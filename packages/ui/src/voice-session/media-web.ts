@@ -51,6 +51,8 @@ export interface VoiceAudioContextLike {
   createSource(buffer: VoicePcmBuffer): VoicePlaybackSource;
   close(): Promise<void> | void;
   resume?(): void | Promise<void>;
+  /** Routes playback to an explicit output device; `""` restores the system default. Absent when the platform cannot set a sink. */
+  setSinkId?(deviceId: string): Promise<void> | void;
 }
 
 export interface VoiceCaptureHandle {
@@ -113,6 +115,13 @@ export function webAudioContextFactory(): VoiceAudioContextLike | null {
     // The promise is returned so a suspended/autoplay-blocked resume
     // rejection is observed by the caller instead of going unhandled.
     resume: () => context.resume(),
+    // `AudioContext.setSinkId` is not in every DOM lib / engine; feature-detect.
+    ...(typeof (context as AudioContext & { setSinkId?: (deviceId: string) => Promise<void> }).setSinkId === "function"
+      ? {
+          setSinkId: (deviceId: string) =>
+            (context as AudioContext & { setSinkId: (id: string) => Promise<void> }).setSinkId(deviceId),
+        }
+      : {}),
   };
 }
 
@@ -145,7 +154,7 @@ export function webCaptureFactory(input: {
         try {
           await context.resume();
         } catch (error: unknown) {
-          console.warn("[voice-session] AudioContext resume failed", error);
+          console.warn("[voice-session] AudioContext resume failed", error instanceof Error ? error.name : "UnknownError");
           throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
         }
       }

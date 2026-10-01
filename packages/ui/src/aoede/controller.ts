@@ -1,13 +1,22 @@
 import type { ReactNode } from "react";
-import type { CanonicalChatDetailResponse, CanonicalChatApprovalView, CanonicalChatApprovalDecision, CanonicalChatInputView, CanonicalSubmitChatInputRequest, AoedeBootstrapRequest, AoedeBootstrapResponse } from "@matrix-os/contracts";
+import { CanonicalActionIdSchema, type CanonicalChatDetailResponse, type CanonicalChatApprovalView, type CanonicalChatApprovalDecision, type CanonicalChatInputView, type CanonicalSubmitChatInputRequest, type CanonicalChatModelSelection, type CanonicalChatRecord, type CanonicalUpdateChatSelectionRequest, type CanonicalChatActionCancellationResponse, type CanonicalProviderCatalog, type AoedeBootstrapRequest, type AoedeBootstrapResponse } from "@matrix-os/contracts";
 import type { SafeVoiceError } from "@matrix-os/contracts/voice-session";
 import { createVoiceSessionClient } from "../voice-session/use-voice-session.js";
-import { capabilityUnavailableError, type VoiceSessionClient, type VoiceSessionClientOptions } from "../voice-session/client-types.js";
+import { capabilityUnavailableError, type VoiceSessionClient, type VoiceSessionClientOptions, type VoiceSessionDevice } from "../voice-session/client-types.js";
+import { voiceErrorForCode, VoiceSessionApiError } from "../voice-session/session-api.js";
 import type { CanonicalChatEventSource } from "../canonical-chat-event-source.js";
 import { applyCanonicalChatContent } from "../canonical-chat-content.js";
 import { createAoedeApi, AoedeRequestError, type AoedeApi } from "./client.js";
-import { projectAoedeCanonical, safeAoedeArtifactPath, type AoedeCanonicalProjection } from "./projection.js";
+import { isCancellableOperation, projectAoedeCanonical, safeAoedeArtifactPath, type AoedeCanonicalProjection } from "./projection.js";
 import { boundedAoedeText, type AoedeStatus } from "./presentation.js";
+import { loadAoedePreferences, saveAoedePreferences, type AoedePreferences } from "./preferences.js";
+
+/** Installed apps live under `apps/<slug>`; canonical navigation may only target that space. */
+const SAFE_NAV_APP = /^[a-z0-9][a-z0-9_-]{0,79}$/;
+const NAV_PATH_MAX = 160;
+const NAV_PATH_FORBIDDEN = /[\\%?#:\x00-\x1f]/;
+/** Voice wire-format device ids (SAFE_ID_BODY, bounded). */
+const DEVICE_ID_SAFE = /^[A-Za-z0-9_-]{1,256}$/;
 
 export interface AoedeOwnerOptions {
   identityKey: string;
@@ -17,24 +26,57 @@ export interface AoedeOwnerOptions {
   projectId?: string;
   onOpenHistory?: (chatId: string) => void;
   onOpenResult?: (path: string) => void;
+  /** Validated canonical navigation into installed app windows (`apps/<slug>` only). */
+  onOpenNavigation?: (nav: { app: string; path: string }) => void;
   webSocketFactory?: VoiceSessionClientOptions["webSocketFactory"];
 }
 export interface AoedeProviderProps extends AoedeOwnerOptions { children: ReactNode }
+/**
+ * Canonical selection/cancellation surface the controller consumes. Optional on
+ * `AoedeControllerApi` so the controller degrades truthfully (null/false) while
+ * an older client build lacks them — never silent, never an unhandled throw.
+ */
+export interface AoedeSelectionApi {
+  providers(): Promise<CanonicalProviderCatalog>;
+  updateSelection(chatId: string, input: CanonicalUpdateChatSelectionRequest): Promise<CanonicalChatRecord>;
+  cancelAction(chatId: string, actionId: string): Promise<CanonicalChatActionCancellationResponse>;
+}
+export type AoedeControllerApi = AoedeApi & Partial<AoedeSelectionApi>;
+
 export interface AoedeSnapshot {
   visible: boolean;
   focusRevision: number;
   status: AoedeStatus;
   microphoneActive: boolean;
   turnMode: "hands_free" | "push_to_talk";
+  /** Persisted capture device; null = system default. */
+  inputDeviceId: string | null;
+  /** Persisted playback device; null = system default. */
+  outputDeviceId: string | null;
+  /** Bumped whenever a re-enumeration settles so settings can refresh its list. */
+  devicesRevision: number;
   binding: AoedeBootstrapResponse | null;
+  /** Immutable provider instance once a run bound the Chat (selection stays inside it). */
+  boundProviderInstanceId: string | null;
+  /** Truthful outcome of the most recent targeted action cancellation. */
+  lastActionCancelOutcome: "cancelled" | "requested" | "already_terminal" | "unknown" | null;
   canonical: AoedeCanonicalProjection;
   error: SafeVoiceError | null;
 }
-export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { api?: AoedeApi; voiceFactory?: (options: VoiceSessionClientOptions) => VoiceSessionClient } = {}) {
+export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { api?: AoedeControllerApi; voiceFactory?: (options: VoiceSessionClientOptions) => VoiceSessionClient } = {}) {
   const options = { ...owner };
-  const api = dependencies.api ?? createAoedeApi(options);
+  const api: AoedeControllerApi = dependencies.api ?? createAoedeApi(options);
   const voiceFactory = dependencies.voiceFactory ?? createVoiceSessionClient;
-  let snapshot: AoedeSnapshot = { visible: false, focusRevision: 0, status: "idle", microphoneActive: false, turnMode: "hands_free", binding: null, canonical: projectAoedeCanonical(null), error: null };
+  let prefs: AoedePreferences = loadAoedePreferences();
+  let snapshot: AoedeSnapshot = {
+    visible: false, focusRevision: 0, status: "idle", microphoneActive: false,
+    turnMode: prefs.turnMode ?? "hands_free",
+    inputDeviceId: prefs.inputDeviceId ?? null,
+    outputDeviceId: prefs.outputDeviceId ?? null,
+    devicesRevision: 0,
+    binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null,
+    canonical: projectAoedeCanonical(null), error: null,
+  };
   // Bound subscriptions; unsubscribe and disposal are eviction. No global registry.
   const listeners: Array<() => void> = [];
   let generation = 0;
@@ -52,8 +94,20 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   let refreshFlight: Promise<void> | null = null;
   let refreshAgain = false;
   let unavailable = false;
+  let providerCatalog: CanonicalProviderCatalog | null = null;
+  let providerFlight: Promise<CanonicalProviderCatalog | null> | null = null;
+  let deviceEnumerationRevision = 0;
   const actions: Array<{ key: string; id: string; busy: boolean }> = [];
   const id = () => `req_${crypto.randomUUID().replaceAll("-", "")}`;
+  /** Preference writes are merge-only and never throw (storage may be absent). */
+  const persistPrefs = (next: Partial<AoedePreferences>) => {
+    prefs = { ...prefs, ...next };
+    saveAoedePreferences(prefs);
+  };
+  const normalizeDeviceId = (value: string | null): string | null | undefined => {
+    if (value === null) return null;
+    return DEVICE_ID_SAFE.test(value) ? value : undefined;
+  };
   const current = (epoch: number) => !disposed && !suspended && epoch === generation;
   const patch = (next: Partial<AoedeSnapshot>) => {
     if (disposed || suspended) return;
@@ -66,13 +120,18 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     console.warn("[aoede] request failed", error instanceof Error ? error.name : "UnknownError");
     const lost = error instanceof AoedeRequestError && [403, 404, 410].includes(error.status);
     if (lost) unavailable = true;
-    patch({ status: "failed", microphoneActive: false, error: { code: lost ? "chat_unavailable" : "internal_failure", retryable: !lost, recovery: lost ? "none" : "start_new_session" } });
+    // A safe voice error (permission_denied, input_unavailable…) is already
+    // truthful — surface it instead of collapsing to a generic failure.
+    const safe = error instanceof VoiceSessionApiError ? error.safeError : undefined;
+    patch({ status: "failed", microphoneActive: false, error: lost
+      ? { code: "chat_unavailable", retryable: false, recovery: "none" }
+      : (safe ?? { code: "internal_failure", retryable: true, recovery: "start_new_session" }) });
     if (lost) { source?.dispose(); source = null; void endMedia(false); }
   };
   const acceptDetail = (value: CanonicalChatDetailResponse) => {
     if (value.record.chat.id !== snapshot.binding?.chatId || (detail && value.record.chat.revision < detail.record.chat.revision)) return;
     detail = value;
-    patch({ canonical: projectAoedeCanonical(detail) });
+    patch({ canonical: projectAoedeCanonical(detail), boundProviderInstanceId: value.record.providerBinding?.instanceId ?? null });
   };
   const refresh = (): Promise<void> => {
     if (refreshFlight) { refreshAgain = true; return refreshFlight; }
@@ -93,14 +152,18 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   const attach = (binding: AoedeBootstrapResponse, epoch: number, reuseMedia = false) => {
     if (!current(epoch)) return;
     if (!reuseMedia || !media) media = voiceFactory({ baseUrl: options.baseUrl, fetcher: options.fetcher, webSocketFactory: options.webSocketFactory,
-      request: { turnMode: snapshot.turnMode, selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary" } });
+      request: { turnMode: snapshot.turnMode, selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary",
+        ...(snapshot.inputDeviceId ? { inputDeviceId: snapshot.inputDeviceId } : {}),
+        ...(snapshot.outputDeviceId ? { outputDeviceId: snapshot.outputDeviceId } : {}) } });
     const captured = media;
     unsubscribeMedia = media.subscribe(() => {
       if (!current(epoch) || captured !== media || unavailable) return;
       const value = captured.getSnapshot();
       const voice = value.voice;
+      // awaiting_reconnect means a live server-side session is being restored
+      // onto a fresh transport — restoring, distinct from a retry loop.
       const status: AoedeStatus = value.phase === "starting" ? "connecting"
-        : value.phase === "awaiting_reconnect" ? "reconnecting"
+        : value.phase === "awaiting_reconnect" ? "restoring"
         : value.phase === "active" ? voice?.state ?? "connecting"
         : value.phase === "idle" ? snapshot.status : value.phase;
       const provisional = voice?.provisionalTranscript?.text;
@@ -115,7 +178,9 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       if (event.type === "chat.changed" && event.eventType === "chat.deleted") { fail(new AoedeRequestError(410)); return; }
       if (event.type === "chat.changed" && event.content && detail) {
         const next = applyCanonicalChatContent(detail, event.content);
-        if (next) { acceptDetail(next); return; }
+        // A clean content merge carries the prior operations array unchanged —
+        // refetch so operation state transitions do not go stale.
+        if (next) { acceptDetail(next); if (!next.operations?.length) return; }
       }
       void refresh();
     });
@@ -153,10 +218,15 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     flight = pending;
     return pending;
   };
+  /** True while the media owner still holds a live or in-flight session. */
+  const mediaLive = () => media !== null && !["idle", "ended", "failed"].includes(media.getSnapshot().phase);
   async function endMedia(showEnded = true) {
     mediaGeneration += 1;
     const captured = media;
-    if (showEnded) patch({ status: "ended", microphoneActive: false });
+    // A live session shows the explicit end-in-progress literal; anything
+    // without live media settles straight to "ended" — never inferred.
+    const live = captured !== null && !["idle", "ended", "failed"].includes(captured.getSnapshot().phase);
+    if (showEnded) patch({ status: live ? "ending" : "ended", microphoneActive: false });
     const epoch = generation;
     try { await captured?.end(); }
     catch (error: unknown) {
@@ -166,6 +236,64 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     }
     if (current(epoch) && !unavailable && showEnded) patch({ status: "ended", microphoneActive: false });
     return true;
+  }
+  /**
+   * Ends the frozen media owner and re-attaches (fresh source + client) so the
+   * next Start builds against the persisted config — the surface-switch
+   * semantics used for backend-driven selection changes.
+   */
+  const rebuildMediaOwner = async (epoch: number): Promise<boolean> => {
+    if (!await endMedia(mediaLive())) return false;
+    unsubscribeMedia?.(); unsubscribeMedia = null;
+    source?.dispose(); source = null;
+    media?.dispose(); media = null;
+    const binding = snapshot.binding;
+    if (!binding || !current(epoch)) return false;
+    attach(binding, epoch);
+    return true;
+  };
+  /** Re-enumerate after devicechange: refresh the list and reconcile stale prefs. */
+  const refreshDeviceLists = async () => {
+    if (typeof media?.listDevices !== "function") return;
+    const epoch = generation;
+    const revision = ++deviceEnumerationRevision;
+    const selectedInput = snapshot.inputDeviceId;
+    const selectedOutput = snapshot.outputDeviceId;
+    const list = await media.listDevices();
+    if (!current(epoch) || revision !== deviceEnumerationRevision || list === null
+      || snapshot.inputDeviceId !== selectedInput || snapshot.outputDeviceId !== selectedOutput) return;
+    const next: Partial<AoedeSnapshot> = { devicesRevision: snapshot.devicesRevision + 1 };
+    const missingInput = selectedInput !== null
+      && !list.some((device) => device.kind === "audioinput" && device.deviceId === selectedInput);
+    const missingOutput = selectedOutput !== null
+      && !list.some((device) => device.kind === "audiooutput" && device.deviceId === selectedOutput);
+    if (missingInput || missingOutput) {
+      // Release capture and playback before changing preferences. Calling the
+      // device setters with null would hot-swap to defaults and silently resume.
+      if (!await endMedia(false)) return;
+      if (!current(epoch) || revision !== deviceEnumerationRevision
+        || snapshot.inputDeviceId !== selectedInput || snapshot.outputDeviceId !== selectedOutput) return;
+    }
+    if (missingInput) {
+      persistPrefs({ inputDeviceId: null });
+      next.inputDeviceId = null;
+      next.status = "failed";
+      next.microphoneActive = false;
+      next.error = voiceErrorForCode("input_unavailable");
+    }
+    if (missingOutput) {
+      persistPrefs({ outputDeviceId: null });
+      next.outputDeviceId = null;
+      next.status = "failed";
+      next.microphoneActive = false;
+      if (!missingInput) next.error = voiceErrorForCode("output_unavailable");
+    }
+    patch(next);
+  };
+  const browserMediaDevices = typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
+  const onBrowserDeviceChange = () => { void refreshDeviceLists(); };
+  if (browserMediaDevices && typeof browserMediaDevices.addEventListener === "function") {
+    browserMediaDevices.addEventListener("devicechange", onBrowserDeviceChange);
   }
   const mutate = async (key: string, operation: (requestId: string, chatId: string) => Promise<unknown>): Promise<boolean> => {
     const chatId = snapshot.binding?.chatId;
@@ -212,12 +340,27 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     end: () => endMedia(),
     async start() {
       if (disposed || suspended || newFlight || unavailable || !snapshot.binding || !media || !snapshot.visible) return;
-      if (snapshot.binding.capability.status === "unavailable" || !snapshot.binding.capability.turnModes.includes(snapshot.turnMode)) return;
+      if (snapshot.binding.capability.status !== "available" || !snapshot.binding.capability.turnModes.includes(snapshot.turnMode)) return;
       if (!["idle", "ended", "permission", "failed"].includes(snapshot.status)) return;
       if (snapshot.status !== "permission") { patch({ status: "permission", error: null }); return; }
       const epoch = generation; const mediaEpoch = ++mediaGeneration; const captured = media; const chatId = snapshot.binding.chatId;
       patch({ status: "connecting" });
       try {
+        // A vanished explicit device requires recovery; never fall back to the
+        // system default or start capture without a new user choice.
+        if (snapshot.inputDeviceId && typeof captured.listDevices === "function") {
+          const selectedInput = snapshot.inputDeviceId;
+          const list = await captured.listDevices();
+          if (!current(epoch) || mediaEpoch !== mediaGeneration) return;
+          if (list !== null && !list.some((device) => device.kind === "audioinput" && device.deviceId === selectedInput)) {
+            await captured.end();
+            if (!current(epoch) || snapshot.inputDeviceId !== selectedInput) return;
+            persistPrefs({ inputDeviceId: null });
+            patch({ inputDeviceId: null, status: "failed", microphoneActive: false,
+              error: voiceErrorForCode("input_unavailable") });
+            return;
+          }
+        }
         if (captured.getSnapshot().phase === "awaiting_reconnect") await captured.reconnect();
         else await captured.startVoice(chatId);
         if (!current(epoch) || mediaEpoch !== mediaGeneration) await captured.end();
@@ -236,14 +379,16 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
         }
         media?.dispose(); media = null; detail = null; actions.length = 0;
         if (disposed) return;
-        unavailable = false; patch({ binding: null, canonical: projectAoedeCanonical(null) });
+        unavailable = false;
+        patch({ binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null, canonical: projectAoedeCanonical(null) });
         await bootstrap("new");
       })().finally(() => { if (newFlight === pending) newFlight = null; });
       newFlight = pending; return pending;
     },
     async retry() {
       if (unavailable || disposed || suspended) return;
-      if (["listening", "speaking", "thinking", "using_tool", "paused"].includes(snapshot.status)) return;
+      if (["listening", "speaking", "thinking", "using_tool", "paused", "restoring", "ending"].includes(snapshot.status)) return;
+      providerCatalog = null; // refetch the catalog on the next listProviders
       await bootstrap(request?.intent ?? "continue");
       if (!unavailable && snapshot.binding?.capability.status !== "unavailable" && snapshot.status !== "failed") patch({ status: "permission", error: null, microphoneActive: false });
     },
@@ -267,18 +412,133 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       return mutate(`input:${view.runId}:${view.requestId}`, (clientRequestId, chatId) => api.submitInput(chatId, view.runId, view.requestId, { ...answer, clientRequestId }));
     },
     viewHistory() { if (snapshot.binding && !unavailable) options.onOpenHistory?.(snapshot.binding.chatId); },
-    openResult(path: string) { const safe = safeAoedeArtifactPath(path); if (safe && snapshot.canonical.artifacts.some(item => item.path === safe)) options.onOpenResult?.(safe); },
+    openResult(path: string) { const safe = safeAoedeArtifactPath(path); if (safe && (snapshot.canonical.artifacts.some(item => item.path === safe) || snapshot.canonical.actionArtifacts.includes(safe))) options.onOpenResult?.(safe); },
+    /** Canonical navigation into installed app windows; unsafe destinations never reach the host. */
+    openNavigation(nav: { app: string; path: string }) {
+      const app = typeof nav?.app === "string" ? nav.app : "";
+      const path = typeof nav?.path === "string" ? nav.path : "";
+      if (!SAFE_NAV_APP.test(app) || path.length === 0 || path.length > NAV_PATH_MAX) return;
+      if (path.includes("..") || path.includes("//") || NAV_PATH_FORBIDDEN.test(path)) return;
+      const prefix = `apps/${app}`;
+      if (path !== prefix && path !== `${prefix}.html` && !path.startsWith(`${prefix}/`)) return;
+      options.onOpenNavigation?.({ app, path });
+    },
+    /** Provider catalog for Settings. Cached per controller; retry() refetches. */
+    listProviders(): Promise<CanonicalProviderCatalog | null> {
+      if (providerCatalog) return Promise.resolve(providerCatalog);
+      if (providerFlight) return providerFlight;
+      if (typeof api.providers !== "function" || unavailable || disposed || suspended) return Promise.resolve(null);
+      const epoch = generation;
+      const work = async () => {
+        try {
+          const catalog = await api.providers!();
+          if (!current(epoch)) return null;
+          providerCatalog = catalog;
+          return catalog;
+        } catch (error: unknown) {
+          if (current(epoch)) console.warn("[aoede] provider catalog unavailable", error instanceof Error ? error.name : "UnknownError");
+          return null;
+        }
+      };
+      const pending = work().finally(() => { if (providerFlight === pending) providerFlight = null; });
+      providerFlight = pending;
+      return pending;
+    },
+    /**
+     * Revision-fenced canonical selection update. The canonical record stays
+     * authoritative — the response record re-resolves binding.selection and the
+     * frozen media owner is rebuilt so the next Start uses the new selection.
+     */
+    setSelection(selection: CanonicalChatModelSelection): Promise<boolean> {
+      const baseRevision = detail?.record.chat.revision;
+      if (!snapshot.binding || baseRevision === undefined || typeof api.updateSelection !== "function") return Promise.resolve(false);
+      const epoch = generation;
+      const changed = mutate("selection", (_requestId, chatId) => api.updateSelection!(chatId, { baseRevision, selection }));
+      return changed.then(async (ok) => {
+        if (!ok || !current(epoch)) return false;
+        const resolved = detail?.record.chat.currentSelection;
+        if (resolved && snapshot.binding) {
+          patch({ binding: { ...snapshot.binding, selection: resolved } });
+        }
+        return rebuildMediaOwner(epoch);
+      });
+    },
+    /** Persisted turn mode. A live session ends so the next Start applies it. */
+    async setTurnMode(mode: "hands_free" | "push_to_talk") {
+      if (disposed || suspended) return;
+      if (mode !== "hands_free" && mode !== "push_to_talk") return;
+      const supported = snapshot.binding?.capability.turnModes;
+      if (supported && !supported.includes(mode)) return;
+      persistPrefs({ turnMode: mode });
+      patch({ turnMode: mode });
+      if (!media || !snapshot.binding) return;
+      await rebuildMediaOwner(generation);
+    },
+    listDevices(): Promise<VoiceSessionDevice[] | null> {
+      if (disposed) return Promise.resolve(null);
+      return media?.listDevices?.() ?? Promise.resolve(null);
+    },
+    async setInputDevice(deviceId: string | null): Promise<boolean> {
+      const normalized = normalizeDeviceId(deviceId);
+      if (normalized === undefined) return false;
+      deviceEnumerationRevision += 1;
+      persistPrefs({ inputDeviceId: normalized });
+      patch({ inputDeviceId: normalized });
+      if (typeof media?.setInputDevice !== "function") return true;
+      return media.setInputDevice(normalized);
+    },
+    async setOutputDevice(deviceId: string | null): Promise<"applied" | "unsupported" | "unavailable"> {
+      const normalized = normalizeDeviceId(deviceId);
+      if (normalized === undefined) return "unavailable";
+      deviceEnumerationRevision += 1;
+      persistPrefs({ outputDeviceId: normalized });
+      patch({ outputDeviceId: normalized });
+      if (typeof media?.setOutputDevice !== "function") return "applied";
+      return media.setOutputDevice(normalized);
+    },
+    /**
+     * Targeted canonical action cancellation. Runs under per-action mutate
+     * fencing, returns the truthful outcome, and merges the authority's
+     * operation view into the local detail.
+     */
+    cancelAction(actionId: string): Promise<"cancelled" | "requested" | "already_terminal" | "unknown" | null> {
+      const parsed = CanonicalActionIdSchema.safeParse(actionId);
+      if (!parsed.success || unavailable || disposed || suspended || typeof api.cancelAction !== "function") return Promise.resolve(null);
+      const operation = detail?.operations?.find((item) => item.id === parsed.data);
+      if (!operation || !isCancellableOperation(operation) || operation.chatId !== snapshot.binding?.chatId) return Promise.resolve(null);
+      const actionKey = parsed.data;
+      let outcome: "cancelled" | "requested" | "already_terminal" | "unknown" | null = null;
+      const epoch = generation;
+      return mutate(`action_cancel_${actionKey}`, (_requestId, chatId) =>
+        api.cancelAction!(chatId, actionKey).then((response: CanonicalChatActionCancellationResponse) => {
+          outcome = response.cancellation;
+          if (detail?.operations) {
+            detail = { ...detail, operations: detail.operations.map((item) => item.id === response.operation.id ? response.operation : item) };
+            patch({ canonical: projectAoedeCanonical(detail) });
+          }
+        })).then((ok) => {
+          if (!ok || !current(epoch)) return null;
+          patch({ lastActionCancelOutcome: outcome });
+          return outcome;
+        });
+    },
     refresh,
     /** React owner lease: fence identity immediately, defer only irreversible disposal. */
     suspend() {
       if (disposed || suspended) return;
-      suspended = true; mediaGeneration += 1;
+      mediaGeneration += 1;
+      // patch() is a no-op while suspended — record the teardown first so a
+      // later activate() never replays a stale live status.
+      patch({ microphoneActive: false,
+        status: ["idle", "ended", "failed"].includes(snapshot.status) ? snapshot.status : "ended" });
+      suspended = true;
       void media?.end().catch(error => console.warn("[aoede] suspended cleanup failed", error instanceof Error ? error.name : "UnknownError"));
     },
-    activate() { if (!disposed) suspended = false; },
+    activate() { if (disposed || !suspended) return; suspended = false; patch({}); },
     dispose() {
       if (disposed) return;
       generation += 1; mediaGeneration += 1; disposed = true;
+      browserMediaDevices?.removeEventListener?.("devicechange", onBrowserDeviceChange);
       source?.dispose(); source = null; unsubscribeMedia?.(); unsubscribeMedia = null;
       const captured = media; media = null;
       void captured?.end().catch(error => console.warn("[aoede] cleanup failed", error instanceof Error ? error.name : "UnknownError")).finally(() => captured.dispose());

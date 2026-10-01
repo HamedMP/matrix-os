@@ -1,9 +1,15 @@
 import {
   canonicalChatApprovals, canonicalChatInputs, canonicalChatToolActivities, CanonicalChatResourceReferenceSchema, SafeAssistantPreviewSourceTextSchema,
   type CanonicalChatDetailResponse, type CanonicalChatApprovalView, type CanonicalChatInputView,
+  type CanonicalOperationView,
   type CanonicalToolActivity,
 } from "@matrix-os/contracts";
 import { boundedAoedeText } from "./presentation.js";
+
+const PRE_CANCELLABLE_STATES = new Set(["proposed", "waiting_for_approval", "authorized"]);
+export function isCancellableOperation(operation: CanonicalOperationView): boolean {
+  return PRE_CANCELLABLE_STATES.has(operation.state) && !operation.cancellationRequested;
+}
 
 export interface AoedeCanonicalProjection {
   captions: { utterance?: string; response?: string; provisional?: boolean };
@@ -11,6 +17,16 @@ export interface AoedeCanonicalProjection {
   inputs: CanonicalChatInputView[];
   progress: Array<Pick<CanonicalToolActivity, "id" | "kind" | "state" | "label" | "subagent">>;
   artifacts: Array<{ id: string; label: string; path: string }>;
+  /** Safe operation views for every visible run, newest first (max 32). */
+  operations: CanonicalOperationView[];
+  /** Newest projected navigation affordance, if any operation produced one. */
+  navigation?: { app: string; path: string; operationId: string };
+  /** Serializable (not Set) list of operations a user may cancel right now. */
+  cancellableActionIds: string[];
+  /** In-flight operations whose outcome will be reconciled — never retried. */
+  outcomeUnknown: CanonicalOperationView[];
+  /** Deduped workspace paths surfaced by operation artifacts/files (max 16). */
+  actionArtifacts: string[];
   runId: string | null;
   outcome: "completed" | "failed" | "aborted" | null;
   canCancel: boolean;
@@ -29,7 +45,11 @@ function safeDescription(value: string | undefined): string {
   return SafeAssistantPreviewSourceTextSchema.safeParse(value).success ? boundedAoedeText(value) : "Details withheld for privacy.";
 }
 export function projectAoedeCanonical(detail: CanonicalChatDetailResponse | null): AoedeCanonicalProjection {
-  const empty: AoedeCanonicalProjection = { captions: {}, approvals: [], inputs: [], progress: [], artifacts: [], runId: null, outcome: null, canCancel: false };
+  const empty: AoedeCanonicalProjection = {
+    captions: {}, approvals: [], inputs: [], progress: [], artifacts: [],
+    operations: [], outcomeUnknown: [], cancellableActionIds: [], actionArtifacts: [],
+    runId: null, outcome: null, canCancel: false,
+  };
   if (!detail) return empty;
   const run = detail.runs.find(item => item.id === detail.record.activeRun?.runId) ?? detail.runs.at(-1);
   const user = [...detail.messages].reverse().find(item => item.role === "user");
@@ -55,10 +75,42 @@ export function projectAoedeCanonical(detail: CanonicalChatDetailResponse | null
       ...(activity?.type === "approval.requested" ? { argumentDigest: activity.argumentDigest } : {}),
     };
   });
+  // Operations arrive only as the pre-validated safe views; newest first across
+  // every visible run so the voice UI reflects the whole detail page.
+  const operations = (detail.operations ?? [])
+    .slice()
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 32);
+  const navigated = operations.find(operation => operation.result?.navigation !== undefined);
+  const navigation = navigated?.result?.navigation === undefined ? undefined : {
+    app: navigated.result.navigation.app,
+    path: navigated.result.navigation.path,
+    operationId: navigated.id,
+  };
+  const actionArtifacts: string[] = [];
+  const seenArtifactPaths = new Set<string>();
+  for (const operation of operations) {
+    const candidates = [
+      ...(operation.result?.artifact ? [operation.result.artifact.path] : []),
+      ...(operation.result?.files?.map(file => file.path) ?? []),
+    ];
+    for (const candidate of candidates) {
+      const path = safeAoedeArtifactPath(candidate);
+      if (path && !seenArtifactPaths.has(path) && actionArtifacts.length < 16) {
+        seenArtifactPaths.add(path);
+        actionArtifacts.push(path);
+      }
+    }
+  }
   const terminal = run && ["completed", "failed", "aborted"].includes(run.status);
   const cancellation = run?.capabilitySnapshot.cancellation;
   return { captions: { ...(caption(user) ? { utterance: caption(user) } : {}), ...(caption(response) ? { response: caption(response) } : {}) },
     approvals, inputs: canonicalChatInputs(detail).slice(-32), progress, artifacts,
+    operations,
+    ...(navigation ? { navigation } : {}),
+    cancellableActionIds: operations.filter(isCancellableOperation).map(operation => operation.id),
+    outcomeUnknown: operations.filter(operation => operation.state === "outcome_unknown"),
+    actionArtifacts,
     runId: run?.id ?? null, outcome: terminal ? run!.status as AoedeCanonicalProjection["outcome"] : null,
     canCancel: Boolean(run && !terminal && (cancellation === true || cancellation === "run")),
   };

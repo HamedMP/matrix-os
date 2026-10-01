@@ -46,6 +46,7 @@ import {
   type VoiceSessionClientOptions,
   type VoiceSessionClientPhase,
   type VoiceSessionClientSnapshot,
+  type VoiceSessionDevice,
   type VoiceSessionHook,
 } from "./client-types.js";
 import { createReconnectLoop, createRemoteCleanupQueue } from "./client-reconnect.js";
@@ -60,12 +61,50 @@ export {
   type VoiceSessionClientOptions,
   type VoiceSessionClientPhase,
   type VoiceSessionClientSnapshot,
+  type VoiceSessionDevice,
   type VoiceSessionHook,
   type VoiceSessionRequestDefaults,
 } from "./client-types.js";
 
 const MAX_STATE_LISTENERS = 16;
 const MAX_CREATE_ATTEMPTS = 2;
+/** Wire-format device ids (device.changed frames accept SAFE_ID_BODY only). */
+const VOICE_DEVICE_ID = /^[A-Za-z0-9_-]{1,256}$/;
+const MAX_AUDIO_DEVICES_PER_KIND = 32;
+const MAX_DEVICE_LABEL = 160;
+
+/**
+ * Bounded, guarded device enumeration. Returns `null` — not an empty list —
+ * when `enumerateDevices` is unavailable or rejects: an unknown set must never
+ * be confused with a truthful "no devices" answer (stale-selection clearing
+ * depends on the difference).
+ */
+async function enumerateAudioDevices(): Promise<VoiceSessionDevice[] | null> {
+  const devices = typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
+  if (!devices || typeof devices.enumerateDevices !== "function") return null;
+  try {
+    const list = await devices.enumerateDevices();
+    if (!Array.isArray(list)) return null;
+    const inputs: VoiceSessionDevice[] = [];
+    const outputs: VoiceSessionDevice[] = [];
+    for (const entry of list) {
+      const kind = entry?.kind === "audioinput" ? "audioinput"
+        : entry?.kind === "audiooutput" ? "audiooutput"
+          : null;
+      if (kind === null) continue;
+      // Skip ids the wire cannot represent (e.g. empty pre-permission ids).
+      if (typeof entry.deviceId !== "string" || !VOICE_DEVICE_ID.test(entry.deviceId)) continue;
+      const target = kind === "audioinput" ? inputs : outputs;
+      if (target.length >= MAX_AUDIO_DEVICES_PER_KIND) continue;
+      // Truthful labels: never invent a name for a pre-permission device.
+      target.push({ deviceId: entry.deviceId, kind, label: typeof entry.label === "string" ? entry.label.slice(0, MAX_DEVICE_LABEL) : "" });
+    }
+    return [...inputs, ...outputs];
+  } catch (enumerateError: unknown) {
+    voiceWarn("[voice-session] device enumeration failed:", enumerateError);
+    return null;
+  }
+}
 
 export function createVoiceSessionClient(options: VoiceSessionClientOptions): VoiceSessionClient {
   const api = createVoiceSessionApi({
@@ -512,8 +551,21 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       : createWebVoiceMediaSession({ audio, callbacks: makeMediaCallbacks(mediaRef) });
     mediaRef.current = heldMedia;
     media = heldMedia;
+    // A persisted capture id that disappeared must fall back to the system
+    // default: getUserMedia({deviceId:{exact:stale}}) would hard-fail prepare.
+    // Only a truthful enumeration may clear it — "unknown" keeps the choice.
+    let inputDeviceId = options.request.inputDeviceId;
+    if (inputDeviceId !== undefined) {
+      const enumerated = await enumerateAudioDevices();
+      if (stale()) return;
+      if (enumerated !== null
+        && !enumerated.some((device) => device.kind === "audioinput" && device.deviceId === inputDeviceId)) {
+        options.request.inputDeviceId = undefined;
+        inputDeviceId = undefined;
+      }
+    }
     try {
-      await heldMedia.prepare({ onRationale: options.onPermissionRationale });
+      await heldMedia.prepare({ onRationale: options.onPermissionRationale, inputDeviceId });
     } catch (mediaError: unknown) {
       // Fence callbacks BEFORE releasing: a prepare that rejects after
       // partial allocation can still emit late chunks/errors, and none may
@@ -535,6 +587,24 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       return;
     }
     if (stale()) return;
+    // Record the persisted playback routing immediately: the media session
+    // defers it to playback-context creation, so it is in force for the first
+    // synthesized segment regardless of session outcome below.
+    if (options.request.outputDeviceId !== undefined
+      && typeof heldMedia.setOutputDevice === "function") {
+      let outputResult: "applied" | "unsupported" | "unavailable";
+      try {
+        outputResult = await heldMedia.setOutputDevice(options.request.outputDeviceId);
+      } catch (sinkError: unknown) {
+        voiceWarn("[voice-session] preferred output apply failed:", sinkError);
+        outputResult = "unavailable";
+      }
+      if (stale()) return;
+      if (outputResult !== "applied") {
+        failSession(voiceErrorForCode("output_unavailable"));
+        return;
+      }
+    }
 
     let created;
     const createAttempt = unresolvedCreate?.chatId === parsedChatId
@@ -639,6 +709,67 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     getSnapshot: () => snapshot,
     controller: () => controller,
     startVoice,
+    listDevices: () => enumerateAudioDevices(),
+    async setInputDevice(deviceId) {
+      const normalized = deviceId === null ? undefined
+        : typeof deviceId === "string" && VOICE_DEVICE_ID.test(deviceId) ? deviceId
+          : undefined;
+      if (deviceId !== null && normalized === undefined) return false;
+      options.request.inputDeviceId = normalized;
+      const held = media;
+      if (held === null || typeof held.switchInputDevice !== "function") {
+        // No live capture owner (or a session without hot-swap): the stored
+        // selection is what the next startVoice prepares with.
+        return true;
+      }
+      // A device switch retires the in-flight capture turn honestly: stop
+      // capture, close the wire turn, swap the mic, then let hands-free
+      // capture resume from the new source via emit -> syncCapture.
+      const turnId = activeTurnId;
+      if (turnId !== null) {
+        try {
+          held.stopCapture();
+        } catch (stopError: unknown) {
+          voiceWarn("[voice-session] capture stop on device switch failed:", stopError);
+        }
+        activeTurnId = null;
+        transport.current()?.send({ type: "capture.stop", turnId });
+      }
+      try {
+        await held.switchInputDevice(normalized);
+      } catch (mediaError: unknown) {
+        if (!disposed && media === held && !ending
+          && phase !== "idle" && phase !== "ended" && phase !== "failed") {
+          failSession(mediaError instanceof VoiceMediaError
+            ? mediaError.safeError
+            : voiceErrorForCode("input_unavailable"));
+        }
+        return false;
+      }
+      if (disposed || media !== held) return false;
+      transport.current()?.send({
+        type: "device.changed",
+        ...(normalized === undefined ? {} : { inputDeviceId: normalized }),
+      });
+      emit();
+      return true;
+    },
+    async setOutputDevice(deviceId) {
+      const normalized = deviceId === null ? undefined
+        : typeof deviceId === "string" && VOICE_DEVICE_ID.test(deviceId) ? deviceId
+          : undefined;
+      if (deviceId !== null && normalized === undefined) return "unavailable";
+      options.request.outputDeviceId = normalized;
+      const held = media;
+      if (held === null) return "applied";
+      if (typeof held.setOutputDevice !== "function") return "unsupported";
+      try {
+        return await held.setOutputDevice(deviceId);
+      } catch (mediaError: unknown) {
+        voiceWarn("[voice-session] output switch failed:", mediaError);
+        return "unavailable";
+      }
+    },
     async reconnect() {
       await reconnectLoop.perform(true);
     },
@@ -729,6 +860,9 @@ export function useVoiceSession(options: VoiceSessionClientOptions): VoiceSessio
     controller: snapshot.voice === null ? null : client.controller(),
     startVoice: (chatIdForCall: string) => client.startVoice(chatIdForCall),
     reconnect: () => client.reconnect(),
+    listDevices: () => client.listDevices(),
+    setInputDevice: (deviceId: string | null) => client.setInputDevice(deviceId),
+    setOutputDevice: (deviceId: string | null) => client.setOutputDevice(deviceId),
     retry: () => client.retry(),
     retryCleanup: () => client.retryCleanup(),
     continueInChat: () => client.continueInChat(),

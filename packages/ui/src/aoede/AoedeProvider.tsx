@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createAoedeController, type AoedeController, type AoedeProviderProps } from "./controller.js";
 import { AoedePanel } from "./AoedePanel.js";
+import { AoedeSettings } from "./AoedeSettings.js";
 import { AoedeCanonicalCards } from "./AoedeCanonicalCards.js";
 
 const Context = createContext<AoedeController | null>(null);
@@ -51,10 +52,13 @@ export function AoedeAssistant() {
     <AoedePanel scopeLabel={snapshot.binding?.scope.label ?? "Workspace"} status={snapshot.status}
       microphoneActive={snapshot.microphoneActive} turnMode={snapshot.turnMode} captions={snapshot.canonical.captions}
       capability={snapshot.binding?.capability} error={snapshot.error ?? undefined}
+      canCancel={snapshot.canonical.canCancel}
       commands={{ start: () => void controller.start(), dismiss: () => void controller.dismiss(), end: () => void controller.end(),
         pause: controller.pause, resume: controller.resume, stopSpeaking: controller.stopSpeaking,
+        cancelGeneration: () => void controller.cancelGeneration(),
         pushToTalkStart: controller.pushToTalkStart, pushToTalkStop: controller.pushToTalkStop,
-        retry: () => void controller.retry(), newConversation: () => void controller.newConversation(), viewHistory: controller.viewHistory }}>
+        retry: () => void controller.retry(), newConversation: () => void controller.newConversation(), viewHistory: controller.viewHistory }}
+      settings={<AoedeSettings controller={controller} snapshot={snapshot} />}>
       <AoedeCanonicalCards controller={controller} projection={snapshot.canonical} />
     </AoedePanel>
   </div>;

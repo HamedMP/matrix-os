@@ -17,6 +17,8 @@ export interface AoedePanelProps {
   turnMode: "hands_free" | "push_to_talk";
   captions: { utterance?: string; response?: string; provisional?: boolean };
   capability?: VoiceCapability;
+  /** Canonical run-cancellation support; when provided, the Cancel generation control is gated on it. */
+  canCancel?: boolean;
   error?: SafeVoiceError;
   children?: ReactNode;
   commands: {
@@ -39,7 +41,7 @@ export interface AoedePanelProps {
 /** Presentation only. The host owns focus restoration, light dismissal, media and canonical work. */
 export function AoedePanel({
   title = "Aoede", scopeLabel, status, microphoneActive, turnMode, captions,
-  capability, error, children, commands, settings,
+  capability, canCancel, error, children, commands, settings,
 }: AoedePanelProps) {
   const id = useId();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -54,7 +56,8 @@ export function AoedePanel({
     gesture.stop();
   }, []);
   const active = status === "listening" || status === "thinking" || status === "using_tool" || status === "speaking";
-  const ready = capability?.status === "available" || capability?.status === "degraded";
+  // Only "available" may create or reconnect a session; "degraded" is display-only.
+  const ready = capability?.status === "available";
   const modeAvailable = ready && Boolean(capability?.turnModes.includes(turnMode));
   const canHold = modeAvailable && turnMode === "push_to_talk" && active;
 
@@ -98,7 +101,11 @@ export function AoedePanel({
   const actionCopy = aoedeActionCopy(capability);
   const canStart = status === "idle" || status === "ended";
   const showRationale = canStart || status === "permission";
-  const showCancel = active && status !== "listening" && commands.cancelGeneration;
+  // Fail closed: an omitted canCancel means "not qualified", never "show it
+  // anyway". When canonical children render, the CancellationCard inside owns
+  // the affordance — the built-in button is the fallback for card-free panels.
+  const showCancel = Boolean(commands.cancelGeneration) && active && status !== "listening"
+    && canCancel === true && !children;
   const canRetry = status === "failed" && error?.retryable && error.code !== "chat_unavailable";
 
   return (
@@ -174,7 +181,7 @@ export function AoedePanel({
         {active ? <Button variant="secondary" className="matrix-aoede__button" onClick={afterRelease(commands.pause)}>Pause</Button> : null}
         {status === "paused" ? <Button className="matrix-aoede__button" disabled={!modeAvailable} onClick={commands.resume}>Resume</Button> : null}
         {status === "speaking" ? <Button variant="secondary" className="matrix-aoede__button" onClick={commands.stopSpeaking}>Stop speaking</Button> : null}
-        {showCancel ? <Button variant="secondary" className="matrix-aoede__button" onClick={afterRelease(showCancel)}>Cancel generation</Button> : null}
+        {showCancel && commands.cancelGeneration ? <Button variant="secondary" className="matrix-aoede__button" onClick={afterRelease(commands.cancelGeneration)}>Cancel generation</Button> : null}
         {canRetry ? <Button className="matrix-aoede__button" onClick={afterRelease(commands.retry)}>Retry</Button> : null}
         <Button variant="secondary" className="matrix-aoede__button" disabled={canStart} onClick={afterRelease(commands.end)}>End</Button>
       </div>

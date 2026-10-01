@@ -107,6 +107,10 @@ interface FakeMedia {
   interrupts: string[];
   interruptBoundary: number | null;
   releases: number;
+  switches: (string | undefined)[];
+  outputs: (string | null)[];
+  switchImpl: (deviceId?: string) => Promise<void>;
+  outputImpl: (deviceId: string | null) => Promise<"applied" | "unsupported" | "unavailable">;
 }
 
 function fakeMedia(prepareImpl?: () => Promise<void>): FakeMedia {
@@ -119,9 +123,21 @@ function fakeMedia(prepareImpl?: () => Promise<void>): FakeMedia {
     interrupts: [],
     interruptBoundary: 123,
     releases: 0,
+    switches: [],
+    outputs: [],
+    switchImpl: async () => undefined,
+    outputImpl: async () => "applied",
     session: {
       supported: true,
       prepare: vi.fn(prepareImpl ?? (async () => undefined)),
+      switchInputDevice: vi.fn(async (deviceId?: string) => {
+        media.switches.push(deviceId);
+        await media.switchImpl(deviceId);
+      }),
+      setOutputDevice: vi.fn(async (deviceId: string | null) => {
+        media.outputs.push(deviceId);
+        return media.outputImpl(deviceId);
+      }),
       startCapture: vi.fn(({ turnId }: { turnId: string }) => {
         media.startedTurns.push(turnId);
         return true;
@@ -622,8 +638,188 @@ describe("createVoiceSessionClient", () => {
   });
 });
 
+describe("voice session device selection", () => {
+  afterEach(() => {
+    unstubMediaDevices();
+  });
+
+  it("passes the configured input device into media.prepare", async () => {
+    const world = makeWorld();
+    world.options.request.inputDeviceId = "mic_x";
+    const client = await started(world);
+    expect(mediaPrepareOf(world)).toHaveBeenCalledWith(
+      expect.objectContaining({ inputDeviceId: "mic_x" }),
+    );
+    client.dispose();
+  });
+
+  it("falls back to the default mic when the persisted device is gone", async () => {
+    const world = makeWorld();
+    world.options.request.inputDeviceId = "mic_gone";
+    stubMediaDevices([{ deviceId: "mic_a", kind: "audioinput", label: "Mic A" }]);
+    const client = await started(world);
+    // The stale id was dropped pre-flight rather than hard-failing getUserMedia.
+    expect(world.options.request.inputDeviceId).toBeUndefined();
+    expect(mediaPrepareOf(world)).toHaveBeenCalledWith(
+      expect.objectContaining({ inputDeviceId: undefined }),
+    );
+    client.dispose();
+  });
+
+  it("keeps the persisted device when enumeration is unavailable", async () => {
+    const world = makeWorld();
+    world.options.request.inputDeviceId = "mic_x"; // jsdom has no mediaDevices
+    const client = await started(world);
+    expect(mediaPrepareOf(world)).toHaveBeenCalledWith(
+      expect.objectContaining({ inputDeviceId: "mic_x" }),
+    );
+    client.dispose();
+  });
+
+  it("lists bounded truthful audio devices and reports null when unsupported", async () => {
+    const world = makeWorld();
+    const client = await started(world);
+    await expect(client.listDevices()).resolves.toBeNull();
+
+    const inputs = Array.from({ length: 40 }, (_, index) => ({
+      deviceId: `mic_${index}`, kind: "audioinput", label: index === 3 ? "" : `Mic ${index}`,
+    }));
+    stubMediaDevices([
+      ...inputs,
+      { deviceId: "spk_1", kind: "audiooutput", label: "Speaker" },
+      { deviceId: "cam_1", kind: "videoinput", label: "Camera" },
+      { deviceId: "", kind: "audioinput", label: "empty id" },
+    ]);
+    const devices = await client.listDevices();
+    expect(devices).not.toBeNull();
+    // Bounded at 32 inputs; empty pre-permission labels stay empty (never invented).
+    expect(devices!.filter((device) => device.kind === "audioinput")).toHaveLength(32);
+    expect(devices!.filter((device) => device.kind === "audiooutput")).toEqual([
+      { deviceId: "spk_1", kind: "audiooutput", label: "Speaker" },
+    ]);
+    expect(devices!.find((device) => device.deviceId === "mic_3")?.label).toBe("");
+    client.dispose();
+  });
+
+  it("rejects malformed device ids without storing them", async () => {
+    const world = makeWorld();
+    const client = await started(world);
+    await expect(client.setInputDevice("bad id!")).resolves.toBe(false);
+    await expect(client.setOutputDevice("bad id!")).resolves.toBe("unavailable");
+    expect(world.options.request.inputDeviceId).toBeUndefined();
+    expect(world.options.request.outputDeviceId).toBeUndefined();
+    client.dispose();
+  });
+
+  it("hot-swaps a live capture turn and announces device.changed", async () => {
+    const world = makeWorld({ turnMode: "hands_free" });
+    const client = await started(world);
+    const socket = world.sockets[0]!;
+    socket.emitOpen();
+    listen(world);
+    expect(world.media.startedTurns).toEqual(["vturn_tid-2"]);
+
+    await expect(client.setInputDevice("mic_b")).resolves.toBe(true);
+    expect(world.media.switches).toEqual(["mic_b"]);
+    expect(world.options.request.inputDeviceId).toBe("mic_b");
+    const types = socket.sent.map((frame) => frame.type);
+    // The interrupted turn closed honestly, the swap was announced, and
+    // hands-free capture resumed on the new device as a fresh turn.
+    expect(types).toContain("capture.stop");
+    expect(types).toContain("device.changed");
+    expect(socket.sent.at(-1)).toMatchObject({ type: "capture.start", turnId: "vturn_tid-3" });
+    expect(world.media.startedTurns).toEqual(["vturn_tid-2", "vturn_tid-3"]);
+    client.dispose();
+  });
+
+  it("routes output selection through the media session and stores it for next start", async () => {
+    const world = makeWorld();
+    const client = await started(world);
+    await expect(client.setOutputDevice("spk_a")).resolves.toBe("applied");
+    expect(world.media.outputs).toEqual(["spk_a"]);
+    expect(world.options.request.outputDeviceId).toBe("spk_a");
+
+    // A session without hot-swap support stores the selection truthfully.
+    const idleWorld = makeWorld();
+    const idleClient = createVoiceSessionClient(idleWorld.options);
+    await expect(idleClient.setOutputDevice("spk_b")).resolves.toBe("applied");
+    expect(idleWorld.options.request.outputDeviceId).toBe("spk_b");
+
+    world.media.outputImpl = async () => "unsupported";
+    await expect(client.setOutputDevice("spk_c")).resolves.toBe("unsupported");
+    client.dispose();
+    idleClient.dispose();
+  });
+
+  it("applies the persisted output device to a fresh session prepare", async () => {
+    const world = makeWorld();
+    world.options.request.outputDeviceId = "spk_a";
+    const client = await started(world);
+    expect(world.media.outputs).toEqual(["spk_a"]);
+    client.dispose();
+  });
+
+  it("waits for persisted output routing before creating the remote session", async () => {
+    const world = makeWorld();
+    world.options.request.outputDeviceId = "spk_a";
+    let resolveOutput!: () => void;
+    world.media.outputImpl = () => new Promise<"applied">((resolve) => {
+      resolveOutput = () => resolve("applied");
+    });
+    const client = createVoiceSessionClient(world.options);
+    const starting = client.startVoice(CHAT_ID);
+    await vi.waitFor(() => expect(world.media.outputs).toEqual(["spk_a"]));
+    expect(world.calls.some((call) => call.method === "POST")).toBe(false);
+    resolveOutput();
+    await starting;
+    expect(world.calls.some((call) => call.method === "POST")).toBe(true);
+    client.dispose();
+  });
+
+  it("fails truthfully when an explicit persisted output route is unsupported", async () => {
+    const world = makeWorld();
+    world.options.request.outputDeviceId = "spk_a";
+    world.media.outputImpl = async () => "unsupported";
+    const client = createVoiceSessionClient(world.options);
+    await client.startVoice(CHAT_ID);
+    expect(client.getSnapshot()).toMatchObject({
+      phase: "failed",
+      error: { code: "output_unavailable" },
+    });
+    expect(world.calls.some((call) => call.method === "POST")).toBe(false);
+    client.dispose();
+  });
+
+  it("fails the session truthfully when a live input switch fails", async () => {
+    const world = makeWorld({ turnMode: "hands_free" });
+    const client = await started(world);
+    world.sockets[0]!.emitOpen();
+    listen(world);
+    world.media.switchImpl = async () => {
+      throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+    };
+    await expect(client.setInputDevice("mic_gone")).resolves.toBe(false);
+    expect(client.getSnapshot()).toMatchObject({
+      phase: "failed",
+      error: { code: "input_unavailable", recovery: "choose_input" },
+    });
+    client.dispose();
+  });
+});
+
 function mediaPrepareOf(world: World) {
   return world.media.session.prepare;
+}
+
+function stubMediaDevices(list: { deviceId: string; kind: string; label: string }[]) {
+  Object.defineProperty(window.navigator, "mediaDevices", {
+    configurable: true,
+    value: { enumerateDevices: vi.fn(async () => list) },
+  });
+}
+
+function unstubMediaDevices() {
+  delete (window.navigator as unknown as { mediaDevices?: unknown }).mediaDevices;
 }
 
 function scheduledRun(world: World) {

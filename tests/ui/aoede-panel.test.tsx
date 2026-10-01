@@ -20,9 +20,9 @@ const capability: VoiceCapability = {
   supportsInputSelection: false, supportsOutputSelection: false,
 };
 const labels = {
-  idle: "Idle", permission: "Permission", connecting: "Connecting", listening: "Listening",
-  thinking: "Thinking", using_tool: "Using tool", speaking: "Speaking", paused: "Paused",
-  reconnecting: "Reconnecting", failed: "Failed", ended: "Ended",
+  idle: "Idle", permission: "Permission", connecting: "Connecting", restoring: "Restoring",
+  listening: "Listening", thinking: "Thinking", using_tool: "Using tool", speaking: "Speaking",
+  paused: "Paused", reconnecting: "Reconnecting", ending: "Ending", failed: "Failed", ended: "Ended",
 } as const;
 
 function setup(overrides: Partial<AoedePanelProps> = {}) {
@@ -101,7 +101,7 @@ describe("AoedePanel standalone presentation", () => {
   });
 
   it("keeps playback, whole-run cancellation, pause, end, and dismissal separate", () => {
-    const { commands } = setup({ status: "speaking" });
+    const { commands } = setup({ status: "speaking", canCancel: true });
     fireEvent.click(screen.getByRole("button", { name: "Stop speaking" }));
     expect(commands.stopSpeaking).toHaveBeenCalledTimes(1);
     expect(commands.cancelGeneration).not.toHaveBeenCalled();
@@ -122,6 +122,18 @@ describe("AoedePanel standalone presentation", () => {
     expect(screen.queryByRole("button", { name: /Cancel/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pause" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Stop speaking" })).not.toBeInTheDocument();
+  });
+
+  it("hides the fallback cancel unless the snapshot qualifies it, and never duplicates the card", () => {
+    // Omitted canCancel fails closed — the affordance must not appear.
+    const view = setup({ status: "using_tool" });
+    expect(screen.queryByRole("button", { name: "Cancel generation" })).not.toBeInTheDocument();
+    // Qualified + card-free panel → built-in fallback shows.
+    view.rerender(<AoedePanel {...view.props} canCancel={true} />);
+    expect(screen.getByRole("button", { name: "Cancel generation" })).toBeVisible();
+    // Canonical children present → the CancellationCard owns the affordance.
+    view.rerender(<AoedePanel {...view.props} canCancel={true}><div>canonical</div></AoedePanel>);
+    expect(screen.queryByRole("button", { name: "Cancel generation" })).not.toBeInTheDocument();
   });
 
   it("resumes paused sessions and explicitly continues ended sessions", () => {

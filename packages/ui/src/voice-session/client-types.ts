@@ -46,6 +46,13 @@ export interface VoiceSessionClientSnapshot {
   voice: VoiceSessionViewState | null;
 }
 
+/** A bounded, truthful audio device projection. Labels may be empty before the platform grants device-listing permission — never invent them. */
+export interface VoiceSessionDevice {
+  deviceId: string;
+  kind: "audioinput" | "audiooutput";
+  label: string;
+}
+
 export interface VoiceSessionRequestDefaults {
   turnMode: VoiceTurnMode;
   selection: CanonicalChatModelSelection;
@@ -54,6 +61,10 @@ export interface VoiceSessionRequestDefaults {
   memoryMode?: "ordinary" | "session_only";
   requestedTransport?: "relayed_websocket" | "direct_webrtc";
   locale?: string;
+  /** Explicit capture device; absent means the platform default. */
+  inputDeviceId?: string;
+  /** Explicit playback device; absent means the platform default. */
+  outputDeviceId?: string;
 }
 
 export interface VoiceSessionClientOptions {
@@ -86,6 +97,24 @@ export interface VoiceSessionClient {
   startVoice(chatId: string): Promise<void>;
   /** Explicit reconnect: required after `existing_consumed`, also used by retry. */
   reconnect(): Promise<void>;
+  /**
+   * Enumerate available audio devices. `null` means enumeration is unsupported
+   * or denied — callers must treat an unknown list differently from an empty
+   * list (only a truthful absence may clear a persisted selection).
+   */
+  listDevices(): Promise<VoiceSessionDevice[] | null>;
+  /**
+   * Select the capture device. `null` restores the platform default. While a
+   * media session is live the microphone is released and re-prepared with the
+   * new device so the next turn captures from it.
+   */
+  setInputDevice(deviceId: string | null): Promise<boolean>;
+  /**
+   * Route playback to an output device. `null` restores the system default.
+   * Returns "applied", "unsupported" (the platform cannot set the sink), or
+   * "unavailable" (no live playback path).
+   */
+  setOutputDevice(deviceId: string | null): Promise<"applied" | "unsupported" | "unavailable">;
   retry(): void;
   /**
    * Explicitly retries remote-session DELETEs that exhausted their bounded
@@ -105,6 +134,9 @@ export interface VoiceSessionHook {
   controller: VoiceSessionController | null;
   startVoice(chatId: string): Promise<void>;
   reconnect(): Promise<void>;
+  listDevices(): Promise<VoiceSessionDevice[] | null>;
+  setInputDevice(deviceId: string | null): Promise<boolean>;
+  setOutputDevice(deviceId: string | null): Promise<"applied" | "unsupported" | "unavailable">;
   retry(): void;
   retryCleanup(): number;
   continueInChat(): void;

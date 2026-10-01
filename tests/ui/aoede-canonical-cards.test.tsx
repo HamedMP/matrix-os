@@ -2,6 +2,7 @@
 import React from "react";
 import { render, screen, fireEvent, cleanup, act, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import type { CanonicalOperationView } from "@matrix-os/contracts";
 import { AoedeCanonicalCards } from "../../packages/ui/src/aoede/AoedeCanonicalCards.js";
 import { projectAoedeCanonical } from "../../packages/ui/src/aoede/projection.js";
 import type { AoedeController } from "../../packages/ui/src/aoede/controller.js";
@@ -59,4 +60,115 @@ it("renders real terminal progress without percentage or fabricated success", ()
   const projection = { ...projectAoedeCanonical(null), progress: [{ id: "tool_1", kind: "tool", state: "failed", label: "Create app" }], outcome: "failed" } as ReturnType<typeof projectAoedeCanonical>;
   const { container } = render(<AoedeCanonicalCards projection={projection} controller={{} as AoedeController} />);
   expect(screen.getByText("Create app")).toBeTruthy(); expect(screen.getByText("Failed")).toBeTruthy(); expect(container.textContent).not.toContain("100%");
+});
+
+function operationView(overrides: Partial<CanonicalOperationView> = {}): CanonicalOperationView {
+  return {
+    id: "action_card_1",
+    chatId: "chat_owner",
+    runId: "run_live",
+    toolId: "matrix_open_app",
+    schemaRevision: "canonical_apps_v1",
+    policyRevision: "canonical_apps_v1_policy",
+    state: "running",
+    argumentDigest: "a".repeat(64),
+    cancellationRequested: false,
+    createdAt: "2026-09-30T00:00:00.000Z",
+    updatedAt: "2026-09-30T00:01:00.000Z",
+    ...overrides,
+  };
+}
+
+it("renders per-operation status for the active run with exact state labels and no arguments", async () => {
+  const operations = [
+    operationView({ id: "action_card_run", state: "running" }),
+    operationView({ id: "action_card_wait", state: "waiting_for_approval" }),
+    operationView({ id: "action_card_other", runId: "run_other", state: "proposed" }),
+  ];
+  const projection = {
+    ...projectAoedeCanonical(null),
+    runId: "run_live",
+    operations,
+    cancellableActionIds: ["action_card_run", "action_card_wait", "action_card_other"],
+  };
+  const { container } = render(<AoedeCanonicalCards
+    projection={projection as ReturnType<typeof projectAoedeCanonical>}
+    controller={{ cancelAction: vi.fn(async () => "requested") } as unknown as AoedeController}
+  />);
+  expect(screen.getByText("Running")).toBeTruthy();
+  expect(screen.getByText("Waiting for approval")).toBeTruthy();
+  expect(screen.getAllByText("matrix_open_app")).toHaveLength(2);
+  // Operations on other runs stay in the projection but do not get cards.
+  expect(screen.queryByText("Proposed")).toBeNull();
+  expect(container.textContent).not.toContain("claim");
+  expect(container.textContent).not.toContain("arguments");
+  const buttons = screen.getAllByRole("button", { name: "Cancel action" });
+  expect(buttons).toHaveLength(2);
+});
+
+it("cancels one targeted action and reports the may-still-complete copy on requested", async () => {
+  const cancelAction = vi.fn(async () => "requested" as const);
+  const projection = {
+    ...projectAoedeCanonical(null),
+    runId: "run_live",
+    operations: [operationView({ id: "action_card_1", state: "running" })],
+    cancellableActionIds: ["action_card_1"],
+  };
+  render(<AoedeCanonicalCards projection={projection as ReturnType<typeof projectAoedeCanonical>}
+    controller={{ cancelAction } as unknown as AoedeController} />);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel action" })); });
+  expect(cancelAction).toHaveBeenCalledWith("action_card_1");
+  await waitFor(() => expect(screen.getByText("Cancel requested — the effect may still complete")).toBeTruthy());
+});
+
+it("hides post-dispatch cancellation while preserving requested and unknown outcomes", () => {
+  const projection = {
+    ...projectAoedeCanonical(null),
+    runId: "run_live",
+    operations: [
+      operationView({ id: "action_running", state: "running" }),
+      operationView({ id: "action_requested", state: "running", cancellationRequested: true }),
+      operationView({ id: "action_unknown", state: "outcome_unknown" }),
+    ],
+    cancellableActionIds: [],
+    outcomeUnknown: [operationView({ id: "action_unknown", state: "outcome_unknown" })],
+  };
+  render(<AoedeCanonicalCards projection={projection as ReturnType<typeof projectAoedeCanonical>}
+    controller={{ cancelAction: vi.fn() } as unknown as AoedeController} />);
+  expect(screen.queryByRole("button", { name: "Cancel action" })).toBeNull();
+  expect(screen.getByText("Cancel requested")).toBeTruthy();
+  expect(screen.getByText("Outcome unknown — will be reconciled")).toBeTruthy();
+  expect(screen.getByText("The action's outcome is unknown; it will be reconciled — not retried.")).toBeTruthy();
+});
+
+it("shows the cancellationRequested badge and reconcile copy for outcome-unknown operations", () => {
+  const projection = {
+    ...projectAoedeCanonical(null),
+    runId: "run_live",
+    operations: [operationView({ id: "action_card_1", state: "outcome_unknown", cancellationRequested: true })],
+    outcomeUnknown: [operationView({ id: "action_card_1", state: "outcome_unknown", cancellationRequested: true })],
+    cancellableActionIds: [],
+  };
+  render(<AoedeCanonicalCards projection={projection as ReturnType<typeof projectAoedeCanonical>}
+    controller={{ cancelAction: vi.fn() } as unknown as AoedeController} />);
+  expect(screen.getByText("Outcome unknown — will be reconciled")).toBeTruthy();
+  expect(screen.getByText("Cancel requested")).toBeTruthy();
+  expect(screen.getByText("The action's outcome is unknown; it will be reconciled — not retried.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Cancel action" })).toBeNull();
+});
+
+it("renders the navigation affordance and action artifacts through the controller", async () => {
+  const openNavigation = vi.fn();
+  const openResult = vi.fn();
+  const projection = {
+    ...projectAoedeCanonical(null),
+    navigation: { app: "timer", path: "apps/timer", operationId: "action_card_1" },
+    actionArtifacts: ["apps/timer/src/main.ts"],
+  };
+  render(<AoedeCanonicalCards projection={projection as ReturnType<typeof projectAoedeCanonical>}
+    controller={{ openNavigation, openResult } as unknown as AoedeController} />);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open timer" })); });
+  expect(openNavigation).toHaveBeenCalledWith({ app: "timer", path: "apps/timer" });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open result: apps/timer/src/main.ts" })); });
+  expect(openResult).toHaveBeenCalledWith("apps/timer/src/main.ts");
 });

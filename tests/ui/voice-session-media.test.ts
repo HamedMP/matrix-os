@@ -357,6 +357,213 @@ describe("createWebVoiceMediaSession", () => {
   });
 });
 
+describe("voice media device selection", () => {
+  it("keeps the newest overlapping acquisition and disposes a stale stream that resolves last", async () => {
+    type Deferred = { resolve: (stream: VoiceMediaStreamLike) => void; promise: Promise<VoiceMediaStreamLike> };
+    const deferred = (): Deferred => {
+      let resolve!: Deferred["resolve"];
+      const promise = new Promise<VoiceMediaStreamLike>((done) => { resolve = done; });
+      return { resolve, promise };
+    };
+    const requestA = deferred();
+    const requestB = deferred();
+    const baselineTrack = { stop: vi.fn(), getSettings: () => ({ deviceId: "mic_baseline" }) };
+    const trackA = { stop: vi.fn(), getSettings: () => ({ deviceId: "mic_a" }) };
+    const trackB = { stop: vi.fn(), getSettings: () => ({ deviceId: "mic_b" }) };
+    const streams = {
+      baseline: { getTracks: () => [baselineTrack] },
+      a: { getTracks: () => [trackA] },
+      b: { getTracks: () => [trackB] },
+    } satisfies Record<string, VoiceMediaStreamLike>;
+    let call = 0;
+    const captureStops = new Map<string, ReturnType<typeof vi.fn>>();
+    const devices: VoiceMediaDevicesLike = {
+      getUserMedia: vi.fn(async () => {
+        call += 1;
+        if (call === 1) return streams.baseline;
+        return call === 2 ? requestA.promise : requestB.promise;
+      }),
+    };
+    const session = createWebVoiceMediaSession({
+      audio: AUDIO,
+      callbacks: { onAudioChunk: () => true, onSegmentPlayed: () => undefined },
+      mediaDevices: devices,
+      createAudioContext: () => fakePlaybackContext().context,
+      captureFactory: ({ stream }) => {
+        const id = stream.getTracks()[0]!.getSettings?.().deviceId ?? "unknown";
+        const stop = vi.fn(async () => undefined);
+        captureStops.set(id, stop);
+        return { sampleRateHz: 16_000, stop };
+      },
+    });
+    await session.prepare();
+
+    const switchA = session.switchInputDevice!("mic_a");
+    const switchB = session.switchInputDevice!("mic_b");
+    requestB.resolve(streams.b);
+    await switchB;
+    requestA.resolve(streams.a);
+    await expect(switchA).rejects.toMatchObject({ safeError: { code: "input_unavailable" } });
+
+    expect(trackA.stop).toHaveBeenCalledOnce();
+    expect(captureStops.has("mic_a")).toBe(false);
+    expect(trackB.stop).not.toHaveBeenCalled();
+    await session.release();
+    expect(trackB.stop).toHaveBeenCalledOnce();
+    expect(captureStops.get("mic_b")).toHaveBeenCalledOnce();
+  });
+
+  it("release fences an in-flight acquisition and disposes its late stream", async () => {
+    let resolve!: (stream: VoiceMediaStreamLike) => void;
+    const pending = new Promise<VoiceMediaStreamLike>((done) => { resolve = done; });
+    const track = { stop: vi.fn(), getSettings: () => ({ deviceId: "mic_late" }) };
+    const captureStop = vi.fn(async () => undefined);
+    const session = createWebVoiceMediaSession({
+      audio: AUDIO,
+      callbacks: { onAudioChunk: () => true, onSegmentPlayed: () => undefined },
+      mediaDevices: { getUserMedia: vi.fn(async () => pending) },
+      createAudioContext: () => fakePlaybackContext().context,
+      captureFactory: () => ({ sampleRateHz: 16_000, stop: captureStop }),
+    });
+    const preparing = session.prepare();
+    await session.release();
+    resolve({ getTracks: () => [track] });
+    await expect(preparing).rejects.toMatchObject({ safeError: { code: "input_unavailable" } });
+    expect(track.stop).toHaveBeenCalledOnce();
+    expect(captureStop).not.toHaveBeenCalled();
+  });
+
+  it("requests the exact input device id at prepare", async () => {
+    const { session, devices } = mediaHarness();
+    await session.prepare({ inputDeviceId: "mic_b" });
+    expect(devices.devices.getUserMedia).toHaveBeenCalledWith({
+      audio: {
+        deviceId: { exact: "mic_b" },
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  });
+
+  it("hot-swaps capture to another input without touching playback", async () => {
+    const trackB = { stop: vi.fn(), getSettings: () => ({ deviceId: "mic_b" }) };
+    const streamB: VoiceMediaStreamLike = { getTracks: () => [trackB] };
+    let calls = 0;
+    const { session, devices, emitSamples, chunks } = mediaHarness({
+      getUserMediaImpl: async () => {
+        calls += 1;
+        return calls === 1 ? devices.stream : streamB;
+      },
+    });
+    await session.prepare({ inputDeviceId: "mic_a" });
+    session.startCapture({ turnId: "vturn_1" });
+    emitSamples(silence(CHUNK_SAMPLES));
+
+    await session.switchInputDevice?.("mic_b");
+    expect(devices.devices.getUserMedia).toHaveBeenLastCalledWith({
+      audio: {
+        deviceId: { exact: "mic_b" },
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    // The old mic track was retired; capture on the new device resumes cleanly.
+    expect(devices.track.stop).toHaveBeenCalled();
+    session.startCapture({ turnId: "vturn_2" });
+    emitSamples(silence(CHUNK_SAMPLES));
+    expect(chunks.map((chunk) => chunk.turnId)).toEqual(["vturn_1", "vturn_2"]);
+    // Playback was never disturbed: the playback context was not closed.
+    expect(devices.deviceHandlerCount()).toBeGreaterThan(0);
+  });
+
+  it("maps a failed hot swap to input_unavailable through the rejection", async () => {
+    let calls = 0;
+    const { session } = mediaHarness({
+      getUserMediaImpl: async () => {
+        calls += 1;
+        if (calls === 1) return { getTracks: () => [] };
+        throw Object.assign(new Error("gone"), { name: "NotFoundError" });
+      },
+    });
+    await session.prepare();
+    await expect(session.switchInputDevice?.("mic_lost")).rejects.toMatchObject({
+      safeError: { code: "input_unavailable" },
+    });
+  });
+
+  it("applies setSinkId to the live playback context and resets to default", async () => {
+    const { session, playback } = mediaHarness();
+    const setSinkId = vi.fn(async (_id: string) => undefined);
+    playback.context.setSinkId = setSinkId;
+    await session.prepare();
+    // Create the playback context lazily via a segment enqueue.
+    session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(320) });
+    await expect(session.setOutputDevice?.("spk_a")).resolves.toBe("applied");
+    expect(setSinkId).toHaveBeenCalledWith("spk_a");
+    await expect(session.setOutputDevice?.(null)).resolves.toBe("applied");
+    expect(setSinkId).toHaveBeenCalledWith("");
+  });
+
+  it("reports unsupported when the context cannot route and unavailable after release", async () => {
+    const { session, playback } = mediaHarness();
+    await session.prepare();
+    session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(320) });
+    // Fake context has no setSinkId.
+    await expect(session.setOutputDevice?.("spk_a")).resolves.toBe("unsupported");
+    expect(playback.context.setSinkId).toBeUndefined();
+    await session.release();
+    await expect(session.setOutputDevice?.("spk_a")).resolves.toBe("unavailable");
+  });
+
+  it("defers a preferred sink to playback-context creation and surfaces apply failure", async () => {
+    const { session, playback, errors } = mediaHarness();
+    const failing = vi.fn(async () => { throw new Error("no sink"); });
+    playback.context.setSinkId = failing;
+    await session.prepare();
+    // No playback context exists yet: the selection is recorded as pending.
+    await expect(session.setOutputDevice?.("spk_a")).resolves.toBe("applied");
+    session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(320) });
+    await vi.waitFor(() => expect(failing).toHaveBeenCalledWith("spk_a"));
+    await vi.waitFor(() => expect(errors.some((e) => e.code === "output_unavailable")).toBe(true));
+  });
+
+  it("does not start playback until deferred output routing settles", async () => {
+    const { session, playback } = mediaHarness();
+    let resolveSink!: () => void;
+    playback.context.setSinkId = vi.fn(() => new Promise<void>((resolve) => { resolveSink = resolve; }));
+    await session.prepare();
+    await expect(session.setOutputDevice?.("spk_a")).resolves.toBe("applied");
+    session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(320) });
+    expect(playback.sources).toHaveLength(0);
+    resolveSink();
+    await vi.waitFor(() => expect(playback.sources).toHaveLength(1));
+    expect(playback.sources[0]!.startedAt).toBe(0);
+  });
+
+  it("never starts or acknowledges playback when explicit output routing rejects", async () => {
+    const { session, playback, errors, acks } = mediaHarness();
+    let rejectSink!: (error: Error) => void;
+    playback.context.setSinkId = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectSink = reject; }));
+    await session.prepare();
+    await expect(session.setOutputDevice?.("spk_a")).resolves.toBe("applied");
+    session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(320) });
+    rejectSink(new Error("routing failed"));
+    await vi.waitFor(() => expect(errors).toContainEqual(expect.objectContaining({ code: "output_unavailable" })));
+    session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_2", data: pcmSegment(320) });
+    session.enqueueSegment({ responseId: "vresp_2", segmentId: "vseg_3", data: pcmSegment(320) });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(playback.sources).toHaveLength(0);
+    expect(acks).toHaveLength(0);
+    playback.context.setSinkId = vi.fn(async () => undefined);
+    await expect(session.setOutputDevice?.("spk_b")).resolves.toBe("applied");
+    session.enqueueSegment({ responseId: "vresp_3", segmentId: "vseg_4", data: pcmSegment(320) });
+    await vi.waitFor(() => expect(playback.sources).toHaveLength(1));
+  });
+});
+
 describe("capture-side AudioContext readiness", () => {
   function readinessHarness(ensureReady?: () => void | Promise<void>) {
     const track = { stop: vi.fn(), getSettings: () => ({ deviceId: "mic_default" }) };

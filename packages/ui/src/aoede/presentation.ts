@@ -1,14 +1,15 @@
 import type { SafeVoiceErrorCode, VoiceCapability } from "@matrix-os/contracts/voice-session";
 
 export type AoedeStatus =
-  | "idle" | "permission" | "connecting" | "listening" | "thinking"
-  | "using_tool" | "speaking" | "paused" | "reconnecting" | "failed" | "ended";
+  | "idle" | "permission" | "connecting" | "restoring" | "listening" | "thinking"
+  | "using_tool" | "speaking" | "paused" | "reconnecting" | "ending" | "failed" | "ended";
 
 export const AOEDE_STATUS_LABELS: Record<AoedeStatus, string> = {
   idle: "Idle", permission: "Permission", connecting: "Connecting",
+  restoring: "Restoring",
   listening: "Listening", thinking: "Thinking", using_tool: "Using tool",
   speaking: "Speaking", paused: "Paused", reconnecting: "Reconnecting",
-  failed: "Failed", ended: "Ended",
+  ending: "Ending", failed: "Failed", ended: "Ended",
 };
 
 export const AOEDE_CAPTION_LIMIT = 600;

@@ -3,21 +3,29 @@ import { createAoedeController } from "../../packages/ui/src/aoede/controller.js
 import { createAoedeApi, AoedeRequestError, type AoedeApi } from "../../packages/ui/src/aoede/client.js";
 import type { AoedeBootstrapResponse } from "../../packages/contracts/src/aoede.js";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
+import { createCanonicalChatFixture, createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat.js";
 import type { VoiceSessionClient } from "../../packages/ui/src/voice-session/client-types.js";
 
 const binding: AoedeBootstrapResponse = { chatId: "chat_aoede", scope: { kind: "workspace", id: "main", label: "Workspace" }, selection: { instanceId: "pi_main", model: "test:model" }, capability: { contractVersion: 1, surface: "web_canvas", status: "available", transportModes: ["relayed_websocket"], turnModes: ["hands_free", "push_to_talk"], supportsInterruption: true, resume: "delivery_aware", sessionOnly: "unsupported", actionMode: "canonical_actions", actionCancellation: "run", supportsInputSelection: false, supportsOutputSelection: false } };
 const detail: CanonicalChatDetailResponse = { record: { chat: { id: "chat_aoede", revision: 0, ownerScope: { type: "personal", ownerId: "owner_test" }, title: "Aoede", lifecycle: "active", attention: "none", messageCount: 0, createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z" } }, messages: [], turns: [], runs: [], activities: [] };
-function harness(bootstrap = vi.fn(async () => binding), initialDetail = detail) {
+function harness(bootstrap = vi.fn(async () => binding), initialDetail = detail, extra: Partial<import("../../packages/ui/src/aoede/controller.js").AoedeOwnerOptions> = {}) {
   const source = { subscribe: vi.fn((_listener: (event: import("../../packages/ui/src/canonical-chat-event-source.js").CanonicalChatInvalidation) => void) => ({ dispose: vi.fn() })), start: vi.fn(async () => {}), dispose: vi.fn() };
   const detailFn = vi.fn(async () => initialDetail);
   const cancelRun = vi.fn(async () => ({})); const submitInput = vi.fn(async () => ({})); const submitApproval = vi.fn(async () => ({}));
-  const api = { bootstrap, detail: detailFn, events: () => source, cancelRun, submitInput, submitApproval } as unknown as AoedeApi;
-  const media = { subscribe: vi.fn(() => () => {}), getSnapshot: () => ({ phase: "idle", voice: null, error: null, notice: null, chatId: null, sessionId: null, reconnectStatus: null }), startVoice: vi.fn(async () => {}), end: vi.fn(async () => {}), dispose: vi.fn(), controller: () => null, retry: vi.fn() } as unknown as VoiceSessionClient;
+  const providers = vi.fn(async () => catalog); const updateSelection = vi.fn(async () => detail.record); const cancelAction = vi.fn(async () => ({ operation: operationView, cancellation: "cancelled" as const }));
+  const api = { bootstrap, detail: detailFn, events: () => source, cancelRun, submitInput, submitApproval, providers, updateSelection, cancelAction } as unknown as AoedeApi;
+  let mediaListener: (() => void) | undefined;
+  const media = { subscribe: vi.fn((listener: () => void) => { mediaListener = listener; return () => {}; }),
+    getSnapshot: vi.fn(() => ({ phase: "idle" as const, voice: null, error: null, notice: null, chatId: null, sessionId: null, reconnectStatus: null })),
+    startVoice: vi.fn(async () => {}), end: vi.fn(async () => {}), dispose: vi.fn(), controller: () => null, retry: vi.fn(),
+    listDevices: vi.fn(async () => devices), setInputDevice: vi.fn(async () => true), setOutputDevice: vi.fn(async () => "applied" as const) } as unknown as VoiceSessionClient;
   const factory = vi.fn(() => media);
-  const controller = createAoedeController({ identityKey: "owner/runtime", baseUrl: "https://runtime.test", surface: "web_canvas" }, { api, voiceFactory: factory });
-  return { controller, api, media, factory, bootstrap, source, detailFn, cancelRun, submitInput, submitApproval };
+  const controller = createAoedeController({ identityKey: "owner/runtime", baseUrl: "https://runtime.test", surface: "web_canvas", ...extra }, { api, voiceFactory: factory });
+  return { controller, api, media, factory, bootstrap, source, detailFn, cancelRun, submitInput, submitApproval, providers, updateSelection, cancelAction, notifyMedia: () => mediaListener?.() };
 }
+const catalog = createCanonicalProviderCatalogFixture();
+const devices = [{ deviceId: "mic_usb", kind: "audioinput" as const, label: "USB Mic" }, { deviceId: "spk_hdmi", kind: "audiooutput" as const, label: "HDMI" }];
+const operationView = { id: "action_timer", chatId: "chat_aoede", runId: "run_op", toolId: "tool_timer", schemaRevision: "s1", policyRevision: "p1", state: "authorized" as const, argumentDigest: "a".repeat(64), cancellationRequested: false, createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z" };
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function runningDetail(): CanonicalChatDetailResponse {
   const fixture = createCanonicalChatFixture("running").snapshot;
@@ -58,6 +66,40 @@ it("API uses strict bootstrap, negotiated detail and SSE URLs, bounded timeout a
   expect(String(calls[1][0])).toContain("limit=200&messageVersion=2&inputVersion=1");
   const events = api.events(); await events.start(); expect(String(vi.mocked(fetcher).mock.calls[2][0])).toContain("/api/chats/events?messageVersion=2&inputVersion=1"); events.dispose();
   await expect(api.bootstrap({ clientRequestId: "req_bad", intent: "continue", surface: "web_canvas", chatId: "chat_wrong" } as never)).rejects.toThrow();
+});
+it("client calls providers, PATCH selection and POST action cancel with schema validation", async () => {
+  const fetcher = vi.fn(async (url: string, _init: RequestInit) => new Response(JSON.stringify(
+    url.includes("/api/chat-providers") ? catalog
+      : url.includes("/actions/") ? { operation: operationView, cancellation: "requested" }
+      : { ...detail.record, chat: { ...detail.record.chat, currentSelection: { instanceId: "pi_main", model: "test:model" } } },
+  ), { headers: { "Content-Type": "application/json" } })) as unknown as typeof fetch;
+  const api = createAoedeApi({ baseUrl: "https://runtime.test", fetcher });
+
+  expect(await api.providers()).toEqual(catalog);
+  expect(vi.mocked(fetcher).mock.calls[0][1]?.method).toBe("GET");
+
+  const selection = { baseRevision: 2, selection: { instanceId: "pi_main", model: "test:model" } };
+  const updated = await api.updateSelection("chat_aoede", selection);
+  expect(updated.chat.id).toBe("chat_aoede");
+  const patchCall = vi.mocked(fetcher).mock.calls[1];
+  expect(String(patchCall[0])).toBe("https://runtime.test/api/chats/chat_aoede/selection");
+  expect(patchCall[1]?.method).toBe("PATCH");
+  expect(JSON.parse(patchCall[1]?.body as string)).toEqual(selection);
+
+  const cancelled = await api.cancelAction("chat_aoede", "action_timer");
+  expect(cancelled.cancellation).toBe("requested");
+  expect(cancelled.operation.id).toBe("action_timer");
+  const cancelCall = vi.mocked(fetcher).mock.calls[2];
+  expect(String(cancelCall[0])).toBe("https://runtime.test/api/chats/chat_aoede/actions/action_timer/cancel");
+  expect(cancelCall[1]?.method).toBe("POST");
+  expect(JSON.parse(cancelCall[1]?.body as string)).toEqual({});
+  expect(cancelCall[1]?.signal).toBeInstanceOf(AbortSignal);
+
+  // Bad identifiers and malformed server payloads are rejected before/instead of use.
+  await expect(api.cancelAction("chat_aoede", "nope")).rejects.toThrow();
+  await expect(api.updateSelection("chat_aoede", { baseRevision: 2 } as never)).rejects.toThrow();
+  fetcher.mockResolvedValueOnce(new Response("{}", { status: 503 }) as never);
+  await expect(api.cancelAction("chat_aoede", "action_timer")).rejects.toBeInstanceOf(AoedeRequestError);
 });
 
 describe("Aoede shell owner", () => {
@@ -150,5 +192,158 @@ describe("Aoede shell owner", () => {
   it("dismiss ends media but keeps canonical subscription discoverable", async () => {
     const h = harness(); await h.controller.open(); await h.controller.dismiss(); expect(h.media.end).toHaveBeenCalled(); expect(h.source.dispose).not.toHaveBeenCalled();
     expect(h.controller.getSnapshot().visible).toBe(false); await h.controller.open(); expect(h.controller.getSnapshot().binding?.chatId).toBe("chat_aoede"); h.controller.dispose();
+  });
+  it("maps transport phases to literal Connecting/Restoring statuses and restores the voice state", async () => {
+    const h = harness(); await h.controller.open();
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "starting", voice: null, error: null, notice: null, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null } as never);
+    h.notifyMedia(); expect(h.controller.getSnapshot().status).toBe("connecting");
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "awaiting_reconnect", voice: null, error: null, notice: null, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null } as never);
+    h.notifyMedia(); expect(h.controller.getSnapshot().status).toBe("restoring");
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "listening", muted: false, turnMode: "hands_free" }, error: null, notice: null, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null } as never);
+    h.notifyMedia(); expect(h.controller.getSnapshot().status).toBe("listening"); h.controller.dispose();
+  });
+  it("shows the literal Ending status while live media teardown is in flight", async () => {
+    const h = harness(); await h.controller.open();
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "listening", muted: false, turnMode: "hands_free" }, error: null, notice: null, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null } as never);
+    h.notifyMedia(); expect(h.controller.getSnapshot().status).toBe("listening");
+    const ending = deferred<void>(); vi.mocked(h.media.end).mockImplementationOnce(() => ending.promise);
+    const done = h.controller.end(); expect(h.controller.getSnapshot().status).toBe("ending");
+    ending.resolve(); await done; expect(h.controller.getSnapshot().status).toBe("ended"); h.controller.dispose();
+  });
+  it("routes only validated installed-app navigation to the shell host", () => {
+    const nav = vi.fn(); const h = harness(undefined, detail, { onOpenNavigation: nav });
+    h.controller.openNavigation({ app: "files", path: "apps/files/index.html" });
+    expect(nav).toHaveBeenCalledWith({ app: "files", path: "apps/files/index.html" });
+    h.controller.openNavigation({ app: "files", path: "apps/files/deep/view" });
+    expect(nav).toHaveBeenLastCalledWith({ app: "files", path: "apps/files/deep/view" });
+    for (const bad of [
+      { app: "Evil", path: "apps/Evil" },
+      { app: "files", path: "../etc/passwd" },
+      { app: "files", path: "apps/other/steal" },
+      { app: "files", path: "apps/files/x/../y" },
+      { app: "files", path: `apps/files/${"a".repeat(200)}` },
+      { app: "files", path: "apps/files?query=1" },
+      { app: "files", path: "apps//files" },
+    ]) h.controller.openNavigation(bad);
+    expect(nav).toHaveBeenCalledTimes(2); h.controller.dispose();
+  });
+  it("serves the provider catalog once per owner and degrades when the api lacks it", async () => {
+    const h = harness(); await h.controller.open();
+    expect(await h.controller.listProviders()).toBe(catalog);
+    expect(await h.controller.listProviders()).toBe(catalog);
+    expect(h.providers).toHaveBeenCalledTimes(1); h.controller.dispose();
+    const bare = harness(); const stripped = { ...bare.api } as Record<string, unknown>;
+    delete stripped.providers; delete stripped.updateSelection; delete stripped.cancelAction;
+    const ownerless = createAoedeController({ identityKey: "owner/runtime", baseUrl: "https://runtime.test", surface: "web_canvas" }, { api: stripped as AoedeApi, voiceFactory: bare.factory });
+    expect(await ownerless.listProviders()).toBeNull(); ownerless.dispose();
+  });
+  it("updates the canonical selection under revision fencing and rebuilds the frozen media owner", async () => {
+    const h = harness(); await h.controller.open();
+    const next = { instanceId: "pi_alt", model: "other:model" };
+    h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision: 1, currentSelection: next } } });
+    expect(await h.controller.setSelection(next)).toBe(true);
+    expect(h.updateSelection).toHaveBeenCalledWith(binding.chatId, { baseRevision: 0, selection: next });
+    expect(h.controller.getSnapshot().binding?.selection).toEqual(next);
+    expect(h.factory).toHaveBeenCalledTimes(2);
+    expect(h.factory.mock.calls[1][0].request.selection).toEqual(next);
+    expect(h.media.end).toHaveBeenCalled(); h.controller.dispose();
+  });
+  it("cancels a targeted canonical action with per-action fencing and a truthful outcome", async () => {
+    const opDetail = { ...detail, operations: [operationView] };
+    const h = harness(undefined, opDetail); await h.controller.open();
+    expect(await h.controller.cancelAction("action_timer")).toBe("cancelled");
+    expect(h.cancelAction).toHaveBeenCalledWith("chat_aoede", "action_timer");
+    expect(h.controller.getSnapshot().lastActionCancelOutcome).toBe("cancelled");
+    expect(await h.controller.cancelAction("bogus")).toBeNull();
+    expect(await h.controller.cancelAction("action_missing")).toBeNull();
+    expect(h.cancelAction).toHaveBeenCalledTimes(1);
+    const cancelled = { ...operationView, state: "cancelled" as const };
+    h.detailFn.mockResolvedValue({ ...opDetail, operations: [cancelled] });
+    await h.controller.refresh();
+    expect(await h.controller.cancelAction("action_timer")).toBeNull(); // terminal ops are not cancellable
+    h.controller.dispose();
+  });
+  it("fences a second cancel of the same action while the first is in flight", async () => {
+    const h = harness(undefined, { ...detail, operations: [operationView] }); await h.controller.open();
+    const pending = deferred<{ operation: typeof operationView; cancellation: "requested" }>();
+    h.cancelAction.mockImplementationOnce(() => pending.promise as never);
+    const first = h.controller.cancelAction("action_timer");
+    expect(await h.controller.cancelAction("action_timer")).toBeNull();
+    pending.resolve({ operation: { ...operationView, cancellationRequested: true }, cancellation: "requested" });
+    expect(await first).toBe("requested");
+    expect(h.controller.getSnapshot().lastActionCancelOutcome).toBe("requested"); h.controller.dispose();
+  });
+  it("persists turn mode/device choices and rebuilds the media owner with the new request", async () => {
+    const h = harness(); await h.controller.open();
+    await h.controller.setInputDevice("mic_usb"); await h.controller.setOutputDevice("spk_hdmi");
+    expect(h.media.setInputDevice).toHaveBeenCalledWith("mic_usb"); expect(h.media.setOutputDevice).toHaveBeenCalledWith("spk_hdmi");
+    await h.controller.setTurnMode("push_to_talk");
+    expect(h.controller.getSnapshot().turnMode).toBe("push_to_talk");
+    expect(h.factory).toHaveBeenCalledTimes(2);
+    expect(h.factory.mock.calls[1][0].request).toEqual(expect.objectContaining({ turnMode: "push_to_talk", inputDeviceId: "mic_usb", outputDeviceId: "spk_hdmi" }));
+    h.controller.dispose();
+  });
+  it("fails closed when a persisted input vanishes before Start without selecting or starting a fallback", async () => {
+    const h = harness(); await h.controller.open();
+    await h.controller.setInputDevice("mic_gone");
+    vi.mocked(h.media.listDevices).mockResolvedValueOnce(devices.filter((device) => device.deviceId !== "mic_gone"));
+    await h.controller.start(); await h.controller.start();
+    expect(h.controller.getSnapshot().inputDeviceId).toBeNull();
+    expect(h.controller.getSnapshot().error?.code).toBe("input_unavailable");
+    expect(h.media.end).toHaveBeenCalled();
+    expect(h.media.setInputDevice).not.toHaveBeenCalledWith(null);
+    expect(h.media.startVoice).not.toHaveBeenCalled(); h.controller.dispose();
+  });
+  it("devicechange stops media before clearing a vanished device and never hot-swaps a default", async () => {
+    const listeners: Array<() => void> = [];
+    vi.stubGlobal("navigator", { mediaDevices: { addEventListener: (_type: string, listener: () => void) => { listeners.push(listener); }, removeEventListener: vi.fn() } });
+    try {
+      const h = harness(); await h.controller.open();
+      vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "listening", muted: false, turnMode: "hands_free" }, error: null, notice: null, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null } as never);
+      h.notifyMedia();
+      await h.controller.setInputDevice("mic_gone");
+      await h.controller.setOutputDevice("spk_gone");
+      vi.mocked(h.media.end).mockImplementationOnce(async () => {
+        expect(h.controller.getSnapshot().inputDeviceId).toBe("mic_gone");
+        expect(h.controller.getSnapshot().outputDeviceId).toBe("spk_gone");
+      });
+      vi.mocked(h.media.listDevices).mockResolvedValueOnce(devices);
+      for (const listener of listeners) listener();
+      await vi.waitFor(() => expect(h.controller.getSnapshot().status).toBe("failed"));
+      expect(h.controller.getSnapshot().inputDeviceId).toBeNull();
+      expect(h.controller.getSnapshot().outputDeviceId).toBeNull();
+      expect(h.controller.getSnapshot().error?.code).toBe("input_unavailable");
+      expect(h.media.end).toHaveBeenCalled();
+      expect(h.media.setInputDevice).not.toHaveBeenCalledWith(null);
+      expect(h.media.setOutputDevice).not.toHaveBeenCalledWith(null);
+      // Denied/unsupported enumeration preserves the persisted choice.
+      const kept = harness(); await kept.controller.open();
+      await kept.controller.setInputDevice("mic_usb");
+      vi.mocked(kept.media.listDevices).mockResolvedValueOnce(null);
+      for (const listener of listeners) listener();
+      await Promise.resolve();
+      expect(kept.controller.getSnapshot().inputDeviceId).toBe("mic_usb");
+      kept.controller.dispose(); h.controller.dispose();
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it("fences overlapping device enumeration by revision and selected-device identity", async () => {
+    const listeners: Array<() => void> = [];
+    vi.stubGlobal("navigator", { mediaDevices: { addEventListener: (_type: string, listener: () => void) => { listeners.push(listener); }, removeEventListener: vi.fn() } });
+    try {
+      const h = harness(); await h.controller.open(); await h.controller.setInputDevice("mic_usb");
+      const stale = deferred<typeof devices>();
+      vi.mocked(h.media.listDevices).mockImplementationOnce(() => stale.promise);
+      listeners[0]?.();
+      await h.controller.setInputDevice("mic_new");
+      vi.mocked(h.media.listDevices).mockResolvedValueOnce([...devices, { deviceId: "mic_new", kind: "audioinput", label: "New mic" }]);
+      listeners[0]?.();
+      await vi.waitFor(() => expect(h.controller.getSnapshot().devicesRevision).toBe(1));
+      stale.resolve(devices);
+      await Promise.resolve();
+      expect(h.controller.getSnapshot().inputDeviceId).toBe("mic_new");
+      expect(h.controller.getSnapshot().devicesRevision).toBe(1);
+      expect(h.media.end).not.toHaveBeenCalled();
+      h.controller.dispose();
+    } finally { vi.unstubAllGlobals(); }
   });
 });
