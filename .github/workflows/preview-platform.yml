@@ -91,6 +91,10 @@ jobs:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
       PREVIEW_PUBLIC_URL: ${{ vars.PREVIEW_PUBLIC_URL || 'https://preview.matrix-os.com' }}
       ISOLATED_PREVIEW_ORIGIN: ${{ contains(github.event.pull_request.labels.*.name, 'preview-isolated') && 'true' || 'false' }}
+      # One explicitly approved legacy pilot. Other PRs receive no Slack credentials.
+      SLACK_PILOT_PR_NUMBER: ${{ vars.SLACK_PILOT_PR_NUMBER }}
+      SLACK_PILOT_APP_ID: ${{ vars.SLACK_PILOT_APP_ID }}
+      SLACK_PILOT_CLIENT_ID: ${{ vars.SLACK_PILOT_CLIENT_ID }}
       MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}
       MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}
       CUSTOM_MCP_ENABLED: ${{ inputs.custom_mcp && 'true' || 'false' }}
@@ -197,6 +201,12 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
+          if [ -n "${SLACK_PILOT_PR_NUMBER:-}" ] &&
+             [ "$SLACK_PILOT_PR_NUMBER" = "$PR_NUMBER" ] &&
+             [ "${ISOLATED_PREVIEW_ORIGIN:-false}" != "true" ]; then
+            echo "The selected Slack pilot requires an isolated preview origin." >&2
+            exit 1
+          fi
           case "${ISOLATED_PREVIEW_ORIGIN:-false}" in
             false) exit 0 ;;
             true) ;;
@@ -215,7 +225,43 @@ jobs:
             exit 1
           fi
           # Next.js bakes this URL into sign-in. Runtime-only overrides cannot isolate it.
-          echo "PREVIEW_PUBLIC_URL=https://pr-${PR_NUMBER}---${service_url#https://}" >> "$GITHUB_ENV"
+          browser_origin="https://pr-${PR_NUMBER}---${service_url#https://}"
+          if [ -n "${SLACK_PILOT_PR_NUMBER:-}" ] && [ "$SLACK_PILOT_PR_NUMBER" = "$PR_NUMBER" ]; then
+            if ! [[ "${SLACK_PILOT_APP_ID:-}" =~ ^A[A-Z0-9]{2,63}$ ]] ||
+               ! [[ "${SLACK_PILOT_CLIENT_ID:-}" =~ ^[0-9]{1,32}\.[0-9]{1,32}$ ]]; then
+              echo "Selected Slack preview app configuration is invalid." >&2
+              exit 1
+            fi
+            # Production Clerk requires a Matrix host. The exact expiring pilot
+            # alias requires owner approval; this does not enable spec 530 routes.
+            browser_origin="https://pr-${PR_NUMBER}-preview.matrix-os.com"
+            echo "SLACK_PREVIEW_ENABLED=true" >> "$GITHUB_ENV"
+            echo "SLACK_PREVIEW_ENV_BINDINGS=|SLACK_APP_ID=${SLACK_PILOT_APP_ID}|SLACK_CLIENT_ID=${SLACK_PILOT_CLIENT_ID}|SLACK_PUBLIC_BASE_URL=${browser_origin}|SLACK_PREVIEW_RUNTIME_HANDLE=pr-${PR_NUMBER}" >> "$GITHUB_ENV"
+            echo "SLACK_PREVIEW_SECRET_BINDINGS=,SLACK_CLIENT_SECRET=slack-preview-pr${PR_NUMBER}-client-secret:1,SLACK_SIGNING_SECRET=slack-preview-pr${PR_NUMBER}-signing-secret:1,SLACK_TOKEN_ENCRYPTION_KEY=slack-preview-pr${PR_NUMBER}-token-encryption-key:1" >> "$GITHUB_ENV"
+          fi
+          echo "PREVIEW_PUBLIC_URL=${browser_origin}" >> "$GITHUB_ENV"
+
+      - name: Verify selected Slack preview credentials
+        if: steps.config.outputs.configured == 'true' && env.SLACK_PREVIEW_ENABLED == 'true'
+        run: |
+          set -euo pipefail
+          for suffix in client-secret signing-secret token-encryption-key; do
+            secret_name="slack-preview-pr${PR_NUMBER}-${suffix}"
+            secret_state="$(gcloud secrets versions describe 1 --secret "$secret_name" \
+              --project "$GCP_PROJECT_ID" --format='value(state)')"
+            if [ "$secret_state" != "ENABLED" ]; then
+              echo "Selected Slack preview secret version is unavailable." >&2
+              exit 1
+            fi
+            accessor_member="$(gcloud secrets get-iam-policy "$secret_name" \
+              --project "$GCP_PROJECT_ID" --flatten='bindings[].members' \
+              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+              --format='value(bindings.members)' | head -1)"
+            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+              echo "Selected Slack preview secret access is misconfigured." >&2
+              exit 1
+            fi
+          done
 
       - name: Verify preview funded AI control-plane secrets
         if: steps.config.outputs.configured == 'true' && env.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED == 'true'
@@ -405,8 +451,8 @@ jobs:
               --tag "pr-${PR_NUMBER}" \
               --no-traffic \
               --allow-unauthenticated \
-              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_ORIGIN=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${collaboration_env_bindings}${funded_ai_env_bindings}" \
-              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}" \
+              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_ORIGIN=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${collaboration_env_bindings}${funded_ai_env_bindings}${SLACK_PREVIEW_ENV_BINDINGS:-}" \
+              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${SLACK_PREVIEW_SECRET_BINDINGS:-}" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
           }
