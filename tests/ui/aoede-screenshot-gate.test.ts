@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { fixtureProblems } from "../../scripts/aoede-fixture-screenshots.js";
 
-const valid = { ready: "true", launcher: true, host: true, chatDom: false, schemaIssues: "0" };
+const valid = { ready: "true", launcher: true, host: true, chatDom: false, schemaIssues: "0",
+  speechSeam: "fake", canonicalSeam: "fake" };
 describe("Aoede rendered fixture evidence gate", () => {
   it("accepts a settled Chat-free host with zero schema issues", () => {
     expect(fixtureProblems(valid, false)).toEqual([]);
     expect(fixtureProblems({ ...valid, host: false }, true)).toEqual([]);
+  });
+  it("requires both fake seam identities, not a descriptive boundary label", () => {
+    expect(fixtureProblems({ ...valid, speechSeam: "managed" }, false)).toContain("speech seam is not fake");
+    expect(fixtureProblems({ ...valid, canonicalSeam: null }, false)).toContain("canonical provider seam is not fake");
   });
   it("rejects nonzero or missing schema counts rather than finding the label", () => {
     expect(fixtureProblems({ ...valid, schemaIssues: "2" }, false)).toContain("fixture schema validation failed");

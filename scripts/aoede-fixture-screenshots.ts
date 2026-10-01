@@ -29,6 +29,8 @@ export function fixtureProblems(state: {
   host: boolean;
   chatDom: boolean;
   schemaIssues: string | null | undefined;
+  speechSeam: string | null | undefined;
+  canonicalSeam: string | null | undefined;
 }, closed: boolean): string[] {
   const problems: string[] = [];
   if (!state.launcher) problems.push("launcher missing");
@@ -36,6 +38,8 @@ export function fixtureProblems(state: {
   if (state.ready !== "true") problems.push("driver did not settle successfully");
   if (state.host === closed) problems.push("standalone host visibility mismatch");
   if (state.schemaIssues !== "0") problems.push("fixture schema validation failed");
+  if (state.speechSeam !== "fake") problems.push("speech seam is not fake");
+  if (state.canonicalSeam !== "fake") problems.push("canonical provider seam is not fake");
   return problems;
 }
 
@@ -45,8 +49,8 @@ async function waitForServer(timeoutMs = 30_000): Promise<void> {
     try {
       const response = await fetch(BASE_URL, { signal: AbortSignal.timeout(2_000) });
       if (response.ok) return;
-    } catch {
-      // server not up yet
+    } catch (error: unknown) {
+      console.debug("fixture server not ready:", error instanceof Error ? error.name : "UnknownError");
     }
     await sleep(250);
   }
@@ -120,6 +124,8 @@ async function main() {
               "[data-chat-root], .fixture-chat, article[data-app-path='__chat__'], [data-testid='chat-window'], [data-testid='chat-app']",
             )),
             schemaIssues: document.querySelector(".fixture-evidence")?.getAttribute("data-schema-issues"),
+            speechSeam: document.querySelector(".fixture-evidence")?.getAttribute("data-speech-seam"),
+            canonicalSeam: document.querySelector(".fixture-evidence")?.getAttribute("data-canonical-provider-seam"),
           }));
           const problems = fixtureProblems(state, scenario === "idle");
           const name = `${surface}-${scenario}.png`;
@@ -161,6 +167,17 @@ async function main() {
               await page.waitForFunction(() => document.querySelector(".fixture-evidence")?.textContent?.includes("navigation:timer:apps/timer"));
               await page.getByRole("button", { name: "Open result: apps/timer/App.tsx", exact: true }).click();
               await page.waitForFunction(() => document.querySelector(".fixture-evidence")?.textContent?.includes("result:apps/timer/App.tsx"));
+              await page.screenshot({ path: path.join(OUT_DIR, `${surface}-results-scrolled.png`), fullPage: true });
+            } else if (scenario === "listening") {
+              await page.emulateMedia({ reducedMotion: "reduce" });
+              const animations = await page.locator(".matrix-aoede__rings span").evaluateAll(nodes =>
+                nodes.map(node => getComputedStyle(node).animationName));
+              if (animations.length !== 3 || animations.some(name => name !== "none")) throw new Error("reduced motion did not stop ambient animation");
+              await page.screenshot({ path: path.join(OUT_DIR, `${surface}-reduced-motion.png`), fullPage: true });
+              await page.emulateMedia({ reducedMotion: "no-preference" });
+              await page.getByRole("button", { name: "Settings", exact: true }).click();
+              await page.getByRole("group", { name: "Devices", exact: true }).scrollIntoViewIfNeeded();
+              await page.screenshot({ path: path.join(OUT_DIR, `${surface}-settings.png`), fullPage: true });
             } else if (scenario === "tool-activity" && await page.getByRole("button", { name: "Cancel action", exact: true }).count() !== 0) {
               throw new Error("post-dispatch tool offers unsupported cancellation");
             }
@@ -199,8 +216,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       path.join(OUT_DIR, "run-status.json"),
       JSON.stringify({ at: new Date().toISOString(), browser: "unknown", error: error instanceof Error ? error.message : String(error) }, null, 2),
     );
-  } catch {
-    // artifact write is best-effort; the console line below is the fallback
+  } catch (artifactError: unknown) {
+    console.error("fixture failure artifact could not be written:", artifactError instanceof Error ? artifactError.name : "UnknownError");
   }
   console.error("aoede fixture screenshots failed:", error instanceof Error ? error.message : error);
   process.exitCode = 1;

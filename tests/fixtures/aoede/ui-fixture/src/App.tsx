@@ -106,7 +106,8 @@ function EvidencePanel({ evidence, scenario, surface, result }: {
 }) {
   const snapshot = useSyncExternalStore(evidence.subscribe, evidence.snapshot, evidence.snapshot);
   return (
-    <aside className="fixture-evidence" data-schema-issues={snapshot.schemaIssues.length} aria-label="Deterministic fixture evidence">
+    <aside className="fixture-evidence" data-schema-issues={snapshot.schemaIssues.length}
+      data-speech-seam="fake" data-canonical-provider-seam="fake" aria-label="Deterministic fixture evidence">
       <dl>
         <div><dt>Surface</dt><dd>{surface === "web_canvas" ? "web_canvas (Canvas)" : "web_desktop (Desktop)"}</dd></div>
         <div><dt>Scenario</dt><dd>{scenario.id}</dd></div>
