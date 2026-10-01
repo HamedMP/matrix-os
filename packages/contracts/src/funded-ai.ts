@@ -326,6 +326,15 @@ export const FundedAiFinalizationRequestSchema = z.discriminatedUnion("mode", [
     tokenId: TokenIdSchema,
     mode: z.literal("conservative"),
   }).strict(),
+  // Trusted relay attestation only: no upstream call occurred after start.
+  // There is no caller-supplied amount or invented provider provenance.
+  z.object({
+    reservationId: canonicalReferenceId(160),
+    tokenId: TokenIdSchema,
+    mode: z.literal("not_dispatched"),
+    expectedRequestId: canonicalReferenceId(160),
+    jevPricingVersion: JevProvenanceSchema.shape.pricingVersion,
+  }).strict(),
 ]);
 
 export const FundedAiStartRequestSchema = z.object({
