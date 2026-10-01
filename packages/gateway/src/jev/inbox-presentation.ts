@@ -34,7 +34,7 @@ function formatBatch(value: unknown): string | null {
     `Confirmed: ${b.labeled} threads / ${b.messagesLabeled} messages`, `No change needed: ${b.noChange}; Review: ${b.review}; Preview: ${b.preview}; Unconfirmed: ${b.unconfirmed}`,
     `Queued: ${b.remainingQueued}; More pages: ${b.hasMore ? "yes" : "no"}; Thread limit: ${b.maxThreads}`,
     ...(b.last ? [`Last thread: ${b.last.threadId} — ${b.last.status}`] : []),
-    b.status === "completed" ? "All listed Inbox threads were examined; unverified Review and preview results were not labeled." :
+    b.status === "completed" ? "All listed Inbox threads were examined; no-write Review and preview results were not labeled." :
       b.status === "completed_with_unconfirmed" ? "All listed threads were examined, but some outcomes require Gmail verification." :
         b.status === "limit_reached" ? "Requested thread limit reached. The whole Inbox was not completed." :
           b.status === "paused" ? "Resume this saved job to continue unprocessed threads. Unconfirmed attempts will not be replayed." : "Continue the saved batch; the whole Inbox is not complete yet.",
