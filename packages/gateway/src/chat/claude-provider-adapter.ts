@@ -433,10 +433,12 @@ export function createClaudeChatProviderAdapter(options: {
     let pendingDelta = "";
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
-    const textProjector = createAssistantTextStreamProjector({
+    const pathProjection = {
       homePath: options.homePath,
       executionRoot: input.executionRoot,
-    });
+      showPrivatePaths: !input.sharedScopeId,
+    };
+    const textProjector = createAssistantTextStreamProjector(pathProjection);
     let projectedMessageId: string | undefined;
     let boundaryProbe: {
       originMessageId?: string;
@@ -496,9 +498,7 @@ export function createClaudeChatProviderAdapter(options: {
         if (projected) enqueueDelta(projected, projectedMessageId);
         if (ordinaryCompletedKeyword) {
           for (const segment of boundaryProbe.segments) {
-            const word = sanitizeAssistantText(segment.text, {
-              homePath: options.homePath, executionRoot: input.executionRoot,
-            });
+            const word = sanitizeAssistantText(segment.text, pathProjection);
             if (word) enqueueDelta(word, segment.messageId);
           }
         } else redactProbeSegments(boundaryProbe.segments);
@@ -664,10 +664,7 @@ export function createClaudeChatProviderAdapter(options: {
           const activity = {
             activityId: block.id,
             ...claudeActivity(block.name),
-            ...safeToolPreview(block.name, block.input, {
-              homePath: options.homePath,
-              executionRoot: input.executionRoot,
-            }),
+            ...safeToolPreview(block.name, block.input, pathProjection),
           };
           activityByIndex.set(line.event.index, activity);
           toolInputByIndex.set(line.event.index, "");
@@ -692,10 +689,7 @@ export function createClaudeChatProviderAdapter(options: {
               const parsedInput: unknown = JSON.parse(partialInput);
               completedActivity = {
                 ...activity,
-                ...safeToolPreview(toolName, parsedInput, {
-                  homePath: options.homePath,
-                  executionRoot: input.executionRoot,
-                }),
+                ...safeToolPreview(toolName, parsedInput, pathProjection),
               };
             } catch (error: unknown) {
               console.warn("[chat-claude] Ignoring malformed bounded tool input:", error instanceof Error ? error.name : "UnknownError");
@@ -712,10 +706,7 @@ export function createClaudeChatProviderAdapter(options: {
           : line.subtype === undefined
             ? undefined
             : "other";
-        resultText = sanitizeAssistantText(line.result ?? "", {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
-        });
+        resultText = sanitizeAssistantText(line.result ?? "", pathProjection);
         resultFailed = line.is_error === true || line.subtype === "error";
         finishInput?.();
       }

@@ -22,6 +22,7 @@ import {
 } from "../coding-agents/thread-store.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { projectCodingActivity } from "./coding-activity-projection.js";
+import { createAssistantTextStreamProjector, sanitizeAssistantText } from "./safe-activity-projection.js";
 import { CodingChatStateSchema, recoveryState, recoverCodingRun, type CodingChatState } from "./coding-run-recovery.js";
 import {
   CanonicalProviderRunEventSchema,
@@ -354,6 +355,43 @@ async function* normalizedEvents(
   }
 }
 
+async function* projectAssistantText(
+  events: AsyncIterable<CanonicalProviderRunEvent>,
+  options: { homePath: string; executionRoot?: string; showPrivatePaths: boolean },
+): AsyncGenerator<CanonicalProviderRunEvent> {
+  let messageId: string | undefined;
+  let projector = createAssistantTextStreamProjector(options);
+  const flush = () => {
+    const delta = projector.flush();
+    return delta && messageId ? CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", messageId, delta }) : undefined;
+  };
+  for await (const event of events) {
+    if (event.type === "assistant.delta") {
+      if (messageId && messageId !== event.messageId) {
+        const tail = flush();
+        if (tail) yield tail;
+        projector = createAssistantTextStreamProjector(options);
+      }
+      messageId = event.messageId;
+      const delta = projector.push(event.delta);
+      if (delta) yield { ...event, delta };
+      continue;
+    }
+    if (event.type === "run.completed") {
+      const tail = flush();
+      if (tail) yield tail;
+      projector = createAssistantTextStreamProjector(options);
+      messageId = undefined;
+    } else if (messageId) {
+      // Preserve the native activity order when an ordinary word is complete.
+      // Path and credential candidates remain buffered across activity events.
+      const delta = projector.flushBoundary(" ");
+      if (delta) yield { type: "assistant.delta", messageId, delta };
+    }
+    yield event;
+  }
+}
+
 function eventsForAcceptedRun(snapshot: AgentThreadSnapshot, requestId: string): AgentThreadEvent[] {
   const index = snapshot.events.items.findIndex((event) =>
     event.type === "turn.accepted" && event.clientRequestId === requestId
@@ -367,6 +405,7 @@ function eventsForAcceptedRun(snapshot: AgentThreadSnapshot, requestId: string):
 export function createCanonicalCodingChatProviderAdapter(options: {
   providerId: "codex" | "claude" | "opencode" | "pi";
   threads: CodingThreads;
+  homePath?: string;
   toolOutputKey?: Buffer;
   nativeInputProvider?: Pick<CodingAgentProviderAdapter, "deferInput">;
 }): CanonicalChatProviderAdapter<CodingState> {
@@ -426,9 +465,17 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     detachOnShutdown: options.providerId === "codex",
     async recover(input) {
       const state = CodingChatStateSchema.parse(input.state);
-      return recoverCodingRun({ ...input, state, includePending: options.providerId === "codex",
+      const recovered = await recoverCodingRun({ ...input, state, includePending: options.providerId === "codex",
         read: (cursor) => options.threads.getThread(principal(input.owner.ownerId), state.conversationId, cursor),
       });
+      if (!recovered) return null;
+      // Recovery reads a complete native transcript. The Chat repository's
+      // shared-read projection handles path visibility if this Chat is shared.
+      return { ...recovered, messages: recovered.messages.map((message) => ({
+        ...message, text: sanitizeAssistantText(message.text, {
+          homePath: options.homePath ?? "/home/matrix/home", showPrivatePaths: true,
+        }),
+      })) };
     },
     async *start(inputValue) {
       const { input, mode } = validate(inputValue);
@@ -487,7 +534,10 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           const recovered = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId!, inbox.lastEventId);
           return recovered.events.items;
         });
-        for await (const event of normalizedEvents(created.snapshot.events.items, inbox, options.providerId, options.toolOutputKey)) {
+        for await (const event of projectAssistantText(
+          normalizedEvents(created.snapshot.events.items, inbox, options.providerId, options.toolOutputKey),
+          { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
+        )) {
           if (event.type === "run.completed") terminalObserved = true;
           yield event;
         }
@@ -539,7 +589,10 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           const recovered = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId, inbox.lastEventId);
           return recovered.events.items;
         });
-        for await (const event of normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId, options.toolOutputKey)) {
+        for await (const event of projectAssistantText(
+          normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId, options.toolOutputKey),
+          { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
+        )) {
           if (event.type === "run.completed") terminalObserved = true;
           yield event;
         }

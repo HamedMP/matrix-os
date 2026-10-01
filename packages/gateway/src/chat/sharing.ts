@@ -3,6 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { z } from "zod/v4";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
+import { redactAssistantParts, redactSharedAssistantText } from "./safe-activity-projection.js";
 import { hasCompanyDriveMaterial } from "./drive-sharing-guard.js";
 
 export { ShareSnapshotSchema, ShareTokenSchema } from "@matrix-os/contracts";
@@ -41,10 +42,12 @@ async function readSnapshot(trx: Kysely<ChatDatabase>, chatId: string, title: st
   if (rows.length > 200) throw new ChatSharingError("limit");
   const messages = rows.flatMap((row) => {
     const parts = z.array(z.unknown()).max(200).parse(row.parts);
-    const text = parts.flatMap((part) => {
+    const textParts = parts.flatMap((part) => {
       const parsed = z.object({ type: z.literal("text"), text: z.string() }).safeParse(part);
-      return parsed.success ? [parsed.data.text] : [];
-    }).join("\n");
+      return parsed.success ? [parsed.data] : [];
+    });
+    const safeParts = row.role === "assistant" ? redactAssistantParts(textParts) : textParts;
+    const text = safeParts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
     return text ? [{ role: row.role, text }] : [];
   });
   const snapshot = ShareSnapshotSchema.parse({ title, messages });
@@ -114,7 +117,10 @@ export class ChatSharing {
         .forShare("chats").executeTakeFirst();
       // Old immutable snapshots also fail closed once their source becomes drive-backed.
       if (!row || await hasCompanyDriveMaterial(trx, row.chat_id)) return null;
-      return ShareSnapshotSchema.parse(row.snapshot);
+      const snapshot = ShareSnapshotSchema.parse(row.snapshot);
+      return { ...snapshot, messages: snapshot.messages.map((message) => message.role === "assistant"
+        ? { ...message, text: redactSharedAssistantText(message.text) }
+        : message) };
     });
   }
 }

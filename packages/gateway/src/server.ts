@@ -1506,6 +1506,7 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
           threads: codingAgentThreadStore,
+          homePath,
           toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "codex"),
         }));
@@ -1514,6 +1515,7 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "pi",
           threads: codingAgentThreadStore,
+          homePath,
           toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "pi"),
         }));
@@ -1522,6 +1524,7 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "opencode",
           threads: codingAgentThreadStore,
+          homePath,
           toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "opencode"),
         }));
