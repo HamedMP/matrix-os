@@ -258,7 +258,9 @@ export function createClaudeChatProviderAdapter(options: {
       // Review is read-only even if its saved permission choice says full access.
       // Unknown future interaction modes receive discovery only.
       scope: mcpScope,
+      ...(input.context?.drives?.length ? {driveContext:true} : {}),
     }) ?? null;
+    if (input.context?.drives?.length && !capability) throw new Error("Company drive tools unavailable");
     const recipeGuidance = input.context?.agent?.recipe
       ? "Selected integration dependencies are unavailable through this route. "
         + (capability
@@ -291,6 +293,7 @@ export function createClaudeChatProviderAdapter(options: {
         claudeOutputFormat: "stream-json",
         claudeIncludePartialMessages: true,
         matrixCustomMcp: capability !== null,
+        matrixDriveContext: Boolean(input.context?.drives?.length),
         matrixCustomMcpScope: mcpScope,
       });
       if (resumeState) {

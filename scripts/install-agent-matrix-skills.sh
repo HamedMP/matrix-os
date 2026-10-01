@@ -15,6 +15,7 @@ fi
 skills=(
   app-builder
   app-ui-patterns
+  chat-import
   design-system
   integrations
   jev-email-triage

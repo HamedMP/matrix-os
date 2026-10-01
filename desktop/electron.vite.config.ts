@@ -14,10 +14,9 @@ const codingAgentsDesktopWorkspace =
 // that generated file cannot make the source checkout appear uncommitted.
 export default defineConfig((): UserConfig => ({
   main: {
-    // Workspace contracts export TypeScript source for package consumers.
-    // Bundle the schemas and Zod so the built Electron main process never
-    // depends on source-only `.js` specifiers at runtime.
-    plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts", "@finnaai/matrix"] })],
+    // Workspace contracts and the collaboration direct client export TypeScript
+    // source. Bundle them so Electron never loads raw TypeScript at runtime.
+    plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts", "@matrix-os/ui", "@finnaai/matrix"] })],
     define: {
       __MATRIX_DESKTOP_BUILD_SOURCE__: JSON.stringify(readBuildSource(resolve(__dirname, ".."), process.env.GITHUB_SHA)),
       __MATRIX_DESKTOP_UPDATE_CHANNEL__: JSON.stringify(desktopUpdateChannel),

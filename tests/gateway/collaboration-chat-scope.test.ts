@@ -38,6 +38,24 @@ describe("CollaborationChatScopeService", () => {
     await fixture.destroy();
   });
 
+  it("fails closed when a Chat contains company drive material without an audience policy", async () => {
+    await fixture.db.insertInto("chat_messages").values({id:"msg_drive_reference",chat_id:collaborationIds.chat,seq:1,role:"user",state:"committed",purpose:"discussion",turn_id:null,run_id:null,actor_id:null,parts:[{type:"resource_reference",resource:{kind:"organization_drive",id:"00000000-0000-4000-8000-000000000001",label:"Company",drive:{kind:"drive",organizationId:"org_matrix_team",scopeId:"00000000-0000-4000-8000-000000000001"}}}],byte_count:400,search_text:"",created_at:now}).execute();
+    const preflight=await service.preflight({ownerId:collaborationActors.owner,organizationId:"org_matrix_team",chatId:collaborationIds.chat});
+    expect(preflight).toMatchObject({eligible:false,reason:"unsupported"});expect(preflight.confirmationToken).toBeUndefined();
+  });
+
+  it("rechecks drive material under the sharing lock after preflight", async () => {
+    const preflight = await service.preflight({ownerId:collaborationActors.owner,organizationId:"org_matrix_team",chatId:collaborationIds.chat});
+    expect(preflight.eligible).toBe(true);
+    await fixture.db.insertInto("chat_messages").values({id:"msg_drive_reference",chat_id:collaborationIds.chat,seq:1,role:"user",state:"committed",purpose:"discussion",turn_id:null,run_id:null,actor_id:null,parts:[{type:"resource_reference",resource:{kind:"organization_drive",id:"00000000-0000-4000-8000-000000000001",label:"Company",drive:{kind:"drive",organizationId:"org_matrix_team",scopeId:"00000000-0000-4000-8000-000000000001"}}}],byte_count:400,search_text:"",created_at:now}).execute();
+    await expect(service.shareChat({ownerId:collaborationActors.owner,organizationId:"org_matrix_team",chatId:collaborationIds.chat,
+      clientRequestId:"50000000-0000-4000-8000-000000000010",payloadHash:"a".repeat(64),expectedChatRevision:0,
+      confirmationToken:preflight.confirmationToken!})).rejects.toMatchObject({code:"conflict"});
+    const chat = await fixture.db.selectFrom("chats").select("collaboration").where("id","=",collaborationIds.chat).executeTakeFirstOrThrow();
+    expect(chat.collaboration).toBeNull();
+    expect(await fixture.db.selectFrom("collaboration_scopes").select("id").execute()).toEqual([]);
+  });
+
   it("preflights and atomically converts one whole Chat to discussion-only sharing", async () => {
     const preflight = await service.preflight({
       ownerId: collaborationActors.owner,

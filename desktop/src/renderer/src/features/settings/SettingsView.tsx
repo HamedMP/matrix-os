@@ -9,6 +9,7 @@ import {
   Settings as SettingsIcon,
   Sparkles,
   SquareTerminal,
+  Upload,
   UserRound,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useState } from "react";
@@ -24,6 +25,7 @@ import McpServersSection from "../plugins/McpServersSection";
 import SkillsSection from "../plugins/SkillsSection";
 import CronSection from "./sections/CronSection";
 import SystemSection from "./sections/SystemSection";
+import ChatImportSection from "./sections/ChatImportSection";
 import { useUi } from "../../stores/ui";
 
 export type SettingsSectionId =
@@ -36,6 +38,7 @@ export type SettingsSectionId =
   | "services"
   | "mcps"
   | "skills"
+  | "chat-import"
   | "cli"
   | "cron"
   | "system";
@@ -47,6 +50,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "services", label: "Services", icon: <Blocks size={15} />, group: "Integrations" },
   { id: "mcps", label: "MCPs", icon: <Server size={15} />, group: "Integrations" },
   { id: "skills", label: "Skills", icon: <Sparkles size={15} />, group: "Integrations" },
+  { id: "chat-import", label: "Import chats", icon: <Upload size={15} />, group: "Integrations" },
   { id: "cli", label: "CLI", icon: <SquareTerminal size={15} />, group: "Integrations" },
   { id: "agents-providers", label: "Agents & providers", icon: <Bot size={15} />, group: "Machine" },
   { id: "identity-personality", label: "Identity & personality", icon: <Sparkles size={15} />, group: "Machine" },
@@ -151,6 +155,7 @@ export default function SettingsView({
           {section === "services" ? <IntegrationsSettingsSection /> : null}
           {section === "mcps" ? <McpServersSection /> : null}
           {section === "skills" ? <SkillsSection /> : null}
+          {section === "chat-import" ? <ChatImportSection /> : null}
           {section === "cli" ? <CliSection /> : null}
           {section === "cron" ? <CronSection /> : null}
           {section === "system" ? <SystemSection /> : null}

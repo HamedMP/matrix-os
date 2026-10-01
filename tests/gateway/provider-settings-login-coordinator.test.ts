@@ -270,7 +270,7 @@ describe("provider terminal login coordinator", () => {
       original.action.kind === "open_terminal" ? original.action.terminalSessionId : "",
     ]));
 
-    for (let retry = 2; retry <= 70; retry += 1) {
+    for (let retry = 2; retry <= 257; retry += 1) {
       checkedAt = new Date(Date.parse(retried.expiresAt) + 1);
       retried = await login.startLogin({
         ...input,
@@ -291,10 +291,10 @@ describe("provider terminal login coordinator", () => {
       join(homePath, "system/ai-providers/login-recovery.json"),
       "utf8",
     )) as { receipts: Array<{ key: string }> };
-    expect(receiptDocument.receipts).toHaveLength(64);
-    expect(receiptDocument.receipts.at(-1)?.key).toBe("login_expiring_retry_70");
+    expect(receiptDocument.receipts).toHaveLength(256);
+    expect(receiptDocument.receipts.at(-1)?.key).toBe("login_expiring_retry_257");
     expect(recoveryDocument.receipts).toHaveLength(1);
-    expect(recoveryDocument.receipts[0]?.key).toBe("login_expiring_retry_70");
+    expect(recoveryDocument.receipts[0]?.key).toBe("login_expiring_retry_257");
     expect(registry.create).toHaveBeenCalledOnce();
     expect(registry.delete).not.toHaveBeenCalled();
   });

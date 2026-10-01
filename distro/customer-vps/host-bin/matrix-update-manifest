@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Platform-verified metadata; owner markers carry only a bounded version request.
+fetch_manifest() {
+  local url="$1" response status
+  if response="$(curl --fail --silent --show-error --max-time 15 --max-filesize 65536 \
+    --write-out '\n%{http_code}' "$url" 2>/dev/null)"; then
+    printf '%s' "${response%$'\n'*}"
+    return 0
+  fi
+  status="${response##*$'\n'}"
+  log "WARN: failed to fetch release metadata"
+  case "$status" in 404|410) return 2 ;; *) return 1 ;; esac
+}
+
+load_trusted_apply_manifest() {
+  local version manifest
+  # The marker is owner-writable. Its only authority is the requested version;
+  # even that is read without following a symlink and bounded before URL use.
+  if ! version="$(python3 - "$UPDATE_MARKER" <<'PY'
+import json
+import os
+import re
+import stat
+import sys
+
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+try:
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 2 or metadata.st_size > 65536:
+        raise ValueError("invalid update marker")
+    payload = os.read(fd, 65537)
+    if len(payload) > 65536:
+        raise ValueError("oversized update marker")
+    version = json.loads(payload).get("version")
+    if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", version):
+        raise ValueError("invalid update version")
+    print(version)
+finally:
+    os.close(fd)
+PY
+  )"; then
+    log "ERROR: prepared update marker is invalid"
+    return 2
+  fi
+  if manifest="$(fetch_manifest "$(release_url_for_version "$version")")"; then :;
+  else return "$?"; fi
+  if ! printf '%s' "$manifest" | python3 -c '
+import json
+import re
+import sys
+from urllib.parse import urlsplit
+
+expected_version = sys.argv[1]
+payload = json.load(sys.stdin)
+if not isinstance(payload, dict) or payload.get("version") != expected_version:
+    raise ValueError("immutable release version mismatch")
+sha256 = payload.get("sha256")
+size = payload.get("size")
+url = payload.get("url")
+if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+    raise ValueError("immutable release digest missing")
+if not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= 20 * 1024**3:
+    raise ValueError("invalid release size")
+if not isinstance(url, str) or len(url) > 8192:
+    raise ValueError("invalid release URL")
+parts = urlsplit(url)
+if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.fragment:
+    raise ValueError("invalid release URL")
+print(json.dumps(payload, separators=(",", ":")))
+' "$version"; then
+    log "ERROR: immutable release metadata is invalid"
+    return 2
+  fi
+}
+

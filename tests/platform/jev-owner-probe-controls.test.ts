@@ -5,8 +5,16 @@ import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-f
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 let db: PlatformDB;
-beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
-afterEach(async () => { await destroyTestPlatformDb(db); });
+beforeEach(async () => {
+  // Match the reviewed pricing returned by this fixture; leave I/O timers real.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-30T12:00:00.000Z"));
+  ({ db } = await createTestPlatformDb());
+});
+afterEach(async () => {
+  try { await destroyTestPlatformDb(db); }
+  finally { vi.useRealTimers(); }
+});
 async function fixture() {
   const repository = createAiFundedPolicyRepository({ db, credentialHashSecret: "h".repeat(32) });
   await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [JEV_MODEL_ID] });

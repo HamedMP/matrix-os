@@ -3,10 +3,14 @@ import type { Context, Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { AiProviderService } from "../ai-providers/service.js";
 import { createAiProviderRoutes } from "../ai-providers/routes.js";
-import { ProviderSettingsStore } from "../ai-providers/provider-settings-store.js";
+import type { ProviderSettingsStoreWriter } from "../ai-providers/provider-settings-store.js";
 import type { GmailAccountRow } from "../chat/jev-recipe-authority.js";
 import { createProviderSettingsRoutes } from "../ai-providers/provider-settings-routes.js";
 import { createChatAgentRoutes } from "../chat/agent-routes.js";
+import { createCodexChatImportRoutes } from "../chat/codex-import-routes.js";
+import { registerLocalChatImports } from "../chat/local-import/runtime.js";
+import type { R2Client } from "../sync/r2-client.js";
+import { CodexChatImporter } from "../chat/codex-importer.js";
 import { registerCanonicalChatEventHttpRoute } from "../chat/event-http-route.js";
 import { registerCanonicalChatEventWebSocketRoute } from "../chat/event-websocket-route.js";
 import { createGatewayChatEventStream } from "../chat/gateway-event-stream.js";
@@ -40,11 +44,14 @@ export interface CollaborationChatRouteOptions {
   canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null;
   canonicalChatProviderCatalog: ReturnType<typeof createGatewayChatProviderCatalog>["catalog"];
   aiProviderService: AiProviderService;
-  providerSettingsStore: ProviderSettingsStore;
+  providerSettingsStore: ProviderSettingsStoreWriter;
+  syncR2?: R2Client | null;
+  runtimeOwnerId?: string;
+  runtimeSlot?: string;
   listGmailAccounts?: (ownerId: string) => Promise<readonly GmailAccountRow[]>;
 }
 
-export function registerCollaborationChatRoutes(options: CollaborationChatRouteOptions): void {
+export function registerCollaborationChatRoutes(options: CollaborationChatRouteOptions): { close(): Promise<void> } {
   const { app, upgradeWebSocket, canonicalChatEventStream, chatRepository,
     gatewayCollaboration, collaborationFailClosedReason, canonicalChatOrchestrator,
     canonicalChatExecutionRoots, canonicalChatCollaborationGuard, projectOwnerToolOutput,
@@ -65,6 +72,12 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }
   app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
   registerOwnerCollaborationRoutes({ app, upgradeWebSocket, gatewayCollaboration, collaborationFailClosedReason });
+  app.route("/", createCodexChatImportRoutes({
+    importer: chatRepository ? new CodexChatImporter(chatRepository) : null,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
+  const localImports = registerLocalChatImports({ app, repository: chatRepository, storage: options.syncR2,
+    runtimeOwnerId: options.runtimeOwnerId, runtimeSlot: options.runtimeSlot, getPrincipal: c => requireRequestPrincipal(c) });
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
@@ -100,5 +113,5 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     store: providerSettingsStore,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
-
+  return localImports;
 }

@@ -83,6 +83,27 @@ describe("collaboration direct client", () => {
     expect(JSON.parse(post.body)).toEqual({ text: "hi" });
   });
 
+  it("aborts an in-flight signed mutation when its caller cancels", async () => {
+    let entered!: () => void;
+    const reachedMutation = new Promise<void>((resolve) => { entered = resolve; });
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith(`/api/collaboration/scopes/${scopeId}/chat/messages`)) {
+        entered();
+        return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")), { once: true }));
+      }
+      return world.fetchImpl(input, init);
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
+    const abort = new AbortController();
+    const pending = direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/chat/messages`,
+      { text: "cancel" }, undefined, abort.signal);
+    await reachedMutation;
+    abort.abort();
+    await expect(pending).rejects.toThrow();
+  });
+
   it("routes each scope to its own home session and never to the selected computer", async () => {
     const direct = client();
     await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
