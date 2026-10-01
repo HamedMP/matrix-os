@@ -127,7 +127,7 @@ describe("provider login exited-terminal recovery", () => {
       expect((await service.startLogin(input)).id).toBe(first.id);
       expect(registry.create).toHaveBeenCalledTimes(createsBeforeReplay);
     }
-    const recovered = await service.startLogin(retry);
+    const recovered = await service.startLogin({ ...retry, mutation: { ...retry.mutation, idempotencyKey: "retry_after_partial_write" } });
     expect(recovered.state).toBe("pending");
     expect(recovered.id).not.toBe(first.id);
     expect(Date.parse(recovered.expiresAt) - clock.getTime()).toBe(600_000);
@@ -136,5 +136,15 @@ describe("provider login exited-terminal recovery", () => {
     const creates = registry.create.mock.calls.length;
     await service.startLogin({ ...retry, mutation: { ...retry.mutation, idempotencyKey: "third", expectedRevision: 2 } });
     expect(registry.create).toHaveBeenCalledTimes(creates);
+  });
+
+  it("does not resolve an old attempt to a replacement when its original terminal disappeared", async () => {
+    const service = login(); const first = await service.startLogin(input);
+    if (first.action.kind !== "open_terminal") throw new Error("Expected terminal");
+    terminals.delete(first.action.terminalSessionId);
+    await service.startLogin(retry);
+    await expect(service.resolveTerminalIdentity(first)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    await expect(service.resolveTerminalIdentity({ ...first, id: "attempt_unrecorded" }))
+      .rejects.toMatchObject({ code: "lifecycle_unavailable" });
   });
 });

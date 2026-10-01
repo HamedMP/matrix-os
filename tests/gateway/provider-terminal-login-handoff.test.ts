@@ -62,7 +62,7 @@ describe("provider Terminal login handoff", () => {
     const createStore = () => new ProviderSettingsStore({ homePath: join(root, "home"), privateRootPath: join(root, "private"),
       providerSnapshotReader: { getSnapshot: async () => providerSettingsCanonicalFixture() }, loginCoordinator: login, now: () => NOW });
     const store = createStore();
-    const app = appFor(handoff(store, (id) => registry.resolveTerminalRef(id)));
+    const app = appFor(handoff(store, (id) => registry.resolveTerminalRef(id), login.resolveTerminalIdentity));
     const first = await app.request("/api/ai/provider-settings/actions?includeCapabilities=true", request);
     expect(first.status).toBe(200);
     const initial = await first.json();
@@ -70,7 +70,7 @@ describe("provider Terminal login handoff", () => {
     expect(parseTerminalRefKey(initial.attempt.action.terminalSessionId)).toEqual(REF);
     expect(parseElectronTerminalRefKey(initial.attempt.action.terminalSessionId)).toEqual(REF);
     expect(ProviderSettingsMutationResponseSchema.safeParse(initial).success).toBe(true);
-    const replay = await appFor(handoff(createStore(), (id) => registry.resolveTerminalRef(id)))
+    const replay = await appFor(handoff(createStore(), (id) => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
       .request("/api/ai/provider-settings/actions?includeCapabilities=true", request);
     expect(replay.status).toBe(200);
     expect(await replay.json()).toEqual(initial);
@@ -78,7 +78,7 @@ describe("provider Terminal login handoff", () => {
     expect(runtime.createTab).toHaveBeenCalledOnce();
     const recoveryStore = createStore();
     const revision = (await recoveryStore.getSnapshot()).revision;
-    const recovered = await appFor(handoff(recoveryStore, (id) => registry.resolveTerminalRef(id)))
+    const recovered = await appFor(handoff(recoveryStore, (id) => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
       .request("/api/ai/provider-settings/actions", { ...request,
         body: JSON.stringify({ ...mutation, expectedRevision: revision, idempotencyKey: "login_handoff_recovery" }) });
     expect(recovered.status).toBe(200);
@@ -91,18 +91,57 @@ describe("provider Terminal login handoff", () => {
     expect(raw.kind === "login_attempt" && raw.attempt.action).toEqual({ kind: "open_terminal", terminalSessionId: tabs[0].name });
 
     const originalName = tabs[0].name;
+    const resolveRef = registry.resolveTerminalRef;
+    let releaseResolution!: () => void;
+    let resolutionEntered!: () => void;
+    const resolutionGate = new Promise<void>(resolve => { releaseResolution = resolve; });
+    const entered = new Promise<void>(resolve => { resolutionEntered = resolve; });
+    vi.spyOn(registry, "resolveTerminalRef").mockImplementationOnce(async identity => {
+      resolutionEntered(); await resolutionGate; return resolveRef(identity);
+    });
+    const inFlightReplay = appFor(handoff(createStore(), id => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
+      .request("/api/ai/provider-settings/actions", request);
+    await entered;
     runtime.getCommandState.mockResolvedValueOnce("exited");
     const endedStore = createStore();
     const endedRevision = (await endedStore.getSnapshot()).revision;
-    const restarted = await appFor(handoff(endedStore, id => registry.resolveTerminalRef(id)))
+    const replacement = appFor(handoff(endedStore, id => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
       .request("/api/ai/provider-settings/actions", { ...request,
         body: JSON.stringify({ ...mutation, expectedRevision: endedRevision, idempotencyKey: "login_handoff_exited" }) });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(runtime.createTab).toHaveBeenCalledOnce();
+    releaseResolution();
+    const inFlightResult = await inFlightReplay;
+    expect((await inFlightResult.json()).attempt).toEqual(initial.attempt);
+    const restarted = await replacement;
     expect(restarted.status).toBe(200);
     expect((await restarted.json()).attempt.action.terminalSessionId).toBe(`${REF.workspaceId}:${tabs[1].id}`);
     expect(tabs[0].name).toMatch(/^provider-auth-ended-/);
     expect(tabs[1].name).toBe(originalName);
     expect(runtime.createTab).toHaveBeenCalledTimes(2);
     expect(runtime.terminateTab).not.toHaveBeenCalled();
+    const oldReplay = await appFor(handoff(createStore(), id => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
+      .request("/api/ai/provider-settings/actions", request);
+    expect(oldReplay.status).toBe(200);
+    expect((await oldReplay.json()).attempt).toEqual(initial.attempt);
+    expect(runtime.createTab).toHaveBeenCalledTimes(2);
+
+    runtime.getCommandState.mockResolvedValueOnce("exited");
+    const thirdStore = createStore();
+    const thirdRevision = (await thirdStore.getSnapshot()).revision;
+    const third = await appFor(handoff(thirdStore, id => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
+      .request("/api/ai/provider-settings/actions", { ...request,
+        body: JSON.stringify({ ...mutation, expectedRevision: thirdRevision, idempotencyKey: "login_handoff_exited_again" }) });
+    expect(third.status).toBe(200);
+    expect((await third.json()).attempt.action.terminalSessionId).toBe(`${REF.workspaceId}:${tabs[2].id}`);
+    const firstAgain = await appFor(handoff(createStore(), id => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
+      .request("/api/ai/provider-settings/actions", request);
+    expect((await firstAgain.json()).attempt).toEqual(initial.attempt);
+    const secondAgain = await appFor(handoff(createStore(), id => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
+      .request("/api/ai/provider-settings/actions", { ...request,
+        body: JSON.stringify({ ...mutation, expectedRevision: endedRevision, idempotencyKey: "login_handoff_exited" }) });
+    expect((await secondAgain.json()).attempt.action.terminalSessionId).toBe(`${REF.workspaceId}:${tabs[1].id}`);
+    expect(runtime.createTab).toHaveBeenCalledTimes(3);
   });
 
   it("projects a historical cached attempt without invoking login or changing the cached object", async () => {

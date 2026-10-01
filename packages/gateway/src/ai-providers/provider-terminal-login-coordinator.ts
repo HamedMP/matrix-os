@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ProviderConnectionAttemptSchema } from "@matrix-os/contracts";
+import { ProviderConnectionAttemptSchema, TerminalRefSchema, type ProviderConnectionAttempt } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { recoverProviderLoginSession, type ProviderLoginRegistry } from "./provider-login-session-recovery.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
@@ -22,6 +22,7 @@ const ReceiptSchema = z.object({
   recoveryHash: DigestSchema.optional(),
   legacyPayloadHash: DigestSchema.optional(),
   superseded: z.literal(true).optional(),
+  archivedSessionName: SafeRefSchema.optional(),
   attempt: ProviderConnectionAttemptSchema,
 }).strict();
 const ReceiptDocumentSchema = z.object({
@@ -186,7 +187,7 @@ export function createProviderTerminalLoginCoordinator(options: {
   enabledHarnesses: readonly ("codex" | "claude")[];
   now?: () => Date;
   persistReceipt?: ReceiptWriter;
-}): ProviderLoginCoordinator {
+}): ProviderLoginCoordinator & { resolveTerminalIdentity(attempt: ProviderConnectionAttempt): Promise<string> } {
   if (!options.homePath) throw new Error("Provider login home path is required");
   if (!options.registry?.create || !options.registry.get || !options.registry.delete
     || !options.registry.rename || !options.registry.observeAgentLiveness) {
@@ -212,6 +213,31 @@ export function createProviderTerminalLoginCoordinator(options: {
   }
 
   return {
+    async resolveTerminalIdentity(attempt) {
+      return await serialize(async () => {
+        const validated = ProviderConnectionAttemptSchema.parse(attempt);
+        if (validated.action.kind !== "open_terminal") throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+        const identity = validated.action.terminalSessionId;
+        const receipts = [...(await readReceipts(receiptsPath)).receipts, ...(await readReceipts(recoveryPath)).receipts]
+          .filter(receipt => receipt.attempt.id === validated.id
+            && receipt.attempt.harnessInstanceId === validated.harnessInstanceId
+            && receipt.attempt.accountId === validated.accountId && receipt.attempt.method === validated.method
+            && receipt.attempt.action.kind === "open_terminal" && receipt.attempt.action.terminalSessionId === identity);
+        if (receipts.length === 0) throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+        const retired = receipts.filter(receipt => receipt.superseded);
+        let terminalIdentity = identity;
+        if (retired.length > 0) {
+          const archives = new Set(retired.map(receipt => receipt.archivedSessionName));
+          if (archives.size !== 1 || archives.has(undefined)) throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          terminalIdentity = [...archives][0]!;
+        }
+        if (!options.registry.resolveTerminalRef) throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+        // Bind the outward action while the same coordinator lock prevents
+        // another login from archiving and reusing this alias between awaits.
+        const ref = TerminalRefSchema.parse(await options.registry.resolveTerminalRef(terminalIdentity));
+        return `${ref.workspaceId}:${ref.tabId}`;
+      });
+    },
     supportedMethods(harness) {
       return supportsHarness(enabledHarnesses, harness)
         ? ["terminal"]
@@ -416,12 +442,20 @@ export function createProviderTerminalLoginCoordinator(options: {
           }
           const recoverySession = recoverySessions.values().next().value!;
           const recoverable = recoverableReceipts[0]!.attempt;
-          const retireRecovery = async () => {
+          const groupIdentity = JSON.stringify(recoverable);
+          const isGroupReceipt = (receipt: ReceiptDocument["receipts"][number]) =>
+            receipt.recoveryHash === recoveryHash && JSON.stringify(receipt.attempt) === groupIdentity;
+          const plannedArchives = new Set([...document.receipts, ...recoveryDocument.receipts]
+            .filter(receipt => isGroupReceipt(receipt) && receipt.archivedSessionName)
+            .map(receipt => receipt.archivedSessionName!));
+          if (plannedArchives.size > 1) throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          const retireRecovery = async (archivedSessionName?: string) => {
             // Retired keys replay their immutable attempts only; they must never
             // resurrect a command while a fresh replacement is being recorded.
             const retire = (candidate: ReceiptDocument) => {
               candidate.receipts = candidate.receipts.map(receipt =>
-                receipt.recoveryHash === recoveryHash ? { ...receipt, superseded: true as const } : receipt);
+                isGroupReceipt(receipt) && !receipt.superseded ? { ...receipt, superseded: true as const,
+                  ...(archivedSessionName ? { archivedSessionName } : {}) } : receipt);
             };
             retire(document);
             retire(recoveryDocument);
@@ -433,7 +467,8 @@ export function createProviderTerminalLoginCoordinator(options: {
               throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
             }
           };
-          const existing = await recoverProviderLoginSession(options.registry, recoverySession.name, command.agent, hash, retireRecovery);
+          const existing = await recoverProviderLoginSession(options.registry, recoverySession.name, command.agent, hash,
+            retireRecovery, [...plannedArchives][0]);
           const attempt = currentProviderConnectionAttempt(recoverable, now());
           if (existing === "live" && attempt.action.kind === "open_terminal") {
             replaceBoundedReceipt(recoveryDocument, ReceiptSchema.parse({
