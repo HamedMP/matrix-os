@@ -182,6 +182,37 @@ describe("standalone Aoede bootstrap (real owner-local PGlite, fake readiness on
     expect(transact).toHaveBeenCalledTimes(1);
   });
 
+  it("repairs a saved model missing from its still-available instance to that instance's default and persists it", async () => {
+    const first = await service.bootstrap(principal, request("initial"));
+    const owner = { type: "personal" as const, ownerId: principal.userId };
+    // Placeholder written by an older build; the instance is available but this model id is not in the catalog.
+    const stale = { instanceId: selection.instanceId, model: "provider-default" };
+    await chats.update(owner, first.chatId, { baseRevision: 0, currentSelection: stale });
+    const repaired = await service.bootstrap(principal, request("repair"));
+    expect(repaired.chatId).toBe(first.chatId);
+    expect(repaired.selection).toEqual(selection);
+    expect(repaired.capability.status).toBe("available");
+    expect(readiness).toHaveBeenLastCalledWith(expect.objectContaining({ selection }));
+    const persisted = await chats.get(owner, first.chatId);
+    expect(persisted?.chat.currentSelection).toEqual(selection);
+    expect(persisted?.chat.revision).toBe(2);
+    // The repair is durable: the next Continue sees a runnable saved route and writes nothing.
+    expect((await service.bootstrap(principal, request("again"))).selection).toEqual(selection);
+    expect((await chats.get(owner, first.chatId))?.chat.revision).toBe(2);
+  });
+
+  it("never substitutes another Provider instance for a saved route whose instance is unavailable", async () => {
+    const first = await service.bootstrap(principal, request("initial"));
+    const owner = { type: "personal" as const, ownerId: principal.userId };
+    const saved = { instanceId: "gone_instance", model: "gone" };
+    await chats.update(owner, first.chatId, { baseRevision: 0, currentSelection: saved });
+    const result = await service.bootstrap(principal, request("continue"));
+    expect(result.selection).toEqual(saved);
+    expect(result.capability).toMatchObject({ status: "unavailable", reason: "provider_unavailable" });
+    expect(readiness).toHaveBeenLastCalledWith(expect.objectContaining({ selection: saved }));
+    expect((await chats.get(owner, first.chatId))?.chat.currentSelection).toEqual(saved);
+  });
+
   it("strict authenticated HTTP rejects owner/runtime/tool fields and bounds bodies with structured safe errors", async () => {
     const app = createAoedeRoutes({ service, requirePrincipal: () => principal });
     const post = (body: unknown) => app.request("http://test/api/aoede/bootstrap", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

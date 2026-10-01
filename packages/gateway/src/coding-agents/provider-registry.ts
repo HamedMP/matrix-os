@@ -18,7 +18,10 @@ import type { CodingAgentProviderAdapter } from "./thread-store.js";
 
 const MAX_PROVIDERS = 8;
 const MAX_CREDENTIAL_PROVIDERS = 3;
-const DEFAULT_HEALTH_TIMEOUT_MS = 2_000;
+// Matches the CLI probe budgets elsewhere (Codex version check, credential
+// detection, Codex local observation). Probes run in parallel, so this bounds
+// catalog latency without adding per-provider.
+const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
 const DEFAULT_CACHE_TTL_MS = 30_000;
 const DEFAULT_MAX_CACHE_ENTRIES = 256;
 const MAX_HEALTH_TIMEOUT_MS = 30_000;

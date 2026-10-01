@@ -171,13 +171,15 @@ export function createCodexEventBridge(options: {
   let queue: Promise<void> = Promise.resolve();
   let lastCleanupAt = 0;
   let versionCache: { ok: boolean; expiresAt: number } | undefined;
+  // The executable is fixed for the life of this process, so the last completed
+  // verdict stays meaningful after its cache entry expires. A probe that only
+  // ran out of a caller's time budget is not evidence that the install changed.
+  let lastCompletedVerdict: boolean | undefined;
+  let pendingProbe: Promise<boolean | undefined> | undefined;
 
-  async function versionIsVerified(parentSignal?: AbortSignal): Promise<boolean> {
-    if (versionCache && versionCache.expiresAt > nowMs()) return versionCache.ok;
-    const timeoutSignal = AbortSignal.timeout(VERSION_TIMEOUT_MS);
-    const signal = parentSignal
-      ? AbortSignal.any([parentSignal, timeoutSignal])
-      : timeoutSignal;
+  // Resolves to the verdict, or undefined when the probe itself timed out.
+  async function runVersionProbe(): Promise<boolean | undefined> {
+    const signal = AbortSignal.timeout(VERSION_TIMEOUT_MS);
     let ok = false;
     try {
       const result = await runVersionCommand(codexExecutable, ["--version"], {
@@ -196,12 +198,36 @@ export function createCodexEventBridge(options: {
         signal.aborted ||
         (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
       ) {
-        return false;
+        return undefined;
       }
       console.warn("[coding-agents] Codex version check failed");
     }
     versionCache = { ok, expiresAt: nowMs() + VERSION_CACHE_TTL_MS };
+    lastCompletedVerdict = ok;
     return ok;
+  }
+
+  async function versionIsVerified(parentSignal?: AbortSignal): Promise<boolean> {
+    if (versionCache && versionCache.expiresAt > nowMs()) return versionCache.ok;
+    if (parentSignal?.aborted) return lastCompletedVerdict ?? false;
+    // Concurrent catalog reads share one child process. The probe keeps running
+    // after a caller gives up so its verdict is cached for the next read instead
+    // of every slow read re-spawning the CLI and timing out again.
+    if (!pendingProbe) {
+      pendingProbe = runVersionProbe().finally(() => {
+        pendingProbe = undefined;
+      });
+    }
+    const probe = pendingProbe;
+    const verdict = parentSignal
+      ? await Promise.race([
+        probe,
+        new Promise<undefined>((resolvePromise) => {
+          parentSignal.addEventListener("abort", () => resolvePromise(undefined), { once: true });
+        }),
+      ])
+      : await probe;
+    return verdict ?? lastCompletedVerdict ?? false;
   }
 
   async function ensureEventDirectory(): Promise<void> {

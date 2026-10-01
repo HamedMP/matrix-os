@@ -29,7 +29,8 @@ export interface AoedeBootstrapServiceDeps {
   /** Independent speech probe, overlapped with catalog discovery when supplied. */
   resolveSpeechCapability?(input: { principal: RequestPrincipal; surface: AoedeBootstrapRequest["surface"] }): Promise<VoiceCapability>;
   /** Canonical catalog default runnable route + server action policy + managed speech readiness.
-   * If selection exists, inspect that exact saved route: never select a substitute.
+   * Receives the saved route, or its same-instance catalog default when the saved
+   * model is gone; it never substitutes a different Provider instance.
    * No provider inference, speech dispatch or microphone work occurs here.
    */
   resolveReadiness(input: { principal: RequestPrincipal; scope: AoedeScope;
@@ -95,7 +96,18 @@ export class AoedeBootstrapService {
     const defaultSelection = catalog.instances.flatMap((instance) => instance.defaultSelection
       && validateChatProviderSelection({ catalog, selection: instance.defaultSelection }).ok
       ? [instance.defaultSelection] : [])[0];
-    const selected = savedSelection ?? defaultSelection;
+    // A saved model that left the catalog while its Provider instance is still
+    // available (a renamed model, or a placeholder written by an older build) is
+    // repaired to that instance's catalog default and persisted below. The
+    // instance never changes here; a missing or unavailable instance still fails
+    // closed so the owner sees a truthful readiness error instead of a substitute.
+    const repairedSelection = savedSelection && !validateChatProviderSelection({ catalog, selection: savedSelection }).ok
+      ? catalog.instances.flatMap((instance) => instance.id === savedSelection.instanceId
+        && instance.defaultSelection?.instanceId === savedSelection.instanceId
+        && validateChatProviderSelection({ catalog, selection: instance.defaultSelection }).ok
+        ? [instance.defaultSelection] : [])[0]
+      : undefined;
+    const selected = repairedSelection ?? savedSelection ?? defaultSelection;
     if (!selected) throw new AoedeBootstrapError("provider_unavailable", 503, true, "retry_connection");
     const readiness = await this.deps.resolveReadiness({ principal, scope: safeScope, surface: request.surface,
       selection: selected, catalog, ...(speechCapability ? { speechCapability } : {}) });
@@ -133,8 +145,14 @@ export class AoedeBootstrapService {
         await repository.bind(key, record.chat.id);
       }
       if ((record.projectId ?? undefined) !== request.projectId) unavailable();
-      // Concurrent New/model changes cannot publish readiness for a different route.
-      if (record.chat.currentSelection && hash(record.chat.currentSelection) !== hash(readiness.selection)) conflict();
+      if (record.chat.currentSelection && hash(record.chat.currentSelection) !== hash(readiness.selection)) {
+        // Only the exact saved route inspected above may be repaired, under the
+        // binding lock and the Chat's own revision CAS. Any other divergence is a
+        // concurrent New/model change: readiness for a different route is never published.
+        if (!repairedSelection || !savedSelection || hash(record.chat.currentSelection) !== hash(savedSelection)) conflict();
+        record = await repository.chats.update(key.owner, record.chat.id,
+          { baseRevision: record.chat.revision, currentSelection: readiness.selection });
+      }
       const elected = await repository.recordRequest(key, request.clientRequestId, semanticHash, record.chat.id);
       if (!elected || elected.semantic_hash !== semanticHash || elected.created_chat_id !== record.chat.id) conflict();
       return responseFor(record);

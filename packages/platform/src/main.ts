@@ -123,6 +123,7 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { startPlatformServer } from './platform-startup.js';
+import { installPlatformFetchRuntime } from './fetch-runtime.js';
 import {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
@@ -160,7 +161,9 @@ const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
+// `connection: close` proxy requests are HTTP/1-only; see fetch-runtime.ts.
 const containerProxyDispatcher = new Agent({
+  allowH2: false,
   pipelining: 0,
   keepAliveTimeout: 1,
   keepAliveMaxTimeout: 1,
@@ -168,6 +171,7 @@ const containerProxyDispatcher = new Agent({
 });
 
 const customerVpsProxyDispatcher = new Agent({
+  allowH2: false,
   pipelining: 0,
   keepAliveTimeout: 1,
   keepAliveMaxTimeout: 1,
@@ -984,6 +988,9 @@ export function createApp(deps: {
 
 // Start server when run directly
 if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')) {
+  if (installPlatformFetchRuntime()) {
+    console.log(`[platform] using undici fetch instead of bundled undici ${process.versions.undici} (nodejs/undici#5360)`);
+  }
   await startPlatformServer({
     port: PORT,
     platformSecret: PLATFORM_SECRET,
