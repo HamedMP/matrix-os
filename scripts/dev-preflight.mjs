@@ -217,10 +217,12 @@ async function getJson(url, options = {}) {
 }
 
 async function authenticatedGet(path) {
-  const script = `set -a; . /opt/matrix/env/host.env; set +a; curl --silent --show-error --max-time 15 --max-filesize ${MAX_OUTPUT} --write-out '\n%{http_code}' -H 'Authorization: Bearer '"$MATRIX_AUTH_TOKEN" http://127.0.0.1:4000${path}`;
+  // Cold provider discovery on the emulated parity VM can exceed 15 seconds.
+  // Leave margin above the product's 30-second readiness deadline.
+  const script = `set -a; . /opt/matrix/env/host.env; set +a; curl --silent --show-error --max-time 45 --max-filesize ${MAX_OUTPUT} --write-out '\n%{http_code}' -H 'Authorization: Bearer '"$MATRIX_AUTH_TOKEN" http://127.0.0.1:4000${path}`;
   const remote = [`sudo sh -c ${shellQuote(script)}`];
   try {
-    const { stdout } = await execFileAsync("ssh", sshArgs(remote), { cwd: root, timeout: 20_000, maxBuffer: MAX_OUTPUT });
+    const { stdout } = await execFileAsync("ssh", sshArgs(remote), { cwd: root, timeout: 50_000, maxBuffer: MAX_OUTPUT });
     const marker = stdout.lastIndexOf("\n");
     const body = marker >= 0 ? stdout.slice(0, marker) : "";
     const status = marker >= 0 ? Number(stdout.slice(marker + 1).trim()) : 0;
