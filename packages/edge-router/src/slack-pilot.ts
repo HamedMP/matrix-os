@@ -32,8 +32,13 @@ function configuration(env: SlackPilotEnv): { publicOrigin: string; upstream: st
   }
 }
 
+function isAuthPath(path: string): boolean {
+  return /^(?:\/__platform-shell)?\/sign-(?:in|up)(?:\/.*)?$/.test(path);
+}
+
 function allowedMethods(path: string): string[] {
-  if (path === '/' || /^(?:\/__platform-shell)?\/sign-(?:in|up)(?:\/.*)?$/.test(path) || path === '/slack/link'
+  if (isAuthPath(path)) return ['GET', 'HEAD', 'POST'];
+  if (path === '/' || path === '/slack/link'
     || path === '/api/slack/oauth/callback' || /^(?:\/__platform-shell)?\/_next\/static\//.test(path)
     || /^\/(?:icons|fonts|textures)\//.test(path) || path === '/favicon.ico') return ['GET', 'HEAD'];
   if (path === '/api/slack/install' || path === '/api/slack/link/complete'
@@ -109,6 +114,8 @@ export async function handleSlackPilotRequest(request: Request, env: SlackPilotE
   const methods = allowedMethods(url.pathname);
   if (!methods.length) return failure(404, 'Not found');
   if (!methods.includes(request.method)) return failure(405, 'Method not allowed');
+  const authAction = isAuthPath(url.pathname) && request.method === 'POST';
+  if (authAction && request.headers.get('origin') !== config.publicOrigin) return failure(403, 'Forbidden');
   if (url.pathname.startsWith('/api/slack/') && !['GET', 'HEAD'].includes(request.method)) {
     const nativeBearer = /^Bearer [A-Za-z0-9._~-]{1,4096}$/i.test(request.headers.get('authorization') ?? '');
     if (request.headers.get('origin') !== config.publicOrigin
@@ -120,7 +127,7 @@ export async function handleSlackPilotRequest(request: Request, env: SlackPilotE
   const headers = new Headers(request.headers);
   for (const key of [...headers.keys()]) {
     if (key === 'host' || key.startsWith('x-forwarded-') || key.startsWith('x-platform-')
-      || key.startsWith('x-matrix-') || key === 'next-action') headers.delete(key);
+      || key.startsWith('x-matrix-') || (key === 'next-action' && !authAction)) headers.delete(key);
   }
   headers.set('x-forwarded-host', url.hostname);
   headers.set('x-forwarded-proto', 'https');

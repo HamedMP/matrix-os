@@ -31,6 +31,26 @@ describe('bounded legacy Slack pilot sign-in route', () => {
     expect(sent.redirect).toBe('manual');
     expect(fetch.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
   });
+  it.each(['/sign-in', '/sign-up/verify-email-address'])('forwards the bounded same-origin auth action for %s', async (path) => {
+    clock(); const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+    const action = 'a'.repeat(40);
+    const response = await handleSlackPilotRequest(request(path, { method: 'POST',
+      headers: { origin, 'next-action': action, 'x-platform-verified': 'forged' }, body: '["cache"]' }), env);
+    expect(response.status).toBe(200);
+    const sent = fetch.mock.calls[0]![0] as Request;
+    expect(await sent.text()).toBe('["cache"]');
+    expect(sent.headers.get('next-action')).toBe(action);
+    expect(sent.headers.has('x-platform-verified')).toBe(false);
+  });
+  it('rejects cross-origin auth actions and strips action dispatch from API requests', async () => {
+    clock(); const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+    expect((await handleSlackPilotRequest(request('/sign-in', { method: 'POST',
+      headers: { origin: 'https://app.matrix-os.com', 'next-action': 'a'.repeat(40) }, body: '[]' }), env)).status).toBe(403);
+    expect(fetch).not.toHaveBeenCalled();
+    expect((await handleSlackPilotRequest(request('/api/slack/install', { method: 'POST',
+      headers: { origin, 'next-action': 'a'.repeat(40) }, body: '{}' }), env)).status).toBe(200);
+    expect((fetch.mock.calls[0]![0] as Request).headers.has('next-action')).toBe(false);
+  });
   it.each(['/vm/pr-2079/api/files', '/api/integrations', '/api/terminal/run', '/api/slack/context',
     '/_next/data/secret', '/api/slack/install/extra', '/sign-injected', '/slack/link/extra'])('denies unrelated path %s', async (path) => {
     clock(); const fetch = vi.spyOn(globalThis, 'fetch');
@@ -54,7 +74,7 @@ describe('bounded legacy Slack pilot sign-in route', () => {
   it('denies a sibling hostname and unauthorised writes before forwarding', async () => {
     clock(); const fetch = vi.spyOn(globalThis, 'fetch');
     expect((await handleSlackPilotRequest(new Request(origin.replace('2079', '2080') + '/sign-in'), env)).status).toBe(404);
-    expect((await handleSlackPilotRequest(request('/sign-in', { method: 'POST', body: '{}' }), env)).status).toBe(405);
+    expect((await handleSlackPilotRequest(request('/sign-in', { method: 'POST', body: '{}' }), env)).status).toBe(403);
     expect((await handleSlackPilotRequest(request('/api/slack/install', { method: 'POST', body: '{}', headers: { origin: 'https://app.matrix-os.com' } }), env)).status).toBe(403);
     expect(fetch).not.toHaveBeenCalled();
   });
