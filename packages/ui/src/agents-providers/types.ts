@@ -59,6 +59,9 @@ export interface AgentsProvidersViewProps {
   onRefresh: () => void;
   onRefreshForConnection?: () => Promise<ProviderSettingsSnapshot | null>;
   onMutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean> | void;
+  workflowClient?: ProviderWorkflowClient;
+  onOpenAuthorizationUrl?: (url: string) => void;
+  onLoadUsageHistory?: (cursor: string | null, signal: AbortSignal) => Promise<import("@matrix-os/contracts").AiCreditHistoryResponse>;
   onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;
   onOpenTerminal: (terminalSessionId: string) => void;
   onOpenBrowser: (authorizationPath: string) => void;
@@ -67,4 +70,14 @@ export interface AgentsProvidersViewProps {
     packageId: "usd_5" | "usd_10" | "usd_25",
     requestId: string,
   ) => Promise<void> | void;
+}
+
+/** Separate capability-negotiated transport; secrets never enter mutation receipts. */
+export interface ProviderWorkflowClient {
+  capabilities(signal: AbortSignal): Promise<import("@matrix-os/contracts").ProviderWorkflowCapability[]>;
+  start(request: import("@matrix-os/contracts").ProviderWorkflowStart, signal: AbortSignal): Promise<import("@matrix-os/contracts").ProviderWorkflow>;
+  get(id: string, signal: AbortSignal): Promise<import("@matrix-os/contracts").ProviderWorkflow>;
+  cancel(id: string, signal: AbortSignal): Promise<import("@matrix-os/contracts").ProviderWorkflow>;
+  submitKey(request: import("@matrix-os/contracts").ProviderWorkflowKey, signal: AbortSignal): Promise<{ verified: true }>;
+  logs(harnessInstanceId: string, signal: AbortSignal): Promise<{ entries: { at: string; event: "started" | "running" | "succeeded" | "failed" | "cancelled" | "expired" }[] }>;
 }

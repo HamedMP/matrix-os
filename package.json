@@ -72,6 +72,11 @@
       }
     },
     "packageExtensions": {
+      "eslint-config-next@16.2.3": {
+        "peerDependencies": {
+          "next": "16.2.6"
+        }
+      },
       "electron-vite@*": {
         "dependencies": {
           "electron": "^41.0.3"

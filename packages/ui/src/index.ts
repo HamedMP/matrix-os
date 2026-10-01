@@ -193,3 +193,5 @@ export { CompanyDriveContextPicker } from "./organization-drive/CompanyDriveCont
 
 export {companyDriveChatReference} from "./organization-drive/context-reference.js";
 export type {DriveChatContextSelection} from "./organization-drive/OrganizationDriveBrowser.js";
+export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
+export type { ProviderWorkflowClient } from "./agents-providers/types.js";
