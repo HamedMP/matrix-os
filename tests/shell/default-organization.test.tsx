@@ -111,6 +111,20 @@ describe("DefaultOrganization", () => {
     expect(clerkState.setActive).not.toHaveBeenCalled();
   });
 
+  it("never re-requests a membership page that failed to load", () => {
+    clerkState.memberships = [member("org_2Znewer")];
+    clerkState.hasNextPage = true;
+    clerkState.isError = true;
+    const { rerender } = render(<DefaultOrganization />);
+    clerkState.isFetching = true;
+    rerender(<DefaultOrganization />);
+    clerkState.isFetching = false;
+    rerender(<DefaultOrganization />);
+
+    expect(clerkState.fetchNext).not.toHaveBeenCalled();
+    expect(clerkState.setActive).not.toHaveBeenCalled();
+  });
+
   it("chooses nothing from a membership list that failed to load", () => {
     clerkState.memberships = [member("org_2Znewer")];
     clerkState.isError = true;

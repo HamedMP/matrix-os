@@ -30,16 +30,19 @@ export function DefaultOrganization() {
   const hasNextPage = userMemberships?.hasNextPage ?? false;
   const isFetching = userMemberships?.isFetching ?? false;
   const fetchNext = userMemberships?.fetchNext;
+  const loadFailed = userMemberships?.isError ?? false;
   // The oldest organization can sit on any page, so choose only from the complete list.
-  const complete = Boolean(userMemberships) && !hasNextPage && !isFetching && !userMemberships?.isError;
+  const complete = Boolean(userMemberships) && !hasNextPage && !isFetching && !loadFailed;
   const memberships = userMemberships?.data;
   const defaultId = complete
     ? pickDefaultOrganizationId(memberships?.map((membership) => membership.organization.id) ?? [])
     : null;
 
+  // A failed page is not retried here: the default waits for the next load (a reload or the
+  // account menu's "More organizations"), so a persistent failure cannot loop requests.
   useEffect(() => {
-    if (needsDefault && hasNextPage && !isFetching) fetchNext?.();
-  }, [fetchNext, hasNextPage, isFetching, needsDefault]);
+    if (needsDefault && hasNextPage && !isFetching && !loadFailed) fetchNext?.();
+  }, [fetchNext, hasNextPage, isFetching, loadFailed, needsDefault]);
 
   useEffect(() => {
     if (!needsDefault || !setActive || !defaultId) return;
