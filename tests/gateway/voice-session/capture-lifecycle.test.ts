@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { VoiceSessionController } from "../../../packages/ui/src/voice-session/controller.js";
+import { enqueueSessionTask, type VoiceSessionRecord } from "../../../packages/gateway/src/voice-session/session-runtime.js";
 import { clientFrame, flush, listeningSession, makeRig, makeSink, PRINCIPAL, resetFrameSeq, type VoiceTestRig } from "./fakes.js";
 
 let rig: VoiceTestRig;
@@ -93,7 +94,7 @@ it.each(["AAAA", "AQAB"])("does not count drained capture %s as backlog", async 
   expect(rig.admission.calls[0].transcript).toBe("Speech after capture");
 });
 
-it("bounds undrained audio while an asynchronous dispatch is stalled", async () => {
+it("drops finalized-turn audio without backpressure while admission is stalled", async () => {
   rig = makeRig({ limits: { maxQueuedAudioMs: 40 } });
   const s = await listeningSession(rig);
   await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "capture.start", turnId: "vturn_stall", mode: "hands_free" }));
@@ -103,13 +104,60 @@ it("bounds undrained audio while an asynchronous dispatch is stalled", async () 
   }));
   rig.adapter.emit({ type: "transcript.final", turnId: "vturn_stall", finalityId: "vfinal_stall", text: "Work" });
   await vi.waitFor(() => expect(release).toBeTypeOf("function"));
-  const frames = [0, 1, 2].map(index => s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+  const frames = Array.from({ length: 300 }, (_, index) => s.handle.receive(clientFrame(s.sessionId, s.epoch, {
     type: "capture.audio", turnId: "vturn_stall", timestampMs: index * 20, data: "AAAA",
   })));
   try {
-    expect(s.sink.frames).toContainEqual(expect.objectContaining({ type: "session.error", code: "audio_backpressure" }));
+    expect(s.sink.frames).toContainEqual(expect.objectContaining({ type: "session.state", state: "thinking" }));
+    expect(s.sink.frames).not.toContainEqual(expect.objectContaining({ type: "session.error", code: "audio_backpressure" }));
+    expect(s.sink.frames).not.toContainEqual(expect.objectContaining({ type: "session.error", code: "session_limit_reached" }));
+    expect(rig.logs.filter(entry => entry.fields.kind === "audio_for_inactive_turn")).toHaveLength(300);
+    expect(rig.logs.filter(entry => entry.event === "voice.session.mutation_overflow")).toHaveLength(0);
   } finally {
     release();
     await Promise.all(frames); await flush(rig, s.sessionId);
   }
+});
+
+it("delivers active capture audio synchronously past a stalled mutation", async () => {
+  const s = await listeningSession(rig);
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.start", turnId: "vturn_active", mode: "hands_free",
+  }));
+  const record = (rig.engine as unknown as { sessions: Map<string, VoiceSessionRecord> }).sessions.get(s.sessionId)!;
+  let release!: () => void;
+  const blocker = enqueueSessionTask(record, () => new Promise<void>(resolve => { release = resolve; }));
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const pendingBefore = record.pendingMutationTasks;
+
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_active", timestampMs: 20, data: "AAAA",
+  }));
+
+  expect(rig.adapter.sessions[0].audios).toContainEqual({ turnId: "vturn_active", timestampMs: 20, data: "AAAA" });
+  expect(record.pendingMutationTasks).toBe(pendingBefore);
+  release();
+  await blocker;
+});
+
+it("keeps audio ordered behind a pending capture start", async () => {
+  const s = await listeningSession(rig);
+  const record = (rig.engine as unknown as { sessions: Map<string, VoiceSessionRecord> }).sessions.get(s.sessionId)!;
+  let release!: () => void;
+  const blocker = enqueueSessionTask(record, () => new Promise<void>(resolve => { release = resolve; }));
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const start = s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.start", turnId: "vturn_pending", mode: "hands_free",
+  }));
+  const audio = s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_pending", timestampMs: 0, data: "AQAB",
+  }));
+  expect(rig.adapter.sessions[0].audios).toEqual([]);
+
+  release();
+  await Promise.all([blocker, start, audio]);
+  expect(rig.adapter.sessions[0].captures).toContainEqual({ turnId: "vturn_pending", mode: "hands_free" });
+  expect(rig.adapter.sessions[0].audios).toEqual([
+    { turnId: "vturn_pending", timestampMs: 0, data: "AQAB" },
+  ]);
 });

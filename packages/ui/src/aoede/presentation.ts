@@ -5,7 +5,7 @@ export type AoedeStatus =
   | "using_tool" | "speaking" | "paused" | "reconnecting" | "ending" | "failed" | "ended";
 
 export const AOEDE_STATUS_LABELS: Record<AoedeStatus, string> = {
-  idle: "Idle", permission: "Permission", connecting: "Connecting",
+  idle: "Ready", permission: "Waiting for microphone", connecting: "Connecting",
   restoring: "Restoring",
   listening: "Listening", thinking: "Thinking", using_tool: "Using tool",
   speaking: "Speaking", paused: "Paused", reconnecting: "Reconnecting",
@@ -33,7 +33,7 @@ const ERROR_COPY: Record<SafeVoiceErrorCode, string> = {
   provider_unavailable: "Voice is temporarily unavailable. Try again later.",
   session_limit_reached: "This voice session reached its limit. Start again to continue this conversation.",
   usage_limit_reached: "Voice usage is unavailable. Review your usage settings before trying again.",
-  audio_backpressure: "Voice input paused because the audio queue filled up. Retry when ready.",
+  audio_backpressure: "Voice input paused to catch up. Resume when ready.",
   chat_unavailable: "This conversation is unavailable. Start a new conversation explicitly to continue.",
   session_conflict: "Another voice session is active. End that session before retrying.",
   unsupported_surface: "Voice is not supported on this surface.",

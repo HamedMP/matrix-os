@@ -94,6 +94,12 @@ export interface VoiceSessionClient {
   subscribe(listener: () => void): () => void;
   getSnapshot(): VoiceSessionClientSnapshot;
   controller(): VoiceSessionController | null;
+  /**
+   * Capture loudness updates (0…1) while the microphone is capturing a turn.
+   * Outside React state on purpose: ~20 updates/s drive a presentation-only
+   * level indicator and must never cause re-renders. Optional for custom clients.
+   */
+  subscribeInputLevel?(listener: (level: number) => void): () => void;
   startVoice(chatId: string): Promise<void>;
   /** Explicit reconnect: required after `existing_consumed`, also used by retry. */
   reconnect(): Promise<void>;

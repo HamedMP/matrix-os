@@ -90,6 +90,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   let detail: CanonicalChatDetailResponse | null = null;
   let source: CanonicalChatEventSource | null = null;
   let media: VoiceSessionClient | null = null;
+  const levelListeners = new Set<(level: number) => void>();
   let unsubscribeMedia: (() => void) | null = null;
   let refreshFlight: Promise<void> | null = null;
   let refreshAgain = false;
@@ -165,10 +166,18 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   };
   const attach = (binding: AoedeBootstrapResponse, epoch: number, reuseMedia = false) => {
     if (!current(epoch)) return;
-    if (!reuseMedia || !media) media = voiceFactory({ baseUrl: options.baseUrl, fetcher: options.fetcher, webSocketFactory: options.webSocketFactory,
-      request: { turnMode: snapshot.turnMode, selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary",
-        ...(snapshot.inputDeviceId ? { inputDeviceId: snapshot.inputDeviceId } : {}),
-        ...(snapshot.outputDeviceId ? { outputDeviceId: snapshot.outputDeviceId } : {}) } });
+    if (!reuseMedia || !media) {
+      const created = voiceFactory({ baseUrl: options.baseUrl, fetcher: options.fetcher, webSocketFactory: options.webSocketFactory,
+        request: { turnMode: snapshot.turnMode, selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary",
+          ...(snapshot.inputDeviceId ? { inputDeviceId: snapshot.inputDeviceId } : {}),
+          ...(snapshot.outputDeviceId ? { outputDeviceId: snapshot.outputDeviceId } : {}) } });
+      media = created;
+      // Presentation-only loudness; fenced to the media client that produced it.
+      created.subscribeInputLevel?.((level) => {
+        if (created !== media || unavailable) return;
+        for (const listener of levelListeners) listener(level);
+      });
+    }
     const captured = media;
     unsubscribeMedia = media.subscribe(() => {
       if (!current(epoch) || captured !== media || unavailable) return;
@@ -209,7 +218,16 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     patch({ status: "connecting", error: null });
     const pending = (async () => {
       try {
-        const binding = await api.bootstrap(captured);
+        let binding: AoedeBootstrapResponse;
+        try { binding = await api.bootstrap(captured); }
+        catch (error: unknown) {
+          // A cold gateway can exceed the first request window while it probes
+          // providers. The request is idempotent by clientRequestId, so one
+          // immediate retry joins that work instead of reporting a failure.
+          if (!(error instanceof Error && error.name === "TimeoutError") || !current(epoch)) throw error;
+          console.warn("[aoede] bootstrap timed out; retrying once");
+          binding = await api.bootstrap(captured);
+        }
         if (!current(epoch)) return;
         const previous = snapshot.binding;
         if (previous && previous.chatId !== binding.chatId) throw new AoedeRequestError(410);
@@ -335,6 +353,13 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   };
   const controller = {
     getSnapshot: () => snapshot,
+    /** Capture loudness (0…1) for the presence orb; bypasses React state. */
+    subscribeInputLevel(listener: (level: number) => void) {
+      if (disposed) return () => {};
+      if (!levelListeners.has(listener) && levelListeners.size >= 32) throw new RangeError("Assistant level subscriber limit");
+      levelListeners.add(listener);
+      return () => { levelListeners.delete(listener); };
+    },
     subscribe(listener: () => void) { if (disposed) return () => {}; if (listeners.length >= 32) throw new RangeError("Assistant subscriber limit"); listeners.push(listener); return () => { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); }; },
     async setSurface(surface: AoedeOwnerOptions["surface"]) {
       if (options.surface === surface || disposed || suspended) return;
@@ -356,9 +381,10 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       if (disposed || suspended || newFlight || unavailable || !snapshot.binding || !media || !snapshot.visible) return;
       if (snapshot.binding.capability.status !== "available" || !snapshot.binding.capability.turnModes.includes(snapshot.turnMode)) return;
       if (!["idle", "ended", "permission", "failed"].includes(snapshot.status)) return;
-      if (snapshot.status !== "permission") { patch({ status: "permission", error: null }); return; }
+      // One gesture: Start requests the microphone directly. The browser's own
+      // permission prompt is the consent step; no interstitial confirmation.
       const epoch = generation; const mediaEpoch = ++mediaGeneration; const captured = media; const chatId = snapshot.binding.chatId;
-      patch({ status: "connecting" });
+      patch({ status: "connecting", error: null });
       try {
         // A vanished explicit device requires recovery; never fall back to the
         // system default or start capture without a new user choice.
@@ -404,7 +430,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       if (["listening", "speaking", "thinking", "using_tool", "paused", "restoring", "ending"].includes(snapshot.status)) return;
       providerCatalog = null; // refetch the catalog on the next listProviders
       await bootstrap(request?.intent ?? "continue");
-      if (!unavailable && snapshot.binding?.capability.status !== "unavailable" && snapshot.status !== "failed") patch({ status: "permission", error: null, microphoneActive: false });
+      if (!unavailable && snapshot.binding?.capability.status !== "unavailable" && snapshot.status !== "failed") patch({ status: "idle", error: null, microphoneActive: false });
     },
     pause() { media?.controller()?.pause(); }, resume() { if (!unavailable) media?.controller()?.resume(); },
     stopSpeaking() { media?.controller()?.stopSpeaking(); },
@@ -558,7 +584,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       source?.dispose(); source = null; unsubscribeMedia?.(); unsubscribeMedia = null;
       const captured = media; media = null;
       void captured?.end().catch(error => console.warn("[aoede] cleanup failed", error instanceof Error ? error.name : "UnknownError")).finally(() => captured.dispose());
-      listeners.length = 0; actions.length = 0; invoker = undefined;
+      listeners.length = 0; levelListeners.clear(); actions.length = 0; invoker = undefined;
       snapshot = { ...snapshot, visible: false, microphoneActive: false, status: "ended" };
     },
   };

@@ -1598,6 +1598,77 @@ describe("canonical Chat Provider catalog", () => {
     expect(openclaw.setupActions.some((action) => action.id === "openclaw_install")).toBe(false);
   });
 
+  it("shares one in-flight read and reuses a clean result until the window closes", async () => {
+    let now = Date.parse("2026-08-30T10:00:00.000Z");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const listProviders = vi.fn(async () => { await gate; return [codingProvider()]; });
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate: vi.fn() },
+      agentRuntimeSource: runtimeSource(),
+      now: () => new Date(now),
+      cacheTtlMs: 10_000,
+    });
+    const other: RequestPrincipal = { userId: "owner_2", source: "jwt" };
+
+    const first = service.getCatalog(principal);
+    const second = service.getCatalog(principal);
+    const elsewhere = service.getCatalog(other);
+    release();
+    expect(await first).toBe(await second);
+    expect(await elsewhere).not.toBe(await first);
+    // Two owners → two reads; the second owner never joins the first owner's read.
+    expect(listProviders).toHaveBeenCalledTimes(2);
+
+    now += 9_999;
+    expect(await service.getCatalog(principal)).toBe(await first);
+    expect(listProviders).toHaveBeenCalledTimes(2);
+
+    now += 1;
+    await service.getCatalog(principal);
+    expect(listProviders).toHaveBeenCalledTimes(3);
+  });
+
+  it("refresh re-reads inside the reuse window and replaces the remembered result", async () => {
+    const providers = [codingProvider({ authStatus: "unauthenticated", availability: "unavailable" })];
+    const listProviders = vi.fn(async () => providers.slice());
+    const invalidate = vi.fn();
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate },
+      agentRuntimeSource: runtimeSource(),
+      now: () => new Date("2026-08-30T10:00:00.000Z"),
+      cacheTtlMs: 10_000,
+    });
+    const before = await service.getCatalog(principal);
+    expect(before.instances.find(instance => instance.driverKind === "codex")?.availability).toBe("unavailable");
+
+    providers[0] = codingProvider();
+    const refreshed = await service.refresh(principal);
+    expect(invalidate).toHaveBeenCalledWith(principal.userId);
+    expect(refreshed.instances.find(instance => instance.driverKind === "codex")?.availability).toBe("available");
+    // Subsequent plain reads see the refreshed catalog, not the pre-refresh one.
+    expect(await service.getCatalog(principal)).toBe(refreshed);
+    expect(listProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not remember a read whose inventory source failed", async () => {
+    let fail = true;
+    const listProviders = vi.fn(async () => { if (fail) throw new Error("probe lost"); return [codingProvider()]; });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate: vi.fn() },
+      agentRuntimeSource: runtimeSource(),
+      now: () => new Date("2026-08-30T10:00:00.000Z"),
+      cacheTtlMs: 10_000,
+    });
+    const codex = (catalog: CanonicalProviderCatalog) => catalog.instances.find(instance => instance.driverKind === "codex");
+    expect(codex(await service.getCatalog(principal))?.availability).not.toBe("available");
+    fail = false;
+    expect(codex(await service.getCatalog(principal))?.availability).toBe("available");
+    expect(listProviders).toHaveBeenCalledTimes(2);
+    warning.mockRestore();
+  });
+
   it.each(["timeout", "empty"])("does not invent a runnable Codex default after live discovery %s", async failure => {
     let recovered = false;
     const service = createChatProviderCatalogService({

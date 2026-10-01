@@ -79,6 +79,17 @@ describe("gateway Chat runtime catalog composition", () => {
     }
   });
 
+  it("builds a reusing readiness view over the same sources as the live catalog", () => {
+    compose("/runtime/codex");
+    expect(mocks.catalog).toHaveBeenCalledTimes(2);
+    const [live, readiness] = mocks.catalog.mock.calls.map((call) => call[0] as CatalogOptions);
+    expect(live.cacheTtlMs).toBeUndefined();
+    expect(readiness.cacheTtlMs).toBe(15_000);
+    // One Claude source instance, so a readiness read never re-resolves owner credentials on its own.
+    expect(readiness.codingModelCatalogSource).toBe(live.codingModelCatalogSource);
+    expect(readiness.invalidateCodingModelCatalog).toBe(live.invalidateCodingModelCatalog);
+  });
+
   it("returns owner-scoped Claude metadata without querying fallback sources", async () => {
     mocks.claude.mockResolvedValue(projection);
     const { source } = compose("/runtime/codex");

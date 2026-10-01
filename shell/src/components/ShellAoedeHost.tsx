@@ -270,6 +270,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
             capability={snapshot.binding?.capability}
             canCancel={snapshot.canonical.canCancel}
             error={snapshot.error ?? undefined}
+            subscribeInputLevel={controller.subscribeInputLevel}
             commands={{
               start: () => void controller.start(),
               dismiss: () => void controller.dismiss(),

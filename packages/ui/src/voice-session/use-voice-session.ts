@@ -148,6 +148,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     ?? ((timer: unknown) => globalThis.clearTimeout(timer as ReturnType<typeof setTimeout>));
 
   const listeners = new Set<() => void>();
+  const levelListeners = new Set<(level: number) => void>();
   let controller: VoiceSessionController | null = null;
   let unsubscribeController: (() => void) | null = null;
   let media: VoiceMediaSession | null = null;
@@ -436,6 +437,10 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
         notice = voiceErrorForCode("audio_backpressure");
         emit();
       },
+      onInputLevel: (level) => {
+        if (!live() || levelListeners.size === 0) return;
+        for (const listener of levelListeners) listener(level);
+      },
       onDeviceChanged: (change) => {
         if (!live()) return;
         transport.current()?.send({ type: "device.changed", ...change });
@@ -710,6 +715,16 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     },
     getSnapshot: () => snapshot,
     controller: () => controller,
+    subscribeInputLevel(listener) {
+      if (disposed) return () => undefined;
+      if (!levelListeners.has(listener) && levelListeners.size >= MAX_STATE_LISTENERS) {
+        throw new RangeError(`Voice session client supports at most ${MAX_STATE_LISTENERS} level listeners`);
+      }
+      levelListeners.add(listener);
+      return () => {
+        levelListeners.delete(listener);
+      };
+    },
     startVoice,
     listDevices: () => enumerateAudioDevices(),
     async setInputDevice(deviceId) {
@@ -843,6 +858,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       controller?.dispose();
       controller = null;
       listeners.clear();
+      levelListeners.clear();
     },
   };
 }

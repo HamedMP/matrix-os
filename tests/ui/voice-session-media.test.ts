@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  captureInputLevel,
   createWebVoiceMediaSession,
   decodeBase64,
   encodeBase64,
@@ -227,6 +228,37 @@ describe("createWebVoiceMediaSession", () => {
     emitSamples(silence(CHUNK_SAMPLES + 40, 0.25));
     emitSamples(silence(CHUNK_SAMPLES - 40, 0.25));
     expect(chunks).toHaveLength(3);
+  });
+
+  it("reports capture loudness as clamped RMS, throttled to one update per 50 ms, only while capturing", async () => {
+    const levels: number[] = [];
+    const harness = mediaHarness();
+    harness.callbacks.onInputLevel = (level) => levels.push(level);
+    await harness.session.prepare();
+    // Not capturing: samples carry no level.
+    harness.emitSamples(silence(CHUNK_SAMPLES, 0.5));
+    expect(levels).toEqual([]);
+    expect(harness.session.startCapture({ turnId: "vturn_level" })).toBe(true);
+    harness.emitSamples(silence(CHUNK_SAMPLES, 0.5));
+    expect(levels).toEqual([0.5]); // RMS of a constant 0.5 signal is 0.5
+    harness.setNow(5_020);
+    harness.emitSamples(silence(CHUNK_SAMPLES, 0.1)); // 20 ms later: throttled
+    expect(levels).toEqual([0.5]);
+    harness.setNow(5_050);
+    harness.emitSamples(silence(CHUNK_SAMPLES, 0.1));
+    expect(levels).toHaveLength(2);
+    expect(levels[1]).toBeCloseTo(0.1, 6);
+    harness.session.stopCapture();
+    harness.setNow(5_200);
+    harness.emitSamples(silence(CHUNK_SAMPLES, 0.5));
+    expect(levels).toHaveLength(2);
+  });
+
+  it("clamps the RMS level and never yields NaN", () => {
+    expect(captureInputLevel(new Float32Array(0))).toBe(0);
+    expect(captureInputLevel(Float32Array.from([2, -2]))).toBe(1);
+    expect(captureInputLevel(Float32Array.from([0.3, -0.4]))).toBeCloseTo(Math.sqrt((0.09 + 0.16) / 2), 6);
+    expect(captureInputLevel(Float32Array.from([Number.NaN]))).toBe(0);
   });
 
   it("resamples the browser capture rate to the 16kHz wire format it advertises", async () => {

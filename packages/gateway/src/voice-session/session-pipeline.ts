@@ -570,6 +570,7 @@ export class VoiceSessionPipeline {
       finalityId: event.finalityId,
       text: event.text,
     });
+    if (s.state === "listening") this.runtime.setState("thinking");
     this.armStagingTimer();
     await this.drainAdmissionQueue();
   }

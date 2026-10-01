@@ -44,6 +44,8 @@ type SystemDriverKind = typeof SYSTEM_DRIVERS[number];
 const CODING_DRIVERS = ["codex", "claude_code", "opencode", "pi"] as const;
 const MAX_EFFORTS = 4;
 const MAX_SKILLS = 64;
+const MAX_CATALOG_CACHE_TTL_MS = 60_000;
+const MAX_CATALOG_CACHE_ENTRIES = 64;
 const CODING_SETUP: Record<CodingDriverKind, {
   command: string;
   installPackage: string;
@@ -510,9 +512,44 @@ export function createChatProviderCatalogService(options: {
     principal: RequestPrincipal,
   ) => Promise<CodingModelCatalogProjection | null>;
   invalidateCodingModelCatalog?: (principal: RequestPrincipal) => void;
+  /**
+   * Per-owner reuse window for clean reads. Off by default: a plain read must
+   * reflect a changed credential context at once. Readers that only need
+   * route availability (voice readiness) opt in; one read fans out to every
+   * provider CLI and runtime probe, ~10 s on a slow host, and concurrent
+   * opted-in readers share a single in-flight read.
+   */
+  cacheTtlMs?: number;
 }): ChatProviderCatalogService {
+  const nowMs = () => (options.now?.() ?? new Date()).getTime();
+  const cacheTtlMs = Math.min(MAX_CATALOG_CACHE_TTL_MS, Math.max(0, Math.trunc(options.cacheTtlMs ?? 0)));
+  const cached = new Map<string, { catalog: CanonicalProviderCatalog; expiresAt: number }>();
+  const inFlight = new Map<string, Promise<CanonicalProviderCatalog>>();
+
+  // Only clean successful reads are reused; a failed or degraded read leaves
+  // nothing behind, so the next reader retries immediately.
+  function remember(principal: RequestPrincipal): Promise<CanonicalProviderCatalog> {
+    if (cacheTtlMs === 0) return readCatalog(principal).then(({ catalog }) => catalog);
+    const ownerId = principal.userId;
+    const read = readCatalog(principal).then(({ catalog, degraded }) => {
+      cached.delete(ownerId);
+      if (degraded) return catalog;
+      if (cached.size >= MAX_CATALOG_CACHE_ENTRIES) {
+        const oldest = cached.keys().next().value;
+        if (oldest !== undefined) cached.delete(oldest);
+      }
+      cached.set(ownerId, { catalog, expiresAt: nowMs() + cacheTtlMs });
+      return catalog;
+    }).finally(() => {
+      if (inFlight.get(ownerId) === read) inFlight.delete(ownerId);
+    });
+    inFlight.set(ownerId, read);
+    return read;
+  }
+
   const service: ChatProviderCatalogService = {
     async refresh(principal) {
+      cached.delete(principal.userId);
       options.invalidateCodingModelCatalog?.(principal);
       options.codingProviders.invalidate(principal.userId);
       options.agentRuntimeSource.invalidate?.();
@@ -526,150 +563,169 @@ export function createChatProviderCatalogService(options: {
           console.warn("[chat-providers] AI Provider inventory refresh unavailable");
         }
       }
-      return service.getCatalog(principal);
+      // A refresh never joins a read that started before the invalidation above.
+      return remember(principal);
     },
-    async getCatalog(principal) {
-      const systemRuntimeReads = Promise.all(SYSTEM_DRIVERS.map(async (kind) => {
-        const source = options.systemRuntimeSources?.[kind];
-        if (!source) return [kind, null] as const;
-        try {
-          return [kind, await readRuntimeSnapshot(source, options.runtimeTimeoutMs)] as const;
-        } catch (_error) {
-          console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
-          return [kind, null] as const;
-        }
-      }));
-      const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
-        options.codingProviders.listProviders(principal),
-        readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs),
-        options.aiProviderSource?.getSnapshot({ refresh: false }) ?? Promise.resolve(undefined),
-        options.harnessSettingsSource?.getSnapshot() ?? Promise.resolve(undefined),
-        systemRuntimeReads,
-      ]);
-      if (codingResult.status === "rejected") {
-        console.warn("[chat-providers] Coding Provider inventory unavailable");
-      }
-      if (runtimeResult.status === "rejected") {
-        console.warn("[chat-providers] System Provider inventory unavailable");
-      }
-      if (aiProviderResult.status === "rejected") {
-        console.warn("[chat-providers] AI Provider inventory unavailable");
-      }
-      if (settingsResult.status === "rejected") {
-        console.warn("[chat-providers] Harness settings unavailable");
-        if (settingsResult.reason instanceof ProviderSettingsStoreError
-          && settingsResult.reason.status === 503) {
-          throw new ProviderCatalogUnavailableError(true);
-        }
-      }
-
-      const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
-      const skills = projectSkills(options.skillsSource?.() ?? []);
-      const seenCodingDrivers: CanonicalProviderDriverKind[] = [];
-      const codingInstances: InstanceDraft[] = [];
-      // The registry bounds provider count. Independent CLI timeouts must not add
-      // together; Promise.all preserves registry order even if probes finish out of order.
-      const projectedInstances = await Promise.all(coding.map(async (provider) => {
-        let projectedCatalog: CodingModelCatalogProjection | null = null;
-        let discoveryFailed = false;
-        if (options.codingModelCatalogSource) {
-          try {
-            projectedCatalog = await options.codingModelCatalogSource(provider, principal);
-            discoveryFailed = provider.kind === "codex" && provider.availability === "available" && projectedCatalog === null;
-          } catch (_error) {
-            console.warn("[chat-providers] Coding model catalog unavailable");
-            discoveryFailed = true;
-          }
-        }
-        const instance = codingInstance(provider, skills, projectedCatalog);
-        return instance && discoveryFailed ? unavailableInstance(instance, "runtime_unavailable") : instance;
-      }));
-      for (const instance of projectedInstances) {
-        if (instance === null) continue;
-        if (seenCodingDrivers.includes(instance.driverKind)) {
-          throw new ProviderCatalogUnavailableError(false);
-        }
-        seenCodingDrivers.push(instance.driverKind);
-        codingInstances.push(instance);
-      }
-
-      const snapshot = runtimeResult.status === "fulfilled" ? runtimeResult.value : undefined;
-      const systemRuntimeSnapshots = new Map<SystemDriverKind, AgentRuntimeSettingsSnapshot>(
-        systemRuntimeResult.status === "fulfilled"
-          ? systemRuntimeResult.value.flatMap(([kind, value]) => value === null ? [] : [[kind, value]])
-          : [],
-      );
-      const systemInstances = SYSTEM_DRIVERS.map((kind) => {
-        const nativeSnapshot = systemRuntimeSnapshots.get(kind);
-        const instanceSnapshot = nativeSnapshot ?? snapshot;
-        return systemInstance({
-          kind,
-          runtime: instanceSnapshot?.runtime.options.find((runtime) => runtime.id === kind),
-          providers: instanceSnapshot?.providers ?? [],
-          selectedProvider: instanceSnapshot?.messaging.runtime === kind
-            ? instanceSnapshot.messaging.provider
-            : null,
-          selectedModel: instanceSnapshot?.messaging.runtime === kind
-            ? instanceSnapshot.messaging.model
-            : null,
-          configuredModel: configuredSystemModel(settingsResult.status === "fulfilled" ? settingsResult.value ?? null : null, kind),
-          messagingConfigured: instanceSnapshot?.messaging.runtime === kind
-            && instanceSnapshot.messaging.configured,
-          skills,
-        });
-      });
-      const completeCodingInstances = CODING_DRIVERS.map((kind) =>
-        codingInstances.find((instance) => instance.driverKind === kind)
-          ?? unavailableCodingInstance(kind, skills, codingResult.status === "fulfilled")
-      );
-      const aiSnapshot = aiProviderResult.status === "fulfilled"
-        ? aiProviderResult.value
-        : undefined;
-      const executableDriverKinds = options.executableDriverKinds;
-      const instances = applyHarnessSettings({
-        systemRepairAction,
-        now: options.now?.() ?? new Date(),
-        instances: [
-        ...managedChatInstances(aiSnapshot, skills),
-        ...systemInstances,
-        ...completeCodingInstances,
-        ],
-        settings: settingsResult.status === "fulfilled" ? settingsResult.value ?? null : null,
-        settingsRequired: options.harnessSettingsSource !== undefined,
-        settingsAvailable: settingsResult.status === "fulfilled",
-        executableDriverKinds,
-        credentialedDriverKinds: options.credentialedDriverKinds,
-        aiSnapshot,
-      });
-      const driverKinds: CanonicalProviderDriverKind[] = [
-        ...(instances.some((instance) => instance.driverKind === "kernel") ? ["kernel" as const] : []),
-        ...SYSTEM_DRIVERS,
-        ...CODING_DRIVERS,
-      ];
-      const drivers = driverKinds.map((kind) => ({
-        kind,
-        displayName: driverDisplayName(kind),
-        adapterVersion: ADAPTER_VERSION,
-        capabilityClass: kind === "kernel" || SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
-          ? "system_agent" as const
-          : "coding_agent" as const,
-      }));
-      const revision = catalogRevision(drivers, instances);
-      const parsed = CanonicalProviderCatalogSchema.safeParse({
-        revision,
-        drivers,
-        instances: instances.map((instance) => ({ ...instance, catalogRevision: revision })),
-      });
-      if (!parsed.success) {
-        const safeIssuePaths = parsed.error.issues.slice(0, 16).map((issue) => (
-          `${issue.path.join(".") || "catalog"}:${issue.code}`
-        ));
-        console.warn(`[chat-providers] Canonical Provider projection failed validation: ${safeIssuePaths.join(",")}`);
-        throw new ProviderCatalogUnavailableError(false);
-      }
-      return parsed.data;
+    getCatalog(principal) {
+      const entry = cached.get(principal.userId);
+      if (entry && entry.expiresAt > nowMs()) return Promise.resolve(entry.catalog);
+      return inFlight.get(principal.userId) ?? remember(principal);
     },
   };
+
+  /**
+   * One full read. `degraded` marks a result shaped by a transient source
+   * failure (inventory rejection, live model discovery timeout); such a
+   * result is still served but never reused, so the next read retries at once.
+   */
+  async function readCatalog(principal: RequestPrincipal): Promise<{ catalog: CanonicalProviderCatalog; degraded: boolean }> {
+    let degraded = false;
+    const systemRuntimeReads = Promise.all(SYSTEM_DRIVERS.map(async (kind) => {
+      const source = options.systemRuntimeSources?.[kind];
+      if (!source) return [kind, null] as const;
+      try {
+        return [kind, await readRuntimeSnapshot(source, options.runtimeTimeoutMs)] as const;
+      } catch (_error) {
+        console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
+        degraded = true;
+        return [kind, null] as const;
+      }
+    }));
+    const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
+      options.codingProviders.listProviders(principal),
+      readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs),
+      options.aiProviderSource?.getSnapshot({ refresh: false }) ?? Promise.resolve(undefined),
+      options.harnessSettingsSource?.getSnapshot() ?? Promise.resolve(undefined),
+      systemRuntimeReads,
+    ]);
+    if (codingResult.status === "rejected") {
+      console.warn("[chat-providers] Coding Provider inventory unavailable");
+      degraded = true;
+    }
+    if (runtimeResult.status === "rejected") {
+      console.warn("[chat-providers] System Provider inventory unavailable");
+      degraded = true;
+    }
+    if (aiProviderResult.status === "rejected") {
+      console.warn("[chat-providers] AI Provider inventory unavailable");
+      degraded = true;
+    }
+    if (settingsResult.status === "rejected") {
+      console.warn("[chat-providers] Harness settings unavailable");
+      degraded = true;
+      if (settingsResult.reason instanceof ProviderSettingsStoreError
+        && settingsResult.reason.status === 503) {
+        throw new ProviderCatalogUnavailableError(true);
+      }
+    }
+
+    const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
+    const skills = projectSkills(options.skillsSource?.() ?? []);
+    const seenCodingDrivers: CanonicalProviderDriverKind[] = [];
+    const codingInstances: InstanceDraft[] = [];
+    // The registry bounds provider count. Independent CLI timeouts must not add
+    // together; Promise.all preserves registry order even if probes finish out of order.
+    const projectedInstances = await Promise.all(coding.map(async (provider) => {
+      let projectedCatalog: CodingModelCatalogProjection | null = null;
+      let discoveryFailed = false;
+      if (options.codingModelCatalogSource) {
+        try {
+          projectedCatalog = await options.codingModelCatalogSource(provider, principal);
+          discoveryFailed = provider.kind === "codex" && provider.availability === "available" && projectedCatalog === null;
+        } catch (_error) {
+          console.warn("[chat-providers] Coding model catalog unavailable");
+          discoveryFailed = true;
+        }
+      }
+      if (discoveryFailed) degraded = true;
+      const instance = codingInstance(provider, skills, projectedCatalog);
+      return instance && discoveryFailed ? unavailableInstance(instance, "runtime_unavailable") : instance;
+    }));
+    for (const instance of projectedInstances) {
+      if (instance === null) continue;
+      if (seenCodingDrivers.includes(instance.driverKind)) {
+        throw new ProviderCatalogUnavailableError(false);
+      }
+      seenCodingDrivers.push(instance.driverKind);
+      codingInstances.push(instance);
+    }
+
+    const snapshot = runtimeResult.status === "fulfilled" ? runtimeResult.value : undefined;
+    const systemRuntimeSnapshots = new Map<SystemDriverKind, AgentRuntimeSettingsSnapshot>(
+      systemRuntimeResult.status === "fulfilled"
+        ? systemRuntimeResult.value.flatMap(([kind, value]) => value === null ? [] : [[kind, value]])
+        : [],
+    );
+    const systemInstances = SYSTEM_DRIVERS.map((kind) => {
+      const nativeSnapshot = systemRuntimeSnapshots.get(kind);
+      const instanceSnapshot = nativeSnapshot ?? snapshot;
+      return systemInstance({
+        kind,
+        runtime: instanceSnapshot?.runtime.options.find((runtime) => runtime.id === kind),
+        providers: instanceSnapshot?.providers ?? [],
+        selectedProvider: instanceSnapshot?.messaging.runtime === kind
+          ? instanceSnapshot.messaging.provider
+          : null,
+        selectedModel: instanceSnapshot?.messaging.runtime === kind
+          ? instanceSnapshot.messaging.model
+          : null,
+        configuredModel: configuredSystemModel(settingsResult.status === "fulfilled" ? settingsResult.value ?? null : null, kind),
+        messagingConfigured: instanceSnapshot?.messaging.runtime === kind
+          && instanceSnapshot.messaging.configured,
+        skills,
+      });
+    });
+    const completeCodingInstances = CODING_DRIVERS.map((kind) =>
+      codingInstances.find((instance) => instance.driverKind === kind)
+        ?? unavailableCodingInstance(kind, skills, codingResult.status === "fulfilled")
+    );
+    const aiSnapshot = aiProviderResult.status === "fulfilled"
+      ? aiProviderResult.value
+      : undefined;
+    const executableDriverKinds = options.executableDriverKinds;
+    const instances = applyHarnessSettings({
+      systemRepairAction,
+      now: options.now?.() ?? new Date(),
+      instances: [
+      ...managedChatInstances(aiSnapshot, skills),
+      ...systemInstances,
+      ...completeCodingInstances,
+      ],
+      settings: settingsResult.status === "fulfilled" ? settingsResult.value ?? null : null,
+      settingsRequired: options.harnessSettingsSource !== undefined,
+      settingsAvailable: settingsResult.status === "fulfilled",
+      executableDriverKinds,
+      credentialedDriverKinds: options.credentialedDriverKinds,
+      aiSnapshot,
+    });
+    const driverKinds: CanonicalProviderDriverKind[] = [
+      ...(instances.some((instance) => instance.driverKind === "kernel") ? ["kernel" as const] : []),
+      ...SYSTEM_DRIVERS,
+      ...CODING_DRIVERS,
+    ];
+    const drivers = driverKinds.map((kind) => ({
+      kind,
+      displayName: driverDisplayName(kind),
+      adapterVersion: ADAPTER_VERSION,
+      capabilityClass: kind === "kernel" || SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
+        ? "system_agent" as const
+        : "coding_agent" as const,
+    }));
+    const revision = catalogRevision(drivers, instances);
+    const parsed = CanonicalProviderCatalogSchema.safeParse({
+      revision,
+      drivers,
+      instances: instances.map((instance) => ({ ...instance, catalogRevision: revision })),
+    });
+    if (!parsed.success) {
+      const safeIssuePaths = parsed.error.issues.slice(0, 16).map((issue) => (
+        `${issue.path.join(".") || "catalog"}:${issue.code}`
+      ));
+      console.warn(`[chat-providers] Canonical Provider projection failed validation: ${safeIssuePaths.join(",")}`);
+      throw new ProviderCatalogUnavailableError(false);
+    }
+    return { catalog: parsed.data, degraded };
+  }
   return service;
 }
 

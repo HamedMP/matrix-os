@@ -20,7 +20,7 @@ const capability: VoiceCapability = {
   supportsInputSelection: false, supportsOutputSelection: false,
 };
 const labels = {
-  idle: "Idle", permission: "Permission", connecting: "Connecting", restoring: "Restoring",
+  idle: "Ready", permission: "Waiting for microphone", connecting: "Connecting", restoring: "Restoring",
   listening: "Listening", thinking: "Thinking", using_tool: "Using tool", speaking: "Speaking",
   paused: "Paused", reconnecting: "Reconnecting", ending: "Ending", failed: "Failed", ended: "Ended",
 } as const;
@@ -52,7 +52,7 @@ describe("AoedePanel standalone presentation", () => {
     expect(screen.getByRole("heading", { name: "Aoede" })).toBeVisible();
     expect(screen.getByText("Workspace: Observatory")).toBeVisible();
     expect(screen.getByText("Microphone off")).toBeVisible();
-    expect(screen.getByText(/Allow microphone requests access/)).toBeVisible();
+    expect(screen.getByText(/Start turns on the microphone/)).toBeVisible();
     expect(container.querySelector("textarea, input, [contenteditable], [role='log'], [role='dialog'], [aria-modal]")).toBeNull();
     expect(screen.queryByText(/Continue in Chat|Voice in Chat/)).not.toBeInTheDocument();
     expect(commands.start).not.toHaveBeenCalled();
@@ -65,25 +65,19 @@ describe("AoedePanel standalone presentation", () => {
     expect(screen.getByRole("status")).toHaveTextContent(label);
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
     expect(screen.getByRole("status")).toHaveAttribute("aria-atomic", "true");
-    expect(screen.getByTestId("aoede-rings")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("aoede-orb")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText("Microphone off")).toBeVisible();
   });
 
-  it("requires a separate Allow microphone gesture after the permission rationale renders", () => {
+  it("starts with one gesture: no interstitial confirmation and no second button", () => {
     const view = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Start" }));
-    expect(view.commands.start).toHaveBeenCalledOnce();
-    view.commands.start.mockClear();
-    view.rerender(<AoedePanel {...view.props} status="permission" />);
-    const confirm = screen.getByRole("button", { name: "Allow microphone" });
-    expect(confirm).toBeEnabled();
-    expect(confirm).toHaveAccessibleDescription(/Allow microphone requests access/);
-    expect(screen.getByText("Microphone off")).toBeVisible();
-    expect(view.commands.start).not.toHaveBeenCalled();
-    fireEvent.click(confirm);
+    const start = screen.getByRole("button", { name: "Start" });
+    expect(start).toHaveAccessibleDescription(/Start turns on the microphone/);
+    fireEvent.click(start);
     expect(view.commands.start).toHaveBeenCalledOnce();
     view.rerender(<AoedePanel {...view.props} status="connecting" />);
-    expect(screen.queryByRole("button", { name: "Allow microphone" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Allow microphone|Start/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Start turns on the microphone/)).not.toBeInTheDocument();
     expect(view.commands.start).toHaveBeenCalledOnce();
   });
 
@@ -91,13 +85,32 @@ describe("AoedePanel standalone presentation", () => {
     undefined,
     { ...capability, status: "unavailable" as const },
     { ...capability, turnModes: [] },
-  ])("does not confirm permission with unavailable capability or turn mode (%#)", (readiness) => {
-    const view = setup({ status: "permission", capability: readiness });
-    const confirm = screen.getByRole("button", { name: "Allow microphone" });
-    expect(confirm).toBeDisabled();
+  ])("does not start with unavailable capability or turn mode (%#)", (readiness) => {
+    const view = setup({ status: "idle", capability: readiness });
+    const start = screen.getByRole("button", { name: "Start" });
+    expect(start).toBeDisabled();
+    fireEvent.click(start);
     expect(view.commands.start).not.toHaveBeenCalled();
-    fireEvent.click(confirm);
-    expect(view.commands.start).not.toHaveBeenCalled();
+  });
+
+  it("drives the orb level from the capture feed only while listening with the microphone on, without re-rendering", () => {
+    const listeners = new Set<(level: number) => void>();
+    const unsubscribe = vi.fn(() => undefined);
+    const subscribeInputLevel = vi.fn((listener: (level: number) => void) => { listeners.add(listener); return () => { listeners.delete(listener); unsubscribe(); }; });
+    const view = setup({ status: "listening", microphoneActive: false, subscribeInputLevel });
+    expect(subscribeInputLevel).not.toHaveBeenCalled();
+    view.rerender(<AoedePanel {...view.props} microphoneActive subscribeInputLevel={subscribeInputLevel} />);
+    expect(subscribeInputLevel).toHaveBeenCalledOnce();
+    const orb = screen.getByTestId("aoede-orb");
+    for (const listener of listeners) listener(0.09);
+    // sqrt(0.09) * 1.8 = 0.54: a quiet voice is clearly visible, not a sliver.
+    expect(orb.style.getPropertyValue("--aoede-level")).toBe("0.540");
+    for (const listener of listeners) listener(0);
+    // Release is soft: one silent frame does not snap the orb shut.
+    expect(Number(orb.style.getPropertyValue("--aoede-level"))).toBeCloseTo(0.389, 2);
+    view.rerender(<AoedePanel {...view.props} status="thinking" microphoneActive={false} subscribeInputLevel={subscribeInputLevel} />);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(orb.style.getPropertyValue("--aoede-level")).toBe("0");
   });
 
   it("takes microphone truth independently of status and announces scope", () => {

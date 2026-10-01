@@ -158,7 +158,7 @@ describe("Shell Aoede host", () => {
     await act(async () => {
       fireEvent.click(launcher);
     });
-    await waitFor(() => expect(screen.getByText("Idle")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Ready")).toBeInTheDocument());
     expect(screen.getByText("Microphone off")).toBeInTheDocument();
     expect(screen.getByText("Workspace")).toBeInTheDocument();
     expect(launcher).toHaveAttribute("aria-expanded", "true");
@@ -197,12 +197,11 @@ describe("Shell Aoede host", () => {
     });
     await waitFor(() => expect(screen.getByTestId("aoede-host")).toBeInTheDocument());
     expect(h.media.startVoice).not.toHaveBeenCalled();
-    // Media still requires the explicit two-step Start gesture.
+    // Media starts only from the single explicit Start gesture.
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
     });
-    expect(screen.getByText("Permission")).toBeInTheDocument();
-    expect(h.media.startVoice).not.toHaveBeenCalled();
+    expect(h.media.startVoice).toHaveBeenCalledTimes(1);
   });
 
   it("bootstraps the owner workspace scope with no active chat or project", async () => {

@@ -263,6 +263,8 @@ export function boundedInsert<K, V>(
 
 export class VoiceSessionRuntime {
   readonly pipeline: VoiceSessionPipeline;
+  /** Capture starts admitted to the bounded mutation queue but not dispatched yet. */
+  private readonly pendingCaptureStarts = new Set<string>();
 
   constructor(
     readonly session: VoiceSessionRecord,
@@ -300,6 +302,7 @@ export class VoiceSessionRuntime {
       });
       prior.closed = true;
       prior.sink.close(1000, "Superseded");
+      this.pendingCaptureStarts.clear();
     }
     s.transport = binding;
     if (s.state === "connecting") {
@@ -378,6 +381,7 @@ export class VoiceSessionRuntime {
     if (s.transport !== binding) return;
     binding.closed = true;
     s.transport = null;
+    this.pendingCaptureStarts.clear();
     this.stopCapture();
     if (ACTIVE_SESSION_STATES.has(s.state) && s.state !== "connecting" && s.state !== "reconnecting") {
       s.restorableState = this.resumeTarget();
@@ -398,6 +402,7 @@ export class VoiceSessionRuntime {
     transport.closed = true;
     transport.sink.close(1000, reason);
     s.transport = null;
+    this.pendingCaptureStarts.clear();
     this.stopCapture();
   }
 
@@ -424,6 +429,22 @@ export class VoiceSessionRuntime {
       return Promise.resolve();
     }
     binding.lastInboundSequence = frame.sequence;
+
+    if (frame.type === "capture.audio") {
+      const turn = s.turns.get(frame.turnId);
+      const activeCapture = s.activeCaptureTurnId === frame.turnId && turn?.phase === "capturing";
+      const terminal = s.state === "ending" || s.state === "ended" || s.state === "failed";
+      if (activeCapture && !terminal) {
+        this.host.touch(s);
+        this.pipeline.onCaptureAudio(frame);
+        return Promise.resolve();
+      }
+      if (!this.pendingCaptureStarts.has(frame.turnId)) {
+        this.countStale("audio_for_inactive_turn");
+        return Promise.resolve();
+      }
+    }
+
     const bytes = new TextEncoder().encode(JSON.stringify(frame)).byteLength;
     const audioMs = frame.type === "capture.audio" ? s.audio?.frameDurationMs ?? 20 : 0;
     if (audioMs && s.queuedAudioMs + audioMs > this.host.limits.maxQueuedAudioMs) {
@@ -435,7 +456,9 @@ export class VoiceSessionRuntime {
       return Promise.resolve();
     }
     s.queuedAudioMs += audioMs;
+    if (frame.type === "capture.start") this.pendingCaptureStarts.add(frame.turnId);
     return enqueueSessionTask(s, () => {
+      if (frame.type === "capture.start") this.pendingCaptureStarts.delete(frame.turnId);
       // Admission-time checks are insufficient: a reconnect/end can replace
       // this binding while the frame waits behind an asynchronous mutation.
       if (binding.closed || s.transport !== binding || frame.epoch !== s.epoch
@@ -453,6 +476,7 @@ export class VoiceSessionRuntime {
     const s = this.session;
     if (s.mutationOverflowed) return s.ending ?? s.mutation;
     s.mutationOverflowed = true;
+    this.pendingCaptureStarts.clear();
     this.host.log("voice.session.mutation_overflow", {
       sessionId: s.sessionId,
       pendingTasks: s.pendingMutationTasks,

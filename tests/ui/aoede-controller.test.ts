@@ -106,22 +106,44 @@ it("keeps ordinary detail requests bounded at ten seconds", async () => {
   try { await api.detail(binding.chatId); expect(timeout).toHaveBeenCalledWith(10_000); }
   finally { timeout.mockRestore(); }
 });
-it("projects a readiness timeout as retryable connection failure without starting media", async () => {
+it("retries a single readiness timeout once with the same idempotent request before reporting failure", async () => {
   const h = harness(vi.fn().mockRejectedValueOnce(new DOMException("private upstream detail", "TimeoutError")).mockResolvedValue(binding));
   await h.controller.open();
+  expect(h.bootstrap).toHaveBeenCalledTimes(2);
+  expect(h.bootstrap.mock.calls[0][0].clientRequestId).toBe(h.bootstrap.mock.calls[1][0].clientRequestId);
+  expect(h.controller.getSnapshot()).toMatchObject({ status: "idle", error: null });
+  expect(h.media.startVoice).not.toHaveBeenCalled();
+  h.controller.dispose();
+});
+it("projects repeated readiness timeouts as retryable connection failure without starting media", async () => {
+  const timeout = () => new DOMException("private upstream detail", "TimeoutError");
+  const h = harness(vi.fn().mockRejectedValueOnce(timeout()).mockRejectedValueOnce(timeout()).mockResolvedValue(binding));
+  await h.controller.open();
+  expect(h.bootstrap).toHaveBeenCalledTimes(2);
   expect(h.controller.getSnapshot()).toMatchObject({ status: "failed", microphoneActive: false,
     error: { code: "connection_failed", retryable: true, recovery: "retry_connection" } });
   expect(h.factory).not.toHaveBeenCalled();
   await h.controller.retry();
-  expect(h.bootstrap.mock.calls[0][0].clientRequestId).toBe(h.bootstrap.mock.calls[1][0].clientRequestId);
+  expect(h.bootstrap).toHaveBeenCalledTimes(3);
+  expect(h.bootstrap.mock.calls[0][0].clientRequestId).toBe(h.bootstrap.mock.calls[2][0].clientRequestId);
+  expect(h.controller.getSnapshot()).toMatchObject({ status: "idle", error: null });
   expect(h.media.startVoice).not.toHaveBeenCalled();
+  h.controller.dispose();
+});
+it("does not retry non-timeout bootstrap failures", async () => {
+  const h = harness(vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValue(binding));
+  await h.controller.open();
+  expect(h.bootstrap).toHaveBeenCalledTimes(1);
+  expect(h.controller.getSnapshot()).toMatchObject({ status: "failed", error: { code: "internal_failure", retryable: true } });
   h.controller.dispose();
 });
 it("preserves newer capability failure and Retry after a timed-out bootstrap", async () => {
   const unready = { ...binding, capability: { ...binding.capability, status: "unavailable" as const,
     transportModes: [], turnModes: [], reason: "provider_unavailable" as const } };
-  const h = harness(vi.fn().mockRejectedValueOnce(new DOMException("Timed out", "TimeoutError")).mockResolvedValue(unready));
+  const timeout = () => new DOMException("Timed out", "TimeoutError");
+  const h = harness(vi.fn().mockRejectedValueOnce(timeout()).mockRejectedValueOnce(timeout()).mockResolvedValue(unready));
   await h.controller.open();
+  expect(h.controller.getSnapshot().error?.code).toBe("connection_failed");
   await h.controller.retry();
   expect(h.controller.getSnapshot()).toMatchObject({ status: "failed",
     error: { code: "provider_unavailable", retryable: true } });
@@ -249,13 +271,13 @@ describe("Aoede shell owner", () => {
   it("captures ordinary supervised bootstrap selection, not any external Chat selection", async () => {
     const h = harness(); await h.controller.open(); expect(h.factory.mock.calls[0][0].request).toEqual({ turnMode: "hands_free", selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary" }); h.controller.dispose();
   });
-  it("bootstraps Continue after reload and still requires explicit two-step Start", async () => {
+  it("bootstraps Continue after reload and still requires an explicit Start", async () => {
     const old = harness(); await old.controller.open(); old.controller.dispose(); const restored = harness(); await restored.controller.open();
     expect(restored.bootstrap.mock.calls[0][0].intent).toBe("continue"); expect(restored.media.startVoice).not.toHaveBeenCalled(); restored.controller.dispose();
   });
-  it("retry recovery does not End an unresolved create or request microphone before confirmation", async () => {
+  it("retry recovery does not End an unresolved create or request microphone before Start", async () => {
     const h = harness(); await h.controller.open(); await h.controller.retry(); expect(h.media.end).not.toHaveBeenCalled(); expect(h.media.startVoice).not.toHaveBeenCalled();
-    expect(h.controller.getSnapshot().status).toBe("permission"); await h.controller.start(); expect(h.media.startVoice).toHaveBeenCalledTimes(1); h.controller.dispose();
+    expect(h.controller.getSnapshot().status).toBe("idle"); await h.controller.start(); expect(h.media.startVoice).toHaveBeenCalledTimes(1); h.controller.dispose();
   });
   it("recovers model/funding readiness by bootstrap retry without opening Chat or replacing the conversation", async () => {
     const boot = vi.fn().mockResolvedValueOnce({ ...binding, capability: { ...binding.capability, status: "unavailable", reason: "provider_unavailable" } }).mockResolvedValue(binding);
@@ -283,8 +305,8 @@ describe("Aoede shell owner", () => {
     expect(h.controller.getSnapshot().binding?.capability.surface).toBe("web_desktop");
     expect(h.factory).toHaveBeenCalledTimes(1); expect(h.media.end).not.toHaveBeenCalled(); h.controller.dispose();
   });
-  it("Start shows rationale then confirms; End and reopen retain canonical conversation without media restart", async () => {
-    const h = harness(); await h.controller.open(); await h.controller.start(); expect(h.controller.getSnapshot().status).toBe("permission"); expect(h.media.startVoice).not.toHaveBeenCalled();
+  it("Start requests media in one gesture; End and reopen retain canonical conversation without media restart", async () => {
+    const h = harness(); await h.controller.open(); expect(h.media.startVoice).not.toHaveBeenCalled();
     await h.controller.start(); expect(h.media.startVoice).toHaveBeenCalledWith("chat_aoede"); await h.controller.end(); await h.controller.open();
     expect(h.bootstrap).toHaveBeenCalledTimes(1); expect(h.media.startVoice).toHaveBeenCalledTimes(1); expect(h.source.dispose).not.toHaveBeenCalled(); h.controller.dispose();
   });
@@ -408,7 +430,7 @@ describe("Aoede shell owner", () => {
     const h = harness(); await h.controller.open();
     await h.controller.setInputDevice("mic_gone");
     vi.mocked(h.media.listDevices).mockResolvedValueOnce(devices.filter((device) => device.deviceId !== "mic_gone"));
-    await h.controller.start(); await h.controller.start();
+    await h.controller.start();
     expect(h.controller.getSnapshot().inputDeviceId).toBeNull();
     expect(h.controller.getSnapshot().error?.code).toBe("input_unavailable");
     expect(h.media.end).toHaveBeenCalled();

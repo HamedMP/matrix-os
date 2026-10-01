@@ -46,56 +46,106 @@
   padding: 1rem;
 }
 
-/* Ambient state marker, not a measured waveform or invented progress indicator. */
-.matrix-aoede__rings {
+/*
+ * Presence orb. One element carries every session state so the eye learns a
+ * single place to look: a soft halo that swells with the live microphone
+ * level (--aoede-level, 0…1, written imperatively), a swirl that only turns
+ * while the assistant is connecting or thinking, and a core that pulses while
+ * it speaks. Colors come from the shell tokens; nothing here is a waveform or
+ * an invented progress indicator.
+ */
+.matrix-aoede__orb {
+  --aoede-level: 0;
   position: relative;
+  display: grid;
+  place-items: center;
   inline-size: 5.5rem;
   aspect-ratio: 1;
   color: var(--matrix-muted-fg);
+  transition: color 240ms ease;
 }
 
-.matrix-aoede__rings span {
+.matrix-aoede__orb > span {
   position: absolute;
-  inset: 4%;
-  border: 1px solid currentColor;
+  inset: 0;
   border-radius: 50%;
-  opacity: 0.4;
 }
 
-.matrix-aoede__rings span:nth-child(2) {
-  inset: 14% 9% 9% 14%;
-  opacity: 0.6;
+.matrix-aoede__orb-halo {
+  background: radial-gradient(circle, color-mix(in srgb, currentColor 42%, transparent) 0%, color-mix(in srgb, currentColor 14%, transparent) 45%, transparent 72%);
+  opacity: calc(0.35 + var(--aoede-level) * 0.65);
+  transform: scale(calc(0.86 + var(--aoede-level) * 0.5));
+  transition: transform 70ms linear, opacity 110ms linear;
 }
 
-.matrix-aoede__rings span:nth-child(3) {
-  inset: 23% 17% 17% 23%;
-  opacity: 0.85;
+.matrix-aoede__orb-swirl {
+  inset: 12%;
+  background: conic-gradient(from 0deg, transparent 0 38%, color-mix(in srgb, currentColor 85%, white) 52%, transparent 66%, color-mix(in srgb, currentColor 55%, transparent) 84%, transparent 100%);
+  filter: blur(1.5px);
+  opacity: 0;
+  transition: opacity 240ms ease;
 }
 
-.matrix-aoede__rings i {
-  position: absolute;
-  inset: 45%;
-  border-radius: 50%;
-  background: currentColor;
+.matrix-aoede__orb-core {
+  inset: 29%;
+  background: radial-gradient(circle at 36% 30%, color-mix(in srgb, currentColor 35%, white) 0%, currentColor 68%, color-mix(in srgb, currentColor 80%, black) 100%);
+  box-shadow: 0 0 calc(0.4rem + var(--aoede-level) * 1.6rem) color-mix(in srgb, currentColor 48%, transparent);
+  transform: scale(calc(1 + var(--aoede-level) * 0.32));
+  transition: transform 70ms ease-out, box-shadow 110ms ease-out;
 }
 
-.matrix-aoede[data-state="listening"] .matrix-aoede__rings,
-.matrix-aoede[data-state="thinking"] .matrix-aoede__rings,
-.matrix-aoede[data-state="using_tool"] .matrix-aoede__rings,
-.matrix-aoede[data-state="speaking"] .matrix-aoede__rings {
+.matrix-aoede[data-state="connecting"] .matrix-aoede__orb,
+.matrix-aoede[data-state="restoring"] .matrix-aoede__orb,
+.matrix-aoede[data-state="listening"] .matrix-aoede__orb,
+.matrix-aoede[data-state="thinking"] .matrix-aoede__orb,
+.matrix-aoede[data-state="using_tool"] .matrix-aoede__orb,
+.matrix-aoede[data-state="speaking"] .matrix-aoede__orb {
   color: var(--matrix-accent);
 }
 
-.matrix-aoede[data-state="permission"] .matrix-aoede__rings,
-.matrix-aoede[data-state="reconnecting"] .matrix-aoede__rings {
+.matrix-aoede[data-state="permission"] .matrix-aoede__orb,
+.matrix-aoede[data-state="reconnecting"] .matrix-aoede__orb {
   color: var(--matrix-warning);
 }
 
-.matrix-aoede[data-state="failed"] .matrix-aoede__rings { color: var(--matrix-destructive); }
+.matrix-aoede[data-state="failed"] .matrix-aoede__orb { color: var(--matrix-destructive); }
 
-.matrix-aoede[data-state="listening"] .matrix-aoede__rings span,
-.matrix-aoede[data-state="speaking"] .matrix-aoede__rings span {
-  animation: matrix-aoede-ambient 4s ease-in-out infinite alternate;
+.matrix-aoede[data-state="paused"] .matrix-aoede__orb,
+.matrix-aoede[data-state="ended"] .matrix-aoede__orb,
+.matrix-aoede[data-state="ending"] .matrix-aoede__orb { opacity: 0.55; }
+
+/* Connecting / thinking: the swirl turns. Faster while waiting for a connection. */
+.matrix-aoede[data-state="connecting"] .matrix-aoede__orb-swirl,
+.matrix-aoede[data-state="restoring"] .matrix-aoede__orb-swirl,
+.matrix-aoede[data-state="reconnecting"] .matrix-aoede__orb-swirl,
+.matrix-aoede[data-state="permission"] .matrix-aoede__orb-swirl {
+  opacity: 0.9;
+  animation: matrix-aoede-spin 1.1s linear infinite;
+}
+
+.matrix-aoede[data-state="thinking"] .matrix-aoede__orb-swirl,
+.matrix-aoede[data-state="using_tool"] .matrix-aoede__orb-swirl {
+  opacity: 0.85;
+  animation: matrix-aoede-spin 1.8s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+.matrix-aoede[data-state="thinking"] .matrix-aoede__orb-core,
+.matrix-aoede[data-state="using_tool"] .matrix-aoede__orb-core {
+  animation: matrix-aoede-think 1.8s ease-in-out infinite;
+}
+
+/* Listening: slow breath under the live level so silence still reads as alive. */
+.matrix-aoede[data-state="listening"] .matrix-aoede__orb {
+  animation: matrix-aoede-breathe 2.6s ease-in-out infinite alternate;
+}
+
+/* Speaking: quick, even pulse from the core outward. */
+.matrix-aoede[data-state="speaking"] .matrix-aoede__orb-core {
+  animation: matrix-aoede-speak 0.7s ease-in-out infinite alternate;
+}
+
+.matrix-aoede[data-state="speaking"] .matrix-aoede__orb-halo {
+  animation: matrix-aoede-speak-halo 0.7s ease-in-out infinite alternate;
 }
 
 .matrix-aoede__literal {
@@ -222,26 +272,52 @@
 .matrix-aoede-settings__row { display: flex; align-items: center; gap: 0.5rem; }
 .matrix-aoede-settings__hint { margin: 0; font-size: 0.75rem; color: var(--matrix-muted-fg); }
 
-@keyframes matrix-aoede-ambient {
-  from { transform: scale(1); }
-  to { transform: scale(0.94); }
+@keyframes matrix-aoede-spin {
+  to { transform: rotate(1turn); }
+}
+
+@keyframes matrix-aoede-breathe {
+  from { transform: scale(0.97); }
+  to { transform: scale(1.05); }
+}
+
+@keyframes matrix-aoede-think {
+  0%, 100% { transform: scale(0.92); opacity: 0.85; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+
+@keyframes matrix-aoede-speak {
+  from { transform: scale(0.96); }
+  to { transform: scale(1.18); }
+}
+
+@keyframes matrix-aoede-speak-halo {
+  from { transform: scale(0.9); opacity: 0.45; }
+  to { transform: scale(1.22); opacity: 0.95; }
 }
 
 @media (max-width: 24rem) {
   .matrix-aoede__presence { grid-template-columns: 3.5rem minmax(0, 1fr); gap: 0.75rem; }
-  .matrix-aoede__rings { inline-size: 3.5rem; }
+  .matrix-aoede__orb { inline-size: 3.5rem; }
   .matrix-aoede__controls .matrix-aoede__button { flex: 1 1 7rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .matrix-aoede__rings span { animation: none !important; }
+  .matrix-aoede__orb,
+  .matrix-aoede__orb > span { animation: none !important; }
+  .matrix-aoede__orb-swirl { filter: none; }
+  .matrix-aoede[data-state="connecting"] .matrix-aoede__orb-swirl,
+  .matrix-aoede[data-state="thinking"] .matrix-aoede__orb-swirl,
+  .matrix-aoede[data-state="using_tool"] .matrix-aoede__orb-swirl { opacity: 0.6; transform: rotate(35deg); }
   .matrix-aoede__button { transition: none !important; }
 }
 
 @media (forced-colors: active) {
   .matrix-aoede { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
-  .matrix-aoede__rings { color: CanvasText !important; }
-  .matrix-aoede__rings i { background: CanvasText; }
+  .matrix-aoede__orb { color: CanvasText !important; opacity: 1 !important; }
+  .matrix-aoede__orb-halo,
+  .matrix-aoede__orb-swirl { display: none; }
+  .matrix-aoede__orb-core { background: CanvasText; box-shadow: none; }
   .matrix-aoede__error { color: CanvasText; background: Canvas; border-color: CanvasText; }
   .matrix-aoede__button { color: ButtonText !important; background: ButtonFace !important; border: 1px solid ButtonText !important; }
   .matrix-aoede__button:disabled { color: GrayText !important; border-color: GrayText !important; }

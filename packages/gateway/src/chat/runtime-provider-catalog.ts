@@ -14,6 +14,12 @@ type RuntimeCatalogOptions = Omit<Parameters<typeof createChatProviderCatalogSer
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
 };
 
+// Voice readiness and Aoede bootstrap read the catalog several times per
+// open (bootstrap, capabilities, session admission) and only need route
+// availability, never a fresh model list. Sharing clean reads for this long
+// keeps one slow probe fan-out from becoming a readiness timeout.
+const READINESS_CATALOG_REUSE_MS = 15_000;
+
 /** Compose runtime metadata sources separately from the gateway entrypoint. */
 export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions) {
   const { homePath, codexExecutable, fundedCredentialProvider, ...catalogOptions } = options;
@@ -31,7 +37,7 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
   const claudeModelCatalogSource = createRuntimeClaudeModelCatalogSource({
     homePath, resolveCredentialLaunch: resolveClaudeCredentialLaunch,
   });
-  const catalog = createChatProviderCatalogService({
+  const serviceOptions: Parameters<typeof createChatProviderCatalogService>[0] = {
     ...catalogOptions,
     skillsSource: () => loadSkills(homePath),
     invalidateCodingModelCatalog: claudeModelCatalogSource.invalidate,
@@ -41,7 +47,10 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
       const codexModels = await codexModelCatalogSource?.(provider);
       return codexModels ?? nativeCodingModelCatalogSource(provider);
     },
-  });
+  };
+  const catalog = createChatProviderCatalogService(serviceOptions);
+  // Same sources, so both views probe the same CLIs; only the reuse window differs.
+  const readinessCatalog = createChatProviderCatalogService({ ...serviceOptions, cacheTtlMs: READINESS_CATALOG_REUSE_MS });
   // Execution and metadata discovery must resolve the same owner credentials.
-  return { catalog, resolveClaudeCredentialLaunch };
+  return { catalog, readinessCatalog, resolveClaudeCredentialLaunch };
 }

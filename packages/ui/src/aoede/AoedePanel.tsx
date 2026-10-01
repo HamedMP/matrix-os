@@ -7,6 +7,7 @@ import {
   AOEDE_STATUS_LABELS, aoedeActionCopy, aoedeErrorCopy, aoedeReadinessCopy,
   boundedAoedeText, type AoedeStatus,
 } from "./presentation.js";
+import { orbLevel } from "./orb-level.js";
 import "./aoede-panel.css";
 
 export interface AoedePanelProps {
@@ -36,14 +37,33 @@ export interface AoedePanelProps {
     viewHistory?(): void;
   };
   settings?: ReactNode;
+  /**
+   * Capture loudness feed (0…1) for the presence orb. Called outside React
+   * state: the panel writes a CSS custom property imperatively so ~20
+   * updates/s never re-render the panel.
+   */
+  subscribeInputLevel?: (listener: (level: number) => void) => () => void;
 }
 
 /** Presentation only. The host owns focus restoration, light dismissal, media and canonical work. */
 export function AoedePanel({
   title = "Aoede", scopeLabel, status, microphoneActive, turnMode, captions,
-  capability, canCancel, error, children, commands, settings,
+  capability, canCancel, error, children, commands, settings, subscribeInputLevel,
 }: AoedePanelProps) {
   const id = useId();
+  const orb = useRef<HTMLDivElement | null>(null);
+  const listening = status === "listening" && microphoneActive;
+  useEffect(() => {
+    const node = orb.current;
+    if (!node) return;
+    if (!listening || !subscribeInputLevel) { node.style.setProperty("--aoede-level", "0"); return; }
+    let level = 0;
+    const unsubscribe = subscribeInputLevel((rms) => {
+      level = orbLevel(level, rms);
+      node.style.setProperty("--aoede-level", level.toFixed(3));
+    });
+    return () => { unsubscribe(); node.style.setProperty("--aoede-level", "0"); };
+  }, [listening, subscribeInputLevel]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [held, setHeld] = useState(false);
   // An input gesture, not session state. Retain the stop paired with its start across prop changes.
@@ -100,7 +120,6 @@ export function AoedePanel({
   const displayTitle = boundedAoedeText(title, 80) || "Aoede";
   const actionCopy = aoedeActionCopy(capability);
   const canStart = status === "idle" || status === "ended";
-  const showRationale = canStart || status === "permission";
   // Fail closed: an omitted canCancel means "not qualified", never "show it
   // anyway". When canonical children render, the CancellationCard inside owns
   // the affordance — the built-in button is the fallback for card-free panels.
@@ -117,8 +136,10 @@ export function AoedePanel({
       </header>
 
       <div className="matrix-aoede__presence">
-        <div className="matrix-aoede__rings" data-testid="aoede-rings" aria-hidden="true">
-          <span /><span /><span /><i />
+        <div ref={orb} className="matrix-aoede__orb" data-testid="aoede-orb" aria-hidden="true">
+          <span className="matrix-aoede__orb-halo" />
+          <span className="matrix-aoede__orb-swirl" />
+          <span className="matrix-aoede__orb-core" />
         </div>
         <div role="status" aria-live="polite" aria-atomic="true" className="matrix-aoede__status">
           <p className="matrix-aoede__literal">{AOEDE_STATUS_LABELS[status]}</p>
@@ -132,8 +153,8 @@ export function AoedePanel({
         {actionCopy ? <p>{actionCopy}</p> : null}
       </div>
 
-      {showRationale ? <p id={`${id}-rationale`} className="matrix-aoede__rationale">
-        Allow microphone requests access to hear your spoken turns in this workspace. Opening Aoede does not turn it on. Pause, Dismiss or End stops capture.
+      {canStart ? <p id={`${id}-rationale`} className="matrix-aoede__rationale">
+        Start turns on the microphone and listens for your next turn. Pause, Dismiss or End turns it off.
       </p> : null}
 
       {utterance ? <section className="matrix-aoede__caption" aria-label={captions.provisional ? "Current utterance (provisional)" : "Current utterance"}>
@@ -151,8 +172,6 @@ export function AoedePanel({
       <div role="group" aria-label="Aoede controls" className="matrix-aoede__controls">
         {canStart ? <Button className="matrix-aoede__button" disabled={!modeAvailable}
           aria-describedby={`${id}-rationale`} onClick={commands.start}>Start</Button> : null}
-        {status === "permission" ? <Button className="matrix-aoede__button" disabled={!modeAvailable}
-          aria-describedby={`${id}-rationale`} onClick={commands.start}>Allow microphone</Button> : null}
         {canHold ? <Button className="matrix-aoede__button matrix-aoede__ptt" aria-pressed={held}
           aria-describedby={`${id}-ptt-hint`}
           onPointerDown={(event) => {

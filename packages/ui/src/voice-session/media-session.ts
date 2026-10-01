@@ -92,6 +92,22 @@ export interface VoiceMediaCallbacks {
   onBackpressure?(droppedChunks: number): void;
   onDeviceChanged?(change: { inputDeviceId?: string }): void;
   onError?(error: SafeVoiceError): void;
+  /** Capture loudness (RMS, 0…1) while a turn is being captured; ~every 50 ms. Presentation only. */
+  onInputLevel?(level: number): void;
+}
+
+const INPUT_LEVEL_INTERVAL_MS = 50;
+
+/** Root-mean-square of one capture buffer, clamped to 0…1. */
+export function captureInputLevel(samples: Float32Array): number {
+  if (samples.length === 0) return 0;
+  let sum = 0;
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = samples[index] as number;
+    sum += sample * sample;
+  }
+  const rms = Math.sqrt(sum / samples.length);
+  return Number.isFinite(rms) ? Math.min(1, rms) : 0;
 }
 
 export interface VoiceMediaSession {
@@ -316,8 +332,16 @@ export function createWebVoiceMediaSession(options: {
     return Float32Array.from(output);
   };
 
+  let lastLevelAtMs = -Infinity;
   const onSamples = (samples: Float32Array) => {
     if (!capturing || samples.length === 0) return;
+    if (callbacks.onInputLevel) {
+      const at = now();
+      if (at - lastLevelAtMs >= INPUT_LEVEL_INTERVAL_MS) {
+        lastLevelAtMs = at;
+        callbacks.onInputLevel(captureInputLevel(samples));
+      }
+    }
     const rateHz = Math.max(1, Math.floor(capture?.sampleRateHz ?? audio.sampleRateHz));
     const wireSamples = resampleCapture(samples, rateHz);
     if (wireSamples.length === 0) return;

@@ -1564,7 +1564,7 @@ export async function createGateway(config: GatewayConfig) {
       : []),
   ];
   const {
-    catalog: canonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
+    catalog: canonicalChatProviderCatalog, readinessCatalog: voiceReadinessCatalog, resolveClaudeCredentialLaunch,
   } = createGatewayChatProviderCatalog({
     homePath,
     codexExecutable,
@@ -1810,7 +1810,7 @@ export async function createGateway(config: GatewayConfig) {
         const owner = { type: "personal" as const, ownerId: principal.userId };
         const selection = (await chatRepository!.get(owner, chatId))?.chat.currentSelection;
         if (!selection) return undefined;
-        const catalog = await canonicalChatProviderCatalog.getCatalog(principal);
+        const catalog = await voiceReadinessCatalog.getCatalog(principal);
         return canonicalVoiceDecision({
           selection,
           catalog,
@@ -1848,7 +1848,7 @@ export async function createGateway(config: GatewayConfig) {
       try {
         aoedeBootstrapService = new AoedeBootstrapService({
           repository: aoedeBindings,
-          catalog: canonicalChatProviderCatalog,
+          catalog: voiceReadinessCatalog,
           runtimeIdentity: { machineId: aoedeMachineId, runtimeSlot: aoedeRuntimeSlot },
           resolveProject: async (principal, projectId) => {
             const resolved = await codingAgentProjectManager.getProjectById(
