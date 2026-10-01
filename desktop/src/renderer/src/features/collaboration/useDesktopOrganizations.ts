@@ -34,6 +34,7 @@ export function useDesktopOrganizations(): DesktopOrganizationListing {
   const platformHost = useConnection((state) => state.platformHost);
   const userId = useConnection((state) => state.userId);
   const reconcileOrganizations = useConnection((state) => state.reconcileOrganizations);
+  const beginOrganizationListing = useConnection((state) => state.beginOrganizationListing);
   const [listing, setListing] = useState<DesktopOrganizationListing>({ state: "loading" });
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- membership is read at sign-in and when the account menu opens, not on a user event; the response is ignored after unmount or an account switch.
@@ -51,11 +52,13 @@ export function useDesktopOrganizations(): DesktopOrganizationListing {
       releaseDesktopCollaborationApi(api);
     };
     setListing({ state: "loading" });
+    const request = beginOrganizationListing();
     void api.get("/api/organizations").then((value) => {
       if (!active) return;
       const { organizations } = OrganizationsResponseSchema.parse(value);
       setListing({ state: "loaded", organizations });
       reconcileOrganizations({
+        request,
         forUserId: userId,
         organizationIds: organizations.map((organization) => organization.organizationId),
         complete: organizations.length < LISTING_CAP,
@@ -68,7 +71,7 @@ export function useDesktopOrganizations(): DesktopOrganizationListing {
       active = false;
       release();
     };
-  }, [platformHost, reconcileOrganizations, userId]);
+  }, [beginOrganizationListing, platformHost, reconcileOrganizations, userId]);
 
   return listing;
 }

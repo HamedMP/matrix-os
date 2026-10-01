@@ -47,9 +47,12 @@ interface ConnectionState {
    * Applies a freshly read membership listing: keeps the member's choice while the
    * listing still contains it, otherwise falls back to their oldest organization (none
    * for a user in no organization). Ignored when the listing was read for another
-   * account, and a capped listing never rules a choice out.
+   * account or requested before a listing already applied, and a capped listing never
+   * rules a choice out.
    */
-  reconcileOrganizations: (listing: { forUserId: string; organizationIds: readonly string[]; complete: boolean }) => void;
+  reconcileOrganizations: (listing: { request: number; forUserId: string; organizationIds: readonly string[]; complete: boolean }) => void;
+  /** Numbers a membership listing request so a slower, older response cannot undo a newer one. */
+  beginOrganizationListing: () => number;
   selectRuntime: (slot: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -140,8 +143,14 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     writeSelectedOrganization(get().userId, valid);
   },
 
-  reconcileOrganizations: ({ forUserId, organizationIds, complete }) => {
-    if (forUserId !== get().userId) return;
+  beginOrganizationListing: () => {
+    organizationListingRequests += 1;
+    return organizationListingRequests;
+  },
+
+  reconcileOrganizations: ({ request, forUserId, organizationIds, complete }) => {
+    if (forUserId !== get().userId || request < lastAppliedOrganizationListing) return;
+    lastAppliedOrganizationListing = request;
     const current = get().organizationId;
     if (current && (!complete || organizationIds.includes(current))) return;
     const fallback = pickDefaultOrganizationId(organizationIds);
@@ -237,6 +246,10 @@ export function unwireConnectionEvents(): void {
 }
 
 const ORGANIZATION_ID = /^org_[A-Za-z0-9_-]{1,124}$/;
+// The sign-in loader and the account menu read memberships independently; responses can
+// arrive out of order, and only the newest request applied so far may decide.
+let organizationListingRequests = 0;
+let lastAppliedOrganizationListing = 0;
 const SELECTED_ORGANIZATION_KEY = "matrix.desktop.selectedOrganization:";
 
 function readOrganizationId(status: unknown): string | null {

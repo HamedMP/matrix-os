@@ -250,23 +250,41 @@ describe("DesktopOrganizationMenuItems", () => {
 
 describe("connection store organization reconciliation", () => {
   it("ignores a listing read for a different account", () => {
-    useConnection.getState().reconcileOrganizations({ forUserId: "user_other", organizationIds: ["org_finna"], complete: true });
+    const { beginOrganizationListing, reconcileOrganizations } = useConnection.getState();
+    reconcileOrganizations({ request: beginOrganizationListing(), forUserId: "user_other", organizationIds: ["org_finna"], complete: true });
 
     expect(useConnection.getState().organizationId).toBeNull();
   });
 
   it("keeps a choice a capped listing cannot rule out, but still offers a default from it", () => {
-    const { reconcileOrganizations, selectOrganization } = useConnection.getState();
-    reconcileOrganizations({ forUserId: "user_nima", organizationIds: ["org_b", "org_a"], complete: false });
+    const { beginOrganizationListing, reconcileOrganizations, selectOrganization } = useConnection.getState();
+    reconcileOrganizations({ request: beginOrganizationListing(), forUserId: "user_nima", organizationIds: ["org_b", "org_a"], complete: false });
     expect(useConnection.getState().organizationId).toBe("org_a");
 
     selectOrganization("org_beyond_cap");
-    reconcileOrganizations({ forUserId: "user_nima", organizationIds: ["org_b", "org_a"], complete: false });
+    reconcileOrganizations({ request: beginOrganizationListing(), forUserId: "user_nima", organizationIds: ["org_b", "org_a"], complete: false });
     expect(useConnection.getState().organizationId).toBe("org_beyond_cap");
   });
 });
 
 describe("DesktopDefaultOrganization", () => {
+  it("never lets the sign-in listing undo a newer one from the account menu", async () => {
+    useConnection.getState().selectOrganization("org_left");
+    let resolveSignIn: (value: unknown) => void = () => undefined;
+    apiState.get.mockReturnValueOnce(new Promise((resolve) => { resolveSignIn = resolve; }));
+    render(<DesktopDefaultOrganization />);
+    await waitFor(() => expect(apiState.get).toHaveBeenCalledTimes(1));
+
+    // The member opens the menu after leaving their only organization; that newer read lands first.
+    apiState.get.mockResolvedValueOnce({ organizations: [] });
+    renderMenu();
+    await waitFor(() => expect(useConnection.getState().organizationId).toBeNull());
+
+    await act(async () => { resolveSignIn({ organizations: [{ organizationId: "org_left", name: "Left" }] }); });
+
+    expect(useConnection.getState().organizationId).toBeNull();
+  });
+
   it("activates the oldest organization at sign-in without the member opening any menu", async () => {
     apiState.get.mockResolvedValue({ organizations: [
       { organizationId: "org_matrix", name: "Matrix" },
