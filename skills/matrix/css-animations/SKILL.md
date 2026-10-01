@@ -1,6 +1,9 @@
 ---
 triggers: ["CSS animation", "keyframes", "hover transition", "clip-path"]
 name: css-animations
+version: 1.0.1
+author: Matrix OS
+platforms: [linux, macos]
 description: Animate with CSS alone — transitions, `@keyframes`, transforms, 3D, and `clip-path` — at the craft bar of the "Animations on the Web" course (animations.dev). Use when writing or fixing CSS motion, deciding between a transition and a keyframe animation, building hover and press effects, entering or exiting an element without a library, looping a marquee or spinner, stacking toasts or cards, staggering a text reveal, rotating in 3D, revealing with clip-path, or fixing hover states that misfire on touch. Triggers on — CSS animation, @keyframes, transition, transition-property, timing-function, cubic-bezier, animation-fill-mode, animation-delay, animation-iteration-count, transform, translate, scale, rotate, rotateY, translateZ, perspective, preserve-3d, backface-visibility, transform-origin, clip-path, inset(), @starting-style, marquee, spinner, stagger, :hover, :active, :focus-visible, hover on mobile.
 metadata:
   short-description: Animate with CSS the way the animations.dev course teaches

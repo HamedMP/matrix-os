@@ -1,6 +1,9 @@
 ---
 triggers: ["reduced motion", "motion sensitivity", "accessible animation", "autoplay"]
 name: animation-accessibility
+version: 1.0.1
+author: Matrix OS
+platforms: [linux, macos]
 description: Reduced motion for web animation — ship every animation as two variants so motion never makes someone sick or distracted. Use when adding or reviewing `prefers-reduced-motion` handling; when deciding what an animation should become under reduced motion; when a page has autoplaying video, GIFs, looping animation, or smooth scrolling; or when wiring up `useReducedMotion` / `MotionConfig`. Triggers on — accessibility, a11y, prefers-reduced-motion, reduced motion, motion sensitivity, vestibular, motion sickness, dizzy, distracting animation, motion-safe, motion-reduce, useReducedMotion, MotionConfig, scroll-behavior, autoplay, autoplaying GIF, looping animation, animation-play-state, accessible animation.
 metadata:
   short-description: Ship animations that respect reduced motion (animations.dev course)

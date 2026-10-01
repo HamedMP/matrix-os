@@ -1,6 +1,9 @@
 ---
 triggers: ["janky animation", "dropped frames", "animation performance", "frame budget"]
 name: animation-performance
+version: 1.0.1
+author: Matrix OS
+platforms: [linux, macos]
 description: Frame budget for web motion — hold 60fps by animating composite-only properties and keeping animation off the main thread. Use when an animation is janky, choppy, or drops frames; when choosing which property to animate (`transform`/`opacity` vs `width`/`height`/`margin`/`top`); when deciding between CSS, WAAPI, and JS/Framer Motion on performance grounds; when a React animation re-renders every frame; or when reaching for `will-change`, GPU layers, or hardware acceleration. Triggers on — janky, choppy, stutter, dropped frames, 60fps, frame budget, 16ms, animation performance, hardware acceleration, GPU, composite, layout recalculation, reflow, style recalc, will-change, requestAnimationFrame, main thread, transform shift, blur performance, CSS variable performance, Framer Motion performance, "works on my machine".
 metadata:
   short-description: Hold 60fps in animations (animations.dev course)

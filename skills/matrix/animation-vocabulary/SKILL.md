@@ -1,6 +1,9 @@
 ---
 triggers: ["name animation", "motion terminology", "animation effect"]
 name: animation-vocabulary
+version: 1.0.1
+author: Matrix OS
+platforms: [linux, macos]
 description: Reverse-lookup glossary that turns a vague description of a web animation or motion effect into its exact term ("the bouncy thing when a popover opens" → Pop in; "the iOS rubber-band scroll" → Rubber-banding; "one shape turning into another" → Morph). Use when the user asks "what's it called when…", or describes a motion effect without knowing its name and wants the right word to prompt an AI or designer with. For naming an effect, not designing or building one. Terms are drawn from the Animations on the Web course (animations.dev).
 metadata:
   short-description: Name a web animation effect from a loose description

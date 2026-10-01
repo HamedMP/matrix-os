@@ -1,6 +1,9 @@
 ---
 triggers: ["animation", "motion", "transition", "easing", "popover", "drawer"]
 name: animate
+version: 1.0.1
+author: Matrix OS
+platforms: [linux, macos]
 description: Design and build web animations that feel right, grounded in the complete "Animations on the Web" course (animations.dev). Use proactively whenever building or improving motion — deciding whether to animate, choosing easing/duration/springs, implementing entrances, exits, hovers, gestures, drawers, popovers, morphs, layout and shared-element transitions, SVG animation, or fixing motion that feels janky, sluggish, or off. Triggers on — animate, animation, motion, easing, ease-out, ease-in-out, cubic-bezier, duration, spring, bounce, keyframes, transition, transform, opacity, scale, translate, clip-path, stagger, hover, press, drag, gesture, drawer, popover, dropdown, tooltip, modal, toast, morph, crossfade, shared element, layout animation, Framer Motion, motion/react, AnimatePresence, layoutId, WAAPI, SVG animation, stroke-dashoffset, prefers-reduced-motion, will-change, GPU, "feels janky", "make it smooth", "feels off".
 metadata:
   short-description: Design and build web animations that feel right (animations.dev course)
