@@ -273,7 +273,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, collaboration-postgres, docs-contract, os-view-parity, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -282,6 +282,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.sync-client.result');
     expect(workflow).toContain('needs.agent-sdk-compatibility.result');
     expect(workflow).toContain('needs.unit.result');
+    expect(workflow).toContain('needs.collaboration-postgres.result');
     expect(workflow).not.toContain('needs.symphony.result');
     expect(workflow).not.toContain('mix test --no-start');
     expect(workflow).toContain('needs.docs-contract.result');
