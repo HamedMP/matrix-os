@@ -252,15 +252,16 @@ printf '%s\\n' "$*" >> "${logPath}"
         env: {
           ...process.env,
           AGENT_BIN: fakeAgent,
+          HOME: join(root, "cli-home"),
         },
         stdio: "pipe",
       });
 
-      const log = readFileSync(logPath, "utf-8");
-      expect(log).toContain(`skills install ${join(source, "app-builder")}`);
-      expect(log).toContain(`skills install ${join(source, "app-ui-patterns")}`);
-      expect(log).toContain(`skills install ${join(source, "landing-design")}`);
-      expect(log).not.toContain("skills/matrix/skills/matrix");
+      expect(existsSync(logPath)).toBe(false);
+      for (const skillDir of ["app-builder", "app-ui-patterns", "landing-design"]) {
+        const target = join(root, "cli-home", ".agent", "skills", `matrix-${skillDir}`);
+        expect(realpathSync(target)).toBe(realpathSync(join(source, skillDir)));
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -64,10 +64,23 @@ AGENT_BIN=/opt/matrix/runtime/node/bin/agent ./scripts/install-agent-matrix-skil
 
 Both installer scripts enumerate the same complete pack. A direct local
 `skills/matrix` path is accepted as well as a checkout root. Hermes local installation
-uses the shared synchronizer; published-source installation does not use `--force`.
-Agent repeat installation fills missing names only and preserves existing files,
-directories, and dangling links under `${AGENT_HOME:-$HOME/.agent}/skills`. Set
-`MATRIX_AGENT_SKILLS_ROOT` to guard a nonstandard Agent skills destination.
+uses the shared synchronizer. Agent local installation also uses that synchronizer,
+without requiring the Agent CLI: repeating it refreshes marked Matrix links/copies
+from the selected source while preserving owner skills and custom aliases.
+Published-source installations fill missing names only, preserve existing files,
+directories and dangling links, and never use `--force`: the remote CLI cannot
+establish whether an existing skill belongs to Matrix. To refresh managed Agent
+skills, use a local checkout or direct `skills/matrix` source.
+
+Agent skills default to `${AGENT_HOME:-$HOME/.agent}/skills`. Set
+`MATRIX_AGENT_SKILLS_ROOT` for a nonstandard destination; the same root is used
+for local refresh and remote collision protection. Local refresh rejects an empty or invalid builder source and any source/destination
+overlap, including existing symlink targets, before modifying skills. Agent sync is opt-in and
+does not change the Matrix, Claude, Codex or Hermes defaults:
+
+```bash
+MATRIX_SKILL_TARGETS=agent ./scripts/sync-matrix-agent-skills.sh /path/to/skills/matrix
+```
 
 Runtime sync preserves existing user-managed skills, including a same-name local
 `animate` or `apple-design`. Shipped vendored directories contain a `.matrix-os-managed`
