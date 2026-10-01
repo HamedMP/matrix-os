@@ -52,37 +52,64 @@ Under `no-preference` the video autoplays. Under `reduce` it stays paused and ge
 ```
 
 ```js
-const btn = document.querySelector("button");
-const video = document.querySelector("video");
+function setupMotionVideo(figure) {
+  const btn = figure.querySelector("button");
+  const video = figure.querySelector("video");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let disposed = false;
+  let request = 0;
+  let shouldPlay = false;
+  const syncLabel = () => { btn.innerText = video.paused ? "Play" : "Pause"; };
 
-const noMotionPreference = window.matchMedia("(prefers-reduced-motion: no-preference)");
+  async function playVideo(automatic) {
+    const current = ++request;
+    shouldPlay = true;
+    try {
+      await video.play();
+      if (disposed || !shouldPlay || (current === request && automatic && reduced.matches)) video.pause();
+    } catch (error) {
+      if (!disposed) console.warn("[video] Playback unavailable", error instanceof Error ? error.name : "Error");
+    } finally {
+      if (!disposed) syncLabel();
+    }
+  }
+  const onClick = () => {
+    if (video.paused) void playVideo(false); // Deliberate play is available under reduce.
+    else { ++request; shouldPlay = false; video.pause(); }
+  };
+  const onPreferenceChange = () => {
+    if (reduced.matches) { ++request; shouldPlay = false; video.pause(); }
+    syncLabel(); // Do not resume automatically when the preference changes back.
+  };
 
-const initVideo = () => {
-  // Swap the native controls for our own so the button label can report state.
+  btn.addEventListener("click", onClick);
+  video.addEventListener("play", syncLabel);
+  video.addEventListener("pause", syncLabel);
+  reduced.addEventListener("change", onPreferenceChange);
   video.removeAttribute("controls");
   btn.hidden = false;
+  syncLabel();
+  if (!reduced.matches) void playVideo(true);
 
-  // Autoplay only when the user has expressed no preference for reduced motion.
-  if (noMotionPreference.matches) {
-    video.setAttribute("autoplay", true);
-    btn.innerText = "Pause";
-  }
-};
-
-btn.addEventListener("click", () => {
-  if (video.paused) {
-    video.play();
-    btn.innerText = "Pause";
-  } else {
+  return () => {
+    disposed = true;
+    shouldPlay = false;
+    ++request;
     video.pause();
-    btn.innerText = "Play";
-  }
-});
+    btn.removeEventListener("click", onClick);
+    video.removeEventListener("play", syncLabel);
+    video.removeEventListener("pause", syncLabel);
+    reduced.removeEventListener("change", onPreferenceChange);
+    video.setAttribute("controls", "");
+    btn.hidden = true;
+  };
+}
 
-initVideo();
+const cleanupVideo = setupMotionVideo(document.querySelector("figure"));
+// Call cleanupVideo on unmount or before replacing this figure.
 ```
 
-The button ships `hidden` so it never appears before `initVideo()` runs — otherwise a control with no handler flashes on load.
+The button ships `hidden` so it never appears before `setupMotionVideo()` runs — otherwise a control with no handler flashes on load.
 
 ## Looping animation: pause on a hero frame
 
@@ -96,8 +123,8 @@ Don't just stop a loop — a paused animation sits on frame 0, which is usually 
 @media (prefers-reduced-motion: reduce) {
   .animation {
     animation-play-state: paused;
-    /* Pauses on the frame at 0.4s. Try different values and pick the best-looking frame. */
-    animation-delay: -0.4s;
+    /* Seeks halfway through this 0.2s cycle, rather than to a whole-cycle boundary. */
+    animation-delay: -0.1s;
   }
 }
 ```

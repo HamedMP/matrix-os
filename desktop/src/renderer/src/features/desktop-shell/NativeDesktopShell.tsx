@@ -418,6 +418,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
               overlayOpen={overlayOpen}
               presentation={desktopMode}
               interactionScale={desktopMode === "canvas" ? canvasZoom : 1}
+              viewport={viewport}
               workspaceRevision={desktopMode === "canvas" ? `${canvasPanX}:${canvasPanY}:${canvasZoom}` : "desktop"}
               desktopTransition={desktopTransition}
               desktopHiddenSurfaceIds={desktopHiddenSurfaceIds}

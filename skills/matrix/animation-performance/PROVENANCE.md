@@ -18,3 +18,8 @@ Original source file hashes (before Matrix adaptations):
 | File | SHA-256 |
 | --- | --- |
 | `SKILL.md` | `a52de3775834ab6e88210d29586cac7534c3511d34e709ec21cd800c1ec62e09` |
+
+Matrix discovery metadata uses `author: Matrix OS` to identify the managed adaptation
+for the bundled recipe catalog, with a version and supported platforms. This
+is a distribution marker, not a claim of upstream authorship or a license grant.
+Original attribution and the original source hashes above remain authoritative.

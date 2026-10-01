@@ -1,6 +1,9 @@
 ---
 triggers: ["review motion", "review animation", "motion quality"]
 name: review-animations
+version: 1.0.1
+author: Matrix OS
+platforms: [linux, macos]
 description: Reviews animation and motion code against a high craft bar derived from the "Animations on the Web" course (animations.dev). Default to flagging; approval is earned.
 disable-model-invocation: true
 metadata:

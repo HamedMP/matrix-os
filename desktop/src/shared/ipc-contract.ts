@@ -5,6 +5,7 @@
 // credentials are accepted only by the bounded write-only setter request.
 import { z } from "zod/v4";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
+import { NativeAppOpenEventSchema } from "./native-app-open";
 import {
   AppGenerateEventSchema,
   OrganizationDriveUploadFolderSchema,
@@ -101,6 +102,7 @@ const BoundsSchema = z
     y: z.number().int().min(-16_384).max(16_384),
     width: z.number().int().min(0).max(16_384),
     height: z.number().int().min(0).max(16_384),
+    cornerRadius: z.number().int().min(0).max(64).optional(),
   })
   .strict();
 
@@ -502,6 +504,7 @@ export const INVOKE_CHANNELS = {
 export const EVENT_CHANNELS = {
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
+  "app:open": NativeAppOpenEventSchema,
   "analytics:capture": DesktopAnalyticsDetailSchema,
   "analytics:flush-requested": Empty,
   "auth:changed": z

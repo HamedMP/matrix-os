@@ -23,3 +23,8 @@ Original source file hashes (before Matrix adaptations):
 | `css-techniques.md` | `e162d662c680f5cac4b989297901f27b695f2f3f3aa055d425f298aea845992f` |
 | `framer-motion.md` | `ae4bedfbac45c5ca3b2cd5f0cee135a7fbb4031912773a69187b32fa7114ec11` |
 | `svg-animation.md` | `708ef19f84b3ce1dd2eefd59dee4dd1398cfaf3d9141ac37bb2ca88eb1adbede` |
+
+Matrix discovery metadata uses `author: Matrix OS` to identify the managed adaptation
+for the bundled recipe catalog, with a version and supported platforms. This
+is a distribution marker, not a claim of upstream authorship or a license grant.
+Original attribution and the original source hashes above remain authoritative.

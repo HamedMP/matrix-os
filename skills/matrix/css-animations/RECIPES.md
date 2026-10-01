@@ -185,6 +185,10 @@ A small circle orbiting a larger one, staying face-on to the viewer.
   from { transform: translate(-50%, -50%) rotateY(0deg)   translateZ(74px) rotateY(360deg); }
   to   { transform: translate(-50%, -50%) rotateY(360deg) translateZ(74px) rotateY(0deg); }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .orbitingCircle { animation: none; transform: translate(-50%, -50%) translateZ(74px); }
+}
 ```
 
 `rotateY` is the revolution; `translateZ` is the orbit's radius (the origin stays put, so pushing the element out along z and rotating sweeps a circle). The **trailing counter-`rotateY`** cancels the element's own spin so it always faces front. `linear`, because orbits don't accelerate. Slow it down if it's ambient background motion — distraction is the failure mode.
@@ -212,6 +216,10 @@ A small circle orbiting a larger one, staying face-on to the viewer.
 }
 
 @keyframes rotate { to { transform: rotateY(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .wrapper { animation: none; transform: none; }
+}
 ```
 
 Build two faces plus a rim, then rotate the parent. What looks like a 3D object is `rotateY` and `backface-visibility`.

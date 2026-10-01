@@ -30,9 +30,8 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
   const source = createCanonicalChatEventSource({ openStream: h.openStream });
   const client = createCanonicalChatWorkspaceClient();
   const initial = await h.getDetail();
-  // A frozen initial snapshot makes HTTP content delivery necessary for progress.
   vi.mocked(client.list).mockResolvedValue({ items: [initial.record] });
-  vi.mocked(client.getDetail).mockResolvedValue(initial);
+  vi.mocked(client.getDetail).mockImplementation(async () => h.getDetail());
   // Completion acknowledgement is not part of this streaming seam. Avoid its
   // separate user-state invalidation triggering an unrelated detail refresh.
   client.acknowledgeCompletion = async () => (await h.getDetail()).record;

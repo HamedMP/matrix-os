@@ -3,7 +3,7 @@ triggers: ["shadcn", "shadcn/ui", "components.json", "component preset", "shadcn
 name: shadcn
 description: Compose shadcn UI with project-aware components, coherent presets, accessible charts, and safe local updates.
 version: 1.0.0
-author: shadcn (owner-provided snapshot; Matrix adaptations)
+author: Matrix OS
 platforms: [linux, macos]
 related_skills: [matrix-app-builder, matrix-design-system, matrix-landing-design]
 metadata:
