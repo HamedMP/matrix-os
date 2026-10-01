@@ -172,7 +172,7 @@ export function App() {
       <header className="fixture-toolbar">
         <div>
           <p>Matrix UI fixture</p>
-          <h1>Voice mode attached to Chat</h1>
+          <h1>Legacy Chat-attached voice fixture — not standalone Aoede evidence</h1>
         </div>
         <label>
           Scenario

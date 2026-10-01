@@ -1,0 +1,113 @@
+@import "tailwindcss" source(none);
+@source "../../../../../packages/ui/src/chat";
+@source "../../../../../packages/ui/src/aoede";
+@source "../../../../../shell/src/components/ShellAoedeHost.tsx";
+
+/* Standalone Aoede fixture chrome — mock surface + evidence readout. */
+:root {
+  --fixture-bg: #f5f4f2;
+  --fixture-ink: #1c1917;
+  --fixture-muted: #57534e;
+  --fixture-border: #d6d3d1;
+  --fixture-card: #fafaf9;
+  --fixture-accent: #0f766e;
+  /* Tokens the shell host maps into the matrix namespace. */
+  --card: #fafaf9;
+  --card-foreground: #1c1917;
+  --foreground: #1c1917;
+  --border: #d6d3d1;
+  --primary: #0f766e;
+  --primary-foreground: #fafaf9;
+  --destructive: #b91c1c;
+  --muted-foreground: #57534e;
+  --secondary: #e7e5e4;
+  --ring: #0f766e;
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--fixture-bg);
+  color: var(--fixture-ink);
+  font-family: var(--font-sans);
+}
+
+.fixture-shell { min-height: 100vh; display: flex; flex-direction: column; }
+
+.fixture-toolbar {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+  padding: 0.75rem 1rem; border-bottom: 1px solid var(--fixture-border);
+  background: var(--fixture-card);
+}
+.fixture-toolbar h1 { margin: 0.15rem 0 0; font-size: 1.05rem; }
+.fixture-toolbar p { margin: 0; font-size: 0.8rem; color: var(--fixture-muted); }
+.fixture-subtitle { max-width: 44rem; }
+.fixture-controls { display: flex; gap: 0.75rem; }
+.fixture-controls label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--fixture-muted); }
+.fixture-controls select { font: inherit; padding: 0.2rem 0.4rem; border: 1px solid var(--fixture-border); border-radius: 0.375rem; background: white; }
+
+/* Mock command palette: renders whatever the real command store holds. */
+.fixture-palette { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--fixture-muted); }
+.fixture-palette button {
+  font: inherit; text-align: left; cursor: pointer;
+  padding: 0.25rem 0.6rem; border: 1px solid var(--fixture-border); border-radius: 0.375rem;
+  background: white; color: var(--fixture-ink);
+}
+.fixture-palette button:hover { border-color: var(--fixture-accent); }
+.fixture-palette__empty { font-style: italic; }
+
+.fixture-stage { position: relative; flex: 1; min-height: 34rem; overflow: hidden; }
+
+/* Mock Web Canvas: an infinite pan surface with floating app windows. */
+.fixture-canvas {
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(var(--fixture-border) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(90deg, var(--fixture-border) 1px, transparent 1px) 0 0 / 40px 40px,
+    #f8f7f5;
+}
+.fixture-window {
+  position: absolute;
+  border: 1px solid var(--fixture-border);
+  border-radius: 0.75rem;
+  background: var(--fixture-card);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.08);
+  padding: 0.75rem 1rem;
+}
+.fixture-window header { font-weight: 600; font-size: 0.85rem; margin-bottom: 0.35rem; }
+.fixture-window p { margin: 0; font-size: 0.85rem; color: var(--fixture-muted); }
+
+/* Mock Web Desktop: flat desktop with icons + taskbar. */
+.fixture-desktop { position: absolute; inset: 0; background: #e8e6e3; padding-bottom: 2.5rem; }
+.fixture-desktop__icons { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; }
+.fixture-desktop__icons span {
+  width: 4.5rem; text-align: center; font-size: 0.75rem; padding: 0.5rem 0.25rem;
+  border: 1px solid var(--fixture-border); border-radius: 0.5rem; background: var(--fixture-card);
+}
+.fixture-taskbar {
+  position: absolute; inset-inline: 0; bottom: 0; height: 2.5rem;
+  display: flex; align-items: center; justify-content: space-between; padding: 0 1rem;
+  background: #292524; color: #fafaf9; font-size: 0.8rem;
+}
+.fixture-taskbar__start { font-weight: 700; }
+
+.fixture-surface-note {
+  position: absolute; left: 1rem; bottom: 3rem; margin: 0;
+  font-size: 0.75rem; color: var(--fixture-muted);
+  background: var(--fixture-card); border: 1px solid var(--fixture-border);
+  border-radius: 999px; padding: 0.25rem 0.75rem;
+}
+.fixture-desktop .fixture-surface-note { bottom: 3rem; }
+
+.fixture-evidence {
+  border-top: 1px solid var(--fixture-border);
+  background: var(--fixture-card);
+  padding: 0.75rem 1rem;
+  font-size: 0.78rem;
+  max-height: 14rem; overflow: auto;
+}
+.fixture-evidence dl { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1.5rem; margin: 0; }
+.fixture-evidence dt { font-weight: 600; color: var(--fixture-muted); }
+.fixture-evidence dd { margin: 0; word-break: break-word; }
+.fixture-summary { margin: 0.5rem 0 0; color: var(--fixture-muted); font-style: italic; }
