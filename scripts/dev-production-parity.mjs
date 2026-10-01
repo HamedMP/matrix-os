@@ -7,6 +7,7 @@ import { createConnection, createServer as createTcpServer } from "node:net";
 import { dirname, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { platformSpeechEnvironment } from "./dev-production-parity-speech.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcherLockHelperPath = resolve(root, "scripts/dev-production-parity-lock.py");
@@ -847,8 +848,9 @@ export async function startArtifactServer(state, options = {}) {
   return server;
 }
 
-function publicBuildEnvironment() {
-  const env = { ...parseEnvFile(resolve(root, ".env")), ...process.env };
+export function publicBuildEnvironment(env = {
+  ...parseEnvFile(resolve(root, ".env")), ...process.env,
+}) {
   return {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "",
     NEXT_PUBLIC_CLERK_SIGN_IN_URL: env.NEXT_PUBLIC_CLERK_SIGN_IN_URL ?? "/sign-in",
@@ -880,14 +882,16 @@ export function platformImageBuildArguments(publicEnv, options = {}) {
   return args;
 }
 
-export function platformEnvironment(state, clerkJwtKey) {
-  const localEnv = { ...parseEnvFile(resolve(root, ".env.docker")), ...parseEnvFile(resolve(root, ".env")), ...process.env };
+export function platformEnvironment(state, clerkJwtKey, localEnv = {
+  ...parseEnvFile(resolve(root, ".env.docker")), ...parseEnvFile(resolve(root, ".env")), ...process.env,
+}) {
   const clerkSecret = configuredClerkSecret(localEnv.CLERK_SECRET_KEY);
   const hasClerkCredential = clerkSecret.length > 0;
   return {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     ...publicBuildEnvironment(),
+    ...platformSpeechEnvironment(localEnv),
     AUTH_SHELL_ENABLED: String(hasClerkCredential),
     AUTH_SHELL_CLERK_SECRET_KEY: clerkSecret,
     ...(!hasClerkCredential && { NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "" }),

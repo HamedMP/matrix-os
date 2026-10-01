@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 import { resolveProxyDatabasePath } from "../../packages/proxy/src/db.js";
+import { loadPlatformSpeechConfig } from "../../packages/platform/src/speech/config.js";
 import {
   createLocalDevelopmentEnv,
   LOCAL_DEVELOPMENT_SERVICES,
@@ -35,8 +36,10 @@ import {
   localParityBuilderName,
   localParityLauncherLockArguments,
   platformContainerArguments,
+  platformEnvironment,
   platformImageBuildArguments,
   pendingLocalParityMachineId,
+  publicBuildEnvironment,
   qemuRuntimeArguments,
   renderLocalParityCloudInit,
   runtimeProcessIsOwned,
@@ -266,6 +269,117 @@ describe("local development contracts", () => {
       "PLATFORM_DATABASE_URL",
       "platform:test",
     ]);
+  });
+
+  it("forwards real bounded speech settings only to the parity platform runtime", () => {
+    const speechEnv = {
+      PLATFORM_SPEECH_ENABLED: "true",
+      PLATFORM_SPEECH_PROVIDER: "openai",
+      PLATFORM_SPEECH_OPENAI_API_KEY: "synthetic-local-test-key",
+      PLATFORM_SPEECH_SECRET: "synthetic-local-speech-secret-32-bytes",
+      PLATFORM_SPEECH_POLICY_REVISION: "local-demo-v1",
+      PLATFORM_SPEECH_MODEL: "gpt-4o-mini-transcribe",
+      PLATFORM_SPEECH_SYNTHESIS_MODEL: "gpt-4o-mini-tts",
+      PLATFORM_SPEECH_SYNTHESIS_VOICE: "alloy",
+      PLATFORM_SPEECH_PREVIEW_NO_CHARGE: "true",
+      PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME: "20",
+      PLATFORM_SPEECH_PREVIEW_NOT_AFTER: "2029-01-01T00:00:00Z",
+      PLATFORM_SPEECH_MAX_DURATION_MS: "30000",
+      PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: "false",
+    };
+    const env = platformEnvironment({ platformSecret: "local-test-platform", platformJwtSecret: "local-test-jwt" }, "public-jwt", speechEnv);
+
+    for (const [name, value] of Object.entries(speechEnv)) {
+      expect(env[name] === value, `${name} is forwarded`).toBe(true);
+    }
+    expect(loadPlatformSpeechConfig({ ...env, NODE_ENV: "production" })).toMatchObject({
+      enabled: true,
+      provider: "openai",
+      fundingMode: "preview_no_charge",
+      previewMaximumOperationsPerRuntime: 20,
+      ownerAudioEnabled: false,
+      limits: { maxDurationMs: 30000 },
+    });
+    const args = platformContainerArguments(env);
+    for (const name of Object.keys(speechEnv)) expect(args).toContain(name);
+    expect(args).not.toContain(speechEnv.PLATFORM_SPEECH_OPENAI_API_KEY);
+    expect(args).not.toContain(speechEnv.PLATFORM_SPEECH_SECRET);
+    const buildArgs = platformImageBuildArguments(publicBuildEnvironment({
+      ...speechEnv, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_local",
+    }));
+    expect(buildArgs).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_local");
+    for (const name of ["PLATFORM_SPEECH_OPENAI_API_KEY", "PLATFORM_SPEECH_SECRET"] as const) {
+      expect(buildArgs.some((arg) => arg.includes(name) || arg.includes(speechEnv[name]))).toBe(false);
+    }
+    const cloudInit = renderLocalParityCloudInit(readFileSync(resolve(root, "distro/customer-vps/cloud-init.yaml"), "utf8"), {
+      handle: "local", machineId: "local-machine", clerkUserId: "local-owner",
+      platformSecret: "local-test-platform", postgresPassword: "local-test-postgres",
+      hostBundleUrl: "http://10.0.2.2:9876/matrix-host-bundle.tar.gz",
+      platformUrl: "http://10.0.2.2:9003", shellOrigin: "http://app.localhost:9003",
+      platformSpeechEnabled: true, registrationToken: "local-registration",
+      registrationTokenExpiresAt: "2029-01-01T00:00:00Z",
+    });
+    expect(cloudInit).not.toContain(speechEnv.PLATFORM_SPEECH_OPENAI_API_KEY);
+    expect(cloudInit).not.toContain(speechEnv.PLATFORM_SPEECH_SECRET);
+    expect(cloudInit).not.toContain("PLATFORM_SPEECH_OPENAI_API_KEY");
+    expect(cloudInit).not.toContain("PLATFORM_SPEECH_SECRET");
+  });
+
+  it("preserves funded speech prices, allowance, admission and media limits", () => {
+    const env = platformEnvironment({ platformSecret: "local-test-platform", platformJwtSecret: "local-test-jwt" }, "public-jwt", {
+      PLATFORM_SPEECH_ENABLED: "true",
+      PLATFORM_SPEECH_PROVIDER: "openai",
+      PLATFORM_SPEECH_OPENAI_API_KEY: "synthetic-local-test-key",
+      PLATFORM_SPEECH_SECRET: "synthetic-local-speech-secret-32-bytes",
+      PLATFORM_SPEECH_POLICY_REVISION: "local-funded-v1",
+      PLATFORM_SPEECH_MODEL: "gpt-4o-mini-transcribe",
+      PLATFORM_SPEECH_MICROUSD_PER_MINUTE: "2000",
+      PLATFORM_SPEECH_SYNTHESIS_MICROUSD_PER_MINUTE: "5000",
+      PLATFORM_SPEECH_FUNDING_SOURCES: "addon,promotional",
+      PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: "250000",
+      PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: "75000",
+      PLATFORM_SPEECH_GLOBAL_CONCURRENCY: "5",
+      PLATFORM_SPEECH_OWNER_CONCURRENCY: "2",
+      PLATFORM_SPEECH_OWNER_REQUESTS_PER_MINUTE: "7",
+      PLATFORM_SPEECH_MAX_BYTES: "8192",
+      PLATFORM_SPEECH_MAX_TRANSCRIPT_CHARS: "512",
+    });
+    expect(loadPlatformSpeechConfig(env)).toMatchObject({
+      enabled: true, provider: "openai", fundingMode: "existing_wallet",
+      microusdPerMinute: 2000, synthesisMicrousdPerMinute: 5000,
+      allowedFundingSources: ["addon", "promotional"],
+      monthlyBudgetMicrousd: 250000, monthlyPromotionalCreditMicrousd: 75000,
+      admission: { maximumActiveOperations: 5, maximumActiveOperationsPerOwner: 2, maximumAdmissionsPerOwner: 7 },
+      limits: { maxBytes: 8192, maxTranscriptChars: 512 },
+    });
+  });
+
+  it.each([undefined, "false"])("does not enable speech from credentials when the flag is %s", (flag) => {
+    const env = platformEnvironment({ platformSecret: "local-test-platform", platformJwtSecret: "local-test-jwt" }, "public-jwt", {
+      PLATFORM_SPEECH_ENABLED: flag,
+      PLATFORM_SPEECH_PROVIDER: "openai",
+      PLATFORM_SPEECH_OPENAI_API_KEY: "synthetic-local-test-key",
+    });
+    expect(loadPlatformSpeechConfig(env)).toEqual({ enabled: false });
+  });
+
+  it("does not forward unrelated or unknown speech-prefixed settings", () => {
+    const env = platformEnvironment({ platformSecret: "local-test-platform", platformJwtSecret: "local-test-jwt" }, "public-jwt", {
+      PLATFORM_SPEECH_FIXTURE_TRANSCRIPT: "must-not-forward",
+      PLATFORM_SPEECH_UNKNOWN_SECRET: "must-not-forward",
+      NEXT_PUBLIC_PLATFORM_SPEECH_OPENAI_API_KEY: "must-not-forward",
+      OPENAI_API_KEY: "must-not-forward",
+      MATRIX_VOICE_SIMULATOR: "1",
+      PLATFORM_PREVIEW: "false",
+      PLATFORM_DATABASE_URL: "must-not-override",
+    });
+    expect(env.PLATFORM_PREVIEW).toBe("true");
+    expect(env.PLATFORM_DATABASE_URL).toContain("host.docker.internal");
+    expect(Object.keys(env).filter((key) => key.startsWith("PLATFORM_SPEECH_"))).toEqual([]);
+    expect(env).not.toHaveProperty("OPENAI_API_KEY");
+    expect(env).not.toHaveProperty("MATRIX_VOICE_SIMULATOR");
+    expect(env).not.toHaveProperty("NEXT_PUBLIC_PLATFORM_SPEECH_OPENAI_API_KEY");
+    expect(loadPlatformSpeechConfig(env)).toEqual({ enabled: false });
   });
 
   it("limits parity bridge containers to this checkout and loopback storage", () => {
