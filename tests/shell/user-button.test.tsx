@@ -19,6 +19,9 @@ const clerkState = vi.hoisted(() => ({
   organizationsLoaded: true,
   memberships: [] as Array<{ organization: { id: string; name: string } }>,
   setActive: vi.fn(async (_params: { organization: string }) => undefined),
+  hasNextPage: false,
+  isFetching: false,
+  fetchNext: vi.fn(),
 }));
 
 const replaceMock = vi.hoisted(() => vi.fn());
@@ -40,7 +43,12 @@ vi.mock("@clerk/nextjs", () => ({
   useOrganizationList: () => ({
     isLoaded: clerkState.organizationsLoaded,
     setActive: clerkState.setActive,
-    userMemberships: { data: clerkState.memberships },
+    userMemberships: {
+      data: clerkState.memberships,
+      hasNextPage: clerkState.hasNextPage,
+      isFetching: clerkState.isFetching,
+      fetchNext: clerkState.fetchNext,
+    },
   }),
 }));
 
@@ -65,6 +73,9 @@ describe("UserButton", () => {
     clerkState.memberships = [];
     clerkState.setActive.mockReset();
     clerkState.setActive.mockResolvedValue(undefined);
+    clerkState.hasNextPage = false;
+    clerkState.isFetching = false;
+    clerkState.fetchNext.mockReset();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ cleared: true }), {
         status: 200,
@@ -136,7 +147,7 @@ describe("UserButton", () => {
     await openAccountMenu();
 
     expect(screen.queryByText("Organization")).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Finna" })).toBeNull();
+    expect(screen.queryByRole("menuitemradio", { name: "Finna" })).toBeNull();
   });
 
   it("lists the member's organizations and activates the one they choose", async () => {
@@ -153,11 +164,38 @@ describe("UserButton", () => {
     await openAccountMenu();
 
     expect(screen.getByText("Organization")).toBeTruthy();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Matrix" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix" }));
     expect(clerkState.setActive).toHaveBeenCalledWith({ organization: "org_b" });
   });
 
-  it("marks only the active organization", async () => {
+  it("keeps the menu open after a choice so the result is visible where it was made", async () => {
+    clerkState.memberships = [
+      { organization: { id: "org_a", name: "Finna" } },
+      { organization: { id: "org_b", name: "Matrix" } },
+    ];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix" }));
+
+    await waitFor(() => expect(clerkState.setActive).toHaveBeenCalled());
+    expect(screen.getByRole("menuitemradio", { name: "Finna" })).toBeTruthy();
+  });
+
+  it("does not re-activate the organization that is already active", async () => {
+    clerkState.organization = { id: "org_a" };
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Finna" }));
+
+    expect(clerkState.setActive).not.toHaveBeenCalled();
+  });
+
+  it("announces the active organization to assistive technology, not only with a checkmark", async () => {
     clerkState.organization = { id: "org_b" };
     clerkState.memberships = [
       { organization: { id: "org_a", name: "Finna" } },
@@ -168,14 +206,11 @@ describe("UserButton", () => {
     render(<UserButton variant="settings" />);
     await openAccountMenu();
 
-    const inactive = screen.getByRole("menuitem", { name: "Finna" });
-    const active = screen.getByRole("menuitem", { name: "Matrix" });
-    expect(inactive.querySelector("svg:last-child")).not.toBe(active.querySelector("svg:last-child"));
-    expect(active.querySelectorAll("svg")).toHaveLength(2);
-    expect(inactive.querySelectorAll("svg")).toHaveLength(1);
+    expect(screen.getByRole("menuitemradio", { name: "Matrix" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemradio", { name: "Finna" }).getAttribute("aria-checked")).toBe("false");
   });
 
-  it("logs a failed activation instead of rejecting unhandled", async () => {
+  it("shows a visible failure instead of only logging when activation fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     clerkState.setActive.mockRejectedValue(new TypeError("network"));
     clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
@@ -183,12 +218,32 @@ describe("UserButton", () => {
 
     render(<UserButton variant="settings" />);
     await openAccountMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Finna" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Finna" }));
 
-    await waitFor(() => expect(warn).toHaveBeenCalledWith(
-      "[collaboration-organization] activation failed",
-      "TypeError",
-    ));
+    expect((await screen.findByRole("alert")).textContent).toBe("Couldn't switch to Finna. Try again.");
+    expect(warn).toHaveBeenCalledWith("[collaboration-organization] activation failed", "TypeError");
+  });
+
+  it("offers later pages of memberships instead of silently dropping them", async () => {
+    clerkState.hasNextPage = true;
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "More organizations" }));
+
+    expect(clerkState.fetchNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no further page once every membership is loaded", async () => {
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.queryByRole("menuitem", { name: "More organizations" })).toBeNull();
   });
 
   it("offers hosted users both computer-management actions", async () => {
