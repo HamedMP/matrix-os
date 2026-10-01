@@ -61,3 +61,12 @@ it("shows compact verified batch counters during tool activity",()=>{
  expect(formatJevInboxActivitySummary(value)).toBe("Inbox batch: 3 examined, 2 confirmed, 0 no change, 1 Review, 0 unconfirmed (ready)");
  expect(formatJevInboxActivitySummary({...value,processed:999})).toBeNull();
 });
+
+it("identifies confirmed Review labels as added for inspection, not a skipped write", () => {
+  const { archiveProposal: _archive, ...base } = proposal;
+  const text = formatJevInboxPresentation({ ...base, kind: "labeled", readonly: false,
+    labels: [EMAIL_TRIAGE_LABELS.newsletter, EMAIL_TRIAGE_LABELS.review] });
+  expect(text).toContain("Confirmed in Gmail");
+  expect(text).toContain("The Review label was added for your inspection.");
+  expect(text).not.toContain("No labels were added");
+});
