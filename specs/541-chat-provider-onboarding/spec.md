@@ -56,7 +56,7 @@ Electron captures an explicit non-Chat entry before restoration adds other tabs,
 | --- | --- | --- |
 | `GET /api/ai/provider-settings?includeCapabilities=true` | Selected-runtime authenticated transport | Validated connection snapshot and advertised methods |
 | `POST /api/ai/provider-settings/actions` | Existing writable provider permission | Revisioned/idempotent `start_login`; no new auth policy |
-| `/api/terminal/sessions` | Existing selected-runtime terminal permission | Open the exact server-returned session |
+| `GET /api/terminal/workspaces` | Existing selected-runtime terminal permission | Validate the exact server-returned workspace/tab reference |
 
 ### Request and response boundaries
 
@@ -130,6 +130,8 @@ For presentation, validate absence against the authoritative snapshot's `refresh
 Live Connect acceptance exposed a second integration defect: the login coordinator persists named Terminal aliases, while current clients open canonical `workspaceId:tabId` references. Project the authenticated mutation response's `open_terminal` action to the exact existing tab reference using the owner runtime registry. Apply projection after store mutation/replay so cached idempotent receipts are covered as well as new and recovered attempts. Keep internal names and receipt hashes server-owned, and preserve immutable idempotent replay. Ended login recovery follows the explicit lifecycle contract below. Resolve only an exact unique named tab, validate its reference, and fail closed with a safe error on missing, ambiguous or invalid identity. Never create another tab during projection or guess an identifier in the client. Authentication and Terminal permissions remain authoritative at their existing boundaries.
 
 Keep this behavior in a focused handoff helper and registry resolver; existing large server entrypoints contain dependency registration only. Tests must prove fresh and replayed responses yield the same actual tab, dependency wiring is validated, unsupported/browser actions retain their existing semantics, and missing/ambiguous identities cannot open a Terminal. Real Electron acceptance must click Connect and observe the existing login Terminal on the selected Preview.
+
+Electron continuation performs an independent selected-runtime workspace read through the canonical session parser. Ordinary five-second/focus Terminal polling retains its existing latest-only store semantics; a pending poll cannot reject a successfully validated handoff merely by superseding its request sequence. Capture runtime generation and authoritative store revision before the read. If a newer list or completed deletion was accepted while it waited, use that newer state and reject a missing or exited target. Otherwise publish the validated snapshot, advance the sequence to fence pending polls, and open only the exact active durable reference. Identity/generation changes and read failures fail closed; continuation never creates a Terminal tab. Regression tests cover overlapping pending polling, completed newer missing/exited/deleted evidence, and runtime changes.
 
 ### Validation / error matrix
 - Explicit matching missing credentials, no contradictory observations: unauthenticated projection.
