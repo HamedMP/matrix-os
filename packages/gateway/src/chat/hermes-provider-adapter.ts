@@ -343,6 +343,7 @@ export function createHermesChatProviderAdapter(options: {
     let pendingVisibleText = "";
     let pendingStreamBoundaryText = "";
     let deferredPathStream = false;
+    let deferredCredentialProbe = false;
     let publishedRawPrefixLength = 0;
     let deltaFlushTimer: NodeJS.Timeout | undefined;
     let separatorPending = false;
@@ -460,14 +461,28 @@ export function createHermesChatProviderAdapter(options: {
         if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
         // A slash path or partial credential key can become sensitive in a
         // later delta. Seal the remaining segment before publishing it.
-        if (!deferredPathStream && (
-          /(^|[\s"'`(=:<>|;&])\//u.test(currentSegment.slice(-1) + text)
-          || hasAssistantCredentialBoundaryCandidate(currentSegment + text)
-        )) {
+        const pathCandidate = /(^|[\s"'`(=:<>|;&])\//u.test(currentSegment.slice(-1) + text);
+        const credentialCandidate = hasAssistantCredentialBoundaryCandidate(currentSegment + text);
+        if (!deferredPathStream && (pathCandidate || credentialCandidate)) {
           deferredPathStream = true;
+          deferredCredentialProbe = !pathCandidate;
           publishedRawPrefixLength = currentSegment.length - pendingStreamBoundaryText.length;
         }
-        if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure && !deferredPathStream) {
+        let releasedCredentialProbe = false;
+        if (deferredCredentialProbe) {
+          if (pathCandidate) {
+            deferredCredentialProbe = false;
+          } else if (!credentialCandidate) {
+            deferredPathStream = false;
+            deferredCredentialProbe = false;
+            releasedCredentialProbe = true;
+            const unpublished = (currentSegment + text).slice(publishedRawPrefixLength);
+            pendingStreamBoundaryText = "";
+            if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure) emitStreamText(unpublished);
+          }
+        }
+        if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure
+          && !deferredPathStream && !releasedCredentialProbe) {
           emitStreamText(text);
         }
         currentSegment += text;
@@ -506,6 +521,7 @@ export function createHermesChatProviderAdapter(options: {
         currentSegment = "";
         pendingStreamBoundaryText = "";
         deferredPathStream = false;
+        deferredCredentialProbe = false;
         publishedRawPrefixLength = 0;
         currentSegmentSuppressed = false;
         deferAssistantAfterToolFailure = false;

@@ -89,6 +89,27 @@ describe("Hermes canonical Chat Provider adapter", () => {
       expect(deltas.join("")).not.toContain("qa-fake-2058");
     }
   });
+  it("resumes live Hermes prose after a credential-like prefix becomes ordinary text", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const seen: unknown[] = [];
+    const completed = (async () => { for await (const event of adapter.start(privateBaseInput)) seen.push(event); })();
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+    gateway.event("message.delta", { text: "Use be" });
+    gateway.event("message.delta", { text: "autiful charts." });
+    let live = "";
+    try {
+      await vi.waitFor(() => {
+        live = seen.filter((event): event is { type: "assistant.delta"; delta: string } =>
+          typeof event === "object" && event !== null && "type" in event && event.type === "assistant.delta")
+          .map((event) => event.delta).join("");
+        expect(live).toBe("Use beautiful charts.");
+      }, { timeout: 150 });
+    } finally {
+      gateway.event("message.complete", { text: "Use beautiful charts.", status: "complete" });
+      await completed;
+    }
+  });
   it("forwards an explicit Codex subscription model to native session creation without a configured Anthropic override", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });

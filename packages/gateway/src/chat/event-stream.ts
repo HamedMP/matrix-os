@@ -271,24 +271,31 @@ export function createCanonicalChatEventStream(options: {
         (highest, event) => highest === undefined ? event.cursor : Math.max(highest, event.cursor),
         undefined,
       );
-      const nextCursor = replay.gap
-        ? replay.nextCursor
-        : replay.nextCursor ?? replayCursor ?? cursor;
-      if (!sendFrame(input.sink, {
-        type: "chat.replay.end",
-        ...(nextCursor === undefined ? {} : { nextCursor }),
-      })) {
-        evict(subscriber.id);
-        return { touch: () => undefined, onClose: () => undefined };
-      }
       subscriber.replaying = false;
       const buffered = subscriber.buffered;
       subscriber.buffered = [];
       for (const event of buffered) {
         if (!deliver(subscriber, event, false)) {
           evict(subscriber.id);
-          break;
+          return { touch: () => undefined, onClose: () => undefined };
         }
+      }
+      const bufferedCursor = buffered.reduce<number | undefined>(
+        (highest, event) => highest === undefined ? event.cursor : Math.max(highest, event.cursor),
+        undefined,
+      );
+      const nextCursor = replay.gap
+        ? replay.nextCursor
+        : bufferedCursor === undefined
+        ? replay.nextCursor ?? replayCursor ?? cursor
+        : Math.max(bufferedCursor, replay.nextCursor ?? bufferedCursor,
+          replayCursor ?? bufferedCursor, cursor ?? bufferedCursor);
+      if (!sendFrame(input.sink, {
+        type: "chat.replay.end",
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+      })) {
+        evict(subscriber.id);
+        return { touch: () => undefined, onClose: () => undefined };
       }
     } catch (error: unknown) {
       console.warn("[chat/event-stream] Attach failed:", error instanceof Error ? error.name : "UnknownError");

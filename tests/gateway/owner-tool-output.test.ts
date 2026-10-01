@@ -156,6 +156,9 @@ it("does not expose a private event buffered during replay after a Chat becomes 
     publish({ owner, event });
     release();
     await opening;
+    expect(frames.map((frame) => frame.type)).toEqual([
+      "chat.stream.attached", "chat.event", "chat.replay.end",
+    ]);
     expect(frames.some((frame) => frame.type === "chat.event" && frame.event.cursor === 2)).toBe(true);
     expect(JSON.stringify(frames)).not.toContain("OPAQUE_PRIVATE_RESULT");
   } finally { stream.shutdown(); }
