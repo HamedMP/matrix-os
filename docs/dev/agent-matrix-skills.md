@@ -14,7 +14,7 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `matrix-integrations` | Use platform-owned Matrix integrations without copying provider secrets into Agent or customer VPSes. |
 | `matrix-dev-vps` | Develop Matrix from inside a user/dev VPS with hot reload, previews, and auth-aware tunnels. |
 | `matrix-debug-app` | Fix `needs_build`, manifest problems, bundle/icon 404s, console errors, and integration proxy issues. |
-| `matrix-landing-design` | Build public Matrix OS marketing and landing surfaces without mixing those patterns into apps. |
+| `matrix-landing-design` | Build product landing pages matching their apps, while keeping public Matrix OS marketing on the shared brand. |
 | `matrix-chat-import` | Import owner-selected Codex/Claude transcripts as private Matrix Chats. |
 | `matrix-personal-daily-brief` | Prepare a personal briefing from connected services. |
 | `matrix-jev-email-triage` | Triage email through the scoped Matrix workflow. |
@@ -31,8 +31,18 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 Every skill supplies top-level discovery triggers. Matrix companion names also appear
 in top-level `related_skills` and harness metadata; discovery presents names while
 full bodies and resources load on demand. Avoid eagerly injecting the entire pack.
-The local snapshots retain original attribution and do not claim Matrix authorship
-or an upstream license that was not supplied. Host-specific configuration is excluded.
+
+Saved Chat Agent recipes pin the admitted skill instructions and retain the actual
+server-selected skill file location separately. Resolve relative guide/resource links
+from that file's directory, using available authorized file-reading tools. Linked
+resources are current local files and may change; they do not replace the pinned
+instruction snapshot. Older snapshots without a source location omit this guidance
+rather than guessing a path. Public catalog metadata excludes source paths, and
+selecting a skill does not expand permissions or install tools.
+
+The local snapshots preserve upstream authorship and provenance. Matrix author metadata
+identifies the managed adaptation; it does not assert an upstream license that was not
+supplied. Host-specific configuration is excluded.
 
 ## Install Into Agent
 
