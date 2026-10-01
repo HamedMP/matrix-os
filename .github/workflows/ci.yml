@@ -11,7 +11,7 @@ on:
     types: [labeled, ready_for_review, synchronize]
 
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}
   queue: max
 
 permissions:

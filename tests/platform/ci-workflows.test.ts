@@ -327,6 +327,9 @@ describe('CI workflows', () => {
     expect(workflow).toContain('run-name: CI coverage-v1');
     expect(workflow).toContain('queue: max');
     expect(workflow).not.toContain('cancel-in-progress:');
+    expect(workflow).toContain(
+      "github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared'",
+    );
     expect(superseder).toContain('actions: write');
     expect(superseder).toContain('paths-ignore:');
     expect(superseder).toContain("- 'docs/**'");
