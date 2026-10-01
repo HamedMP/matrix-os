@@ -3,7 +3,7 @@ import { PanelLeftOpenIcon } from "@/lib/hugeicons";
 
 import { DEFAULT_SHELL_SESSION_NAME } from "./TerminalSidebarItems";
 import { useTerminalAppContext } from "./TerminalAppContext";
-import { getFirstPaneId, getPaneSessionId } from "./terminal-layout";
+import { getFocusedSessionId } from "./terminal-layout";
 import { TerminalSharing } from "./TerminalSharing";
 
 function isTerminalChromeControl(target: EventTarget | null): boolean {
@@ -178,8 +178,7 @@ export function TerminalEmbeddedToolbar() {
 function getActiveTerminalId(ctx: ReturnType<typeof useTerminalAppContext>): string | null {
   const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
   if (!activeTab) return null;
-  const activePaneId = ctx.focusedPaneId ?? getFirstPaneId(activeTab.paneTree);
-  return activePaneId ? getPaneSessionId(activeTab.paneTree, activePaneId) : null;
+  return getFocusedSessionId(activeTab.paneTree, ctx.focusedPaneId);
 }
 
 function TerminalSharingSlot({ terminalId, emptyWidth }: { terminalId: string | null; emptyWidth: number }) {
