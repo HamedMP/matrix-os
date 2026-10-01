@@ -3,6 +3,7 @@ import React from "react";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDefaultOsViewDocument, mergeOsViewStatePatch, type PatchOsViewStateRequest } from "@matrix-os/contracts";
 
 import type { Desktop } from "../../shell/src/components/Desktop.js";
 import type { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
@@ -446,7 +447,9 @@ describe("Desktop launcher dock button by mode", () => {
       icon: "sushi-counter",
       slug: "sushi-counter",
     };
-    const patches: unknown[] = [];
+    const patches: PatchOsViewStateRequest[] = [];
+    let revision = 1;
+    let document = createDefaultOsViewDocument();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return await jsonResponse({ complete: true });
@@ -455,29 +458,21 @@ describe("Desktop launcher dock button by mode", () => {
         return await jsonResponse({ layout: { windows: [] }, apps: [sushi], modules: [] });
       }
       if (url.includes("/api/os-view-state") && init?.method === "PATCH") {
-        patches.push(JSON.parse(String(init.body)));
+        const mutation = JSON.parse(String(init.body)) as PatchOsViewStateRequest;
+        expect(mutation.baseRevision).toBe(revision);
+        patches.push(mutation);
+        document = mergeOsViewStatePatch(document, mutation.patch);
+        revision += 1;
         return await jsonResponse({
-          revision: 2,
-          document: {
-            version: 1,
-            apps: [],
-            pinnedApps: [],
-            desktop: { windows: [], icons: [{ path: "apps/sushi-counter/index.html", x: 24, y: 24 }] },
-            canvas: { windows: [], transform: { zoom: 1, panX: 0, panY: 0 } },
-          },
+          revision,
+          document,
           updatedAt: "2026-09-08T00:00:00.000Z",
         });
       }
       if (url.includes("/api/os-view-state")) {
         return await jsonResponse({
-          revision: 1,
-          document: {
-            version: 1,
-            apps: [],
-            pinnedApps: [],
-            desktop: { windows: [], icons: [] },
-            canvas: { windows: [], transform: { zoom: 1, panX: 0, panY: 0 } },
-          },
+          revision,
+          document,
           updatedAt: "2026-09-08T00:00:00.000Z",
         });
       }
@@ -487,14 +482,20 @@ describe("Desktop launcher dock button by mode", () => {
 
     renderDesktop();
 
+    // Startup now persists Chat. Settle that revision before the icon action;
+    // the fixture must not invent an icon as the startup PATCH response.
+    await waitFor(() => expect(patches).toHaveLength(1));
+    expect(document.apps).toContainEqual(expect.objectContaining({ path: "__chat__", state: "open" }));
+
     fireEvent.click(await screen.findByRole("button", { name: "Open App Launcher" }));
     fireEvent.contextMenu(await screen.findByRole("button", { name: "Sushi Counter" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" }));
 
     await waitFor(() => expect(screen.queryByTestId("launcher-destinations")).toBeNull());
     expect(screen.getByRole("button", { name: "Sushi Counter" })).toBeTruthy();
-    expect(patches).toEqual([expect.objectContaining({
-      baseRevision: 1,
+    expect(patches).toHaveLength(2);
+    expect(patches[1]).toEqual(expect.objectContaining({
+      baseRevision: 2,
       patch: expect.objectContaining({
         desktop: expect.objectContaining({
           icons: expect.arrayContaining([
@@ -502,7 +503,8 @@ describe("Desktop launcher dock button by mode", () => {
           ]),
         }),
       }),
-    })]);
+    }));
+    expect(document.apps).toContainEqual(expect.objectContaining({ path: "__chat__", state: "open" }));
   });
 
   it("routes an installed Browser command through the dedicated public browser launch", async () => {

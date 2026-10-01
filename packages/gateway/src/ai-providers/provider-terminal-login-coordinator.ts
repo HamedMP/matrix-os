@@ -5,12 +5,13 @@ import { ProviderConnectionAttemptSchema, TerminalRefSchema, type ProviderConnec
 import { z } from "zod/v4";
 import { recoverProviderLoginSession, type ProviderLoginRegistry } from "./provider-login-session-recovery.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
-import { writeProviderJsonAtomic } from "./provider-settings-persistence.js";
+import { MAX_PROVIDER_SETTINGS_RECEIPTS, writeProviderJsonAtomic } from "./provider-settings-persistence.js";
 import type { ProviderLoginCoordinator } from "./provider-settings-coordinators.js";
 import { currentProviderConnectionAttempt } from "./provider-settings-receipts.js";
 
-const MAX_RECEIPTS = 64;
-const MAX_FILE_BYTES = 256 * 1024;
+// Login bindings must outlive the same successful mutations cached by Settings.
+const MAX_RECEIPTS = MAX_PROVIDER_SETTINGS_RECEIPTS;
+const MAX_FILE_BYTES = 1024 * 1024;
 const LOGIN_LIFETIME_MS = 10 * 60_000;
 const MAX_LEGACY_REVISION_LOOKBACK = 64;
 const SafeRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);

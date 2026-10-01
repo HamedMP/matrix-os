@@ -142,6 +142,24 @@ describe("provider Terminal login handoff", () => {
         body: JSON.stringify({ ...mutation, expectedRevision: endedRevision, idempotencyKey: "login_handoff_exited" }) });
     expect((await secondAgain.json()).attempt.action.terminalSessionId).toBe(`${REF.workspaceId}:${tabs[1].id}`);
     expect(runtime.createTab).toHaveBeenCalledTimes(3);
+
+    // Settings caches 256 mutations. Archived bindings must survive beyond the
+    // former coordinator limit of 64 while those cached requests remain valid.
+    for (let generation = 0; generation < 65; generation += 1) {
+      runtime.getCommandState.mockResolvedValueOnce("exited");
+      const nextStore = createStore();
+      const nextRevision = (await nextStore.getSnapshot()).revision;
+      const next = await appFor(handoff(nextStore, id => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
+        .request("/api/ai/provider-settings/actions", { ...request,
+          body: JSON.stringify({ ...mutation, expectedRevision: nextRevision, idempotencyKey: `login_generation_${generation}` }) });
+      expect(next.status).toBe(200);
+    }
+    const retainedReplay = await appFor(handoff(createStore(), id => registry.resolveTerminalRef(id), login.resolveTerminalIdentity))
+      .request("/api/ai/provider-settings/actions", request);
+    expect(retainedReplay.status).toBe(200);
+    expect((await retainedReplay.json()).attempt).toEqual(initial.attempt);
+    expect(runtime.createTab).toHaveBeenCalledTimes(68);
+    expect(runtime.terminateTab).not.toHaveBeenCalled();
   });
 
   it("projects a historical cached attempt without invoking login or changing the cached object", async () => {
