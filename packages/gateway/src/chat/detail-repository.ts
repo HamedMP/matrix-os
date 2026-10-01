@@ -107,9 +107,11 @@ export class ChatDetailRepository {
       .where("run_id", "in", runIds)
       .where("owner_type", "=", owner.type)
       .where("owner_id", "=", owner.ownerId)
-      .orderBy(sql`operation ->> 'createdAt'`)
+      .orderBy(sql`operation ->> 'createdAt'`, "desc")
+      .orderBy("id", "desc")
       .limit(200)
       .execute();
+    operationRows.reverse();
     const operations = operationRows.flatMap((row) => {
       const parsed = CanonicalOperationSchema.safeParse(parseJson(row.operation));
       if (!parsed.success) {

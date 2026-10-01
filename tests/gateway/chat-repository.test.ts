@@ -2601,6 +2601,36 @@ describe("ChatRepository", () => {
     expect(otherDetail?.operations?.map((op) => op.id)).toEqual(["action_detail_other_run"]);
   });
 
+  it("keeps the newest 200 operations with deterministic ordering at tied timestamps", async () => {
+    const admitted = await admitChat(repository, "detail_operation_bound");
+    const rows = Array.from({ length: 203 }, (_, index) => {
+      const id = `action_bound_${String(index).padStart(3, "0")}`;
+      const createdAt = index < 3 ? "2026-08-24T00:00:00.000Z" : now;
+      return {
+        id, chat_id: admitted.chatId, run_id: admitted.runId,
+        owner_type: "personal", owner_id: owner.ownerId,
+        state: "succeeded", revision: 1, decision_request_id: null, decision: null,
+        operation: {
+          id, owner, chatId: admitted.chatId, runId: admitted.runId,
+          workspaceScope: "apps", policyRevision: "bound_v1",
+          executionPolicy: { revision: "bound_v1", actionMode: "canonical_actions",
+            workspaceScope: "apps", tools: ["matrix_open_app"], delegation: false },
+          toolId: "matrix_open_app", schemaRevision: "canonical_apps_v1",
+          arguments: { app: "timer" }, argumentDigest: "a".repeat(64),
+          state: "succeeded", revision: 1, cancellationRequested: false,
+          createdAt, updatedAt: createdAt,
+        },
+      };
+    });
+    // Insert in reverse order so neither row order nor timestamp alone can pass.
+    await repository.kysely.insertInto("chat_action_operations" as never)
+      .values(rows.reverse() as never).execute();
+    const detail = await repository.getDetailPage(owner, admitted.chatId, { limit: 200 });
+    expect(detail?.operations?.map(operation => operation.id)).toEqual(
+      Array.from({ length: 200 }, (_, index) => `action_bound_${String(index + 3).padStart(3, "0")}`),
+    );
+  });
+
   it("omits the operations field when the page covers no persisted operations", async () => {
     const admitted = await admitChat(repository, "detail_no_ops");
     const detail = await repository.getDetailPage(owner, admitted.chatId, { limit: 200 });
