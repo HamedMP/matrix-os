@@ -35,7 +35,13 @@ function harness() {
     if (url.includes(`/api/chats/${record.chat.id}?`)) return getDetail();
     throw new Error("Unexpected request");
   }));
-  controller.enqueue(new TextEncoder().encode('data: {"type":"chat.stream.attached"}\n\n'));
+  controller.enqueue(new TextEncoder().encode([
+    'data: {"type":"chat.stream.attached"}',
+    "",
+    'data: {"type":"chat.replay.end","nextCursor":1}',
+    "",
+    "",
+  ].join("\n")));
   return {
     getDetail, list,
     emit(cursor: number, eventType = "run.message", chatId = record.chat.id) {
