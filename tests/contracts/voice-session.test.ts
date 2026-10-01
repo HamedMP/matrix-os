@@ -284,6 +284,25 @@ describe("voice session contracts", () => {
     expectRejected(VoiceServerFrameSchema, { ...frames[1], ticket: "one-time-secret" });
   });
 
+  it("correlates operation status and acks targeted action cancellation truthfully", () => {
+    const status = {
+      ...common,
+      type: "operation.status",
+      runId: "run_demo",
+      label: "Applying files",
+      state: "cancelled",
+      operationId: "action_demo",
+    };
+    expect(VoiceServerFrameSchema.parse(status)).toEqual(status);
+    for (const outcome of ["cancelled", "requested", "already_terminal", "unavailable", "unknown"]) {
+      const ack = { ...common, type: "action.cancel_result", actionId: "action_demo", outcome };
+      expect(VoiceServerFrameSchema.parse(ack)).toEqual(ack);
+    }
+    expectRejected(VoiceServerFrameSchema, { ...common, type: "action.cancel_result", actionId: "action_demo", outcome: "destroyed" });
+    expectRejected(VoiceServerFrameSchema, { ...common, type: "action.cancel_result", actionId: "not-an-action", outcome: "cancelled" });
+    expectRejected(VoiceServerFrameSchema, { ...status, operationId: "x".repeat(200) });
+  });
+
   it("makes unsafe free-form client errors impossible", () => {
     const safe = {
       code: "connection_lost",

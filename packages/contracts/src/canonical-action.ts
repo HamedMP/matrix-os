@@ -2,6 +2,15 @@ import { z } from "zod/v4";
 import { CanonicalChatRunPolicySchema, CanonicalChatArgumentDigestSchema, CanonicalChatIdSchema, CanonicalChatRunIdSchema, CanonicalOwnerScopeSchema } from "#canonical-chat";
 
 const ref = (max: number) => z.string().min(1).max(max).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+/**
+ * Slash-separated workspace path (e.g. `apps/timer/src/main.tsx`). Every
+ * segment stays a safe ref — `..`, empty, hidden and `/`-prefixed segments are
+ * rejected — so projected paths are never traversal or absolute escapes.
+ */
+const pathRef = (max: number) => z.string().min(1).max(max).refine(
+  (value) => value.split("/").every((segment) => /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(segment)),
+  { message: "Invalid operation result path" },
+);
 export const CanonicalExecutionPolicySchema = CanonicalChatRunPolicySchema.shape.executionPolicy.unwrap();
 export type CanonicalExecutionPolicy = z.infer<typeof CanonicalExecutionPolicySchema>;
 // JSON only, bounded before recursive traversal; reject cycles, getters and exotic objects.
@@ -43,3 +52,61 @@ export const CanonicalOperationSchema = z.object({
   if (op.policyRevision !== op.executionPolicy.revision || op.workspaceScope !== op.executionPolicy.workspaceScope) ctx.addIssue({ code: "custom", message: "Operation policy identity mismatch" });
 });
 export type CanonicalOperation = z.infer<typeof CanonicalOperationSchema>;
+
+/**
+ * The pinned server-owned fallback a live voice session may stamp onto its
+ * runs. `conversation_only` with an empty tool inventory and no delegation is
+ * self-enforcing — the canonical authority rejects every tool invocation under
+ * it and no provider grant is transported — so admission may accept this exact
+ * policy without an adapter `qualifyPolicy` echo. Any other frozen policy
+ * still requires byte-exact adapter attestation. The revision is pinned so a
+ * session can never widen the exemption by inventing a variant.
+ */
+export const CANONICAL_VOICE_CONVERSATION_ONLY_POLICY = Object.freeze(
+  CanonicalExecutionPolicySchema.parse({
+    revision: "voice_conversation_only_v1",
+    actionMode: "conversation_only",
+    workspaceScope: "apps",
+    tools: [],
+    delegation: false,
+  }),
+);
+
+/**
+ * Safe client projection of a canonical operation. Raw `arguments`, raw
+ * `result` payloads and `claimToken` never leave the server; only whitelisted,
+ * schema-validated result fields per tool are projected. Unknown tools project
+ * no result detail at all.
+ */
+export const CanonicalOperationResultViewSchema = z.object({
+  navigation: z.object({ kind: z.literal("open_app"), app: ref(80), path: pathRef(160) }).strict().optional(),
+  artifact: z.object({ kind: ref(40), path: pathRef(160) }).strict().optional(),
+  apps: z.array(z.object({ app: ref(80), name: z.string().min(1).max(160) }).strict()).max(32).optional(),
+  files: z.array(z.object({
+    path: pathRef(160),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    truncated: z.boolean().optional(),
+  }).strict()).max(32).optional(),
+  matches: z.array(z.object({
+    path: pathRef(160),
+    line: z.number().int().min(1).max(1_000_000),
+    text: z.string().max(240),
+  }).strict()).max(32).optional(),
+}).strict();
+export type CanonicalOperationResultView = z.infer<typeof CanonicalOperationResultViewSchema>;
+
+export const CanonicalOperationViewSchema = z.object({
+  id: CanonicalActionIdSchema,
+  chatId: CanonicalChatIdSchema,
+  runId: CanonicalChatRunIdSchema,
+  toolId: ref(80),
+  schemaRevision: ref(160),
+  policyRevision: ref(160),
+  state: z.enum(["proposed", "waiting_for_approval", "authorized", "running", "succeeded", "failed", "cancelled", "timed_out", "outcome_unknown"]),
+  argumentDigest: CanonicalChatArgumentDigestSchema,
+  cancellationRequested: z.boolean(),
+  result: CanonicalOperationResultViewSchema.optional(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+}).strict();
+export type CanonicalOperationView = z.infer<typeof CanonicalOperationViewSchema>;

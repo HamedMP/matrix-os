@@ -351,7 +351,10 @@ export const VoiceServerFrameSchema = z.discriminatedUnion("type", [
   z.object({ ...commonFrameShape, type: z.literal("response.audio"), responseId: VoiceResponseIdSchema, segmentId: VoiceSegmentIdSchema, startMs: VoiceDurationMsSchema, data: VoiceAudioFrameDataSchema, format: VoiceOutputAudioFormatSchema.optional() }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("response.audio_end"), responseId: VoiceResponseIdSchema, generatedDurationMs: VoiceDurationMsSchema, segmentId: VoiceSegmentIdSchema.optional() }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("response.interrupted"), responseId: VoiceResponseIdSchema, effectiveThroughMs: VoiceDurationMsSchema }).strict(),
-  z.object({ ...commonFrameShape, type: z.literal("operation.status"), runId: VoiceCanonicalRunIdSchema, label: boundedText(VOICE_SESSION_LIMITS.maxOperationLabelChars, VOICE_SESSION_LIMITS.maxOperationLabelChars * 4), state: CanonicalOperationStateSchema }).strict(),
+  z.object({ ...commonFrameShape, type: z.literal("operation.status"), runId: VoiceCanonicalRunIdSchema, label: boundedText(VOICE_SESSION_LIMITS.maxOperationLabelChars, VOICE_SESSION_LIMITS.maxOperationLabelChars * 4), state: CanonicalOperationStateSchema, operationId: boundedText(160, 640).optional() }).strict(),
+  // Truthful ack for `action.cancel`: reports the canonical cancellation
+  // outcome — `requested` means the op is still running with the flag set.
+  z.object({ ...commonFrameShape, type: z.literal("action.cancel_result"), actionId: VoiceActionIdSchema, outcome: z.enum(["cancelled", "requested", "already_terminal", "unavailable", "unknown"]) }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("transport.going_away"), retryAfterMs: z.number().int().nonnegative().max(60_000), reconnectAllowed: z.boolean() }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("session.error"), ...SafeVoiceErrorSchema.shape }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("heartbeat.ack"), timestampMs: VoiceTimestampMsSchema }).strict(),

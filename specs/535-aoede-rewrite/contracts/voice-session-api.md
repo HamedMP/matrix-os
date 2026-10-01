@@ -189,14 +189,15 @@ type VoiceServerFrame = VoiceFrameCommon & (
   | { type: "response.audio"; responseId: string; segmentId: string; startMs: number; data: string; format?: VoiceOutputAudioFormat }
   | { type: "response.audio_end"; responseId: string; segmentId?: string; generatedDurationMs: number }
   | { type: "response.interrupted"; responseId: string; effectiveThroughMs: number }
-  | { type: "operation.status"; runId: string; label: string; state: CanonicalOperationState }
+  | { type: "operation.status"; runId: string; label: string; state: CanonicalOperationState; operationId?: string }
+  | { type: "action.cancel_result"; actionId: string; outcome: "cancelled" | "requested" | "already_terminal" | "unavailable" | "unknown" }
   | { type: "transport.going_away"; retryAfterMs: number; reconnectAllowed: boolean }
   | { type: "session.error"; code: SafeVoiceErrorCode; retryable: boolean; recovery: VoiceRecoveryAction }
   | { type: "heartbeat.ack"; timestampMs: number }
 );
 ```
 
-`transcript.final` requires either `canonicalTurnId` or `canonicalQueuedTurnId`. A reconnect commits a new epoch before transport attachment; the replacement transport receives `session.resumed`, not an epoch-rotated `session.state`. `generation.cancel` targets the current canonical response/run, while `action.cancel` targets a qualified canonical action and must not be represented as local playback interruption.
+`transcript.final` requires either `canonicalTurnId` or `canonicalQueuedTurnId`. A reconnect commits a new epoch before transport attachment; the replacement transport receives `session.resumed`, not an epoch-rotated `session.state`. `generation.cancel` targets the current canonical response/run, while `action.cancel` targets a qualified canonical action and must not be represented as local playback interruption. `action.cancel` always receives an `action.cancel_result` ack unless the session has no run-control port: `cancelled` means the operation reached `cancelled`, `requested` means a `running`/`outcome_unknown` operation recorded `cancellationRequested` (the in-flight effect is not interrupted), `already_terminal` means it finished first, and `unavailable` also surfaces a `session.error` (`unsupported_surface`, non-retryable — the deployment has no run-control port); `unknown` is reported by the ack alone so a live session is not falsely presented as failed, while a thrown cancellation additionally emits a retryable `chat_unavailable` error. `operation.status` may carry `operationId` so clients can correlate status with a cancellable `actionId` from canonical detail `operations`.
 
 Durable assistant text, tool activity, approvals, and terminal results still arrive through the canonical Chat event stream. The voice channel may carry a bounded operation label for immediate spoken/UI feedback but cannot replace canonical activity state.
 
@@ -239,7 +240,7 @@ Voice action eligibility is derived from canonical harness/tool capabilities:
 
 The voice layer never supplies missing enforcement. Unsupported routes degrade to conversation-only or safe reads. Stop speaking, cancel generation, and cancel action are separate commands and statuses.
 
-At checkpoint `553fff73d`, consequential execution is constrained Codex with five bounded app tools; delegation is disabled, non-Codex frozen action policies fail closed, and canonical Codex native input/approval delivery is unavailable. Run-level cancellation exists; targeted Aoede `action.cancel` is not wired. This current matrix must remain explicit until each added provider/capability is structurally qualified.
+Consequential execution is constrained Codex with five bounded app tools; delegation is disabled, non-Codex frozen action policies fail closed, and canonical Codex native input/approval delivery is unavailable. Run-level cancellation exists. Targeted `action.cancel` is wired end to end: the WS frame reaches `CanonicalActionAuthority.cancelById` (owner+chat scoped, run id resolved from the operation row), `action.cancel_result` reports the truthful outcome, and the canonical HTTP route `POST /api/chats/:chatId/actions/:actionId/cancel` offers the same semantics to typed surfaces. Cancellation granularity stays `run`-level: a `requested` outcome does not interrupt an in-flight effect.
 
 Tool return JSON is not itself shell authority. `matrix_open_app`, file-apply artifacts, `outcome_unknown` and reconciliation results must become bounded canonical navigation/resource/activity records. Aoede may open only those validated projected records, and both Web Canvas and Web Desktop must prove the resulting destination behavior. Arbitrary `tool.output` text is never parsed into a navigation or filesystem command.
 

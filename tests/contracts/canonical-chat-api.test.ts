@@ -2,8 +2,10 @@ import {
   CanonicalCancelChatRunRequestSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
+  CanonicalChatActionCancellationResponseSchema,
   CanonicalCreateChatTurnRequestSchema,
   CanonicalRetryChatTurnRequestSchema,
+  CanonicalUpdateChatSelectionRequestSchema,
   CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   CanonicalChatDetailResponseSchema,
@@ -11,6 +13,7 @@ import {
   CanonicalChatRecordSchema,
   CanonicalChatStreamServerFrameSchema,
   CanonicalCreateChatRequestSchema,
+  type CanonicalOperationView,
 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -260,5 +263,108 @@ describe("canonical Chat API contracts", () => {
       run: { ...run, attempt: 2 },
       admission: "accepted",
     })).toMatchObject({ run: { attempt: 2 } });
+  });
+
+  const operationView = {
+    id: "action_contract_1",
+    chatId: chat.id,
+    runId: run.id,
+    toolId: "matrix_open_app",
+    schemaRevision: "canonical_apps_v1",
+    policyRevision: "canonical_apps_v1_policy",
+    state: "running",
+    argumentDigest: "a".repeat(64),
+    cancellationRequested: false,
+    createdAt: "2026-08-25T12:01:00.000Z",
+    updatedAt: "2026-08-25T12:01:00.000Z",
+  } satisfies CanonicalOperationView;
+
+  it("bounds detail operations and rejects views carrying unsafe server fields", () => {
+    const detail = CanonicalChatDetailResponseSchema.parse({
+      record: chatRecord,
+      messages: [],
+      turns: [],
+      runs: [run],
+      activities: [],
+      operations: [{ ...operationView, result: { navigation: { kind: "open_app", app: "timer", path: "apps/timer" } } }],
+    });
+    expect(detail.operations).toHaveLength(1);
+
+    expect(CanonicalChatDetailResponseSchema.safeParse({
+      record: chatRecord,
+      messages: [],
+      turns: [],
+      runs: [],
+      activities: [],
+      operations: [{ ...operationView, arguments: { path: "apps/timer" } }],
+    }).success).toBe(false);
+    expect(CanonicalChatDetailResponseSchema.safeParse({
+      record: chatRecord,
+      messages: [],
+      turns: [],
+      runs: [],
+      activities: [],
+      operations: [{ ...operationView, claimToken: "claim_secret" }],
+    }).success).toBe(false);
+    expect(CanonicalChatDetailResponseSchema.safeParse({
+      record: chatRecord,
+      messages: [],
+      turns: [],
+      runs: [],
+      activities: [],
+      operations: [{ ...operationView, result: { text: "secret file body" } }],
+    }).success).toBe(false);
+    expect(CanonicalChatDetailResponseSchema.safeParse({
+      record: chatRecord,
+      messages: [],
+      turns: [],
+      runs: [],
+      activities: [],
+      operations: Array.from({ length: 201 }, () => operationView),
+    }).success).toBe(false);
+    // Traversal or absolute paths can never occupy a projected result path.
+    expect(CanonicalChatDetailResponseSchema.safeParse({
+      record: chatRecord,
+      messages: [],
+      turns: [],
+      runs: [],
+      activities: [],
+      operations: [{
+        ...operationView,
+        result: { navigation: { kind: "open_app", app: "timer", path: "../escape" } },
+      }],
+    }).success).toBe(false);
+  });
+
+  it("defines the strict selection update and targeted action cancel envelopes", () => {
+    const selection = { baseRevision: 3, selection: { instanceId: "codex_default", model: "gpt-5.6-sol" } };
+    expect(CanonicalUpdateChatSelectionRequestSchema.parse(selection)).toEqual(selection);
+    expect(CanonicalUpdateChatSelectionRequestSchema.safeParse({
+      ...selection,
+      ownerScope: { type: "personal", ownerId: "other" },
+    }).success).toBe(false);
+    expect(CanonicalUpdateChatSelectionRequestSchema.safeParse({ baseRevision: 3 }).success).toBe(false);
+
+    const cancellation = CanonicalChatActionCancellationResponseSchema.parse({
+      operation: operationView,
+      cancellation: "requested",
+    });
+    expect(cancellation.cancellation).toBe("requested");
+    expect(CanonicalChatActionCancellationResponseSchema.safeParse({
+      operation: { ...operationView, claimToken: "claim_secret" },
+      cancellation: "requested",
+    }).success).toBe(false);
+    // The truthful enum covers every reachable outcome, including "unknown"
+    // for a request whose intent could not be proven recorded.
+    for (const outcome of ["cancelled", "already_terminal", "unknown"] as const) {
+      expect(CanonicalChatActionCancellationResponseSchema.safeParse({
+        operation: operationView,
+        cancellation: outcome,
+      }).success).toBe(true);
+    }
+    expect(CanonicalChatActionCancellationResponseSchema.safeParse({
+      operation: operationView,
+      cancellation: "maybe",
+    }).success).toBe(false);
   });
 });
