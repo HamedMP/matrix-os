@@ -146,6 +146,9 @@ describe("funded relay Cloud Run service", () => {
       "utf8",
     );
 
+    const triggers = workflow.split("permissions:")[0]!;
+    expect(triggers).toContain("workflow_dispatch:");
+    expect(triggers).not.toMatch(/^  (push|pull_request|workflow_run):/m);
     expect(dockerfile).toContain('CMD ["node", "packages/proxy/dist/funded-main.js"]');
     expect(dockerfile).toContain("COPY patches patches");
     expect(dockerfile).not.toContain("packages/platform");

@@ -22,7 +22,7 @@ function fixture(mode = "valid", reviewEnv: NodeJS.ProcessEnv = {}, now = defaul
     const url = String(raw);
     if (url.startsWith("https://platform.example.test/")) {
       const action = url.split("/").at(-1)!; events.push(action);
-      if (mode === `review-expires-during-${action}`) {
+      if (mode === `review-expires-during-${action}` || mode === `review-expires-during-${action}-retry`) {
         await Promise.resolve();
         clock = new Date(Date.parse(reviewEnv.MATRIX_JEV_PRICING_VALID_THROUGH!) + 1);
       }
@@ -42,11 +42,15 @@ function fixture(mode = "valid", reviewEnv: NodeJS.ProcessEnv = {}, now = defaul
         tokenId: identity.tokenId, releasedMicrousd: 5_000, releasedAt: clock.toISOString(), reason: "pre_upstream_failure",
         status: "released", funding });
       if (action === "finalize") {
-        finalizations.push(JSON.parse(String(init?.body)));
-        if (mode === "settlement-failure") return Response.json({}, { status: 503 });
+        const task = JSON.parse(String(init?.body));
+        const cost = task.mode === "not_dispatched" ? 0 : 12;
+        finalizations.push(task);
+        if (mode === "settlement-failure" || (mode === "review-expires-during-start-retry" && finalizations.length === 1)) {
+          return Response.json({}, { status: 503 });
+        }
         return Response.json({ contractVersion: 1, reservationId: mode === "wrong-finalization" ? "other_reservation" : "reservation_fixture",
-          requestId: "request_fixture", tokenId: identity.tokenId, actualCostMicrousd: 12, chargedCostMicrousd: 12,
-          matrixAbsorbedMicrousd: 0, releasedMicrousd: 4_988, remainingBalanceMicrousd: 99_988, remainingBudgetMicrousd: 99_988,
+          requestId: "request_fixture", tokenId: identity.tokenId, actualCostMicrousd: cost, chargedCostMicrousd: cost,
+          matrixAbsorbedMicrousd: 0, releasedMicrousd: 5_000 - cost, remainingBalanceMicrousd: 99_988, remainingBudgetMicrousd: 99_988,
           funding: { ...funding, settledThisMonthMicrousd: 12, promotionalBalanceMicrousd: 99_988,
             creditBalanceMicrousd: 99_988, remainingBalanceMicrousd: 99_988, remainingBudgetMicrousd: 99_988 },
           settledAt: now.toISOString(), status: "settled", finalizationMode: "exact" });
@@ -158,7 +162,24 @@ it.each(["evaluation", "readiness"])("blocks %s dispatch when its admitted revie
   try {
     const response = await (route === "evaluation" ? f.evaluation() : f.request());
     expect(response.status).not.toBe(200);
-    expect(f.events).toEqual(["check", "authorize", "start"]);
-    expect(f.finalizations).toEqual([]);
+    expect(response.headers.get("x-matrix-jev-dispatch")).toBe("not-started");
+    expect(f.events).toEqual(["check", "authorize", "start", "finalize"]);
+    expect(f.finalizations).toEqual([{ reservationId: "reservation_fixture", tokenId: "credential_fixture",
+      mode: "not_dispatched", expectedRequestId: "request_fixture", jevPricingVersion: JEV_PRICING_VERSION }]);
+  } finally { await f.relay.close(); }
+});
+
+it("retries the identical zero-cost attestation after transient control-plane failure without dispatch", async () => {
+  const f = fixture("review-expires-during-start-retry", { ...renewedReview,
+    MATRIX_JEV_PRICING_VALID_THROUGH: "2026-10-01T00:00:00.020Z" }, new Date("2026-10-01T00:00:00.000Z"));
+  try {
+    const response = await f.evaluation();
+    expect(response.status).not.toBe(200);
+    expect(response.headers.get("x-matrix-jev-dispatch")).toBe("not-started");
+    await vi.waitFor(() => expect(f.finalizations).toHaveLength(2));
+    expect(f.finalizations[0]).toEqual({ reservationId: "reservation_fixture", tokenId: "credential_fixture",
+      mode: "not_dispatched", expectedRequestId: "request_fixture", jevPricingVersion: JEV_PRICING_VERSION });
+    expect(f.finalizations[1]).toEqual(f.finalizations[0]);
+    expect(f.events).toEqual(["check", "authorize", "start", "finalize", "finalize"]);
   } finally { await f.relay.close(); }
 });

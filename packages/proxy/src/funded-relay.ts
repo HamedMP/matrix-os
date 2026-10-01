@@ -638,6 +638,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const deadline = AbortSignal.timeout(config.firstResponseTimeoutMs);
     const evaluationSignal = AbortSignal.any([state.lifetimeSignal, deadline]);
     let started = false;
+    let dispatched = false;
     const startedAt = now().getTime();
     try {
       // Keep the admitted review; a new deployment attestation cannot renew this request.
@@ -651,10 +652,11 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         throw new Error("Funded AI start response did not match its reservation");
       }
       started = true;
-      // Start is awaited and may cross the admitted review deadline. The
-      // reservation is already in flight, so retain its hold if this fails.
+      // A successful platform start is not evidence of an upstream call.
       reviewedJevPricing(now(), pricing);
+      evaluationSignal.throwIfAborted();
       const target = cloudflareJevTarget(config.gatewayBaseUrl);
+      dispatched = true;
       const upstream = await fetchImpl(target.url, {
         method: "POST",
         headers: {
@@ -724,6 +726,18 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     } catch (error) {
       if (!started) {
         await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+      } else if (!dispatched) {
+        const task = { ...finalizationLocator, mode: "not_dispatched" as const,
+          expectedRequestId: requestId, jevPricingVersion: pricing.version };
+        try {
+          const settled = await platform.finalize(task, AbortSignal.timeout(config.platformTimeoutMs));
+          assertJevProbeSettlement(settled, { ...finalizationLocator, requestId, actualCostMicrousd: 0 });
+        } catch (settlementError) {
+          console.warn("[proxy] Jev no-dispatch settlement will retry", {
+            errorName: settlementError instanceof Error ? settlementError.name : "UnknownError",
+          });
+          settlementQueue.enqueue(task);
+        }
       } else {
         enqueueFinalization({ mode: "conservative" });
       }
@@ -732,10 +746,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded Jev upstream request failed", { errorName });
       if (state.lifetimeSignal.aborted || deadline.aborted) {
-        return started ? errorResponse(c, 504, "timeout_error", "AI access timed out")
+        return dispatched ? errorResponse(c, 504, "timeout_error", "AI access timed out")
           : jevNotStarted(errorResponse(c, 504, "timeout_error", "AI access timed out"));
       }
-      return started ? errorResponse(c, 502, "api_error", "AI access is temporarily unavailable")
+      return dispatched ? errorResponse(c, 502, "api_error", "AI access is temporarily unavailable")
         : jevNotStarted(errorResponse(c, 502, "api_error", "AI access is temporarily unavailable"));
     }
   }

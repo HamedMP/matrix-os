@@ -452,6 +452,44 @@ jobs:
       - run: bun run test -- --shard=${{ matrix.shard }}/4
         if: needs.changes.outputs.should_run == 'true'
 
+  funded-postgres:
+    name: Funded Settlement PostgreSQL
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: matrix_test
+          POSTGRES_PASSWORD: matrix_test
+          POSTGRES_DB: matrix_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U matrix_test -d matrix_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # Disposable service only; never use owner or production database secrets.
+      MATRIX_TEST_POSTGRES_URL: postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify funded settlement on PostgreSQL
+        run: |
+          set -euo pipefail
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          bun run test -- tests/platform/ai-funded-usage-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+
   docs-contract:
     name: Docs Contract Tests
     needs: changes
@@ -690,7 +728,7 @@ jobs:
 
   ci-results:
     name: CI Results
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, docs-contract, os-view-parity, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -706,6 +744,7 @@ jobs:
           SYNC_CLIENT_RESULT: ${{ needs.sync-client.result }}
           AGENT_SDK_COMPATIBILITY_RESULT: ${{ needs.agent-sdk-compatibility.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
+          FUNDED_POSTGRES_RESULT: ${{ needs.funded-postgres.result }}
           DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
           OS_VIEW_PARITY_RESULT: ${{ needs.os-view-parity.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
@@ -729,13 +768,14 @@ jobs:
             echo "| Sync Client Package (Node 20) | $SYNC_CLIENT_RESULT |"
             echo "| Agent SDK 0.3.251 Compatibility | $AGENT_SDK_COMPATIBILITY_RESULT |"
             echo "| Unit Tests | $UNIT_RESULT |"
+            echo "| Funded Settlement PostgreSQL | $FUNDED_POSTGRES_RESULT |"
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
@@ -744,6 +784,10 @@ jobs:
                 ;;
             esac
           done
+
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$FUNDED_POSTGRES_RESULT" != "success" ]; then
+            failed=true
+          fi
 
           if [ "$failed" = "true" ]; then
             echo "One or more required CI jobs failed or were cancelled." >&2
