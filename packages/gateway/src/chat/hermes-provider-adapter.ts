@@ -1,3 +1,5 @@
+import { ChatAgentContextError } from "./agent-context.js";
+import { mapChatAgentContextError } from "./orchestration-errors.js";
 import { createHermesSubagentActivity } from "./hermes-subagent-activity.js";
 import { restrictedHermesPythonArguments } from "./jev-hermes-python.js";
 import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
@@ -851,9 +853,12 @@ export function createHermesChatProviderAdapter(options: {
           "[chat/hermes] Provider Run failed:",
           error instanceof HermesGatewayProtocolError
             ? `${error.name}:${error.reason}${error.eventType ? `:${error.eventType}` : ""}`
+            : error instanceof ChatAgentContextError ? `${error.name}:${error.code}`
             : error instanceof Error ? error.name : "UnknownError",
         );
-        const safeFailure = error instanceof HermesGatewayProtocolError && error.reason === "frame_too_large"
+        const safeFailure = error instanceof ChatAgentContextError
+          ? mapChatAgentContextError(error).safeError
+          : error instanceof HermesGatewayProtocolError && error.reason === "frame_too_large"
           ? {
               code: "run_failed" as const,
               safeMessage: "The agent returned a response that was too large to process.",
@@ -874,9 +879,9 @@ export function createHermesChatProviderAdapter(options: {
           outcome: input.signal.aborted ? "aborted" : "failed",
           ...(input.signal.aborted ? {} : {
             error: {
-              ...safeFailure,
               retryable: true,
               recoveryActions: ["retry"],
+              ...safeFailure,
             },
           }),
         };

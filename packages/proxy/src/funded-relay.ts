@@ -15,7 +15,6 @@ import {
   normalizeFundedJevEvaluationResponse,
   reviewedJevPricing,
   serializeFundedJevEvaluationRequest,
-  JEV_PRICING_VALID_THROUGH,
 } from "./funded-relay-evaluation.js";
 import { JEV_READINESS_PATH, jevProbeControlAuthorized, fixedJevProbeRequest, assertJevProbeSettlement } from "./funded-relay-jev-probe.js";
 import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
@@ -541,7 +540,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     let pricing: ReturnType<typeof reviewedJevPricing>;
     try {
-      pricing = reviewedJevPricing(now());
+      pricing = reviewedJevPricing(now(), config.jevPricingReview);
     } catch (error) {
       console.warn("[proxy] Jev pricing unavailable", { errorName: error instanceof Error ? error.name : "UnknownError" });
       return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
@@ -565,6 +564,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let checked: Awaited<ReturnType<FundedPlatformClient["check"]>>;
     try {
       checked = await platform.check(checkInput.data, state.lifetimeSignal);
+      reviewedJevPricing(now(), pricing);
     } catch (error) {
       return jevNotStarted(controlPlaneError(c, error));
     }
@@ -640,6 +640,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let started = false;
     const startedAt = now().getTime();
     try {
+      // Keep the admitted review; a new deployment attestation cannot renew this request.
+      reviewedJevPricing(now(), pricing);
       const startResult = await platform.start(
         { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
         state.lifetimeSignal,
@@ -707,7 +709,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           if (!identitiesMatch(checked.identity, latest.identity)
             || checked.policy.globalRevision !== latest.policy.globalRevision
             || checked.policy.runtimeRevision !== latest.policy.runtimeRevision) throw new Error("Jev probe authorization changed");
-          reviewedJevPricing(now()); state.lifetimeSignal.throwIfAborted();
+          reviewedJevPricing(now(), pricing); state.lifetimeSignal.throwIfAborted();
         } catch (error) {
           enqueueFinalization(finalization);
           throw error;
@@ -715,7 +717,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       } else enqueueFinalization(finalization);
       resourceLease.release();
       state.resourceLease = null;
-      return probe ? c.json({ ready: true, priceValidThrough: JEV_PRICING_VALID_THROUGH }, 200) : c.json(normalized.result, 200);
+      return probe ? c.json({ ready: true, priceValidThrough: pricing.validThrough }, 200) : c.json(normalized.result, 200);
     } catch (error) {
       if (!started) {
         await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);

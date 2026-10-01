@@ -319,7 +319,7 @@ describe("funded Jev evaluation relay", () => {
   it("rejects arbitrary questions before policy or upstream calls", async () => {
     const fetchMock = vi.fn();
     const config = resolveFundedRelayConfig(environment());
-    const relay = createFundedRelay({ ...config!, fetch: fetchMock as typeof fetch });
+    const relay = createFundedRelay({ ...config!, fetch: fetchMock as typeof fetch, now: () => NOW });
     const app = new Hono();
     relay.register(app);
     const response = await app.request("/v1/evaluate", request(requestBody({
@@ -333,7 +333,7 @@ describe("funded Jev evaluation relay", () => {
   it("keeps the route unavailable until the Cloudflare Workers AI token is configured", async () => {
     const fetchMock = vi.fn();
     const config = resolveFundedRelayConfig(environment({ CLOUDFLARE_WORKERS_AI_TOKEN: undefined }));
-    const relay = createFundedRelay({ ...config!, fetch: fetchMock as typeof fetch });
+    const relay = createFundedRelay({ ...config!, fetch: fetchMock as typeof fetch, now: () => NOW });
     const app = new Hono();
     relay.register(app);
     const response = await app.request("/v1/evaluate", request());
@@ -346,7 +346,7 @@ describe("funded Jev evaluation relay", () => {
   it("applies the relay body limit before parsing evaluation input", async () => {
     const fetchMock = vi.fn();
     const config = resolveFundedRelayConfig(environment({ MATRIX_FUNDED_AI_MAX_BODY_BYTES: "256" }));
-    const relay = createFundedRelay({ ...config!, fetch: fetchMock as typeof fetch });
+    const relay = createFundedRelay({ ...config!, fetch: fetchMock as typeof fetch, now: () => NOW });
     const app = new Hono();
     relay.register(app);
     const response = await app.request("/v1/evaluate", request(requestBody({ state: "x".repeat(1_000) })));
@@ -362,7 +362,7 @@ describe("funded Jev evaluation relay", () => {
       authorize: vi.fn(), start: vi.fn(), release: vi.fn(), finalize: vi.fn(),
     };
     const config = resolveFundedRelayConfig(environment())!;
-    const relay = createFundedRelay({ ...config, fetch: upstream as typeof fetch, platformClient });
+    const relay = createFundedRelay({ ...config, now: () => NOW, fetch: upstream as typeof fetch, platformClient });
     const app = new Hono();
     relay.register(app);
 
