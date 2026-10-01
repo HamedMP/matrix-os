@@ -5,28 +5,34 @@ import type {
   ProviderHarnessInstance,
   ProviderHarnessKind,
   ProviderWorkflowCapability,
+  ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import {
-  CODING_AGENT_ARTWORK,
   codingAgentArtworkSrc,
 } from "../coding-agent-artwork.js";
 import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
+import { providerEnablementBlockReason } from "./provider-enablement.js";
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 
-/** The same shipped artwork and backgrounds used by both Terminal menus. */
+/** Settings-specific Figma artwork and lettermarks; Terminal retains its own assets. */
 export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
-  const logo = CODING_AGENT_ARTWORK[harness];
+  const marks = { opencode: "OC", pi: "Pi", hermes: "H", openclaw: "Cl" };
+  if (harness !== "claude" && harness !== "codex") {
+    return <span className="matrix-ap-agent-logo matrix-ap-agent-lettermark" aria-hidden="true">{marks[harness]}</span>;
+  }
+  const src = harness === "claude" ? "/agents/settings/claude.svg" : "/agents/settings/openai.svg";
+  const size = harness === "claude" ? 22 : 20;
   return (
     <span
       className="matrix-ap-agent-logo"
-      style={{ background: logo.background }}
       aria-hidden="true"
     >
       <img
-        src={codingAgentArtworkSrc(logo.src)}
+        src={codingAgentArtworkSrc(src)}
         alt=""
-        width="20"
-        height="20"
+        className={harness === "claude" ? "matrix-ap-claude-logo" : "matrix-ap-openai-logo"}
+        width={size}
+        height={size}
         draggable={false}
         loading="eager"
       />
@@ -103,9 +109,13 @@ export function HarnessRail({
   statusOverride,
   inventory = [],
   renderInventory,
+  catalog = [],
+  renderCatalog,
 }: {
   harnesses: ProviderHarnessInstance[];
   inventory?: ProviderWorkflowCapability[];
+  catalog?: ProviderSettingsSnapshot["harnessCatalog"];
+  renderCatalog?: (entry: ProviderSettingsSnapshot["harnessCatalog"][number]) => ReactNode;
   renderInventory?: (item: ProviderWorkflowCapability) => ReactNode;
   sources: ProviderAccessSource[];
   selectedId: string | null;
@@ -133,13 +143,16 @@ export function HarnessRail({
             harness: item.harness,
             instance: item,
             inventory: null,
+            catalog: null,
           })),
           ...inventory.map((item) => ({
             id: item.harnessInstanceId,
             harness: item.harness,
             instance: null,
             inventory: item,
+            catalog: null,
           })),
+          ...catalog.map((entry) => ({ id: `catalog:${entry.harness}`, harness: entry.harness, instance: null, inventory: null, catalog: entry })),
         ]
           .filter((item) => order.includes(item.harness))
           .sort((a, b) => order.indexOf(a.harness) - order.indexOf(b.harness));
@@ -155,8 +168,8 @@ export function HarnessRail({
             </div>
             {items.map((item) => {
               const expanded = item.id === selectedId;
-              if (item.inventory) {
-                const observed = item.inventory;
+              if (item.inventory || item.catalog) {
+                const observed = item.inventory ?? item.catalog!;
                 const status =
                   statusOverride?.id === item.id && statusOverride.status
                     ? statusOverride.status
@@ -203,7 +216,7 @@ export function HarnessRail({
                       hidden={!expanded}
                       className="matrix-ap-agent-details"
                     >
-                      {expanded ? renderInventory?.(observed) : null}
+                      {expanded ? item.inventory ? renderInventory?.(item.inventory) : renderCatalog?.(item.catalog!) : null}
                     </div>
                   </div>
                 );
@@ -214,14 +227,10 @@ export function HarnessRail({
               );
               const configuredEnabled =
                 harness.configuredEnabled ?? harness.enabled;
-              const needsConnection =
-                !configuredEnabled &&
-                (harness.harness === "pi" || harness.harness === "opencode") &&
-                !isSupportedGenericHarnessCredentialRoute(harness, source);
-              const toggleDisabled =
-                disabled ||
-                (!configuredEnabled &&
-                  (harness.installState !== "installed" || needsConnection));
+              const blockReason = !configuredEnabled
+                ? providerEnablementBlockReason(harness, sources)
+                : null;
+              const toggleDisabled = disabled || blockReason !== null;
               const status =
                 statusOverride?.id === harness.id && statusOverride.status
                   ? statusOverride.status
@@ -247,7 +256,7 @@ export function HarnessRail({
                       </span>
                       <span className="matrix-ap-rail-copy">
                         <span className="matrix-ap-rail-name">
-                          {harness.displayName}
+                          {harness.harness === "claude" && harness.displayName === "Claude" ? "Claude Code" : harness.displayName}
                         </span>
                       </span>
                       <span
@@ -278,11 +287,10 @@ export function HarnessRail({
                               <input
                                 type="checkbox"
                                 role="switch"
-                                aria-label={`Enable ${harness.displayName}`}
+                                aria-label={`Enable ${harness.harness === "claude" && harness.displayName === "Claude" ? "Claude Code" : harness.displayName}`}
                                 checked={configuredEnabled}
                                 aria-describedby={
-                                  needsConnection &&
-                                  harness.installState === "installed"
+                                  blockReason !== null
                                     ? connectionHintId
                                     : undefined
                                 }
@@ -295,9 +303,9 @@ export function HarnessRail({
                             </label>
                           ) : null}
                           <span>Enable this agent</span>
-                          {needsConnection ? (
+                          {blockReason !== null ? (
                             <span id={connectionHintId}>
-                              Choose a connection to enable
+                              {blockReason}
                             </span>
                           ) : null}
                           {harness.version ? (

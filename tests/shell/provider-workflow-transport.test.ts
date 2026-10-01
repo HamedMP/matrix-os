@@ -15,6 +15,14 @@ describe("web provider workflow transport", () => {
       reason: "unavailable", message: "Provider action is unavailable.",
     });
   });
+  it("preserves an owner-only denial for an actionable UI state", async () => {
+    const client = createWebProviderWorkflowClient({ fetcher: vi.fn().mockResolvedValue(
+      Response.json({ error: { code: "forbidden", message: "private" } }, { status: 403 }),
+    ) });
+    await expect(client.capabilities(new AbortController().signal)).rejects.toMatchObject({
+      reason: "forbidden", message: "Provider action is unavailable.",
+    });
+  });
   it("allows bounded key verification and native saving to finish after twenty seconds", async () => {
     vi.useFakeTimers();
     vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {

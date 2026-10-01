@@ -149,7 +149,7 @@ export async function openWebProviderAgentSetup(
   const runtimeUrl = getGatewayUrl();
   return openProviderAgentSetup({
     harness,
-    getCatalog: () => fetchJson(fetch, "/api/chat-providers?refresh=true&includeConnectionLabels=true", {
+    getCatalog: () => fetchJson(fetch, "/api/chat-providers?refresh=true&includeConnectionLabels=true&includeSettingsSetupActions=true", {
       signal: requestSignal(undefined, FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs), cache: "no-store",
     }),
     openCommand: async (cmd) => {

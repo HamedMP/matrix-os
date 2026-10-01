@@ -5,6 +5,7 @@ import type {
   ProviderWorkflowCapability,
 } from "@matrix-os/contracts";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
+import { ConnectionMethodCard } from "./ConnectionMethodCard.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient } from "./types.js";
 
@@ -359,43 +360,22 @@ export function HarnessWorkflowPanel({
               <h3>Connect {harness.displayName} with</h3>
               <div className="matrix-ap-connection-options">
                 {capability.loginMethods.length ? (
-                  <button
-                    type="button"
-                    className="matrix-ap-connection-choice"
-                    aria-pressed={method === "account"}
+                  <ConnectionMethodCard
+                    method="account"
+                    title={hasSubscription ? `${subscriptionName} account` : "Provider account"}
+                    description={hasSubscription ? `Use your ${subscriptionName} plan` : "Sign in through this agent’s Terminal"}
+                    recommended={hasSubscription}
+                    selected={method === "account"}
                     disabled={disabled || pending || connecting}
                     onClick={() => void start("login")}
-                  >
-                    {method === "account" ? (
-                      <span
-                        aria-hidden="true"
-                        className="matrix-ap-method-check"
-                      >
-                        ✓
-                      </span>
-                    ) : null}
-                    <strong>
-                      {hasSubscription
-                        ? `${subscriptionName} account`
-                        : "Provider account"}{" "}
-                      {hasSubscription ? (
-                        <span className="matrix-ap-selected-tag">
-                          Recommended
-                        </span>
-                      ) : null}
-                    </strong>
-                    <span>
-                      {hasSubscription
-                        ? `Use your ${subscriptionName} plan`
-                        : "Sign in through this agent’s Terminal"}
-                    </span>
-                  </button>
+                  />
                 ) : null}
                 {capability.apiKeyProviders.length ? (
-                  <button
-                    type="button"
-                    className="matrix-ap-connection-choice"
-                    aria-pressed={method === "key"}
+                  <ConnectionMethodCard
+                    method="key"
+                    title="API key"
+                    description={`Pay ${harness.harness === "codex" ? "OpenAI" : "your provider"} per request`}
+                    selected={method === "key"}
                     disabled={disabled || pending || connecting}
                     onClick={() => {
                       pendingStart.current = null;
@@ -403,18 +383,7 @@ export function HarnessWorkflowPanel({
                       setOperation(null);
                       setFailure(null);
                     }}
-                  >
-                    {method === "key" ? (
-                      <span
-                        aria-hidden="true"
-                        className="matrix-ap-method-check"
-                      >
-                        ✓
-                      </span>
-                    ) : null}
-                    <strong>API key</strong>
-                    <span>Pay your provider per request</span>
-                  </button>
+                  />
                 ) : null}
               </div>
             </>

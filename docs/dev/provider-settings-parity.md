@@ -495,8 +495,18 @@ client/runtime versions and those outcomes independently during Human Review.
 
 ### Setup interaction contract
 
-- Agent artwork reuses the Terminal new-tab assets; do not replace recognizable
-  coding-agent logos with text glyphs.
+- Settings artwork follows the approved Figma connection frames: unchanged exported
+  Claude/OpenAI SVGs in neutral icon slots, plus the designed OC/Pi/H/Cl text
+  marks. Terminal artwork remains independent.
+- Missing guided workflow capabilities must preserve the compact connection
+  chooser and catalog inventory, with only server-advertised Terminal actions
+  available. Legacy account/routing fields remain under collapsed disclosures.
+- Hermes/OpenClaw enablement requires an eligible configured account route. Show
+  the connect-first reason before enabling; explicit Off remains available.
+  Failed mutations retain the last confirmed settings and expanded agent.
+- Settings setup reads negotiate `includeSettingsSetupActions=true` so saved Off
+  does not remove the original server-issued connection command. Ordinary Chat
+  reads remain unavailable with empty models/actions for disabled instances.
 - Installed Pi/OpenCode instances offer **Use Matrix AI** and **Own account**
   before advanced routing fields. Matrix AI is still an access source, not a
   fabricated inference vendor.

@@ -76,9 +76,13 @@ export interface CodingModelCatalogProjection {
   defaultModel: string;
 }
 
+export interface ChatProviderCatalogReadOptions {
+  includeSettingsSetupActions?: boolean;
+}
+
 export interface ChatProviderCatalogService {
-  getCatalog(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
-  refresh(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
+  getCatalog(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions): Promise<CanonicalProviderCatalog>;
+  refresh(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions): Promise<CanonicalProviderCatalog>;
 }
 
 export interface HarnessSettingsSnapshotReader {
@@ -515,7 +519,7 @@ export function createChatProviderCatalogService(options: {
   invalidateCodingModelCatalog?: (principal: RequestPrincipal) => void;
 }): ChatProviderCatalogService {
   const service: ChatProviderCatalogService = {
-    async refresh(principal) {
+    async refresh(principal, readOptions) {
       options.invalidateCodingModelCatalog?.(principal);
       options.codingProviders.invalidate(principal.userId);
       options.agentRuntimeSource.invalidate?.();
@@ -529,9 +533,9 @@ export function createChatProviderCatalogService(options: {
           console.warn("[chat-providers] AI Provider inventory refresh unavailable");
         }
       }
-      return service.getCatalog(principal);
+      return service.getCatalog(principal, readOptions);
     },
-    async getCatalog(principal) {
+    async getCatalog(principal, readOptions) {
       const systemRuntimeReads = Promise.all(SYSTEM_DRIVERS.map(async (kind) => {
         const source = options.systemRuntimeSources?.[kind];
         if (!source) return [kind, null] as const;
@@ -636,6 +640,7 @@ export function createChatProviderCatalogService(options: {
         settings: settingsResult.status === "fulfilled" ? settingsResult.value ?? null : null,
         settingsRequired: options.harnessSettingsSource !== undefined,
         settingsAvailable: settingsResult.status === "fulfilled",
+        includeSettingsSetupActions: readOptions?.includeSettingsSetupActions,
         executableDriverKinds,
         credentialedDriverKinds: options.credentialedDriverKinds,
         aiSnapshot,

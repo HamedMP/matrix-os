@@ -11,6 +11,14 @@ describe("Electron provider workflow transport", () => {
       harnessInstanceId: "codex", providerId: "openai", apiKey: "synthetic-key",
     }, new AbortController().signal)).rejects.toMatchObject({ reason: "rejected", message: "Provider action is unavailable." });
   });
+  it("preserves owner-only denial without expiring a valid Matrix session", async () => {
+    const onUnauthorized = vi.fn();
+    const api = createApiClient({ baseUrl: "https://matrix.invalid", getRuntimeSlot: () => "pr-test",
+      onUnauthorized, fetchFn: async () => Response.json({ error: { code: "forbidden", message: "private" } }, { status: 403 }) });
+    await expect(createDesktopProviderWorkflowClient(api, () => true).capabilities(new AbortController().signal))
+      .rejects.toMatchObject({ reason: "forbidden", message: "Provider action is unavailable." });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
   it("allows native credential saving to finish beyond the read timeout", async () => {
     vi.useFakeTimers();
     try {

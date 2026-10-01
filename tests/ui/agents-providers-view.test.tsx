@@ -2,7 +2,6 @@
 import React from "react";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options";
 import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -291,6 +290,8 @@ function setup(overrides: Partial<React.ComponentProps<typeof AgentsProvidersVie
   const result = render(<AgentsProvidersView {...props} />);
   const selected = props.snapshot.harnesses.find(item=>item.id===props.selectedHarnessId) ?? props.snapshot.harnesses[0];
   if (selected) { const row=result.container.querySelector<HTMLButtonElement>(`button[aria-controls="matrix-ap-details-${selected.id}"]`); if(row)fireEvent.click(row); }
+  // Existing configuration contracts explicitly enter the preserved advanced surface.
+  for (const details of result.container.querySelectorAll<HTMLDetailsElement>(".matrix-ap-agent-details > details")) details.open = true;
   if (vi.isMockFunction(props.onSelectHarness)) props.onSelectHarness.mockClear();
   return { ...result, props, onMutate };
 }
@@ -375,7 +376,7 @@ describe("AgentsProvidersView", () => {
     });
     setup({ snapshot: next });
     expect(screen.getByRole("button", { name: new RegExp(`${kind === "pi" ? "Pi" : "OpenCode"}.*Not connected`) })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Check connection/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check connection" })).not.toBeInTheDocument();
   });
 
   it("distinguishes a signed-in but deliberately disabled agent", () => {
@@ -404,7 +405,7 @@ describe("AgentsProvidersView", () => {
     const { onMutate, rerender, props } = setup({ snapshot: next });
     const toggle = screen.getByRole("switch", { name: `Enable ${kind}` });
     expect(toggle).toBeDisabled();
-    expect(toggle).toHaveAccessibleDescription("Choose a connection to enable");
+    expect(toggle).toHaveAccessibleDescription("Connect an account before enabling this agent.");
     fireEvent.click(toggle);
     expect(onMutate).not.toHaveBeenCalled();
     const enabled = structuredClone(next);
@@ -425,20 +426,17 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Changes were not saved. Refresh and try again.");
     expect(screen.getByRole("alert")).not.toHaveTextContent("/opt/private");
   });
-  it("uses the same shipped agent artwork as the Terminal menu", () => {
+  it("uses the Figma lettermark slots while retaining shipped packaged artwork", () => {
     const next = snapshot();
-    next.harnesses = (["claude", "codex", "opencode", "pi"] as const).map((harness) => ({
-      ...next.harnesses[0]!, id: harness, harness, displayName: harness,
-    }));
+    next.harnessCatalog = [];
+    next.harnesses = (["claude", "codex", "opencode", "pi"] as const).map((harness) => ({ ...next.harnesses[0]!, id: harness, harness, displayName: harness }));
     const { container } = setup({ snapshot: next, selectedHarnessId: "claude" });
-    expect(Array.from(container.querySelectorAll(".matrix-ap-rail-item img")).map((image) => image.getAttribute("src"))).toEqual([
-      "/agent-logos/claude-code.png", "/agent-logos/codex.png", "/agent-logos/opencode-white.png", "/agent-logos/pi-coding-agent.png",
-    ]);
-    for (const option of TERMINAL_AGENT_OPTIONS) {
-      const image = container.querySelector(`img[src="${option.logoSrc}"]`);
-      expect(image).toBeInTheDocument();
-      expect(image?.parentElement).toHaveStyle({ background: option.color });
-      expect(existsSync(resolve("shell/public", option.logoSrc.slice(1)))).toBe(true);
+    expect(Array.from(container.querySelectorAll(".matrix-ap-agent-lettermark")).map((item) => item.textContent)).toEqual(["OC", "Pi"]);
+    for (const image of container.querySelectorAll<HTMLImageElement>(".matrix-ap-rail-item img")) {
+      expect(existsSync(resolve("shell/public", image.getAttribute("src")!.slice(1)))).toBe(true);
+      const size = image.getAttribute("src")?.endsWith("claude.svg") ? "22" : "20";
+      expect(image).toHaveAttribute("width", size);
+      expect(image).toHaveAttribute("height", size);
     }
     expect(readFileSync("desktop/electron.vite.config.ts", "utf8")).toContain('publicDir: resolve(__dirname, "../shell/public")');
   });

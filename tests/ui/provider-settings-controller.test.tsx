@@ -297,6 +297,27 @@ describe("ProviderSettingsController", () => {
     expect(controller.getState().snapshot?.revision).toBe(2);
   });
 
+  it("keeps Hermes, its selected route and all rows after enable is rejected, then allows retry", async () => {
+    const response = deferred<ProviderSettingsMutationResponse>();
+    const initial = snapshot(1, ["harness_one", "harness_two"]);
+    initial.harnesses[0]!.enabled = false;
+    const gateway = transport({ getSnapshot: async () => initial, mutate: () => response.promise });
+    const controller = new ProviderSettingsController({ identityKey: "owner-a:preview", transport: gateway });
+    await controller.refresh({ refresh: false });
+    controller.selectHarness("harness_one");
+    const pending = controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: true });
+    await Promise.resolve();
+    expect(controller.getState()).toMatchObject({ snapshot: initial, selectedHarnessId: "harness_one", busy: true });
+    response.reject(new Error("private provider failure"));
+    expect(await pending).toBe(false);
+    expect(controller.getState()).toMatchObject({ snapshot: initial, selectedHarnessId: "harness_one", busy: false,
+      error: "Changes were not saved. Refresh and try again." });
+    const enabled = snapshot(2, ["harness_one", "harness_two"]);
+    gateway.mutate.mockResolvedValue({ kind: "snapshot", snapshot: enabled });
+    expect(await controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: true })).toBe(true);
+    expect(controller.getState()).toMatchObject({ snapshot: enabled, selectedHarnessId: "harness_one", busy: false, error: null });
+  });
+
   it("fails closed when the server does not advertise an action", async () => {
     const gateway = transport();
     const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway });

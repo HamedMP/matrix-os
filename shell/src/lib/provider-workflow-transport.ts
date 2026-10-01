@@ -29,7 +29,8 @@ async function requestJson(input: {
     const code = value && typeof value === "object" && "error" in value
       && value.error && typeof value.error === "object" && "code" in value.error
       ? value.error.code : null;
-    throw new ProviderWorkflowClientError(response.status === 400 && code === "rejected" ? "rejected" : "unavailable");
+    throw new ProviderWorkflowClientError(response.status === 403 && code === "forbidden" ? "forbidden"
+      : response.status === 400 && code === "rejected" ? "rejected" : "unavailable");
   }
   return value;
 }

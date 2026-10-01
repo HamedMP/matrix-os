@@ -9,6 +9,9 @@ import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
 import { HarnessEditor } from "./HarnessEditor.js";
 import { HarnessRail } from "./HarnessRail.js";
+import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
+import { CatalogSetupPanel } from "./CatalogSetupPanel.js";
+import { ConnectionFallback } from "./ConnectionFallback.js";
 import { ConnectionChoices } from "./ConnectionChoices.js";
 import { settingsErrorPresentation } from "./settings-error-presentation.js";
 import type {
@@ -92,12 +95,14 @@ export function AgentsProvidersView({
   const [workflowCapabilities, setWorkflowCapabilities] = useState<
     ProviderWorkflowCapability[]
   >([]);
+  const [workflowPermission, setWorkflowPermission] = useState<"unknown" | "available" | "forbidden">("unknown");
   const [workflowStatus, setWorkflowStatus] = useState<{
     id: string;
     status: string | null;
   } | null>(null);
   useEffect(() => {
     setWorkflowCapabilities([]);
+    setWorkflowPermission("unknown");
   }, [workflowClient]);
   useEffect(() => {
     if (!workflowClient) return;
@@ -105,7 +110,10 @@ export function AgentsProvidersView({
     void workflowClient
       .capabilities(controller.signal)
       .then((value) => {
-        if (!controller.signal.aborted) setWorkflowCapabilities(value);
+        if (!controller.signal.aborted) {
+          setWorkflowCapabilities(value);
+          setWorkflowPermission("available");
+        }
       })
       .catch((caught) => {
         if (!controller.signal.aborted) {
@@ -114,6 +122,7 @@ export function AgentsProvidersView({
             caught instanceof Error ? caught.name : typeof caught,
           );
           setWorkflowCapabilities([]);
+          setWorkflowPermission(caught instanceof ProviderWorkflowClientError && caught.reason === "forbidden" ? "forbidden" : "unknown");
         }
       });
     return () => controller.abort();
@@ -245,6 +254,8 @@ export function AgentsProvidersView({
         <HarnessRail
           harnesses={snapshot.harnesses}
           inventory={inventoryHarnesses}
+          catalog={(snapshot.harnessCatalog ?? []).filter((entry) => !snapshot.harnesses.some((item) => item.harness === entry.harness) && !inventoryHarnesses.some((item) => item.harness === entry.harness))}
+          renderCatalog={(entry) => <CatalogSetupPanel entry={entry} disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={onRefresh} />}
           renderInventory={(item) =>
             workflowClient ? (
               <HarnessWorkflowPanel
@@ -313,8 +324,9 @@ export function AgentsProvidersView({
               harness.accountIds.length > 0 ? (
                 <SavedAccounts
                   collapsed={
-                    gatewaySelected &&
-                    (harness.harness === "pi" || harness.harness === "opencode")
+                    harness.authState !== "authenticated" ||
+                    (gatewaySelected &&
+                    (harness.harness === "pi" || harness.harness === "opencode"))
                   }
                 >
                   <AccountsPanel
@@ -369,14 +381,14 @@ export function AgentsProvidersView({
                       : undefined
                   }
                 />
-                {!guided ? accountsPanel() : null}
+                {!guided ? <><ConnectionFallback harness={harness} workflowPermission={workflowPermission} disabled={mutationsDisabled} onSetupHarness={onSetupHarness} />{accountsPanel()}</> : null}
                 {workflowClient &&
                 workflowCapabilities.find(
                   (item) => item.harnessInstanceId === harness.id,
                 ) ? (
                   <HarnessWorkflowPanel
                     key={harness.id}
-                    renderConnection={accountsPanel}
+                    renderConnection={harness.authState === "authenticated" ? accountsPanel : undefined}
                     harness={harness}
                     capability={
                       workflowCapabilities.find(
@@ -416,9 +428,7 @@ export function AgentsProvidersView({
                 ) : null}
                 <SavedAccounts
                   title="Advanced configuration"
-                  collapsed={workflowCapabilities.some(
-                    (item) => item.harnessInstanceId === harness.id,
-                  )}
+                  collapsed={true}
                 >
                   <HarnessEditor
                     snapshot={snapshot}
@@ -442,7 +452,7 @@ export function AgentsProvidersView({
             );
           }}
         />
-        {snapshot.harnesses.length === 0 && inventoryHarnesses.length === 0 ? (
+        {snapshot.harnesses.length === 0 && inventoryHarnesses.length === 0 && (snapshot.harnessCatalog?.length ?? 0) === 0 ? (
           <div className="matrix-ap-empty-state">
             <strong>No agents found</strong>
             <span>Use + Add agent above to install or connect an agent.</span>

@@ -110,3 +110,66 @@ Exercise real auth middleware, request principal and workflow registration for s
 ### 7. Wrong vs Correct
 
 Wrong: `if (actor !== owner) throw new ProviderWorkflowError('unauthorized')` (HTTP401). Correct: distinguish authenticated `forbidden` (HTTP403) from a missing principal (HTTP401), retaining owner-only credential access.
+
+## Capability-unavailable and enablement repair
+
+### 1. Scope / Trigger
+
+A valid runtime session can lack guided credential-workflow permissions. The
+compact approved connection presentation must survive that failure. An installed
+Hermes with no eligible account cannot switch the system runtime through Enable.
+
+### 2. Signatures
+
+`providerEnablementBlockReason(harness, sources, now): string | null` derives
+canonical prerequisites. Workflow transports distinguish `forbidden` from
+`unavailable` without exposing raw response messages. Settings setup catalog
+reads explicitly negotiate `includeSettingsSetupActions=true` to retain original
+server-issued setup commands for disabled executable harnesses; ordinary Chat
+catalog reads keep those commands absent. The flag is a bounded boolean query
+parameter and duplicate values are rejected.
+
+### 3. Contracts
+
+Catalog-only rows use presentation IDs only; install/connect handoff uses the
+authoritative catalog entry and advertised action. Guided credential writes stay
+owner-only. Legacy configuration remains a secondary disclosure, including when
+capabilities are unavailable. Figma SVG assets are stored unchanged; the designed
+OC/Pi/H/Cl marks are Settings-specific text layers.
+
+### 4. Validation & Error Matrix
+
+Do not allow On for uninstalled or unsupported credential routes. Preserve Off
+even if credentials disappear. Native Claude/Codex preferences keep their existing
+contract. Exact saved Hermes source-null payload is schema-valid; the route maps
+the store's invalid route to the safe public `invalid_request` HTTP 400.
+
+
+| State | Presentation / mutation |
+| --- | --- |
+| Owner workflow denial | Valid session retained; unavailable methods explained |
+| Missing guided capabilities | Compact chooser and catalog remain visible |
+| Hermes account missing | Connect-first hint; On disabled; no invalid mutation |
+| Mutation rejected | Confirmed route, revision and selected agent retained |
+
+### 5. Good/Base/Bad Cases
+
+Good: an authorized Terminal setup action remains available while its agent is
+Off. Base: capability denial retains the compact chooser and a safe permission
+explanation. Bad: missing credentials submit an invalid enable mutation, or a
+workflow failure exposes the full legacy editor as the default connection UI.
+
+### 6. Tests Required
+
+Red/green regressions cover capability-unavailable Codex chooser, missing OpenClaw
+catalog row, source-null Hermes enable prerequisite, typed workflow denial and
+failed-save retention/retry. Real route/store regression asserts public HTTP 400
+and zero runtime changes for the captured payload.
+
+### 7. Wrong vs Correct
+
+Correct: display Connect Codex choices with an explicit unavailable method and a
+real advertised Terminal action. Incorrect: expose the legacy editor by default
+or manufacture a workflow operation ID. Correct: explain Hermes's connection
+prerequisite. Incorrect: change backend authorization or label an unconfigured
+agent connected to make Enable succeed.
