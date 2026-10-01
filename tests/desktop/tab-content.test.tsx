@@ -23,6 +23,7 @@ vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({ defau
 vi.mock("@desktop/renderer/src/features/browser/BrowserTab", () => ({ default: browserMock }));
 vi.mock("@desktop/renderer/src/features/editor/DesktopEditorWorkspace", () => ({ default: editorMock }));
 vi.mock("@desktop/renderer/src/features/notes/NotesWorkspace", () => ({ default: notesMock }));
+vi.mock("@desktop/renderer/src/features/embeds/EmbedHost", () => ({ default: () => <div>Native content</div> }));
 
 afterEach(() => {
   cleanup();
@@ -57,6 +58,29 @@ describe("current desktop tab panes", () => {
     expect(view.container.querySelector('[data-window-resize-controls]')).toBeNull();
     expect(view.container.querySelector('[data-window-click-buffer]')).toBeNull();
     vi.unstubAllGlobals();
+  });
+  it.each(["desktop", "canvas"] as const)("fills native app windows while keeping resize controls outside the clipped frame in %s", (presentation) => {
+    const props = {
+      tab: { id: "app-test", kind: "app" as const, slug: "notes", title: "Notes", closable: true },
+      surface: { tabId: "app-test", mode: "window" as const, bounds: { x: 100, y: 80, width: 800, height: 600 }, zIndex: 1 },
+      active: true, tabWorkspaceActive: false, presentation, interactionScale: presentation === "canvas" ? 0.5 : 1,
+      overlayOpen: false, onFocus: vi.fn(), onClose: vi.fn(), onMinimize: vi.fn(), onMaximize: vi.fn(), onBoundsChange: vi.fn(),
+    };
+    const view = render(<DesktopSurfaceFrame {...props} />);
+    const content = view.getByTestId("desktop-surface-content-app");
+    expect(content.style.paddingLeft).toBe("");
+    expect(content.style.paddingRight).toBe("");
+    expect(content.style.paddingBottom).toBe("");
+    const frame = view.container.querySelector<HTMLElement>("[data-os-window]")!;
+    expect(frame.className).toContain("overflow-visible");
+    const clip = frame.querySelector<HTMLElement>("[data-os-window-clip]")!;
+    expect(clip.className).toContain("overflow-hidden");
+    expect(clip.style.borderRadius).toBe("inherit");
+    const controls = frame.querySelector<HTMLElement>("[data-window-resize-controls]")!;
+    expect(controls.parentElement).toBe(frame);
+    expect(controls.closest("[data-os-window-clip]")).toBeNull();
+    expect(controls.querySelector<HTMLElement>('[data-window-resize="e"]')!.style.right).toBe(presentation === "canvas" ? "-12px" : "-6px");
+    expect(controls.querySelector<HTMLElement>('[data-window-resize="se"]')!.style.bottom).toBe(presentation === "canvas" ? "-32px" : "-16px");
   });
   it.each([
     ["chat", "chat"],

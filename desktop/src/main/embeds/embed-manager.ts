@@ -11,6 +11,7 @@ export interface Bounds {
   y: number;
   width: number;
   height: number;
+  cornerRadius?: number;
 }
 
 export interface EmbedViewLike {

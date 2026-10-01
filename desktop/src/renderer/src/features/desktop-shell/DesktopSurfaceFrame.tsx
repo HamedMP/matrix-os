@@ -8,7 +8,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { DESKTOP_Z_INDEX, NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type {
   DesktopSurface,
   DesktopSurfaceBounds,
@@ -276,13 +276,14 @@ export default function DesktopSurfaceFrame({
       onContextMenu={(event) => event.stopPropagation()}
       frameControls={isWindow && visible ? (
         <WindowResizeControls bounds={surface.bounds} scale={interactionScale}
+          placement={isNativeEmbed ? "outside" : "inside"}
           minimum={{ width: Math.min(440, surface.bounds.width), height: Math.min(300, surface.bounds.height) }}
           onFocus={onFocus} onBoundsChange={onBoundsChange} />
       ) : undefined}
       data-window-click-buffer={isWindow && visible && !isDesktopHidden && !isDesktopTransition || undefined}
       data-surface-mode={surface.mode}
       data-active={active || undefined}
-      className="pointer-events-auto absolute min-h-0 min-w-0 flex-col overflow-hidden transition-[box-shadow,border-color] duration-150"
+      className={`pointer-events-auto absolute min-h-0 min-w-0 flex-col ${isNativeEmbed && isWindow ? "overflow-visible" : "overflow-hidden"} transition-[box-shadow,border-color] duration-150`}
       style={frameStyle}
       onPointerDown={isWindow ? onFocus : undefined}
     >
@@ -291,11 +292,6 @@ export default function DesktopSurfaceFrame({
         data-testid={`desktop-surface-content-${tab.kind}`}
         className="relative flex min-h-0 flex-1 flex-col"
         inert={!interactive ? true : undefined}
-        style={isNativeEmbed && isWindow ? {
-          paddingLeft: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
-          paddingRight: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
-          paddingBottom: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
-        } : undefined}
       >
         <TabErrorBoundary tabTitle={tab.title} onClose={onClose}>
           <TabPane

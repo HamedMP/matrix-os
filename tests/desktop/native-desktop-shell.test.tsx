@@ -983,13 +983,16 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Go forward" })).toBeNull();
   });
 
-  it("keeps the native resize handle clear of floating Browser content", () => {
+  it("fills floating Browser windows and keeps resize targets outside native content", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
 
     const content = screen.getByTestId("desktop-surface-content-browser");
-    expect(content.style.paddingRight).toBe(`${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`);
-    expect(content.style.paddingBottom).toBe(`${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`);
+    expect(content.style.paddingRight).toBe("");
+    expect(content.style.paddingBottom).toBe("");
+    const frame = content.closest("[data-os-window]")!;
+    expect(frame.querySelector<HTMLElement>('[data-window-resize="e"]')?.style.right).toBe("-6px");
+    expect(frame.querySelector<HTMLElement>('[data-window-resize="se"]')?.style.bottom).toBe("-16px");
   });
 
   it("unmounts a closed root surface and reopens it from its desktop icon", () => {
