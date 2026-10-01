@@ -46,7 +46,8 @@ const DEFAULT_MAX_ATTACHMENTS = 512;
 const DEFAULT_ATTACHMENT_TTL_MS = 60_000;
 
 type ProviderLoginRuntime = Pick<TerminalRuntimeSocketClient,
-  "listWorkspaces" | "ensureWorkspace" | "createTab" | "renameTab" | "terminateTab">;
+  "listWorkspaces" | "ensureWorkspace" | "createTab" | "renameTab" | "terminateTab">
+  & Partial<Pick<TerminalRuntimeSocketClient, "getCommandState" | "archiveEndedTab">>;
 
 type NamedTerminal = { name: string };
 
@@ -148,11 +149,28 @@ export function createProviderLoginTerminalRegistry(runtime: ProviderLoginRuntim
       return { name: renamed.name };
     },
 
+    async archiveStopped(name: string, nextName: string, agent: AgentKind): Promise<NamedTerminal> {
+      const tab = await find(name);
+      if (!runtime.archiveEndedTab || !tab.incarnation || tab.agent?.providerId !== agent
+        || (agent !== "claude" && agent !== "codex")) {
+        throw new Error("Provider terminal state is unavailable");
+      }
+      const archived = await runtime.archiveEndedTab(
+        { workspaceId: tab.workspaceId, tabId: tab.id },
+        { name: nextName, expectedName: name, providerId: agent,
+          expectedIncarnation: tab.incarnation, baseRevision: tab.revision },
+      );
+      return { name: archived.name };
+    },
+
     async observeAgentLiveness(name: string, agent: AgentKind): Promise<"running" | "stopped" | "unknown"> {
       const tab = await find(name);
-      if (["exited", "failed", "unavailable"].includes(tab.status)) return "stopped";
-      if (!tab.agent) return "unknown";
-      return tab.agent.providerId === agent ? "running" : "stopped";
+      if (tab.agent?.providerId !== agent) return "unknown";
+      if (tab.status === "exited") return "stopped";
+      if (["failed", "unavailable"].includes(tab.status)) return "unknown";
+      if (!runtime.getCommandState) return "unknown";
+      const state = await runtime.getCommandState({ workspaceId: tab.workspaceId, tabId: tab.id }, tab.incarnation);
+      return state === "exited" ? "stopped" : state === "running" ? "running" : "unknown";
     },
   };
 }

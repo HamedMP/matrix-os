@@ -18,6 +18,7 @@ const ACTIVE_TAB = {
   cwd: "",
   status: "running",
   revision: 3,
+  incarnation: "ti_00000000000000000000000000000001",
   order: 0,
   agent: { providerId: "codex" },
   createdAt: "2026-09-07T00:00:00.000Z",
@@ -272,17 +273,44 @@ describe("provider login terminal registry", () => {
     expect(runtime.terminateTab).not.toHaveBeenCalled();
   });
 
-  it("reports liveness only for the matching active provider tab", async () => {
+  it("uses current command state rather than persisted provider metadata for liveness", async () => {
     const runtime = {
       listWorkspaces: vi.fn(async () => [MAIN_WORKSPACE]),
       ensureWorkspace: vi.fn(),
       createTab: vi.fn(),
       renameTab: vi.fn(),
       terminateTab: vi.fn(),
+      getCommandState: vi.fn().mockResolvedValueOnce("running").mockResolvedValueOnce("exited").mockResolvedValueOnce("unknown"),
     };
     const registry = createProviderLoginTerminalRegistry(runtime);
 
     await expect(registry.observeAgentLiveness(ACTIVE_TAB.name, "codex")).resolves.toBe("running");
-    await expect(registry.observeAgentLiveness(ACTIVE_TAB.name, "claude")).resolves.toBe("stopped");
+    await expect(registry.observeAgentLiveness(ACTIVE_TAB.name, "codex")).resolves.toBe("stopped");
+    await expect(registry.observeAgentLiveness(ACTIVE_TAB.name, "codex")).resolves.toBe("unknown");
+    await expect(registry.observeAgentLiveness(ACTIVE_TAB.name, "claude")).resolves.toBe("unknown");
+    expect(runtime.getCommandState).toHaveBeenCalledTimes(3);
+    expect(runtime.getCommandState).toHaveBeenCalledWith(TERMINAL_REF, ACTIVE_TAB.incarnation);
+  });
+
+  it("never treats exited metadata for another provider as stopped", async () => {
+    const runtime = { listWorkspaces: vi.fn(async () => [{ ...MAIN_WORKSPACE,
+      tabs: [{ ...ACTIVE_TAB, status: "exited" as const }] }]),
+      ensureWorkspace: vi.fn(), createTab: vi.fn(), renameTab: vi.fn(), terminateTab: vi.fn(), getCommandState: vi.fn() };
+    await expect(createProviderLoginTerminalRegistry(runtime).observeAgentLiveness(ACTIVE_TAB.name, "claude"))
+      .resolves.toBe("unknown");
+    expect(runtime.getCommandState).not.toHaveBeenCalled();
+  });
+
+  it("passes the exact observed tab identity to atomic stopped-login archival", async () => {
+    const runtime = { listWorkspaces: vi.fn(async () => [MAIN_WORKSPACE]),
+      ensureWorkspace: vi.fn(), createTab: vi.fn(), renameTab: vi.fn(), terminateTab: vi.fn(),
+      archiveEndedTab: vi.fn(async () => ({ ...ACTIVE_TAB, name: "provider-auth-ended-test" })) };
+    await expect(createProviderLoginTerminalRegistry(runtime).archiveStopped(ACTIVE_TAB.name, "provider-auth-ended-test", "codex"))
+      .resolves.toEqual({ name: "provider-auth-ended-test" });
+    expect(runtime.archiveEndedTab).toHaveBeenCalledWith(TERMINAL_REF, {
+      name: "provider-auth-ended-test", expectedName: ACTIVE_TAB.name, providerId: "codex",
+      expectedIncarnation: ACTIVE_TAB.incarnation, baseRevision: ACTIVE_TAB.revision,
+    });
+    expect(runtime.renameTab).not.toHaveBeenCalled(); expect(runtime.terminateTab).not.toHaveBeenCalled();
   });
 });

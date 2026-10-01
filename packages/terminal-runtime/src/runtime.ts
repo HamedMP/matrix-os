@@ -14,6 +14,8 @@ import { z } from "zod/v4";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import { terminalTabIncarnation } from "./incarnation.js";
+import { TerminalCommandStateRefSchema, TerminalCommandStateSchema, type TerminalCommandState } from "./terminal-command-state.js";
+import { archiveEndedTerminalTab, TerminalEndedTabArchiveInputSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
@@ -23,6 +25,9 @@ import {
   type TerminalSnapshot,
 } from "./workspace-store.js";
 export interface ZellijRuntimeAdapter {
+  findTabByInternalNameReadOnly?(sessionName: string, internalName: string,
+    expected?: { tabId: number | null; paneId: string | null }): Promise<{ tabId: number; paneId: string } | undefined>;
+  getCommandState?(sessionName: string, tabId: number, paneId: string): Promise<TerminalCommandState>;
   ensureSession(sessionName: string, size?: { cols: number; rows: number }): Promise<void>;
   createTab(sessionName: string, input: {
     internalName: string;
@@ -268,6 +273,25 @@ export class TerminalRuntime {
     return this.store.listWorkspaces();
   }
 
+  async getCommandState(refInput: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState> {
+    const ref = TerminalCommandStateRefSchema.parse({ ...refInput, expectedIncarnation });
+    return this.runWorkspaceMutation(async () => {
+      const workspace = await this.store.getRuntimeWorkspace(ref.workspaceId);
+      const tab = workspace?.tabs[ref.tabId];
+      if (!workspace || !tab || tab.zellijTabId === null || tab.zellijPaneId === null
+        || !this.zellij.getCommandState) return "unknown";
+      const incarnation = terminalTabIncarnation(tab);
+      if (expectedIncarnation && incarnation !== expectedIncarnation) return "unknown";
+      const state = TerminalCommandStateSchema.safeParse(await this.zellij.getCommandState(
+        workspace.zellijSessionName, tab.zellijTabId, tab.zellijPaneId,
+      ));
+      const current = (await this.store.getRuntimeWorkspace(ref.workspaceId))?.tabs[ref.tabId];
+      if (!current || terminalTabIncarnation(current) !== incarnation || current.zellijTabId !== tab.zellijTabId
+        || current.zellijPaneId !== tab.zellijPaneId) return "unknown";
+      return state.success ? state.data : "unknown";
+    });
+  }
+
   private reconcileWorkspace(workspaceId: string): Promise<void> {
     return this.runWorkspaceMutation(() => this.reconcileWorkspaceNow(workspaceId));
   }
@@ -324,6 +348,19 @@ export class TerminalRuntime {
     } finally {
       releaseObserverReservation();
     }
+  }
+
+  async archiveEndedTab(refInput: TerminalRef, inputRaw: TerminalEndedTabArchiveInput): Promise<TerminalTab> {
+    const ref = TerminalRefSchema.parse(refInput);
+    const input = TerminalEndedTabArchiveInputSchema.parse(inputRaw);
+    return this.runWorkspaceMutation(async () => {
+      const key = refKey(ref);
+      const release = this.reservePaneClosure(key);
+      try {
+        await this.drainTabInput(key);
+        return await archiveEndedTerminalTab(this.store, this.zellij, ref, input);
+      } finally { release(); }
+    });
   }
 
   async renameTab(refInput: TerminalRef, input: { name: string; baseRevision: number }): Promise<TerminalTab> {

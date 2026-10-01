@@ -3,8 +3,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ProviderConnectionAttemptSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import type { AgentKind } from "../shell/agent-session-state.js";
-import type { ShellAgentLiveness } from "../shell/registry.js";
+import { recoverProviderLoginSession, type ProviderLoginRegistry } from "./provider-login-session-recovery.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import { writeProviderJsonAtomic } from "./provider-settings-persistence.js";
 import type { ProviderLoginCoordinator } from "./provider-settings-coordinators.js";
@@ -22,6 +21,7 @@ const ReceiptSchema = z.object({
   payloadHash: DigestSchema,
   recoveryHash: DigestSchema.optional(),
   legacyPayloadHash: DigestSchema.optional(),
+  superseded: z.literal(true).optional(),
   attempt: ProviderConnectionAttemptSchema,
 }).strict();
 const ReceiptDocumentSchema = z.object({
@@ -31,19 +31,6 @@ const ReceiptDocumentSchema = z.object({
 
 type LoginHarness = Parameters<ProviderLoginCoordinator["supportedMethods"]>[0];
 type LoginInput = Parameters<ProviderLoginCoordinator["startLogin"]>[0];
-interface LoginRegistry {
-  create(input: {
-    name: string;
-    cwd?: string;
-    cmd?: string;
-    agent?: AgentKind;
-    exclusive?: boolean;
-  }): Promise<{ name: string }>;
-  get(name: string): Promise<{ name: string }>;
-  delete(name: string, options?: { force?: boolean }): Promise<void>;
-  rename(name: string, nextName: string): Promise<{ name: string }>;
-  observeAgentLiveness(name: string, agent: AgentKind): Promise<ShellAgentLiveness>;
-}
 type ReceiptDocument = z.infer<typeof ReceiptDocumentSchema>;
 type ReceiptWriter = (path: string, value: ReceiptDocument) => Promise<void>;
 
@@ -195,7 +182,7 @@ function supportsHarness(
 
 export function createProviderTerminalLoginCoordinator(options: {
   homePath: string;
-  registry: LoginRegistry;
+  registry: ProviderLoginRegistry;
   enabledHarnesses: readonly ("codex" | "claude")[];
   now?: () => Date;
   persistReceipt?: ReceiptWriter;
@@ -250,14 +237,15 @@ export function createProviderTerminalLoginCoordinator(options: {
         if (new Set(matchingReceipts.map((receipt) => receipt.payloadHash)).size > 1) {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
-        let duplicate = matchingReceipts[0];
+        let duplicate = matchingReceipts.find(receipt => receipt.superseded) ?? matchingReceipts[0];
         if (duplicate) {
           if (duplicate.payloadHash !== hash) {
             throw new ProviderSettingsStoreError("idempotency_conflict", 409);
           }
+          if (duplicate.superseded) return currentProviderConnectionAttempt(duplicate.attempt, currentTime);
           if (duplicate.attempt.action.kind === "open_terminal"
             && duplicate.attempt.action.terminalSessionId !== canonicalSessionName) {
-            let canonicalSession: Awaited<ReturnType<LoginRegistry["get"]>> | null = null;
+            let canonicalSession: Awaited<ReturnType<ProviderLoginRegistry["get"]>> | null = null;
             try {
               canonicalSession = await options.registry.get(canonicalSessionName);
             } catch (error) {
@@ -342,7 +330,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         const liveLegacyReceipts = [];
         for (const receipt of document.receipts) {
           const attempt = currentProviderConnectionAttempt(receipt.attempt, currentTime);
-          if (!matchesLegacyLoginPayload(input, receipt)
+          if (receipt.superseded || !matchesLegacyLoginPayload(input, receipt)
             || attempt.state === "expired"
             || attempt.action.kind !== "open_terminal"
             || attempt.action.terminalSessionId !== legacyLoginSessionName(
@@ -406,7 +394,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
 
         const activeRecoveryReceipts = [...document.receipts, ...recoveryDocument.receipts].filter((receipt) =>
-          receipt.recoveryHash === recoveryHash
+          !receipt.superseded && receipt.recoveryHash === recoveryHash
           && currentProviderConnectionAttempt(receipt.attempt, currentTime).state !== "expired");
         const activeRecoveryAttempts = new Map<string, typeof activeRecoveryReceipts>();
         for (const receipt of activeRecoveryReceipts) {
@@ -428,46 +416,49 @@ export function createProviderTerminalLoginCoordinator(options: {
           }
           const recoverySession = recoverySessions.values().next().value!;
           const recoverable = recoverableReceipts[0]!.attempt;
+          const retireRecovery = async () => {
+            // Retired keys replay their immutable attempts only; they must never
+            // resurrect a command while a fresh replacement is being recorded.
+            const retire = (candidate: ReceiptDocument) => {
+              candidate.receipts = candidate.receipts.map(receipt =>
+                receipt.recoveryHash === recoveryHash ? { ...receipt, superseded: true as const } : receipt);
+            };
+            retire(document);
+            retire(recoveryDocument);
+            try {
+              await persistReceipt(receiptsPath, ReceiptDocumentSchema.parse(document));
+              await writeProviderJsonAtomic(recoveryPath, ReceiptDocumentSchema.parse(recoveryDocument));
+            } catch (error) {
+              console.warn("[provider-login] Failed to retire ended login receipts:", error instanceof Error ? error.name : "UnknownError");
+              throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+            }
+          };
+          const existing = await recoverProviderLoginSession(options.registry, recoverySession.name, command.agent, hash, retireRecovery);
           const attempt = currentProviderConnectionAttempt(recoverable, now());
-          if (attempt.action.kind !== "open_terminal") {
-            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          if (existing === "live" && attempt.action.kind === "open_terminal") {
+            replaceBoundedReceipt(recoveryDocument, ReceiptSchema.parse({
+              key: input.mutation.idempotencyKey,
+              payloadHash: hash,
+              recoveryHash,
+              ...(recoverySession.legacyPayloadHash
+                ? { legacyPayloadHash: recoverySession.legacyPayloadHash }
+                : {}),
+              attempt: recoverable,
+            }));
+            try {
+              await writeProviderJsonAtomic(recoveryPath, ReceiptDocumentSchema.parse(recoveryDocument));
+            } catch (error) {
+              console.warn("[provider-login] Failed to persist active login alias:", error instanceof Error ? error.name : "UnknownError");
+              throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+            }
+            return attempt;
           }
-          replaceBoundedReceipt(recoveryDocument, ReceiptSchema.parse({
-            key: input.mutation.idempotencyKey,
-            payloadHash: hash,
-            recoveryHash,
-            ...(recoverySession.legacyPayloadHash
-              ? { legacyPayloadHash: recoverySession.legacyPayloadHash }
-              : {}),
-            attempt: recoverable,
-          }));
-          try {
-            await writeProviderJsonAtomic(recoveryPath, ReceiptDocumentSchema.parse(recoveryDocument));
-          } catch (error) {
-            console.warn(
-              "[provider-login] Failed to persist login recovery alias:",
-              error instanceof Error ? error.name : "UnknownError",
-            );
-            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
-          }
-          try {
-            await options.registry.get(attempt.action.terminalSessionId);
-          } catch (error) {
-            if (!isMissingSession(error)) throw error;
-            await options.registry.create({
-              name: attempt.action.terminalSessionId,
-              cwd: "~",
-              cmd: command.command,
-              agent: command.agent,
-              exclusive: false,
-            });
-          }
-          return attempt;
+          if (existing !== "archived") await retireRecovery();
         }
 
         const expiredRecoverySessions = new Map<string, RecoverySession>();
         for (const candidate of [...document.receipts, ...recoveryDocument.receipts]) {
-          const session = expiredRecoverySession(candidate, recoveryHash, input, currentTime);
+          const session = candidate.superseded ? null : expiredRecoverySession(candidate, recoveryHash, input, now());
           if (session) expiredRecoverySessions.set(JSON.stringify(session), session);
         }
         if (expiredRecoverySessions.size > 1) {
@@ -479,37 +470,17 @@ export function createProviderTerminalLoginCoordinator(options: {
         let sessionName = canonicalSessionName;
         let adoptedExpiredSession = false;
         if (expiredSession) {
-          try {
-            await options.registry.get(expiredSession.name);
+          if (await recoverProviderLoginSession(options.registry, expiredSession.name, command.agent, hash) === "live") {
             sessionName = expiredSession.name;
             adoptedExpiredSession = true;
-          } catch (error) {
-            if (!isMissingSession(error)) throw error;
           }
         }
         if (!adoptedExpiredSession) {
-          try {
-            const canonicalSession = await options.registry.get(canonicalSessionName);
-            if (canonicalSession.name !== canonicalSessionName) {
-              throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
-            }
-            if (await options.registry.observeAgentLiveness(
-              canonicalSessionName,
-              command.agent,
-            ) === "running") {
-              // A full-digest canonical name plus an observed matching foreground
-              // agent is the durable exact identity/liveness marker. It remains
-              // safe to adopt after bounded receipts have been evicted.
-              adoptedExpiredSession = true;
-            } else {
-              // The production terminal wrapper can hide the foreground agent.
-              // Unknown is not evidence that the login exited: fail closed so
-              // we neither kill an active login nor adopt a stale shell prompt.
-              throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
-            }
-          } catch (error) {
-            if (!isMissingSession(error)) throw error;
-          }
+          // The full-digest name preserves exact recovery even after bounded
+          // receipts are evicted; unknown liveness never starts another login.
+          adoptedExpiredSession = await recoverProviderLoginSession(
+            options.registry, canonicalSessionName, command.agent, hash,
+          ) === "live";
         }
         const attempt = ProviderConnectionAttemptSchema.parse({
           id: `attempt_${hash.slice(0, 24)}`,

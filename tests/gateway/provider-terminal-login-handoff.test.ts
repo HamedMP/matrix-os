@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ProviderSettingsMutationResponseSchema, type TerminalTab, type ProviderSettingsMutationResponse } from "@matrix-os/contracts";
+import { ProviderSettingsMutationResponseSchema, type TerminalRef, type TerminalTab, type ProviderSettingsMutationResponse } from "@matrix-os/contracts";
 import type { ProviderSettingsStoreWriter } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { createProviderSettingsRoutes } from "../../packages/gateway/src/ai-providers/provider-settings-routes.js";
@@ -45,10 +45,16 @@ describe("provider Terminal login handoff", () => {
       status: "running" as const, revision: 1, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(), tabs };
     const runtime = { listWorkspaces: vi.fn(async () => [workspace]), ensureWorkspace: vi.fn(async () => workspace),
       createTab: vi.fn(async (_id: string, input: Parameters<Parameters<typeof createProviderLoginTerminalRegistry>[0]["createTab"]>[1]) => {
-        const tab: TerminalTab = { id: REF.tabId, workspaceId: REF.workspaceId, name: input.name ?? "Terminal", cwd: "", status: "running",
-          revision: 1, order: 0, agent: input.agent, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() };
+        const tab: TerminalTab = { id: `tt_${String(tabs.length + 1).padStart(32, "0")}`, workspaceId: REF.workspaceId, name: input.name ?? "Terminal", cwd: "", status: "running",
+          revision: 1, incarnation: `ti_${String(tabs.length + 1).padStart(32, "0")}`, order: 0, agent: input.agent, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() };
         tabs.push(tab); return tab;
-      }), renameTab: vi.fn(), terminateTab: vi.fn() };
+      }), renameTab: vi.fn(async (ref: TerminalRef, input: { name: string }) => {
+        const tab = tabs.find(t => t.id === ref.tabId)!;
+        tab.name = input.name; tab.revision += 1; return tab;
+      }), archiveEndedTab: vi.fn(async (ref: TerminalRef, input: { name: string }) => {
+        const tab = tabs.find(t => t.id === ref.tabId)!;
+        tab.name = input.name; tab.revision += 1; return tab;
+      }), terminateTab: vi.fn(), getCommandState: vi.fn(async () => "running" as "running" | "exited" | "unknown") };
     const registry = createProviderLoginTerminalRegistry(runtime);
     const login = createProviderTerminalLoginCoordinator({ homePath: join(root, "home"), registry,
       enabledHarnesses: ["claude"], now: () => NOW });
@@ -83,6 +89,20 @@ describe("provider Terminal login handoff", () => {
     expect(receipt).not.toContain(KEY);
     const raw = await store.mutate(mutation);
     expect(raw.kind === "login_attempt" && raw.attempt.action).toEqual({ kind: "open_terminal", terminalSessionId: tabs[0].name });
+
+    const originalName = tabs[0].name;
+    runtime.getCommandState.mockResolvedValueOnce("exited");
+    const endedStore = createStore();
+    const endedRevision = (await endedStore.getSnapshot()).revision;
+    const restarted = await appFor(handoff(endedStore, id => registry.resolveTerminalRef(id)))
+      .request("/api/ai/provider-settings/actions", { ...request,
+        body: JSON.stringify({ ...mutation, expectedRevision: endedRevision, idempotencyKey: "login_handoff_exited" }) });
+    expect(restarted.status).toBe(200);
+    expect((await restarted.json()).attempt.action.terminalSessionId).toBe(`${REF.workspaceId}:${tabs[1].id}`);
+    expect(tabs[0].name).toMatch(/^provider-auth-ended-/);
+    expect(tabs[1].name).toBe(originalName);
+    expect(runtime.createTab).toHaveBeenCalledTimes(2);
+    expect(runtime.terminateTab).not.toHaveBeenCalled();
   });
 
   it("projects a historical cached attempt without invoking login or changing the cached object", async () => {
