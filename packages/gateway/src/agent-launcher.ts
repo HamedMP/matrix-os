@@ -322,6 +322,7 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
   const discoveryOnly = input.mode === "plan" || input.mode === "review"
     || input.sandbox?.mode === "read-only" || permissionMode === "plan"
     || input.matrixCustomMcpScope === "discovery";
+  const effectiveMcpScope = discoveryOnly ? "discovery" : "call";
   return [
     "--setting-sources",
     "",
@@ -331,9 +332,9 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     permissionMode,
     "--strict-mcp-config",
     ...(input.runtimeHome ? ["--append-system-prompt", buildMatrixAgentOrientation({
-      surface: "claude", customMcpScope: input.matrixCustomMcp ? (discoveryOnly ? "discovery" : "call") : "none",
+      surface: "claude", customMcpScope: input.matrixCustomMcp ? effectiveMcpScope : "none",
     })] : []),
-    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(input.matrixCustomMcpScope, input.matrixDriveContext)] : []),
+    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(effectiveMcpScope, input.matrixDriveContext)] : []),
     "--no-chrome",
     ...(input.model ? ["--model", input.model] : []),
     ...(modelOption(input, "effort") ? ["--effort", modelOption(input, "effort")!] : []),

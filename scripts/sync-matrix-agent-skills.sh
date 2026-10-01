@@ -44,8 +44,16 @@ skill_name() {
 is_matrix_owned_dir() {
   local path="$1"
   if [ -L "$path" ]; then
-    local resolved
+    local resolved expected_name
     resolved="$(realpath "$path" 2>/dev/null || true)"
+    # Source ownership does not imply ownership of an owner's custom alias.
+    # A marker reached through the symlink belongs to the source, not the link.
+    [ -f "$path/SKILL.md" ] || return 1
+    expected_name="$(skill_name "$path")"
+    if [ -z "$expected_name" ]; then
+      expected_name="matrix-$(basename "$resolved")"
+    fi
+    [ "$(basename "$path")" = "$expected_name" ] || return 1
     case "$resolved" in
       "$MATRIX_SKILLS_SOURCE"/*) return 0 ;;
     esac

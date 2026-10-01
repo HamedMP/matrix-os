@@ -163,6 +163,72 @@ describe("Matrix coding-agent skill sync", () => {
     expect(extractHermesFallbackSkillList(hermesInstaller)).toEqual(shippedSkillDirs);
   });
 
+  it("preserves owner-named aliases into current and previous Matrix sources", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-skill-aliases-${Date.now()}`), { recursive: true }));
+    const source = join(root, "current", "matrix");
+    const previousSource = join(root, "previous", "matrix");
+    const cliHome = join(root, "cli-home");
+    const matrixHome = join(root, "matrix-home");
+    const hermesHome = join(root, "hermes-home");
+    const targets = [join(matrixHome, ".agents", "skills"), join(matrixHome, ".claude", "skills"),
+      join(cliHome, ".agents", "skills"), join(cliHome, ".claude", "skills"),
+      join(cliHome, ".codex", "skills"), join(hermesHome, "skills")];
+    try {
+      writeSkill(source, "app-builder", "matrix-app-builder");
+      writeSkill(source, "animate", "animate");
+      writeFileSync(join(source, "animate", ".matrix-os-managed"), "managed snapshot\n");
+      writeSkill(previousSource, "animate", "animate");
+      writeFileSync(join(previousSource, "animate", ".matrix-os-managed"), "managed snapshot\n");
+      for (const target of targets) {
+        mkdirSync(target, { recursive: true });
+        for (const [name, src] of [["my-builder", join(source, "app-builder")], ["my-motion", join(source, "animate")],
+          ["previous-motion", join(previousSource, "animate")]]) {
+          execFileSync("ln", ["-s", realpathSync(src), join(target, name)]);
+        }
+      }
+      execFileSync("bash", [join(process.cwd(), "scripts/sync-matrix-agent-skills.sh"), source], {
+        env: { ...process.env, HOME: cliHome, MATRIX_HOME: matrixHome, HERMES_HOME: hermesHome,
+          MATRIX_SKILL_TARGETS: "matrix,claude,codex,hermes" }, stdio: "pipe",
+      });
+      for (const target of targets) {
+        expect(realpathSync(join(target, "my-builder"))).toBe(realpathSync(join(source, "app-builder")));
+        expect(realpathSync(join(target, "my-motion"))).toBe(realpathSync(join(source, "animate")));
+        expect(realpathSync(join(target, "previous-motion"))).toBe(realpathSync(join(previousSource, "animate")));
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each(["default", "custom-home", "custom-root"])("preserves Agent skill collisions before invoking its installer (%s)", (location) => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-agent-collisions-${location}-${Date.now()}`), { recursive: true }));
+    const cliHome = join(root, "cli-home");
+    const agentHome = location === "custom-home" ? join(root, "custom-agent-home") : join(cliHome, ".agent");
+    const skillsRoot = location === "custom-root" ? join(root, "custom-skills") : join(agentHome, "skills");
+    const fakeAgent = join(root, "agent");
+    const logPath = join(root, "calls.log");
+    try {
+      writeSkill(skillsRoot, "animate", "animate");
+      mkdirSync(join(skillsRoot, "matrix-app-builder"));
+      execFileSync("ln", ["-s", join(root, "missing-owner-skill"), join(skillsRoot, "apple-design")]);
+      writeFileSync(join(skillsRoot, "css-animations"), "owner file\n");
+      writeFileSync(fakeAgent, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${logPath}"\n`);
+      chmodSync(fakeAgent, 0o755);
+      execFileSync("bash", [join(process.cwd(), "scripts/install-agent-matrix-skills.sh"), "Example/remote-repo"], {
+        env: { ...process.env, AGENT_BIN: fakeAgent, HOME: cliHome,
+          ...(location === "custom-home" ? { AGENT_HOME: agentHome } : {}),
+          ...(location === "custom-root" ? { MATRIX_AGENT_SKILLS_ROOT: skillsRoot } : {}) }, stdio: "pipe",
+      });
+      const calls = readFileSync(logPath, "utf-8").split("\n");
+      expect(calls.some((call) => call.endsWith("/animate"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/app-builder"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/apple-design"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/css-animations"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/integrations"))).toBe(true);
+      expect(readFileSync(join(skillsRoot, "animate", "SKILL.md"), "utf-8")).toContain("animate test skill");
+      expect(lstatSync(join(skillsRoot, "apple-design")).isSymbolicLink()).toBe(true);
+      expect(readFileSync(join(skillsRoot, "css-animations"), "utf-8")).toBe("owner file\n");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("lets the Agent installer consume a direct skills/matrix source path", () => {
     const root = resolve(mkdirSync(join(tmpdir(), `matrix-agent-install-${Date.now()}`), { recursive: true }));
     const source = join(root, "skills", "matrix");

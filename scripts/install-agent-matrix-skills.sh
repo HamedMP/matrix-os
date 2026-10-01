@@ -3,6 +3,7 @@ set -euo pipefail
 
 AGENT_BIN="${AGENT_BIN:-agent}"
 MATRIX_SKILLS_SOURCE="${1:-${MATRIX_SKILLS_SOURCE:-HamedMP/matrix-os}}"
+MATRIX_AGENT_SKILLS_ROOT="${MATRIX_AGENT_SKILLS_ROOT:-${AGENT_HOME:-$HOME/.agent}/skills}"
 
 if [ -d "${MATRIX_SKILLS_SOURCE}/skills/matrix" ]; then
   MATRIX_SKILLS_ROOT="${MATRIX_SKILLS_SOURCE}/skills/matrix"
@@ -40,6 +41,24 @@ if ! command -v "$AGENT_BIN" >/dev/null 2>&1; then
 fi
 
 for skill in "${skills[@]}"; do
+  case "$skill" in
+    animate|animation-accessibility|animation-performance|animation-vocabulary|apple-design|css-animations|emil-design-eng|review-animations)
+      skill_name="$skill" ;;
+    *) skill_name="matrix-$skill" ;;
+  esac
+  if [ -f "${MATRIX_SKILLS_ROOT}/${skill}/SKILL.md" ]; then
+    declared_name="$(sed -n 's/^name:[[:space:]]*//p' "${MATRIX_SKILLS_ROOT}/${skill}/SKILL.md" | head -1)"
+    if [ -n "$declared_name" ]; then
+      skill_name="$declared_name"
+    fi
+  fi
+  destination="$MATRIX_AGENT_SKILLS_ROOT/$skill_name"
+  # Protect directories, files and dangling owner links before invoking a CLI
+  # whose replace behavior may vary by version. Repeat installs fill gaps only.
+  if [ -e "$destination" ] || [ -L "$destination" ]; then
+    echo "Preserved existing Agent skill: $skill_name."
+    continue
+  fi
   "$AGENT_BIN" skills install "${MATRIX_SKILLS_ROOT}/${skill}"
 done
 

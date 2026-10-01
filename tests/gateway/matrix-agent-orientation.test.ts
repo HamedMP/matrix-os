@@ -38,6 +38,8 @@ describe("Claude Matrix orientation", () => {
     const prompt = launch.args[launch.args.indexOf("--append-system-prompt") + 1]!;
     expect(prompt).toContain("discovery only");
     expect(prompt).not.toContain("broker owns approval");
+    const mcpConfig = JSON.parse(launch.args[launch.args.indexOf("--mcp-config") + 1]!);
+    expect(mcpConfig.mcpServers["matrix-integrations"].args).toContain("--tool-surface=custom-mcp-discovery");
   });
 
   it("describes broker-mediated calls under supervised default permissions without auto-approving them", () => {
@@ -54,6 +56,8 @@ describe("Claude Matrix orientation", () => {
     expect(settings.permissions.allow).not.toContain("mcp__matrix-integrations__call_custom_mcp_tool");
     expect(settings.sandbox.enabled).toBe(true);
     expect(settings.sandbox.allowUnsandboxedCommands).toBe(false);
+    const mcpConfig = JSON.parse(launch.args[launch.args.indexOf("--mcp-config") + 1]!);
+    expect(mcpConfig.mcpServers["matrix-integrations"].args).toContain("--tool-surface=custom-mcp-call");
   });
 
   it("does not advertise Custom MCP wrappers without a configured MCP server", () => {

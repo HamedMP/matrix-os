@@ -54,6 +54,9 @@ AGENT_BIN=/opt/matrix/runtime/node/bin/agent ./scripts/install-agent-matrix-skil
 Both installer scripts enumerate the same complete pack. A direct local
 `skills/matrix` path is accepted as well as a checkout root. Hermes local installation
 uses the shared synchronizer; published-source installation does not use `--force`.
+Agent repeat installation fills missing names only and preserves existing files,
+directories, and dangling links under `${AGENT_HOME:-$HOME/.agent}/skills`. Set
+`MATRIX_AGENT_SKILLS_ROOT` to guard a nonstandard Agent skills destination.
 
 Runtime sync preserves existing user-managed skills, including a same-name local
 `animate` or `apple-design`. Shipped vendored directories contain a `.matrix-os-managed`
@@ -62,6 +65,8 @@ authorship to the underlying skill. Only current-source links, explicit markers,
 legacy `matrix-*` directories authored by Matrix are eligible for cleanup. Uncertain
 or unmarked same-name installations remain untouched and a skip is reported. The
 source pack under the current release is the instruction/resource source of truth.
+Owner-named symlink aliases remain intact even when they point into the shipped
+pack: source ownership or a followed marker does not make an alias Matrix-managed.
 
 ## Codex Plugin
 
