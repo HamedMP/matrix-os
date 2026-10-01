@@ -6,6 +6,7 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SafeVoiceError, VoiceCapability } from "@matrix-os/contracts/voice-session";
 import { AoedePanel, type AoedePanelProps } from "../../packages/ui/src/aoede/AoedePanel";
+import { AoedeSettingsIcon } from "../../packages/ui/src/aoede/icons";
 import {
   AOEDE_CAPTION_LIMIT, aoedeErrorCopy, boundedAoedeText, aoedeReadinessCopy, aoedeActionCopy,
 } from "../../packages/ui/src/aoede/presentation";
@@ -419,9 +420,23 @@ describe("Aoede pure presentation helpers", () => {
 });
 
 describe("AoedePanel accessibility styling", () => {
+  it("renders Settings as a gear rather than a sun with detached rays", () => {
+    const { container } = render(<AoedeSettingsIcon />);
+    const svg = container.querySelector("svg");
+    expect(svg).toHaveAttribute("data-icon", "settings-gear");
+    expect(svg?.querySelectorAll("path")).toHaveLength(1);
+    expect(svg?.querySelectorAll("circle")).toHaveLength(1);
+  });
+
   it("uses theme/font tokens, visible focus, reduced motion, forced colors, and reflow instead of fixed viewport chrome", async () => {
     const css = await readFile(`${process.cwd()}/packages/ui/src/aoede/aoede-panel.css`, "utf8");
     expect(css).toContain("var(--matrix-font-sans)");
+    expect(css).toContain("--aoede-surface: var(--bg-surface, var(--matrix-card))");
+    expect(css).toContain("--aoede-control: var(--bg-sunken, var(--matrix-secondary))");
+    expect(css).toContain("--aoede-hover: var(--bg-hover, var(--matrix-muted))");
+    expect(css).toContain("--aoede-text: var(--text-primary, var(--matrix-card-fg))");
+    expect(css).toContain("--aoede-muted: var(--text-secondary, var(--matrix-muted-fg))");
+    expect(css).toContain("--aoede-border: var(--border-default, var(--matrix-border))");
     expect(css).toContain(":focus-visible");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
     // State selectors have higher specificity; reduction must actually win the cascade.
