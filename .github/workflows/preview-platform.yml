@@ -24,7 +24,9 @@
 # to walk a specific PR, route its tag to the host:
 #   gcloud run services update-traffic matrix-platform-preview \
 #     --region europe-west3 --to-tags pr-<N>=100
-# then reset when done. No Hetzner token is mounted, so previews still cannot
+# then reset when done. Add `preview-isolated` alongside `preview-platform`
+# to bake the exact tagged origin into sign-in instead, without moving shared traffic.
+# No Hetzner token is mounted, so previews still cannot
 # provision real VPSes (enabling the provisioned hand-off slice is a separate,
 # deliberate change -- a preview-scoped Hetzner token plus VPS reaping).
 # Config lives in the GitHub "Preview" environment; the jobs no-op with a
@@ -88,6 +90,7 @@ jobs:
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT }}
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
       PREVIEW_PUBLIC_URL: ${{ vars.PREVIEW_PUBLIC_URL || 'https://preview.matrix-os.com' }}
+      ISOLATED_PREVIEW_ORIGIN: ${{ contains(github.event.pull_request.labels.*.name, 'preview-isolated') && 'true' || 'false' }}
       MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}
       MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}
       CUSTOM_MCP_ENABLED: ${{ inputs.custom_mcp && 'true' || 'false' }}
@@ -189,6 +192,30 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Resolve isolated preview browser origin
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          case "${ISOLATED_PREVIEW_ORIGIN:-false}" in
+            false) exit 0 ;;
+            true) ;;
+            *) echo "Invalid isolated preview mode." >&2; exit 1 ;;
+          esac
+          if [ "$CLOUD_RUN_PREVIEW_SERVICE" != "matrix-platform-preview" ] ||
+             ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            echo "Isolated browser previews require the dedicated preview service and a valid PR." >&2
+            exit 1
+          fi
+          service_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format='value(status.url)')"
+          if ! [[ "$service_url" =~ ^https://matrix-platform-preview-[a-z0-9-]+\.a\.run\.app$ ]]; then
+            echo "Dedicated preview service origin is unavailable or invalid." >&2
+            exit 1
+          fi
+          # Next.js bakes this URL into sign-in. Runtime-only overrides cannot isolate it.
+          echo "PREVIEW_PUBLIC_URL=https://pr-${PR_NUMBER}---${service_url#https://}" >> "$GITHUB_ENV"
 
       - name: Verify preview funded AI control-plane secrets
         if: steps.config.outputs.configured == 'true' && env.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED == 'true'
@@ -478,7 +505,8 @@ jobs:
           set -euo pipefail
           body="**Platform preview revision deployed**
 
-          - Browser-reachable host: ${PREVIEW_PUBLIC_URL} (route this PR's tag to it: \`gcloud run services update-traffic ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION} --to-tags pr-${PR_NUMBER}=100\`, then reset when done)
+          - Browser-reachable host: ${PREVIEW_PUBLIC_URL}
+          - Shared-host mode only: route this PR's tag to it: \`gcloud run services update-traffic ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION} --to-tags pr-${PR_NUMBER}=100\`, then reset when done. Isolated previews need no traffic change.
           - Desktop control-plane origin: ${PREVIEW_API_ORIGIN}
           - Revision URL: ${PREVIEW_URL}
           - Service: \`${CLOUD_RUN_PREVIEW_SERVICE}\` (deployed zero-traffic, tag \`pr-${PR_NUMBER}\`)
