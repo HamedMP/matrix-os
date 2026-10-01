@@ -32,6 +32,9 @@ function setup(value = snapshot(), overrides: Partial<React.ComponentProps<typeo
   const result = render(<AgentsProvidersView snapshot={value} selectedHarnessId="pi"
     onSelectHarness={onSelectHarness} onRefresh={onRefresh} onMutate={onMutate}
     onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()} {...overrides} />);
+  const selected=value.harnesses.find(item=>item.id===(overrides.selectedHarnessId ?? "pi")) ?? value.harnesses[0];
+  if(selected){const row=result.container.querySelector<HTMLButtonElement>(`button[aria-controls="matrix-ap-details-${selected.id}"]`);if(row)fireEvent.click(row);}
+  onSelectHarness.mockClear();
   return { ...result, onRefresh, onSelectHarness, onMutate };
 }
 
@@ -59,7 +62,7 @@ describe("provider setup presentation", () => {
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Setup needed")).toBeVisible();
     expect(within(gateway).getByText(/not available on this computer yet/i)).toBeVisible();
-    expect(within(gateway).queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
+    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
     expect(within(gateway).queryByText(/\$0/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
   });
@@ -100,7 +103,7 @@ describe("provider setup presentation", () => {
   it("connects an eligible agent through an exact canonical Matrix AI route", () => {
     const { onMutate } = setup(fundedSnapshot());
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
-    fireEvent.click(within(gateway).getByText("Usage & available models"));
+    fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
     expect(within(gateway).getByText("$1.00")).toBeVisible();
     expect(within(gateway).getByText("Sonnet")).toBeVisible();
     expect(within(gateway).queryByRole("textbox", { name: "Monthly budget in USD" })).not.toBeInTheDocument();
@@ -247,13 +250,13 @@ describe("provider setup presentation", () => {
     value.accessSources[0]!.readiness.state = authState === "expired" ? "expired" : "auth_required";
     value.accessSources[0]!.readiness.action = "open_terminal";
     setup(value);
-    expect(screen.getByRole("button", { name: /Pi.*Sign in/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: new RegExp(`Pi.*${authState === "expired" ? "Needs attention" : "Not connected"}`) })).toBeVisible();
   });
 
   it("preserves the explicit expired-authentication action when connectivity is offline", () => {
     const value = snapshot();
     Object.assign(value.harnesses[0]!, { authState: "expired", connectivity: "offline" });
     setup(value);
-    expect(screen.getByRole("button", { name: /Pi.*Sign in/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Pi.*Needs attention/ })).toBeVisible();
   });
 });

@@ -46,6 +46,8 @@ async function settings() {
   await page.getByRole("button", { name: "Open account menu", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
+  const claude = page.locator(".matrix-ap-rail-item").filter({ hasText: "Claude" }).first();
+  if (await claude.getAttribute("aria-expanded") !== "true") await claude.click();
 }
 
 it("reveals a closed Terminal for Connect and refreshes auth after logout", async () => {

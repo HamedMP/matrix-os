@@ -24,7 +24,8 @@ it("retains historical native local evidence after expiry without promoting auth
 });
 it.each(["failed", "expired"] as const)("preserves explicit %s over local positive evidence", (authState) => {
   show({ ...harness, authState, localObservation: { state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now()+5000).toISOString() } });
-  expect(screen.getByRole("button", { name: authState === "failed" ? /Check failed/ : /Sign in/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Hermes.*Needs attention/ })).toBeVisible();
+  expect(screen.queryByRole("button", {name: /Hermes.*Connected/})).not.toBeInTheDocument();
 });
 
 it("keeps an unknown installation distinct from a failed installation", () => {
@@ -33,7 +34,7 @@ it("keeps an unknown installation distinct from a failed installation", () => {
 });
 it("does not obscure an explicit sign-in requirement with historical local evidence", () => {
   show({ ...harness, authState: "unauthenticated", localObservation: { state: "present_unverified", checkedAt: new Date(Date.now()-10000).toISOString(), staleAfter: new Date(Date.now()-5000).toISOString() } });
-  expect(screen.getByRole("button", { name: /Hermes.*Sign in/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
 });
 
 it.each(["failed_auth", "invalid_source"] as const)("preserves %s for a saved enabled route that is currently blocked", (failure) => {
@@ -41,7 +42,8 @@ it.each(["failed_auth", "invalid_source"] as const)("preserves %s for a saved en
   if (failure === "failed_auth") value.authState = "failed";
   value.connectivity = "offline";
   show(value, failure === "invalid_source" ? [{ id: "native", readiness: { state: "invalid" } } as ProviderAccessSource] : []);
-  expect(screen.getByRole("button", { name: /Hermes.*Check failed/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Hermes.*Needs attention/ })).toBeVisible();
+  expect(screen.queryByRole("button", {name: /Hermes.*Connected/})).not.toBeInTheDocument();
 });
 it.each([false, true])("requests a connection check for unavailable or stale access when enabled=%s without inventing an authentication failure", (enabled) => {
   show({ ...harness, harness: "claude", displayName: "Claude", enabled,
@@ -51,11 +53,12 @@ it.each([false, true])("requests a connection check for unavailable or stale acc
   }, [{ id: "matrix_included", readiness: { state: "unavailable", safeReason: "provider_unavailable", action: "retry" } } as ProviderAccessSource]);
   expect(screen.getByRole("button", { name: /Claude.*Check connection/ })).toBeVisible();
   expect(screen.queryByText(/Local login/)).not.toBeInTheDocument();
-  expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+  expect(screen.queryByText("Connected")).not.toBeInTheDocument();
 });
 it.each([false, true])("keeps explicit authentication failure authoritative when offline and enabled=%s", (enabled) => {
   show({ ...harness, enabled, connectivity: "offline", authState: "failed" });
-  expect(screen.getByRole("button", { name: /Check failed/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Hermes.*Needs attention/ })).toBeVisible();
+  expect(screen.queryByRole("button", {name: /Hermes.*Connected/})).not.toBeInTheDocument();
 });
 
 function observedReadyRoute(ageMs = 0) {
@@ -65,13 +68,13 @@ function observedReadyRoute(ageMs = 0) {
   const source = { id: value.accessSourceId, kind: "provider_account", readiness: { state: "ready" } } as ProviderAccessSource;
   return { value, source };
 }
-it.each([0, 10_000])("preserves authoritative Ready over local evidence aged %sms", (ageMs) => {
+it.each([0, 10_000])("preserves authoritative Connected over local evidence aged %sms", (ageMs) => {
   const { value, source } = observedReadyRoute(ageMs);
   show(value, [source]);
-  expect(screen.getByRole("button", { name: /Hermes.*Ready/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Hermes.*Connected/ })).toBeVisible();
   expect(screen.queryByText(/Local login/)).not.toBeInTheDocument();
 });
-it.each(["auth_unknown", "offline", "degraded", "unsupported_source", "source_unknown", "source_invalid", "source_expired", "source_stale", "source_unavailable", "disabled", "install_unknown", "missing_source"] as const)("never promotes local evidence to Ready when %s", (state) => {
+it.each(["auth_unknown", "offline", "degraded", "unsupported_source", "source_unknown", "source_invalid", "source_expired", "source_stale", "source_unavailable", "disabled", "install_unknown", "missing_source"] as const)("never promotes local evidence to Connected when %s", (state) => {
   const { value, source } = observedReadyRoute();
   if (state === "auth_unknown") value.authState = "unknown";
   if (state === "offline" || state === "degraded") value.connectivity = state;
@@ -81,5 +84,5 @@ it.each(["auth_unknown", "offline", "degraded", "unsupported_source", "source_un
   if (state === "install_unknown") value.installState = "unknown";
   if (state === "missing_source") value.accessSourceId = null;
   show(value, state === "missing_source" ? [] : [source]);
-  expect(screen.queryByRole("button", { name: /Hermes.*Ready/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Hermes.*Connected/ })).not.toBeInTheDocument();
 });

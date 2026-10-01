@@ -27,6 +27,7 @@ describe("specialized harness switches", () => {
     };
     const onMutate = vi.fn();
     render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId={`harness_${kind}`} onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={onMutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button",{name:new RegExp(`^${kind}`)}));
     const toggle = screen.getByRole("switch", { name: `Enable ${kind}` });
     expect(toggle).toBeEnabled();
     expect(toggle).not.toBeChecked();
