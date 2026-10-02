@@ -136,7 +136,7 @@ export interface ConversationTurnPresentation {
 }
 
 export interface ConversationPresentationCallbacks {
-  renderCredentialDisclosure?: (message: ConversationMessagePresentation) => ReactNode;
+  renderCredentialMarker?: (message: ConversationMessagePresentation, offset: number, marker: string, number: number) => ReactNode;
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
   loadFileImage?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => Promise<Blob>;

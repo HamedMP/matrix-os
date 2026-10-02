@@ -13,9 +13,10 @@ interface DisclosureState {
   occurrences: ChatCredentialOccurrence[];
   values: Record<string, string>;
   unavailable: string[];
+  availabilityFailed: boolean;
 }
 
-const EMPTY_STATE: DisclosureState = { scopeKey: null, loaded: false, occurrences: [], values: {}, unavailable: [] };
+const EMPTY_STATE: DisclosureState = { scopeKey: null, loaded: false, occurrences: [], values: {}, unavailable: [], availabilityFailed: false };
 
 function occurrenceMatchesMessage(occurrence: ChatCredentialOccurrence, text: string | undefined): boolean {
   if (!text) return false;
@@ -71,6 +72,7 @@ export function useChatCredentialDisclosure({ client, detail, scopeKey }: {
             Object.entries(previous.values).filter(([id]) => occurrences.some((item) => item.id === id && item.revealed)),
           ) : {},
           unavailable: [],
+          availabilityFailed: false,
         }));
         for (const occurrence of occurrences) {
           if (!occurrence.revealed) continue;
@@ -88,7 +90,7 @@ export function useChatCredentialDisclosure({ client, detail, scopeKey }: {
       } catch {
         if (cancelled || currentScope.current !== requestedScope) return;
         // Metadata failure never falls back to scanning or showing raw text.
-        setState({ scopeKey: requestedScope, loaded: true, occurrences: [], values: {}, unavailable: [] });
+        setState({ scopeKey: requestedScope, loaded: true, occurrences: [], values: {}, unavailable: [], availabilityFailed: true });
       }
     };
     void request();

@@ -1,84 +1,59 @@
 import { useState } from "react";
 import type { ChatCredentialOccurrence } from "../../lib/canonical-chat-client";
 
-const REDACTED_CREDENTIAL_MARKER = /\[redacted(?: credential)?\]/g;
-
+/** This control replaces only its own masked marker in the rendered reply. */
 export function ChatCredentialDisclosure({
-  messageId,
-  markdown,
-  occurrences,
-  values,
-  unavailableIds = [],
+  marker,
+  number,
+  occurrence,
+  value,
   loaded,
-  enabled = true,
+  availabilityFailed = false,
   onReveal,
   onHide,
 }: {
-  messageId: string;
-  markdown: string;
-  occurrences: readonly ChatCredentialOccurrence[];
-  values: Readonly<Record<string, string>>;
-  unavailableIds?: readonly string[];
+  marker: string;
+  number: number;
+  occurrence?: ChatCredentialOccurrence;
+  value?: string;
   loaded: boolean;
-  enabled?: boolean;
+  availabilityFailed?: boolean;
   onReveal: (id: string) => Promise<unknown>;
   onHide: (id: string) => Promise<unknown>;
 }) {
-  const [pendingId, setPendingId] = useState<string | null>(null);
-  const [failedId, setFailedId] = useState<string | null>(null);
-  if (!enabled) return null;
-  const markerCount = [...markdown.matchAll(REDACTED_CREDENTIAL_MARKER)].length;
-  if (markerCount === 0 && occurrences.length === 0) return null;
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  if (!occurrence) {
+    const explanation = !loaded ? "Checking credential availability…"
+      : availabilityFailed ? "Credential availability is temporarily unavailable."
+        : "Previously redacted values cannot be recovered.";
+    return <span title={explanation} aria-label={loaded ? explanation : undefined}>{marker}</span>;
+  }
 
-  const act = async (id: string, operation: (id: string) => Promise<unknown>) => {
-    if (pendingId) return;
-    setPendingId(id);
-    setFailedId(null);
+  const revealed = occurrence.revealed;
+  const act = async () => {
+    if (pending) return;
+    setPending(true);
+    setFailed(false);
     try {
-      await operation(id);
+      await (revealed ? onHide(occurrence.id) : onReveal(occurrence.id));
     } catch {
-      // The gateway returns uniformly safe errors. Do not print the response,
-      // because a future regression could include the credential itself.
-      setFailedId(id);
+      // Never render a raw gateway error; a future regression could echo a secret.
+      setFailed(true);
     } finally {
-      setPendingId(null);
+      setPending(false);
     }
   };
-
-  const ordered = [...occurrences].sort((left, right) => left.offset - right.offset || left.id.localeCompare(right.id));
-  return (
-    <div className="mt-2 space-y-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
-      role="group" aria-label={`Credentials in message ${messageId}`}>
-      {!loaded && ordered.length === 0 ? <p role="status">Checking credential availability…</p> : null}
-      {ordered.map((occurrence, index) => {
-        const number = index + 1;
-        const value = occurrence.revealed ? values[occurrence.id] : undefined;
-        return <div key={occurrence.id} className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <span>Credential {number}</span>
-          {value === undefined && !occurrence.revealed ? (
-            <button type="button" aria-label={`Reveal credential ${number}`} disabled={pendingId !== null || occurrence.revealed}
-              className="rounded-md border px-2 py-1 font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50"
-              style={{ borderColor: "var(--border-default)" }}
-              onClick={() => void act(occurrence.id, onReveal)}>
-              Reveal
-            </button>
-          ) : <>
-            {value === undefined ? (
-              <span role="status">{unavailableIds.includes(occurrence.id) || failedId === occurrence.id ? "Credential unavailable" : "Loading credential…"}</span>
-            ) : (
-              <code className="min-w-0 max-w-full break-all rounded px-1 py-0.5" style={{ background: "var(--bg-sunken)", color: "var(--text-primary)" }}>{value}</code>
-            )}
-            <button type="button" aria-label={`Hide credential ${number}`} disabled={pendingId !== null}
-              className="rounded-md border px-2 py-1 font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50"
-              style={{ borderColor: "var(--border-default)" }}
-              onClick={() => void act(occurrence.id, onHide)}>Hide</button>
-          </>}
-          {failedId === occurrence.id ? <span role="alert">The action failed. Try again.</span> : null}
-        </div>;
-      })}
-      {loaded && markerCount > ordered.length ? (
-        <p>Some redacted credentials cannot be revealed. Previously redacted values cannot be recovered.</p>
-      ) : null}
-    </div>
-  );
+  return <>
+    <button type="button" disabled={pending} data-chat-credential-marker={marker}
+      aria-label={`${revealed ? "Hide" : "Reveal"} credential ${number}`}
+      title={revealed ? "Hide credential" : "Reveal credential"}
+      className="inline max-w-full cursor-pointer break-all rounded px-0.5 font-mono text-[0.9em] underline decoration-dotted underline-offset-2 hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-wait disabled:opacity-50"
+      style={{ color: "var(--text-primary)" }}
+      onClick={() => void act()}>
+      {revealed && value !== undefined ? value : marker}
+    </button>
+    {revealed && value === undefined ? <span role="status" className="ml-1 text-xs" title="The value could not be loaded. Click to hide it.">Credential unavailable</span> : null}
+    {failed ? <span role="alert" className="ml-1 text-xs">The action failed. Try again.</span> : null}
+  </>;
 }

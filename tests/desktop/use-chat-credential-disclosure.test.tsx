@@ -140,6 +140,7 @@ describe("useChatCredentialDisclosure", () => {
     await waitFor(() => expect(hook.result.current.loaded).toBe(true));
     expect(hook.result.current.occurrences).toEqual([]);
     expect(hook.result.current.values).toEqual({});
+    expect(hook.result.current.availabilityFailed).toBe(true);
     expect(routeClient.getRevealedCredential).not.toHaveBeenCalled();
   });
 });

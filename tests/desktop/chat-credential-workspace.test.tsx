@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe("owner-only credential disclosure in Electron Chat", () => {
-  it("keeps generic message copy masked while a separately rehydrated value is visible, then clears it on auth loss", async () => {
+  it("keeps generic message copy masked while a rehydrated value replaces its marker, then clears it on auth loss", async () => {
     const copy = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copy } });
     const routeClient = createCanonicalChatWorkspaceClient();
@@ -56,7 +56,8 @@ describe("owner-only credential disclosure in Electron Chat", () => {
     render(<CanonicalChatWorkspace client={routeClient} api={{} as ApiClient} projectId="matrix-os"
       initialChatId={snapshot.chat.id} initialView="conversation" active catalog={providerCatalog} eventSource={connectedEventSource} />);
     expect(await screen.findByText(secret)).toBeTruthy();
-    expect(screen.getByText("[redacted credential]", { exact: false })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide credential 1" }).textContent).toBe(secret);
+    expect(screen.queryByText("[redacted credential]", { exact: false })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Copy assistant message" }));
     await waitFor(() => expect(copy).toHaveBeenCalledWith(maskedText));
     expect(copy).not.toHaveBeenCalledWith(secret);

@@ -932,12 +932,15 @@ export function CanonicalChatWorkspace({
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
               ...artifactActions,
-              renderCredentialDisclosure: (message) => message.role === "assistant" ? (
-                <ChatCredentialDisclosure messageId={message.id} markdown={message.markdown}
-                  occurrences={credentialDisclosure.occurrences.filter((occurrence) => occurrence.messageId === message.id)}
-                  values={credentialDisclosure.values} unavailableIds={credentialDisclosure.unavailable} loaded={credentialDisclosure.loaded}
-                  enabled={credentialScopeKey !== null} onReveal={credentialDisclosure.reveal} onHide={credentialDisclosure.hide} />
-              ) : null,
+              renderCredentialMarker: (message, offset, marker, number) => {
+                if (message.role !== "assistant" || credentialScopeKey === null) return marker;
+                const occurrence = credentialDisclosure.occurrences.find((item) =>
+                  item.messageId === message.id && item.offset === offset && item.length === marker.length);
+                return <ChatCredentialDisclosure marker={marker} number={number} occurrence={occurrence}
+                  value={occurrence && !credentialDisclosure.unavailable.includes(occurrence.id) ? credentialDisclosure.values[occurrence.id] : undefined}
+                  loaded={credentialDisclosure.loaded} availabilityFailed={credentialDisclosure.availabilityFailed}
+                  onReveal={credentialDisclosure.reveal} onHide={credentialDisclosure.hide} />;
+              },
               copyText,
               openImportedAsset: importedAssets.openImportedAsset,
               openAttachment: (rawPath) => {
