@@ -70,3 +70,12 @@ The wide settings panel now overlays the conversation below its toolbar and supp
 | Native Mobile | Native modal sheet, shared copy/actions | 20 focused component tests; lint | Real-device capture/validation pending; full native suite/types have the failures above |
 
 Before changing this PR to review-ready, connect a physical device and validate sheet open/close, section switching, keyboard/safe areas, scrolling, draft preservation, and bot/scope changes. Record device-renderer captures and the commands/results of the required Native Mobile gates. Resolve the Native Mobile evidence thread only after that check succeeds.
+
+
+## Main rebase and subsequent review fixes
+
+The PR is now based on the Pi integration dependency #2118 rebased onto main `33c53cb24`; earlier screenshots and full-build evidence above precede that rebase. Current Web/shared settings regression passes 31 tests and the focused Native Mobile transcript suite passes 20 tests. The shared UI source type check passes.
+
+The settings overlay is positioned in the conversation stage below the naturally sized bot-control region, so a growing pending question cannot be covered by a fixed toolbar offset. A regression exercises the pending-question layout and preserves the conversation stage. Routines guidance now explicitly says scheduling is unavailable, using the same shared copy in Web and Native Mobile.
+
+Electron qualification remains blocked by the integration dependency's three references to main's removed `mentionPermission.allowed` field. The exact UI alignment awaits explicit approval after automatic approval review rejected it. Current Electron send/typecheck and fresh renderer captures are not claimed. Physical-device Native Mobile validation remains pending; keep this PR a draft.

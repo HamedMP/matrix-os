@@ -87,5 +87,5 @@ export const botSettingsEmptyStates = {
   memory: { title: "Nothing remembered yet", description: "Save preferences so this bot can tailor its replies.",
     hint: 'Try saying "Remember that I prefer short summaries."' },
   routines: { title: "No routines yet", description: "Routines help this bot repeat work on a schedule.",
-    hint: "Ask your bot to schedule a recurring task." },
+    hint: "Scheduling routines is not available yet." },
 } as const;

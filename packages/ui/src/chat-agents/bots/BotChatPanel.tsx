@@ -77,23 +77,7 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, children
   }, [agentId, chatId, bots, client, tick, refreshKey]);
   const active = !!agentId && !!chatId && !!bots;
   return <BotSettingsLayout open={active && showAuthority} onClose={() => setShowAuthority(false)} triggerRef={triggerRef} panelId={panelId}
-    settings={<>
-      {!authorityFresh ? <div className="px-5 pb-4" role="status"><p className="text-xs" style={chatAgentMutedStyle}>{authorityLoading ? "Loading settings…" : "Settings couldn't be refreshed. Try again."}</p>
-        {!authorityLoading ? <button type="button" className={`${chatAgentButtonClass} mt-3`} aria-label="Retry settings" onClick={() => setTick((value) => value + 1)}>Retry</button> : null}</div> : null}
-      {authority && authority.agentId === agentId && bots && agentId ? <BotAuthorityPanel key={`${chatId}:${agentId}`} view={authority} actionsAvailable={authorityFresh}
-        onRevoke={(grantId) => bots.revoke(agentId, grantId)}
-        onMemory={(itemId, action, input) => bots.memory(agentId, itemId, action, input)}
-        onConfirmedChange={(apply) => {
-          const scope = currentScope.current;
-          if (scope.chatId !== chatId || scope.bots !== bots || scope.agentId !== agentId) return;
-          setAuthority((value) => value?.agentId === agentId ? apply(value) : value);
-        }}
-        onChanged={() => {
-          const scope = currentScope.current;
-          if (scope.chatId === chatId && scope.bots === bots && scope.agentId === agentId) setTick((value) => value + 1);
-        }} /> : null}
-    </>}>
-    {active ? <section aria-label="Bot controls" className="shrink-0 border-b px-4 py-2.5">
+    header={active ? <section aria-label="Bot controls" className="shrink-0 border-b px-4 py-2.5">
       <div className="flex items-center gap-2.5">
         <AgentAvatar id={agentId} name={name ?? "Your bot"} size="small" />
         <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{name ?? "Your bot"}</p>
@@ -113,6 +97,23 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, children
       </div> : null}
       {error ? <p role="alert" className="mt-2 text-xs">{error}</p> : null}
     </section> : null}
+    settings={<>
+      {!authorityFresh ? <div className="px-5 pb-4" role="status"><p className="text-xs" style={chatAgentMutedStyle}>{authorityLoading ? "Loading settings…" : "Settings couldn't be refreshed. Try again."}</p>
+        {!authorityLoading ? <button type="button" className={`${chatAgentButtonClass} mt-3`} aria-label="Retry settings" onClick={() => setTick((value) => value + 1)}>Retry</button> : null}</div> : null}
+      {authority && authority.agentId === agentId && bots && agentId ? <BotAuthorityPanel key={`${chatId}:${agentId}`} view={authority} actionsAvailable={authorityFresh}
+        onRevoke={(grantId) => bots.revoke(agentId, grantId)}
+        onMemory={(itemId, action, input) => bots.memory(agentId, itemId, action, input)}
+        onConfirmedChange={(apply) => {
+          const scope = currentScope.current;
+          if (scope.chatId !== chatId || scope.bots !== bots || scope.agentId !== agentId) return;
+          setAuthority((value) => value?.agentId === agentId ? apply(value) : value);
+        }}
+        onChanged={() => {
+          const scope = currentScope.current;
+          if (scope.chatId === chatId && scope.bots === bots && scope.agentId === agentId) setTick((value) => value + 1);
+        }} /> : null}
+    </>}>
+
     {children}
   </BotSettingsLayout>;
 }

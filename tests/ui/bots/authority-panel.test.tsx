@@ -78,5 +78,5 @@ it("explains how to populate each empty section without implying automatic acces
   expect(screen.getByText('Try saying "Remember that I prefer short summaries."')).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: /Routines/ }));
   expect(screen.getByRole("heading", { name: "No routines yet" })).toBeTruthy();
-  expect(screen.getByText("Ask your bot to schedule a recurring task.")).toBeTruthy();
+  expect(screen.getByText("Scheduling routines is not available yet.")).toBeTruthy();
 });

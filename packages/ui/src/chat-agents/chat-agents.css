@@ -345,15 +345,18 @@
   container: matrix-bot-chat / inline-size;
   position: relative;
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
 .matrix-bot-conversation { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.matrix-bot-settings-header { flex-shrink: 0; }
+.matrix-bot-settings-stage { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .matrix-bot-settings {
   position: absolute;
-  inset: 52px 0 0 auto;
+  inset: 0 0 0 auto;
   z-index: 2;
   width: 320px;
   max-width: 100%;

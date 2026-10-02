@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import { chatAgentButtonClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from "../theme.js";
 
 /** One layout/focus owner for Web Canvas, Web Desktop, Electron, and Web Mobile. */
-export function BotSettingsLayout({ children, settings, open, onClose, triggerRef, panelId }: {
+export function BotSettingsLayout({ children, header, settings, open, onClose, triggerRef, panelId }: {
   children: ReactNode;
+  header?: ReactNode;
   settings: ReactNode;
   open: boolean;
   onClose: () => void;
@@ -48,6 +49,8 @@ export function BotSettingsLayout({ children, settings, open, onClose, triggerRe
     };
   }, [open, narrow, onClose, triggerRef]);
   return <div ref={root} className="matrix-bot-workspace" data-settings-open={open}>
+    {header ? <div className="matrix-bot-settings-header" inert={open && narrow || undefined} aria-hidden={open && narrow || undefined}>{header}</div> : null}
+    <div className="matrix-bot-settings-stage">
     <div className="matrix-bot-conversation" inert={open && narrow || undefined} aria-hidden={open && narrow || undefined}>
       {children}
     </div>
@@ -74,5 +77,6 @@ export function BotSettingsLayout({ children, settings, open, onClose, triggerRe
         {settings}
       </aside>
     </> : null}
+    </div>
   </div>;
 }

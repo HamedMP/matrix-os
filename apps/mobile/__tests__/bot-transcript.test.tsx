@@ -354,5 +354,5 @@ it("guides the owner through empty connections, memory and routines", () => {
   expect(screen.getByText('Try saying "Remember that I prefer short summaries."')).toBeTruthy();
   fireEvent.press(screen.getByRole("tab", { name: "Routines (0)" }));
   expect(screen.getByRole("header", { name: "No routines yet" })).toBeTruthy();
-  expect(screen.getByText("Ask your bot to schedule a recurring task.")).toBeTruthy();
+  expect(screen.getByText("Scheduling routines is not available yet.")).toBeTruthy();
 });

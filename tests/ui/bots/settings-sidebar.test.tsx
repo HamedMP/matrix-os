@@ -15,6 +15,25 @@ function client() {
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+it("keeps a growing question toolbar above the settings overlay", async () => {
+  const api = client();
+  api.bots.interactions.mockResolvedValue([{
+    interactionId: "in_question1", chatId: "chat_research", agentId: "bot_research1",
+    taskId: "task_question1", kind: "question", blocking: true, status: "pending",
+    expiresAt: "2099-01-01T00:00:00.000Z", revision: 1,
+    payload: { kind: "question", questions: [{ questionId: "target", header: "Target", question: "Which company?" }] },
+  }] as never);
+  render(<BotChatPanel chatId="chat_research" client={api as never}><textarea aria-label="Reply" /></BotChatPanel>);
+  const question = await screen.findByText("Which company?");
+  fireEvent.click(screen.getByRole("button", { name: "Bot settings" }));
+  const settings = screen.getByRole("complementary", { name: "Bot settings" });
+  const stage = settings.closest(".matrix-bot-settings-stage");
+  expect(stage).not.toBeNull();
+  expect(stage?.contains(question)).toBe(false);
+  expect(stage?.contains(screen.getByRole("textbox", { name: "Reply" }))).toBe(true);
+  expect(screen.getByRole("region", { name: "Bot controls" }).closest(".matrix-bot-settings-header")?.nextElementSibling).toBe(stage);
+});
+
 it("keeps the conversation and draft mounted while settings open beside it and change sections", async () => {
   const api = client();
   const view = render(<BotChatPanel chatId="chat_research" client={api as never} refreshKey={0}>
