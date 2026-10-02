@@ -105,7 +105,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     const teamId = SlackTeamIdSchema.safeParse(c.req.param("teamId")); if (!teamId.success) return fail(c, "Invalid request", 422);
     const installed = await options.repository.getInstallation(options.config.appId, teamId.data);
     if (!installed || !await options.requireOrgAdmin({ actorId, organizationId: installed.organizationId })) return fail(c, "Forbidden", 403);
-    await options.repository.revokeInstallation(options.config.appId, teamId.data); return c.body(null, 204);
+    await options.repository.revokeInstallation(options.config.appId, teamId.data, { source: "administrator" }); return c.body(null, 204);
   });
   app.put("/api/slack/workspaces/:teamId/channels/:channelId", limit, async (c) => {
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);

@@ -44,7 +44,7 @@ export class SlackRepository {
       if (!saved) throw new SlackRepositoryError("conflict");
     });
   }
-  async revokeInstallation(appId: string, teamId: string): Promise<void> {
+  async revokeInstallation(appId: string, teamId: string, options: { source?: "webhook" | "administrator" } = {}): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtext(${`slack-install:${appId}`}))`.execute(trx);
       const installed = await trx.selectFrom("slack_installations").select(["organization_id", "state"]).where("app_id", "=", appId).where("team_id", "=", teamId).executeTakeFirst();
@@ -53,7 +53,9 @@ export class SlackRepository {
         await trx.deleteFrom("slack_oauth_states").where("app_id", "=", appId).execute();
         return;
       }
-      if (installed.state === "revoked") return;
+      // Duplicate provider revocations must not cancel a new reinstall attempt.
+      // An explicit authorized administrator removal must cancel it, even after uninstall.
+      if (installed.state === "revoked" && options.source !== "administrator") return;
       await trx.updateTable("slack_installations").set({ state: "revoked", encrypted_bot_token: "", generation: sql<number>`generation + 1`, updated_at: this.now() })
         .where("app_id", "=", appId).where("team_id", "=", teamId).where("state", "=", "active").execute();
       for (const table of ["slack_employee_links", "slack_channel_bindings", "slack_link_challenges"] as const) {

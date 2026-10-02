@@ -106,6 +106,16 @@ describe("durable Slack authorization metadata", () => {
     await repository.saveInstallation(installation, { oauthStateHash: hash });
     expect(await repository.getInstallation("A123", "T123")).toMatchObject({ state: "active", generation: 3 });
   });
+  it.each([false, true])("explicit administrator removal cancels a fresh reinstall permit on an already-revoked workspace (consumed=%s)", async (consumed) => {
+    await repository.revokeInstallation("A123", "T123");
+    const hash = "fresh-reinstall-permit";
+    await repository.createOAuthState({ appId: "A123", hash, actorId: "user_admin", organizationId: "org_company" });
+    if (consumed) await repository.consumeOAuthState(hash, "user_admin");
+    await repository.revokeInstallation("A123", "T123", { source: "administrator" });
+    expect(await db.selectFrom("slack_oauth_states").selectAll().where("hash", "=", hash).execute()).toEqual([]);
+    await expect(repository.saveInstallation(installation, { oauthStateHash: hash })).rejects.toMatchObject({ code: "conflict" });
+    expect(await repository.getInstallation("A123", "T123")).toMatchObject({ state: "revoked", generation: 2 });
+  });
   it.each(["unconsumed","revoked","app","organization","actor","expired"])("fences callback installation with an exact consumed permit (%s)",async(change)=>{
     const hash="d".repeat(64);
     await repository.createOAuthState({appId:"A123",hash,actorId:"user_admin",organizationId:"org_company"});
