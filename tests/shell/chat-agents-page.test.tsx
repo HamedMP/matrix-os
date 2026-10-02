@@ -37,7 +37,7 @@ describe("Web Chat Agents page", () => {
     await waitFor(() => expect(submit).toHaveBeenCalledWith("Summarize these synthetic notes", undefined,
       expect.objectContaining({ resources: [{ kind: "agent", id: saved.id, label: saved.name, revision: String(saved.revision) }] })));
   });
-  it.each([false, true])("preserves the transcript and draft across recipe browsing (mobile=%s)", async (mobile) => {
+  it.each([false, true])("preserves the transcript and draft across Templates and Agents management (mobile=%s)", async (mobile) => {
     const client = clientFixture();
     client.list.mockResolvedValue({ enabled: true, agents: [saved] });
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(await client.catalog())));
@@ -49,7 +49,7 @@ describe("Web Chat Agents page", () => {
     const draft = screen.getByRole("textbox", { name: "Message chat" });
     fireEvent.change(draft, { target: { value: "Keep this draft" } });
     await waitFor(() => expect((draft as HTMLTextAreaElement).disabled).toBe(false));
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Message chat" })).toBeNull();
     expect(draft.isConnected).toBe(true);
@@ -61,10 +61,23 @@ describe("Web Chat Agents page", () => {
     expect((draft as HTMLTextAreaElement).value).toBe("Keep this draft");
     expect(screen.getByText("Original message")).toBeTruthy();
     expect(screen.getByText("Arrived while editing")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Agents", exact: true }));
+    expect(await screen.findByRole("region", { name: "Agents", exact: true })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: `Edit ${saved.name}` })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Agent recipes" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Message chat" })).toBeNull();
+    expect(draft.isConnected).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Back to Chat" }));
+    expect(screen.getByRole("textbox", { name: "Message chat" })).toBe(draft);
+    expect((draft as HTMLTextAreaElement).value).toBe("Keep this draft");
+    expect(screen.getByText("Original message")).toBeTruthy();
+    expect(screen.getByText("Arrived while editing")).toBeTruthy();
+    expect(props.onNewChat).not.toHaveBeenCalled();
+    expect(props.onSwitchConversation).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it("starts conversational Agent creation in a fresh Chat", async () => {
+  it("starts conversational Agent creation from a template in a fresh Chat without sending or losing the source draft", async () => {
     const client = clientFixture();
     client.list.mockResolvedValue({ enabled: true, agents: [] });
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(await client.catalog())));
@@ -73,10 +86,23 @@ describe("Web Chat Agents page", () => {
       sessionId: "chat_original" as string | undefined, busy: false, connected: true, conversations: [],
       onNewChat, onSwitchConversation: vi.fn(), onSubmit: vi.fn(), agentClient: client };
     const view = render(<ChatApp {...props} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Create an agent" }));
+    const sourceDraft = screen.getByRole("textbox", { name: "Message chat" });
+    fireEvent.change(sourceDraft, { target: { value: "Keep the original draft" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
+    fireEvent.change(await screen.findByRole("searchbox", { name: "Search recipes" }), { target: { value: "Account Research Desk" } });
+    const buildInChat = await screen.findByRole("button", { name: "Use Account Research Desk" });
+    expect(buildInChat.textContent).toBe("Build in Chat");
+    fireEvent.click(buildInChat);
     expect(onNewChat).toHaveBeenCalledTimes(1);
     view.rerender(<ChatApp {...props} sessionId={undefined} messages={[]} />);
-    expect((await screen.findByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement).value)
-      .toContain("Help me create an agent");
+    const newDraft = await screen.findByRole("textbox", { name: "Message chat" });
+    expect((newDraft as HTMLTextAreaElement).value).toContain("Help me create a Matrix agent");
+    expect((newDraft as HTMLTextAreaElement).value).toContain("Account Research Desk");
+    expect(screen.queryByRole("region", { name: "Agent recipes" })).toBeNull();
+    expect(props.onSubmit).not.toHaveBeenCalled();
+    expect(client.create).not.toHaveBeenCalled();
+    view.rerender(<ChatApp {...props} />);
+    expect((await screen.findByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement).value).toBe("Keep the original draft");
+    expect(screen.getByText("Original message")).toBeTruthy();
   });
 });
