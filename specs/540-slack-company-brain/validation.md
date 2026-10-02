@@ -208,3 +208,18 @@ Recovery also isolates unrelated label events into separate workflow concurrency
 - OAuth permits capture a bounded app/org workspace-generation snapshot. Explicit removal fences the returned workspace, including already-revoked reinstall attempts, while retaining another workspace's callback. Legacy snapshots fail closed. Three new regressions failed before the fix; 82 native/platform migration cases across three suites pass on PostgreSQL.
 - Direct preview diagnosis proved the gateway and terminal were running but the Slack bridge's root-mounted wildcard signature middleware intercepted `/health`. The bridge signature and body limit now apply only to `/api/internal/slack/*`. A composed routing test failed with 401 before the fix; 22 bridge/startup/isolation cases pass.
 - The resulting complete preview source passes 187 cases across 13 suites and full workspace types. Live personal/company agent replies, exact final-bundle qualification, approved Project/channel binding, and physical Native Mobile validation remain outstanding; account-link success alone is not model proof.
+
+### Isolated personal Slack pilot runtime routing
+
+The pilot can accept Slack events while failing to enqueue them if its isolated
+platform database has the installation and employee link but no exact preview
+home row. The protected `connect_slack_pilot` operation now checks the linked
+Slack actor against the preview runtime owner, confirms the exact PR image and
+machine identity, and registers only that disposable preview machine in the
+PR-scoped database. It binds the disposable VM's normal Matrix API and Slack bridge to the exact
+PR backend, and allows the preview browser origin for owner sign-in and provider
+setup. Its production release manifest and control credentials stay pinned to
+the existing platform. A 300-second rollback guard restores the original host
+environment unless the gateway restarts healthy and enrolls with the isolated
+preview backend. Direct replies still require a configured provider on that preview
+home; no successful model reply is claimed until a fresh DM is answered.
