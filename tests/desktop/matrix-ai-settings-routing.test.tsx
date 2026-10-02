@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-it.each(["matrix_pi", "kernel"] as const)("opens Agents & providers from the held %s picker without provider or Terminal setup", async (driverKind) => {
+it.each(["matrix_pi"] as const)("opens Agents & providers from the held %s picker without provider or Terminal setup", async (driverKind) => {
   const catalog = heldCatalog(driverKind);
   const instance = catalog.instances[0]!;
   const refresh = vi.fn();

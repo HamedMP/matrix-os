@@ -16,7 +16,7 @@ it("keeps the authorized Bot model visible and disabled without admitting a mode
     models: [{ ...base.models[0]!, id: selection.model, displayName: "Claude Sonnet 5", availability: "unavailable" }] }];
   const change = vi.fn();
   const view = render(<MatrixBotModelField label="Bot model" selection={null} catalog={catalog} models={[]} pending={false} onChange={change} />);
-  const row = screen.getByRole("option", { name: "Claude Sonnet 5 · Matrix AI · Pi · Credit reserved" });
+  const row = screen.getByRole("option", { name: "Claude Sonnet 5 · Matrix AI · Credit reserved" });
   expect(row).toBeDisabled();
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: (row as HTMLOptionElement).value } });
   expect(change).not.toHaveBeenCalled();
@@ -38,9 +38,9 @@ it("does not turn retained executable Bot choices into enabled rows after the ca
   catalog.instances[0]!.models[0]!.availability = "unavailable";
   const change = vi.fn();
   render(<MatrixBotModelField label="Bot model" selection={selection} catalog={catalog} models={retained} pending={false} onChange={change} />);
-  const row = screen.getByRole("option", { name: "Claude Sonnet 5 · Matrix AI · Pi · Credit reserved" });
+  const row = screen.getByRole("option", { name: "Claude Sonnet 5 · Matrix AI · Credit reserved" });
   expect(row).toBeDisabled();
-  expect(screen.queryByRole("option", { name: "Claude Sonnet 5 · Matrix AI · Pi" })).toBeNull();
+  expect(screen.queryByRole("option", { name: "Claude Sonnet 5 · Matrix AI" })).toBeNull();
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: (row as HTMLOptionElement).value } });
   expect(change).not.toHaveBeenCalled();
   expect(screen.getByText("Your credit is reserved while usage is confirmed.")).toBeVisible();

@@ -18,7 +18,7 @@ it("keeps a healthy Matrix Pi generation model selectable when its peer is unava
   expect(chatPickerEntryForSelection(deriveChatPickerEntries(catalog), selected.instanceId)).toBe("matrix-ai");
 });
 
-it("uses managed Pi for a new Sonnet Chat while retaining a historical kernel binding", () => {
+it("uses managed Pi for a new Sonnet Chat without defaulting to a historical kernel binding", () => {
   const catalog = createCanonicalProviderCatalogFixture();
   const base = catalog.instances[0]!;
   const legacy = { ...base, id: "kernel_matrix_included", driverKind: "kernel" as const, connectionLabel: "Matrix AI",
@@ -27,5 +27,5 @@ it("uses managed Pi for a new Sonnet Chat while retaining a historical kernel bi
     defaultSelection: { instanceId: "matrix_pi_default", model: base.models[0]!.id } };
   catalog.instances = [legacy, pi];
   expect(createCanonicalComposerSelection(catalog)?.instanceId).toBe(pi.id);
-  expect(createCanonicalComposerSelection(catalog, legacy.id)?.instanceId).toBe(legacy.id);
+  expect(createCanonicalComposerSelection(catalog, legacy.id)?.instanceId).toBe(pi.id);
 });

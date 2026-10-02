@@ -198,3 +198,4 @@ export {companyDriveChatReference} from "./organization-drive/context-reference.
 export type {DriveChatContextSelection} from "./organization-drive/OrganizationDriveBrowser.js";
 
 export { useDirectBotChat } from "./chat-agents/bots/use-direct-bot-chat.js";
+export { ChatProviderLoadingIndicator } from "./chat-provider-loading-indicator.js";

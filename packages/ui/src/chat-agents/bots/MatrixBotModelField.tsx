@@ -38,9 +38,9 @@ export function MatrixBotModelField({ id, label = "Model", selection, models, ca
         <option value="">Automatic · managed by this computer</option>
         {!available && !savedRow ? <option value={key} disabled>{selection?.model} · unavailable</option> : null}
         {choices.map((choice) => <option key={`${choice.instanceId}:${choice.modelId}`} value={JSON.stringify([choice.instanceId, choice.modelId])}>
-          {choice.modelLabel} · Matrix AI · Pi</option>)}
+          {choice.modelLabel} · Matrix AI</option>)}
         {blockedRows.map(row => <option key={`${row.instanceId}:${row.modelId}`} disabled value={JSON.stringify([row.instanceId, row.modelId])}>
-          {row.modelLabel} · Matrix AI · Pi · {canonicalProviderUnavailableSelectionLabel(catalog?.instances.find(instance => instance.id === row.instanceId), row.modelId)}
+          {row.modelLabel} · Matrix AI · {canonicalProviderUnavailableSelectionLabel(catalog?.instances.find(instance => instance.id === row.instanceId), row.modelId)}
         </option>)}
       </select>
     </label>

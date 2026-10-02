@@ -75,7 +75,7 @@ describe("managed model default parity", () => {
 });
 
 describe("canonical Provider choice presentation", () => {
-  it("distinguishes the actual managed Pi and legacy kernel projections using catalog driver names", () => {
+  it("offers only Matrix AI without exposing the managed execution driver", () => {
     const snapshot = makeAiProviderSnapshot();
     const value = CanonicalProviderCatalogSchema.parse({
       revision: "managed-pi-and-kernel",
@@ -88,8 +88,7 @@ describe("canonical Provider choice presentation", () => {
     });
     expect(deriveCanonicalProviderChoices(value).map(({ instanceId, modelId, harnessLabel, connectionLabel }) =>
       ({ instanceId, modelId, harnessLabel, connectionLabel }))).toEqual([
-      { instanceId: "matrix_pi_default", modelId: "claude-sonnet-5", harnessLabel: "Pi", connectionLabel: "Matrix AI" },
-      { instanceId: "kernel_matrix_included", modelId: "claude-sonnet-5", harnessLabel: "Claude SDK", connectionLabel: "Matrix AI" },
+      { instanceId: "matrix_pi_default", modelId: "claude-sonnet-5", harnessLabel: "Matrix AI", connectionLabel: "Matrix AI" },
     ]);
   });
 

@@ -1,4 +1,4 @@
-import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState } from "@matrix-os/contracts";
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -71,6 +71,7 @@ function selectedOptionsFor(
 }
 
 export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
+  if (isLegacyMatrixSdkProvider(instance)) return "Unavailable";
   const label = canonicalProviderAvailabilityReasonLabel(instance);
   return label === "Available" && (instance.driverKind === "codex" || instance.localObservation !== undefined)
     ? codexLocalObservationLabel(instance.localObservation) : label;
@@ -78,7 +79,7 @@ export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderIn
 
 /** Preserve a bound route while reporting why it cannot execute. */
 export function canonicalProviderUnavailableSelectionLabel(instance?: CanonicalProviderInstanceDescriptor | null, modelId?: string): string {
-  return instance && instance.models.some(model => model.id === modelId) && canonicalProviderFundingState(instance) === "credit_reserved"
+  return instance && !isLegacyMatrixSdkProvider(instance) && instance.models.some(model => model.id === modelId) && canonicalProviderFundingState(instance) === "credit_reserved"
     ? "Credit reserved" : "Unavailable";
 }
 
@@ -99,16 +100,12 @@ export function deriveCanonicalProviderChoices(
   catalog: CanonicalProviderCatalog,
 ): CanonicalProviderChoice[] {
   return orderCanonicalProviderInstancesForDefault(catalog.instances).flatMap((instance) => {
-    if (instance.availability !== "available") return [];
+    if (isLegacyMatrixSdkProvider(instance) || instance.availability !== "available") return [];
     const interactionMode = instance.supports.interactionModes[0];
     const permissionMode = instance.supports.permissionModes[0];
     if (!interactionMode || !permissionMode) return [];
-    // These managed instances share the funding label, but have different executors.
-    const managedExecution = (instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default")
-      || (instance.driverKind === "kernel" && instance.id === "kernel_matrix_included");
-    const harnessLabel = managedExecution
-      ? catalog.drivers.find((driver) => driver.kind === instance.driverKind)?.displayName ?? instance.displayName
-      : instance.displayName;
+    const managedExecution = instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default";
+    const harnessLabel = managedExecution ? "Matrix AI" : instance.displayName;
     return instance.models.flatMap((model) => model.availability === "available" ? [{
       instanceId: instance.id,
       driverKind: instance.driverKind,

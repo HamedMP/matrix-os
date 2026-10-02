@@ -171,7 +171,7 @@ describe("Chat canonical provider state", () => {
     fireEvent.click(trigger);
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(trigger);
-    fireEvent.pointerDown(screen.getByPlaceholderText("Ask anything..."));
+    fireEvent.pointerDown(await screen.findByPlaceholderText("Ask anything..."));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -326,6 +326,7 @@ describe("Chat canonical provider state", () => {
     fireEvent.change(screen.getByLabelText("Reasoning"), { target: { value: "high" } });
     fireEvent.click(screen.getByLabelText("Thinking"));
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
       "Keep this draft", undefined, {
@@ -349,7 +350,7 @@ describe("Chat canonical provider state", () => {
 
     expect(await screen.findByText("Choose a model to start chatting.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
-    fireEvent.click(screen.getByRole("button", { name: "Pi agent, Disabled in Settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pi agent, Disabled in Settings" }));
     expect(await screen.findByText("Disabled in Settings")).toBeVisible();
     const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
     expect(draft).toBeEnabled();
@@ -424,11 +425,14 @@ describe("Chat canonical provider state", () => {
 
     fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Continue" } });
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
-    fireEvent.click(await screen.findByRole("option", { name: "Claude Opus 5 via Pi" }));
+    const opus = await screen.findByRole("option", { name: "Claude Opus 5 via Pi" });
+    await waitFor(() => expect(opus).toBeEnabled());
+    fireEvent.click(opus);
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
     fireEvent.click(screen.getByText("Execution options"));
     fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
     fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "full_access" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Continue", undefined, expect.objectContaining({
@@ -451,10 +455,11 @@ describe("Chat canonical provider state", () => {
 
     fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Use OpenCode" } });
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
-    fireEvent.click(screen.getByRole("button", { name: "OpenCode agent, Available" }));
+    fireEvent.click(await screen.findByRole("button", { name: "OpenCode agent, Available" }));
     const openCode = await screen.findByRole("option", { name: "GPT-5 via OpenCode" });
     expect(openCode).toBeEnabled();
     fireEvent.click(openCode);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Use OpenCode", undefined, expect.objectContaining({
@@ -517,6 +522,7 @@ describe("Chat canonical provider state", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Hello" } });
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
     expect(screen.queryByText("Channels")).toBeNull();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Hello", undefined, expect.not.objectContaining({
       promptText: expect.anything(),

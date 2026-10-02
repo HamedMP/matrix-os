@@ -1,3 +1,4 @@
+import { isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
 import type { CanonicalChatSummary, CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -76,7 +77,7 @@ export function useCanonicalComposerSelection({
         : chatId
           ? selectedChatInstance ?? currentInstance
           : rememberedInstance ?? currentInstance;
-      const currentIsSupported = current && currentInstance?.availability === "available"
+      const currentIsSupported = current && currentInstance?.availability === "available" && !isLegacyMatrixSdkProvider(currentInstance)
         && (!boundInstanceId || current.instanceId === boundInstanceId)
         && currentInstance.models.some((model) => (
           model.id === current.model && model.availability === "available"
@@ -87,6 +88,7 @@ export function useCanonicalComposerSelection({
       // Existing Chats retain their saved route even when it cannot run. Choosing
       // a global default here would silently change the harness/account.
       if (chatId && currentSelection && (!requiredInstance
+        || isLegacyMatrixSdkProvider(requiredInstance)
         || requiredInstance.availability !== "available"
         || !requiredInstance.models.some((model) => model.id === currentSelection.model && model.availability === "available"))) {
         return {

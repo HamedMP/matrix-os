@@ -19,7 +19,7 @@ const recipe = { recipeId: "writing-bot", version: "v1", name: "Writer", descrip
 it("creates a Native Mobile recipe bot with the exact Matrix AI model", async () => {
   const create = jest.fn(async () => "chat_abcdefgh");
   render(<BotRecipeChooser recipes={[recipe]} catalog={catalog} onCreate={create} onOpenChat={jest.fn()} />);
-  fireEvent.press(screen.getByText("GLM 5.3 Flash · Matrix AI · Pi"));
+  fireEvent.press(screen.getByText("GLM 5.3 Flash · Matrix AI"));
   fireEvent.press(screen.getByText("Build in Chat"));
   await waitFor(() => expect(create).toHaveBeenCalledWith({ recipeId: recipe.recipeId, version: recipe.version }, expect.any(String), selected));
 });
@@ -27,10 +27,10 @@ it("retains an unavailable Native Mobile choice and blocks creation until delibe
   const create = jest.fn();
   const props = { recipes: [recipe], onCreate: create, onOpenChat: jest.fn() };
   const { rerender } = render(<BotRecipeChooser {...props} catalog={catalog} />);
-  fireEvent.press(screen.getByText("GLM 5.3 Flash · Matrix AI · Pi"));
+  fireEvent.press(screen.getByText("GLM 5.3 Flash · Matrix AI"));
   rerender(<BotRecipeChooser {...props} catalog={{ ...catalog, instances: [] }} />);
   expect(screen.getByText(/saved Matrix AI model is unavailable/)).toBeTruthy();
-  expect(screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · Pi · unavailable" }).props.accessibilityState)
+  expect(screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · unavailable" }).props.accessibilityState)
     .toMatchObject({ checked: true, disabled: true });
 
   fireEvent.press(screen.getByText("Build in Chat"));
@@ -51,10 +51,10 @@ it("restores the exact saved identity when a creation attempt reopens with an un
   const attemptRef = { current: { scope: "owner", key: "attempt", requestId: "request_abcdefgh", selection: selected } };
   const { rerender } = render(<BotRecipeChooser recipes={[recipe]} catalog={unavailable}
     attemptRef={attemptRef} attemptScope="owner" onCreate={jest.fn()} onOpenChat={jest.fn()} />);
-  expect(screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · Pi · unavailable" }).props.accessibilityState.checked).toBe(true);
+  expect(screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · unavailable" }).props.accessibilityState.checked).toBe(true);
   rerender(<BotRecipeChooser recipes={[recipe]} catalog={{ ...catalog, instances: [] }}
     attemptRef={attemptRef} attemptScope="owner" onCreate={jest.fn()} onOpenChat={jest.fn()} />);
-  expect(screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · Pi · unavailable" })).toBeTruthy();
+  expect(screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · unavailable" })).toBeTruthy();
 });
 
 it("edits only the bot model through its revisioned Native Mobile action", async () => {
@@ -64,7 +64,7 @@ it("edits only the bot model through its revisioned Native Mobile action", async
     authority: { agentId: "bot_abcdefgh", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } } };
   render(<BotChatControls snapshot={snapshot} catalog={catalog} onSelectionChange={save}
     onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={refresh} />);
-  fireEvent.press(screen.getByText("GLM 5.3 Flash · Matrix AI · Pi"));
+  fireEvent.press(screen.getByText("GLM 5.3 Flash · Matrix AI"));
   await waitFor(() => expect(save).toHaveBeenCalledWith(selected));
   expect(refresh).toHaveBeenCalled();
 });
@@ -74,7 +74,7 @@ it("shows authorized reserved models without permitting a new Native Mobile Bot 
   const create = jest.fn();
   const attemptRef = { current: { scope: "owner", key: "attempt", requestId: "request_abcdefgh", selection: selected } };
   render(<BotRecipeChooser recipes={[recipe]} catalog={held} onCreate={create} onOpenChat={jest.fn()} attemptRef={attemptRef} attemptScope="owner" />);
-  const row = screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · Pi · Credit reserved" });
+  const row = screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · Credit reserved" });
   expect(row.props.accessibilityState).toMatchObject({ disabled: true, checked: true });
   expect(row.props.onPress).toBeUndefined();
   expect(screen.getByText("Your credit is reserved while usage is confirmed.")).toBeTruthy();
@@ -89,7 +89,7 @@ it("shows disabled discovery in Native Mobile bot controls without a model-save 
     authority: { agentId: "bot_abcdefgh", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } } };
   render(<BotChatControls snapshot={snapshot} catalog={held} onSelectionChange={save}
     onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
-  const row = screen.getByText("GLM 5.3 Flash · Matrix AI · Pi · Credit reserved");
+  const row = screen.getByText("GLM 5.3 Flash · Matrix AI · Credit reserved");
   expect(row.props.accessibilityState).toMatchObject({ disabled: true });
   expect(row.props.onPress).toBeUndefined();
   fireEvent.press(row);

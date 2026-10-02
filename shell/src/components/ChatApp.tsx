@@ -3,7 +3,7 @@ import { ChatProviderOnboarding } from "./chat-provider-onboarding";
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
-import { useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
+import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
@@ -296,7 +296,7 @@ function ChatAppContent({
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
   const providerState = useChatProviderState(providerSelection, boundProviderInstanceId);
   const directBotId = useDirectBotChat(collaborationView ? undefined : sessionId, agentClient);
-  const providerReady = Boolean(directBotId || providerState.selected);
+  const providerReady = Boolean(directBotId || (!providerState.loading && providerState.selected));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
@@ -412,7 +412,7 @@ function ChatAppContent({
           </Button>
         </div>
 
-        <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => { providerState.refresh(); setSetupOpen(true); }} /></div>
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
@@ -567,9 +567,10 @@ function ChatAppContent({
             variant={setupOpen ? "secondary" : "ghost"}
             size="sm"
             className="h-8 max-w-[12rem] gap-1.5 px-2.5 text-xs"
-            onClick={() => setSetupOpen((value) => !value)}
+            onClick={() => { if (!setupOpen) providerState.refresh(); setSetupOpen((value) => !value); }}
           >
             <span className="truncate">{providerState.selected ? `${providerState.selected.harnessLabel}${providerState.selected.connectionLabel && providerState.selected.connectionLabel !== providerState.selected.harnessLabel ? ` · ${providerState.selected.connectionLabel}` : ""} · Model` : "Model"}</span>
+            {providerState.loading ? <ChatProviderLoadingIndicator /> : null}
             {providerState.selectionStatus ? <span className="shrink-0">{providerState.selectionStatus}</span> : null}
             <ChevronDownIcon className="size-3.5" aria-hidden="true" />
           </Button> : null}
@@ -597,6 +598,7 @@ function ChatAppContent({
               setSetupOpen(false);
             }}
             catalog={providerState.catalog}
+            loading={providerState.loading}
             choices={providerState.choices}
             selected={providerState.selected}
             displaySelection={providerState.displaySelection}

@@ -1,3 +1,4 @@
+import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
 import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
@@ -34,7 +35,7 @@ import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
-import { managedChatInstances, managedPiChatInstances } from "./managed-chat-catalog.js";
+import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
 
 const ADAPTER_VERSION = "1.0.0";
@@ -629,7 +630,6 @@ export function createChatProviderCatalogService(options: {
         systemRepairAction,
         now: options.now?.() ?? new Date(),
         instances: [
-        ...managedChatInstances(aiSnapshot, skills),
         ...managedPiChatInstances(aiSnapshot, (options.now?.() ?? new Date()).getTime()),
         ...systemInstances,
         ...completeCodingInstances,
@@ -756,6 +756,9 @@ export function validateChatProviderSelection(input: {
       "This Chat is already bound to another Provider instance.",
       ["fork_chat", "start_new_chat"],
     );
+  }
+  if (isRetiredMatrixSdkInstance(selection.data.instanceId)) {
+    return { ok: false, error: matrixSdkRetirementError() };
   }
   const instance = input.catalog.instances.find((candidate) =>
     candidate.id === selection.data.instanceId

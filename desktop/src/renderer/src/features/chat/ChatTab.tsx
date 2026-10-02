@@ -157,6 +157,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     )) ?? false;
     if (
       uploadingAttachments
+      || liveProviderCatalog.status === "loading"
       || !legacyGlobalSelectionExecutable(providerCatalog, canonicalSelection)
       || !canSubmitChatDraft(
         draft,
@@ -257,6 +258,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
           canSubmit={composerReady}
           catalog={providerCatalog}
           onProviderPickerOpen={liveProviderCatalog.refresh}
+          providerCatalogLoading={liveProviderCatalog.status === "loading"}
           selection={canonicalSelection}
           onSelectionChange={(selection) => {
             const instance = providerCatalog.instances.find((candidate) => candidate.id === selection.instanceId);

@@ -75,11 +75,12 @@ export default function ChatScreen() {
   const botCreationAttempt = useRef<BotCreationAttempt | null>(null);
   const botRecipes = useBotRecipes(gatewayUrl, showBotRecipes);
   const chats = useCanonicalChats();
-  const { catalog } = useChatProviderCatalog();
+  const { catalog, isPending: catalogPending, isFetching: catalogFetching } = useChatProviderCatalog();
   const { projects } = useProjects();
   const sendMessage = useSendChatMessage();
 
   const directBot = Boolean(botChat.snapshot);
+  const providerCatalogLoading = !directBot && (catalogPending || catalogFetching);
   const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
@@ -126,11 +127,11 @@ export default function ChatScreen() {
 
   const isConnected = Boolean(isSignedIn);
   const hasDraftText = draft.trim().length > 0;
-  const canSend = hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
+  const canSend = !providerCatalogLoading && hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
 
   const send = useCallback(() => {
     const trimmed = draft.trim();
-    if (!trimmed || !selection || !turnModes) return;
+    if (providerCatalogLoading || !trimmed || !selection || !turnModes) return;
     // Clear the draft only once the send actually succeeds -- a failed token
     // fetch, computer resolution, chat creation, or turn admission leaves the
     // typed text in place so the user can retry instead of losing it. The
@@ -174,6 +175,7 @@ export default function ChatScreen() {
     detail?.record.chat.revision,
     selectedProjectId,
     sendMessage,
+    providerCatalogLoading,
   ]);
 
   const insets = useSafeAreaInsets();
@@ -317,6 +319,7 @@ export default function ChatScreen() {
                 <View onTouchStart={handlePickerTouchStart}>
                   {!directBot ? <ModelPicker
                     catalog={catalog}
+                    catalogLoading={providerCatalogLoading}
                     selection={selection}
                     onSelectionChange={setSelectionOverride}
                   /> : <Text style={styles.systemText}>Bot model</Text>}

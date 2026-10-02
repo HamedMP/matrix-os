@@ -30,7 +30,7 @@ it("shows authorized held models without executable choices or a new Chat defaul
   expect(createCanonicalComposerSelection(catalog)).toBeNull();
   render(<CompactChatProviderChoices catalog={catalog} choices={[]} selected={null} onSelect={select} onSetupAction={setup} />);
   expect(screen.getByRole("button", { name: "Matrix AI agent, Matrix AI credit reserved" })).toBeEnabled();
-  const option = screen.getByRole("option", { name: "Claude Sonnet 5 via Pi · Matrix AI" });
+  const option = screen.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" });
   expect(option).toBeDisabled();
   expect(option).toHaveAttribute("aria-selected", "false");
   fireEvent.click(option);
@@ -98,10 +98,10 @@ it("reports disabled peer model availability independently from its healthy inst
   instance.models.push({ ...instance.models[0]!, id: "cloudflare:@cf/zai-org/glm-5.3-flash", displayName: "GLM 5.3 Flash", availability: "unavailable" });
   const select = vi.fn();
   render(<CompactChatProviderChoices catalog={catalog} choices={deriveCanonicalProviderChoices(catalog)} selected={null} onSelect={select} />);
-  const blocked = screen.getByRole("option", { name: "GLM 5.3 Flash via Pi · Matrix AI" });
+  const blocked = screen.getByRole("option", { name: "GLM 5.3 Flash via Matrix AI" });
   expect(blocked).toBeDisabled();
   expect(within(blocked).getByText(/Model unavailable/)).toBeVisible();
   expect(within(blocked).queryByText(/ · Available$/)).toBeNull();
-  fireEvent.click(screen.getByRole("option", { name: "Claude Sonnet 5 via Pi · Matrix AI" }));
+  fireEvent.click(screen.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" }));
   expect(select).toHaveBeenCalledTimes(1);
 });

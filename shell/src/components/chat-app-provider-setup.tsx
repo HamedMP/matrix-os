@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import {
   CanonicalProviderCatalogSchema,
@@ -108,6 +108,8 @@ export function useChatProviderState(
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
+  const refreshRef = useRef<() => void>(() => undefined);
+  const requestRefresh = useCallback(() => refreshRef.current(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,6 +123,7 @@ export function useChatProviderState(
         return;
       }
       refreshing = true;
+      if (!cancelled) setLoading(true);
       do {
         pending = false;
         const forceRefresh = forcePending;
@@ -139,21 +142,23 @@ export function useChatProviderState(
           console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
           if (!cancelled) setUnavailable(true);
         }
-        if (!cancelled) setLoading(false);
       } while (!cancelled && pending);
       refreshing = false;
+      if (!cancelled) setLoading(false);
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refresh();
     };
     const onFocus = () => { void refresh(); };
     const onSettingsChange = () => { void refresh(true); };
+    refreshRef.current = () => { void refresh(true); };
     void refresh();
     window.addEventListener("focus", onFocus);
     window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
+      refreshRef.current = () => undefined;
       window.removeEventListener("focus", onFocus);
       window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
       document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -255,6 +260,7 @@ export function useChatProviderState(
     selectPermissionMode,
     selectOption,
     loading,
+    refresh: requestRefresh,
     unavailable,
     activeInstance,
     displaySelection,
@@ -282,6 +288,7 @@ export function ChatProviderSetupPanel({
   channels,
   onToggleChannel,
   onDismiss,
+  loading = false,
 }: {
   catalog: CanonicalProviderCatalog | null;
   choices: CanonicalProviderChoice[];
@@ -300,8 +307,10 @@ export function ChatProviderSetupPanel({
   channels: Set<string>;
   onToggleChannel: (channel: string) => void;
   onDismiss: () => void;
+  loading?: boolean;
 }) {
   const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => { panelRef.current?.focus(); }, []);
   useEffect(() => {
     const dismiss = (event: PointerEvent) => {
       const target = event.target;
@@ -312,7 +321,7 @@ export function ChatProviderSetupPanel({
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [onDismiss]);
   return (
-    <section ref={panelRef} role="dialog" aria-label="Choose model and connection"
+    <section ref={panelRef} tabIndex={-1} role="dialog" aria-label="Choose model and connection"
       onKeyDown={(event) => { if (event.key === "Escape") {
         event.stopPropagation();
         panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
@@ -322,7 +331,7 @@ export function ChatProviderSetupPanel({
       style={{ maxHeight: "min(520px, calc(100% - 72px))" }}>
       <div className="grid min-w-0 gap-3">
         <div>
-          <CompactChatProviderChoices catalog={catalog ?? undefined} choices={choices} selected={displaySelection ?? selected} lockedInstanceId={lockedInstanceId}
+          <CompactChatProviderChoices loading={loading} catalog={catalog ?? undefined} choices={choices} selected={displaySelection ?? selected} lockedInstanceId={lockedInstanceId}
             renderDriverIcon={(kind) => kind === "kernel" || kind === "matrix_bot" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
               dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("matrix-chat-rabbit-mark") }} /> : (
               <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">
@@ -335,7 +344,7 @@ export function ChatProviderSetupPanel({
               panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
               onDismiss();
             }} />
-          {!catalog && choices.length === 0 ? <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
+          {!loading && !catalog && choices.length === 0 ? <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
             Connect a harness in Settings to start chatting.
           </p> : null}
           {selected ? (

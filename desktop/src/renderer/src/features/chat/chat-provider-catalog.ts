@@ -42,6 +42,7 @@ export function useChatProviderCatalog(
   catalog: CanonicalProviderCatalog;
   status: "fallback" | "loading" | "ready" | "error";
   refresh: () => void;
+  hasTrustedCatalog: boolean;
 } {
   const connectionApi = useConnection((state) => state.api);
   const identityKey = useConnection(desktopProviderIdentityKey);
@@ -92,6 +93,8 @@ export function useChatProviderCatalog(
     };
     const update = () => {
       const request = ++requestSequence;
+      setState({ catalog: lastTrustedCatalog ?? unavailableCatalog,
+        identityKey, generation: catalogGeneration, api, status: "loading" });
       void fetchCanonicalProviderCatalog(api, true).then((catalog) => {
         if (!cancelled && request === requestSequence && isCurrentScope()) {
           lastTrustedCatalog = catalog;
@@ -129,6 +132,8 @@ export function useChatProviderCatalog(
   // A scope/change render must fail closed before passive effects run. Old
   // state must never be observable by a composer or a layout-effect consumer.
   const current = state.identityKey === identityKey && state.generation === catalogGeneration && state.api === api;
-  return { catalog: current ? state.catalog : unavailableCatalog,
-    status: current ? state.status : "loading", refresh };
+  const trusted = trustedCatalogRef.current;
+  const hasTrustedCatalog = Boolean(current && trusted && trusted.api === api && trusted.identityKey === identityKey && trusted.generation === catalogGeneration);
+  return { catalog: current && (state.status !== "loading" || hasTrustedCatalog) ? state.catalog : unavailableCatalog,
+    status: current ? state.status : "loading", refresh, hasTrustedCatalog };
 }

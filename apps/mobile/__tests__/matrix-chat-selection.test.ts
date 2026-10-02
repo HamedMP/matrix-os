@@ -14,3 +14,12 @@ it("uses Matrix Pi for a new Native Chat and refuses a revoked or unavailable sa
   catalog.instances[1]!.models[0]!.availability = "unavailable";
   expect(defaultTurnModes(catalog, selected)).toBeNull();
 });
+
+it("does not default or admit a legacy Matrix SDK binding from an older catalog", () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  const base = catalog.instances[0]!;
+  const selection = { instanceId: "kernel_matrix_included", model: base.models[0]!.id };
+  catalog.instances = [{ ...base, id: selection.instanceId, driverKind: "kernel", defaultSelection: selection }];
+  expect(defaultCatalogSelection(catalog)).toBeNull();
+  expect(defaultTurnModes(catalog, selection)).toBeNull();
+});

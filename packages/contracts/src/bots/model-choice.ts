@@ -8,12 +8,17 @@ export function isManagedPiBotRoute(route: { instanceId: string; driverKind: str
   return route.instanceId === MATRIX_PI_CHAT_INSTANCE_ID && route.driverKind === "matrix_pi";
 }
 
+/** Retired Matrix SDK identities remain readable, never a current executable choice. */
+export function isLegacyMatrixSdkProvider(instance: { id: string; driverKind: string }): boolean {
+  return instance.id === "kernel_matrix_included" && instance.driverKind === "kernel";
+}
+
 /** Discovery reflects the authenticated catalog; it never acquires credentials or admits a run. */
 export function managedPiBotModelChoices(catalog?: CanonicalProviderCatalog | null): Array<{ label: string; selection: CanonicalChatModelSelection }> {
   return catalog?.instances.flatMap((instance) => isManagedPiBotRoute({ instanceId: instance.id, ...instance })
     && instance.availability === "available"
     ? instance.models.flatMap((model) => model.availability === "available"
-      ? [{ label: `${model.displayName} · Matrix AI · Pi`, selection: { instanceId: instance.id, model: model.id } }] : []) : []) ?? [];
+      ? [{ label: `${model.displayName} · Matrix AI`, selection: { instanceId: instance.id, model: model.id } }] : []) : []) ?? [];
 }
 
 export function botModelRoutingLabel(selection: CanonicalChatModelSelection | null | undefined,
@@ -66,6 +71,9 @@ export function canonicalProviderAvailabilityReasonLabel(
 export function canonicalProviderModelRouteLabel(instance: CanonicalProviderInstanceDescriptor | undefined,
   modelLabel: string): string {
   if (!instance) return modelLabel;
+  if (isManagedPiBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isLegacyMatrixSdkProvider(instance)) {
+    return `${modelLabel} · Matrix AI`;
+  }
   return [modelLabel, instance.connectionLabel,
     instance.driverKind === "matrix_pi" ? "Pi" : instance.displayName].filter(Boolean).join(" · ");
 }

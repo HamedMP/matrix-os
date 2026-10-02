@@ -1,8 +1,10 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
+import { ownerSdkAdapterFixture } from "./owner-sdk-home-test-support.js";
 import { createAssistantTextStreamProjector } from "../../packages/gateway/src/chat/safe-activity-projection.js";
 import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter.js";
+
+const createClaudeChatProviderAdapter = ownerSdkAdapterFixture();
 
 class FakeStream extends EventEmitter {}
 

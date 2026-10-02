@@ -1,3 +1,4 @@
+import { isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
 import type {
   CanonicalChatSummary,
   CanonicalProviderCatalog,
@@ -50,7 +51,7 @@ function optionsForInstance(
 function selectionForInstance(
   instance: CanonicalProviderInstanceDescriptor,
 ): CanonicalComposerSelection | null {
-  if (instance.availability !== "available") return null;
+  if (isLegacyMatrixSdkProvider(instance) || instance.availability !== "available") return null;
   const availableModel = instance.defaultSelection
     ? instance.models.find((model) => (
         model.id === instance.defaultSelection?.model && model.availability === "available"
@@ -71,7 +72,7 @@ export function canonicalComposerSelectionIsAvailable(
   selection: CanonicalComposerSelection | null,
 ): boolean {
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
-  return instance?.availability === "available"
+  return instance?.availability === "available" && !isLegacyMatrixSdkProvider(instance)
     && instance.models.some((model) => model.id === selection?.model && model.availability === "available");
 }
 

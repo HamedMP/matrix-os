@@ -202,9 +202,9 @@ Native Pi, kernel and other instance identities remain excluded from this select
    and abort its sibling route observation. Both source schemas support
    `credit_reserved`; negotiated canonical connection state supports it too.
    Legacy wire projections downgrade it to `credit_required` without mutating
-   internal snapshots. Display-only unavailable picker rows are limited to exact
-   managed Matrix Pi and kernel identities; other harnesses retain existing
-   executable-only rows. Unavailable models have no executable default or choice.
+   internal snapshots. Display-only unavailable picker rows are limited to the
+   exact managed Matrix Pi identity. The retired Matrix SDK identity stays out of
+   new choices; other harnesses retain existing executable-only rows. Unavailable models have no executable default or choice.
    Electron accepts the catalog-matching `matrix_ai_settings` navigation action
    only for `matrix_pi_default`/`matrix_pi` and
    `kernel_matrix_included`/`kernel`; retired system-harness setup actions stay
@@ -234,3 +234,59 @@ Native Pi, kernel and other instance identities remain excluded from this select
    unavailable descriptors with a coarse funding explanation and keep admission
    closed. Aggregate reservations do not prove failed or unknown usage, settlement,
    refund or release timing; presentation changes never reconcile the ledger.
+
+
+## Pi-only Matrix AI and provider loading
+
+1. **Scope / trigger:** Matrix AI uses the owned Pi execution path exclusively.
+   Model choices present the model and Matrix AI connection without exposing the
+   execution harness. Owner-connected Claude and Pi coding agents remain distinct.
+2. **Signatures:** the canonical catalog publishes `matrix_pi_default` with
+   `matrix_pi`, omitting `kernel_matrix_included`. Shared contract presentation
+   helpers identify the exact retired Matrix SDK descriptor and derive Matrix
+   model labels (`isLegacyMatrixSdkProvider({ id, driverKind })`). Gateway uses
+   `isRetiredMatrixSdkInstance(instanceId)` and `matrixSdkRetirementError()`
+   for canonical recovery. Kernel credential launch and the kernel adapter deny
+   explicit or implicit Matrix-funded SDK execution before acquiring credentials.
+   Provider catalog loading is propagated to shared picker and trigger UI through
+   the accessible `ChatProviderLoadingIndicator` status and Native picker
+   `catalogLoading` state, including query refreshes. Electron
+   `useChatProviderCatalog` returns `catalog`, `status`, `refresh` and
+   `hasTrustedCatalog`, bound to API, principal/runtime identity and generation.
+3. **Contracts:** old SDK-bound Chat records, history, checkpoints and owner grants
+   remain readable and retain historical identity. New, retried and persisted
+   queued SDK Matrix turns fail closed with safe new-Chat recovery; they never
+   resume opaque SDK sessions as Pi or fall back to another account/model.
+   Owner-key/profile launches preserve owner routing and clear conflicting ambient
+   `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` and
+   `ANTHROPIC_CUSTOM_HEADERS` before installing the selected owner credentials.
+   Read-only funded-source
+   discovery and the Pi broker keep their existing authority. Opening the picker
+   focuses its accessible container rather than search; explicit search interaction
+   and focus return remain supported. Initial and refresh loading show an accessible
+   spinner while preserving any bound model and safe funding reason. Cached
+   discovery may remain visible only within its original scope/generation;
+   pending refresh does not admit a Send or establish current execution readiness.
+4. **Validation / error matrix:** stale catalogs cannot offer or send through the
+   retired Matrix SDK descriptor even when it says available. Missing, revoked,
+   unknown and wrong-driver identities cannot synthesize a managed Pi choice.
+   Loading does not imply Ready, Unavailable or executable admission. GLM discovery
+   and execution still require supported mapping, current global/runtime policy,
+   reviewed pricing and the appropriate receipt; renderer lists cannot bypass them.
+5. **Good / base / bad cases:** an authorized Sonnet or GLM has one Matrix AI model
+   row backed by Pi, without a Pi label. A held route retains its disabled row and
+   reason. An old SDK conversation opens read-only and directs recovery to a new
+   Chat. Owner-connected Claude/Pi labels and execution remain unchanged. A slow
+   catalog displays loading, and opening it does not steal focus into search.
+6. **Required tests:** actual catalog/admission/adapter and persisted queued-run
+   paths reject retired SDK Matrix execution before lease/dispatch; old reads and
+   non-Matrix routes remain intact. Shared/Web/Electron/Native presentation tests
+   cover old-catalog filtering, labels, focus, initial/refresh spinner and preserved
+   selection/held-credit/cancellation. Exact final Preview plus Electron acceptance
+   verifies a single Matrix model row, no Pi/SDK detail, no search autofocus and a
+   visible loading spinner. Paid GLM or cancellation remains a separate funded gate.
+7. **Wrong / correct:** hiding an SDK row alone does not retire its execution.
+   Enforce retirement at the credential and actual dispatch boundaries, preserve
+   historical owner data, and use current catalog authority. Do not migrate opaque
+   sessions, add unauthorized GLM rows, relabel legacy identity as Pi, or settle an
+   unknown reservation from status alone.

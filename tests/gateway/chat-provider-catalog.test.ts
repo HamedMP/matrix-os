@@ -1229,13 +1229,12 @@ describe("canonical Chat Provider catalog", () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([]), agentRuntimeSource: runtimeSource(),
       aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
-      executableDriverKinds: ["kernel"],
+      executableDriverKinds: ["matrix_pi"],
     });
     const catalog = await service.getCatalog(principal);
-    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included"))
+    expect(catalog.instances.find((instance) => instance.id === "matrix_pi_default"))
       .toMatchObject({ displayName: "Matrix AI", availability: "available" });
-    expect(catalog.drivers.find((driver) => driver.kind === "kernel"))
-      .toMatchObject({ displayName: "Claude SDK", capabilityClass: "system_agent" });
+    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
   });
 
   it("retains unavailable Matrix AI without exposing models or acquiring credentials", async () => {
@@ -1260,8 +1259,9 @@ describe("canonical Chat Provider catalog", () => {
 
       const catalog = await service.getCatalog(principal);
 
-      expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included"))
-        .toMatchObject({ availability: "unavailable", connectionState: "unavailable", models: [] });
+      expect(catalog.instances.find((instance) => instance.id === "matrix_pi_default"))
+        .toMatchObject({ availability: "unavailable", models: [] });
+      expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
       expect(JSON.stringify(catalog)).not.toContain("platform-secret");
     } finally {
       aiProviderSource.close();

@@ -1,6 +1,6 @@
-import { canonicalProviderAvailabilityReasonLabel, canonicalProviderModelRouteLabel, canonicalProviderFundingState, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderModelRouteLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { Host, Picker } from "@expo/ui";
-import { Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 const MODEL_VALUE_SEPARATOR = "::";
@@ -25,14 +25,16 @@ export function ModelPicker({
   catalog,
   selection,
   onSelectionChange,
+  catalogLoading = false,
 }: {
   catalog: CanonicalProviderCatalog | null;
+  catalogLoading?: boolean;
   selection: CanonicalChatModelSelection | null;
   onSelectionChange: (selection: CanonicalChatModelSelection) => void;
 }) {
   const { theme } = useUnistyles();
-  const availableInstances = catalog?.instances.filter((instance) => instance.availability === "available") ?? [];
-  const reservedModels = catalog?.instances.filter((instance) => canonicalProviderFundingState(instance) === "credit_reserved")
+  const availableInstances = catalog?.instances.filter((instance) => instance.availability === "available" && !isLegacyMatrixSdkProvider(instance)) ?? [];
+  const reservedModels = catalog?.instances.filter((instance) => !isLegacyMatrixSdkProvider(instance) && canonicalProviderFundingState(instance) === "credit_reserved")
     .flatMap((instance) => instance.models.map((model) => ({ instance, model }))) ?? [];
   const unavailableModels = availableInstances.flatMap((instance) => instance.models
     .filter((model) => model.availability !== "available").map((model) => ({ instance, model })));
@@ -41,8 +43,8 @@ export function ModelPicker({
     ? catalog?.instances.find((instance) => instance.id === selection.instanceId)
     : undefined;
   const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
-  const selectionAvailable = selectedInstance?.availability === "available" && selectedModel?.availability === "available";
-  const selectedCreditReserved = selectedModel && selectedInstance && canonicalProviderFundingState(selectedInstance) === "credit_reserved";
+  const selectionAvailable = selectedInstance?.availability === "available" && !isLegacyMatrixSdkProvider(selectedInstance) && selectedModel?.availability === "available";
+  const selectedCreditReserved = selectedModel && selectedInstance && !isLegacyMatrixSdkProvider(selectedInstance) && canonicalProviderFundingState(selectedInstance) === "credit_reserved";
   const savedLabel = canonicalProviderModelRouteLabel(selectedInstance, selectedModel?.displayName ?? selection?.model ?? "Models unavailable");
   const modelValue = selection ? modelKey(selection.instanceId, selection.model) : "";
   const recoveryReason = !catalog ? "Checking model availability"
@@ -50,6 +52,7 @@ export function ModelPicker({
       : "Saved model unavailable";
 
   function handleModelChange(value: string) {
+    if (catalogLoading) return;
     const parsed = parseModelKey(value);
     if (!parsed) return;
     const instance = availableInstances.find((candidate) => candidate.id === parsed.instanceId);
@@ -64,7 +67,7 @@ export function ModelPicker({
     : composerOption?.defaultValue;
 
   function handleOptionChange(value: string) {
-    if (!selection || !composerOption) return;
+    if (catalogLoading || !selection || !composerOption) return;
     const otherOptions = (selection.options ?? []).filter((option) => option.id !== composerOption.id);
     onSelectionChange({
       ...selection,
@@ -76,13 +79,14 @@ export function ModelPicker({
   // text (SwiftUI .pickerStyle(.menu) / Material3 dropdown convention), so
   // Include the connection/runtime label to distinguish equally named models.
   return (
-    <View style={styles.row}>
+    <View style={styles.row} accessibilityState={{ busy: catalogLoading }}>
+      {catalogLoading ? <ActivityIndicator size="small" accessibilityLabel="Checking model availability" /> : null}
       <Host matchContents seedColor={theme.v2.appColors.muted}>
         <Picker
           appearance="menu"
           selectedValue={modelValue}
           onValueChange={handleModelChange}
-          enabled={availableInstances.some((instance) => instance.models.some((model) => model.availability === "available"))}
+          enabled={!catalogLoading && availableInstances.some((instance) => instance.models.some((model) => model.availability === "available"))}
           testID="model-picker"
         >
           {selection && !selectionAvailable && !selectedCreditReserved ? <Picker.Item label={`${savedLabel} · ${catalog ? "unavailable" : "checking"}`} value={modelValue} /> : null}
@@ -109,7 +113,7 @@ export function ModelPicker({
         accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.recovery}>
         {canonicalProviderModelRouteLabel(instance, model.displayName)} · Model unavailable
       </Text>)}
-      {selection && !selectionAvailable ? <Text accessibilityRole="alert" style={styles.recovery}>
+      {selection && !selectionAvailable && !catalogLoading ? <Text accessibilityRole="alert" style={styles.recovery}>
         {recoveryReason}. Choose another model or check Agents &amp; providers.
       </Text> : null}
       {composerOption && composerOption.kind === "enum" && composerOption.values ? (
@@ -118,6 +122,7 @@ export function ModelPicker({
             appearance="menu"
             selectedValue={typeof optionValue === "string" ? optionValue : ""}
             onValueChange={handleOptionChange}
+            enabled={!catalogLoading}
             testID="model-option-picker"
           >
             {composerOption.values.map((value) => (

@@ -1,5 +1,5 @@
 import type { CanonicalProviderCatalog, CanonicalProviderDriverKind, CanonicalProviderInstanceDescriptor } from "@matrix-os/contracts";
-import { canonicalProviderFundingState } from "@matrix-os/contracts";
+import { canonicalProviderFundingState, isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
 import { canonicalProviderAvailabilityLabel, orderCanonicalProviderInstancesForDefault, type CanonicalProviderChoice } from "./canonical-provider-choice.js";
 
 export interface ChatPickerEntry {
@@ -12,10 +12,9 @@ export interface ChatPickerEntry {
 
 /** Presentation groups retain real server instance IDs; Matrix AI is an access source. */
 export function deriveChatPickerEntries(catalog: CanonicalProviderCatalog): ChatPickerEntry[] {
-  const managed = catalog.instances.filter(instance => instance.connectionLabel === "Matrix AI"
-    || (instance.driverKind === "kernel" && instance.id === "kernel_matrix_included"));
+  const managed = catalog.instances.filter(instance => instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default");
   return [{ id: "matrix-ai", label: "Matrix AI", iconKind: "kernel", instances: managed, capabilityClass: "system_agent" },
-    ...catalog.drivers.flatMap(driver => catalog.instances.filter(instance => instance.driverKind === driver.kind
+    ...catalog.drivers.flatMap(driver => catalog.instances.filter(instance => instance.driverKind === driver.kind && !isLegacyMatrixSdkProvider(instance)
       && !managed.some(candidate => candidate.id === instance.id))
       .map(instance => ({ id: instance.id, label: instance.displayName, iconKind: instance.driverKind,
         instances: [instance], capabilityClass: driver.capabilityClass })))];
@@ -48,19 +47,16 @@ export function deriveChatPickerModelRows(
   catalog: CanonicalProviderCatalog,
   choices: readonly CanonicalProviderChoice[],
 ): ChatPickerModelRow[] {
-  return orderCanonicalProviderInstancesForDefault(catalog.instances).flatMap(instance => instance.models.flatMap(model => {
+  return orderCanonicalProviderInstancesForDefault(catalog.instances.filter(instance => !isLegacyMatrixSdkProvider(instance))).flatMap(instance => instance.models.flatMap(model => {
     const choice = instance.availability === "available" && model.availability === "available"
       ? choices.find(candidate => candidate.instanceId === instance.id && candidate.modelId === model.id)
       : undefined;
-    const managed = instance.id === "matrix_pi_default" && instance.driverKind === "matrix_pi"
-      || instance.id === "kernel_matrix_included" && instance.driverKind === "kernel";
+    const managed = instance.id === "matrix_pi_default" && instance.driverKind === "matrix_pi";
     // Retain prior executable-only discovery for other harnesses.
     if (!choice && !managed) return [];
     return [{
       instanceId: instance.id, modelId: model.id, modelLabel: model.displayName, modelAvailability: model.availability,
-      harnessLabel: choice?.harnessLabel ?? (managed
-        ? catalog.drivers.find(driver => driver.kind === instance.driverKind)?.displayName ?? instance.displayName
-        : instance.displayName),
+      harnessLabel: managed ? "Matrix AI" : choice?.harnessLabel ?? instance.displayName,
       connectionLabel: instance.connectionLabel, driverKind: instance.driverKind,
       ...(choice ? { choice } : {}),
     }];

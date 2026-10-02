@@ -8,7 +8,7 @@ it("shares exact model choices and unavailable saved-route copy across shells", 
   const selection = { instanceId: "matrix_pi_default", model: "cloudflare:@cf/zai-org/glm-5.3-flash" };
   catalog.instances = [{ ...base, id: selection.instanceId, driverKind: "matrix_pi", connectionLabel: "Matrix AI",
     models: [{ ...base.models[0]!, id: selection.model, displayName: "GLM 5.3 Flash" }] }];
-  expect(managedPiBotModelChoices(catalog)).toEqual([{ selection, label: "GLM 5.3 Flash · Matrix AI · Pi" }]);
+  expect(managedPiBotModelChoices(catalog)).toEqual([{ selection, label: "GLM 5.3 Flash · Matrix AI" }]);
   expect(botModelRoutingLabel(selection, catalog)).toBe("Matrix AI · GLM 5.3 Flash");
   catalog.instances[0]!.availability = "unavailable";
   expect(managedPiBotModelChoices(catalog)).toEqual([]);
@@ -33,7 +33,7 @@ it("projects only currently available advertised models when labels are not nego
     models: [{ ...base.models[0]!, id: "claude-sonnet-5", displayName: "Claude Sonnet 5" },
       { ...base.models[0]!, id: "unavailable-model", availability: "unavailable" }] }];
   expect(managedPiBotModelChoices(catalog)).toEqual([{ selection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" },
-    label: "Claude Sonnet 5 · Matrix AI · Pi" }]);
+    label: "Claude Sonnet 5 · Matrix AI" }]);
   catalog.instances[0]!.availability = "auth_required";
   expect(managedPiBotModelChoices(catalog)).toEqual([]);
 });
