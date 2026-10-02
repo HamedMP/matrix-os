@@ -133,6 +133,7 @@ async function readBoundedResponse(response: Response, signal: AbortSignal): Pro
   const reader = response.body.getReader();
   let bytes = 0;
   let result = "";
+  let complete = false;
   const decoder = new TextDecoder("utf8", { fatal: true });
   const abort = () => { void reader.cancel().catch((error: unknown) => {
     console.error("WhatsApp response cleanup failed", error instanceof Error ? error.name : "UnknownError");
@@ -146,14 +147,18 @@ async function readBoundedResponse(response: Response, signal: AbortSignal): Pro
       if (next.done) break;
       bytes += next.value.byteLength;
       if (bytes > MAX_RESPONSE_BYTES) {
-        abort();
         throw new WhatsAppSendError(true);
       }
       result += decoder.decode(next.value, { stream: true });
     }
-    return result + decoder.decode();
+    const decoded = result + decoder.decode();
+    complete = true;
+    return decoded;
   } finally {
     signal.removeEventListener("abort", abort);
+    // Decode/read failures may leave the remote stream open. Cancel while its
+    // reader still holds the lock; releasing alone does not close the response.
+    if (!complete) abort();
     reader.releaseLock();
   }
 }

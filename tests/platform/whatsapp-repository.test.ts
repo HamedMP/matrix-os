@@ -123,6 +123,58 @@ describe('WhatsApp linking repository', () => {
     expect(await repo.stop(sender, 'wamid.stop', now + 60_000, now)).toBe(false);
     expect((await repo.getConnection(owner))?.id).toBe(current.id);
   });
+  it('commits STOP at saturated capacity and retains a terminal replay marker after relinking', async () => {
+    const first = await repo.startLink(sender, 'wamid.capacity-link');
+    await repo.confirm(first.token, owner, await codeFor(first.token), 'whatsapp-general-agent-v1');
+    const ciphertext = encryptWhatsAppPayload({ kind: 'incoming', text: 'Queued elsewhere' }, key);
+    await sql`INSERT INTO whatsapp_jobs(id,sender,payload,state,available_at,expires_at,created_at)
+      SELECT 'wamid.saturated.' || n::text, '46' || lpad(n::text,9,'0'), ${ciphertext},
+        'ready', ${now}, ${now + 120_000}, ${now}
+      FROM generate_series(1,10000) AS n`.execute(db.kysely);
+    await expect(repo.enqueue({ id: 'wamid.full', sender, payload: {}, expiresAt: now + 60_000 }))
+      .rejects.toMatchObject({ code: 'capacity' });
+    expect(await repo.stop(sender, 'wamid.capacity-stop', now + 60_000, now)).toBe(true);
+    expect(await repo.getConnectionBySender(sender)).toBeNull();
+    const marker = await sql<{state: string; payload: string | null; fence: string | null; lease_expires_at: number | null}>`
+      SELECT state,payload,fence,lease_expires_at FROM whatsapp_jobs WHERE id='stop:wamid.capacity-stop'`.execute(db.kysely);
+    expect(marker.rows).toEqual([{ state: 'complete', payload: null, fence: null, lease_expires_at: null }]);
+    const active = await sql<{count: number}>`SELECT count(*) AS count FROM whatsapp_jobs WHERE state IN ('ready','leased','sending')`.execute(db.kysely);
+    expect(Number(active.rows[0]!.count)).toBe(10_000);
+    const revoked = await sql<{state: string; token_cipher: string; code_hash: string | null}>`
+      SELECT state,token_cipher,code_hash FROM whatsapp_link_challenges WHERE request_id='wamid.capacity-link'`.execute(db.kysely);
+    expect(revoked.rows).toEqual([{ state: 'blocked', token_cipher: '', code_hash: null }]);
+    await sql`UPDATE whatsapp_jobs SET state='complete',payload=NULL,finished_at=${now} WHERE state='ready'`.execute(db.kysely);
+    const second = await repo.startLink(sender, 'wamid.capacity-relink');
+    const current = await repo.confirm(second.token, owner, await codeFor(second.token), 'whatsapp-general-agent-v1');
+    expect(await repo.stop(sender, 'wamid.capacity-stop', now + 60_000, now)).toBe(false);
+    expect((await repo.getConnection(owner))?.id).toBe(current.id);
+    expect(await repo.lease()).toBeNull();
+    now += 7 * 86_400_000 + 1;
+    await repo.cleanup();
+    const retained = await sql`SELECT id FROM whatsapp_jobs WHERE id='stop:wamid.capacity-stop'`.execute(db.kysely);
+    expect(retained.rows).toEqual([]);
+  });
+  it('rolls back STOP on acknowledgement database failure and permits a safe retry', async () => {
+    const { token } = await repo.startLink(sender, 'wamid.database-link');
+    const linked = await repo.confirm(token, owner, await codeFor(token), 'whatsapp-general-agent-v1');
+    await repo.enqueue({ id: 'wamid.pending-stop', sender, payload: { kind: 'incoming' }, expiresAt: now + 60_000 });
+    const original = client.query.bind(client);
+    const failure = new Error('Database unavailable');
+    const query = vi.spyOn(client, 'query').mockImplementation(async (...args: Parameters<typeof client.query>) => {
+      if (args[0].startsWith('insert into "whatsapp_jobs"')) throw failure;
+      return original(...args);
+    });
+    await expect(repo.stop(sender, 'wamid.database-stop', now + 60_000, now)).rejects.toBe(failure);
+    query.mockRestore();
+    expect((await repo.getConnection(owner))?.id).toBe(linked.id);
+    const pending = await sql<{state: string}>`SELECT state FROM whatsapp_jobs WHERE id='wamid.pending-stop'`.execute(db.kysely);
+    expect(pending.rows[0]!.state).toBe('ready');
+    const marker = await sql`SELECT id FROM whatsapp_jobs WHERE id='stop:wamid.database-stop'`.execute(db.kysely);
+    expect(marker.rows).toEqual([]);
+    expect(await repo.stop(sender, 'wamid.database-stop', now + 60_000, now)).toBe(true);
+    expect(await repo.getConnection(owner)).toBeNull();
+    expect((await repo.lease())?.id).toBe('stop:wamid.database-stop');
+  });
   it('ignores a first-seen delayed STOP sent before a new association', async () => {
     const messageTimestamp = now;
     now += 3000;

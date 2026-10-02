@@ -175,8 +175,20 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
         await trx.updateTable('whatsapp_jobs').set({ state: 'revoked', payload: null, fence: null, lease_expires_at: null, finished_at: time })
           .where('sender', '=', sender).where('state', 'in', ACTIVE).execute();
       }
-      await insertJob(trx, { id: ackId, sender, expiresAt,
-        payload: { kind: 'reply', text: 'WhatsApp disconnected. Your Matrix Chat is still available in Matrix.' } }, time);
+      try {
+        await insertJob(trx, { id: ackId, sender, expiresAt,
+          payload: { kind: 'reply', text: 'WhatsApp disconnected. Your Matrix Chat is still available in Matrix.' } }, time);
+      } catch (error) {
+        // Queue admission raises this typed capacity error before attempting
+        // its INSERT. A full delivery queue must not undo STOP revocation.
+        // Database failures still abort the transaction and remain retryable.
+        if (!(error instanceof WhatsAppRepositoryError && error.code === 'capacity')) throw error;
+        await trx.insertInto('whatsapp_jobs').values({
+          id: ackId, sender, payload: null, state: 'complete', attempts: 0,
+          fence: null, lease_expires_at: null, available_at: time,
+          expires_at: expiresAt, created_at: time, finished_at: time,
+        }).onConflict((oc) => oc.column('id').doNothing()).execute();
+      }
       return true;
     });
   }

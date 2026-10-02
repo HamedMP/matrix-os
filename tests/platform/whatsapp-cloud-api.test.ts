@@ -201,6 +201,32 @@ describe("WhatsApp outgoing text", () => {
     await expect(sendWhatsAppText(config(), "46700000000", "Hello", async () => new Response(stream))).resolves.toBe("wamid.stream");
     await expect(sendWhatsAppText(config(), "46700000000", "Hello", async () => new Response(new Uint8Array([0xff])))).rejects.toMatchObject({ ambiguous: true });
   });
+  it("cancels an open response stream immediately when UTF-8 decoding fails", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array([0xff])); }, cancel,
+    });
+    const fetcher = vi.fn(async () => new Response(stream));
+    await expect(sendWhatsAppText(config(), "46700000000", "Hello", fetcher)).rejects.toMatchObject({
+      ambiguous: true, message: "WhatsApp delivery failed",
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(stream.locked).toBe(false);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it("keeps a malformed response ambiguous when cancelling its stream also fails", async () => {
+    const logger = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array([0xff])); },
+      cancel() { throw new Error("private connection cleanup detail"); },
+    });
+    await expect(sendWhatsAppText(config(), "46700000000", "Hello", async () => new Response(stream))).rejects.toMatchObject({
+      ambiguous: true, message: "WhatsApp delivery failed",
+    });
+    expect(logger).toHaveBeenCalledWith("WhatsApp response cleanup failed", "Error");
+    expect(JSON.stringify(logger.mock.calls)).not.toContain("private connection cleanup detail");
+    expect(stream.locked).toBe(false);
+  });
   it("cancels a stalled response when its overall deadline expires without retrying", async () => {
     const controller = new AbortController(); vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
     const cancel = vi.fn();
