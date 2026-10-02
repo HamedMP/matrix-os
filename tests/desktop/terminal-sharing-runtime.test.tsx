@@ -32,7 +32,7 @@ describe("DesktopTerminalSharing", () => {
       expect.objectContaining({ runtimeId: "vps:10000000-0000-4000-8000-000000000001", organizationId: null }),
       undefined,
     ));
-    act(() => useConnection.setState({ organizationId: "org_matrix_team" }));
+    act(() => useConnection.setState({ organizationId: "org_matrix_team", organizationStatus: "member" }));
     await waitFor(() => expect(sharingButton).toHaveBeenLastCalledWith(
       expect.objectContaining({ organizationId: "org_matrix_team" }),
       undefined,
@@ -103,12 +103,32 @@ describe("DesktopCollaborationOrganization gate", () => {
         <button type="button" onClick={() => setToken(`preflight-for-${organizationId ?? "none"}`)}>preflight</button>
       </div>;
     }
-    useConnection.setState({ organizationId: "org_alpha" });
+    useConnection.setState({ organizationId: "org_alpha", organizationStatus: "member" });
     const view = render(<DesktopCollaborationOrganization>{(id) => <StatefulChild organizationId={id} />}</DesktopCollaborationOrganization>);
     act(() => { view.getByRole("button", { name: "preflight" }).click(); });
     await waitFor(() => expect(view.getByTestId("token").textContent).toBe("preflight-for-org_alpha"));
     act(() => useConnection.setState({ organizationId: "org_beta" }));
     await waitFor(() => expect(view.getByTestId("organization").textContent).toBe("org_beta"));
     expect(view.getByTestId("token").textContent).toBe("none");
+  });
+
+  it("hides only after the organization listing authoritatively confirms none", () => {
+    const view = render(<DesktopCollaborationOrganization>{() => <span>Organization surface</span>}</DesktopCollaborationOrganization>);
+    act(() => useConnection.setState({ organizationId: null, organizationStatus: "unavailable" }));
+    expect(view.getByText("Organization surface")).toBeTruthy();
+
+    act(() => useConnection.setState({ organizationId: null, organizationStatus: "none" }));
+    expect(view.queryByText("Organization surface")).toBeNull();
+  });
+
+  it("keeps unresolved controls visible without passing a remembered organization as authority", () => {
+    useConnection.setState({ organizationId: "org_stale", organizationStatus: "unavailable" });
+    let received: string | null | undefined;
+    render(<DesktopCollaborationOrganization>{(organizationId) => {
+      received = organizationId;
+      return <span>Organization surface</span>;
+    }}</DesktopCollaborationOrganization>);
+
+    expect(received).toBeNull();
   });
 });

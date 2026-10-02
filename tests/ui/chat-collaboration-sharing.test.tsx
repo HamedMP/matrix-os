@@ -30,14 +30,16 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByRole("button", { name: "Share snapshot" })).toBeNull();
   });
 
-  it("hides live collaboration entirely when the computer flag is off", () => {
-    const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
+  it("opens snapshot sharing directly when live organization collaboration is unavailable", async () => {
+    const api = { baseUrl: "https://gateway.test", get: vi.fn(async (path: string) => path.endsWith("/preview")
+      ? { title: "Solo Chat", revision: 1, fingerprint: "a".repeat(64), messages: [] }
+      : { shares: [] }), post: vi.fn(), delete: vi.fn() };
     render(<ChatSharingButton api={api} collaborationEnabled={false} collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
       handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    expect(screen.getByRole("button", { name: "Share snapshot" })).toBeVisible();
+    expect(await screen.findByRole("dialog", { name: "Share Chat" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Share snapshot" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Invite collaborators" })).toBeNull();
-    expect(screen.queryByText(/Live collaboration is unavailable/i)).toBeNull();
   });
 
   it("converts an idle Chat once and grants Contributor to a current organization member", async () => {

@@ -1,9 +1,9 @@
 import { ChatCollaboration, type ChatCollaborationView } from "@matrix-os/ui";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
-import { createDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import { useDesktopCollaborationApi } from "../collaboration/DesktopCollaborationOrganization";
 
 const COLLABORATION_LAYERS = {
   dialog: DESKTOP_Z_INDEX.dialog,
@@ -13,9 +13,13 @@ const COLLABORATION_LAYERS = {
 export default function DesktopChatCollaboration() {
   const actorId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
-  const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
+  const organizationStatus = useConnection((state) => state.organizationStatus);
+  const api = useDesktopCollaborationApi(platformHost, organizationStatus !== "none");
   const [view, setView] = useState<ChatCollaborationView>({ kind: "home" });
   const openTab = useTabs((state) => state.openTab);
+  if (organizationStatus === "none") return <div role="alert" className="m-auto max-w-lg rounded-xl border p-8 text-center">
+    Organization sharing is no longer available for this account.
+  </div>;
   if (!actorId || !api) return <div role="alert" className="m-auto max-w-lg rounded-xl border p-8 text-center">
     Shared Chats are unavailable. Reconnect your Matrix account and try again.
   </div>;
