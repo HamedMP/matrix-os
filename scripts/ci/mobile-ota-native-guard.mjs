@@ -53,6 +53,20 @@ export function resolveVersionAnchor(history, currentVersion) {
   return anchor;
 }
 
+/**
+ * A pull request that changes the app version starts a new runtime, so there is
+ * nothing to compare. An unreadable base version fails instead of passing.
+ */
+export function startsNewRuntime(baseVersion, version) {
+  if (typeof baseVersion !== 'string' || baseVersion.length === 0) {
+    throw new Error(
+      `Could not read the app version at the pull request base (${APP_CONFIG}). ` +
+        'The guard needs full git history (fetch-depth: 0).',
+    );
+  }
+  return baseVersion !== version;
+}
+
 /** `../../node_modules/.pnpm/expo-blur@57_abc/node_modules/expo-blur/ios` -> `expo-blur/ios`. */
 export function normalizeSourcePath(filePath) {
   return filePath.replace(/^(?:.*\/)?node_modules\//, '');
@@ -190,7 +204,7 @@ function main() {
   }
 
   const baseSha = process.env.BASE_SHA?.trim();
-  if (baseSha && versionAt(root, baseSha) !== version) {
+  if (baseSha && startsNewRuntime(versionAt(root, baseSha), version)) {
     console.log(`App version changes to ${version}: this starts a new runtime, nothing to compare.`);
     return;
   }

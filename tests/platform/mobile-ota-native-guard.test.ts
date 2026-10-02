@@ -9,6 +9,7 @@ import {
   normalizeContents,
   normalizeSourcePath,
   resolveVersionAnchor,
+  startsNewRuntime,
 } from '../../scripts/ci/mobile-ota-native-guard.mjs';
 
 const tempDirs: string[] = [];
@@ -55,6 +56,20 @@ describe('mobile OTA native guard', () => {
       expect(resolveVersionAnchor([], '0.2.3')).toBeNull();
       expect(resolveVersionAnchor([{ commit: 'c1', version: '0.2.2' }], '0.2.3')).toBeNull();
       expect(resolveVersionAnchor([{ commit: 'c1', version: null }], '0.2.3')).toBeNull();
+    });
+  });
+
+  describe('startsNewRuntime', () => {
+    it('is true only when the pull request changes the app version', () => {
+      expect(startsNewRuntime('0.2.2', '0.2.3')).toBe(true);
+      expect(startsNewRuntime('0.2.3', '0.2.3')).toBe(false);
+    });
+
+    it('refuses to guess when the base version cannot be read', () => {
+      // An unreadable base must not look like a version bump, which would wave
+      // a native change through without comparing anything.
+      expect(() => startsNewRuntime(null, '0.2.3')).toThrow(/base/);
+      expect(() => startsNewRuntime('', '0.2.3')).toThrow(/base/);
     });
   });
 
