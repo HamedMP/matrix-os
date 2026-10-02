@@ -57,6 +57,7 @@ export function canonicalEncodedByteLength(value: unknown): number {
 
 export const CanonicalProviderDriverKindSchema = z.enum([
   "kernel",
+  "matrix_pi",
   "hermes",
   "openclaw",
   "codex",
