@@ -42,6 +42,7 @@ import { createBotStateTransactions } from "../bots/events.js";
 import { createBotGrantService, type BotGrantService } from "../bots/grants-service.js";
 import { createBotIntegrationClient, type BotIntegrationTransport } from "../bots/integration-client.js";
 import { createBotIntegrationTools } from "../bots/integration-tools.js";
+import { createBotInteractionContinuations } from "../bots/interaction-continuations.js";
 import { createBotInteractionService, type BotInteractionService } from "../bots/interactions.js";
 import { createBotMemoryService, type BotMemoryService } from "../bots/memory-service.js";
 import { createBotModelRouteResolver } from "../bots/codex-route.js";
@@ -152,10 +153,10 @@ export async function startBots(options: {
     ? createBotIntegrationTools({ client: integrationClient, transact, recipes, agents: options.agents })
     : undefined;
   const connections = integrationClient && integrationTools
-    ? createBotConnections({ client: integrationClient, transact, tools: integrationTools })
+    ? createBotConnections({ client: integrationClient, transact, tools: integrationTools, now: options.now })
     : undefined;
   const interactions = createBotInteractionService({
-    transact,
+    transact, now: options.now,
     ...(integrationTools ? {
       handlers: {
         ...createBotAccessHandlers({ tools: integrationTools }),
@@ -164,13 +165,17 @@ export async function startBots(options: {
     } : {}),
   });
   const authority = createBotAuthority({ transact, agents: options.agents, recipes, ...(integrationClient ? { client: integrationClient } : {}) });
-  // Started connection requests are completed from the inventory; passes never overlap and stop on close.
+  // Durable answers retry without integrations; passes never overlap and stop on close.
+  const recovery = connections ?? {
+    ...createBotInteractionContinuations({ transact, now: options.now }),
+    reconcile: async () => [], deferOwner: async () => undefined,
+  };
   let connectionTimer: ReturnType<typeof setInterval> | undefined;
   let connecting: Promise<unknown> | undefined;
   const startConnectionReconciler = (admit: BotContinuationAdmitter) => {
-    if (!connections || connectionTimer) return;
+    if (connectionTimer) return;
     connectionTimer = setInterval(() => {
-      connecting ??= runConnectionReconciliationPass(connections, admit).catch((error: unknown) => {
+      connecting ??= runConnectionReconciliationPass(recovery, admit).catch((error: unknown) => {
         console.warn("[bots] connection reconciliation unavailable:", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => { connecting = undefined; });
     }, CONNECTION_RECONCILE_MS);

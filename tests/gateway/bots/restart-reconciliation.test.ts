@@ -5,6 +5,7 @@ import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { createBotCheckpointsRepository } from "../../../packages/gateway/src/bots/repositories/checkpoints.js";
+import { createBotInteractionsRepository } from "../../../packages/gateway/src/bots/repositories/interactions.js";
 import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
 import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
@@ -75,6 +76,28 @@ describe("bot services at gateway start", () => {
     await runConnectionReconciliationPass(connections, admit);
     expect(ackContinuation).toHaveBeenCalledWith("good", continuation.clientRequestId);
   });
+  it("recovers question answers without any configured integration, and stops retrying after close", async () => {
+    await insertChat(db, "chat_restart_answer");
+    const at = "2026-10-02T12:00:00Z";
+    const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: "chat_restart_answer", now: at });
+    const { interaction } = await createBotInteractionsRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: task.chatId, taskId: task.taskId,
+      kind: "question", responderActorId: OWNER, blocking: false, payload: { kind: "question", questions: [] }, now: at, expiresAt: "2026-10-02T13:00:00Z" });
+    await createBotInteractionsRepository(db).resolve({ ownerId: OWNER, interactionId: interaction.interactionId, baseRevision: 1,
+      responderActorId: OWNER, resolution: { answer: "Casual", continuation: "Casual" }, now: at });
+    const services = await startBots({ ...base(), now: () => new Date(at) });
+    const admit = vi.fn(async () => undefined);
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      services!.startConnectionReconciler(admit);
+      await vi.advanceTimersByTimeAsync(30_001);
+      await vi.waitFor(() => expect(admit).toHaveBeenCalledTimes(1));
+      await vi.waitFor(async () => expect((await createBotInteractionsRepository(db).get({ ownerId: OWNER, interactionId: interaction.interactionId }))?.resolution?.continuationAdmittedAt).toBeDefined());
+      await services!.close();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(admit).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("marks tool calls the previous process left dispatched as effect unknown, before any run", async () => {
     await insertChat(db, "chat_restart1");
     const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: "chat_restart1", now: "2026-09-27T12:00:00.000Z" });

@@ -4,8 +4,8 @@
  * At most one blocking interaction is pending per task (partial unique
  * index), and an owner has at most 32 pending interactions, counted inside
  * the insert transaction under an owner advisory lock. Resolution claims the
- * row at its revision, so the caller can enqueue exactly one continuation in
- * the same transaction.
+ * row at its revision and stores continuation text in the same transaction;
+ * delivery acknowledges only after idempotent canonical admission.
  */
 import { sql, type Selectable } from "kysely";
 import type { BotInteractionsTable } from "../database.js";
@@ -149,8 +149,8 @@ export function createBotInteractionsRepository(db: BotExecutor) {
     },
     /**
      * Resolves a pending interaction at its revision, only by the designated
-     * responder and before it expires. Pass the transaction that enqueues the
-     * continuation so both commit together.
+     * responder and before it expires. Store the continuation text in resolution
+     * so failed admission can recover without another client request.
      */
     async resolve(input: {
       ownerId: string;

@@ -38,14 +38,17 @@ describe("bot interaction and memory routes", () => {
   });
   it("records an answer, then continues the task as the responder", async () => {
     const resolve = vi.fn(async () => ({ response: RESOLVED, continuation: CONTINUATION }));
+    const ackContinuation = vi.fn(async () => undefined);
     const admitContinuation = vi.fn(async () => undefined);
-    const server = app({ interactions: { resolve, listPending: vi.fn() }, admitContinuation });
+    const server = app({ interactions: { resolve, listPending: vi.fn(), ackContinuation }, admitContinuation });
     const response = await post(server, `/api/chats/${CHAT}/interactions/${INTERACTION}/resolve`, JSON.stringify({ kind: "question", baseRevision: 1, answer: "Casual" }));
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toEqual(RESOLVED);
     expect(resolve).toHaveBeenCalledWith("user_owner_1", CHAT, INTERACTION, { kind: "question", baseRevision: 1, answer: "Casual" });
     expect(admitContinuation).toHaveBeenCalledWith(PRINCIPAL, CONTINUATION);
+    expect(ackContinuation).toHaveBeenCalledWith("user_owner_1", CONTINUATION.clientRequestId);
+    expect(ackContinuation.mock.invocationCallOrder[0]).toBeGreaterThan(admitContinuation.mock.invocationCallOrder[0]!);
   });
 
   it("answers 503 when the continuation fails, so the same request can be retried", async () => {
@@ -122,7 +125,7 @@ describe("answer continuations", () => {
 
   it("admits the answer once as the owner's message on the bot runtime", async () => {
     const admitTurn = vi.fn(async () => ({}) as never);
-    const admit = createBotContinuationAdmitter({ repository: { get: vi.fn(async () => record(4)) }, orchestrator: { admitTurn, enqueueQueuedTurn: vi.fn() } });
+    const admit = createBotContinuationAdmitter({ repository: { findQueuedAdmission: vi.fn(async () => null), get: vi.fn(async () => record(4)) }, orchestrator: { admitTurn, enqueueQueuedTurn: vi.fn() } });
     await admit(PRINCIPAL, CONTINUATION);
     expect(admitTurn).toHaveBeenCalledWith(PRINCIPAL, { type: "personal", ownerId: "user_owner_1" }, CHAT, {
       clientRequestId: CONTINUATION.clientRequestId, baseRevision: 4, parts: [{ type: "text", text: "Casual" }],
@@ -135,18 +138,18 @@ describe("answer continuations", () => {
     const changed = new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_conflict", "Changed"), 409);
     const enqueueQueuedTurn = vi.fn(async () => ({}) as never);
     await createBotContinuationAdmitter({
-      repository: { get: vi.fn(async () => record(1)) },
+      repository: { findQueuedAdmission: vi.fn(async () => null), get: vi.fn(async () => record(1)) },
       orchestrator: { admitTurn: vi.fn(async () => { throw busy; }), enqueueQueuedTurn },
     })(PRINCIPAL, CONTINUATION);
     expect(enqueueQueuedTurn).toHaveBeenCalledTimes(1);
 
     const admitTurn = vi.fn().mockRejectedValueOnce(changed).mockResolvedValueOnce({});
     const get = vi.fn().mockResolvedValueOnce(record(1)).mockResolvedValueOnce(record(2));
-    await createBotContinuationAdmitter({ repository: { get }, orchestrator: { admitTurn, enqueueQueuedTurn: vi.fn() } })(PRINCIPAL, CONTINUATION);
+    await createBotContinuationAdmitter({ repository: { get, findQueuedAdmission: vi.fn(async () => null) }, orchestrator: { admitTurn, enqueueQueuedTurn: vi.fn() } })(PRINCIPAL, CONTINUATION);
     expect(admitTurn.mock.calls.map((call) => (call[3] as { baseRevision: number }).baseRevision)).toEqual([1, 2]);
 
     await expect(createBotContinuationAdmitter({
-      repository: { get: vi.fn(async () => null) }, orchestrator: { admitTurn: vi.fn(), enqueueQueuedTurn: vi.fn() },
+      repository: { findQueuedAdmission: vi.fn(async () => null), get: vi.fn(async () => null) }, orchestrator: { admitTurn: vi.fn(), enqueueQueuedTurn: vi.fn() },
     })(PRINCIPAL, CONTINUATION)).rejects.toEqual(new BotInteractionError("not_found"));
   });
 });

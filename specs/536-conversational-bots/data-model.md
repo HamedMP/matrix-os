@@ -122,7 +122,7 @@ Constraints:
 
 - Partial unique index `(owner_id, task_id) WHERE blocking AND status = 'pending'`: one blocking question per task.
 - At most 32 pending interactions per owner, counted inside the insert transaction under the owner row lock.
-- Resolution claims the row with `WHERE status = 'pending' AND revision = :base` and enqueues at most one continuation in the same transaction.
+- Resolution claims the row with `WHERE status = 'pending' AND revision = :base` and stores continuation text in the same transaction. Canonical admission uses `req_answer_<interactionId>` and sets `continuationAdmittedAt` only after admission succeeds. A bounded background pass retries due, unacknowledged answers (questions, account choices, approvals, and connection outcomes), including when integrations are absent. Failed admissions defer 60 seconds; canonical queue deduplication verifies owner and request hash before acknowledging a restarted attempt.
 
 Payload schemas (Zod, in contracts):
 

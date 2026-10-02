@@ -6,6 +6,7 @@
  * the read and the admission is retried once.
  */
 import type { CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
+import { chatContextRequestHash } from "../chat/agent-context.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import { CanonicalChatOrchestrationError } from "../chat/orchestration-errors.js";
 import type { ChatRepository } from "../chat/repository.js";
@@ -16,7 +17,7 @@ import { MATRIX_BOT_SELECTION } from "./selection.js";
 export type BotContinuationAdmitter = (principal: RequestPrincipal, continuation: BotContinuation) => Promise<void>;
 
 export function createBotContinuationAdmitter(deps: {
-  repository: Pick<ChatRepository, "get">;
+  repository: Pick<ChatRepository, "get" | "findQueuedAdmission">;
   orchestrator: Pick<CanonicalChatOrchestrator, "admitTurn" | "enqueueQueuedTurn">;
 }): BotContinuationAdmitter {
   return async (principal, continuation) => {
@@ -32,6 +33,9 @@ export function createBotContinuationAdmitter(deps: {
         interactionMode: "default",
         permissionMode: "default",
       };
+      // A previous process may have queued the answer before acknowledging it.
+      // The canonical lookup verifies owner and exact request hash, including claimed entries.
+      if (await deps.repository.findQueuedAdmission(owner, continuation.chatId, input.clientRequestId, chatContextRequestHash(input))) return;
       try {
         await deps.orchestrator.admitTurn(principal, owner, continuation.chatId, input);
         return;

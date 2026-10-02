@@ -9,7 +9,7 @@ import { createBotTasksRepository } from "../../../packages/gateway/src/bots/rep
 import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
-import { BOT, OTHER_OWNER, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
+import { BOT, OTHER_OWNER, OWNER, createBotStateDatabase, createRealBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 const CHAT = "chat_questions1";
 const QUESTION = {
@@ -26,7 +26,7 @@ let binding: BotRuntimeBinding;
 let clock: number;
 
 beforeEach(async () => {
-  ({ db, destroy } = await createBotStateDatabase());
+  ({ db, destroy } = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase()));
   await insertChat(db, CHAT);
   await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: "2026-09-28T09:00:00.000Z" });
   const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: "2026-09-28T09:00:00.000Z" });
@@ -92,6 +92,10 @@ describe("bot questions", () => {
       continuation: { chatId: CHAT, clientRequestId: `req_answer_${pending.interactionId}`, text: "Formal or casual?\nCasual\n\nKeep it under a page." },
     });
     await expect(service().resolve(OWNER, CHAT, pending.interactionId, body)).resolves.toEqual(first);
+    await service().ackContinuation(OTHER_OWNER, first.continuation!.clientRequestId);
+    await expect(service().resolve(OWNER, CHAT, pending.interactionId, body)).resolves.toEqual(first);
+    await service().ackContinuation(OWNER, first.continuation!.clientRequestId);
+    await expect(service().resolve(OWNER, CHAT, pending.interactionId, body)).resolves.toEqual({ response: first.response });
     await expect(service().resolve(OWNER, CHAT, pending.interactionId, { ...body, answer: "Different" })).rejects.toEqual(new BotInteractionError("conflict"));
     expect((await events()).map((event) => event.type)).toEqual(["interaction.requested", "interaction.resolved"]);
   });

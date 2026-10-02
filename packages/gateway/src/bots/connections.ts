@@ -14,12 +14,13 @@
  * resolves, and announces in one transaction, and returns the continuation
  * for the caller to admit. No transaction spans a network call.
  */
-import { BotInteractionIdSchema, ResolveBotInteractionResponseSchema, type BotEffect, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
+import { ResolveBotInteractionResponseSchema, type BotEffect, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import { sql } from "kysely";
 import type { BotStateTransaction, BotStateTransactions } from "./events.js";
 import { BotIntegrationError, type BotIntegrationClient, type BotIntegrationConnection } from "./integration-client.js";
 import type { BotIntegrationTools } from "./integration-tools.js";
 import { BotInteractionError, type BotContinuation } from "./interactions.js";
+import { createBotInteractionContinuations } from "./interaction-continuations.js";
 import { connectOutcome, createBotConnectRequestsRepository } from "./repositories/connect-requests.js";
 import { createBotGrantsRepository } from "./repositories/grants.js";
 import { createBotInteractionsRepository, type BotInteractionRecord } from "./repositories/interactions.js";
@@ -30,7 +31,6 @@ const CONNECT_LIFETIME_MS = 15 * 60_000;
 const CHOICE_LIFETIME_MS = 24 * 60 * 60_000;
 const MAX_ACCOUNT_OPTIONS = 10;
 const MAX_OWNERS_PER_PASS = 16;
-const MAX_CONTINUATIONS_PER_OWNER = 100;
 const CONTINUATION_RETRY_MS = 60_000;
 /** The reconcile read publishes nothing, so no owner scope applies to it. */
 const PASS_OWNER = "bot-connection-reconcile";
@@ -131,7 +131,9 @@ export function createBotConnections(deps: {
     }
   }
 
+  const delivery = createBotInteractionContinuations(deps);
   return {
+    ...delivery,
     /** The owner starts a connection request. */
     async startConnect(responderId: string, chatId: string, interactionId: string, baseRevision: number): Promise<StartResult> {
       const interaction = await deps.transact(responderId, (tx) => loadPending(tx, responderId, chatId, interactionId, baseRevision));
@@ -233,48 +235,6 @@ export function createBotConnections(deps: {
       return continuations;
     },
 
-    /** Resolved connections awaiting Chat admission survive process restarts. */
-    async pendingContinuations(ownerId: string): Promise<BotContinuation[]> {
-      const at = now().toISOString();
-      const rows = await deps.transact(ownerId, (tx) => tx.db.selectFrom("bot_interactions")
-        .select(["interaction_id", "chat_id", "resolution"])
-        .where("owner_id", "=", ownerId).where("kind", "=", "connect_request").where("status", "=", "resolved")
-        .where(sql<boolean>`resolution ? 'continuation'`)
-        .where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt')`)
-        .where(sql<boolean>`(resolution->>'continuationRetryAt' IS NULL OR resolution->>'continuationRetryAt' <= ${at})`)
-        .orderBy("created_at", "asc").limit(MAX_CONTINUATIONS_PER_OWNER).execute());
-      return rows.flatMap((row) => {
-        const text = row.resolution?.continuation;
-        return typeof text === "string" && text.length > 0
-          ? [{ chatId: row.chat_id, clientRequestId: `req_answer_${row.interaction_id}`, text }]
-          : [];
-      });
-    },
-    /** Admission is idempotent under the interaction-derived request ID. */
-    async ackContinuation(ownerId: string, clientRequestId: string): Promise<void> {
-      const id = BotInteractionIdSchema.safeParse(clientRequestId.replace(/^req_answer_/, ""));
-      if (!id.success || clientRequestId !== `req_answer_${id.data}`) throw new BotInteractionError("invalid_request");
-      const at = now().toISOString();
-      await deps.transact(ownerId, (tx) => tx.db.updateTable("bot_interactions")
-        .set({ resolution: sql`jsonb_set(resolution, '{continuationAdmittedAt}', to_jsonb(${at}::text), true)` })
-        .where("owner_id", "=", ownerId).where("interaction_id", "=", id.data)
-        .where("kind", "=", "connect_request").where("status", "=", "resolved")
-        .where(sql<boolean>`resolution ? 'continuation'`).where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt')`)
-        .execute());
-    },
-    /** Delay a failed admission so one owner cannot monopolize every bounded pass. */
-    async deferContinuation(ownerId: string, clientRequestId: string): Promise<void> {
-      const id = BotInteractionIdSchema.safeParse(clientRequestId.replace(/^req_answer_/, ""));
-      if (!id.success || clientRequestId !== `req_answer_${id.data}`) throw new BotInteractionError("invalid_request");
-      const retryAt = new Date(now().getTime() + CONTINUATION_RETRY_MS).toISOString();
-      await deps.transact(ownerId, (tx) => tx.db.updateTable("bot_interactions")
-        .set({ resolution: sql`jsonb_set(resolution, '{continuationRetryAt}', to_jsonb(${retryAt}::text), true)` })
-        .where("owner_id", "=", ownerId).where("interaction_id", "=", id.data)
-        .where("kind", "=", "connect_request").where("status", "=", "resolved")
-        .where(sql<boolean>`resolution ? 'continuation'`).where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt')`)
-        .execute());
-    },
-
     /** One failed owner yields its place to other owners until the next retry. */
     async deferOwner(ownerId: string): Promise<void> {
       const at = now();
@@ -288,26 +248,18 @@ export function createBotConnections(deps: {
     /** Owners with started requests or due continuations, a bounded number per pass. */
     async ownersWithPending(): Promise<string[]> {
       const at = now().toISOString();
-      const [requests, continuations] = await deps.transact(PASS_OWNER, async (tx) => {
+      const requests = await deps.transact(PASS_OWNER, async (tx) => {
         const requests = await tx.db.selectFrom("bot_connect_requests")
           .select("owner_id").select((eb) => eb.fn.min("requested_at").as("oldest"))
           .where("status", "=", "pending")
           .where((eb) => eb.or([eb("retry_after", "is", null), eb("retry_after", "<=", at)]))
           .groupBy("owner_id")
           .orderBy("oldest", "asc").orderBy("owner_id", "asc").limit(MAX_OWNERS_PER_PASS).execute();
-        const continuations = await tx.db.selectFrom("bot_interactions")
-          .select("owner_id").select((eb) => eb.fn.min("created_at").as("oldest"))
-          .where("kind", "=", "connect_request").where("status", "=", "resolved")
-          .where(sql<boolean>`resolution ? 'continuation'`)
-          .where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt')`)
-          .where(sql<boolean>`(resolution->>'continuationRetryAt' IS NULL OR resolution->>'continuationRetryAt' <= ${at})`)
-          .groupBy("owner_id").orderBy("oldest", "asc").orderBy("owner_id", "asc")
-          .limit(MAX_OWNERS_PER_PASS).execute();
-        return [requests, continuations] as const;
+        return requests;
       });
       // Each query is already oldest-first and capped. Admit due continuations
       // before filling the remaining slots with pending provider requests.
-      const owners = continuations.map((row) => row.owner_id);
+      const owners = await delivery.ownersWithPending();
       for (const row of requests) {
         if (owners.length >= MAX_OWNERS_PER_PASS) break;
         if (!owners.includes(row.owner_id)) owners.push(row.owner_id);

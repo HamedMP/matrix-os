@@ -40,7 +40,7 @@ export function createBotRoutes(options: {
   botChats?: BotChatLookup;
   tasks?: (ownerId: string, chatId: string) => Promise<BotTaskSummary[]>;
   instantiation?: Pick<BotInstantiation, "instantiate">;
-  interactions?: Pick<BotInteractionService, "listPending" | "resolve">;
+  interactions?: Pick<BotInteractionService, "listPending" | "resolve"> & Partial<Pick<BotInteractionService, "ackContinuation">>;
   memory?: Pick<BotMemoryService, "forget" | "confirm">;
   grants?: Pick<BotGrantService, "revoke">;
   authority?: Pick<BotAuthority, "view">;
@@ -138,9 +138,10 @@ export function createBotRoutes(options: {
       principal.userId, chatId.data, interactionId.data, await context.req.json(),
     );
     if (continuation) {
-      // The answer is recorded either way; repeating this request retries the continuation.
+      // The durable answer remains pending until canonical admission succeeds; the background pass retries failures.
       try {
         await options.admitContinuation(principal, continuation);
+        await options.interactions.ackContinuation?.(principal.userId, continuation.clientRequestId);
       } catch (error: unknown) {
         console.warn("[bots] answer continuation failed:", error instanceof Error ? error.name : "UnknownError");
         return errorResponse(context, "unavailable");

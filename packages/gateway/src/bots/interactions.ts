@@ -10,6 +10,7 @@
  * State changes and their Chat events commit in one transaction. A person
  * who is not the responder learns nothing about an interaction.
  */
+import { isDeepStrictEqual } from "node:util";
 import {
   BotInteractionIdSchema,
   CanonicalChatIdSchema,
@@ -20,6 +21,7 @@ import {
   type BotToolResult,
   type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
+import { createBotInteractionContinuations } from "./interaction-continuations.js";
 import { BotBrokerActionError } from "./broker-actions.js";
 import type { BotStateTransaction, BotStateTransactions } from "./events.js";
 import { createBotInteractionsRepository, type BotInteractionRecord } from "./repositories/interactions.js";
@@ -109,6 +111,7 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
   }
 
   return {
+    ackContinuation: createBotInteractionContinuations(deps).ackContinuation,
     /** `interaction.create` from a bot run. Questions only in M1 L9a. */
     async createFromTool(binding: BotRuntimeBinding, args: Extract<BotToolRequest, { capability: "interaction.create" }>["args"]): Promise<BotToolResult> {
       if (args.payload.kind !== "question") throw new BotBrokerActionError("not_granted");
@@ -161,7 +164,8 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
      * Records the responder's answer at the interaction's revision. Every answered
      * interaction returns the continuation to admit; busy Chats queue it. Repeating the same answer
      * after it was recorded returns the same result, so a client can retry a
-     * request whose continuation failed.
+     * request whose continuation failed. The durable delivery pass also retries
+     * unacknowledged resolutions after queue pressure or a process restart.
      */
     async resolve(responderId: string, chatIdValue: string, interactionIdValue: string, body: unknown): Promise<{
       response: ResolveBotInteractionResponse;
@@ -192,11 +196,11 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
           response: ResolveBotInteractionResponseSchema.parse({ interaction: { interactionId: interaction.interactionId, status: interaction.status, revision: interaction.revision } }),
           ...(text ? { continuation: { chatId: interaction.chatId, clientRequestId: `req_answer_${interaction.interactionId}`, text } } : {}),
         });
-        const { continuation: storedText, ...stored } = current.resolution ?? {};
-        if (current.status === "resolved" && current.revision === input.baseRevision + 1 && JSON.stringify(stored) === JSON.stringify(requested)) {
+        const { continuation: storedText, continuationAdmittedAt, continuationRetryAt: _retryAt, ...stored } = current.resolution ?? {};
+        if (current.status === "resolved" && current.revision === input.baseRevision + 1 && isDeepStrictEqual(stored, requested)) {
           const replayText = typeof storedText === "string" ? storedText
             : current.kind === "question" ? renderAnswer(current.payload as QuestionPayload, requested as QuestionAnswer) : undefined;
-          return respond(current, replayText);
+          return respond(current, continuationAdmittedAt ? undefined : replayText);
         }
         if (current.status === "expired" || (current.status === "pending" && Date.parse(current.expiresAt) <= Date.parse(at))) {
           throw new BotInteractionError("expired");

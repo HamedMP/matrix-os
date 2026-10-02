@@ -1,3 +1,15 @@
+import { Hono } from "hono";
+import { bootstrapBotDatabase, type OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
+import type { Kysely } from "kysely";
+import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
+import { createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
+import { createBotConnections } from "../../../packages/gateway/src/bots/connections.js";
+import { createBotContinuationAdmitter } from "../../../packages/gateway/src/bots/continuations.js";
+import { createBotInteractionsRepository } from "../../../packages/gateway/src/bots/repositories/interactions.js";
+import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
+import { createBotRoutes } from "../../../packages/gateway/src/bots/routes.js";
+import { runConnectionReconciliationPass } from "../../../packages/gateway/src/startup/bots.js";
+import { createRealBotStateDatabase } from "./bot-state-support.js";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withBotProviderInstance } from "../../../packages/gateway/src/bots/provider-instance.js";
@@ -11,6 +23,7 @@ const principal = { userId: owner.ownerId, source: "jwt" as const };
 const BOT_CHAT = "chat_bot_direct";
 
 let repository: ChatRepository;
+let destroyFixture: (() => Promise<void>) | undefined;
 let orchestrator: CanonicalChatOrchestrator;
 let finishBlockedRun: (() => void) | undefined;
 let blockedRun: Promise<void> | undefined;
@@ -18,7 +31,15 @@ let getCatalog: ReturnType<typeof vi.fn>;
 let started: Array<{ selection: unknown; permissionMode: string }>;
 
 beforeEach(async () => {
-  repository = new ChatRepository((await KyselyPGlite.create()).dialect);
+  if (process.env.MATRIX_TEST_POSTGRES_URL) {
+    const fixture = await createRealBotStateDatabase();
+    repository = new ChatRepository(fixture.db as unknown as Kysely<import("../../../packages/gateway/src/chat/database.js").ChatDatabase>);
+    destroyFixture = fixture.destroy;
+  } else {
+    repository = new ChatRepository((await KyselyPGlite.create()).dialect);
+    await bootstrapBotDatabase(repository.kysely as unknown as Kysely<OwnerBotDatabase>);
+    destroyFixture = () => repository.kysely.destroy();
+  }
   await repository.bootstrap();
   started = [];
   finishBlockedRun = undefined;
@@ -51,7 +72,8 @@ afterEach(async () => {
   finishBlockedRun?.();
   await orchestrator.drain();
   await orchestrator.close();
-  await repository.kysely.destroy();
+  await destroyFixture?.();
+  destroyFixture = undefined;
 });
 
 describe("turns in a bot's chat", () => {
@@ -106,6 +128,65 @@ describe("turns in a bot's chat", () => {
     });
     expect(queued.queuedTurn.selection).toEqual({ instanceId: "matrix_bot_default", model: "auto" });
     expect(getCatalog).not.toHaveBeenCalled();
+  });
+
+  it("recovers a recorded nonblocking answer after a full canonical queue, including restart and duplicate admission", async () => {
+    blockedRun = new Promise<void>((resolve) => { finishBlockedRun = resolve; });
+    const selection = { instanceId: "matrix_bot_default", model: "auto" };
+    await orchestrator.admitTurn(principal, owner, BOT_CHAT, {
+      clientRequestId: "req_capacity_active", baseRevision: 0, parts: [{ type: "text", text: "first" }],
+      selection, interactionMode: "default", permissionMode: "default",
+    });
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    const queuedIds: string[] = [];
+    for (let index = 0; index < 20; index++) {
+      const current = await repository.get(owner, BOT_CHAT);
+      const queued = await orchestrator.enqueueQueuedTurn(principal, owner, BOT_CHAT, {
+        clientRequestId: `req_capacity_${index}`, baseRevision: current!.chat.revision,
+        parts: [{ type: "text", text: `Queued ${index}` }], selection, interactionMode: "default", permissionMode: "default",
+      });
+      queuedIds.push(queued.queuedTurn.id);
+    }
+    let clock = new Date("2026-10-02T12:00:00Z");
+    const state = repository.kysely as unknown as Kysely<OwnerBotDatabase>;
+    const task = await createBotTasksRepository(state).create({ ownerId: owner.ownerId, botId: "bot_0123456789abcdef01234567", chatId: BOT_CHAT, now: clock.toISOString() });
+    const { interaction } = await createBotInteractionsRepository(state).create({
+      ownerId: owner.ownerId, botId: task.botId, chatId: BOT_CHAT, taskId: task.taskId, responderActorId: owner.ownerId,
+      kind: "question", blocking: false, payload: { kind: "question", questions: [{ questionId: "q1", header: "Tone", question: "Which tone?", secret: false, allowOther: true }] },
+      now: clock.toISOString(), expiresAt: new Date(clock.getTime() + 3600_000).toISOString(),
+    });
+    const transact = createBotStateTransactions(repository);
+    const interactions = createBotInteractionService({ transact, now: () => clock });
+    const body = { kind: "question", baseRevision: 1, answer: "Casual" };
+    const admit = createBotContinuationAdmitter({ repository, orchestrator });
+    const app = new Hono();
+    app.route("/", createBotRoutes({ interactions, admitContinuation: admit, getPrincipal: () => principal }));
+    const answer = () => app.request(`/api/chats/${BOT_CHAT}/interactions/${interaction.interactionId}/resolve`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect((await answer()).status).toBe(503);
+    const recovery = () => createBotConnections({ transact, client: { inventory: vi.fn() } as never,
+      tools: { declaredEffects: vi.fn() }, now: () => clock });
+    expect(await recovery().ownersWithPending()).toContain(owner.ownerId);
+    await runConnectionReconciliationPass(recovery(), admit);
+    const stored = await createBotInteractionsRepository(state).get({ ownerId: owner.ownerId, interactionId: interaction.interactionId });
+    expect(stored?.resolution?.continuationAdmittedAt).toBeUndefined();
+    expect(await recovery().pendingContinuations(owner.ownerId)).toEqual([]); // bounded retry delay
+    const current = await repository.get(owner, BOT_CHAT);
+    await repository.cancelQueuedTurn(owner, { chatId: BOT_CHAT, queuedTurnId: queuedIds[0]!, clientRequestId: "req_capacity_cancel",
+      baseRevision: current!.chat.revision, cancelledAt: clock.toISOString() });
+    clock = new Date(clock.getTime() + 60_001);
+    // Reconstruct service objects as after a process restart; no client retry is needed.
+    const pending = (await recovery().pendingContinuations(owner.ownerId))[0]!;
+    await admit(principal, pending); // admission succeeds, process dies before acknowledgment
+    await runConnectionReconciliationPass(recovery(), admit);
+    const rows = await repository.kysely.selectFrom("chat_queued_turns").selectAll()
+      .where("client_request_id", "=", `req_answer_${interaction.interactionId}`).execute();
+    expect(rows).toHaveLength(1);
+    expect(await recovery().pendingContinuations(owner.ownerId)).toEqual([]);
+    expect((await answer()).status).toBe(200); // identical answer still idempotent after delivery acknowledgment
+    expect(await repository.kysely.selectFrom("chat_queued_turns").selectAll()
+      .where("client_request_id", "=", `req_answer_${interaction.interactionId}`).execute()).toHaveLength(1);
   });
 
   it("preserve ordinary catalog failures and reject forged bot routing", async () => {
