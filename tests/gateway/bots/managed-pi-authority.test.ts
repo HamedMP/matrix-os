@@ -64,7 +64,7 @@ it("binds read-only authority and rejects workspace inode changes before any art
   const binding = await admission.admit(input);
   expect(binding).toMatchObject({ kind: "managed_chat", capabilities: ["artifact.read"], requestClass: "interactive" });
   expect(binding).not.toHaveProperty("botId"); expect(binding).not.toHaveProperty("taskId");
-  expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({ sandbox: expect.objectContaining({ network: "broker_only", worktree: expect.objectContaining({ mode: "ro" }) }) }));
+  expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({ profileId: "scope-runtime-managed-pi-v1", sandbox: expect.objectContaining({ network: "broker_only", worktree: expect.objectContaining({ mode: "ro" }) }) }));
   const root = await managedPiWorkspace(home, OWNER, input.chatId);
   expect(await admission.workspace(binding)).toBe(root.path);
   await rename(root.path, `${root.path}.old`); await mkdir(root.path);

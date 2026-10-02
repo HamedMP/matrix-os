@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { CanonicalChatExecutionRootRefSchema, CanonicalChatModelSelectionSchema, type BotToolCapability } from "@matrix-os/contracts";
-import { SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION, SCOPE_RUNTIME_BOT_PROFILE_ID } from "@matrix-os/scope-runtime/bot-profile";
+import { SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION, SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID } from "@matrix-os/scope-runtime/bot-profile";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { BotAdmissionError } from "../bots/admission.js";
 import { BotRuntimeRegistry, type ManagedPiRuntimeBinding } from "../bots/runtime-registry.js";
@@ -59,7 +59,7 @@ export function createManagedPiAdmission(deps: {
       const capabilities: BotToolCapability[] = row.permission_mode === "full_access" ? ["artifact.read", "artifact.write"] : row.permission_mode === "supervised" ? ["artifact.read"] : [];
       if (!capabilities.length) throw new BotAdmissionError("not_found");
       const scopeHandle = `scope_${createHash("sha256").update(`managed-chat:${input.ownerId}:${input.chatId}`).digest("hex").slice(0, 32)}`;
-      const runtime = await deps.host.client.createRuntime({ scopeHandle, profileId: SCOPE_RUNTIME_BOT_PROFILE_ID, workload: "bot_agent",
+      const runtime = await deps.host.client.createRuntime({ scopeHandle, profileId: SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID, workload: "bot_agent",
         adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID, harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION,
         sandbox: { version: 1, scopeHandle, actorId: input.ownerId, worktree: { hostPath: root.path, mode: row.permission_mode === "full_access" ? "rw" : "ro", fingerprint: root.fingerprint }, network: "broker_only" } });
       const binding: ManagedPiRuntimeBinding = { ...runtime, kind: "managed_chat", ownerId: input.ownerId, chatId: input.chatId,

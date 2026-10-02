@@ -4,15 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ScopeRuntimeCapabilityProfile, ScopeRuntimeResponse } from "../../packages/scope-runtime/src/protocol.js";
-import { SCOPE_RUNTIME_BOT_PROFILE, SCOPE_RUNTIME_PROFILE } from "../../packages/scope-runtime/src/supervisor.js";
+import { SCOPE_RUNTIME_BOT_PROFILE, SCOPE_RUNTIME_MANAGED_PI_PROFILE, SCOPE_RUNTIME_PROFILE } from "../../packages/scope-runtime/src/supervisor.js";
 import { createScopeRuntimeClient } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
 import { SHARED_AI_PROFILE_CATALOG } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
 import { BOT_SCOPE_RUNTIME_PROFILE_CATALOG } from "../../packages/gateway/src/bots/scope-runtime-profile.js";
+import { MANAGED_PI_SCOPE_RUNTIME_PROFILE_CATALOG } from "../../packages/gateway/src/chat/managed-pi-profile.js";
 
 const REQUEST_ID = "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1";
-const catalog = { ...SHARED_AI_PROFILE_CATALOG, ...BOT_SCOPE_RUNTIME_PROFILE_CATALOG };
+const catalog = { ...SHARED_AI_PROFILE_CATALOG, ...BOT_SCOPE_RUNTIME_PROFILE_CATALOG, ...MANAGED_PI_SCOPE_RUNTIME_PROFILE_CATALOG };
 const chat = { ...SCOPE_RUNTIME_PROFILE, executionGeneration: "5" } as ScopeRuntimeCapabilityProfile;
 const bot = { ...SCOPE_RUNTIME_BOT_PROFILE, executionGeneration: "5" } as ScopeRuntimeCapabilityProfile;
+const managed = { ...SCOPE_RUNTIME_MANAGED_PI_PROFILE, executionGeneration: "5" } as ScopeRuntimeCapabilityProfile;
 const cleanup: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -42,6 +44,18 @@ async function supervisor(response: () => Omit<Extract<ScopeRuntimeResponse, { t
 const base = { version: 1 as const, type: "capability.result" as const, ok: true as const, supervisorVersion: "1.0.0", profile: chat };
 
 describe("scope runtime client profiles", () => {
+  it("pins managed Chat independently from recipe Bot and rejects old/digest-drifted supervisors", async () => {
+    const client = await supervisor(() => ({ ...base, profiles: [chat, bot, managed] }));
+    await client.refreshCapability();
+    expect(client.profileCapability(managed.profileId)).toMatchObject({ available: true, profileId: managed.profileId });
+    const drifted = await supervisor(() => ({ ...base, profiles: [chat, bot, { ...managed, profileDigest: bot.profileDigest }] }));
+    await drifted.refreshCapability();
+    expect(drifted.profileCapability(managed.profileId)).toEqual({ available: false, reason: "unsupported_profile" });
+    expect(drifted.profileCapability(bot.profileId)).toMatchObject({ available: true });
+    const old = await supervisor(() => ({ ...base, profiles: [chat, bot] }));
+    await old.refreshCapability();
+    expect(old.profileCapability(managed.profileId)).toEqual({ available: false, reason: "unsupported_profile" });
+  });
   it("accepts each advertised profile with its exact pinned digest", async () => {
     const client = await supervisor(() => ({ ...base, profiles: [chat, bot] }));
     await expect(client.refreshCapability()).resolves.toMatchObject({ available: true, profileId: "scope-runtime-chat-v1" });

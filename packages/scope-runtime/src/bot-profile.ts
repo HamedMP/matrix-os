@@ -61,6 +61,24 @@ export const SCOPE_RUNTIME_BOT_PROFILE_DIGEST = createHash("sha256")
   ].join("\n") + "\n")
   .digest("hex");
 
+/** Ordinary owner-authorized Chat shares Pi's worker, never recipe Bot mount authority. */
+export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID = "scope-runtime-managed-pi-v1";
+export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION = 1;
+export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST = createHash("sha256")
+  .update(`${SCOPE_RUNTIME_BOT_PROFILE_DIGEST}\nProfile=${SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID}\nRoots=agent-workspaces,projects,worktrees\n`)
+  .digest("hex");
+
+/** Fixed Pi profile identity used by launch and reconciliation; unknown profiles never qualify. */
+export function piProfileIdentity(profileId: string | undefined) {
+  if (profileId === SCOPE_RUNTIME_BOT_PROFILE_ID) return {
+    profileId, profileVersion: SCOPE_RUNTIME_BOT_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
+  };
+  if (profileId === SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID) return {
+    profileId, profileVersion: SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST,
+  };
+  return undefined;
+}
+
 export interface ScopeRuntimeBotProfilePaths {
   scopeRoot: string;
   botRuntimeDirectory: string;

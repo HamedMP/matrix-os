@@ -22,7 +22,8 @@ const manifest: ScopeRuntimeSandboxManifest = {
 function launcher(overrides: Partial<ScopeRuntimeLauncher> = {}): ScopeRuntimeLauncher {
   return {
     supportedAdapters: vi.fn(async (profileId?: string) =>
-      profileId === SCOPE_RUNTIME_BOT_PROFILE.profileId ? [BOT_ADAPTER] : SCOPE_RUNTIME_PROFILE.adapters),
+      profileId === SCOPE_RUNTIME_BOT_PROFILE.profileId ? [BOT_ADAPTER]
+        : profileId === SCOPE_RUNTIME_PROFILE.profileId ? SCOPE_RUNTIME_PROFILE.adapters : []),
     list: vi.fn(async () => []),
     start: vi.fn(async () => undefined),
     runChat: vi.fn(async () => ({ text: "chat" })),
@@ -74,7 +75,7 @@ describe("scope runtime supervisor bot profile", () => {
 
     const chatOnly = await createScopeRuntimeController({
       launcher: launcher({ supportedAdapters: vi.fn(async (profileId?: string) =>
-        profileId === SCOPE_RUNTIME_BOT_PROFILE.profileId ? [] : SCOPE_RUNTIME_PROFILE.adapters) }),
+        profileId === SCOPE_RUNTIME_PROFILE.profileId ? SCOPE_RUNTIME_PROFILE.adapters : []) }),
       executionGeneration: "4",
     });
     const response = await chatOnly.handle({ version: 1, type: "capability.get", requestId: REQUEST_ID });

@@ -94,6 +94,12 @@ export function botSandboxRootsForHome(homePath: string): string[] {
   return [join(home, "bots")];
 }
 
+/** Server-owned Chat workspaces and separately owner-authorized project/worktree roots. */
+export function managedPiSandboxRootsForHome(homePath: string): string[] {
+  const home = assertTrustedHostPath(homePath);
+  return [join(home, "agent-workspaces"), ...sandboxRootsForHome(home)];
+}
+
 export interface SandboxMountSources {
   /** Canonical (realpath) host directory that is bound at `SANDBOX_WORKSPACE_MOUNT`. */
   worktreeHostPath: string;
@@ -191,6 +197,8 @@ export async function validateSandboxMountSources(
   if (roots.length === 0) throw new Error("Sandbox worktree roots are not configured");
   const canonicalRoots = (await Promise.all(roots.map(async (root) => {
     try {
+      // Owner-writable parent roots must not widen the fixed allowlist through a symlink.
+      await assertNoSymlinkComponents(root);
       return await realpath(root);
     } catch (error: unknown) {
       if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") return undefined;

@@ -13,8 +13,13 @@ describe("dormant scope runtime host bundle", () => {
     expect(unit).toContain("StateDirectory=matrix-scope-runtime");
     expect(unit).toContain("PrivateNetwork=yes");
     expect(unit).toContain("ProtectHome=tmpfs");
-    // Only the bot workspace root is visible, read-only, for mount validation.
-    expect(unit.match(/^(?:Bind|BindReadOnly|ReadWrite)Paths=.*$/gm)).toEqual(["BindReadOnlyPaths=-/home/matrix/home/bots"]);
+    // Only fixed workload roots are visible to the supervisor for mount validation.
+    expect(unit.match(/^(?:Bind|BindReadOnly|ReadWrite)Paths=.*$/gm)).toEqual([
+      "BindReadOnlyPaths=-/home/matrix/home/bots",
+      "BindReadOnlyPaths=-/home/matrix/home/agent-workspaces",
+      "BindReadOnlyPaths=-/home/matrix/home/projects",
+      "BindReadOnlyPaths=-/home/matrix/home/worktrees",
+    ]);
     expect(unit).toContain("ProtectSystem=strict");
     expect(unit).toContain("NoNewPrivileges=yes");
     expect(unit).toContain("CapabilityBoundingSet=");
@@ -58,7 +63,15 @@ describe("dormant scope runtime host bundle", () => {
     expect(main).toContain('botRuntimeDirectory: "/opt/matrix/app/packages/bot-runtime/dist"');
     expect(botProfile).toContain("BindReadOnlyPaths=${BOT_RUNTIME_DIRECTORY_TOKEN}:${BOT_RUNTIME_MOUNT}");
     expect(cloudInit).toMatch(/install -d -o matrix -g matrix -m 0750 [^\n]*\/home\/matrix\/home\/bots/);
-    expect(updater.indexOf("sudo install -d -o matrix -g matrix -m 0750 /home/matrix/home/bots"))
+    expect(updater).toContain('for workload_root in /home/matrix/home/bots /home/matrix/home/agent-workspaces /home/matrix/home/projects /home/matrix/home/worktrees; do');
+    expect(updater).toContain('if [ ! -d "$workload_root" ]; then');
+    expect(updater.indexOf('sudo install -d -o matrix -g matrix -m 0750 "$workload_root"'))
       .toBeLessThan(updater.indexOf("sudo systemctl start matrix-scope-runtime.service"));
+    for (const directory of ["agent-workspaces", "projects", "worktrees"]) {
+      expect(cloudInit).toMatch(new RegExp(`install -d -o matrix -g matrix -m 0750 [^\\n]*/home/matrix/home/${directory}`));
+      const prepared = updater.indexOf(`/home/matrix/home/${directory}`, updater.indexOf('if [ -f "$extract_dir/systemd/matrix-scope-runtime.service" ]'));
+      expect(prepared).toBeGreaterThan(-1);
+      expect(prepared).toBeLessThan(updater.indexOf("sudo systemctl start matrix-scope-runtime.service"));
+    }
   });
 });

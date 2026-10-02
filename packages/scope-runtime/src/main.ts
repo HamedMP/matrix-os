@@ -2,7 +2,7 @@ import { describeScopeRuntimeFailure } from "./failure.js";
 import { createScopeRuntimeServer } from "./server.js";
 import { createScopeRuntimeController } from "./supervisor.js";
 import { createSystemdScopeRuntimeLauncher, nextExecutionGeneration } from "./systemd-launcher.js";
-import { botSandboxRootsForHome, sandboxRootsForHome } from "./sandbox.js";
+import { botSandboxRootsForHome, managedPiSandboxRootsForHome, sandboxRootsForHome } from "./sandbox.js";
 
 const RUNTIME_DIRECTORY = "/run/matrix-scope-runtime";
 const STATE_DIRECTORY = "/var/lib/matrix-scope-runtime";
@@ -18,6 +18,7 @@ async function main(): Promise<void> {
     sandboxRoots: sandboxRootsForHome(home),
     botRuntimeDirectory: "/opt/matrix/app/packages/bot-runtime/dist",
     botSandboxRoots: botSandboxRootsForHome(home),
+    managedPiSandboxRoots: managedPiSandboxRootsForHome(home),
   });
   const executionGeneration = await nextExecutionGeneration(`${STATE_DIRECTORY}/generation`);
   const controller = await createScopeRuntimeController({ launcher, executionGeneration });

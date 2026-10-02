@@ -1538,10 +1538,13 @@ apply_update() {
       fi
     fi
     if [ -f "$extract_dir/systemd/matrix-scope-runtime.service" ]; then
-      # The supervisor binds the bot workspace root read-only at start, so it must exist first.
-      if [ ! -d /home/matrix/home/bots ]; then
-        sudo install -d -o matrix -g matrix -m 0750 /home/matrix/home/bots
-      fi
+      # Prepare each fixed root before the supervisor's read-only namespace is created.
+      # Existing roots and owner data retain their modes and contents.
+      for workload_root in /home/matrix/home/bots /home/matrix/home/agent-workspaces /home/matrix/home/projects /home/matrix/home/worktrees; do
+        if [ ! -d "$workload_root" ]; then
+          sudo install -d -o matrix -g matrix -m 0750 "$workload_root"
+        fi
+      done
       sudo systemctl enable matrix-scope-runtime.service
       sudo systemctl start matrix-scope-runtime.service
       log "Collaboration scope runtime service enabled"

@@ -26,9 +26,39 @@ Managed sessions and checkpoints persist in owner-controlled Postgres, independe
 of recipe bot sessions. Keys include owner and canonical Chat identity. Canonical history
 feeds new turns; provider-private state never cross-resumes a different driver.
 Private chat workspaces bind an owner hash and Chat ID plus inode identity; associated
-project roots use existing owner-authorized resolution. Artifacts remain root-scoped.
+project roots use existing owner-authorized resolution. Managed Pi supports standard
+projects and worktrees beneath the fixed `projects/` and `worktrees/` home directories;
+arbitrary folder projects outside those roots remain unavailable for this route.
+Artifacts remain root-scoped.
 Reading is supported; full-access writes create files exclusively. Overwriting existing
 files and managed Chat image attachments are explicitly unavailable in this increment.
+
+## Managed Pi sandbox contract
+
+1. **Scope / trigger:** ordinary Chat workspaces cannot use the recipe Bot profile,
+   whose mount authority is restricted to `bots/`.
+2. **Signatures:** `managedPiSandboxRootsForHome(homePath)` returns fixed
+   `agent-workspaces/`, `projects/`, and `worktrees/` roots. Gateway admission and
+   supervisor discovery pin `scope-runtime-managed-pi-v1`, version 1, digest
+   `158a42f750eec1cca6aebd90cbe5b5955eea57fca1c06d08b72b084b94e32ef4`.
+3. **Contracts:** managed Chat reuses the pinned Pi worker and `bot_agent` transport,
+   with independently selected mount authority. Recipe Bots retain their original
+   profile/digest and `bots/` allowlist. The supervisor keeps `ProtectHome=tmpfs`
+   and exposes only the four fixed roots read-only for validation; a child receives
+   its one owner-authorized workspace. Provisioning prepares missing roots with
+   mode 0750 without replacing existing owner contents or permissions.
+4. **Validation / errors:** missing managed roots or worker sources disables only
+   managed capability; unknown profiles fail closed. Out-of-root, symlinked roots,
+   wrong ownership/inode, hard links and world-writable mounts remain rejected.
+5. **Good / base / bad cases:** private Chat and standard project roots launch;
+   existing recipe Bots remain isolated; an arbitrary external folder project or
+   a root symlink into protected data cannot launch.
+6. **Required tests:** assert capability discovery and distinct profile selection,
+   real mount-source admission/rejection, child systemd arguments, fresh-root
+   preparation and existing-data preservation. Preview acceptance must verify the
+   installed service and execute paid text/tool/resume through Electron Desktop.
+7. **Wrong / correct:** do not broaden `botSandboxRoots` to the whole home or remove
+   `ProtectHome`. Select the managed profile and its fixed root allowlist instead.
 
 ## Auth matrix
 

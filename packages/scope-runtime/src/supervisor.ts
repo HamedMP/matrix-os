@@ -17,6 +17,10 @@ import {
   SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
   SCOPE_RUNTIME_BOT_PROFILE_ID,
   SCOPE_RUNTIME_BOT_PROFILE_VERSION,
+  SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID,
+  SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION,
+  SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST,
+  piProfileIdentity,
 } from "./bot-profile.js";
 import { SCOPE_RUNTIME_SANDBOX_CAPABILITY } from "./sandbox.js";
 import {
@@ -78,7 +82,15 @@ export const SCOPE_RUNTIME_BOT_PROFILE: Omit<ScopeRuntimeCapabilityProfile, "exe
   },
 };
 
-export const SCOPE_RUNTIME_PROFILES = [SCOPE_RUNTIME_PROFILE, SCOPE_RUNTIME_BOT_PROFILE] as const;
+/** Same private Pi worker protocol; separate trusted mount authority for ordinary Chat. */
+export const SCOPE_RUNTIME_MANAGED_PI_PROFILE: Omit<ScopeRuntimeCapabilityProfile, "executionGeneration"> = {
+  ...SCOPE_RUNTIME_BOT_PROFILE,
+  profileId: SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID,
+  profileVersion: SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION,
+  profileDigest: SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST,
+};
+
+export const SCOPE_RUNTIME_PROFILES = [SCOPE_RUNTIME_PROFILE, SCOPE_RUNTIME_BOT_PROFILE, SCOPE_RUNTIME_MANAGED_PI_PROFILE] as const;
 
 export interface ScopeRuntimeLaunchRequest {
   runtimeHandle: string;
@@ -370,7 +382,7 @@ export async function createScopeRuntimeController(options: {
     request: Extract<ScopeRuntimeRequest, { type: "runtime.bot" }>,
   ): Promise<ScopeRuntimeResponse> {
     const runtime = runtimes.get(request.runtimeHandle);
-    if (runtime === undefined || runtime.profileId !== SCOPE_RUNTIME_BOT_PROFILE_ID || !options.launcher.runBot) {
+    if (runtime === undefined || !piProfileIdentity(runtime.profileId) || !options.launcher.runBot) {
       return botFailure(request.requestId, "runtime_not_found");
     }
     if (runtime.executionGeneration !== request.executionGeneration) {

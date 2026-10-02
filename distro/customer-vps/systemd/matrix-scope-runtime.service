@@ -29,10 +29,13 @@ UMask=0007
 PrivateNetwork=yes
 PrivateIPC=yes
 PrivateDevices=yes
-# Home stays hidden except the bot workspace root, which the supervisor reads
-# (never writes) to validate a bot_agent mount before systemd binds it.
+# Home stays hidden except fixed workload roots. The supervisor only reads
+# these for validation; each workload binds its one authorized workspace.
 ProtectHome=tmpfs
 BindReadOnlyPaths=-/home/matrix/home/bots
+BindReadOnlyPaths=-/home/matrix/home/agent-workspaces
+BindReadOnlyPaths=-/home/matrix/home/projects
+BindReadOnlyPaths=-/home/matrix/home/worktrees
 ProtectSystem=strict
 ProtectProc=invisible
 ProcSubset=pid

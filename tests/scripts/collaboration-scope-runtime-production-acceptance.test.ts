@@ -9,11 +9,21 @@ import {
   SCOPE_RUNTIME_BOT_HARNESS_VERSION,
   SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
   SCOPE_RUNTIME_BOT_PROFILE_ID,
+  SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID,
+  SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST,
 } from "../../packages/scope-runtime/src/bot-profile.js";
 
 const acceptancePath = "scripts/spikes/collaboration/production-supervisor-acceptance.mjs";
 
 describe("collaboration production scope-runtime acceptance", () => {
+  it("recognizes the separately pinned managed Pi profile without assuming Bot is present", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+    expect(source).toContain(`const EXPECTED_MANAGED_PI_PROFILE_ID = "${SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID}"`);
+    expect(source).toContain(`const EXPECTED_MANAGED_PI_PROFILE_DIGEST = "${SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST}"`);
+    expect(source).toContain("response.profiles.length <= 3");
+    expect(source).toContain("response.profiles.find((entry) => entry.profileId === EXPECTED_BOT_PROFILE_ID)");
+    expect(source).toContain("response.profiles.find((entry) => entry.profileId === EXPECTED_MANAGED_PI_PROFILE_ID)");
+  });
   it("reserves cleanup margin beyond the bounded preview and remote-command budgets", async () => {
     const workflow = await readFile(
       ".github/workflows/collaboration-scope-runtime-acceptance.yml",

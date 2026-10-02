@@ -29,9 +29,8 @@ import {
   BOT_RUNTIME_ENTRY,
   SCOPE_RUNTIME_BOT_ADAPTER_ID,
   SCOPE_RUNTIME_BOT_HARNESS_VERSION,
-  SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
   SCOPE_RUNTIME_BOT_PROFILE_ID,
-  SCOPE_RUNTIME_BOT_PROFILE_VERSION,
+  piProfileIdentity,
   isBotAdapter,
   materializeBotSystemdProperties,
   type ScopeRuntimeBotProfilePaths,
@@ -94,12 +93,14 @@ interface LauncherPaths {
   botRuntimeDirectory?: string;
   /** Bot workspaces a `bot_agent` workload may bind; shared-chat roots never apply to bots. */
   botSandboxRoots?: readonly string[];
+  /** Ordinary managed Chat roots; recipe Bot launches never use this allowlist. */
+  managedPiSandboxRoots?: readonly string[];
 }
 
 type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory">> & { botRuntimeDirectory?: string };
 
-function isBotLaunch(input: { profileId?: string }): boolean {
-  return input.profileId === SCOPE_RUNTIME_BOT_PROFILE_ID;
+function isPiLaunch(input: { profileId?: string }): boolean {
+  return piProfileIdentity(input.profileId) !== undefined;
 }
 
 function unitName(runtimeHandle: string): string {
@@ -162,8 +163,8 @@ export function buildFixedSystemdRunArgs(
 }
 
 /**
- * `systemd-run` arguments for a `bot_agent` workload. The bot profile always
- * carries sandbox properties: a bot only runs inside its own workspace root.
+ * Shared pinned Pi worker arguments. Both trusted profiles require a sandbox;
+ * the launcher selects their distinct root allowlists before building these.
  */
 export function buildBotSystemdRunArgs(
   input: ScopeRuntimeLaunchRequest,
@@ -172,7 +173,7 @@ export function buildBotSystemdRunArgs(
 ): string[] {
   const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
   const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
-  if (!isBotLaunch(input) || input.workload !== "bot_agent" || !isBotAdapter(input.adapterId, input.harnessVersion)) {
+  if (!isPiLaunch(input) || input.workload !== "bot_agent" || !isBotAdapter(input.adapterId, input.harnessVersion)) {
     throw new Error("Unsupported scope runtime adapter");
   }
   if (options.sandboxProperties.length === 0) throw new Error("Bot workloads require a sandbox");
@@ -245,7 +246,7 @@ async function prepareRuntimeRoot(
   const commandDirectory = join(runtimeRoot, "command");
   await mkdir(commandDirectory, { mode: 0o733 });
   await chmod(commandDirectory, 0o733);
-  const bot = isBotLaunch(request);
+  const bot = isPiLaunch(request);
   const mountPoints = bot
     ? ["opt/matrix/scope-sdk/bot-runtime"]
     : ["opt/matrix/scope-sdk/native", "opt/matrix/scope-sdk/sdk", "opt/matrix/scope-runtime"];
@@ -281,9 +282,9 @@ async function prepareRuntimeRoot(
   const provenance = `${JSON.stringify({
     version: 1,
     runtimeHandle,
-    profileId: bot ? SCOPE_RUNTIME_BOT_PROFILE_ID : SCOPE_RUNTIME_PROFILE_ID,
-    profileVersion: bot ? SCOPE_RUNTIME_BOT_PROFILE_VERSION : SCOPE_RUNTIME_PROFILE_VERSION,
-    profileDigest: bot ? SCOPE_RUNTIME_BOT_PROFILE_DIGEST : SCOPE_RUNTIME_PROFILE_DIGEST,
+    ...(piProfileIdentity(request.profileId) ?? {
+      profileId: SCOPE_RUNTIME_PROFILE_ID, profileVersion: SCOPE_RUNTIME_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+    }),
     workload: request.workload,
     adapterId: request.adapterId,
     harnessVersion: request.harnessVersion,
@@ -381,13 +382,14 @@ async function readRuntimeProvenance(
     const parsed: unknown = JSON.parse(await handle.readFile("utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
     const value = parsed as Record<string, unknown>;
-    const bot = value.profileId === SCOPE_RUNTIME_BOT_PROFILE_ID;
+    const pi = typeof value.profileId === "string" ? piProfileIdentity(value.profileId) : undefined;
+    const bot = pi !== undefined;
     if (Object.keys(value).length !== 9
       || value.version !== 1
       || value.runtimeHandle !== runtimeHandle
-      || value.profileId !== (bot ? SCOPE_RUNTIME_BOT_PROFILE_ID : SCOPE_RUNTIME_PROFILE_ID)
-      || value.profileVersion !== (bot ? SCOPE_RUNTIME_BOT_PROFILE_VERSION : SCOPE_RUNTIME_PROFILE_VERSION)
-      || value.profileDigest !== (bot ? SCOPE_RUNTIME_BOT_PROFILE_DIGEST : SCOPE_RUNTIME_PROFILE_DIGEST)
+      || value.profileId !== (pi?.profileId ?? SCOPE_RUNTIME_PROFILE_ID)
+      || value.profileVersion !== (pi?.profileVersion ?? SCOPE_RUNTIME_PROFILE_VERSION)
+      || value.profileDigest !== (pi?.profileDigest ?? SCOPE_RUNTIME_PROFILE_DIGEST)
       || value.workload !== (bot ? "bot_agent" : "chat_ai")
       || typeof value.adapterId !== "string"
       || typeof value.harnessVersion !== "string"
@@ -397,7 +399,7 @@ async function readRuntimeProvenance(
     return {
       runtimeHandle,
       executionGeneration: value.executionGeneration,
-      ...(bot ? { profileId: SCOPE_RUNTIME_BOT_PROFILE_ID } : {}),
+      ...(pi ? { profileId: pi.profileId } : {}),
     };
   } catch (error: unknown) {
     if (error instanceof SyntaxError) return undefined;
@@ -630,6 +632,7 @@ export function createSystemdScopeRuntimeLauncher(
     codexBinary: assertTrustedAbsolutePath(input.codexBinary ?? "/opt/matrix/runtime/node/bin/codex"),
     sandboxRoots: (input.sandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
     botSandboxRoots: (input.botSandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
+    managedPiSandboxRoots: (input.managedPiSandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
     ...(input.botRuntimeDirectory ? { botRuntimeDirectory: assertTrustedAbsolutePath(input.botRuntimeDirectory) } : {}),
   };
   const runCommand = input.runCommand ?? defaultRunCommand;
@@ -641,8 +644,9 @@ export function createSystemdScopeRuntimeLauncher(
 
   return {
     async supportedAdapters(profileId?: string) {
-      if (profileId === SCOPE_RUNTIME_BOT_PROFILE_ID) {
-        if (!paths.botRuntimeDirectory || paths.botSandboxRoots.length === 0) return [];
+      if (piProfileIdentity(profileId)) {
+        const roots = profileId === SCOPE_RUNTIME_BOT_PROFILE_ID ? paths.botSandboxRoots : paths.managedPiSandboxRoots;
+        if (!paths.botRuntimeDirectory || roots.length === 0) return [];
         try {
           await validateBotRuntimeSources(paths);
           return [{
@@ -743,14 +747,16 @@ export function createSystemdScopeRuntimeLauncher(
       const { root, readinessFile, commandDirectory } = await prepareRuntimeRoot(paths.stateRoot, request);
       let submitted = false;
       try {
-        const bot = isBotLaunch(request);
+        const bot = isPiLaunch(request);
         const chatSources = bot ? undefined : await validateRuntimeSources(paths, request.adapterId, runCommand);
         const botSources = bot ? await validateBotRuntimeSources(paths) : undefined;
         const sandboxProperties = request.sandbox
           ? buildSandboxSystemdProperties(
               request.sandbox,
               await validateSandboxMountSources(request.sandbox, {
-                allowedRoots: bot ? paths.botSandboxRoots : paths.sandboxRoots,
+                allowedRoots: bot
+                  ? request.profileId === SCOPE_RUNTIME_BOT_PROFILE_ID ? paths.botSandboxRoots : paths.managedPiSandboxRoots
+                  : paths.sandboxRoots,
               }),
             )
           : undefined;
