@@ -237,6 +237,16 @@ describe("Aoede shell entry helpers", () => {
     expect(state.focusedWindowId).toBe(state.windows[1]?.id);
   });
 
+  it("closes only the matching installed app window and preserves app data", () => {
+    revealShellAppWindow("apps/notes/index.html", "Notes");
+    revealShellAppWindow("apps/timer/index.html", "Timer");
+    const notes = useWindowManager.getState().windows.find(window => window.path === "apps/notes/index.html")!;
+    openAoedeNavigation({ kind: "close_app", app: "notes", path: "apps/notes" });
+    expect(useWindowManager.getState().windows.some(window => window.id === notes.id)).toBe(false);
+    expect(useWindowManager.getState().windows.some(window => window.path === "apps/timer/index.html")).toBe(true);
+    expect(useWindowManager.getState().closedPaths.has("apps/notes/index.html")).toBe(true);
+  });
+
   it("rejects retired, uninstalled, cross-app and malformed navigation targets", () => {
     const launch = vi.fn();
     useCommandStore.setState({

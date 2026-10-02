@@ -94,6 +94,15 @@ describe("canonical operation client projection", () => {
     expect(view.result).toEqual({ navigation: { kind: "open_app", app: "notes", path: "apps/notes" } });
   });
 
+  it("projects bounded close-app intent without widening it to deletion", () => {
+    const view = toOperationView(operation({
+      toolId: "matrix_close_app",
+      arguments: { app: "notes" },
+      result: { app: "notes", navigation: { kind: "close_app", app: "notes", path: "apps/notes" } },
+    }));
+    expect(view.result).toEqual({ navigation: { kind: "close_app", app: "notes", path: "apps/notes" } });
+  });
+
   it("projects apply_app_files artifact, navigation and hashed file list without contents", () => {
     const view = toOperationView(operation({
       toolId: "matrix_apply_app_files",

@@ -3,12 +3,12 @@ import { createCanonicalActionTools } from "../../packages/gateway/src/chat/acti
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
 import { freezeCodexCanonicalInventory } from "../../packages/gateway/src/coding-agents/codex-canonical-tools.mjs";
 import type { CodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
-import { createNoteActionTool } from "../../packages/gateway/src/chat/note-action-tool.js";
+import { createNoteActionTools } from "../../packages/gateway/src/chat/note-action-tool.js";
 import type { AppDb } from "../../packages/gateway/src/app-db.js";
 
-it("transports app and create-note schemas through the adapter while denying data writes in safe-read mode", async () => {
+it("transports bounded app and Notes schemas while denying data writes in safe-read mode", async () => {
   const inventory = [...createCanonicalActionTools({ homeForOwner: async () => "/unused" }),
-    createNoteActionTool({ db: {} as AppDb, homeForOwner: async () => "/unused", notify: vi.fn() })];
+    ...createNoteActionTools({ db: {} as AppDb, homeForOwner: async () => "/unused", notify: vi.fn() })];
   const executionPolicy = { revision: "codex_canonical_v1", actionMode: "canonical_actions" as const,
     workspaceScope: "apps", tools: inventory.map(tool => tool.toolId), delegation: false };
   let qualified: ReturnType<typeof freezeCodexCanonicalInventory> | undefined;
@@ -26,8 +26,11 @@ it("transports app and create-note schemas through the adapter while denying dat
     selection: { instanceId: "codex_default", model: "gpt-test" }, permissionMode: "supervised", interactionMode: "default",
     runPolicy: { memoryMode: "ordinary", source: "voice", nativeCheckpointPolicy: "reusable", executionPolicy },
     signal: new AbortController().signal }).next()).rejects.toThrow("validated_without_launch");
-  expect(qualified?.tools).toHaveLength(6);
+  expect(qualified?.tools).toHaveLength(9);
   expect(qualified?.descriptors.find(tool => tool.toolId === "matrix_create_note")).toMatchObject({ effect: "data" });
+  expect(qualified?.descriptors.find(tool => tool.toolId === "matrix_list_notes")).toMatchObject({ effect: "read" });
+  expect(qualified?.descriptors.find(tool => tool.toolId === "matrix_edit_note")).toMatchObject({ effect: "data" });
+  expect(qualified?.descriptors.find(tool => tool.toolId === "matrix_close_app")).toMatchObject({ effect: "navigation" });
   expect(() => freezeCodexCanonicalInventory({ ...executionPolicy, actionMode: "safe_reads", tools: ["matrix_create_note"] }, qualified!.descriptors)).toThrow();
   const schema = qualified!.descriptors.find(tool => tool.toolId === "matrix_apply_app_files")!.inputSchema;
   expect(schema).toMatchObject({ properties: {

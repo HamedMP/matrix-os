@@ -52,7 +52,7 @@ import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider
 import { createCanonicalActionAuthority, type CanonicalActionAuthority } from "./chat/action-authority.js";
 import { ActionRepository } from "./chat/action-repository.js";
 import { createCanonicalActionTools, type CanonicalActionTool } from "./chat/action-tools.js";
-import { createNoteActionTool } from "./chat/note-action-tool.js";
+import { createNoteActionTools } from "./chat/note-action-tool.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
@@ -925,9 +925,9 @@ export async function createGateway(config: GatewayConfig) {
     };
     canonicalActionTools = [
       ...createCanonicalActionTools({ homeForOwner }),
-      ...(appDb ? [createNoteActionTool({ db: appDb, homeForOwner,
+      ...(appDb ? createNoteActionTools({ db: appDb, homeForOwner,
         notify: (ownerId) => broadcastToOwner(ownerId, { type: "data:change", app: "notes", key: "notes" }),
-      })] : []),
+      }) : []),
     ];
     aoedeBindings = new AoedeBindingRepository(chatRepository);
   }

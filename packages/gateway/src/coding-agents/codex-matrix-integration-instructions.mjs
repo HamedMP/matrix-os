@@ -27,9 +27,12 @@ export function createCanonicalVoiceInstructions({ executionPolicy, descriptors 
     const applyPhrase = granted.has("matrix_apply_app_files") ? "apply an authorized app-file change" : undefined;
     capabilities.push(`You can ${[readPhrase && `${readPhrase} app files`, applyPhrase].filter(Boolean).join(" and ")}.`);
   }
-  if (granted.has("matrix_create_note")) {
-    capabilities.push("You can create a new note, but cannot read, edit, or delete notes.");
+  if (["matrix_create_note", "matrix_list_notes", "matrix_edit_note"].some(id => granted.has(id))) {
+    capabilities.push(granted.has("matrix_create_note") && granted.has("matrix_list_notes") && granted.has("matrix_edit_note")
+      ? "You can create, list, and safely edit notes. List notes first when an exact note ID and current concurrency timestamp are not already known. You cannot delete notes."
+      : "You have only the explicitly listed bounded Notes actions; do not infer missing read, edit, create, or delete authority.");
   }
+  if (granted.has("matrix_close_app")) capabilities.push("You can close an installed app window without deleting the app or its data.");
   if (capabilities.length === 0) capabilities.push("No Matrix actions are available for this run.");
 
   return [

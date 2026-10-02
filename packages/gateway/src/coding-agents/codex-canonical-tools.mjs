@@ -11,7 +11,8 @@ export const CodexExecutionPolicySchema = z.object({
 // These descriptors are injected by the server's canonical authority, never a
 // Chat request or a model. Authority still validates normalized arguments again.
 const supported = Object.freeze({ matrix_list_apps: "read", matrix_inspect_app: "read",
-  matrix_search_workspace: "read", matrix_open_app: "navigation", matrix_apply_app_files: "files", matrix_create_note: "data" });
+  matrix_search_workspace: "read", matrix_open_app: "navigation", matrix_close_app: "navigation",
+  matrix_apply_app_files: "files", matrix_create_note: "data", matrix_list_notes: "read", matrix_edit_note: "data" });
 const DescriptorSchema = z.object({ toolId: z.enum(Object.keys(supported)), schemaRevision: ref,
   description: z.string().min(1).max(1600), effect: z.enum(["read", "navigation", "files", "data"]), inputSchema: z.unknown(),
 }).strict();

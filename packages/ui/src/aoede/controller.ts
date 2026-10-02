@@ -28,7 +28,7 @@ export interface AoedeOwnerOptions {
   onOpenHistory?: (chatId: string) => void;
   onOpenResult?: (path: string) => void;
   /** Validated canonical navigation into installed app windows (`apps/<slug>` only). */
-  onOpenNavigation?: (nav: { app: string; path: string }) => void;
+  onOpenNavigation?: (nav: { kind?: "open_app" | "close_app"; app: string; path: string }) => void;
   webSocketFactory?: VoiceSessionClientOptions["webSocketFactory"];
 }
 export interface AoedeProviderProps extends AoedeOwnerOptions { children: ReactNode }
@@ -150,14 +150,14 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     patch({ ...(!lost && mediaLive() ? {} : { status: "failed", microphoneActive: false }), error: requestError });
     if (lost) { source?.dispose(); source = null; void endMedia(false); }
   };
-  const dispatchNavigation = (nav: { app: string; path: string }) => {
+  const dispatchNavigation = (nav: { kind: "open_app" | "close_app"; app: string; path: string }) => {
     const app = typeof nav?.app === "string" ? nav.app : "";
     const path = typeof nav?.path === "string" ? nav.path : "";
     if (!SAFE_NAV_APP.test(app) || path.length === 0 || path.length > NAV_PATH_MAX) return;
     if (path.includes("..") || path.includes("//") || NAV_PATH_FORBIDDEN.test(path)) return;
     const prefix = `apps/${app}`;
     if (path !== prefix && path !== `${prefix}.html` && !path.startsWith(`${prefix}/`)) return;
-    options.onOpenNavigation?.({ app, path });
+    options.onOpenNavigation?.({ ...(nav.kind === "close_app" ? { kind: nav.kind } : {}), app, path });
   };
   const acceptDetail = (value: CanonicalChatDetailResponse) => {
     if (value.record.chat.id !== snapshot.binding?.chatId || (detail && value.record.chat.revision < detail.record.chat.revision)) return;
@@ -498,7 +498,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     openResult(path: string) { const safe = safeAoedeArtifactPath(path); if (safe && (snapshot.canonical.artifacts.some(item => item.path === safe) || snapshot.canonical.actionArtifacts.includes(safe))) options.onOpenResult?.(safe); },
     /** Canonical navigation into installed app windows; unsafe destinations never reach the host. */
     openNavigation(nav: { app: string; path: string }) {
-      dispatchNavigation(nav);
+      dispatchNavigation({ kind: "open_app", ...nav });
     },
     /** Provider catalog for Settings. Cached per controller; retry() refetches. */
     listProviders(): Promise<CanonicalProviderCatalog | null> {

@@ -11,6 +11,11 @@ const noteSchema = z.object({
   title: z.string().trim().min(1).max(160),
   content: z.string().trim().min(1).max(16_000),
 }).strict();
+const listNotesSchema = z.object({ app: z.literal("notes") }).strict();
+const editNoteSchema = noteSchema.extend({
+  id: z.uuid(),
+  expectedUpdatedAt: z.string().min(20).max(40).regex(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)$/),
+}).strict();
 
 type NoteArguments = z.infer<typeof noteSchema>;
 type NoteRow = {
@@ -20,6 +25,7 @@ type NoteRow = {
   content_json: unknown;
   pinned: boolean;
   tags: string;
+  updated_at?: string;
 };
 
 const navigation = Object.freeze({ kind: "open_app", app: "notes", path: "apps/notes" });
@@ -138,4 +144,100 @@ export function createNoteActionTool(options: {
         : { confirmed: false };
     },
   };
+}
+
+export function createNoteActionTools(options: {
+  db: AppDb;
+  homeForOwner: (owner: CanonicalOwnerScope) => Promise<string>;
+  notify: (ownerId: string) => void;
+}): readonly CanonicalActionTool[] {
+  const create = createNoteActionTool(options);
+  const normalize = <T>(schema: z.ZodType<T>) => (input: unknown): T => {
+    BoundedActionJsonSchema.parse(input);
+    const normalized = schema.parse(input);
+    BoundedActionJsonSchema.parse(normalized);
+    return normalized;
+  };
+  const list: CanonicalActionTool = {
+    toolId: "matrix_list_notes",
+    schemaRevision: "list_notes_v1",
+    description: "List up to 16 actual Notes records with exact IDs, current text, and concurrency timestamps before editing.",
+    inputSchema: z.toJSONSchema(listNotesSchema),
+    effect: "read",
+    approval: false,
+    reconciliation: false,
+    cancellation: "before_dispatch",
+    normalize: normalize(listNotesSchema),
+    async execute(input) {
+      await options.homeForOwner(input.owner);
+      input.signal.throwIfAborted();
+      listNotesSchema.parse(input.arguments);
+      await requireInstalledNotes(options.db);
+      const rows = await options.db.raw(
+        `SELECT id::text, title, LEFT(content, 2000) AS content, updated_at::text
+         FROM notes.notes ORDER BY updated_at DESC, id LIMIT 16`,
+      );
+      return { app: "notes", notes: rows.rows.map(row => ({
+        id: row.id, title: row.title, content: row.content, updatedAt: row.updated_at,
+      })) };
+    },
+  };
+  const editResult = (row: NoteRow) => ({
+    app: "notes", note: { id: row.id, title: row.title, updatedAt: row.updated_at }, navigation,
+  });
+  const edit: CanonicalActionTool = {
+    toolId: "matrix_edit_note",
+    schemaRevision: "edit_note_v1",
+    description: "Replace one exact existing Notes record using its listed ID and expectedUpdatedAt concurrency token, then open Notes.",
+    inputSchema: z.toJSONSchema(editNoteSchema),
+    effect: "data",
+    approval: false,
+    reconciliation: true,
+    cancellation: "before_dispatch",
+    normalize: normalize(editNoteSchema),
+    async execute(input) {
+      await options.homeForOwner(input.owner);
+      input.signal.throwIfAborted();
+      const args = editNoteSchema.parse(input.arguments);
+      await requireInstalledNotes(options.db);
+      const contentJson = tiptapDocument(args.content);
+      const updated = await options.db.raw(
+        `UPDATE notes.notes
+         SET title = $1, content = $2, content_json = $3::jsonb, updated_at = clock_timestamp()
+         WHERE id = $4 AND updated_at = $5::timestamptz
+         RETURNING id::text, title, content, content_json, pinned, tags, updated_at::text`,
+        [args.title, args.content, JSON.stringify(contentJson), args.id, args.expectedUpdatedAt],
+      );
+      let row = updated.rows[0] as NoteRow | undefined;
+      if (!row) {
+        const stored = await options.db.raw(
+          "SELECT id::text, title, content, content_json, pinned, tags, updated_at::text FROM notes.notes WHERE id = $1",
+          [args.id],
+        );
+        row = stored.rows[0] as NoteRow | undefined;
+        if (!row || row.title !== args.title || row.content !== args.content || !isDeepStrictEqual(row.content_json, contentJson)) {
+          throw new CanonicalActionError();
+        }
+      } else {
+        options.notify(input.owner.ownerId);
+      }
+      return editResult(row);
+    },
+    async reconcile(input) {
+      await options.homeForOwner(input.owner);
+      input.signal.throwIfAborted();
+      const args = editNoteSchema.parse(input.arguments);
+      await requireInstalledNotes(options.db);
+      const stored = await options.db.raw(
+        "SELECT id::text, title, content, content_json, pinned, tags, updated_at::text FROM notes.notes WHERE id = $1",
+        [args.id],
+      );
+      const row = stored.rows[0] as NoteRow | undefined;
+      return row && row.title === args.title && row.content === args.content
+        && isDeepStrictEqual(row.content_json, tiptapDocument(args.content))
+        ? { confirmed: true, result: editResult(row) }
+        : { confirmed: false };
+    },
+  };
+  return Object.freeze([create, list, edit]);
 }

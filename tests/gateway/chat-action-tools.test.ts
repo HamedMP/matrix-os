@@ -26,7 +26,7 @@ describe("bounded owner app tools", () => {
   it("rejects secret/traversal paths before access and exposes one inventory", async () => {
     home = await mkdtemp(join(tmpdir(), "matrix-action-"));
     const tools = createCanonicalActionTools({ homeForOwner: async () => home });
-    expect(tools.map((t) => t.toolId)).toEqual(["matrix_list_apps", "matrix_inspect_app", "matrix_search_workspace", "matrix_open_app", "matrix_apply_app_files"]);
+    expect(tools.map((t) => t.toolId)).toEqual(["matrix_list_apps", "matrix_inspect_app", "matrix_search_workspace", "matrix_open_app", "matrix_close_app", "matrix_apply_app_files"]);
     const apply = tools.find((t) => t.toolId === "matrix_apply_app_files")!;
     for (const path of ["../system/config.json", ".env", "src/auth.ts", "src/secrets.json", "node_modules/a.js"]) expect(() => apply.normalize({ app: "notes", files: [{ path, content: "bad", expectedSha256: null }] })).toThrow();
   });

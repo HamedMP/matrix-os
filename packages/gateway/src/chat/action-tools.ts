@@ -63,8 +63,8 @@ async function boundedText(path: string): Promise<string> {
 }
 export function createCanonicalActionTools(options: { homeForOwner(owner: CanonicalOwnerScope): Promise<string> }): readonly CanonicalActionTool[] {
   const searchSchema = z.object({ query: z.string().trim().min(1).max(160), app: z.string().regex(SAFE_SLUG) }).strict();
-  const schemas: Record<string, z.ZodType> = { matrix_list_apps: z.object({}).strict(), matrix_inspect_app: inspectSchema, matrix_search_workspace: searchSchema, matrix_open_app: appSchema, matrix_apply_app_files: batchSchema };
-  const descriptions: Record<string, string> = { matrix_list_apps: "List bounded owner Vite apps.", matrix_inspect_app: "Inspect an exact owner app without secret/config reads.", matrix_search_workspace: "Search bounded safe source text in one owner app.", matrix_open_app: "Return navigation intent for an exact validated existing owner app.", matrix_apply_app_files: "Propose an approved bounded owner Vite app file batch. Every existing file needs its expected SHA256; null means exclusive create. Never installs dependencies or runs code." };
+  const schemas: Record<string, z.ZodType> = { matrix_list_apps: z.object({}).strict(), matrix_inspect_app: inspectSchema, matrix_search_workspace: searchSchema, matrix_open_app: appSchema, matrix_close_app: appSchema, matrix_apply_app_files: batchSchema };
+  const descriptions: Record<string, string> = { matrix_list_apps: "List bounded owner Vite apps.", matrix_inspect_app: "Inspect an exact owner app without secret/config reads.", matrix_search_workspace: "Search bounded safe source text in one owner app.", matrix_open_app: "Return navigation intent for an exact validated existing owner app.", matrix_close_app: "Close only the window for an exact validated installed owner app. Does not delete the app or its data.", matrix_apply_app_files: "Propose an approved bounded owner Vite app file batch. Every existing file needs its expected SHA256; null means exclusive create. Never installs dependencies or runs code." };
   const meta = (toolId: string, effect: QualifiedActionTool["effect"], approval = false): QualifiedActionTool => ({ toolId, schemaRevision: "canonical_apps_v1", description: descriptions[toolId]!, inputSchema: z.toJSONSchema(schemas[toolId]!), effect, approval, reconciliation: effect === "files", cancellation: "before_dispatch" });
   const normalize = (schema: z.ZodType) => (input: unknown) => { BoundedActionJsonSchema.parse(input); const args = schema.parse(input); BoundedActionJsonSchema.parse(args); return args; };
   const manifest = async (home: string, app: string, discovery = false) => {
@@ -135,6 +135,10 @@ export function createCanonicalActionTools(options: { homeForOwner(owner: Canoni
   const openApp: CanonicalActionTool = { ...meta("matrix_open_app", "navigation"), normalize: normalize(appSchema), async execute(input) {
     const info = await inspect.execute(input) as { app: string; path: string }; return { ...info, navigation: { kind: "open_app", app: info.app, path: info.path } };
   } };
+  const closeApp: CanonicalActionTool = { ...meta("matrix_close_app", "navigation"), normalize: normalize(appSchema), async execute(input) {
+    const info = await inspect.execute(input) as { app: string; path: string };
+    return { app: info.app, navigation: { kind: "close_app", app: info.app, path: info.path } };
+  } };
   const apply: CanonicalActionTool = { ...meta("matrix_apply_app_files", "files", true), normalize: normalize(batchSchema), async execute(input) {
     input.signal.throwIfAborted(); const args = batchSchema.parse(input.arguments); const home = await options.homeForOwner(input.owner);
     const root = await safeFile(home, `apps/${args.app}`);
@@ -189,5 +193,5 @@ export function createCanonicalActionTools(options: { homeForOwner(owner: Canoni
     }
     return { confirmed: true, result: { app: args.app, artifact: { kind: "app", path: `apps/${args.app}` }, navigation: { kind: "open_app", app: args.app, path: `apps/${args.app}` } } };
   } };
-  return Object.freeze([list, inspect, search, openApp, apply]);
+  return Object.freeze([list, inspect, search, openApp, closeApp, apply]);
 }

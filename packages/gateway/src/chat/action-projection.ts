@@ -22,7 +22,10 @@ const pathRef = (max: number) => z.string().min(1).max(max).refine(
   (value) => value.split("/").every((segment) => /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(segment)),
 );
 
-const NavigationSchema = z.object({ kind: z.literal("open_app"), app: ref(80), path: pathRef(160) });
+const NavigationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("open_app"), app: ref(80), path: pathRef(160) }),
+  z.object({ kind: z.literal("close_app"), app: ref(80), path: pathRef(160) }),
+]);
 const ArtifactSchema = z.object({ kind: ref(40), path: pathRef(160) });
 const AppEntrySchema = z.object({ app: ref(80), name: z.string().min(1).max(160) });
 const FileEntrySchema = z.object({
@@ -91,7 +94,13 @@ const projectors: Record<string, (result: ResultRecord, op: CanonicalOperation) 
   matrix_create_note: (result, op) => {
     const app = operationApp(op, result);
     const navigation = pick(NavigationSchema, result.navigation);
-    return app === "notes" && navigation?.app === app && navigation.path === "apps/notes"
+    return app === "notes" && navigation?.kind === "open_app" && navigation.app === app && navigation.path === "apps/notes"
+      ? assemble({ navigation }) : undefined;
+  },
+  matrix_edit_note: (result, op) => {
+    const app = operationApp(op, result);
+    const navigation = pick(NavigationSchema, result.navigation);
+    return app === "notes" && navigation?.kind === "open_app" && navigation.app === app && navigation.path === "apps/notes"
       ? assemble({ navigation }) : undefined;
   },
   // Result is `{...inspect, navigation}`; only the navigation intent projects.
@@ -100,7 +109,15 @@ const projectors: Record<string, (result: ResultRecord, op: CanonicalOperation) 
     if (!app) return undefined;
     const navigation = pick(NavigationSchema, result.navigation);
     return assemble({
-      navigation: navigation?.app === app && navigation.path === `apps/${app}` ? navigation : undefined,
+      navigation: navigation?.kind === "open_app" && navigation.app === app && navigation.path === `apps/${app}` ? navigation : undefined,
+    });
+  },
+  matrix_close_app: (result, op) => {
+    const app = operationApp(op, result);
+    if (!app) return undefined;
+    const navigation = pick(NavigationSchema, result.navigation);
+    return assemble({
+      navigation: navigation?.kind === "close_app" && navigation.app === app && navigation.path === `apps/${app}` ? navigation : undefined,
     });
   },
   matrix_apply_app_files: (result, op) => {
@@ -110,7 +127,7 @@ const projectors: Record<string, (result: ResultRecord, op: CanonicalOperation) 
     const navigation = pick(NavigationSchema, result.navigation);
     return assemble({
       artifact: artifact?.path === `apps/${app}` ? artifact : undefined,
-      navigation: navigation?.app === app && navigation.path === `apps/${app}` ? navigation : undefined,
+      navigation: navigation?.kind === "open_app" && navigation.app === app && navigation.path === `apps/${app}` ? navigation : undefined,
       files: qualifiedFiles(app, result.files),
     });
   },

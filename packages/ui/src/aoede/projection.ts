@@ -81,7 +81,7 @@ export function projectAoedeCanonical(detail: CanonicalChatDetailResponse | null
     .slice()
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, 32);
-  const navigated = operations.find(operation => operation.result?.navigation !== undefined);
+  const navigated = operations.find(operation => operation.result?.navigation?.kind === "open_app");
   const navigation = navigated?.result?.navigation === undefined ? undefined : {
     app: navigated.result.navigation.app,
     path: navigated.result.navigation.path,

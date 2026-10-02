@@ -451,6 +451,22 @@ describe("Aoede shell owner", () => {
     expect(nav).toHaveBeenCalledTimes(1);
     h.controller.dispose();
   });
+  it("dispatches a newly completed close-app intent once without replaying history", async () => {
+    const nav = vi.fn();
+    const historical = { ...operationView, id: "action_old_close", state: "succeeded" as const,
+      result: { navigation: { kind: "close_app" as const, app: "notes", path: "apps/notes" } } };
+    const h = harness(undefined, { ...detail, operations: [historical] }, { onOpenNavigation: nav });
+    await h.controller.open();
+    expect(nav).not.toHaveBeenCalled();
+    const current = { ...historical, id: "action_new_close", updatedAt: "2026-09-30T00:00:03.000Z" };
+    h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision: 3 } }, operations: [current, historical] });
+    await h.controller.refresh();
+    expect(nav).toHaveBeenCalledOnce();
+    expect(nav).toHaveBeenCalledWith({ kind: "close_app", app: "notes", path: "apps/notes" });
+    await h.controller.refresh();
+    expect(nav).toHaveBeenCalledOnce();
+    h.controller.dispose();
+  });
   it("streams contiguous message content without refetching action details for every token", async () => {
     const initial = { ...runningDetail(), operations: [operationView] };
     const h = harness(undefined, initial);

@@ -23,7 +23,7 @@ export const CodingAgentCanonicalExecutionSchema = z.object({
   executionPolicy: CanonicalChatRunPolicySchema.shape.executionPolicy.unwrap().refine(policy => !policy.delegation
     && (policy.actionMode !== "conversation_only" || policy.tools.length === 0)),
   inventory: z.array(z.object({
-    toolId: z.enum(["matrix_list_apps", "matrix_inspect_app", "matrix_search_workspace", "matrix_open_app", "matrix_apply_app_files", "matrix_create_note"]),
+    toolId: z.enum(["matrix_list_apps", "matrix_inspect_app", "matrix_search_workspace", "matrix_open_app", "matrix_close_app", "matrix_apply_app_files", "matrix_create_note", "matrix_list_notes", "matrix_edit_note"]),
     schemaRevision: z.string().min(1).max(160), description: z.string().min(1).max(1600),
     effect: z.enum(["read", "navigation", "files", "data"]), inputSchema: z.unknown(),
   }).strict()).max(32),

@@ -201,13 +201,20 @@ function registeredNavigationPath(prefix: string, requestedPath: string): string
  * never become windows, and `revealShellAppWindow` stays the single dispatch
  * path so no recursive command invocation or canvas-pan fork can sneak in.
  */
-export function openAoedeNavigation(nav: { app: string; path: string }): void {
+export function openAoedeNavigation(nav: { kind?: "open_app" | "close_app"; app: string; path: string }): void {
   if (!nav || typeof nav.app !== "string" || typeof nav.path !== "string") return;
   if (!SAFE_NAV_APP.test(nav.app) || nav.path.length === 0 || nav.path.length > NAV_PATH_MAX) return;
   if (nav.path.includes("..") || nav.path.includes("//") || NAV_PATH_FORBIDDEN.test(nav.path)) return;
   const prefix = `apps/${nav.app}`;
   if (nav.path !== prefix && nav.path !== `${prefix}.html`
     && nav.path !== `${prefix}/index.html` && nav.path !== `${prefix}/dist/index.html`) return;
+  if (nav.kind === "close_app") {
+    const window = useWindowManager.getState().windows.find(candidate =>
+      candidate.path === prefix || candidate.path === `${prefix}.html`
+      || candidate.path === `${prefix}/index.html` || candidate.path === `${prefix}/dist/index.html`);
+    if (window) useWindowManager.getState().closeWindow(window.id);
+    return;
+  }
   const registeredPath = registeredNavigationPath(prefix, nav.path);
   if (!registeredPath) return;
   // A registered launcher proves the destination is installed and keeps the

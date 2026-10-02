@@ -25,13 +25,15 @@ it("accurately describes the full canonical inventory without widening note or d
     descriptor("matrix_list_apps", "read"), descriptor("matrix_inspect_app", "read"),
     descriptor("matrix_search_workspace", "read"), descriptor("matrix_open_app", "navigation"),
     descriptor("matrix_apply_app_files", "files"), descriptor("matrix_create_note", "data"),
+    descriptor("matrix_list_notes", "read"), descriptor("matrix_edit_note", "data"), descriptor("matrix_close_app", "navigation"),
   ];
   const instructions = createCanonicalVoiceInstructions({
     executionPolicy: { revision: "v1", actionMode: "canonical_actions", workspaceScope: "apps", tools: descriptors.map(({ toolId }) => toolId), delegation: false },
     descriptors,
   });
   expect(instructions).toContain("list installed Matrix apps and open an installed Matrix app");
-  expect(instructions).toContain("create a new note, but cannot read, edit, or delete notes");
+  expect(instructions).toContain("create, list, and safely edit notes");
+  expect(instructions).toContain("close an installed app window");
   expect(instructions).toContain("inspect or search app files and apply an authorized app-file change");
   expect(instructions).toContain("cannot arbitrarily click desktop apps, control a browser, or send email");
   expect(instructions).toContain("Never bypass authority or approval requirements");

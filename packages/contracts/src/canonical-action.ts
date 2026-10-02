@@ -79,7 +79,10 @@ export const CANONICAL_VOICE_CONVERSATION_ONLY_POLICY = Object.freeze(
  * no result detail at all.
  */
 export const CanonicalOperationResultViewSchema = z.object({
-  navigation: z.object({ kind: z.literal("open_app"), app: ref(80), path: pathRef(160) }).strict().optional(),
+  navigation: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("open_app"), app: ref(80), path: pathRef(160) }).strict(),
+    z.object({ kind: z.literal("close_app"), app: ref(80), path: pathRef(160) }).strict(),
+  ]).optional(),
   artifact: z.object({ kind: ref(40), path: pathRef(160) }).strict().optional(),
   apps: z.array(z.object({ app: ref(80), name: z.string().min(1).max(160) }).strict()).max(32).optional(),
   files: z.array(z.object({
