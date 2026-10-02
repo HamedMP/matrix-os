@@ -642,6 +642,8 @@ function MobileAppFrame({
         messages={chat.messages}
         sessionId={chat.sessionId}
         busy={chat.busy}
+        activeRunId={chat.activeRunId}
+        onAbortCurrent={chat.abortCurrent}
         connected={chat.connected}
         conversations={chat.conversations}
         onNewChat={() => void chat.newChat()}

@@ -134,6 +134,8 @@ interface ChatAppProps {
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
+  activeRunId?: string;
+  onAbortCurrent?: () => void;
   connected: boolean;
   conversations: ConversationMeta[];
   onNewChat: () => void;
@@ -204,6 +206,8 @@ function ChatAppContent({
   messages,
   sessionId,
   busy,
+  activeRunId,
+  onAbortCurrent,
   connected,
   conversations,
   onNewChat: createChat,
@@ -722,6 +726,8 @@ function ChatAppContent({
                 key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} permissionMode={directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised"}
                 connected={connected && providerReady}
                 busy={busy}
+                activeRunId={activeRunId}
+                onAbortCurrent={onAbortCurrent}
                 onSubmit={submitWithHermesSetup}
                 draftRequest={activeDraftRequest}
                 onDraftConsumed={consumeDraftRequest}

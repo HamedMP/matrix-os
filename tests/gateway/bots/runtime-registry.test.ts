@@ -19,6 +19,44 @@ const binding = (overrides: Partial<BotRuntimeBinding> = {}): BotRuntimeBinding 
 });
 
 describe("bot runtime registry", () => {
+  it("cancels inference only for an exact owner/chat/run/generation and keeps graceful broker authority", () => {
+    const registry = new BotRuntimeRegistry();
+    const first = binding(); const sibling = binding({ runtimeHandle: handle(2), ownerId: "other_owner", runId: "run_two" });
+    registry.bind(first); registry.bind(sibling);
+    const signal = registry.inferenceSignal(first)!;
+    for (const mismatch of [{ ownerId: "wrong" }, { chatId: "wrong" }, { runId: "run_other" }, { executionGeneration: "3" }]) {
+      expect(registry.inferenceSignal({ ...first, ...mismatch })).toBeNull();
+      registry.cancelInference({ ...first, ...mismatch });
+      expect(signal.aborted).toBe(false);
+    }
+    registry.cancelInference(first);
+    expect(signal.aborted).toBe(true);
+    expect(registry.inferenceSignal(sibling)?.aborted).toBe(false);
+    expect(registry.lookupRun(first)).toEqual(first);
+    expect(Object.keys(registry.lookup(first)!)).toEqual(Object.keys(first));
+    registry.shutdown();
+  });
+
+  it("aborts released, replaced, expired and shutdown entries while a new generation stays live", () => {
+    let now = 0; const registry = new BotRuntimeRegistry({ now: () => now, ttlMs: 1_000 });
+    const first = binding(); registry.bind(first);
+    const old = registry.inferenceSignal(first)!;
+    const replacement = binding({ executionGeneration: "5", runId: "run_replacement" });
+    registry.bind(replacement);
+    expect(old.aborted).toBe(true);
+    const fresh = registry.inferenceSignal(replacement)!;
+    registry.cancelInference(first);
+    expect(fresh.aborted).toBe(false);
+    registry.release(first.runtimeHandle); registry.release(first.runtimeHandle);
+    expect(fresh.aborted).toBe(true);
+    registry.bind(replacement);
+    const expired = registry.inferenceSignal(replacement)!;
+    now = 1_001; expect(registry.size).toBe(0); expect(expired.aborted).toBe(true);
+    registry.bind(replacement);
+    const shutdown = registry.inferenceSignal(replacement)!;
+    registry.shutdown(); expect(shutdown.aborted).toBe(true); expect(registry.size).toBe(0);
+  });
+
   it("binds an owner Codex subscription only to its admitted Responses model and generation", () => {
     const registry = new BotRuntimeRegistry();
     registry.bind(binding({ accessSourceId: "owner_openai_profile", route: {

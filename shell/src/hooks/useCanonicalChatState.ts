@@ -485,6 +485,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   }, []);
 
   const switchConversation = useCallback((chatId: string) => {
+    activeChatIdRef.current = chatId;
+    detailRef.current = null;
     detailRequestGeneration.current += 1;
     setActiveChatId(chatId);
     setDetail(null);
@@ -519,12 +521,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
 
   const abortCurrent = useCallback(() => {
     const current = detailRef.current;
-    if (!current?.record.activeRun) return;
-    void client.cancelRun(current.record.chat.id, current.record.activeRun.runId, requestId())
-      .then(() => loadDetail(current.record.chat.id))
+    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current) return;
+    const chatId = current.record.chat.id;
+    void client.cancelRun(chatId, current.record.activeRun.runId, requestId())
+      .then(() => { if (activeChatIdRef.current === chatId) return loadDetail(chatId); })
       .catch((error: unknown) => {
         console.warn("[canonical-chat] Shell cancellation failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError("The run could not be stopped. Try again.");
+        if (activeChatIdRef.current === chatId) setSafeError("The run could not be stopped. Try again.");
       });
   }, [client, loadDetail]);
 
@@ -663,6 +666,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     messages,
     sessionId: activeChatId,
     busy: submitting || detailLoading || Boolean(detail?.record.activeRun),
+    activeRunId: detail && detail.record.chat.id === activeChatId ? detail.record.activeRun?.runId : undefined,
     currentTool: null,
     connected,
     queue: [],

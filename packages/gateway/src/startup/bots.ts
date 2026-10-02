@@ -303,7 +303,8 @@ export async function startBots(options: {
     client: host.client,
     onRunFinished: (runId) => forgetRun(runId),
   });
-  const managed = createManagedPiRuntime({ admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal, forgetRun: (runId) => forgetRun(runId) });
+  const managed = createManagedPiRuntime({ admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+    forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const actions = createBotBrokerActions({
     db,
     registry,

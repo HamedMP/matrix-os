@@ -53,7 +53,7 @@ it("passes the already prepared canonical Agent prompt to Pi exactly once", asyn
     return { ok: true, reply: { runId: binding.runId, status: "completed", toolActions: 0, sessionRevision: 1 } };
   } } } as unknown as ScopeRuntimeHost;
   runtime = createManagedPiRuntime({ admission: { admit: async () => binding, release, workspace: async () => "/owned/chat" },
-    host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal, forgetRun: () => undefined });
+    host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal, forgetRun: () => undefined, cancelInference: () => undefined });
   const events = [];
   for await (const event of runtime.adapter.start({ owner: { type: "personal", ownerId: OWNER }, chatId: binding.chatId,
     turnId: "cturn_prompt", runId: binding.runId, prompt, context, parts: [{ type: "text", text: "Revise this sentence." }],
@@ -101,7 +101,8 @@ it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered 
   } } } as unknown as ScopeRuntimeHost;
   const admission = createManagedPiAdmission({ db, homePath: home, host, registry, roots: { resolve: async () => { throw new Error("No project" ); } } });
   const lifetime = new AbortController();
-  const runtime = createManagedPiRuntime({ admission, host, providers, lifetime: lifetime.signal, forgetRun: (runId) => actions.forgetRun(runId) });
+  const runtime = createManagedPiRuntime({ admission, host, providers, lifetime: lifetime.signal,
+    forgetRun: (runId) => actions.forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   actions = createBotBrokerActions({ db, registry, sessions: createBotSessionsRepository(db), checkpoints: createBotCheckpointsRepository(db),
     managedSessions: createManagedPiSessionsRepository(db), managedCheckpoints: createManagedPiCheckpointsRepository(db),
     runs: runtime.runs, events: runtime.events, tools: createBotToolDispatcher({ homePath: home, managedWorkspace: admission.workspace }),

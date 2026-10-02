@@ -32,6 +32,8 @@ export function ChatInput({
   composer, agentClient, scope, permissionMode,
   connected,
   busy,
+  activeRunId,
+  onAbortCurrent,
   onSubmit,
   autoFocus,
   draftRequest,
@@ -48,6 +50,8 @@ export function ChatInput({
   permissionMode: string;
   connected: boolean;
   busy: boolean;
+  activeRunId?: string;
+  onAbortCurrent?: () => void;
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>, options?: ChatSubmitOptions) => void | Promise<boolean>;
   autoFocus?: boolean;
   draftRequest?: ChatAgentDraftRequest | null;
@@ -66,6 +70,7 @@ export function ChatInput({
   const query = queryMatch && dismissedQuery !== input ? queryMatch[1]! : null;
   const permission = useChatMentionPermission(scope, resources, permissionMode, composer.permissionIdentity);
   const mayQueue = resources.length > 0;
+  const canAbort = Boolean(activeRunId && onAbortCurrent);
 
 
   const mentionListRef = useRef<HTMLDivElement>(null);
@@ -207,16 +212,30 @@ export function ChatInput({
               </span>
             </>
           ) : null}
-          <Button
-            type="button"
-            aria-label={busy && mayQueue ? "Queue next" : "Send"}
-            size="icon"
-            className="size-8 rounded-full"
-            disabled={!canSend}
-            onClick={() => handleSubmit()}
-          >
-            <SendIcon className="size-4" />
-          </Button>
+          {canAbort ? (
+            <Button
+              type="button"
+              aria-label="Stop"
+              title="Stop"
+              size="icon"
+              className="size-8 rounded-full"
+              onClick={onAbortCurrent}
+            >
+              <CircleStop className="size-4" />
+            </Button>
+          ) : null}
+          {!canAbort || mayQueue ? (
+            <Button
+              type="button"
+              aria-label={busy && mayQueue ? "Queue next" : "Send"}
+              size="icon"
+              className="size-8 rounded-full"
+              disabled={!canSend}
+              onClick={() => handleSubmit()}
+            >
+              <SendIcon className="size-4" />
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>

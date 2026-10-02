@@ -40,6 +40,8 @@ export interface ChatState {
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
+  /** Cancellable run from the selected canonical Chat detail, separate from admission/loading. */
+  activeRunId?: string;
   /** Name of the currently-running tool, or null when the agent is just
       generating text. Drives the global AgentStatusCard's stage label. */
   currentTool: string | null;

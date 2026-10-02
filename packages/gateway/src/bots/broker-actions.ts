@@ -221,12 +221,14 @@ export function createBotBrokerActions(deps: {
         if (!request.success) return undefined;
         const binding = deps.registry.lookup(request.data);
         if (!binding) return { version: 1, requestId: request.data.requestId, ok: false, error: "action_denied" };
+        const runSignal = deps.registry.inferenceSignal(binding);
+        if (!runSignal) return { version: 1, requestId: request.data.requestId, ok: false, error: "action_denied" };
         return forwardBotInference(request.data, binding, (modelId) => deps.registry.authorize({
           runtimeHandle: request.data.runtimeHandle,
           executionGeneration: request.data.executionGeneration,
           action: request.data.action,
           modelId,
-        }), deps.inference);
+        }), { ...deps.inference, runSignal });
       }
       const parsed = BotBrokerRequestSchema.safeParse(raw);
       if (!parsed.success) return undefined;

@@ -54,7 +54,8 @@ export type PiRuntimeBinding = BotRuntimeBinding | ManagedPiRuntimeBinding;
 export function isManagedPiBinding(binding: PiRuntimeBinding): binding is ManagedPiRuntimeBinding {
   return "kind" in binding && binding.kind === "managed_chat";
 }
-type StoredBinding = PiRuntimeBinding & { expiresAt: number };
+export type PiInferenceIdentity = Pick<PiRuntimeBinding, "runtimeHandle" | "executionGeneration" | "runId" | "ownerId" | "chatId">;
+type StoredBinding = PiRuntimeBinding & { expiresAt: number; inference: AbortController };
 
 export class BotRuntimeRegistryError extends Error {
   constructor(readonly code: "capacity_exceeded" | "invalid_binding") {
@@ -121,7 +122,8 @@ export class BotRuntimeRegistry {
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
       throw new BotRuntimeRegistryError("capacity_exceeded");
     }
-    this.entries.set(parsed.data.runtimeHandle, { ...parsed.data, expiresAt: this.now() + this.ttlMs });
+    this.entries.get(parsed.data.runtimeHandle)?.inference.abort();
+    this.entries.set(parsed.data.runtimeHandle, { ...parsed.data, expiresAt: this.now() + this.ttlMs, inference: new AbortController() });
   }
 
   /** The binding for a frame's runtime and generation; a stale generation never matches. */
@@ -132,7 +134,7 @@ export class BotRuntimeRegistry {
     this.sweep();
     const entry = this.entries.get(runtimeHandle.data);
     if (!entry || entry.executionGeneration !== generation.data) return null;
-    const { expiresAt: _expiresAt, ...binding } = entry;
+    const { expiresAt: _expiresAt, inference: _inference, ...binding } = entry;
     return binding;
   }
 
@@ -140,6 +142,18 @@ export class BotRuntimeRegistry {
   lookupRun(input: { runtimeHandle: string; executionGeneration: string; runId: string }): PiRuntimeBinding | null {
     const binding = this.lookup(input);
     return binding && binding.runId === input.runId ? binding : null;
+  }
+
+  /** Private run lifetime; never exposed in serialized runtime bindings. */
+  inferenceSignal(input: PiInferenceIdentity): AbortSignal | null {
+    const binding = this.lookupRun(input);
+    if (!binding || binding.ownerId !== input.ownerId || binding.chatId !== input.chatId) return null;
+    return this.entries.get(binding.runtimeHandle)!.inference.signal;
+  }
+
+  /** Stop inference immediately, retaining terminal event/session authority until release. */
+  cancelInference(input: PiInferenceIdentity): void {
+    if (this.inferenceSignal(input)) this.entries.get(input.runtimeHandle)!.inference.abort();
   }
 
   /** Inference only on the route's own action and model; bot runtimes never use egress. */
@@ -164,17 +178,24 @@ export class BotRuntimeRegistry {
 
   release(runtimeHandleInput: string): void {
     const runtimeHandle = RuntimeHandleSchema.safeParse(runtimeHandleInput);
-    if (runtimeHandle.success) this.entries.delete(runtimeHandle.data);
+    if (runtimeHandle.success) {
+      this.entries.get(runtimeHandle.data)?.inference.abort();
+      this.entries.delete(runtimeHandle.data);
+    }
   }
 
   shutdown(): void {
+    for (const entry of this.entries.values()) entry.inference.abort();
     this.entries.clear();
   }
 
   private sweep(): void {
     const now = this.now();
     for (const [handle, entry] of this.entries) {
-      if (entry.expiresAt <= now) this.entries.delete(handle);
+      if (entry.expiresAt <= now) {
+        entry.inference.abort();
+        this.entries.delete(handle);
+      }
     }
   }
 }

@@ -23,12 +23,14 @@ interface Active {
 export function createManagedPiRuntime(deps: {
   admission: ManagedPiAdmission; host: ScopeRuntimeHost; providers: AiProviderSnapshotReader; lifetime: AbortSignal;
   forgetRun(runId: string): void;
+  cancelInference(binding: ManagedPiRuntimeBinding): void;
 }) {
   const active = new Map<string, Active>(); // capacity/terminal eviction below; runtime deadline bounds lifetime.
   async function stop(runId: string): Promise<void> {
     const run = active.get(runId); if (!run || run.finished) return;
     run.stopping = true;
     const binding = run.binding; if (!binding) return;
+    deps.cancelInference(binding);
     let delivered = false;
     try { delivered = (await deps.host.client.runBot({ ...binding, command: { version: 1, kind: "bot.cancel", runId } })).ok; }
     catch (error: unknown) { console.warn("[managed-pi] cancel delivery failed", error instanceof Error ? error.name : "UnknownError"); }

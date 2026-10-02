@@ -486,6 +486,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               messages={chatState.messages}
               sessionId={chatState.sessionId}
               busy={chatState.busy}
+              activeRunId={chatState.activeRunId}
+              onAbortCurrent={chatState.abortCurrent}
               connected={chatState.connected}
               conversations={chatState.conversations}
               onNewChat={chatState.newChat}

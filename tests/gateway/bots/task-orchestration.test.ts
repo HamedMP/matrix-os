@@ -63,7 +63,13 @@ function setup(options: {
   const commands: RunBotInput["command"][] = [];
   const runBot = vi.fn(async (input: RunBotInput) => {
     commands.push(input.command);
-    if (input.command.kind !== "bot.run") return { ok: options.cancelDelivered !== false, reply: {} };
+    if (input.command.kind !== "bot.run") {
+      if (input.command.kind === "bot.cancel") {
+        const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
+        expect(registry.inferenceSignal(binding)?.aborted).toBe(true);
+      }
+      return { ok: options.cancelDelivered !== false, reply: {} };
+    }
     const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
     const publish = (seq: number, event: Record<string, unknown>) => orchestrator.eventSink.publish(binding, { seq, event } as never);
     const reply = options.worker

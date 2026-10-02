@@ -337,8 +337,10 @@ describe("bot broker actions", () => {
       const pending = actions.handleFrame(inference());
       await vi.waitFor(() => expect(queued).toBeDefined());
       // The queue bounds the wait itself; no 30 second send deadline applies while queued.
-      expect(waitSignal).toBe(lifetime.signal);
+      expect(waitSignal?.aborted).toBe(false);
       registry.release(RUNTIME);
+      expect(waitSignal?.aborted).toBe(true);
+      expect(lifetime.signal.aborted).toBe(false);
       await queued!();
       await expect(pending).resolves.toMatchObject({ ok: false, error: "action_denied" });
       expect(fetchImpl).not.toHaveBeenCalled();

@@ -95,7 +95,7 @@ export function createBotTaskOrchestrator(deps: {
   recipes: BotRecipeCatalog;
   resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
   admission: Pick<PrivateBotAdmission, "admit" | "release">;
-  registry: Pick<BotRuntimeRegistry, "lookupRun">;
+  registry: Pick<BotRuntimeRegistry, "lookupRun" | "cancelInference">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
   onRunFinished?(runId: string): void;
   now?: () => Date;
@@ -175,6 +175,8 @@ export function createBotTaskOrchestrator(deps: {
     run.stopping ??= reason;
     const runtime = run.runtime;
     if (!runtime || run.finished) return;
+    const binding = deps.registry.lookupRun({ ...runtime, runId });
+    if (binding) deps.registry.cancelInference(binding);
     let delivered = false;
     try {
       delivered = (await deps.client.runBot({ ...runtime, command: { version: 1, kind: "bot.cancel", runId } })).ok;

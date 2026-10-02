@@ -82,6 +82,22 @@ queue waits. Validate bounded inputs and body limits. Cap registries/event queue
 cancellation and execution deadlines, and drain owned resources at shutdown. Sessions
 and dependent writes use transactions; shared pool ownership stays with its creator.
 
+Managed funded inference allows up to 120 seconds per complete broker response,
+including buffered generation after response headers arrive. Retain the separate
+30-second owner Anthropic credential deadline, lifetime cancellation, bounded queue
+waits and the worker's independent whole-turn limit. A timeout is final for that
+provider attempt; only an explicitly marked relay capacity refusal may retry.
+
+Web Desktop, Web Canvas and Web Mobile expose Stop only for the current Chat's
+active run and invoke the existing canonical cancel transport. Submission/loading
+and queued-only states do not imply a cancellable run. Preserve Queue next and
+allow cancellation when the selected model becomes unavailable during execution.
+Each pinned runtime binding owns a bounded inference cancellation signal. Stop
+aborts that exact run before worker cancellation; release, replacement, expiry and
+shutdown also abort its pending queue/fetch/body reads. Stale generations and other
+owners cannot cancel another binding, and a new run remains independently usable.
+Cancellation does not claim to reverse completed tools or already incurred usage.
+
 ## Pricing and readiness
 
 Readiness requires fresh policy, positive funding and a valid per-model receipt.
