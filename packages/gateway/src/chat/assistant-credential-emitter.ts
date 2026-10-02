@@ -58,7 +58,9 @@ export function createAssistantCredentialEmitter(context: {
                 }, capture.value),
               });
               state.count += 1;
-            } catch {
+            } catch (error: unknown) {
+              const errorKind = error instanceof Error ? error.name : typeof error;
+              console.warn(`[chat-credential] unable to seal captured value (${errorKind})`);
               // Key/capture failure is masked-only; never emit the raw value.
             }
           }

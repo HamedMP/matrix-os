@@ -158,7 +158,9 @@ export class ChatCredentialRepository {
       try {
         value = openAssistantCredential(this.key!, { ownerId: owner.ownerId, chatId, runId: row.run_id,
           messageId: row.message_id, occurrenceId }, row.envelope);
-      } catch {
+      } catch (error: unknown) {
+        const errorKind = error instanceof Error ? error.name : typeof error;
+        console.warn(`[chat-credential] unable to open captured value (${errorKind})`);
         throw new ChatCredentialUnavailableError();
       }
       if (action === "reveal" && !row.revealed) {
