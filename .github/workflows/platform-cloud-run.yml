@@ -319,9 +319,9 @@ jobs:
             exit 1
           fi
 
-      # Without this secret the Clerk organization webhook answers 503, the membership
-      # projection never fills, and every share is refused. Runtime access comes from the
-      # runtime identity's project-level secretAccessor role, like the other platform secrets.
+      # Without a usable secret the Clerk organization webhook answers 503, the membership
+      # projection never fills, and every share is refused. The value check mirrors the
+      # platform's decodeSigningSecret: the whole value is whsec_ + base64 decoding to >= 16 bytes.
       - name: Verify Clerk organization webhook secret
         run: |
           set -euo pipefail
@@ -335,8 +335,29 @@ jobs:
             echo "$secret_name must have an accessible latest version." >&2
             exit 1
           fi
-          if ! grep -Eq '^whsec_[A-Za-z0-9+/=]{16,}$' "$webhook_secret_tmpfile"; then
-            echo "$secret_name must hold a Clerk webhook signing secret (whsec_...)." >&2
+          if ! jq -Rse 'test("\\Awhsec_[A-Za-z0-9+/=]{16,}\\z") and ((((ltrimstr("whsec_") | gsub("="; "") | length) * 3 / 4) | floor) >= 16)' \
+            "$webhook_secret_tmpfile" >/dev/null; then
+            echo "$secret_name must hold exactly one Clerk webhook signing secret (whsec_...) with a key of at least 16 bytes." >&2
+            exit 1
+          fi
+          # The read above ran as the deployer. The Cloud Run runtime identity needs its own
+          # access: a grant on this secret, or an unconditional project-level secretAccessor.
+          runtime_member="serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}"
+          secret_grant="$(
+            gcloud secrets get-iam-policy "$secret_name" \
+              --project "$GCP_PROJECT_ID" \
+              --flatten='bindings[].members' \
+              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:${runtime_member}" \
+              --format='value(bindings.members)' \
+              | head -1
+          )"
+          project_grants="$(
+            gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json \
+              | jq --arg member "$runtime_member" \
+                '[.bindings[] | select(.role == "roles/secretmanager.secretAccessor" and .condition == null and (.members | index($member)))] | length'
+          )"
+          if [ "$secret_grant" != "$runtime_member" ] && [ "$project_grants" = "0" ]; then
+            echo "$secret_name must be readable by the Cloud Run runtime identity (${CLOUD_RUN_SERVICE_ACCOUNT})." >&2
             exit 1
           fi
 

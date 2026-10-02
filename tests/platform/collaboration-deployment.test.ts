@@ -1,8 +1,20 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const workflow = readFileSync(resolve(".github/workflows/platform-cloud-run.yml"), "utf8");
+
+// Must accept exactly what the platform's decodeSigningSecret accepts (webhook-signature.ts):
+// the whole value is `whsec_` + base64, and the key decodes to at least 16 bytes.
+const WEBHOOK_SECRET_FILTER =
+  'test("\\\\Awhsec_[A-Za-z0-9+/=]{16,}\\\\z") and ((((ltrimstr("whsec_") | gsub("="; "") | length) * 3 / 4) | floor) >= 16)';
+
+function webhookSecretAccepted(value: string): boolean {
+  const result = spawnSync("jq", ["-Rse", WEBHOOK_SECRET_FILTER], { input: value, encoding: "utf8" });
+  if (result.error) throw result.error;
+  return result.status === 0;
+}
 
 // `collaboration-ticket-keys` holds Ed25519 seeds and is not the V1 `collaboration-proof-keys`
 // secret under a new name: #1864 also tightened the value check from "any string >= 32 bytes" to
@@ -39,9 +51,30 @@ describe("platform collaboration deployment contract", () => {
   it("refuses to deploy without a usable Clerk organization webhook signing secret", () => {
     expect(workflow).toContain("Verify Clerk organization webhook secret");
     expect(workflow).toContain("secret_name=clerk-organization-webhook-signing-secret");
-    expect(workflow).toContain("^whsec_[A-Za-z0-9+/=]{16,}$");
+    expect(workflow).toContain(`jq -Rse '${WEBHOOK_SECRET_FILTER}'`);
     // The value is checked from a private temp file and never echoed.
     expect(workflow).toContain('trap \'rm -f "$webhook_secret_tmpfile"\' EXIT');
+  });
+
+  it("accepts only a whole value the platform can decode into a 16-byte key", () => {
+    const key = Buffer.alloc(24, 7).toString("base64");
+    expect(webhookSecretAccepted(`whsec_${key}`)).toBe(true);
+    // 16 base64 characters decode to only 12 bytes: the platform refuses it.
+    expect(webhookSecretAccepted("whsec_AAAAAAAAAAAAAAAA")).toBe(false);
+    // The platform validates the whole value, so a trailing newline or a second line is unusable.
+    expect(webhookSecretAccepted(`whsec_${key}\n`)).toBe(false);
+    expect(webhookSecretAccepted(`whsec_${key}\nextra`)).toBe(false);
+    expect(webhookSecretAccepted(key)).toBe(false);
+  });
+
+  it("checks that the Cloud Run runtime identity, not the deployer, can read the secret", () => {
+    // A grant on the secret, or an unconditional project-level secretAccessor grant (how
+    // production reads its other secrets) -- so a staging runtime without either fails here,
+    // before a revision is created.
+    expect(workflow).toContain('runtime_member="serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}"');
+    expect(workflow).toContain('gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json');
+    expect(workflow).toContain('select(.role == "roles/secretmanager.secretAccessor" and .condition == null');
+    expect(workflow).toContain("must be readable by the Cloud Run runtime identity");
   });
 
   it("verifies the direct ticket key secret and deployed revision contract", () => {
