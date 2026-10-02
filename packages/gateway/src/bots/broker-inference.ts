@@ -14,7 +14,7 @@ import {
 import { z } from "zod/v4";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
-import { buildKernelCredentialLaunch } from "../kernel-credentials.js";
+import { resolveBotBrokerCredentials } from "./broker-credentials.js";
 import { createCodexOwnerIdentityResolver, type ResolveCodexOwnerIdentity } from "../collaboration/codex-owner-identity.js";
 import { forwardCodexBotInference } from "./codex-inference.js";
 import type { BotInferenceAuthorization } from "./credentials.js";
@@ -47,7 +47,7 @@ export interface BotInferenceDependencies {
   runSignal?: AbortSignal;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
-  resolveCredentials?: typeof buildKernelCredentialLaunch;
+  resolveCredentials?: typeof resolveBotBrokerCredentials;
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   fetchImpl?: typeof fetch;
   /** Canonical owner/run/workspace authority is rechecked after funded queue waits. */
@@ -117,13 +117,14 @@ export async function forwardBotInference(
         fetchImpl,
       });
     }
-    const resolveCredentials = deps.resolveCredentials ?? buildKernelCredentialLaunch;
+    const resolveCredentials = deps.resolveCredentials ?? resolveBotBrokerCredentials;
     const launch = await resolveCredentials(
       deps.homePath,
       process.env,
       accessSourceId,
       deps.fundedCredentialProvider,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
+      lifecycle,
     );
     const env = launch.env;
     if (lifecycle.aborted) return failure(request.requestId, "action_denied");
