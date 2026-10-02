@@ -173,6 +173,28 @@ it("denies owner credential access when project-inherited sharing leaves the Cha
   }
 });
 
+it("does not capture a new credential sidecar after project-inherited sharing", async () => {
+  const db = repository.kysely as Kysely<OwnerCollaborationDatabase>;
+  const projectScopeId = "10000000-0000-4000-8000-000000000565";
+  await db.insertInto("collaboration_scopes").values([
+    { id: projectScopeId, owner_type: "personal", owner_id: owner.ownerId, kind: "project",
+      organization_id: "org_matrix_team", resource_id: "proj_credentials", parent_scope_id: null,
+      membership_mode: "direct", lifecycle: "shared", revision: 1, auth_epoch: 1,
+      authority_runtime_id: "vps:shared", authority_generation: 1,
+      execution_generation: null, execution_eligibility: null, created_at: createdAt, updated_at: createdAt, deleted_at: null },
+    { id: "10000000-0000-4000-8000-000000000566", owner_type: "personal", owner_id: owner.ownerId, kind: "chat",
+      organization_id: "org_matrix_team", resource_id: chatId, parent_scope_id: projectScopeId,
+      membership_mode: "inherited", lifecycle: "shared", revision: 1, auth_epoch: 1,
+      authority_runtime_id: "vps:shared", authority_generation: 1,
+      execution_generation: null, execution_eligibility: null, created_at: createdAt, updated_at: createdAt, deleted_at: null },
+  ]).execute();
+  const { messageId, occurrenceId } = await appendCredential();
+  expect((await repository.getDetailPage(owner, chatId, { limit: 100 })).messages
+    .find((message) => message.id === messageId)?.parts).toEqual([{ type: "text", text: safe }]);
+  expect(await db.selectFrom("chat_credentials").select("id")
+    .where("id", "=", occurrenceId).executeTakeFirst()).toBeUndefined();
+});
+
 it("revokes reveal state when an owned Chat is bound into an already shared project", async () => {
   const { occurrenceId } = await appendCredential();
   await credentials.reveal(owner, chatId, occurrenceId);

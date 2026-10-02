@@ -50,6 +50,16 @@ export async function storeAssistantCredentialSidecars(
   if (input.credentials.length > MAX_PER_MESSAGE) return;
   const parsed = z.array(SealedAssistantCredentialSchema).max(MAX_PER_MESSAGE).safeParse(input.credentials);
   if (!parsed.success) return;
+  // The append transaction already holds the Chat lock. A project publication
+  // takes that lock before committing an inherited shared scope, so this
+  // check also covers a private run that continues after publication.
+  const sharedScope = await (trx as unknown as Transaction<OwnerCollaborationDatabase>)
+    .selectFrom("collaboration_scopes").select("id")
+    .where("owner_type", "=", "personal").where("owner_id", "=", input.owner.ownerId)
+    .where("kind", "=", "chat").where("resource_id", "=", input.chatId)
+    .where("lifecycle", "not in", ["private", "preparing"])
+    .executeTakeFirst();
+  if (sharedScope) return;
   let perMessage = Number((await trx.selectFrom("chat_credentials").select(({ fn }) => fn.count("id").as("count"))
     .where("message_id", "=", input.messageId).executeTakeFirst())?.count ?? 0);
   let perChat = Number((await trx.selectFrom("chat_credentials").select(({ fn }) => fn.count("id").as("count"))
