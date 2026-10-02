@@ -67,9 +67,6 @@ export function HarnessWorkflowPanel({
   const [apiKey, setApiKey] = useState("");
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const [logs, setLogs] = useState<{ at: string; event: string }[] | null>(
-    null,
-  );
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [uninstall, setUninstall] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -93,7 +90,10 @@ export function HarnessWorkflowPanel({
   } | null>(null);
   const dialog = useRef<HTMLElement | null>(null);
   useDialogFocus(dialog, disconnectOpen, () => {
-    if (!pending) setDisconnectOpen(false);
+    if (!pending) {
+      setDisconnectOpen(false);
+      setFailure(null);
+    }
   });
   useEffect(() => {
     const controller = new AbortController();
@@ -106,7 +106,6 @@ export function HarnessWorkflowPanel({
     setOperation(null);
     setPending(false);
     setFailure(null);
-    setLogs(null);
     setDisconnectOpen(false);
     setUninstall(false);
     setCopied(false);
@@ -233,7 +232,7 @@ export function HarnessWorkflowPanel({
     });
   useEffect(() => {
     onStateChange?.(
-      pending || active(operation)
+      disconnectOpen ? null : pending || active(operation)
         ? operation?.kind === "install"
           ? "Installing"
           : operation?.kind === "uninstall"
@@ -245,7 +244,7 @@ export function HarnessWorkflowPanel({
           ? "Couldn't connect"
           : null,
     );
-  }, [pending, operation, failure]);
+  }, [pending, operation, failure, disconnectOpen]);
   useEffect(() => {
     if (!active(operation)) return;
     const controller = new AbortController();
@@ -676,27 +675,11 @@ export function HarnessWorkflowPanel({
             Continue in Terminal
           </button>
         ) : null}
-        {capability.logs ? (
-          <button
-            type="button"
-            className="matrix-ap-link-button"
-            disabled={pending}
-            onClick={() =>
-              void run(async (signal) => {
-                const result = await client.logs(harness.id, signal);
-                if (!signal.aborted) setLogs(result.entries);
-              })
-            }
-          >
-            View logs
-          </button>
-        ) : null}
-        {connected ? (
+        {connected && onDisconnect ? (
           <button
             type="button"
             className="matrix-ap-link-button"
             disabled={disabled || pending || !onDisconnect}
-            title={!onDisconnect ? "Disconnect is unavailable for this connection on this computer" : undefined}
             onClick={() => {
               setDisconnectOpen(true);
               setUninstall(false);
@@ -707,35 +690,6 @@ export function HarnessWorkflowPanel({
         ) : null}
         {!renderConnection ? changeAccountAction : null}
       </div>
-      {logs !== null ? (
-        <section
-          className="matrix-ap-operation-logs"
-          aria-label="Connection logs"
-        >
-          <h3>Connection logs</h3>
-          {logs.length ? (
-            <ol>
-              {logs.map((entry, index) => (
-                <li key={index}>
-                  <time dateTime={entry.at}>
-                    {new Date(entry.at).toLocaleString()}
-                  </time>{" "}
-                  · {entry.event}
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="matrix-ap-help">No connection activity yet.</p>
-          )}
-          <button
-            type="button"
-            className="matrix-ap-link-button"
-            onClick={() => setLogs(null)}
-          >
-            Close logs
-          </button>
-        </section>
-      ) : null}
       {disconnectOpen ? (
         <div className="matrix-ap-dialog-backdrop">
           <section
@@ -749,8 +703,9 @@ export function HarnessWorkflowPanel({
               Disconnect {harness.displayName}?
             </h3>
             <p className="matrix-ap-dialog-copy">
-              This signs the agent out on this computer. Your chats, projects
-              and settings stay.
+              This disconnects the agent from Matrix on this computer. Your
+              saved account login stays available for other agents. Your chats,
+              projects and settings stay.
             </p>
             {capability.uninstall ? (
               <label className="matrix-ap-uninstall-choice">
@@ -769,7 +724,10 @@ export function HarnessWorkflowPanel({
                 type="button"
                 className="matrix-ap-button"
                 disabled={pending}
-                onClick={() => setDisconnectOpen(false)}
+                onClick={() => {
+                  setDisconnectOpen(false);
+                  setFailure(null);
+                }}
               >
                 Cancel
               </button>

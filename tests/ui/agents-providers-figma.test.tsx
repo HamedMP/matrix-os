@@ -359,7 +359,7 @@ it("wires Change account inside the authenticated shared account card", async ()
   fireEvent.click(screen.getByRole("button", { name: /^codex/ }));
   const action = await screen.findByRole("button", { name: "Change account" });
   expect(action.closest(".matrix-ap-account")).toBeVisible();
-  expect(screen.getByTestId("account-owner")).not.toBeVisible();
+  expect(screen.queryByTestId("account-owner")).not.toBeInTheDocument();
   expect(
     screen.getAllByRole("button", { name: "Change account" }),
   ).toHaveLength(1);
@@ -462,7 +462,7 @@ it("keeps Matrix AI policy and purchase restrictions out of persistent overview 
   expect(screen.queryByText("Matrix AI is restricted by your workspace. Ask your administrator.")).not.toBeInTheDocument();
   expect(screen.queryByText("Matrix AI credit purchases are not available yet.")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Check again", hidden: true })).toHaveAttribute("title", "Matrix AI is restricted by your workspace. Ask your administrator.");
-  expect(screen.getByRole("button", { name: "Buy credit" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
 });
 
 it("keeps missing-runtime purchase explanations out of the overview while showing honest unavailable credit", async () => {
@@ -470,5 +470,5 @@ it("keeps missing-runtime purchase explanations out of the overview while showin
   render(<GatewayPanel source={null} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   expect(screen.queryByText(/Credit purchases are unavailable/)).not.toBeInTheDocument();
   expect(screen.getByText("Credit unavailable")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Buy credit" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
 });

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
@@ -11,7 +11,7 @@ function fixture(): ProviderSettingsSnapshot {
   return { harnesses: [{ id: "codex", harness: "codex", displayName: "Codex", installState: "installed", authState: "unknown", connectivity: "online", enabled: true, configuredEnabled: true, accessSourceId: null, accountIds: [], selectedAccountId: null, loginMethods: ["terminal"], route: { kind: "fixed", providerId: "openai", modelId: "selected-in-codex" } }], accounts: [], accessSources: [], modelProviders: [], gatewayPolicy: null, configurationHarnessKinds: [], supportedActions: [], access: { mode: "writable" }, refreshedAt: "2026-10-01T00:00:00Z" } as unknown as ProviderSettingsSnapshot;
 }
 function props() { return { snapshot: fixture(), selectedHarnessId: "codex", onSelectHarness: vi.fn(), onMutate: vi.fn(), onRefresh: vi.fn(), onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit: vi.fn(), onSetupHarness: vi.fn().mockResolvedValue(true) }; }
-it("keeps the new Codex chooser when guided workflows are unavailable and preserves legacy controls behind disclosure", async () => {
+it("keeps the Codex chooser without obsolete saved-account or configuration sections", async () => {
   const p = props();
   render(<AgentsProvidersView {...p} />);
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
@@ -21,8 +21,9 @@ it("keeps the new Codex chooser when guided workflows are unavailable and preser
   expect(account).toBeDisabled();
   fireEvent.click(account);
   expect(p.onSetupHarness).not.toHaveBeenCalled();
-  expect(screen.getByText("Advanced configuration").closest("details")).not.toHaveAttribute("open");
-  expect(screen.getByRole("heading", { name: "Choose the model", hidden: true })).not.toBeVisible();
+  expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
+  expect(screen.queryByText("Manage saved accounts")).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Choose the model", hidden: true })).not.toBeInTheDocument();
 });
 it("uses the same two choices for a supported guided Codex connection without duplicate account setup", async () => {
   const p = props();
@@ -89,7 +90,7 @@ it("renders the connected card from source observation without a disabled connec
   expect(screen.getAllByText("owner@example.com").some(node => !node.closest("details"))).toBe(true);
   expect(screen.getByRole("button", { name: "Change account" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Check account again" })).toBeEnabled();
-  expect(screen.queryByText("Your subscription or account")).not.toBeVisible();
+  expect(screen.queryByText("Your subscription or account")).not.toBeInTheDocument();
 });
 it("shows negotiated plan and email with real remaining allowance and reset", async () => {
   const { ConnectedAccountCard } = await import("../../packages/ui/src/agents-providers/ConnectedAccountCard");
@@ -134,10 +135,10 @@ it("wires source-linked native profile identity and quota into the connected pag
   expect(screen.queryByText("Connect Codex with")).not.toBeInTheDocument();
   expect(screen.queryByText(/5 hour|weekly/i)).not.toBeInTheDocument();
 });
-it("disconnects only the exact source-linked account when logout is advertised and selection is unresolved", async () => {
+it("disconnects the exact agent without depending on canonical account selection", async () => {
   const p = props();
   Object.assign(p.snapshot.harnesses[0]!, { authState: "authenticated", accessSourceId: "native", accountIds: ["owner"], selectedAccountId: null });
-  p.snapshot.supportedActions = ["logout_account"];
+  p.snapshot.supportedActions = ["set_harness_enabled"];
   p.snapshot.accounts = [{ id: "owner", accessSourceId: "native", displayName: "Owner", authMethod: "terminal", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } }] as never;
   p.snapshot.accessSources = [{ id: "native", accountId: "owner", eligibleModelIds: [], readiness: { state: "ready" }, usage: { kind: "unavailable", reason: "unknown" } }] as never;
   const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["openai"], install: false, uninstall: false, logs: true }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
@@ -145,8 +146,39 @@ it("disconnects only the exact source-linked account when logout is advertised a
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
   const disconnect = await screen.findByRole("button", { name: "Disconnect" });
   expect(disconnect).toBeEnabled();
+  await act(async () => {});
   fireEvent.click(disconnect);
   const confirmation = screen.getByRole("dialog");
   fireEvent.click(confirmation.querySelector("button.matrix-ap-button-danger")!);
-  await waitFor(() => expect(p.onMutate).toHaveBeenCalledWith({ type: "logout_account", accountId: "owner" }));
+  await waitFor(() => expect(p.onMutate).toHaveBeenCalledWith({ type: "set_harness_enabled", harnessInstanceId: "codex", enabled: false }));
+});
+
+it("disconnects only the selected Matrix agent and keeps failed disconnects connected", async () => {
+  const p = props();
+  p.snapshot.harnesses[0]!.authState = "authenticated";
+  p.snapshot.supportedActions = ["set_harness_enabled"];
+  p.onMutate.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["openai"], install: false, uninstall: false, logs: false }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
+  const { rerender } = render(<AgentsProvidersView {...p} workflowClient={client as never} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+  const disconnect = await screen.findByRole("button", { name: "Disconnect" });
+  expect(disconnect).toBeEnabled();
+  expect(screen.queryByText("Manage saved accounts")).not.toBeInTheDocument();
+  fireEvent.click(disconnect);
+  expect(screen.getByRole("dialog")).toHaveTextContent("saved account login stays available for other agents");
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Disconnect" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("button", { name: /^Codex.*Connected/ })).toBeVisible();
+  expect(p.onMutate).toHaveBeenLastCalledWith({ type: "set_harness_enabled", harnessInstanceId: "codex", enabled: false });
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: /^Codex.*Connected/ })).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Disconnect" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  rerender(<AgentsProvidersView {...p} snapshot={{...p.snapshot, harnesses: [{...p.snapshot.harnesses[0]!, enabled: false, configuredEnabled: false}]}} workflowClient={client as never} />);
+  expect(screen.getByRole("button", { name: /^Codex.*Not connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /ChatGPT account Recommended/ })).toBeEnabled();
+  expect(p.onMutate).not.toHaveBeenCalledWith(expect.objectContaining({type: "logout_account"}));
 });

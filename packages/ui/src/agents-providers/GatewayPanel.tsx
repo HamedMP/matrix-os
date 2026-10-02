@@ -238,7 +238,7 @@ export function GatewayPanel({
           >
             Usage history
           </button>
-          {(
+          {checkoutAvailable ? (
             <button
               type="button"
               className="matrix-ap-button matrix-ap-button-primary"
@@ -247,14 +247,11 @@ export function GatewayPanel({
                 setCreditRequestId(crypto.randomUUID());
                 setCreditDialogOpen(true);
               }}
-              disabled={disabled || !checkoutAvailable}
-              title={
-                checkoutAvailable ? undefined : "Credit purchases are unavailable on this computer"
-              }
+              disabled={disabled}
             >
               Buy credit
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 

@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { HarnessEditor } from "../../packages/ui/src/agents-providers/HarnessEditor";
 import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
 
 function snapshot(): ProviderSettingsSnapshot {
@@ -55,17 +56,14 @@ function fundedSnapshot(): ProviderSettingsSnapshot {
 afterEach(cleanup);
 
 describe("provider setup presentation", () => {
-  it("keeps Matrix AI first with unavailable purchases disabled even without any agents", () => {
+  it("keeps Matrix AI first with unsupported purchases omitted even without any agents", () => {
     const value = snapshot();
     value.harnesses = [];
     setup(value);
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Setup needed")).toBeVisible();
     expect(within(gateway).queryByText(/not available on this computer yet/i)).not.toBeInTheDocument();
-    const buy = within(gateway).getByRole("button", { name: "Buy credit" });
-    expect(buy).toBeDisabled();
-    expect(buy).toHaveAttribute("title", "Credit purchases are unavailable on this computer");
-    fireEvent.click(buy);
+    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(within(gateway).queryByText(/\$0/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
@@ -78,8 +76,8 @@ describe("provider setup presentation", () => {
     expect(row.querySelector("img")).toHaveAttribute("src", "/agent-logos/pi-coding-agent.png");
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(gateway.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(container.querySelector("details.matrix-ap-advanced")).not.toHaveAttribute("open");
-    expect(screen.getByLabelText("Display name")).not.toBeVisible();
+    expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Display name")).not.toBeInTheDocument();
     fireEvent.click(row);
     expect(row).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(row);
@@ -91,9 +89,8 @@ describe("provider setup presentation", () => {
     setup();
     expect(screen.queryByRole("combobox", { name: "Paid through" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Model provider" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("Advanced configuration"));
-    fireEvent.click(screen.getByText("Advanced settings"));
-    expect(screen.getByText("No access connected")).toBeVisible();
+    expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Choose the model" })).not.toBeInTheDocument();
   });
 
   it("provides a retry for absent gateway setup without inventing a use action", () => {
@@ -207,12 +204,11 @@ describe("provider setup presentation", () => {
     value.harnesses[0]!.installState = "missing";
     const onSetupHarness = vi.fn().mockResolvedValue(true);
     setup(value, { onSetupHarness });
-    fireEvent.click(screen.getByText("Manage saved accounts"));
-    expect(screen.getByRole("button", { name: "Install Pi in Terminal" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Install in Terminal" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Set up Pi" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Install Pi in Terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install in Terminal" }));
     expect(onSetupHarness).toHaveBeenCalledOnce();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Install Pi in Terminal" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Install in Terminal" })).toBeEnabled());
   });
 
   it.each(["hermes", "openclaw"] as const)("does not offer Matrix funding for an unimplemented %s route", (kind) => {
@@ -226,7 +222,9 @@ describe("provider setup presentation", () => {
     Object.assign(value, { supportedActions: ["set_route", "select_access_source", "add_harness"] });
     value.harnessCatalog = [{ harness: kind, displayName: kind, installState: "installed", available: true, runnable: true, setupAction: "none", safeReason: null }];
     setup(value);
-    fireEvent.click(screen.getByText("Advanced configuration"));
+    render(<HarnessEditor snapshot={value} harness={value.harnesses[0]!} disabled={false}
+      canUpdate={false} canSetRoute={true} canSelectSource={true} canSelectAccount={false}
+      onMutate={vi.fn()} onRefresh={vi.fn()} />);
     fireEvent.click(screen.getByText("Advanced settings"));
     const access = screen.getByRole("combobox", { name: "Paid through" });
     expect(within(access).getByRole("option", { name: "My API key" })).toBeInTheDocument();
@@ -249,7 +247,9 @@ describe("provider setup presentation", () => {
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(screen.getByRole("button", { name: new RegExp(`${kind}.*Not connected`) })).toBeVisible();
     expect(within(gateway).queryByText(`Selected for ${kind}`)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("Advanced configuration"));
+    render(<HarnessEditor snapshot={value} harness={value.harnesses[0]!} disabled={false}
+      canUpdate={false} canSetRoute={true} canSelectSource={true} canSelectAccount={false}
+      onMutate={vi.fn()} onRefresh={vi.fn()} />);
     fireEvent.click(screen.getByText("Advanced settings"));
     expect(screen.getByText("Choose a supported connection", { selector: "strong" })).toBeVisible();
     expect(screen.queryByText("This agent uses Matrix AI. No provider account is required.")).not.toBeInTheDocument();

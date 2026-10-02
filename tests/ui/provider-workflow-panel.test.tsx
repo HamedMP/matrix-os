@@ -378,13 +378,18 @@ it("shows account actions for a configured native connection without claiming re
   expect(screen.queryByText("Connect Codex with")).not.toBeInTheDocument();
   expect(api.start).not.toHaveBeenCalled();
 });
-it("retains a disabled Disconnect action for connected accounts without logout capability", () => {
+it("omits unsupported Disconnect without a Matrix disconnection callback", () => {
   const api = client();
-  render(<HarnessWorkflowPanel harness={{ ...harness, authState: "authenticated" }} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} onOpenAuthorizationUrl={vi.fn()} />);
-  const button = screen.getByRole("button", { name: "Disconnect" });
-  expect(button).toBeDisabled();
-  expect(button).toHaveAttribute("title", "Disconnect is unavailable for this connection on this computer");
-  fireEvent.click(button);
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  render(<HarnessWorkflowPanel harness={{ ...harness, authState: "authenticated" }} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} />);
+  expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
   expect(api.start).not.toHaveBeenCalled();
+});
+
+it("omits View logs when only workflow activity is available", () => {
+  const api = client();
+  render(<HarnessWorkflowPanel harness={harness} capability={capability} client={api}
+    disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} />);
+  expect(screen.queryByRole("button", { name: "View logs" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Connection logs" })).not.toBeInTheDocument();
+  expect(api.logs).not.toHaveBeenCalled();
 });

@@ -30,7 +30,7 @@ it.each(["failed", "expired"] as const)("preserves explicit %s over local positi
 
 it("keeps an unknown installation distinct from a failed installation", () => {
   show({ ...harness, installState: "unknown", enabled: false, configuredEnabled: true });
-  expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Hermes.*Checking installation/ })).toBeVisible();
 });
 it("does not obscure an explicit sign-in requirement with historical local evidence", () => {
   show({ ...harness, authState: "unauthenticated", localObservation: { state: "present_unverified", checkedAt: new Date(Date.now()-10000).toISOString(), staleAfter: new Date(Date.now()-5000).toISOString() } });
@@ -79,5 +79,5 @@ it.each(["source_invalid", "source_expired", "install_unknown"] as const)("retai
   if (state === "install_unknown") value.installState = "unknown";
   else source.readiness.state = state.slice(7) as ProviderAccessSource["readiness"]["state"];
   show(value, [source]);
-  expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: state === "install_unknown" ? /Hermes.*Checking installation/ : /Hermes.*Not connected/ })).toBeVisible();
 });

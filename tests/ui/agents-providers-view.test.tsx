@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { AccountsPanel } from "../../packages/ui/src/agents-providers/AccountsPanel";
+import { HarnessEditor } from "../../packages/ui/src/agents-providers/HarnessEditor";
 import React from "react";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -274,7 +276,7 @@ function snapshotWithNativeCodexProfile(nativeOwner: "pi" | "opencode" | "hermes
   return next;
 }
 
-function setup(overrides: Partial<React.ComponentProps<typeof AgentsProvidersView>> = {}) {
+function setup(overrides: Partial<React.ComponentProps<typeof AgentsProvidersView>> = {}, retainedControls = false) {
   const onMutate = vi.fn<(intent: ProviderSettingsMutationIntent) => void>();
   const props: React.ComponentProps<typeof AgentsProvidersView> = {
     snapshot: snapshot(),
@@ -287,13 +289,31 @@ function setup(overrides: Partial<React.ComponentProps<typeof AgentsProvidersVie
     onAddCredit: vi.fn(),
     ...overrides,
   };
-  const result = render(<AgentsProvidersView {...props} />);
+  const selectedHarness = props.snapshot.harnesses.find(item => item.id === props.selectedHarnessId) ?? props.snapshot.harnesses[0]!;
+  const supports = (action: string) => props.snapshot.supportedActions?.includes(action as never) ?? false;
+  const generic = (props.snapshot.configurationHarnessKinds ?? ["hermes", "opencode", "pi", "openclaw"]).includes(selectedHarness.harness);
+  const disabled = props.busy === true || props.snapshot.access?.mode === "read_only";
+  // Retained components are tested explicitly, never mounted by the Settings view.
+  const result = render(<><AgentsProvidersView {...props} />{retainedControls ? <>
+    <HarnessEditor snapshot={props.snapshot} harness={selectedHarness} disabled={disabled}
+      canUpdate={generic && supports("update_harness")} canSetRoute={generic && supports("set_route")}
+      canSelectSource={generic && supports("select_access_source")} canSelectAccount={generic && supports("select_account")}
+      onMutate={props.onMutate} onRefresh={props.onRefresh} />
+    <AccountsPanel harness={selectedHarness} accounts={props.snapshot.accounts.filter(account => selectedHarness.accountIds.includes(account.id))}
+      sources={props.snapshot.accessSources} allHarnesses={props.snapshot.harnesses} gatewayPolicy={props.snapshot.gatewayPolicy}
+      attempt={props.connectionAttempt?.action.kind !== "open_terminal" ? props.connectionAttempt ?? null : null}
+      disabled={disabled} canLogin={false} canLogout={supports("logout_account")} canRemove={supports("remove_account")}
+      canReassign={supports("reassign_account")} onMutate={props.onMutate} onRefresh={props.onRefresh}
+      onOpenTerminal={props.onOpenTerminal} onOpenBrowser={props.onOpenBrowser} onSetupHarness={props.onSetupHarness} />
+  </> : null}</>);
   const selected = props.snapshot.harnesses.find(item=>item.id===props.selectedHarnessId) ?? props.snapshot.harnesses[0];
   if (selected) { const row=result.container.querySelector<HTMLButtonElement>(`button[aria-controls="matrix-ap-details-${selected.id}"]`); if(row)fireEvent.click(row); }
-  // Existing configuration contracts explicitly enter the preserved advanced surface.
-  for (const details of result.container.querySelectorAll<HTMLDetailsElement>(".matrix-ap-agent-details > details")) details.open = true;
   if (vi.isMockFunction(props.onSelectHarness)) props.onSelectHarness.mockClear();
   return { ...result, props, onMutate };
+}
+
+function setupRetained(overrides: Partial<React.ComponentProps<typeof AgentsProvidersView>> = {}) {
+  return setup(overrides, true);
 }
 
 afterEach(() => {
@@ -529,7 +549,7 @@ describe("AgentsProvidersView", () => {
     });
     next.gatewayPolicy!.allowedModelIds.push("@cf/zai-org/glm-5.3-flash");
 
-    setup({ snapshot: next });
+    setupRetained({ snapshot: next });
 
     expect(screen.queryByLabelText("Model provider")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Model")).toHaveValue("@cf/zai-org/glm-5.3-flash");
@@ -605,16 +625,11 @@ describe("AgentsProvidersView", () => {
     expect(onMutate).not.toHaveBeenCalled();
   });
 
-  it("keeps saved account logout reachable without leaving Matrix AI", async () => {
+  it("omits the old saved-account manager even when saved accounts exist", () => {
     const next = snapshot();
-    Object.assign(next.harnesses[0]!, { harness: "pi", displayName: "Pi", accountIds: ["account_work"], selectedAccountId: null, accessSourceId: "matrix_included" });
-    next.accounts.find((account) => account.id === "account_work")!.authState = "authenticated";
-    const onMutate = vi.fn().mockResolvedValue(true);
-    setup({ snapshot: next, onMutate });
-    fireEvent.click(screen.getByText("Manage saved accounts"));
-    fireEvent.click(screen.getByRole("button", { name: "Log out Work" }));
-    await waitFor(() => expect(onMutate).toHaveBeenCalledWith({ type: "logout_account", accountId: "account_work" }));
-    expect(onMutate).not.toHaveBeenCalledWith(expect.objectContaining({ type: "set_route" }));
+    setup({ snapshot: next });
+    expect(screen.queryByText("Manage saved accounts")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Log out Work" })).not.toBeInTheDocument();
   });
 
   it("contains failed managed connection errors without changing the selected route", async () => {
@@ -641,20 +656,13 @@ describe("AgentsProvidersView", () => {
     const rail = screen.getByRole("region", { name: "Installed agents" });
     expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
     expect(within(rail).getByRole("button", { name: /Hermes.*Connected/ })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("region", { name: "Hermes configuration" })).toBeVisible();
-    expect(screen.getByLabelText("Model provider")).toHaveValue("anthropic");
-    expect(screen.getByLabelText("Model")).toHaveValue("anthropic/claude-opus-5");
-    expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Personal Anthropic subscription");
-    expect(screen.getByRole("heading", { name: "Choose the model" })).toBeVisible();
-    fireEvent.click(screen.getByText("Advanced settings"));
-    expect(screen.getByRole("heading", { name: "Access" })).toBeVisible();
-    expect(screen.getByLabelText("Paid through")).toHaveValue("owner_anthropic_profile");
-    expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Paid through");
-    expect(screen.getByText(/Connect your own provider account in Terminal/)).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Hermes configuration" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Connection" })).toBeVisible();
   });
 
   it("switches a generic harness to another provider as one coherent route intent", () => {
-    const { onMutate } = setup();
+    const { onMutate } = setupRetained();
 
     expect(within(screen.getByLabelText("Model provider")).getByRole("option", { name: "OpenAI" })).toBeVisible();
     fireEvent.change(screen.getByLabelText("Model provider"), { target: { value: "openai" } });
@@ -679,7 +687,7 @@ describe("AgentsProvidersView", () => {
     harness.accessSourceId = "matrix_included";
     harness.selectedAccountId = null;
     next.gatewayPolicy!.allowedModelIds = ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"];
-    const { onMutate } = setup({ snapshot: next });
+    const { onMutate } = setupRetained({ snapshot: next });
 
     fireEvent.change(screen.getByLabelText("Paid through"), { target: { value: "owner_anthropic_key" } });
     fireEvent.change(screen.getByLabelText("Account"), { target: { value: "account_work" } });
@@ -692,7 +700,7 @@ describe("AgentsProvidersView", () => {
   });
 
   it("keeps fixed harness routes visible but immutable", () => {
-    setup({ selectedHarnessId: "harness_claude" });
+    setupRetained({ selectedHarnessId: "harness_claude" });
 
     expect(screen.getByText("Fixed by Claude")).toBeVisible();
     expect(screen.queryByRole("combobox", { name: "Model provider" })).not.toBeInTheDocument();
@@ -703,7 +711,7 @@ describe("AgentsProvidersView", () => {
   });
 
   it("does not advertise generic configuration mutations for specialized harnesses", () => {
-    const { onMutate } = setup({ selectedHarnessId: "harness_claude" });
+    const { onMutate } = setupRetained({ selectedHarnessId: "harness_claude" });
 
     expect(screen.queryByRole("switch", { name: "Enable Claude" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Display name")).toBeDisabled();
@@ -723,7 +731,7 @@ describe("AgentsProvidersView", () => {
     const claude = independentLogout.harnesses.find((harness) => harness.id === "harness_claude")!;
     claude.loginMethods = [];
     claude.recommendedLoginMethod = null;
-    const { onMutate } = setup({ snapshot: independentLogout, selectedHarnessId: "harness_claude" });
+    const { onMutate } = setupRetained({ snapshot: independentLogout, selectedHarnessId: "harness_claude" });
 
     fireEvent.click(within(screen.getByTestId("account-account_personal"))
       .getByRole("button", { name: "Log out Personal" }));
@@ -831,7 +839,7 @@ describe("AgentsProvidersView", () => {
     const broken = structuredClone(current);
     broken.accessSources[0]!.readiness.safeReason = "provider_unavailable";
     rerender(<AgentsProvidersView {...setupProps(broken)} />);
-    expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeDisabled();
+    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
 
     const ledgerMissing = structuredClone(current);
     ledgerMissing.accessSources[0]!.usage = {
@@ -839,11 +847,11 @@ describe("AgentsProvidersView", () => {
       scope: "owner_entitlement", reason: "ledger_not_available", asOf: null,
     };
     rerender(<AgentsProvidersView {...setupProps(ledgerMissing)} />);
-    expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeDisabled();
+    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
   });
 
   it("shows per-account usage and keeps login, logout, and remove distinct", async () => {
-    const { onMutate } = setup();
+    const { onMutate } = setupRetained();
     const personal = screen.getByTestId("account-account_personal");
     const work = screen.getByTestId("account-account_work");
 
@@ -868,7 +876,7 @@ describe("AgentsProvidersView", () => {
   it("requires dependency reassignment before removing an account in use", () => {
     const value = snapshot();
     value.harnesses[0]!.harness = "pi";
-    const { onMutate } = setup({ snapshot: value });
+    const { onMutate } = setupRetained({ snapshot: value });
     const personal = screen.getByTestId("account-account_personal");
     fireEvent.click(within(personal).getByRole("button", { name: "Remove Personal" }));
 
@@ -890,7 +898,7 @@ describe("AgentsProvidersView", () => {
   it("offers only reassignment targets that serve every dependent harness route", () => {
     const value = snapshot();
     value.harnesses[0]!.harness = "pi";
-    setup({ snapshot: value });
+    setupRetained({ snapshot: value });
     fireEvent.click(within(screen.getByTestId("account-account_personal"))
       .getByRole("button", { name: "Remove Personal" }));
 
@@ -926,8 +934,8 @@ describe("AgentsProvidersView", () => {
       action: { kind: "open_browser", authorizationPath: "/api/ai/providers/login-attempts/attempt_browser/authorize" },
     };
     rerender(<AgentsProvidersView {...setupProps(snapshot(), { connectionAttempt: browserAttempt, onOpenTerminal, onOpenBrowser })} />);
-    fireEvent.click(screen.getByRole("button", { name: "Continue in browser" }));
-    expect(onOpenBrowser).toHaveBeenCalledWith("/api/ai/providers/login-attempts/attempt_browser/authorize");
+    expect(screen.queryByRole("button", { name: "Continue in browser" })).not.toBeInTheDocument();
+    expect(onOpenBrowser).not.toHaveBeenCalled();
   });
 
   it("controls gateway budget and offers one shared, server-backed add-on package flow", async () => {
@@ -1010,9 +1018,9 @@ describe("AgentsProvidersView", () => {
       activeChatCount: 0,
     });
     const { rerender } = setup({ snapshot: base, selectedHarnessId: "harness_pi" });
-    expect(screen.getByText("Connection unavailable")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Pi.*Not installed/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Install Pi" })).not.toBeInTheDocument();
-    expect(screen.getByText(/Install from this computer’s Terminal/)).toBeVisible();
+    expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
 
     const readOnly = structuredClone(base);
     readOnly.access = { mode: "read_only", reason: "remote_policy" };
@@ -1038,7 +1046,7 @@ describe("AgentsProvidersView", () => {
       },
     });
 
-    setup({ snapshot: base });
+    setupRetained({ snapshot: base });
 
     expect(within(screen.getByLabelText("Model provider"))
       .getByRole("option", { name: "Baseten · Unavailable" })).toBeVisible();
@@ -1060,7 +1068,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByRole("button", { name: "+ Add account" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Log out Personal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove Personal" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Buy credit" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
   });
 
   it("renders platform-authoritative gateway policy as read-only", () => {
@@ -1121,7 +1129,7 @@ describe("AgentsProvidersView", () => {
   ] as const)("does not offer a foreign %s route using the %s Codex profile", (harness, nativeOwner) => {
     const next = snapshotWithNativeCodexProfile(nativeOwner);
     Object.assign(next.harnesses[0]!, { harness, displayName: harness });
-    const { onMutate } = setup({ snapshot: next });
+    const { onMutate } = setupRetained({ snapshot: next });
     const providerPicker = within(screen.getByLabelText("Model provider"));
 
     expect(providerPicker.queryByRole("option", { name: "OpenAI Codex" })).toBeNull();
@@ -1139,7 +1147,7 @@ describe("AgentsProvidersView", () => {
     Object.assign(next.harnesses[0]!, { harness: "hermes", displayName: "Hermes", selectedAccountId: null, accountIds: [],
       accessSourceId: source.id, authState: "unknown", connectivity: "unknown",
       route: { kind: "configurable", providerId: "openai-codex", modelId: "openai-codex:gpt-5.6-sol" } });
-    const { onMutate } = setup({ snapshot: next });
+    const { onMutate } = setupRetained({ snapshot: next });
     expect(within(screen.getByLabelText("Model provider")).getByRole("option", { name: "OpenAI Codex" })).toBeVisible();
     expect(screen.getByLabelText("Model")).toHaveValue("openai-codex:gpt-5.6-sol");
     expect(screen.getByText("Hermes manages authentication for this route. Connect or switch accounts in Settings.")).toBeInTheDocument();
@@ -1158,7 +1166,7 @@ describe("AgentsProvidersView", () => {
       accessSourceId: `harness_${nativeOwner}_openai-codex`,
     });
     const savedHarness = structuredClone(next.harnesses[0]!);
-    const { onMutate } = setup({ snapshot: next });
+    const { onMutate } = setupRetained({ snapshot: next });
 
     expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Saved access unavailable");
     expect(screen.getByLabelText("Model provider")).toHaveValue("openai-codex");
@@ -1212,7 +1220,7 @@ describe("AgentsProvidersView", () => {
         asOf: now,
       },
     });
-    const { onMutate } = setup({ snapshot: native });
+    const { onMutate } = setupRetained({ snapshot: native });
     expect(within(screen.getByLabelText("Model provider"))
       .getByRole("option", { name: "Baseten" })).toBeVisible();
     fireEvent.change(screen.getByLabelText("Model provider"), { target: { value: "baseten" } });
@@ -1261,7 +1269,7 @@ describe("AgentsProvidersView", () => {
       models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3", enabled: true }],
     });
 
-    setup({ snapshot: unavailable });
+    setupRetained({ snapshot: unavailable });
 
     expect(screen.getByLabelText("Model provider")).toHaveValue("baseten");
     expect(within(screen.getByLabelText("Model provider"))

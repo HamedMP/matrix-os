@@ -8,10 +8,8 @@ import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-con
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
 import type { ProviderWorkflowCapability } from "@matrix-os/contracts";
 import { ConnectedAccountCard } from "./ConnectedAccountCard.js";
-import { AccountsPanel } from "./AccountsPanel.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
-import { HarnessEditor } from "./HarnessEditor.js";
 import { HarnessRail } from "./HarnessRail.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { CatalogSetupPanel } from "./CatalogSetupPanel.js";
@@ -46,29 +44,9 @@ function supportedActions(
   );
 }
 
-function SavedAccounts({
-  collapsed,
-  children,
-  title = "Manage saved accounts",
-}: {
-  collapsed: boolean;
-  children: ReactNode;
-  title?: string;
-}) {
-  return collapsed ? (
-    <details className="matrix-ap-advanced">
-      <summary>{title}</summary>
-      {children}
-    </details>
-  ) : (
-    children
-  );
-}
-
 export function AgentsProvidersView({
   snapshot,
   selectedHarnessId,
-  connectionAttempt = null,
   busy = false,
   error = null,
   onSelectHarness,
@@ -76,7 +54,6 @@ export function AgentsProvidersView({
   onRefreshForConnection,
   onMutate,
   onOpenTerminal,
-  onOpenBrowser,
   onAddCredit,
   onSetupHarness,
   workflowClient,
@@ -333,47 +310,6 @@ export function AgentsProvidersView({
             const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
             const connected = hasConfiguredConnection(harness, source);
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
-            const accountsPanel = (connectionAction?: ReactNode) =>
-              !gatewaySelected ||
-              (harness.harness !== "pi" && harness.harness !== "opencode") ||
-              harness.accountIds.length > 0 ? (
-                <SavedAccounts
-                  collapsed={true}
-                >
-                  <AccountsPanel
-                    harness={harness}
-                    connectionAction={connectionAction}
-                    guided={workflowCapabilities.some(
-                      (item) =>
-                        item.harnessInstanceId === harness.id &&
-                        (item.loginMethods.length > 0 ||
-                          item.apiKeyProviders.length > 0 ||
-                          item.install),
-                    )}
-                    accounts={snapshot.accounts.filter((account) =>
-                      harness.accountIds.includes(account.id),
-                    )}
-                    sources={snapshot.accessSources}
-                    allHarnesses={snapshot.harnesses}
-                    gatewayPolicy={snapshot.gatewayPolicy}
-                    attempt={
-                      connectionAttempt?.harnessInstanceId === harness.id && connectionAttempt.action.kind !== "open_terminal"
-                        ? connectionAttempt
-                        : null
-                    }
-                    disabled={mutationsDisabled}
-                    canLogin={false}
-                    canLogout={supports("logout_account")}
-                    canRemove={supports("remove_account")}
-                    canReassign={supports("reassign_account")}
-                    onMutate={onMutate}
-                    onOpenTerminal={onOpenTerminal}
-                    onOpenBrowser={onOpenBrowser}
-                    onSetupHarness={workflowPermission === "forbidden" ? undefined : onSetupHarness}
-                    onRefresh={refreshSettings}
-                  />
-                </SavedAccounts>
-              ) : null;
             return (
               <>
                 <ConnectionChoices
@@ -394,7 +330,10 @@ export function AgentsProvidersView({
                     : undefined}
 
                 />
-                {!guided ? <>{connected ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}{accountsPanel()}</> : null}
+                {!guided && harness.installState === "missing" && harness.harness !== "codex" && harness.harness !== "claude" ? <CatalogSetupPanel
+                  entry={{ harness: harness.harness, displayName: harness.displayName, installState: "missing", available: true, runnable: false, setupAction: "install", safeReason: "not_installed" }}
+                  disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} /> : null}
+                {!guided ? <>{connected ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}</> : null}
                 {workflowClient &&
                 workflowCapabilities.find(
                   (item) => item.harnessInstanceId === harness.id,
@@ -426,40 +365,19 @@ export function AgentsProvidersView({
                       setWorkflowStatus(current => updateWorkflowRowStatus(current, harness.id, status))
                     }
                     onDisconnect={
-                      supports("logout_account") && selectedAccount?.id
+                      supports("set_harness_enabled")
                         ? async () => {
                             return await onMutate({
-                              type: "logout_account",
-                              accountId: selectedAccount!.id,
+                              type: "set_harness_enabled",
+                              harnessInstanceId: harness.id,
+                              enabled: false,
                             });
                           }
                         : undefined
                     }
                   />
                 ) : null}
-                {guided ? accountsPanel() : null}
-                <SavedAccounts
-                  title="Advanced configuration"
-                  collapsed={true}
-                >
-                  <HarnessEditor
-                    snapshot={snapshot}
-                    harness={harness}
-                    disabled={mutationsDisabled}
-                    canUpdate={
-                      genericConfiguration && supports("update_harness")
-                    }
-                    canSetRoute={genericConfiguration && supports("set_route")}
-                    canSelectSource={
-                      genericConfiguration && supports("select_access_source")
-                    }
-                    canSelectAccount={
-                      genericConfiguration && supports("select_account")
-                    }
-                    onMutate={onMutate}
-                    onRefresh={refreshSettings}
-                  />
-                </SavedAccounts>
+
               </>
             );
           }}

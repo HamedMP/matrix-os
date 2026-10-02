@@ -96,8 +96,9 @@ account, never an unrelated Codex account. Native helpers return bounded safe
 metadata, not credentials. Missing quota is unavailable, not zero.
 
 Connected agents present a Connection card with the selected account's available
-plan/email, authoritative usage and reset time, Change account, View logs, and
-Disconnect. Hide the connection chooser once the same shared derivation marks
+plan/email, authoritative usage and reset time, Change account and supported
+Disconnect. View logs is omitted until a real runtime-log action is supported.
+The Settings page omits the legacy saved-account and advanced-configuration panels. Hide the connection chooser once the same shared derivation marks
 that agent Connected. Resolve optional account details from selectedAccountId,
 or the exact selected access source account identity; never borrow another
 account. The allowance bar represents remaining quota.
@@ -111,9 +112,12 @@ native email/usage without a plan name. After a successful mutation, the shared
 controller refreshes the negotiated projection without resetting the accordion;
 a metadata refresh failure must not claim the confirmed mutation failed.
 
-The Matrix AI primary card displays eligible credit balance, Usage history and
-Buy credit. Unsupported checkout retains a disabled explained control. Harness
-routing and spending limits belong under Advanced settings. Known Sonnet and
+The Matrix AI primary card displays eligible credit balance and Usage history.
+Buy credit is shown only when the current server-backed checkout is supported.
+Unsupported purchase actions are omitted, without enabling policy or fabricating
+a payment route. Supported checkout preserves owner/runtime scope, idempotent
+request IDs and safe retry feedback.
+Matrix AI spending limits remain under its Advanced settings. Known Sonnet and
 GLM models use Coding and General purpose chips respectively; unknown purpose
 is omitted rather than fabricated.
 
@@ -500,7 +504,11 @@ mode. Neither CLI metadata nor a renderer account label can upgrade an
 unverified subscription to remotely authenticated. Verified key readiness and
 successful inference remain separate facts.
 
-Disconnect keeps the existing logout/dependency guard. Optional uninstall is a
+Disconnect disables only the selected Matrix agent using the existing owner-scoped,
+revision-guarded runtime mutation. It preserves account credentials and other
+agents sharing them; confirmation copy must explain this scope. It does not
+log a shared native account out. Unsupported disconnect actions are omitted.
+Optional uninstall is a
 separate operation over a verified Matrix-managed executable prefix, not
 `remove_harness` and not owner-home deletion. No chats, projects, Settings,
 native owner configuration, or immutable Chat bindings are deleted. Progress
