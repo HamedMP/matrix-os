@@ -332,6 +332,30 @@ export const AOEDE_SCENARIOS: readonly AoedeScenario[] = [
     drive: ["open", "start", "allow", "ptt-hold"],
     ready: { state: "listening", texts: ["Push to talk", "Microphone active"] },
   },
+  {
+    id: "code-response",
+    label: "Code response",
+    summary: "Compact code typography with an overflowing line inside the narrow assistant panel.",
+    detail: () => fixtureDetail({
+      runStatus: "completed",
+      messages: [fixtureUserMessage("Show me a weather app snippet."), fixtureAssistantMessage([
+        "Save this as `index.html`:",
+        "",
+        "```html",
+        "<!DOCTYPE html>",
+        '<html lang="en">',
+        "<head>",
+        '  <meta charset="utf-8">',
+        '  <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        "  <title>Weather</title>",
+        "</head>",
+        "</html>",
+        "```",
+      ].join("\n"))],
+    }),
+    drive: ["open"],
+    ready: { selectors: ['[data-streamdown="code-block"] code'] },
+  },
 ] as const;
 
 export const AOEDE_SCENARIO_IDS = AOEDE_SCENARIOS.map((scenario) => scenario.id);

@@ -2,6 +2,9 @@
 @source "../../../../../packages/ui/src/chat";
 @source "../../../../../packages/ui/src/aoede";
 @source "../../../../../shell/src/components/ShellAoedeHost.tsx";
+@source "../../../../../shell/src/components/aoede";
+@source "../../../../../shell/src/components/ai-elements/message.tsx";
+@source "../../../../../shell/node_modules/streamdown/dist";
 
 /* Standalone Aoede fixture chrome — mock surface + evidence readout. */
 :root {

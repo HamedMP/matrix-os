@@ -152,6 +152,25 @@ async function main() {
               // Dismissal records cleanup (`end`) even if Start was never used.
               // Assert acquisition, not the absence of legitimate cleanup.
               if (!media || media.includes("startVoice:")) throw new Error("launch started media");
+            } else if (scenario === "code-response") {
+              const typography = await page.locator('[data-streamdown="code-block-body"]').evaluate(body => {
+                const code = body.querySelector("code")!;
+                const pre = body.querySelector("pre")!;
+                pre.scrollLeft = 40;
+                return {
+                  font: getComputedStyle(code).fontSize,
+                  lineHeight: getComputedStyle(code).lineHeight,
+                  padding: getComputedStyle(body).padding,
+                  scrolled: pre.scrollLeft > 0,
+                  overflow: pre.scrollWidth > pre.clientWidth,
+                  proseFont: getComputedStyle(document.querySelector(".matrix-aoede__response p")!).fontSize,
+                };
+              });
+              if (typography.font !== "12px" || typography.lineHeight !== "18px" || typography.padding !== "8px") {
+                throw new Error(`code typography is not compact: ${JSON.stringify(typography)}`);
+              }
+              if (typography.proseFont !== "14px") throw new Error("code styling changed prose size");
+              if (!typography.overflow || !typography.scrolled) throw new Error("long code line is not horizontally scrollable");
             } else if (scenario === "clarification") {
               const choice = page.getByRole("radio").nth(1);
               await choice.focus();
