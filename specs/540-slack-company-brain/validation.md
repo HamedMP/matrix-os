@@ -7,7 +7,7 @@ date: 2026-09-30
 
 ## October 2 main refresh
 
-The local composed stack is refreshed onto main `cd75ec0c4`, including the
+The local composed stack is refreshed onto main `988b94155`, including the
 merged Codex 0.160 contracts, scoped app launch, Electron window sizing,
 organization-webhook deployment and builder/skill changes. Conflict resolution
 preserves both server-only recipe-source projection and negotiated bot event
@@ -24,7 +24,7 @@ These are automated checks, not physical-device or live model qualification.
 
 Slack installation is verified in the dedicated preview database and the app is
 present in the approved test channel. Three preview computers timed out before
-registration. Startup repair [#2123](https://github.com/HamedMP/matrix-os/pull/2123)
+registration. Merged startup repair [#2123](https://github.com/HamedMP/matrix-os/pull/2123)
 reproduces registration blocking selected-tool installation and queues the
 registration service without bypassing readiness. Its 58 focused tests pass,
 including the real registration client and negative startup/retry checks;
@@ -191,3 +191,7 @@ The current-main platform image built successfully, but its startup correctly re
 The workflow resolves the pilot database's PR-scoped, immutable secret version only for the explicitly selected isolated pilot, checks its enabled version and exact runner access before building, and preserves the existing database binding for other previews. Three new regression expectations fail before the repair; the combined workflow/migration regression passes 5 suites / 56 tests. A redeploy of the exact tested image with the isolated database is running; its pilot tag, image, database binding and unchanged shared traffic/other PR tags were verified. The live branded completion page renders without consuming an installation permit.
 
 The production Web Desktop/auth build and separate 34-suite / 347-test funded AI/speech regression also pass. These are distinct from live Slack/model/VPS acceptance, which remains pending.
+
+### Final October 2 main refresh
+
+Startup repair #2123 merged after current-head Greptile 5/5 and admitted CI, including all unit shards and Electron end-to-end checks. The composed stack includes main `988b94155` and the merged managed-Agent skill refresh #2115. A failing rendered-template headroom assertion exposed an eight-byte margin overrun when composing the changes; shortening a comment restores the reserve without changing execution. All 98 startup, registration-client and managed-skill regressions across six suites pass. The previously qualified Web Desktop and Electron Desktop production builds pass; the final rebase adds startup scripts and regression tests, with no renderer-source changes. Live Slack model replies remain unqualified until the recreated preview registers and the personal/company routes are configured.
