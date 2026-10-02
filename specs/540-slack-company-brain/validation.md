@@ -5,6 +5,35 @@ date: 2026-09-30
 
 # Implementation and qualification evidence
 
+## October 2 main refresh
+
+The local composed stack is refreshed onto main `cd75ec0c4`, including the
+merged Codex 0.160 contracts, scoped app launch, Electron window sizing,
+organization-webhook deployment and builder/skill changes. Conflict resolution
+preserves both server-only recipe-source projection and negotiated bot event
+delivery. Native Mobile retains main's streamed Chat cache path, refreshing bot
+state for control/lifecycle changes instead of every text chunk.
+
+Across 158 regression suites, 1,687 tests pass and six optional cases are skipped.
+The initial sandboxed run could not access local PostgreSQL and Unix sockets;
+all 19 affected suites pass with those local test resources available (237 tests).
+The full workspace TypeScript check passes. Native Mobile streaming/bot tests
+pass 17 cases; the separate draft settings PR passes 36 focused cases and its
+Electron source check after waiting for asynchronously loaded controls.
+These are automated checks, not physical-device or live model qualification.
+
+Slack installation is verified in the dedicated preview database and the app is
+present in the approved test channel. Three preview computers timed out before
+registration. Startup repair [#2123](https://github.com/HamedMP/matrix-os/pull/2123)
+reproduces registration blocking selected-tool installation and queues the
+registration service without bypassing readiness. Its 58 focused tests pass,
+including the real registration client and negative startup/retry checks;
+current-head Greptile gives 5/5. The owner approved its reviewed provisioning
+rollout and replacement of only the failed disposable preview. Live replies,
+funding, Linux sandbox and two-employee qualification remain pending recovery.
+Fresh full-app screenshots and Native Mobile physical-device testing remain
+pending; earlier screenshots are historical evidence.
+
 ## Reviewed implementation
 
 Core implementation: `37024c22a2a276b4bcccab16e306b6b27d75db5e`. Final publication and authorization fences: `d3639b4eb`. Failure/recovery qualification: `44bf5f9f8`. Final post-receipt authority fence: `d741b69df`; six revocation regressions confirmed red → green, including source-free replies.
