@@ -1,6 +1,6 @@
 import { botInteractionCard, type BotInteraction, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
-import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
+import { chatAgentButtonClass, chatAgentMutedStyle, chatAgentSurfaceStyle } from "../theme.js";
 
 const MAX_STRUCTURED_ANSWER_BYTES = 700;
 const encoder = new TextEncoder();
@@ -63,7 +63,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
   )));
   const allQuestionsAnswered = payload?.kind === "question" && !answerTooLong
     && payload.questions.every((question) => questionAnswers[question.questionId]?.length);
-  return <section aria-label={card.title} className="matrix-chat-agent-card grid gap-3 rounded-2xl border p-4">
+  return <section aria-label={card.title} className="matrix-bot-request grid gap-2.5 rounded-xl border p-3" style={chatAgentSurfaceStyle}>
     <div><h3 className="text-sm font-semibold">{card.title}</h3>
       {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : !actionsAvailable && card.state === "actionable" ? "Status unavailable. Refresh to respond." : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
     {!actionsAvailable && card.state === "actionable" && payload?.kind === "question"
@@ -96,7 +96,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
             className="w-full rounded-lg border bg-transparent p-2 text-sm" />
             : <textarea aria-label={`Answer ${question.header}`} value={typedAnswers[question.questionId] ?? ""}
               maxLength={400} disabled={pending} onChange={(event) => typeAnswer(question.questionId, event.currentTarget.value)}
-              className="min-h-20 w-full rounded-lg border bg-transparent p-2 text-sm" />}
+              rows={2} className="min-h-12 w-full rounded-lg border bg-transparent p-2 text-sm" />}
         </label> : null}
       </fieldset>)}
       {answerTooLong ? <p role="status" className="text-xs">Shorten an answer to fit the request.</p> : null}

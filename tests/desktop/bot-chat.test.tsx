@@ -44,7 +44,8 @@ describe("Electron Desktop bot Chat", () => {
 
     expect(await screen.findByText("Research Rabbit")).toBeTruthy();
     expect(await screen.findByText("Which company?")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show bot authority" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bot settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Memory/ }));
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
     await waitFor(() => expect(client.agents!.bots!.directBot).toHaveBeenCalledWith(snapshot.chat.id));
   });
@@ -99,7 +100,7 @@ describe("Electron Desktop bot Chat", () => {
     await waitFor(() => expect(resolve).toHaveBeenCalledWith(snapshot.chat.id, "in_abcdefgh",
       { kind: "question", baseRevision: 1, structuredAnswers: { target: ["Acme"] } }));
     await waitFor(() => expect(interactions.mock.calls.length).toBeGreaterThan(1));
-    fireEvent.click(screen.getByRole("button", { name: "Show bot authority" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bot settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Revoke Work" }));
     await waitFor(() => expect(revoke).toHaveBeenCalledWith("bot_research1", "gr_abcdefgh"));
   });
@@ -114,7 +115,7 @@ it("admits a direct bot turn when the ordinary provider catalog is empty", async
   render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation"
     active catalog={{ ...providerCatalog, instances: [] }} />);
   await screen.findByText("Your bot's Chat");
-  expect(screen.getByText("Runtime: Pi · Model routing: automatic")).toBeTruthy();
+  expect(screen.queryByText("Runtime: Pi · Model routing: automatic")).toBeNull();
   const composer = screen.getByRole("textbox", { name: "Reply to chat" });
   await setSharedComposerText(composer, "Check the pages");
   fireEvent.click(screen.getByRole("button", { name: "Send" }));

@@ -586,7 +586,7 @@ function ChatAppContent({
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header>
-        {!collaborationView && sessionId ? <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} refreshKey={botEventRevision} /> : null}
+        <BotChatPanel chatId={!collaborationView ? sessionId : undefined} client={!collaborationView ? agentClient : undefined} directBotId={directBotId} refreshKey={botEventRevision}>
         {!collaborationView && directBotId === null && setupOpen && (
           <ChatProviderSetupPanel
             onDismiss={() => {
@@ -735,6 +735,7 @@ function ChatAppContent({
           </div>
         )}
         </>}
+        </BotChatPanel>
       </main>
       {previewFile && previewFile.chatId === sessionId ? <ChatFilePanel key={`${sessionId}:${previewFile.path}`} path={previewFile.path} onClose={() => {
         setPreviewFile(null);

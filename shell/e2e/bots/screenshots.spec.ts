@@ -62,7 +62,7 @@ async function openChat(page: Page) {
   await page.keyboard.press("Meta+k");
   await page.locator('[data-slot="command-input"]').fill("Chat");
   await page.getByRole("group", { name: "Apps" }).getByRole("option", { name: /Chat/ }).click();
-  await expect(page.getByRole("button", { name: "Show bot authority" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Bot settings" })).toBeVisible();
 }
 
 for (const surface of ["web-desktop", "web-canvas"] as const) {
@@ -83,11 +83,12 @@ for (const surface of ["web-desktop", "web-canvas"] as const) {
     await openChat(page);
     await expect(page.getByText("Which company should I watch?")).toBeVisible();
     await page.screenshot({ path: resolve(evidence, `${surface}-question.png`) });
-    await page.getByRole("button", { name: "Show bot authority" }).click();
+    await page.getByRole("button", { name: "Bot settings" }).click();
+    await page.getByRole("button", { name: /Memory/ }).click();
     await page.getByText("Keep briefs concise").scrollIntoViewIfNeeded();
     await expect(page.getByText("Keep briefs concise")).toBeVisible();
     await page.screenshot({ path: resolve(evidence, `${surface}-authority-memory.png`) });
-    await page.getByRole("button", { name: "Show bot authority" }).click();
+    await page.getByRole("button", { name: "Close bot settings" }).click();
     current.kind = "connect_request";
     await page.getByText("I can read the latest competitor updates in your inbox.").scrollIntoViewIfNeeded({ timeout: 30_000 });
     await expect(page.getByText("I can read the latest competitor updates in your inbox.")).toBeVisible();

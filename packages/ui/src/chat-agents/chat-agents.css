@@ -339,3 +339,41 @@
     transition-duration: 0.01ms;
   }
 }
+
+/* Size to the Chat pane so small desktop windows get the mobile drawer too. */
+.matrix-bot-workspace {
+  container: matrix-bot-chat / inline-size;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.matrix-bot-conversation { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.matrix-bot-settings-header { flex-shrink: 0; }
+.matrix-bot-settings-stage { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.matrix-bot-settings {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 2;
+  width: 320px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-width: 0 0 0 1px !important;
+  box-shadow: -12px 0 32px color-mix(in srgb, var(--text-primary, var(--foreground)) 8%, transparent);
+}
+.matrix-bot-settings-nav { display: flex; gap: 4px; padding: 0 16px 14px; border-bottom: 1px solid var(--border-default, var(--matrix-border, var(--border))); }
+.matrix-bot-settings-tab { display: flex; align-items: center; justify-content: center; gap: 4px; flex: 1; min-width: 0; white-space: nowrap; border-radius: 8px; padding: 8px 3px; font-size: 12px; color: var(--text-secondary, var(--matrix-muted-fg, var(--muted-foreground))); }
+.matrix-bot-settings-tab span { font-size: 10px; opacity: .65; }
+.matrix-bot-settings-tab[aria-pressed="true"] { background: var(--bg-hover, var(--matrix-secondary, var(--secondary))); color: var(--text-primary, var(--matrix-card-fg, var(--foreground))); font-weight: 600; }
+.matrix-bot-settings-tab:focus-visible { outline: 2px solid var(--ring, var(--accent, var(--matrix-ring))); outline-offset: 2px; }
+.matrix-bot-settings-body { overflow-y: auto; flex: 1; min-height: 0; padding: 20px; overscroll-behavior: contain; }
+.matrix-bot-settings-card { border: 1px solid var(--border-default, var(--matrix-border, var(--border))); border-radius: 12px; padding: 14px; }
+.matrix-bot-settings-backdrop { position: absolute; inset: 0; z-index: 1; background: color-mix(in srgb, var(--text-primary, var(--foreground)) 12%, transparent); }
+@container matrix-bot-chat (width < 880px) {
+  .matrix-bot-settings { position: absolute; inset: 0 0 0 auto; z-index: 2; width: min(360px, 100%); box-shadow: -12px 0 32px color-mix(in srgb, var(--text-primary, var(--foreground)) 8%, transparent); }
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BotAuthorityView, BotInteraction, BotTaskSummary } from "@matrix-os/contracts";
-import { botInteractionCard, botTaskStatusCopy, groupBotAuthority } from "@matrix-os/contracts";
+import { botInteractionCard, botTaskStatusCopy, groupBotAuthority, botServiceLabel, botConnectionStateLabel, botAccessLabel } from "@matrix-os/contracts";
 
 const now = "2026-09-28T12:00:00.000Z";
 const interaction = (overrides: Partial<BotInteraction> = {}): BotInteraction => ({
@@ -65,4 +65,14 @@ describe("bot task status copy", () => {
     expect(botTaskStatusCopy(task({ status: "blocked", blockedReason: "grant_revoked" }))).toBe("Access was removed");
     expect(botTaskStatusCopy(task({ status: "blocked" }))).toBe("Needs attention");
   });
+});
+
+it("uses friendly service, connection, and permission labels across surfaces", () => {
+  expect(botServiceLabel("gmail")).toBe("Gmail");
+  expect(botServiceLabel("google_calendar")).toBe("Google Calendar");
+  expect(botServiceLabel("custom_notes")).toBe("Custom Notes");
+  expect(botConnectionStateLabel("granted")).toBe("Access allowed");
+  expect(botConnectionStateLabel("connected_not_granted")).toBe("Connected · no access");
+  expect(botConnectionStateLabel("not_connected")).toBe("Not connected");
+  expect(botAccessLabel(["read", "send"])).toBe("Read, Send");
 });

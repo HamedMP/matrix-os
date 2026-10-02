@@ -29,14 +29,14 @@ it("renders a direct bot's identity, pending interaction and authority from its 
   expect(await screen.findByText("Research Rabbit")).toBeTruthy();
   expect(await screen.findByText("Which company?")).toBeTruthy();
   expect(screen.getByText("Waiting for your answer")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Show bot authority" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Bot settings" })).toBeTruthy();
 });
 
 it("keeps bot controls absent for a non-bot Chat", async () => {
   const client = { bots: { directBot: vi.fn(async () => null) } };
   render(<BotChatPanel chatId="chat_general" client={client as never} />);
   await waitFor(() => expect(client.bots.directBot).toHaveBeenCalledOnce());
-  expect(screen.queryByRole("button", { name: "Show bot authority" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Bot settings" })).toBeNull();
 });
 
 it("keeps bot interactions visible when only the agent library request fails", async () => {
@@ -120,7 +120,8 @@ for (const surface of ["Web Canvas", "Web Desktop"] as const) {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} />);
     expect(await screen.findByText("Research Rabbit")).toBeTruthy();
     expect(await screen.findByText("Which company?")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show bot authority" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bot settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /Memory/ }));
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
   });
 }
