@@ -91,4 +91,23 @@ The settings overlay is positioned in the conversation stage below the naturally
 
 With explicit owner approval, the integration dependency now removes the three obsolete `mentionPermission.allowed` UI references and preserves the selected permission mode and server authorization. The current settings head passes 36 focused Web/shared/Electron tests across 6 suites, Electron source typechecks, and an Electron production build. The foundation passes 96 broader Electron/Web Agent regressions including direct bot sends, supervised requests, retry identity and background refresh. Fresh post-rebase renderer captures are still pending; earlier captures above remain historical. Physical-device Native Mobile validation remains pending; keep this PR a draft.
 
-The final October 2 main refresh includes merged startup #2123 and managed-Agent skill refresh #2115. Both Web Desktop and Electron Desktop production builds completed successfully. All 98 focused startup/registration/skill-refresh regressions pass on the composed runtime; final ancestry changes do not alter the settings renderer. New renderer captures and physical-device validation remain pending.
+The final October 2 main refresh includes merged startup #2123 and managed-Agent skill refresh #2115. Both Web Desktop and Electron Desktop production builds completed successfully. All 98 focused startup/registration/skill-refresh regressions pass on the composed runtime; final ancestry changes do not alter the settings renderer. Current captures are recorded below; physical-device validation remains pending.
+
+
+## October 2 current renderer captures
+
+Captured on the rebased settings source `9c033210d` containing main `988b94155`. The actual rebuilt Electron Desktop and local Web Desktop/Web Canvas renderers use synthetic fixtures. Each surface shows Chat, Connections, Memory, and the final unavailable Routines state. Web settings views clear the synthetic pending question to show the complete panel; Electron preserves it to demonstrate placement below the control region. The capture checks pass: two Web journeys and one Electron journey. Offline/unavailable fixture states do not qualify live Slack/model behavior. Physical Native Mobile testing is still pending; this PR remains a draft.
+
+- [electron-desktop chat](oct02-electron-desktop-chat.png)
+
+- [electron-desktop connections](oct02-electron-desktop-connections.png)
+- [electron-desktop memory](oct02-electron-desktop-memory.png)
+- [electron-desktop routines](oct02-electron-desktop-routines.png)
+- [web-desktop chat](oct02-web-desktop-chat.png)
+- [web-desktop connections](oct02-web-desktop-connections.png)
+- [web-desktop memory](oct02-web-desktop-memory.png)
+- [web-desktop routines](oct02-web-desktop-routines.png)
+- [web-canvas chat](oct02-web-canvas-chat.png)
+- [web-canvas connections](oct02-web-canvas-connections.png)
+- [web-canvas memory](oct02-web-canvas-memory.png)
+- [web-canvas routines](oct02-web-canvas-routines.png)
