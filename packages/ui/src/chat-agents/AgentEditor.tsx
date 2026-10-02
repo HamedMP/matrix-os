@@ -64,7 +64,7 @@ export function AgentEditor({ draft, editing, pending, models, catalog, recipeCa
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-name`}>Name<input id={`${ids}-name`} className={input} value={draft.name} maxLength={80} required disabled={pending} onChange={(event) => change({ name: event.target.value })} /></label>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-description`}>Description <span className="text-xs" style={muted}>Optional</span><input id={`${ids}-description`} className={input} value={draft.description} maxLength={400} disabled={pending} onChange={(event) => change({ description: event.target.value })} /></label>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-instructions`}>Instructions<textarea id={`${ids}-instructions`} className={`${input} min-h-32 resize-y`} value={draft.instructions} maxLength={8000} required disabled={pending} placeholder="What should this Agent do? How should it work?" onChange={(event) => change({ instructions: event.target.value })} /></label>
-      {recipeBot ? <div className="grid gap-3 text-sm"><p>Runtime <strong>Pi</strong></p>
+      {recipeBot ? <div className="grid gap-3 text-sm">
         <MatrixBotModelField id={`${ids}-model`} selection={draft.selection} models={models} catalog={catalog} pending={pending} onChange={(selection) => change({ selection })} />
         <p className="text-xs" style={muted}>This bot runs in its own Chat. Its model and tool access are managed by this computer.</p>
       </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />}

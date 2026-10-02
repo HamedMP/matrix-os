@@ -88,7 +88,7 @@ describe("shared Agents entry", () => {
     fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
     expect((screen.getByRole("textbox", { name: "Instructions" }) as HTMLTextAreaElement).value).toBe(saved.instructions);
   });
-  it("shows recipe bots as Pi with server routing and saves without a coding selection", async () => {
+  it("shows recipe bots with their own Chat and server routing and saves without a coding selection", async () => {
     const client = clientFixture();
     const bot = { ...saved, recipeRef: { recipeId: "writing-bot", version: "1" },
       recipe: { skills: ["matrix-integrations"], integrations: [], output: "Legacy Agent recipe" } };
@@ -97,9 +97,11 @@ describe("shared Agents entry", () => {
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Current Chat</p></ChatAgentsContent></ChatAgentsWorkspace>);
     fireEvent.click(await screen.findByRole("button", { name: "Manage agents" }));
-    expect(await screen.findByText("Pi · own Chat")).toBeTruthy();
+    expect(await screen.findByText("Own Chat")).toBeTruthy();
+    expect(screen.queryByText("Pi · own Chat")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
-    expect(screen.getByText("Pi")).toBeTruthy();
+    expect(screen.queryByText("Pi")).toBeNull();
+    expect(screen.queryByText(/^Runtime/)).toBeNull();
     expect(screen.getByText("Automatic · managed by this computer")).toBeTruthy();
     expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value).toBe("");
     expect(screen.queryByText(/Set up Codex or Hermes/)).toBeNull();

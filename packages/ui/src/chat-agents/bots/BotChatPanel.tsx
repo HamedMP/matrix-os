@@ -75,7 +75,7 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog 
       <div className="flex items-center gap-2">
         <AgentAvatar id={agentId} name={name ?? "Your bot"} />
         <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{name ?? "Your bot"}</p>
-          <p className="text-xs" style={chatAgentMutedStyle}>Your bot&apos;s Chat</p><p className="text-xs" style={chatAgentMutedStyle}>Runtime: Pi · {modelRouting}</p></div>
+          <p className="text-xs" style={chatAgentMutedStyle}>Your bot&apos;s Chat</p><p className="text-xs" style={chatAgentMutedStyle}>Model: {modelRouting}</p></div>
         <button type="button" aria-label="Show bot authority" aria-expanded={showAuthority} className={chatAgentButtonClass}
           onClick={() => setShowAuthority((value) => !value)}>Access &amp; memory</button>
       </div>
