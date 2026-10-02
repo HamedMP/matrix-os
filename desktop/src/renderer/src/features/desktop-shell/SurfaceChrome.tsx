@@ -15,6 +15,9 @@ export interface SurfaceChromeHost {
 
 export const SurfaceChromeContext = createContext<SurfaceChromeHost | null>(null);
 
+/** Only the verified Bot route supplies a target in the existing Chat toolbar. */
+export const BotHeaderContext = createContext<HTMLElement | null>(null);
+
 export function useSurfaceChromeHost(): SurfaceChromeHost | null {
   return useContext(SurfaceChromeContext);
 }

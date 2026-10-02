@@ -10,6 +10,39 @@ vi.mock("@desktop/renderer/src/features/work/work-rail/use-project-actions", () 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const project: Project = { id: "project_alpha_id", slug: "alpha", name: "Alpha", kind: "folder", description: "Build the customer portal" };
 describe("ProjectLanding", () => {
+  it.each([true, false])("passes remaining height to the Chat workspace with metadata visible=%s", (showMetadata) => {
+    const { container } = render(<ProjectLanding project={project} showMetadata={showMetadata}>
+      <section aria-label="Canonical workspace" className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto">Connection guidance</div>
+        <textarea aria-label="Bottom composer" className="shrink-0" />
+      </section>
+    </ProjectLanding>);
+    const workspace = screen.getByRole("region", { name: "Canonical workspace" });
+    const remainingSpace = workspace.parentElement!;
+    // flex-1 on the canonical route is effective only when its immediate
+    // Project parent participates in the same bounded flex-height chain.
+    expect(remainingSpace.classList.contains("flex")).toBe(true);
+    expect(remainingSpace.classList.contains("flex-col")).toBe(true);
+    expect(remainingSpace.classList.contains("min-h-0")).toBe(true);
+    expect(remainingSpace.classList.contains("flex-1")).toBe(true);
+    expect(remainingSpace.classList.contains("overflow-hidden")).toBe(true);
+    expect(container.firstElementChild?.classList.contains("overflow-hidden")).toBe(true);
+  });
+
+  it("scrolls metadata and Chat cards within a bounded area so short windows keep room for the composer", () => {
+    const records = Array.from({ length: 12 }, (_, index) => ({
+      chat: { id: `chat_${index}`, title: `Plan ${index}`, attention: "none" }, projectId: project.id,
+    } as CanonicalChatRecord));
+    const { container } = render(<ProjectLanding project={project} records={records} onSelectChat={vi.fn()}><textarea aria-label="Bottom composer" /></ProjectLanding>);
+    const metadata = container.querySelector("header")!;
+    expect(metadata.classList.contains("min-h-0")).toBe(true);
+    expect(metadata.classList.contains("max-h-[60%]")).toBe(true);
+    expect(metadata.classList.contains("overflow-y-auto")).toBe(true);
+    // One metadata scroll surface contains both description/files and cards.
+    expect(screen.getByLabelText("Alpha chats").classList.contains("overflow-y-auto")).toBe(false);
+    expect(screen.getAllByRole("button", { name: /^Open Plan / })).toHaveLength(12);
+  });
+
   it("shows ordinary Project chats including pinned chats as metadata-style cards and opens their stable identity", () => {
     const record = {chat:{id:"chat_alpha",title:"Implementation plan",userState:{pinned:true},attention:"none"},projectId:project.id} as CanonicalChatRecord;
     const onSelectChat=vi.fn();

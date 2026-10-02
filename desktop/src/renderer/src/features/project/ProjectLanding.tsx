@@ -20,8 +20,8 @@ export function ProjectLanding({ project, children, showMetadata = true, records
   const chats = records ?? loaded.chats;
   const actions = useProjectActions(project);
   const editButtonRef = useRef<HTMLButtonElement>(null);
-  return <div className="@container/project-landing flex h-full min-h-0 min-w-0 w-full flex-1 flex-col">
-    {showMetadata ? <header className={`${PROJECT_LANDING_CONTENT_CLASS} shrink-0 pb-2 pt-8`}>
+  return <div className="@container/project-landing flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
+    {showMetadata ? <header className={`${PROJECT_LANDING_CONTENT_CLASS} min-h-0 max-h-[60%] shrink-0 overflow-y-auto pb-2 pt-8`}>
       <div className="mb-5 flex items-center gap-3">
         <FolderOpen size={22} aria-hidden style={{ color: "var(--text-tertiary)" }} />
         <h1 className="truncate text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>{project.name}</h1>
@@ -40,7 +40,7 @@ export function ProjectLanding({ project, children, showMetadata = true, records
           <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>Browse project files</span>
         </button>
       </div>
-      {chats.length ? <div aria-label={`${project.name} chats`} className="mt-3 grid max-h-64 grid-cols-1 gap-3 overflow-y-auto @min-[34rem]/project-landing:grid-cols-2">
+      {chats.length ? <div aria-label={`${project.name} chats`} className="mt-3 grid grid-cols-1 gap-3 @min-[34rem]/project-landing:grid-cols-2">
         {chats.map(record => <button key={record.chat.id} type="button" aria-label={`Open ${record.chat.title}`} disabled={!onSelectChat}
           className="rounded-xl border p-4 text-left outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
           style={{ borderColor: "var(--border-subtle)" }} onClick={() => onSelectChat?.(record)}>
@@ -51,7 +51,7 @@ export function ProjectLanding({ project, children, showMetadata = true, records
       {loaded.error ? <p role="alert" className="mt-2 text-xs">Project chats could not be refreshed. Try again.</p> : null}
       {actions.error && actions.dialog !== "edit" ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}
     </header> : null}
-    <div className="min-h-0 flex-1">{children}</div>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
     {actions.dialog === "edit" ? <ProjectEditDialog project={project} returnFocusRef={editButtonRef} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
   </div>;
 }

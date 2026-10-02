@@ -90,3 +90,10 @@ Move to project is additive to the existing ordinary Chat context menu. The subm
 All sixteen review items require actual Electron Desktop acceptance at the final committed client and matching immutable Preview bundle, including real pointer hit testing, windowed/maximized geometry, completed Chats, send-time list retention, and existing/new Project submenu actions. Unit tests and accessibility actions alone cannot establish these visual or pointer conditions.
 
 The pre-existing after-inline-reference mention cursor mismatch is tracked separately in [ENG-109](https://linear.app/matrix-os/issue/ENG-109/fix-chat-mention-cursor-offsets-after-inline-reference-tokens). Recovery tests cover supported before-reference mention insertion and do not claim that editor defect is fixed.
+
+
+### Native geometry follow-up
+
+The Project body must continue the flex-column chain into CanonicalChatWorkspace; `flex-1` on a block wrapper does not establish bottom anchoring. Metadata and Chat cards share one scroll area capped at 60% of the available Project height, preserving composer space. Native acceptance must inspect tall/maximized and windowed layouts.
+
+For verified Bots, identity occupies the existing WorkTab toolbar title slot through `BotHeaderContext`, with shared BotChatPanel portaling only its header to the supplied HTMLElement. Ordinary/loading/failed bindings keep generic chrome. Status and Details remain in Chat content; host changes preserve Details open state and clean up old portals/reservations. Shared Web Bot chrome uses the same single-header contract.

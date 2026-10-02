@@ -119,6 +119,9 @@ for (const surface of ["Web Canvas", "Web Desktop"] as const) {
     render(<ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} />);
     expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
+    expect(document.querySelector("[data-slot='chat-session-header']")).toBeNull();
+    expect(document.querySelectorAll(".matrix-bot-identity-bar")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Open Agents & providers settings" }).closest(".matrix-bot-identity-bar")).toBeTruthy();
     expect(await screen.findByText("Which company?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();

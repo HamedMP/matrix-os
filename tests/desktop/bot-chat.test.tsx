@@ -9,6 +9,7 @@ import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import type { ChatAgentClient } from "@matrix-os/ui";
 import type { CanonicalChatEventSource, CanonicalChatInvalidation } from "@matrix-os/ui";
 import { createCanonicalChatWorkspaceClient, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
+import { BotHeaderContext } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 
 beforeAll(() => {
   globalThis.ResizeObserver = class implements ResizeObserver {
@@ -39,10 +40,19 @@ describe("Electron Desktop bot Chat", () => {
       list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" }, recipeRef: { recipeId: "research", version: "1" } }] })),
     } as unknown as ChatAgentClient;
 
-    render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
-      initialView="conversation" active catalog={providerCatalog} />);
+    function HostedBot() {
+      const [header, setHeader] = React.useState<HTMLElement | null>(null);
+      return <BotHeaderContext.Provider value={header}>
+        <header ref={setHeader} data-testid="bot-toolbar" />
+        <CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
+          initialView="conversation" active catalog={providerCatalog} />
+      </BotHeaderContext.Provider>;
+    }
+    render(<HostedBot />);
 
     expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Details" }).closest("header")).toBe(screen.getByTestId("bot-toolbar"));
+    expect(document.querySelector("[data-slot='canonical-chat-workspace'] .matrix-bot-identity-bar")).toBeNull();
     expect(await screen.findByText("Which company?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();

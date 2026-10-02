@@ -1,5 +1,5 @@
 import type { BotAuthorityView, BotInteraction, BotTaskSummary, CanonicalProviderCatalog, CanonicalChatModelSelection, ChatAgent } from "@matrix-os/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useBotDetailsHost } from "./use-bot-details-host.js";
 import type { ChatAgentClient } from "../client.js";
@@ -14,8 +14,21 @@ import { useDirectBotChat } from "./use-direct-bot-chat.js";
 
 const REFRESH_INTERVAL_MS = 15_000;
 
+interface BotChatPanelProps {
+  chatId?: string;
+  client?: ChatAgentClient;
+  refreshKey?: number;
+  directBotId?: string | null;
+  catalog?: CanonicalProviderCatalog | null;
+  catalogLoading?: boolean;
+  detailsContainer?: HTMLElement | null;
+  headerContainer?: HTMLElement | null;
+  headerLeading?: ReactNode;
+  headerActions?: ReactNode;
+}
+
 /** Shared by Web Canvas and Web Desktop through ChatApp. */
-export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog, catalogLoading = false, detailsContainer }: { chatId?: string; client?: ChatAgentClient; refreshKey?: number; directBotId?: string | null; catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean; detailsContainer?: HTMLElement | null }) {
+export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog, catalogLoading = false, detailsContainer, headerContainer, headerLeading, headerActions }: BotChatPanelProps) {
   const bots = client?.bots;
   const agentId = useDirectBotChat(chatId, client, directBotId);
   const [agent, setAgent] = useState<ChatAgent | null>(null);
@@ -97,14 +110,17 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
   if (!agentId || !chatId || !bots) return null;
   const details = showAuthority ? <BotDetailsPanel agent={agent} agentId={agentId} authority={authority} bots={bots} catalog={catalog} catalogLoading={catalogLoading} pending={modelPending}
     hosted={Boolean(detailsContainer)} onModelChange={selection => { void changeModel(selection); }} onClose={() => setShowAuthority(false)} onEdit={() => setShowEdit(true)} onChanged={() => setTick(value => value + 1)}/> : null;
-  return <section aria-label="Bot controls" className="matrix-bot-chat-header" data-bot-header>
-    <div className="matrix-bot-identity-bar flex min-w-0 items-center gap-3 border-b px-4 py-2">
+  const identity = <div className="matrix-bot-identity-bar flex min-w-0 items-center gap-3 px-3 py-1" data-hosted={headerContainer ? "true" : undefined}>
+      {headerLeading}
       <AgentAvatar id={agentId} name={name ?? "Your bot"} size="small" />
       <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{name ?? "Your bot"}</p>
         <p className="truncate text-xs" style={chatAgentMutedStyle}>{agent ? agent.description || "Bot chat" : "Loading agent details…"}</p></div>
       <button type="button" aria-label="Details" aria-expanded={showAuthority} className={`${chatAgentButtonClass} shrink-0`}
         onClick={() => setShowAuthority(value => !value)}>Details</button>
-    </div>
+      {headerActions}
+    </div>;
+  return <section aria-label="Bot controls" className="matrix-bot-chat-header" data-bot-header>
+    {headerContainer ? createPortal(identity, headerContainer) : identity}
     <div className="matrix-bot-status-content">
       {interactions.filter(interaction => interaction.status === "pending").map((interaction) => <InteractionCard key={interaction.interactionId} interaction={interaction}
         actionsAvailable={interactionsFresh}

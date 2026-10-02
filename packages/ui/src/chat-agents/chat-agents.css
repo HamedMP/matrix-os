@@ -324,7 +324,11 @@
 }
 
 .matrix-bot-chat-header { position: relative; flex-shrink: 0; }
-.matrix-bot-identity-bar { min-height: 52px; }
+.matrix-bot-identity-bar {
+  min-height: 48px;
+  border-bottom: 1px solid var(--border-subtle, var(--matrix-border, var(--border)));
+}
+.matrix-bot-identity-bar[data-hosted] { min-height: 0; height: 100%; border-bottom: 0; padding: 0 8px; }
 .matrix-bot-identity-bar .matrix-chat-agent-button { min-height: 28px; padding: 4px 10px; font-size: 12px; }
 .matrix-bot-status-content:has(> .matrix-bot-interaction-card),
 .matrix-bot-status-content:has(> [role="alert"]) { padding: 12px 16px; }

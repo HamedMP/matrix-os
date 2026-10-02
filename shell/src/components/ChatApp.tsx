@@ -471,7 +471,7 @@ function ChatAppContent({
       <ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"} onOpenBotChat={onSwitchConversation}>
       <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
-        <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
+        {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
           {!sidebarOpen && (
             <>
               <Button
@@ -572,9 +572,19 @@ function ChatAppContent({
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
-        </header>
+        </header> : null}
         {botIdentityUnknown ? <BotBindingStatus loading={botBinding.loading} retry={botBinding.retry}/> : null}
-        {!collaborationView && sessionId ? <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} detailsContainer={botDetailsContainer} catalog={providerState.catalog} catalogLoading={providerState.loading} refreshKey={(botEventRevision ?? 0) + botModelRevision} /> : null}
+        {!collaborationView && sessionId ? <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} detailsContainer={botDetailsContainer}
+          headerLeading={!sidebarOpen ? <>
+            <Button variant="ghost" size="icon" aria-label="Open Chat sidebar" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={() => setSidebarOpen(true)}><PanelLeftIcon className="size-4" /></Button>
+            <Button variant="ghost" size="icon" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={onNewChat} title="New chat"><PlusIcon className="size-4" /></Button>
+          </> : null}
+          headerActions={<>
+            <ChatSharing key={sessionId} chatId={sessionId} />
+            <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => { setSetupOpen(false); openProviderSettings(); }}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
+            {!connected ? <span className="text-[10px] text-destructive font-medium">Offline</span> : null}
+          </>}
+          catalog={providerState.catalog} catalogLoading={providerState.loading} refreshKey={(botEventRevision ?? 0) + botModelRevision} /> : null}
         {!collaborationView && !botIdentityUnknown && !directBotId && setupOpen && (
           <ChatProviderSetupPanel
             onDismiss={() => {

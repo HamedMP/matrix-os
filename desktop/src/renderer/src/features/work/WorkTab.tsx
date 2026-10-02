@@ -37,7 +37,7 @@ import ProjectChatsView from "../project/ProjectChatsView";
 import ProjectsIndex from "../project/ProjectsIndex";
 import { WorkRail } from "./WorkRail";
 import { WorkFilesInspector } from "./WorkFilesInspector";
-import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
 import type { WorkFilesScope } from "./work-files-scope";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
@@ -245,6 +245,7 @@ function WorkTabContent({
   } | null>(null);
   const surfaceChromeHost = useSurfaceChromeHost();
   const hostedChrome = surfaceChromeHost !== null;
+  const [botHeaderContainer, setBotHeaderContainer] = useState<HTMLElement | null>(null);
   const hostedRuntime = useWorkSurfaceRuntime();
   const [responsive, setResponsive] = useState<WorkResponsiveState>({
     layout: "narrow",
@@ -784,8 +785,9 @@ function WorkTabContent({
       className="no-drag pointer-events-auto flex items-center gap-1" />
   ) : sharingControl, [sharedScopeId, sharingControl]);
   const chromeSpec = useMemo(() => ({
-    title: agentsOpen ? "Agents" : chromeTitle,
-    hideTitle: !agentsOpen && Boolean(chromeBotBinding.agentId),
+    title: agentsOpen ? "Agents" : chromeBotBinding.agentId
+      ? <div ref={setBotHeaderContainer} data-slot="desktop-bot-header" className="no-drag pointer-events-auto h-12 min-w-0 w-full" />
+      : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
     rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
     rightActions: agentsOpen ? null : hasInspector ? (
@@ -903,11 +905,13 @@ function WorkTabContent({
             ? "hidden"
             : "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"}
         >
+          <BotHeaderContext.Provider value={!agentsOpen && chromeBotBinding.agentId ? botHeaderContainer : null}>
           <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
             onOpenBotChat={openBotChat}>
             {content}
             {draftInspector}
           </ChatAgentsContent>
+          </BotHeaderContext.Provider>
         </div>
       </div>
     </div>

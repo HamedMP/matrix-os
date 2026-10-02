@@ -46,6 +46,40 @@ it("uses the Bot's saved description in its compact identity header and leaves m
   expect(screen.queryByRole("complementary", { name: "Bot details" })).toBeNull();
 });
 
+it("places Bot identity and Details in the host toolbar without a second identity row", async () => {
+  const host = document.createElement("header");
+  const nextHost = document.createElement("header");
+  const detailsHost = document.createElement("section");
+  const nextDetailsHost = document.createElement("section");
+  document.body.append(host, nextHost, detailsHost, nextDetailsHost);
+  const bot = { ...saved, recipeRef: { recipeId: "writer", version: "1" } };
+  const client = clientFixture();
+  client.list.mockResolvedValue({ enabled: true, agents: [bot] });
+  client.bots = { interactions: vi.fn(async () => []), tasks: vi.fn(async () => []),
+    authority: vi.fn(async () => ({ grants: [], connections: [], memory: { items: [] }, routines: [], pendingInteractions: [] })) } as never;
+  const view = render(<BotChatPanel chatId="chat_bot" directBotId={bot.id} client={client} headerContainer={host} detailsContainer={detailsHost}
+    headerLeading={<button>Toggle Chat sidebar</button>} headerActions={<button>Share</button>} />);
+  try {
+    await within(host).findByText(bot.name);
+    expect(view.container.querySelector(".matrix-bot-identity-bar")).toBeNull();
+    expect(within(host).getByRole("button", { name: "Toggle Chat sidebar" })).toBeTruthy();
+    expect(within(host).getByRole("button", { name: "Share" })).toBeTruthy();
+    fireEvent.click(within(host).getByRole("button", { name: "Details" }));
+    expect(await within(detailsHost).findByRole("complementary", { name: "Bot details" })).toBeTruthy();
+    view.rerender(<BotChatPanel chatId="chat_bot" directBotId={bot.id} client={client} headerContainer={nextHost} detailsContainer={nextDetailsHost} />);
+    expect(host.querySelector(".matrix-bot-identity-bar")).toBeNull();
+    expect(within(nextHost).getByText(bot.name)).toBeTruthy();
+    expect(within(nextHost).getByRole("button", { name: "Details" }).getAttribute("aria-expanded")).toBe("true");
+    expect(within(detailsHost).queryByRole("complementary")).toBeNull();
+    expect(detailsHost.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("");
+    expect(within(nextDetailsHost).getByRole("complementary", { name: "Bot details" })).toBeTruthy();
+    view.rerender(<BotChatPanel chatId="chat_other" directBotId={null} client={client} headerContainer={nextHost} detailsContainer={nextDetailsHost} />);
+    expect(nextHost.querySelector(".matrix-bot-identity-bar")).toBeNull();
+    expect(within(nextDetailsHost).queryByRole("complementary")).toBeNull();
+    expect(nextDetailsHost.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("");
+  } finally { view.unmount(); host.remove(); nextHost.remove(); detailsHost.remove(); nextDetailsHost.remove(); }
+});
+
 it("keeps template search and setup accessible while showing a compact featured set and expandable full catalog", () => {
   render(<AgentRecipesPanel onStartChat={vi.fn()} />);
   expect(screen.getAllByRole("button", { name: /^Use / }).length).toBeLessThanOrEqual(6);

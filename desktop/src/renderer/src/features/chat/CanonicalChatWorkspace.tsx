@@ -20,7 +20,7 @@ import {
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { createChatMentionRequestTracker } from "@matrix-os/ui";
 import { ChatMentionControls, useChatMentionPermission } from "@matrix-os/ui";
-import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { ChatSharingButton } from "./ChatSharingButton";
 import { ChatContextMenu } from "@matrix-os/ui";
 import { openChatWebLink } from "./chat-web-navigation";
@@ -36,7 +36,7 @@ import type {
   CanonicalChatQueuedTurn,
 } from "@matrix-os/contracts";
 import { Plus, Search } from "@renderer/lib/hugeicons";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
@@ -136,6 +136,7 @@ export function CanonicalChatWorkspace({
   const projects = useBoard((state) => state.projects);
   const fileNavigation = useChatFileNavigation();
   const chromeHost = useSurfaceChromeHost();
+  const botHeaderContainer = useContext(BotHeaderContext);
   const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
@@ -900,9 +901,11 @@ export function CanonicalChatWorkspace({
         ) : null}
         {controller.detail && globalView === "conversation" ? (
           <>
-            {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
+            {api && !chromeHost && !directBotId ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
-              client={client.agents} directBotId={directBotId} detailsContainer={botDetailsContainer} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
+              client={client.agents} directBotId={directBotId} detailsContainer={botDetailsContainer} headerContainer={botHeaderContainer}
+              headerActions={api && !chromeHost ? <ChatSharingButton api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
+              catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{

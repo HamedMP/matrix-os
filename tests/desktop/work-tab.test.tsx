@@ -762,18 +762,20 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
   });
 
-  it("suppresses the generic native Chat title after authenticated Bot binding", async () => {
+  it("replaces the generic title with a Bot identity target on the existing native toolbar after authenticated binding", async () => {
     const api = useConnection.getState().api!;
     const original = api.get;
     api.get = vi.fn(async (path: string) => path === "/api/chats/chat_global/bot" ? {agentId:"bot_writer01"} : original(path)) as typeof api.get;
     function HostedBot() {
       const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
       const host = React.useMemo(() => ({setChrome}), []);
-      return <SurfaceChromeContext.Provider value={host}><output data-testid="hide-chat-title">{String(chrome?.hideTitle)}</output>
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}{chrome?.rightActions}</header>
         <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation"/></SurfaceChromeContext.Provider>;
     }
     render(<HostedBot/>);
-    await waitFor(()=>expect(screen.getByTestId("hide-chat-title").textContent).toBe("true"));
+    await waitFor(()=>expect(document.querySelector("header [data-slot='desktop-bot-header']")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Rename Chat" })).toBeNull();
+    expect(within(document.querySelector("header")!).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
   });
 
   it("leaves the sidebar trigger to OSWindow while registering shared Chat chrome", async () => {
