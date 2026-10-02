@@ -185,10 +185,38 @@ jobs:
           esac
           echo "configured=true" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve preview source and isolation
+        id: source
+        if: steps.config.outputs.configured == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            echo "Invalid preview PR." >&2
+            exit 1
+          fi
+          head_sha="$EVENT_HEAD_SHA"
+          isolated="${ISOLATED_PREVIEW_ORIGIN:-false}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            head_sha="$(jq -er --arg repository "$GITHUB_REPOSITORY" \
+              'select(.head.repo.full_name == $repository) | .head.sha' <<< "$pr_json")"
+            isolated="$(jq -r 'any(.labels[]?; .name == "preview-isolated")' <<< "$pr_json")"
+          fi
+          if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid preview source." >&2
+            exit 1
+          fi
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "ISOLATED_PREVIEW_ORIGIN=$isolated" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v6
         if: steps.config.outputs.configured == 'true'
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.source.outputs.head_sha }}
 
       - name: Authenticate to Google Cloud
         if: steps.config.outputs.configured == 'true'
@@ -344,7 +372,7 @@ jobs:
             echo "Refusing to build a platform preview with the example Clerk key." >&2
             exit 1
           fi
-          head_sha="${{ github.event.pull_request.head.sha || github.sha }}"
+          head_sha="${{ steps.source.outputs.head_sha }}"
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${head_sha::12}"
           gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
