@@ -252,7 +252,11 @@ export async function createGatewayCollaboration(options: {
     onChatShared: (ownerId, event) => options.chatRepository.publishCommittedExternalOutbox(
       { type: "personal", ownerId }, event),
   });
-  const projectTransitions = createProjectTransitionJournal({ db: options.db });
+  const projectTransitions = createProjectTransitionJournal({
+    db: options.db,
+    onChatShared: (ownerId, event) => options.chatRepository.publishCommittedExternalOutbox(
+      { type: "personal", ownerId }, event),
+  });
   const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });
   const projectLifecycle = options.projectLifecycleDrivers
     ? createCollaborationProjectLifecycle({ db: options.db, ...options.projectLifecycleDrivers })
@@ -577,7 +581,11 @@ export async function createGatewayCollaboration(options: {
         db: options.db,
         transitions: projectTransitions,
         fence: projectFence,
-        inheritance: createProjectInheritanceResolver({ db: options.db }),
+        inheritance: createProjectInheritanceResolver({
+          db: options.db,
+          onChatShared: (ownerId, event) => options.chatRepository.publishCommittedExternalOutbox(
+            { type: "personal", ownerId }, event),
+        }),
         inventory,
       });
       await projectTransitionCoordinator.recover();

@@ -12,11 +12,12 @@ interface DisclosureState {
   loaded: boolean;
   occurrences: ChatCredentialOccurrence[];
   values: Record<string, string>;
+  suppressed: string[];
   unavailable: string[];
   availabilityFailed: boolean;
 }
 
-const EMPTY_STATE: DisclosureState = { scopeKey: null, loaded: false, occurrences: [], values: {}, unavailable: [], availabilityFailed: false };
+const EMPTY_STATE: DisclosureState = { scopeKey: null, loaded: false, occurrences: [], values: {}, suppressed: [], unavailable: [], availabilityFailed: false };
 
 function occurrenceMatchesMessage(occurrence: ChatCredentialOccurrence, text: string | undefined): boolean {
   if (!text) return false;
@@ -71,6 +72,8 @@ export function useChatCredentialDisclosure({ client, detail, scopeKey }: {
           values: previous.scopeKey === requestedScope ? Object.fromEntries(
             Object.entries(previous.values).filter(([id]) => occurrences.some((item) => item.id === id && item.revealed)),
           ) : {},
+          suppressed: previous.scopeKey === requestedScope ? previous.suppressed.filter((id) =>
+            occurrences.some((item) => item.id === id && item.revealed)) : [],
           unavailable: [],
           availabilityFailed: false,
         }));
@@ -79,7 +82,8 @@ export function useChatCredentialDisclosure({ client, detail, scopeKey }: {
           try {
             const value = await client.getRevealedCredential(chatId, occurrence.id);
             if (cancelled || currentScope.current !== requestedScope) return;
-            setState((previous) => previous.scopeKey === requestedScope && previous.occurrences.some((item) => item.id === occurrence.id && item.revealed)
+            setState((previous) => previous.scopeKey === requestedScope && !previous.suppressed.includes(occurrence.id)
+              && previous.occurrences.some((item) => item.id === occurrence.id && item.revealed)
               ? { ...previous, values: { ...previous.values, [occurrence.id]: value } } : previous);
           } catch {
             if (cancelled || currentScope.current !== requestedScope) return;
@@ -90,7 +94,7 @@ export function useChatCredentialDisclosure({ client, detail, scopeKey }: {
       } catch {
         if (cancelled || currentScope.current !== requestedScope) return;
         // Metadata failure never falls back to scanning or showing raw text.
-        setState({ scopeKey: requestedScope, loaded: true, occurrences: [], values: {}, unavailable: [], availabilityFailed: true });
+        setState({ scopeKey: requestedScope, loaded: true, occurrences: [], values: {}, suppressed: [], unavailable: [], availabilityFailed: true });
       }
     };
     void request();
@@ -106,7 +110,8 @@ export function useChatCredentialDisclosure({ client, detail, scopeKey }: {
     if (currentScope.current !== scopeKey) return;
     setState((previous) => previous.scopeKey === scopeKey && previous.occurrences.some((item) => item.id === occurrenceId)
       ? { ...previous, occurrences: previous.occurrences.map((item) => item.id === occurrenceId ? { ...item, revealed: true } : item),
-        values: { ...previous.values, [occurrenceId]: value }, unavailable: previous.unavailable.filter((id) => id !== occurrenceId) }
+        values: { ...previous.values, [occurrenceId]: value }, suppressed: previous.suppressed.filter((id) => id !== occurrenceId),
+        unavailable: previous.unavailable.filter((id) => id !== occurrenceId) }
       : previous);
   }, [chatId, client, scopeKey]);
 
@@ -116,15 +121,17 @@ export function useChatCredentialDisclosure({ client, detail, scopeKey }: {
       if (previous.scopeKey !== scopeKey) return previous;
       const values = { ...previous.values };
       delete values[occurrenceId];
-      // Invalidate a pending rehydration before the network hide completes.
-      // The value must not reappear after the owner presses Hide.
-      return { ...previous, values, occurrences: previous.occurrences.map((item) =>
-        item.id === occurrenceId ? { ...item, revealed: false } : item) };
+      // Keep the server's revealed state until Hide succeeds, so a failed
+      // request leaves the masked inline Hide control available for retry.
+      // Suppression also blocks a pending rehydration from restoring plaintext.
+      return { ...previous, values, suppressed: [...new Set([...previous.suppressed, occurrenceId])] };
     });
     await client.hideCredential(chatId, occurrenceId);
     if (currentScope.current !== scopeKey) return;
     setState((previous) => previous.scopeKey === scopeKey
       ? { ...previous, occurrences: previous.occurrences.map((item) => item.id === occurrenceId ? { ...item, revealed: false } : item),
+        // Keep suppression until a fresh hidden metadata result or an explicit
+        // reveal, so an older in-flight value read cannot win a later refresh.
         unavailable: previous.unavailable.filter((id) => id !== occurrenceId) }
       : previous);
   }, [chatId, client, scopeKey]);

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { ChatCredentialRepository } from "../../packages/gateway/src/chat/credential-repository.js";
@@ -8,6 +8,9 @@ import { assistantCredentialOccurrenceId, sealAssistantCredential } from "../../
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
 import { Hono } from "hono";
 import { sql } from "kysely";
+import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { createProjectInheritanceResolver } from "../../packages/gateway/src/collaboration/project-inheritance.js";
+import type { Kysely } from "kysely";
 
 const owner = { type: "personal" as const, ownerId: "owner_secret" };
 const other = { type: "personal" as const, ownerId: "other_secret" };
@@ -23,6 +26,7 @@ beforeEach(async () => {
   const db = await KyselyPGlite.create();
   repository = new ChatRepository(db.dialect);
   await repository.bootstrap();
+  await bootstrapCollaborationDatabase(repository.kysely as Kysely<OwnerCollaborationDatabase>);
   credentials = new ChatCredentialRepository(repository.kysely, key, [owner.ownerId]);
   const { snapshot } = createCanonicalChatFixture("running");
   chatId = snapshot.chat.id;
@@ -137,6 +141,89 @@ it("revokes previously revealed values when live collaboration begins, including
   await expect(credentials.value(owner, chatId, occurrenceId)).rejects.toThrow();
   await expect(credentials.reveal(owner, chatId, occurrenceId)).rejects.toThrow();
   await expect(credentials.list(owner, chatId, [messageId])).rejects.toThrow();
+});
+
+it("denies owner credential access when project-inherited sharing leaves the Chat row private", async () => {
+  const { messageId, occurrenceId } = await appendCredential();
+  await credentials.reveal(owner, chatId, occurrenceId);
+  const db = repository.kysely as Kysely<OwnerCollaborationDatabase>;
+  const projectScopeId = "10000000-0000-4000-8000-000000000561";
+  const childScopeId = "10000000-0000-4000-8000-000000000562";
+  await db.insertInto("collaboration_scopes").values([
+    { id: projectScopeId, owner_type: "personal", owner_id: owner.ownerId, kind: "project",
+      organization_id: "org_matrix_team", resource_id: "proj_credentials", parent_scope_id: null,
+      membership_mode: "direct", lifecycle: "shared", revision: 1, auth_epoch: 1,
+      authority_runtime_id: "vps:shared", authority_generation: 1,
+      execution_generation: null, execution_eligibility: null, created_at: createdAt, updated_at: createdAt, deleted_at: null },
+    { id: childScopeId, owner_type: "personal", owner_id: owner.ownerId, kind: "chat",
+      organization_id: "org_matrix_team", resource_id: chatId, parent_scope_id: projectScopeId,
+      membership_mode: "inherited", lifecycle: "shared", revision: 1, auth_epoch: 1,
+      authority_runtime_id: "vps:shared", authority_generation: 1,
+      execution_generation: null, execution_eligibility: null, created_at: createdAt, updated_at: createdAt, deleted_at: null },
+  ]).execute();
+  expect((await db.selectFrom("chats").select("collaboration").where("id", "=", chatId).executeTakeFirstOrThrow()).collaboration).toBeNull();
+  await expect(credentials.list(owner, chatId, [messageId])).rejects.toThrow("Credential unavailable");
+  await expect(credentials.value(owner, chatId, occurrenceId)).rejects.toThrow("Credential unavailable");
+  await expect(credentials.reveal(owner, chatId, occurrenceId)).rejects.toThrow("Credential unavailable");
+  for (const lifecycle of ["archived", "recovering", "deleted"] as const) {
+    await db.updateTable("collaboration_scopes").set({ lifecycle })
+      .where("id", "=", childScopeId).execute();
+    await expect(credentials.list(owner, chatId, [messageId])).rejects.toThrow("Credential unavailable");
+    await expect(credentials.value(owner, chatId, occurrenceId)).rejects.toThrow("Credential unavailable");
+  }
+});
+
+it("revokes reveal state when an owned Chat is bound into an already shared project", async () => {
+  const { occurrenceId } = await appendCredential();
+  await credentials.reveal(owner, chatId, occurrenceId);
+  const db = repository.kysely as Kysely<OwnerCollaborationDatabase>;
+  const projectScopeId = "10000000-0000-4000-8000-000000000563";
+  await db.insertInto("collaboration_scopes").values({
+    id: projectScopeId, owner_type: "personal", owner_id: owner.ownerId, kind: "project",
+    organization_id: "org_matrix_team", resource_id: "proj_credentials", parent_scope_id: null,
+    membership_mode: "direct", lifecycle: "shared", revision: 1, auth_epoch: 1,
+    authority_runtime_id: "vps:shared", authority_generation: 1,
+    execution_generation: null, execution_eligibility: null,
+    created_at: createdAt, updated_at: createdAt, deleted_at: null,
+  }).execute();
+  const published = vi.fn();
+  const inheritance = createProjectInheritanceResolver({
+    db, createBindingId: () => "30000000-0000-4000-8000-000000000563",
+    createScopeId: () => "10000000-0000-4000-8000-000000000564",
+    onChatShared: published,
+  });
+  await inheritance.bindOwnedResource({ projectScopeId, ownerId: owner.ownerId, kind: "chat",
+    resourceId: chatId, authorityRuntimeId: "vps:shared", authorityGeneration: 1,
+    revision: 1, readiness: "ready" });
+  expect(await db.selectFrom("chat_credentials").select("revealed")
+    .where("id", "=", occurrenceId).executeTakeFirstOrThrow()).toEqual({ revealed: false });
+  expect(await db.selectFrom("chat_outbox").select("event_type")
+    .where("chat_id", "=", chatId).where("event_type", "=", "chat.updated").execute()).toHaveLength(1);
+  expect(published).toHaveBeenCalledWith(owner.ownerId, expect.objectContaining({
+    chatId, eventType: "chat.updated",
+  }));
+  const revisionAfterFirstBind = (await db.selectFrom("chats").select("revision")
+    .where("id", "=", chatId).executeTakeFirstOrThrow()).revision;
+  published.mockClear();
+  await inheritance.bindOwnedResource({ projectScopeId, ownerId: owner.ownerId, kind: "chat",
+    resourceId: chatId, authorityRuntimeId: "vps:shared", authorityGeneration: 1,
+    revision: 1, readiness: "ready" });
+  expect(published).not.toHaveBeenCalled();
+  expect((await db.selectFrom("chats").select("revision")
+    .where("id", "=", chatId).executeTakeFirstOrThrow()).revision).toBe(revisionAfterFirstBind);
+
+  // Replaying a legacy binding with a lingering reveal must heal it inside
+  // the binding transaction and publish one fresh Chat invalidation.
+  await db.updateTable("chat_credentials").set({ revealed: true })
+    .where("id", "=", occurrenceId).execute();
+  await inheritance.bindOwnedResource({ projectScopeId, ownerId: owner.ownerId, kind: "chat",
+    resourceId: chatId, authorityRuntimeId: "vps:shared", authorityGeneration: 1,
+    revision: 1, readiness: "ready" });
+  expect(await db.selectFrom("chat_credentials").select("revealed")
+    .where("id", "=", occurrenceId).executeTakeFirstOrThrow()).toEqual({ revealed: false });
+  expect(published).toHaveBeenCalledTimes(1);
+  expect((await db.selectFrom("chats").select("revision")
+    .where("id", "=", chatId).executeTakeFirstOrThrow()).revision).toBe(Number(revisionAfterFirstBind) + 1);
 });
 
 it("cascades encrypted occurrences on hard delete", async () => {

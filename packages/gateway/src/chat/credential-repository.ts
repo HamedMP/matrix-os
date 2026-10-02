@@ -2,6 +2,7 @@ import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import { CanonicalChatMessagePartSchema } from "@matrix-os/contracts";
 import type { ChatDatabase } from "./database.js";
+import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import type { ChatOwner } from "./records.js";
 import {
   assistantCredentialOccurrenceId,
@@ -118,6 +119,19 @@ export class ChatCredentialRepository {
         .where("owner_id", "=", owner.ownerId).where("collaboration", "is", null)
         .forUpdate().executeTakeFirst();
       if (!chat) throw new ChatCredentialUnavailableError();
+      // Whole-project publication shares an inherited Chat through its scope
+      // without writing chats.collaboration. Read that authority after taking
+      // the Chat lock also used by project publication, so a concurrent share
+      // cannot leave a credential read authorized after it commits.
+      const sharedScope = await (trx as unknown as Transaction<OwnerCollaborationDatabase>)
+        .selectFrom("collaboration_scopes").select("id")
+        .where("owner_type", "=", "personal").where("owner_id", "=", owner.ownerId)
+        .where("kind", "=", "chat").where("resource_id", "=", chatId)
+        // Archive, transfer and deletion do not make a previously shared
+        // transcript private again. Only a never-published scope can pass.
+        .where("lifecycle", "not in", ["private", "preparing"])
+        .executeTakeFirst();
+      if (sharedScope) throw new ChatCredentialUnavailableError();
       return fn(trx);
     });
   }

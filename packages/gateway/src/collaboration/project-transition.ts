@@ -10,6 +10,7 @@ import {
   reconcileProjectMembershipAtPublication,
 } from "./project-membership-transition.js";
 import { jsonb, OPERATION_RETENTION_MS, parseJson } from "./repository-shared.js";
+import type { ChatOutboxEvent } from "../chat/records.js";
 
 const MAX_RECOVERY_BATCH = 100;
 const DEFAULT_RECOVERY_TIMEOUT_MS = 30_000;
@@ -174,6 +175,7 @@ export function createProjectTransitionJournal(options: {
   createEventId?: () => string;
   recoveryTimeoutMs?: number;
   recoveryBatchSize?: number;
+  onChatShared?: (ownerId: string, event: ChatOutboxEvent) => void;
 }) {
   const now = options.now ?? (() => new Date());
   const createTransitionId = options.createTransitionId ?? randomUUID;
@@ -463,8 +465,11 @@ export function createProjectTransitionJournal(options: {
 
   async function activate(transitionId: string): Promise<ProjectTransitionRecord> {
     try {
-      return await lockTransition(options.db, transitionId, async (trx, row, scope) => {
+      let committedChatEvents: ChatOutboxEvent[] = [];
+      let committedOwnerId = "";
+      const result = await lockTransition(options.db, transitionId, async (trx, row, scope) => {
         if (row.status === "active") return rowToTransition(row);
+        committedOwnerId = scope.owner_id;
         if (!(["committing", "recovering"] as ProjectTransitionStatus[]).includes(row.status)
           || row.publication_marker === null || row.source_fence_epoch === null
           || (scope.lifecycle !== "preparing" && scope.lifecycle !== "recovering")) {
@@ -479,7 +484,7 @@ export function createProjectTransitionJournal(options: {
           ])).limit(1).executeTakeFirst();
         if (incompatibleBinding) throw new ProjectTransitionError("conflict");
         try {
-          await reconcileProjectMembershipAtPublication(trx, {
+          committedChatEvents = await reconcileProjectMembershipAtPublication(trx, {
             projectScopeId: scope.id,
             ownerType: scope.owner_type,
             ownerId: scope.owner_id,
@@ -612,6 +617,13 @@ export function createProjectTransitionJournal(options: {
         }).execute();
         return rowToTransition(updated);
       });
+      for (const event of committedChatEvents) {
+        try { options.onChatShared?.(committedOwnerId, event); }
+        catch (error: unknown) {
+          console.warn("[collaboration-project] Chat invalidation delivery failed", error instanceof Error ? error.name : "UnknownError");
+        }
+      }
+      return result;
     } catch (error: unknown) {
       if (error instanceof ProjectTransitionError && error.code === "conflict") {
         const current = await get(transitionId);

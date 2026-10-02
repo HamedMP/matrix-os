@@ -76,6 +76,27 @@ describe("useChatCredentialDisclosure", () => {
     expect(hook.result.current.values).toEqual({});
   });
 
+  it("keeps a failed hide masked and retryable until the server confirms it", async () => {
+    const hideCredential = vi.fn()
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce(undefined);
+    const routeClient = client({ hideCredential });
+    const hook = renderHook(() => useChatCredentialDisclosure({ client: routeClient, detail, scopeKey: "owner:chat" }));
+    await waitFor(() => expect(hook.result.current.values[occurrence.id]).toBe("private-test-value"));
+
+    let failedHide!: Promise<void>;
+    act(() => { failedHide = hook.result.current.hide(occurrence.id); });
+    expect(hook.result.current.values).toEqual({});
+    await act(async () => { await expect(failedHide).rejects.toThrow("temporary failure"); });
+    expect(hook.result.current.occurrences[0]?.revealed).toBe(true);
+    expect(hook.result.current.values).toEqual({});
+
+    await act(async () => { await hook.result.current.hide(occurrence.id); });
+    expect(hideCredential).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.occurrences[0]?.revealed).toBe(false);
+    expect(hook.result.current.values).toEqual({});
+  });
+
   it("does not restore plaintext from an in-flight rehydration after hide starts", async () => {
     let finishRead!: (value: string) => void;
     let finishHide!: () => void;
@@ -90,6 +111,21 @@ describe("useChatCredentialDisclosure", () => {
     await act(async () => { finishRead("private-test-value"); });
     expect(hook.result.current.values).toEqual({});
     await act(async () => { finishHide(); await hidePromise; });
+    expect(hook.result.current.values).toEqual({});
+  });
+
+  it("does not restore an in-flight value after Hide fails", async () => {
+    let finishRead!: (value: string) => void;
+    const routeClient = client({
+      getRevealedCredential: vi.fn(() => new Promise<string>((resolve) => { finishRead = resolve; })),
+      hideCredential: vi.fn(async () => { throw new Error("temporary failure"); }),
+    });
+    const hook = renderHook(() => useChatCredentialDisclosure({ client: routeClient, detail, scopeKey: "owner:chat" }));
+    await waitFor(() => expect(routeClient.getRevealedCredential).toHaveBeenCalled());
+
+    await act(async () => { await expect(hook.result.current.hide(occurrence.id)).rejects.toThrow("temporary failure"); });
+    await act(async () => { finishRead("private-test-value"); });
+    expect(hook.result.current.occurrences[0]?.revealed).toBe(true);
     expect(hook.result.current.values).toEqual({});
   });
 
