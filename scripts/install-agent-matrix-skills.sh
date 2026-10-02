@@ -35,6 +35,22 @@ skills=(
   shadcn
 )
 
+# A real local source can refresh only Matrix-managed entries through the
+# shared synchronizer, including copies from a previous release. A remote CLI
+# install has no reliable ownership proof and remains fill-missing only.
+if [ -e "$MATRIX_SKILLS_SOURCE" ] || [ -L "$MATRIX_SKILLS_SOURCE" ]; then
+  builder_skill="$MATRIX_SKILLS_ROOT/app-builder/SKILL.md"
+  if [ ! -f "$builder_skill" ] || [ -L "$builder_skill" ] || ! grep -q '^name:[[:space:]]*matrix-app-builder[[:space:]]*$' "$builder_skill"; then
+    echo "Invalid local Matrix skills source; existing Agent skills were preserved." >&2
+    exit 1
+  fi
+  MATRIX_SKILL_TARGETS=agent \
+    MATRIX_SKILLS_SOURCE="$MATRIX_SKILLS_ROOT" \
+    MATRIX_AGENT_SKILLS_ROOT="$MATRIX_AGENT_SKILLS_ROOT" \
+    bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sync-matrix-agent-skills.sh"
+  exit 0
+fi
+
 if ! command -v "$AGENT_BIN" >/dev/null 2>&1; then
   echo "Agent binary not found: $AGENT_BIN" >&2
   echo "Set AGENT_BIN=/path/to/agent or install Agent first." >&2

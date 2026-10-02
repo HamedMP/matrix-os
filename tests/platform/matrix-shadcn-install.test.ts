@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, realpathSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -16,8 +16,8 @@ describe("shadcn and companion installation", () => {
     try {
       writeFileSync(executable, '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$MATRIX_INSTALL_LOG"\n');
       chmodSync(executable, 0o755);
-      // Hermes fallback must be exercised without fetching or executing a CLI.
-      const installSource = harness === "agent" ? source : "example/matrix-skills";
+      // Both remote fallbacks use only the fake CLI, without fetching code.
+      const installSource = "example/matrix-skills";
       execFileSync("bash", [join(repo, `scripts/install-${harness}-matrix-skills.sh`), installSource], {
         env: { ...process.env, HOME: fixture, HERMES_HOME: join(fixture, "hermes-home"),
           AGENT_BIN: executable, HERMES_BIN: executable, MATRIX_AGENT_SKILLS_ROOT: join(fixture, "agent-skills"), MATRIX_INSTALL_LOG: log },
@@ -31,6 +31,22 @@ describe("shadcn and companion installation", () => {
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
+  });
+  it("syncs every shipped local skill into Agent without invoking its CLI", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "matrix-agent-local-pack-"));
+    const destination = join(fixture, "agent-skills");
+    try {
+      execFileSync("bash", [join(repo, "scripts/install-agent-matrix-skills.sh"), source], {
+        env: { ...process.env, HOME: fixture, AGENT_BIN: join(fixture, "absent-cli"), MATRIX_AGENT_SKILLS_ROOT: destination }, stdio: "pipe",
+      });
+      expect(readdirSync(destination)).toHaveLength(shipped.length);
+      for (const directory of shipped) {
+        const name = readFileSync(join(source, directory, "SKILL.md"), "utf8").match(/^name:\s*(.+)$/m)?.[1].trim();
+        expect(name).toBeTruthy();
+        expect(realpathSync(join(destination, name!))).toBe(realpathSync(join(source, directory)));
+      }
+      expect(existsSync(join(fixture, ".agents"))).toBe(false);
+    } finally { rmSync(fixture, { recursive: true, force: true }); }
   });
   it.each([
     ["agent", "file"], ["agent", "directory"], ["agent", "dangling-link"],
