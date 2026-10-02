@@ -74,9 +74,12 @@ function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
 function isRetentionProtectedActivity(
   activity: CanonicalChatRunActivity,
   resolvedApprovalIds: readonly string[],
+  resolvedInputIds: readonly string[],
 ): boolean {
   return isTerminalActivity(activity)
-    || (activity.type === "approval.requested" && !resolvedApprovalIds.includes(activity.approvalId));
+    || (activity.type === "approval.requested" && !resolvedApprovalIds.includes(activity.approvalId))
+    || ((activity.type === "input.requested" || activity.type === "input.submitted")
+      && !resolvedInputIds.includes(activity.requestId));
 }
 
 function railTransitionForActivity(activity: CanonicalChatRunActivity): {
@@ -390,10 +393,8 @@ export class ChatRunLifecycleRepository {
       const unseenCount = activityIds.length - existing.length;
       const overflow = Number(count.count) + unseenCount - 500;
       let removedActivityIds: string[] = [];
+      const skippedIncomingIds = new Set<string>();
       if (overflow > 0) {
-        if (!activities.some(isTerminalActivity)) {
-          throw new ChatConflictError(chatId, Number(current.revision));
-        }
         const candidates = await trx.selectFrom("chat_run_events")
           .select(["id", "event"])
           .where("run_id", "=", runId)
@@ -408,12 +409,18 @@ export class ChatRunLifecycleRepository {
         // Bounded by the 500 persisted events plus at most 100 incoming events.
         const resolvedApprovalIds = activities.flatMap((activity) =>
           activity.type === "approval.resolved" ? [activity.approvalId] : []);
+        const resolvedInputIds = activities.flatMap((activity) =>
+          activity.type === "input.resolved" ? [activity.requestId] : []);
         const requestedApprovalIds = parsedCandidates.flatMap(({ activity }) =>
           activity.success && activity.data.type === "approval.requested" ? [activity.data.approvalId] : []);
         for (const { activity } of parsedCandidates) {
           if (activity.success && activity.data.type === "approval.resolved"
             && !resolvedApprovalIds.includes(activity.data.approvalId)) {
             resolvedApprovalIds.push(activity.data.approvalId);
+          }
+          if (activity.success && activity.data.type === "input.resolved"
+            && !resolvedInputIds.includes(activity.data.requestId)) {
+            resolvedInputIds.push(activity.data.requestId);
           }
         }
         if (requestedApprovalIds.length > 0) {
@@ -429,12 +436,27 @@ export class ChatRunLifecycleRepository {
           }
         }
         const evictedIds = parsedCandidates.flatMap(({ id, activity }) => {
-          return activity.success && !isRetentionProtectedActivity(activity.data, resolvedApprovalIds) ? [id] : [];
+          return activity.success
+            && !isRetentionProtectedActivity(activity.data, resolvedApprovalIds, resolvedInputIds)
+            ? [id]
+            : [];
         }).slice(0, overflow);
-        if (evictedIds.length !== overflow) {
+        let remainingOverflow = overflow - evictedIds.length;
+        if (remainingOverflow > 0) {
+          const existingIds = new Set(existing.map((row) => row.id));
+          const expendableIncomingIds = [...new Map(activities
+            .filter((activity) => !existingIds.has(activity.id)
+              && !isRetentionProtectedActivity(activity, resolvedApprovalIds, resolvedInputIds))
+            .map((activity) => [activity.id, activity])).keys()];
+          for (const id of expendableIncomingIds.slice(0, remainingOverflow)) skippedIncomingIds.add(id);
+          remainingOverflow -= skippedIncomingIds.size;
+        }
+        if (remainingOverflow > 0) {
           throw new ChatConflictError(chatId, Number(current.revision));
         }
-        await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
+        if (evictedIds.length > 0) {
+          await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
+        }
         removedActivityIds = evictedIds;
       }
       const latestSequence = await trx.selectFrom("chat_run_events")
@@ -447,6 +469,7 @@ export class ChatRunLifecycleRepository {
       let changed = 0;
       let railTransition: ReturnType<typeof railTransitionForActivity>;
       for (const activity of activities) {
+        if (skippedIncomingIds.has(activity.id)) continue;
         if (existingIds.has(activity.id)) {
           const row = existingById.get(activity.id);
           if (!row) throw new ChatConflictError(chatId, Number(current.revision));
@@ -525,7 +548,11 @@ export class ChatRunLifecycleRepository {
           ...(railTransition ? { attention: railTransition.attention } : {}),
           updated_at: sql`now()`,
         }).where("id", "=", chatId).execute();
-        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId, activityIds, removedActivityIds });
+        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", {
+          runId,
+          activityIds: activityIds.filter((id) => !skippedIncomingIds.has(id)),
+          removedActivityIds,
+        });
       }
       return changed;
     });
