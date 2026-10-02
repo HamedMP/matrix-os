@@ -166,6 +166,8 @@ import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
 import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
+import { createCompanyBotSetup } from "./startup/slack-company.js";
+import { startOwnerSlack } from "./startup/slack-owner.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
 import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
@@ -796,6 +798,8 @@ export async function createGateway(config: GatewayConfig) {
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let scopeRuntimeHost: ScopeRuntimeHost | undefined;
   let botServices: BotServices | undefined;
+  let companyBotSetup: ReturnType<typeof createCompanyBotSetup>;
+  let slackRuntime: Awaited<ReturnType<typeof startOwnerSlack>> | undefined;
   let messagingRepository: MessagingKyselyRepository | null = null;
   // Collaboration wiring always constructs (S20): there is no release flag.
   // Incomplete configuration or a missing owner database registers the
@@ -1510,9 +1514,17 @@ export async function createGateway(config: GatewayConfig) {
     });
     const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
     await chatAgents.bootstrap();
+    if (gatewayCollaboration && collaborationConfig?.ownerId) {
+      companyBotSetup = createCompanyBotSetup({
+        homePath, ownerId: collaborationConfig.ownerId, repository: chatRepository,
+        collaboration: gatewayCollaboration, providers: aiProviderService,
+        getBots: () => botServices, modelId: process.env.MATRIX_COMPANY_BOT_MODEL?.trim(),
+      });
+    }
     botServices = await startBots({
       homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       providers: aiProviderService,
+      ...(companyBotSetup ? { group: companyBotSetup } : {}),
       ...(internalIntegrationBaseUrl && internalPlatformToken
         ? { integrations: createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken }) }
         : integrationRoutes ? { integrations: createLocalIntegrationTransport(integrationRoutes) } : {}),
@@ -1598,6 +1610,7 @@ export async function createGateway(config: GatewayConfig) {
         homePath,
         providerCatalog: canonicalChatProviderCatalog,
         codingProviders: codingAgentProviderRegistry,
+        ...(companyBotSetup ? { matrixBot: companyBotSetup.matrixBot } : {}),
         // S09: the canonical resolver is the S07 sandbox manifest source; without it
         // shared AI reports no eligibility instead of launching unmounted runs.
         ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
@@ -1626,6 +1639,12 @@ export async function createGateway(config: GatewayConfig) {
       });
     }
   }
+  slackRuntime = await startOwnerSlack({
+    app, ownerId: process.env.MATRIX_USER_ID?.trim(), token: internalPlatformToken,
+    platformUrl: internalPlatformUrl, handle: internalHandle, repository: chatRepository,
+    orchestrator: canonicalChatOrchestrator, executionRoots: canonicalChatExecutionRoots,
+    collaboration: gatewayCollaboration, bots: botServices,
+  });
   // Bind deletion and run tombstone recovery only after Chat dependencies are ready.
   const deleteProjectChats = chatRepository && canonicalChatOrchestrator
     ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
@@ -1851,10 +1870,13 @@ export async function createGateway(config: GatewayConfig) {
       cronService.stop();
       await localChatImportLifecycle.close();
       await backgroundChatProjection.close();
+      await slackRuntime?.close();
+      slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
       await botServices?.close();
       botServices = undefined;
+      companyBotSetup?.close();
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();

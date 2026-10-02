@@ -92,6 +92,7 @@ const APP_IFRAME_PREFIXES = ["/apps/"];
 // tokens do. Integrations webhook and voice webhooks live here.
 const HMAC_WEBHOOK_PREFIXES = [
   "/api/integrations/webhook/",
+  "/api/internal/slack/",
 ];
 // These endpoints own bearer validation in their route handlers because they
 // use service-specific tokens instead of the user/session MATRIX_AUTH_TOKEN.
