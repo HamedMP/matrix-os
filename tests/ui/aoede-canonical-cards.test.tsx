@@ -79,6 +79,10 @@ it("uses canonical operation identity and state rather than pairing provider act
   } as ReturnType<typeof projectAoedeCanonical>;
   render(<AoedeCanonicalCards projection={projection} controller={{} as AoedeController} />);
   const disclosure = screen.getByRole("button", { name: "2 tools" });
+  expect(disclosure.classList.contains("matrix-aoede__tool-disclosure-trigger")).toBe(true);
+  expect(disclosure.closest("section")?.classList.contains("matrix-aoede__tool-disclosure")).toBe(true);
+  expect(disclosure.querySelector("strong")).toBeNull();
+  expect(disclosure.querySelectorAll("svg")).toHaveLength(2);
   expect(disclosure.getAttribute("aria-expanded")).toBe("false");
   expect(screen.queryByText("List installed apps")).toBeNull();
   expect(screen.queryByText("matrix_list_apps")).toBeNull();

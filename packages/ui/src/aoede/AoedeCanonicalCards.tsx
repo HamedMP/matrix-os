@@ -95,9 +95,9 @@ type ToolDetail = { id: string; label: string; state: string };
 function ToolDisclosure({ tools }: { tools: ToolDetail[] }) {
   const [open, setOpen] = useState(false);
   const label = `${tools.length} ${tools.length === 1 ? "tool" : "tools"}`;
-  return <section className="matrix-aoede__tool-card">
-    <button type="button" aria-label={label} aria-expanded={open} onClick={() => setOpen(value => !value)}>
-      <span><WrenchIcon /><strong>{label}</strong></span><ChevronIcon />
+  return <section className="matrix-aoede__tool-disclosure">
+    <button className="matrix-aoede__tool-disclosure-trigger" type="button" aria-label={label} aria-expanded={open} onClick={() => setOpen(value => !value)}>
+      <WrenchIcon /><span>{label}</span><ChevronIcon />
     </button>
     {open ? <ul>{tools.map(tool => <li key={tool.id}><span>{tool.label}</span><span>{tool.state}</span></li>)}</ul> : null}
   </section>;
