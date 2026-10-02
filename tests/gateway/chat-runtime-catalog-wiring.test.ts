@@ -79,15 +79,31 @@ describe("gateway Chat runtime catalog composition", () => {
     }
   });
 
-  it("builds a reusing readiness view over the same sources as the live catalog", () => {
+  it("builds a Codex-first readiness view that falls back to the complete cached catalog", async () => {
     compose("/runtime/codex");
-    expect(mocks.catalog).toHaveBeenCalledTimes(2);
-    const [live, readiness] = mocks.catalog.mock.calls.map((call) => call[0] as CatalogOptions);
+    expect(mocks.catalog).toHaveBeenCalledTimes(3);
+    const [live, completeReadiness, codexReadiness] = mocks.catalog.mock.calls.map((call) => call[0] as CatalogOptions);
     expect(live.cacheTtlMs).toBeUndefined();
-    expect(readiness.cacheTtlMs).toBe(15_000);
+    expect(completeReadiness.cacheTtlMs).toBe(15_000);
+    expect(codexReadiness.cacheTtlMs).toBe(15_000);
+    expect(codexReadiness.preferredCodingProviderId).toBe("codex");
     // One Claude source instance, so a readiness read never re-resolves owner credentials on its own.
-    expect(readiness.codingModelCatalogSource).toBe(live.codingModelCatalogSource);
-    expect(readiness.invalidateCodingModelCatalog).toBe(live.invalidateCodingModelCatalog);
+    expect(codexReadiness.codingModelCatalogSource).toBe(live.codingModelCatalogSource);
+    expect(codexReadiness.invalidateCodingModelCatalog).toBe(live.invalidateCodingModelCatalog);
+
+    const unavailable = { instances: [] };
+    const available = { instances: [{ driverKind: "codex", availability: "available", defaultSelection: { instanceId: "codex_default", model: "gpt-5" } }] };
+    const codexService = { getCatalog: vi.fn().mockResolvedValue(available), refresh: vi.fn().mockResolvedValue(available) };
+    const completeService = { getCatalog: vi.fn().mockResolvedValue(unavailable), refresh: vi.fn().mockResolvedValue(unavailable) };
+    mocks.catalog.mockReset();
+    mocks.catalog.mockReturnValueOnce({}).mockReturnValueOnce(completeService).mockReturnValueOnce(codexService);
+    const { readinessCatalog } = compose("/runtime/codex");
+    await expect(readinessCatalog.getCatalog(principal)).resolves.toBe(available);
+    expect(completeService.getCatalog).not.toHaveBeenCalled();
+
+    codexService.getCatalog.mockResolvedValueOnce(unavailable);
+    await expect(readinessCatalog.getCatalog(principal)).resolves.toBe(unavailable);
+    expect(completeService.getCatalog).toHaveBeenCalledWith(principal);
   });
 
   it("returns owner-scoped Claude metadata without querying fallback sources", async () => {

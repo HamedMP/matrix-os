@@ -521,6 +521,8 @@ export function createChatProviderCatalogService(options: {
    * opted-in readers share a single in-flight read.
    */
   cacheTtlMs?: number;
+  /** Build a bounded coding-harness view for latency-sensitive readiness. */
+  preferredCodingProviderId?: string;
 }): ChatProviderCatalogService {
   const nowMs = () => (options.now?.() ?? new Date()).getTime();
   const cacheTtlMs = Math.min(MAX_CATALOG_CACHE_TTL_MS, Math.max(0, Math.trunc(options.cacheTtlMs ?? 0)));
@@ -585,7 +587,9 @@ export function createChatProviderCatalogService(options: {
 
   /** One full read across every inventory source. */
   async function readCatalog(principal: RequestPrincipal): Promise<CanonicalProviderCatalog> {
-    const systemRuntimeReads = Promise.all(SYSTEM_DRIVERS.map(async (kind) => {
+    const preferredCodingProviderId = options.preferredCodingProviderId;
+    const systemRuntimeReads = preferredCodingProviderId === undefined
+      ? Promise.all(SYSTEM_DRIVERS.map(async (kind) => {
       const source = options.systemRuntimeSources?.[kind];
       if (!source) return [kind, null] as const;
       try {
@@ -594,11 +598,17 @@ export function createChatProviderCatalogService(options: {
         console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
         return [kind, null] as const;
       }
-    }));
+      }))
+      : Promise.resolve([]);
     const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
-      options.codingProviders.listProviders(principal),
-      readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs),
-      options.aiProviderSource?.getSnapshot({ refresh: false }) ?? Promise.resolve(undefined),
+      options.codingProviders.listProviders(principal,
+        preferredCodingProviderId === undefined ? undefined : [preferredCodingProviderId]),
+      preferredCodingProviderId === undefined
+        ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs)
+        : Promise.resolve(undefined),
+      preferredCodingProviderId === undefined
+        ? options.aiProviderSource?.getSnapshot({ refresh: false }) ?? Promise.resolve(undefined)
+        : Promise.resolve(undefined),
       options.harnessSettingsSource?.getSnapshot() ?? Promise.resolve(undefined),
       systemRuntimeReads,
     ]);

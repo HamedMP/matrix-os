@@ -40,7 +40,7 @@ type CredentialReadResult =
   | { state: "failed"; agents: [] };
 
 export interface CodingAgentProviderRegistry {
-  listProviders(principal: RequestPrincipal): Promise<AgentProviderSummary[]>;
+  listProviders(principal: RequestPrincipal, providerIds?: readonly string[]): Promise<AgentProviderSummary[]>;
   invalidate(ownerId?: string, providerId?: string): void;
 }
 
@@ -373,14 +373,18 @@ export function createCodingAgentProviderRegistry(
   }
 
   return {
-    async listProviders(principal) {
+    async listProviders(principal, providerIds) {
       const credentials = await readCredentials(principal);
+      const selectedProviders = providerIds === undefined
+        ? providers
+        : providers.filter((provider) => providerIds.includes(provider.providerId));
       const summaries = await Promise.all(
-        providers.map((provider) => summaryForProvider(provider, principal, credentials)),
+        selectedProviders.map((provider) => summaryForProvider(provider, principal, credentials)),
       );
       if (credentials.state === "available") {
         for (const credential of credentials.agents) {
           if (credential.agent === "hermes") continue;
+          if (providerIds !== undefined && !providerIds.includes(credential.agent)) continue;
           if (summaries.some((summary) => summary.id === credential.agent)) continue;
           summaries.push(summaryFromCredential(credential));
         }
