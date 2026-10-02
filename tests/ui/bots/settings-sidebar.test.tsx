@@ -112,12 +112,12 @@ it("keeps a confirmed revocation after failed refresh, close, and reopen", async
   api.bots.revoke.mockResolvedValue(undefined);
   render(<BotChatPanel chatId="chat_research" client={api as never} />);
   fireEvent.click(await screen.findByRole("button", { name: "Bot settings" }));
-  fireEvent.click(screen.getByRole("button", { name: "Revoke Work" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Revoke Work" }));
   await waitFor(() => expect(api.bots.authority).toHaveBeenCalledTimes(2));
   fireEvent.click(screen.getByRole("button", { name: "Close bot settings" }));
   fireEvent.click(screen.getByRole("button", { name: "Bot settings" }));
+  expect(await screen.findByText("Connected · no access")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Revoke Work" })).toBeNull();
-  expect(screen.getByText("Connected · no access")).toBeTruthy();
 });
 
 it("moves focus into the drawer when an open wide inspector becomes narrow", async () => {
@@ -135,7 +135,7 @@ it("dismisses wide settings outside the panel while preserving the reply and tri
   render(<BotChatPanel chatId="chat_research" client={client() as never}><textarea aria-label="Reply" defaultValue="Keep my draft" /></BotChatPanel>);
   const trigger = await screen.findByRole("button", { name: "Bot settings" });
   fireEvent.click(trigger);
-  fireEvent.pointerDown(screen.getByRole("button", { name: /Memory/ }));
+  fireEvent.pointerDown(await screen.findByRole("button", { name: /Memory/ }));
   expect(screen.getByRole("complementary", { name: "Bot settings" })).toBeTruthy();
   const reply = screen.getByRole("textbox", { name: "Reply" });
   fireEvent.pointerDown(reply);
