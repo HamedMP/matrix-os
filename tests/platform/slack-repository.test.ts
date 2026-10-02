@@ -95,6 +95,17 @@ describe("durable Slack authorization metadata", () => {
     expect(await repository.getOAuthState("c".repeat(64))).toBeNull();
     expect(await repository.getOAuthState("b".repeat(64))).not.toBeNull();
   });
+  it("preserves a fresh reinstall permit when a second old revocation arrives", async () => {
+    await repository.revokeInstallation("A123", "T123");
+    const hash = "reinstall-after-revocation";
+    await repository.createOAuthState({ appId: "A123", hash, actorId: "user_admin", organizationId: "org_company" });
+    await repository.revokeInstallation("A123", "T123");
+    expect(await repository.getOAuthState(hash)).toMatchObject({ actorId: "user_admin" });
+    expect(await repository.getInstallation("A123", "T123")).toMatchObject({ state: "revoked", generation: 2 });
+    await repository.consumeOAuthState(hash, "user_admin");
+    await repository.saveInstallation(installation, { oauthStateHash: hash });
+    expect(await repository.getInstallation("A123", "T123")).toMatchObject({ state: "active", generation: 3 });
+  });
   it.each(["unconsumed","revoked","app","organization","actor","expired"])("fences callback installation with an exact consumed permit (%s)",async(change)=>{
     const hash="d".repeat(64);
     await repository.createOAuthState({appId:"A123",hash,actorId:"user_admin",organizationId:"org_company"});
