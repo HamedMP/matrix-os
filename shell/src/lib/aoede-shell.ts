@@ -180,6 +180,20 @@ const SAFE_NAV_APP = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const NAV_PATH_MAX = 160;
 const NAV_PATH_FORBIDDEN = /[\\%?#:\x00-\x1f]/;
 
+function registeredNavigationPath(prefix: string, requestedPath: string): string | null {
+  const commands = useCommandStore.getState().commands;
+  const candidates = requestedPath === prefix
+    ? [`${prefix}/index.html`, `${prefix}/dist/index.html`]
+    : [requestedPath];
+  for (const candidate of candidates) {
+    const normalized = normalizeBuiltInAppPath(candidate);
+    if (!isRetiredBuiltInAppPath(normalized) && commands.has(`app:${normalized}`)) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
 /**
  * Canonical "open this app result" navigation. Only destinations the shell can
  * actually reveal make it to the window manager: the path must normalize to a
@@ -192,11 +206,11 @@ export function openAoedeNavigation(nav: { app: string; path: string }): void {
   if (!SAFE_NAV_APP.test(nav.app) || nav.path.length === 0 || nav.path.length > NAV_PATH_MAX) return;
   if (nav.path.includes("..") || nav.path.includes("//") || NAV_PATH_FORBIDDEN.test(nav.path)) return;
   const prefix = `apps/${nav.app}`;
-  if (nav.path !== prefix && nav.path !== `${prefix}.html` && !nav.path.startsWith(`${prefix}/`)) return;
-  const normalized = normalizeBuiltInAppPath(nav.path);
-  if (isRetiredBuiltInAppPath(normalized)) return;
+  if (nav.path !== prefix && nav.path !== `${prefix}.html`
+    && nav.path !== `${prefix}/index.html` && nav.path !== `${prefix}/dist/index.html`) return;
+  const registeredPath = registeredNavigationPath(prefix, nav.path);
+  if (!registeredPath) return;
   // A registered launcher proves the destination is installed and keeps the
   // reveal on the single dispatch path (canvas pan + retired-path guards).
-  if (!useCommandStore.getState().commands.has(`app:${normalized}`)) return;
-  revealShellAppWindow(normalized, nav.app);
+  revealShellAppWindow(registeredPath, nav.app);
 }

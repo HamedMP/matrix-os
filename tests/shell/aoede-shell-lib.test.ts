@@ -210,18 +210,49 @@ describe("Aoede shell entry helpers", () => {
     expect(useWindowManager.getState().windows).toHaveLength(0);
   });
 
+  it("resolves an app-root action to the installed registered entrypoint", () => {
+    useCommandStore.setState({
+      commands: new Map([
+        ["app:apps/notes/index.html", {
+          id: "app:apps/notes/index.html", label: "Notes", group: "Apps" as const,
+          execute: () => revealShellAppWindow("apps/notes/index.html", "Notes"),
+        }],
+        ["app:apps/stickies/dist/index.html", {
+          id: "app:apps/stickies/dist/index.html", label: "Stickies", group: "Apps" as const,
+          execute: () => revealShellAppWindow("apps/stickies/dist/index.html", "Stickies"),
+        }],
+      ]),
+    });
+
+    openAoedeNavigation({ app: "notes", path: "apps/notes" });
+    let state = useWindowManager.getState();
+    expect(state.windows).toHaveLength(1);
+    expect(state.windows[0]?.path).toBe("apps/notes/index.html");
+    expect(state.focusedWindowId).toBe(state.windows[0]?.id);
+
+    openAoedeNavigation({ app: "stickies", path: "apps/stickies" });
+    state = useWindowManager.getState();
+    expect(state.windows).toHaveLength(2);
+    expect(state.windows[1]?.path).toBe("apps/stickies/dist/index.html");
+    expect(state.focusedWindowId).toBe(state.windows[1]?.id);
+  });
+
   it("rejects retired, uninstalled, cross-app and malformed navigation targets", () => {
     const launch = vi.fn();
     useCommandStore.setState({
       commands: new Map([
         ["app:__chat__", { id: "app:__chat__", label: "Chat", group: "Apps" as const, execute: launch }],
         ["app:__aoede__", { id: "app:__aoede__", label: "Aoede", group: "Apps" as const, execute: launch }],
+        ["app:apps/forged/child.html", { id: "app:apps/forged/child.html", label: "Forged", group: "Apps" as const, execute: launch }],
       ]),
     });
     // Retired built-ins stay retired even with a registered singleton command.
     openAoedeNavigation({ app: "aoede", path: "apps/aoede/index.html" });
     // No registered launcher: the app is not installed, so nothing may open.
     openAoedeNavigation({ app: "ghost", path: "apps/ghost/index.html" });
+    // A command beneath the app root is not proof unless it is a supported
+    // installed entrypoint.
+    openAoedeNavigation({ app: "forged", path: "apps/forged" });
     // The path must live under the exact app slug, with no traversal/noise.
     openAoedeNavigation({ app: "chat", path: "apps/other/index.html" });
     openAoedeNavigation({ app: "chat", path: "apps/chat/../files/index.html" });
