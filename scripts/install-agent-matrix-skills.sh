@@ -20,11 +20,13 @@ skills=(
   animation-vocabulary
   app-builder
   app-ui-patterns
+  apple-design
   chat-import
   css-animations
   debug-app
   design-system
   dev-vps
+  emil-design-eng
   integrations
   jev-email-triage
   landing-design
@@ -40,7 +42,7 @@ fi
 
 for skill in "${skills[@]}"; do
   case "$skill" in
-    animate|animation-accessibility|animation-performance|animation-vocabulary|css-animations|review-animations)
+    animate|animation-accessibility|animation-performance|animation-vocabulary|apple-design|css-animations|emil-design-eng|review-animations)
       skill_name="$skill" ;;
     *) skill_name="matrix-$skill" ;;
   esac
