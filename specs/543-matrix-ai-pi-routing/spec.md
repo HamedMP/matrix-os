@@ -140,3 +140,46 @@ Recipe Bot model choices identify the exact managed `matrix_pi` driver and
 not authority; a label-free authenticated catalog must expose the same eligible
 models. Available-instance/model filtering and server admission remain enforced.
 Native Pi, kernel and other instance identities remain excluded from this selector.
+
+## Settings fallback and rejected inference accounting
+
+1. **Scope / trigger:** selecting a native harness with no saved access source must
+   not let an unavailable policy anchor hide another ready Matrix serving route.
+   A funded inference rejected before an accepted stream needs evidence-bound
+   settlement; an unknown usage hold is distinct from consumed credit.
+2. **Signatures:** shared `AgentsProvidersView` derives its displayed source from
+   `ProviderSettingsSnapshot`. Relay calls
+   `classifyFundedUpstreamRejection({ upstream, canonicalModelId, requestPath,
+   signal }): Promise<FundedFinalization>` after its authenticated reservation
+   starts and the fixed generation target returns a non-OK response.
+3. **Contracts:** preserve an explicitly saved Matrix source first. Otherwise
+   choose fully ready allowed Cloudflare, another fully ready Matrix source, then
+   the policy anchor/first source. Full readiness requires an enabled eligible
+   model allowed by current policy. This display fallback neither changes saved
+   credentials nor grants model access. Rejection classification is exact zero
+   only for the validated `anthropic/claude-sonnet-5` `/v1/messages` route,
+   HTTP429, JSON media type, and a complete strict envelope
+   `{type:"error",error:{type:"rate_limit_error",message:string},request_id?:string}`.
+   The body is bounded to16KiB/1second, with fatalUTF8 and caller cancellation;
+   request IDs are at most256characters. Private error text is discarded.
+4. **Validation / errors:** explicit unavailable sources remain visible; empty,
+   disabled or policy-denied models cannot establish readiness. Additional error
+   fields, malformed/incomplete/stalled bodies, nonJSON429, other models/routes,
+   500, transport failure, or errors after HTTP200/SSE remain conservative.
+   Finalization retries reuse the same exact-zero reservation locator and never
+   retry inference. Usage-mode conservative finalization retains its hold and
+   owner admission barrier until exact evidence arrives; this policy is unchanged.
+5. **Good / base / bad cases:** an unbound Pi Settings panel can show ready
+   Sonnet while its Cloudflare anchor is unavailable. A saved unavailable source
+   retains explicit intent. A complete known pre-stream rate rejection settles
+   zero and permits the next run; a429 containing usage/content remains unknown.
+6. **Required tests:** real shared-view transitions and allowed-model intersection;
+   actual Relay-handler known/ambiguous fixtures, body deadline/byte bounds and
+   abort; deferred exact finalization without repeated generation; repository
+   accounting for zero debit, released hold, replay idempotency and next admission.
+   Fixture SQL checks do not replace live managed-Postgres accounting. Delivery
+   requires exact Relay plus Preview VPS/Electron revisions and fresh acceptance.
+7. **Wrong / correct:** do not declare any HTTP429 free or infer a historical
+   response body from its status. Classify only complete validated evidence, then
+   settle through existing authenticated accounting. Never grant new credit or
+   patch the database to conceal an unresolved hold.

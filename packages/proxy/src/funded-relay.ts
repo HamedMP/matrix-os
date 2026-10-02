@@ -33,6 +33,7 @@ import {
   serializeFundedRequest,
   type FundedRequest,
 } from "./funded-relay-request.js";
+import { classifyFundedUpstreamRejection } from "./funded-relay-rejection.js";
 import { SettlementRetryQueue } from "./funded-relay-settlement-queue.js";
 import { boundedBody, safeUpstreamHeaders } from "./funded-relay-stream.js";
 import { createFundedUsageTracker, type FundedFinalization } from "./funded-relay-usage.js";
@@ -513,8 +514,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
-        enqueueFinalization({ mode: "conservative" });
-        await upstream.body?.cancel("upstream rejected request");
+        enqueueFinalization(await classifyFundedUpstreamRejection({
+          upstream, canonicalModelId: model.canonicalModelId,
+          requestPath: c.req.path, signal: state.lifetimeSignal,
+        }));
         resourceLease.release();
         state.resourceLease = null;
         if (upstream.status === 429) {
