@@ -24,4 +24,14 @@ describe("registration-time company drive dependencies", () => {
         expect(mismatch.service).toBeNull();
         expect(construct).toHaveBeenCalledTimes(1);
     });
+    it("stays live on a production computer, where provisioning writes no client origins", () => {
+        // The relay origin is itself the default client origin, so drive context no longer
+        // disables itself on every production home for want of MATRIX_COLLABORATION_CLIENT_ORIGINS.
+        construct.mockClear();
+        const { MATRIX_COLLABORATION_CLIENT_ORIGINS: _unset, ...production } = env;
+        const live = createProductionChatDriveContext({ repository: {} as never, collaborationReady: true, env: production });
+        expect(live.service).not.toBeNull();
+        expect(construct).toHaveBeenCalledWith(expect.objectContaining({ relayOrigin: "https://app.matrix-os.com" }));
+        live.close();
+    });
 });

@@ -423,7 +423,10 @@ The `Connect collaboration preview home` job, also gated by
   - `UPGRADE_TOKEN` becomes HMAC-SHA256 of the handle under the preview
     `PLATFORM_SECRET`, the credential the preview platform verifies;
   - `MATRIX_COLLABORATION_CLIENT_ORIGINS` becomes the tagged revision's allowed
-    origins;
+    origins. Production homes never set it: when it is unset the gateway allows
+    only the relay origin (`COLLABORATION_RELAY_ORIGIN`, default
+    `https://app.matrix-os.com`), and a value that is set but entirely
+    malformed stays fail-closed;
   - `MATRIX_UPDATE_MANIFEST_BASE_URL` is pinned to the original platform, so
     later exact-head deploys still find their release metadata.
 
