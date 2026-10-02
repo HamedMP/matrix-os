@@ -19,7 +19,10 @@ import {
 
 const harness = vi.hoisted(() => ({ createApi: null as null | ((baseUrl: string) => unknown) }));
 vi.mock("@/hooks/useBrowserOrigin", () => ({ useBrowserOrigin: () => "https://app.matrix-os.com" }));
-vi.mock("@/lib/collaboration", () => ({ createShellCollaborationApi: (baseUrl: string) => harness.createApi!(baseUrl) }));
+vi.mock("@/lib/collaboration", () => ({
+  createShellCollaborationApi: (baseUrl: string) => harness.createApi!(baseUrl),
+  releaseShellCollaborationApi: vi.fn(),
+}));
 
 import { OrganizationDrivesView } from "../../shell/src/components/file-browser/OrganizationDrivesView.js";
 

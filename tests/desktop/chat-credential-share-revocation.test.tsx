@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { ChatSharingButton } from "@desktop/renderer/src/features/chat/ChatSharingButton";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   collaborationApi: null as null | { post(path: string, body: unknown): Promise<unknown> },
@@ -12,20 +14,29 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@matrix-os/ui", () => ({
-  ChatSharingButton: (props: { collaborationApi: typeof mocks.collaborationApi }) => {
+  ChatSharingButton: (props: { collaborationApi: typeof mocks.collaborationApi; organizationId: string | null }) => {
+    const [draft, setDraft] = React.useState("clean");
     mocks.collaborationApi = props.collaborationApi;
-    return <div>Share</div>;
+    return <div>
+      <span data-testid="share-state">{`${props.organizationId ?? "none"}:${draft}`}</span>
+      <button type="button" onClick={() => setDraft("open")}>Open share</button>
+    </div>;
   },
 }));
 vi.mock("@desktop/renderer/src/lib/collaboration", () => ({
   createDesktopCollaborationApi: () => ({ post: mocks.sent, get: vi.fn(), delete: vi.fn(), baseUrl: "https://matrix.test" }),
+  releaseDesktopCollaborationApi: vi.fn(),
 }));
 vi.mock("@desktop/renderer/src/features/chat/../collaboration/useCollaborationRuntime", () => ({
   useCollaborationRuntimeId: () => "vps:runtime",
 }));
-vi.mock("@desktop/renderer/src/features/chat/../collaboration/DesktopCollaborationOrganization", () => ({
-  DesktopCollaborationOrganization: ({ children }: { children: (id: string) => React.ReactNode }) => children("org_test"),
-}));
+beforeEach(() => {
+  useConnection.setState({
+    platformHost: "https://matrix.test",
+    organizationId: "org_alpha",
+    organizationStatus: "member",
+  });
+});
 
 afterEach(() => { cleanup(); mocks.sent.mockClear(); mocks.collaborationApi = null; });
 
@@ -41,5 +52,23 @@ describe("Electron Chat live-share credential revocation", () => {
     expect(order).toEqual(["post"]);
     await api!.post("/api/collaboration/runtimes/vps%3Aruntime/scopes", { kind: "chat" });
     expect(order).toEqual(["post", "clear", "post"]);
+  });
+
+  it("clears organization-bound Chat share state when the active organization changes", () => {
+    render(<ChatSharingButton api={{} as ApiClient} chatId="chat_one" copyText={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open share" }));
+    expect(screen.getByTestId("share-state")).toHaveTextContent("org_alpha:open");
+
+    act(() => useConnection.setState({ organizationId: "org_beta", organizationStatus: "member" }));
+
+    expect(screen.getByTestId("share-state")).toHaveTextContent("org_beta:clean");
+  });
+
+  it("keeps snapshot sharing visible without treating a remembered organization as verified", () => {
+    useConnection.setState({ organizationId: "org_stale", organizationStatus: "unavailable" });
+    render(<ChatSharingButton api={{} as ApiClient} chatId="chat_one" copyText={vi.fn()} />);
+
+    expect(screen.getByTestId("share-state")).toHaveTextContent("none:clean");
+    expect(mocks.collaborationApi).toBeTruthy();
   });
 });

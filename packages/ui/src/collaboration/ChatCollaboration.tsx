@@ -24,6 +24,7 @@ import { SessionAccessControl } from "./SessionAccessControl.js";
 import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
+import { isAcceptedProjectOwnedByRail } from "./discovery-visibility.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -103,7 +104,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   const [organizationPending, setOrganizationPending] = useState<string | null>(null);
   const [organizationError, setOrganizationError] = useState<string | null>(null);
   const visibleItems = useMemo(() => hideAcceptedProjects
-    ? items.filter((item) => item.kind !== "project" || item.status !== "accepted")
+    ? items.filter((item) => !isAcceptedProjectOwnedByRail(item))
     : items, [hideAcceptedProjects, items]);
   useEffect(() => {
     let active = true;

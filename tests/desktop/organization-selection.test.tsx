@@ -176,7 +176,7 @@ describe("DesktopOrganizationMenuItems", () => {
     apiState.get.mockRejectedValue(new TypeError("network"));
     renderMenu();
 
-    expect((await screen.findByRole("alert")).textContent).toBe("Couldn't load your organizations.");
+    expect((await screen.findByRole("alert")).textContent).toBe("Couldn't verify your organizations.");
     expect(screen.getByText("Organization")).toBeTruthy();
   });
 

@@ -35,6 +35,7 @@ export function ChatSharingButton({ api, collaborationEnabled, collaborationApi,
   const [surface, setSurface] = useState<"choice" | "snapshot" | "collaborators" | null>(null);
   const [scope, setScope] = useState<z.infer<typeof CollaborationScopeSchema> | null>(null);
   const [members, setMembers] = useState<z.infer<typeof CollaborationMemberSchema>[]>([]);
+  const collaborationAvailable = collaborationEnabled && Boolean(collaborationApi && runtimeId && organizationId);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const path = `/api/chats/${encodeURIComponent(chatId)}/shares`;
@@ -91,9 +92,13 @@ export function ChatSharingButton({ api, collaborationEnabled, collaborationApi,
   const close = () => { setSurface(null); setPreview(null); setScope(null); };
   return <div className="relative inline-flex shrink-0 items-center gap-2 text-xs">
     {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">Sharing unavailable. Try again.</span> : null}
-    <button type="button" disabled={pending} aria-expanded={surface !== null} onClick={() => surface ? close() : setSurface("choice")}
+    <button type="button" disabled={pending} aria-expanded={surface !== null} onClick={() => {
+      if (surface) close();
+      else if (collaborationAvailable) setSurface("choice");
+      else void openSnapshot();
+    }}
       className="rounded-lg px-3 py-1.5 hover:bg-[var(--bg-hover)] disabled:opacity-50">{pending ? "Loading share…" : "Share"}</button>
-    {surface === "choice" ? <ShareChoiceDialog collaborationAvailable={collaborationEnabled && Boolean(collaborationApi && runtimeId && organizationId)} pending={pending}
+    {surface === "choice" ? <ShareChoiceDialog collaborationAvailable={collaborationAvailable} pending={pending}
       onClose={close} onSnapshot={() => void openSnapshot()} onCollaborate={() => void openCollaborators()} /> : null}
     {surface === "snapshot" && preview ? <ChatShareDialog confirmationKey={`${preview.fingerprint}:${preview.revision}`} notice={notice} title={preview.title} messages={preview.messages} existing={existing} copyText={copyText}
       onClose={close} revoke={async (id) => { await api.delete(`${path}/${encodeURIComponent(id)}`); }}
