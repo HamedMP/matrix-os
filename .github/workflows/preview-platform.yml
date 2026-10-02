@@ -1478,10 +1478,8 @@ jobs:
       PR_NUMBER: ${{ inputs.pr }}
       SLACK_PILOT_PR_NUMBER: ${{ vars.SLACK_PILOT_PR_NUMBER }}
       SLACK_PILOT_APP_ID: ${{ vars.SLACK_PILOT_APP_ID }}
-      PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      PREVIEW_RUNTIME_OWNER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
-      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
-      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       PREVIEW_VPS_CONTROL_URL: https://app.matrix-os.com
       EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
       GH_TOKEN: ${{ github.token }}
@@ -1554,7 +1552,7 @@ jobs:
       - name: Prove the Slack link and preview home have the same owner
         id: owner
         env:
-          PREVIEW_RUNTIME_OWNER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+          PREVIEW_RUNTIME_OWNER_ID: ${{ env.PREVIEW_RUNTIME_OWNER_ID }}
         run: |
           set -euo pipefail
           handle="pr-${PR_NUMBER}"
@@ -1562,14 +1560,35 @@ jobs:
           preview_db="$(gcloud secrets versions access latest --secret "slack-preview-pr${PR_NUMBER}-platform-database-url" --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
           SLACK_PREVIEW_DATABASE_URL="$preview_db" node scripts/slack-preview-runtime.mjs verify
-          fleet="$(curl --fail --silent --show-error --max-time 30 -H "authorization: Bearer ${PLATFORM_SECRET}" "${PLATFORM_PUBLIC_URL}/vps/fleet")"
-          machine="$(jq -cer --arg handle "$handle" --arg owner "$PREVIEW_RUNTIME_OWNER_ID" '
-            [.machines[] | select(.handle == $handle and .runtimeSlot == $handle and .provisioningClass == "preview" and .status == "running" and .deletedAt == null and .clerkUserId == $owner)]
-            | if length == 1 then .[0] | {machineId, publicIPv4, clerkUserId} else error("preview home unavailable") end
-          ' <<< "$fleet")"
-          jq -e --arg address "$(jq -r '.address' preview-share-route.json)" '.publicIPv4 == $address' <<< "$machine" >/dev/null
-          echo "machine_id=$(jq -r '.machineId' <<< "$machine")" >> "$GITHUB_OUTPUT"
-          echo "address=$(jq -r '.publicIPv4' <<< "$machine")" >> "$GITHUB_OUTPUT"
+          sessions="$(curl --fail --silent --show-error --max-time 30 \
+            "https://api.clerk.com/v1/sessions?user_id=${PREVIEW_RUNTIME_OWNER_ID}&status=active&limit=10" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10")"
+          session_id="$(jq -er 'sort_by(.last_active_at // 0) | reverse | .[0].id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' <<< "$sessions")"
+          session_response="$(curl --fail --silent --show-error --max-time 30 \
+            -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10" \
+            -H 'content-type: application/json' \
+            --data-binary '{"expires_in_seconds":300}')"
+          preview_session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' <<< "$session_response")"
+          echo "::add-mask::$preview_session_token"
+          route="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          loader='import sys; n = int(sys.argv[1]); source = "".join(sys.argv[2:2 + n]); sys.argv = ["-c", *sys.argv[2 + n:]]; exec(compile(source, "preview-slack-identity", "exec"), {"__name__": "__main__"})'
+          body="$(jq -cn --rawfile source scripts/preview-collaboration-probe.py \
+            --arg loader "$loader" --arg handle "$handle" --arg owner "$PREVIEW_RUNTIME_OWNER_ID" '
+            ($source | [range(0; length; 4000) as $at | .[$at:$at + 4000]]) as $chunks
+            | {command:["/usr/bin/python3", "-I", "-c", $loader, ($chunks | length | tostring)] + $chunks + ["identity", $handle, $owner], timeoutMs:10000}')"
+          curl --fail --silent --show-error --max-time 45 --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
+            -o "$response" -X POST "$route" \
+            -H "authorization: Bearer ${preview_session_token}" \
+            -H 'content-type: application/json' --data-binary "$body"
+          jq -e 'select(.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null)' "$response" >/dev/null
+          machine_id="$(jq -er '.stdout | fromjson | .machineId | select(test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))' "$response")"
+          echo "machine_id=$machine_id" >> "$GITHUB_OUTPUT"
+          echo "address=$(jq -r '.address' preview-share-route.json)" >> "$GITHUB_OUTPUT"
       - name: Connect the preview VM to the isolated Slack backend under a rollback guard
         env:
           PREVIEW_RUNTIME_OWNER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
