@@ -480,7 +480,9 @@ it("restores Buy credit without starting unsupported checkout and allows refresh
   fireEvent.click(screen.getByRole("button", {name: "Buy credit"}));
   const dialog = screen.getByRole("dialog", {name: "Add Matrix AI credit"});
   expect(within(dialog).getByText("Credit purchases are unavailable on this computer right now.")).toBeInTheDocument();
-  expect(within(dialog).getByRole("button", {name: "Continue to checkout"})).toBeDisabled();
+  expect(within(dialog).queryByRole("button", {name: "Continue to checkout"})).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole("radio")).not.toBeInTheDocument();
+  expect(within(dialog).getByRole("button", {name: "Close"})).toBeEnabled();
   fireEvent.click(within(dialog).getByRole("button", {name: "Check again"}));
   expect(onRefresh).toHaveBeenCalledOnce(); expect(onAddCredit).not.toHaveBeenCalled();
   fireEvent.keyDown(dialog, {key: "Escape"});

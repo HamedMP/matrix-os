@@ -516,3 +516,16 @@
   .matrix-ap-history-table th, .matrix-ap-history-table td { padding: 10px 6px; }
   .matrix-ap-history-footer { padding: 12px 16px; }
 }
+
+.matrix-ap-dialog.matrix-ap-credit-dialog { display: flex; flex-direction: column; max-width: 480px; width: min(480px, calc(100vw - 40px)); max-height: min(600px, 80dvh); overflow: hidden; padding: 0; }
+.matrix-ap-credit-head { align-items: flex-start; flex: 0 0 auto; gap: 16px; margin: 0; padding: 20px 24px 16px; }
+.matrix-ap-credit-head .matrix-ap-icon-button { flex: 0 0 30px; }
+.matrix-ap-credit-content { min-height: 0; overflow: auto; padding: 0 24px 20px; }
+.matrix-ap-credit-unavailable { color: var(--matrix-ap-muted); font-size: 13px; line-height: 1.5; }
+.matrix-ap-credit-unavailable p { margin: 0; }
+.matrix-ap-credit-actions { border-top: 1px solid var(--matrix-ap-border); flex: 0 0 auto; margin: 0; padding: 12px 24px; }
+@media (max-width: 520px) {
+  .matrix-ap-credit-head { padding: 16px; }
+  .matrix-ap-credit-content { padding: 0 16px 16px; }
+  .matrix-ap-credit-actions { padding: 12px 16px; }
+}

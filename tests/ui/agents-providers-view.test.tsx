@@ -997,7 +997,7 @@ describe("AgentsProvidersView", () => {
     };
     rerender(<AgentsProvidersView {...props} snapshot={unavailable} />);
     expect(screen.getByRole("dialog", { name: "Add Matrix AI credit" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Continue to checkout" })).not.toBeInTheDocument();
     expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
     rerender(<AgentsProvidersView {...props} snapshot={current} />);
     expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeEnabled();

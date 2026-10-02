@@ -459,12 +459,12 @@ export function GatewayPanel({
         <div className="matrix-ap-dialog-backdrop" role="presentation">
           <section
             ref={creditDialog}
-            className="matrix-ap-dialog"
+            className="matrix-ap-dialog matrix-ap-credit-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="matrix-ap-credit-title"
           >
-            <div className="matrix-ap-dialog-head">
+            <header className="matrix-ap-dialog-head matrix-ap-credit-head">
               <div>
                 <span className="matrix-ap-eyebrow">Matrix AI</span>
                 <h3 id="matrix-ap-credit-title">Add Matrix AI credit</h3>
@@ -472,8 +472,12 @@ export function GatewayPanel({
                   {checkoutAvailable ? "Credit is added to this computer after Stripe confirms payment. It does not expire." : "Add credit to your Matrix AI balance."}
                 </p>
               </div>
-            </div>
-            <fieldset
+              <button type="button" className="matrix-ap-icon-button" aria-label="Close" disabled={creditBusy} onClick={closeCreditDialog}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+              </button>
+            </header>
+            <div className="matrix-ap-credit-content">
+            {checkoutAvailable ? <fieldset
               className="matrix-ap-credit-packages"
               disabled={creditBusy || disabled || !checkoutAvailable}
             >
@@ -499,11 +503,10 @@ export function GatewayPanel({
                   </label>
                 );
               })}
-            </fieldset>
+            </fieldset> : null}
             {!checkoutAvailable ? (
-              <div className="matrix-ap-notice" role="status">
+              <div className="matrix-ap-credit-unavailable" role="status">
                 <p>Credit purchases are unavailable on this computer right now.</p>
-                <button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button>
               </div>
             ) : null}
             {creditError ? (
@@ -511,7 +514,9 @@ export function GatewayPanel({
                 Checkout could not be opened. Try again.
               </p>
             ) : null}
-            <div className="matrix-ap-dialog-actions">
+            </div>
+            <footer className="matrix-ap-dialog-actions matrix-ap-credit-actions">
+              {!checkoutAvailable ? <button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button> : null}
               <button
                 type="button"
                 className="matrix-ap-button"
@@ -520,7 +525,7 @@ export function GatewayPanel({
               >
                 Cancel
               </button>
-              <button
+              {checkoutAvailable ? <button
                 type="button"
                 className="matrix-ap-button matrix-ap-button-primary"
                 disabled={creditBusy || disabled || !checkoutAvailable}
@@ -529,8 +534,8 @@ export function GatewayPanel({
                 }}
               >
                 {creditBusy ? "Opening checkout…" : "Continue to checkout"}
-              </button>
-            </div>
+              </button> : null}
+            </footer>
           </section>
         </div>
       ) : null}
