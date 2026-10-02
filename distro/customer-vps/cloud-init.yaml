@@ -722,7 +722,9 @@ runcmd:
     systemctl start matrix-restore.service matrix-scope-runtime.service
     systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service
     if [ -f /etc/systemd/system/matrix-vps-registration.service ]; then
-      systemctl enable --now matrix-vps-registration.service
+      # Registration waits for selected tools; let their installers start below.
+      systemctl enable matrix-vps-registration.service
+      systemctl start --no-block matrix-vps-registration.service
     fi
     log_bootstrap_phase core_services_started
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
