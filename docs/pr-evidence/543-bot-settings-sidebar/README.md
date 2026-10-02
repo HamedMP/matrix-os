@@ -2,8 +2,8 @@
 
 ## October 2 local main refresh
 
-The draft is locally refreshed onto the Pi foundation containing main
-`cd75ec0c4`. All 36 focused Web/shared/Electron tests across six suites and the
+The draft is refreshed onto the Pi foundation containing main
+`988b94155`. All 36 focused Web/shared/Electron tests across six suites and the
 Electron source check pass. Two timing-dependent assertions now wait for loaded
 settings controls instead of treating toolbar availability as data readiness.
 The foundation also passes 17 Native Mobile streaming/bot/transcript tests;
@@ -90,3 +90,5 @@ The PR is now based on the Pi integration dependency #2118 rebased onto main `33
 The settings overlay is positioned in the conversation stage below the naturally sized bot-control region, so a growing pending question cannot be covered by a fixed toolbar offset. A regression exercises the pending-question layout and preserves the conversation stage. Routines guidance now explicitly says scheduling is unavailable, using the same shared copy in Web and Native Mobile.
 
 With explicit owner approval, the integration dependency now removes the three obsolete `mentionPermission.allowed` UI references and preserves the selected permission mode and server authorization. The current settings head passes 36 focused Web/shared/Electron tests across 6 suites, Electron source typechecks, and an Electron production build. The foundation passes 96 broader Electron/Web Agent regressions including direct bot sends, supervised requests, retry identity and background refresh. Fresh post-rebase renderer captures are still pending; earlier captures above remain historical. Physical-device Native Mobile validation remains pending; keep this PR a draft.
+
+The final October 2 main refresh includes merged startup #2123 and managed-Agent skill refresh #2115. Both Web Desktop and Electron Desktop production builds completed successfully. All 98 focused startup/registration/skill-refresh regressions pass on the composed runtime; final ancestry changes do not alter the settings renderer. New renderer captures and physical-device validation remain pending.
