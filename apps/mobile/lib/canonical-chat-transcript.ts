@@ -154,3 +154,51 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
   }
   return transcript;
 }
+
+/** A message the user just sent, shown in the transcript before the server confirms it. */
+export interface OptimisticUserMessage {
+  /** Transcript list key; distinct from any server message id. */
+  id: string;
+  /** The chat it was sent in, or null while the draft's chat has not been created yet. */
+  chatId: string | null;
+  text: string;
+  /** The chat's highest message seq when it was sent -- the server's copy lands after it. */
+  afterSeq: number;
+  createdAt: number;
+  /** The server's id for it, known once the turn is admitted. */
+  messageId?: string;
+}
+
+export function latestMessageSeq(detail: CanonicalChatDetailResponse | null): number {
+  return detail?.messages.reduce((latest, message) => Math.max(latest, message.seq), 0) ?? 0;
+}
+
+export function optimisticTranscriptMessage(optimistic: OptimisticUserMessage): TranscriptMessage {
+  return {
+    id: optimistic.id,
+    role: "user",
+    text: optimistic.text,
+    toolCalls: [],
+    activities: [],
+    isRunning: false,
+    createdAt: optimistic.createdAt,
+  };
+}
+
+/**
+ * True once `detail` holds the server's copy of an optimistic message, at
+ * which point the transcript shows that copy instead. The copy can arrive
+ * over the event stream before the admission response names it, so until
+ * then it is recognised as a newer user message with the same text.
+ */
+export function isOptimisticMessageDelivered(
+  detail: CanonicalChatDetailResponse | null,
+  optimistic: OptimisticUserMessage,
+): boolean {
+  if (!detail || detail.record.chat.id !== optimistic.chatId) return false;
+  return detail.messages.some((message) => message.id === optimistic.messageId || (
+    message.role === "user"
+    && message.seq > optimistic.afterSeq
+    && messageText(message) === optimistic.text
+  ));
+}
