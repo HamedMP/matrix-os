@@ -339,3 +339,35 @@
     transition-duration: 0.01ms;
   }
 }
+
+.matrix-bot-chat-header { position: relative; }
+.matrix-bot-details {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 10;
+  width: min(360px, 100%);
+  max-height: min(70vh, 720px);
+  overflow-y: auto;
+  display: grid;
+  gap: 24px;
+  padding: 20px;
+  background: var(--bg-surface, var(--matrix-card, var(--card)));
+  color: var(--text-primary, var(--matrix-card-fg, var(--foreground)));
+  border: 1px solid var(--border-default, var(--matrix-border, var(--border)));
+  border-radius: 0 0 12px 12px;
+  box-shadow: -8px 12px 28px color-mix(in srgb, var(--text-primary, var(--foreground)) 8%, transparent);
+}
+.matrix-bot-details select { width: 100%; min-width: 0; }
+
+/* Compact template cards follow the shared desktop reference without new capabilities. */
+.matrix-chat-agent-recipes__intro { background: none; border: 0; }
+.matrix-chat-agent-recipe-card { background: var(--bg-surface, var(--matrix-card, var(--card))); box-shadow: none; gap: 12px; }
+.matrix-chat-agent-category[aria-pressed="true"] { background: var(--text-primary, var(--foreground)); color: var(--bg-surface, var(--background)); }
+@container matrix-agent-recipes (min-width: 720px) {
+  .matrix-chat-agent-recipes__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.matrix-bot-interaction-card[data-interaction-kind="approval"] {
+  background: color-mix(in srgb, var(--bg-hover, var(--matrix-secondary, var(--secondary))) 40%, var(--bg-surface, var(--matrix-card, var(--card))));
+  box-shadow: none;
+}

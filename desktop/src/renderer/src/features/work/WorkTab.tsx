@@ -32,6 +32,7 @@ import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import ChatTab from "../chat/ChatTab";
 import { ChatTitleEditor } from "../chat/ChatTitleEditor";
+import { ProjectLanding } from "../project/ProjectLanding";
 import ProjectChatsView from "../project/ProjectChatsView";
 import ProjectsIndex from "../project/ProjectsIndex";
 import { WorkRail } from "./WorkRail";
@@ -695,6 +696,11 @@ function WorkTabContent({
     />
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
+  const selectedProject = projects.find(project => project.slug === projectSlug);
+  const projectChats = projectSlug ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} /> : null;
+  const projectCenter = selectedProject
+    ? <ProjectLanding project={selectedProject} showMetadata={!initialChatId}>{projectChats}</ProjectLanding>
+    : projectChats;
   const content = route === "chat"
     ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView}
         sharedScopeId={sharedScopeId} sharedHeaderContainer={sharedHeaderContainer}
@@ -704,7 +710,7 @@ function WorkTabContent({
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug
-        ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
+        ? projectCenter
         : null;
 
   const openBotChat = useCallback((chatId: string) => {
@@ -725,6 +731,7 @@ function WorkTabContent({
       showCollapseControl={!hostedChrome}
       onNewGlobalChat={openGlobalDraft}
       onCreateProject={openCreateProject}
+      onSelectProject={openProjectDraft}
       onNewProjectChat={openProjectDraft}
       onSelectChat={selectRailChat}
       onChatDeleted={handleRailChatDeleted}

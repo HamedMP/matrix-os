@@ -7,7 +7,8 @@ import {
   chatReadAction,
   CanonicalSharedChatPanel,
   BotChatPanel,
-  useDirectBotChat,
+  useDirectBotBinding, BotBindingStatus,
+  useBotMentionNavigation,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
 } from "@matrix-os/ui";
@@ -196,6 +197,7 @@ export function CanonicalChatWorkspace({
     setDraftProjectId,
     prepareNewChatDraft,
     removeChatDraft,
+    seedChatDraft,
   } = useChatComposerDrafts({
     clientIdentity: client,
     chatId: routedComposerChatId,
@@ -250,9 +252,11 @@ export function CanonicalChatWorkspace({
     currentSelection: controller.detail?.record.chat.currentSelection,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
-  const directBotId = useDirectBotChat(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
-  const selection = directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : providerSelection;
-  const selectionAvailable = Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));
+  const botBinding = useDirectBotBinding(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
+  const directBotId = botBinding.agentId;
+  const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error";
+  const selection = botIdentityUnknown ? null : directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : providerSelection;
+  const selectionAvailable = !botIdentityUnknown && Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, mentionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -296,7 +300,6 @@ export function CanonicalChatWorkspace({
     ) return;
     previousRoute.current = { initialChatId, initialView, projectId };
     if (initialView === "draft") reportedChatId.current = initialChatId ?? null;
-    if (projectId !== null) return;
     setGlobalView(initialView ?? (initialChatId ? "conversation" : "index"));
   }, [initialChatId, initialView, projectId]);
 
@@ -667,7 +670,14 @@ export function CanonicalChatWorkspace({
     setGlobalView("conversation");
   };
 
-  const composer = (
+  const botMention = useBotMentionNavigation(client.agents, `${draftScope}:${draftRevision}`, (chatId, text) => {
+    const seeded = seedChatDraft(chatId, text);
+    selectChat(chatId);
+    if (!seeded) setSubmissionError("This bot already has a draft. Your text is still in the original Chat.");
+    return seeded;
+  });
+
+  const composer = botIdentityUnknown ? <BotBindingStatus loading={botBinding.loading} retry={botBinding.retry}/> : (
     <>
       <input
         ref={fileInputRef}
@@ -697,6 +707,7 @@ export function CanonicalChatWorkspace({
         draftScopeKey={routedComposerChatId ?? `new:${projectId ?? "global"}`}
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
+        onAgentMention={botMention.select}
         onSubmit={(submission) => void (
           editingQueuedTurn || activeRun ? submitQueueAction(submission) : submit(submission)
         )}
@@ -765,6 +776,8 @@ export function CanonicalChatWorkspace({
         layout={workspaceLayout === "narrow" ? "narrow" : "default"}
       />
       {editingQueuedTurn ? <QueuedTurnEditContext turn={editingQueuedTurn} /> : null}
+      {botMention.pending ? <p role="status" className="px-3 text-xs">Opening bot Chat…</p> : null}
+      {botMention.error ? <p role="alert" className="px-3 text-xs">{botMention.error}</p> : null}
       <ChatMentionControls client={client.agents} resources={mentionResources} permissionMode={selection?.permissionMode ?? "supervised"}
         confirmed={mentionPermission.confirmed} onConfirm={mentionPermission.confirm} />
     </>
@@ -899,7 +912,7 @@ export function CanonicalChatWorkspace({
           <>
             {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
-              client={client.agents} directBotId={directBotId} catalog={providerCatalog} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
+              client={client.agents} directBotId={directBotId} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{

@@ -107,6 +107,9 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       const botKey = activeChatId && computer
         ? mobileQueryKeys.botChat(uid, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, activeChatId)
         : null;
+      if (computer) void queryClient.invalidateQueries({
+        queryKey: mobileQueryKeys.botNavigation(uid, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`),
+      });
       if (event.type === "chat.full_refresh") {
         void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChats(uid, key) });
         if (activeChatId) {

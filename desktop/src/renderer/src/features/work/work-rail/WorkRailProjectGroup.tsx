@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { Folder, FolderOpen, PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2 } from "@renderer/lib/hugeicons";
+import { ChevronRight, Folder, FolderOpen, PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2 } from "@renderer/lib/hugeicons";
 import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
 import { ProjectEditDialog } from "./ProjectActionDialogs";
 import { useProjectActions } from "./use-project-actions";
@@ -17,6 +17,7 @@ export function WorkRailProjectGroup({
   activeChatId,
   pinning,
   onToggle,
+  onSelect,
   onNewChat,
   onDeleteProject,
   onSelectChat,
@@ -38,6 +39,7 @@ export function WorkRailProjectGroup({
   activeChatId?: string;
   pinning: Record<string, boolean>;
   onToggle: () => void;
+  onSelect?: (project: Project) => void;
   onNewChat: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project: Project) => void;
@@ -66,13 +68,18 @@ export function WorkRailProjectGroup({
     <div>
       <ProjectActionsMenu items={items}>
         <div className="group/project relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]">
+          <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${group.name} chats`} aria-expanded={expanded}
+            className="grid size-6 shrink-0 place-items-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            onClick={onToggle}>
+            <ChevronRight size={12} aria-hidden className={expanded ? "rotate-90" : undefined} />
+          </button>
           <button
             type="button"
             aria-label={group.name}
-            aria-expanded={expanded}
+            aria-current={activeProjectSlug === group.slug && !activeChatId ? "page" : undefined}
             className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
             style={{ color: activeProjectSlug === group.slug ? "var(--text-primary)" : "var(--text-secondary)" }}
-            onClick={onToggle}
+            onClick={() => onSelect?.(group.project)}
           >
             {expanded
               ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: activeProjectSlug === group.slug ? "var(--accent)" : "var(--text-tertiary)" }} />

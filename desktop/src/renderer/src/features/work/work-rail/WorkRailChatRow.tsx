@@ -16,6 +16,14 @@ import {
 } from "../work-rail-model";
 import { useEffect, useRef } from "react";
 
+const railStateLabel: Record<Exclude<WorkRailAgentState, "idle">, string> = {
+  approval_required: "Approval required",
+  input_required: "Waiting for your reply",
+  running: "Working…",
+  failed: "Needs retry",
+  unseen_completion: "Completed",
+};
+
 export function WorkRailChatRow({
   record,
   active,
@@ -126,7 +134,10 @@ export function WorkRailChatRow({
           }}
         >
           <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />
-          <span className={isChatUnread(record) ? "flex min-w-0 flex-1 font-semibold" : "flex min-w-0 flex-1"}><OverflowingChatTitle title={record.chat.title} /></span>
+          <span className="min-w-0 flex-1">
+            <span className={isChatUnread(record) ? "flex min-w-0 font-semibold" : "flex min-w-0"}><OverflowingChatTitle title={record.chat.title} /></span>
+            {agentState !== "idle" ? <span className="block text-[11px] font-normal" style={{ color: "var(--text-tertiary)" }}>{railStateLabel[agentState]}</span> : null}
+          </span>
           {isChatUnread(record) && (record.readState || agentState !== "unseen_completion") ? <span aria-label={`Unread ${record.chat.title}`} className="size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
           <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} />
         </button>}

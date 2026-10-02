@@ -61,6 +61,7 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
         chatView: "conversation", closable: false,
       })}
       onCreateProject={() => useUi.getState().openCreateProject()}
+      onSelectProject={openWorkProject}
       onNewProjectChat={openWorkProject}
       onSelectChat={selectChat}
       onChatRenamed={(record) => {

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { MessageSquare } from "@renderer/lib/hugeicons";
+import { AgentAvatar } from "@matrix-os/ui";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
 import { ChatStarterCards } from "./ChatStarterCards";
@@ -24,9 +24,9 @@ export function CanonicalNewChatContent({ projectId, workspaceLayout, composer, 
       >
         <div
           data-slot="chat-starter-stack"
-          className="my-auto w-full max-w-[480px]"
+          className="@container/chat-home my-auto w-full max-w-[640px]"
         >
-          <ChatProviderOnboarding><ChatStarterCards
+          <ChatProviderOnboarding><div className="mb-7 grid justify-items-center gap-2 text-center"><AgentAvatar id="matrix_home" name="Matrix"/><h1 className="text-[24px] font-medium leading-[32px]" style={{ color: "var(--text-primary)" }}>What should we build today?</h1><p className="text-sm" style={{ color: "var(--text-tertiary)" }}>I’m Matrix. What should I start on?</p></div><ChatStarterCards
             layout="two-by-two"
             density={workspaceLayout === "narrow" ? "compact" : "regular"}
             onSelect={onSelect}
@@ -38,19 +38,9 @@ export function CanonicalNewChatContent({ projectId, workspaceLayout, composer, 
       </div>
     </div>
   ) : (
-    <div data-slot="chat-project-draft-scroll" className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center-safe overflow-y-auto", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "gap-3 px-3 py-3" : "gap-[26px] px-5 py-8")}>
-      <ChatProviderOnboarding><div className="flex flex-col items-center gap-3 text-center">
-        <MessageSquare size={28} aria-hidden style={{ color: "var(--text-tertiary)" }} />
-        <h1 className="text-[24px] font-medium leading-[32px]" style={{ color: "var(--text-primary)" }}>
-          What should we build today?
-        </h1>
-      </div>
-      <ChatStarterCards
-        layout="two-by-two"
-        density={workspaceLayout === "narrow" ? "compact" : "regular"}
-        onSelect={onSelect}
-      /></ChatProviderOnboarding>
-      {composer}
+    <div className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "px-3 pb-3" : "px-5 pb-5")}>
+      <div data-slot="chat-project-draft-scroll" className="flex min-h-0 flex-1 flex-col overflow-y-auto"><ChatProviderOnboarding><div className="flex-1" /></ChatProviderOnboarding></div>
+      <div className="shrink-0">{composer}</div>
     </div>
   );
 }

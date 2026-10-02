@@ -10,6 +10,8 @@ export type OpenAgents = {
 };
 type Navigation = {
   opened: OpenAgents | null;
+  generation: number;
+  getGeneration(): number;
   open(value: OpenAgents, trigger: HTMLButtonElement): void;
   close(restoreFocus?: boolean): void;
 };
@@ -17,16 +19,21 @@ const Context = createContext<Navigation | null>(null);
 
 function LocalWorkspace({ children }: { children: ReactNode }) {
   const [opened, setOpened] = useState<OpenAgents | null>(null);
+  const [generation, setGeneration] = useState(0);
+  const generationRef = useRef(0);
+  const getGeneration = useCallback(() => generationRef.current, []);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const open = useCallback((value: OpenAgents, element: HTMLButtonElement) => {
+    generationRef.current += 1; setGeneration(generationRef.current);
     trigger.current = element;
     setOpened(value);
   }, []);
   const close = useCallback((restoreFocus = false) => {
+    generationRef.current += 1; setGeneration(generationRef.current);
     setOpened(null);
     if (restoreFocus && trigger.current?.isConnected) trigger.current.focus();
   }, []);
-  const value = useMemo(() => ({ opened, open, close }), [opened, open, close]);
+  const value = useMemo(() => ({ opened, open, close, generation, getGeneration }), [opened, open, close, generation, getGeneration]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 

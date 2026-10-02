@@ -13,10 +13,10 @@ export function matrixBotModelSelection(choice: CanonicalProviderChoice): Canoni
     ...(choice.selectedOptions.length ? { options: choice.selectedOptions } : {}) };
 }
 
-export function MatrixBotModelField({ id, label = "Model", selection, models, catalog, pending, onChange }: {
+export function MatrixBotModelField({ id, label = "Model", selection, models, catalog, catalogLoading = false, pending, onChange }: {
   id?: string; label?: string; selection: CanonicalChatModelSelection | null;
   models: readonly CanonicalProviderChoice[]; pending: boolean;
-  catalog?: CanonicalProviderCatalog | null;
+  catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
   onChange(selection: CanonicalChatModelSelection): void;
 }) {
   const rows = catalog ? deriveChatPickerModelRows(catalog, matrixBotModelChoices(models)).filter(isManagedPiBotRoute) : [];
@@ -30,7 +30,8 @@ export function MatrixBotModelField({ id, label = "Model", selection, models, ca
   const reserved = savedRow && selectedInstance && canonicalProviderFundingState(selectedInstance) === "credit_reserved";
   return <div className="grid gap-1.5">
     <label className="grid gap-1.5 text-sm" htmlFor={id}>{label}
-      <select id={id} className={chatAgentInputClass} value={key} disabled={pending} onChange={(event) => {
+      <select id={id} className={chatAgentInputClass} value={key} disabled={pending || catalogLoading} onChange={(event) => {
+        if (pending || catalogLoading) return;
         if (!event.target.value) return onChange(MATRIX_BOT_SELECTION);
         const choice = choices.find((candidate) => JSON.stringify([candidate.instanceId, candidate.modelId]) === event.target.value);
         if (choice) onChange(matrixBotModelSelection(choice));
@@ -44,6 +45,7 @@ export function MatrixBotModelField({ id, label = "Model", selection, models, ca
         </option>)}
       </select>
     </label>
+    {catalogLoading ? <p role="status" className="text-xs" style={chatAgentMutedStyle}>Loading available bot models…</p> : null}
     {!available ? <p className="text-xs" style={chatAgentMutedStyle}>{reserved ? "Your credit is reserved while usage is confirmed."
       : "This saved Matrix AI model is unavailable. Choose another model or check Agents & providers."}</p> : null}
   </div>;

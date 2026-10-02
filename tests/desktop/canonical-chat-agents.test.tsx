@@ -103,9 +103,13 @@ it.each([false, true])("retries a mentioned draft through its original operation
   vi.mocked(client.getDetail).mockImplementation(async () => ({ record: { ...canonicalChatRecord,
     ...(active ? { activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" as const } } : {}),
   }, messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: snapshot.activities }));
-  let listener: ((event: CanonicalChatInvalidation) => void) | undefined;
+  const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
   const eventSource = {
-    subscribe(next: (event: CanonicalChatInvalidation) => void) { listener = next; return { dispose: () => { listener = undefined; } }; },
+    subscribe(next: (event: CanonicalChatInvalidation) => void) {
+      if (listeners.size >= 8) throw new Error("Too many fixture subscribers");
+      listeners.add(next);
+      return { dispose: () => { listeners.delete(next); } };
+    },
   } as CanonicalChatEventSource;
   const fail = async () => { active = !initiallyActive; throw new Error("Ambiguous acknowledgement"); };
   vi.mocked(client.admitTurn).mockImplementation(fail);
@@ -120,7 +124,9 @@ it.each([false, true])("retries a mentioned draft through its original operation
   const other = initiallyActive ? client.admitTurn : client.queueTurn;
   await waitFor(() => expect(original).toHaveBeenCalledTimes(1));
   const reads = vi.mocked(client.getDetail).mock.calls.length;
-  await act(async () => { listener?.({ type: "chat.changed", chatId: canonicalChatRecord.chat.id, cursor: 100, revision: 100, eventType: "chat.updated" }); });
+  await act(async () => {
+    for (const listener of [...listeners]) listener({ type: "chat.changed", chatId: canonicalChatRecord.chat.id, cursor: 100, revision: 100, eventType: "chat.updated" });
+  });
   await waitFor(() => expect(vi.mocked(client.getDetail).mock.calls.length).toBeGreaterThan(reads));
   const retryButton = await screen.findByRole("button", { name: "Send" });
   await waitFor(() => expect((retryButton as HTMLButtonElement).disabled).toBe(false));

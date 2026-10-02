@@ -63,7 +63,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
   )));
   const allQuestionsAnswered = payload?.kind === "question" && !answerTooLong
     && payload.questions.every((question) => questionAnswers[question.questionId]?.length);
-  return <section aria-label={card.title} className="matrix-chat-agent-card grid gap-3 rounded-2xl border p-4">
+  return <section aria-label={card.title} className="matrix-chat-agent-card matrix-bot-interaction-card grid gap-3 rounded-xl border p-4" data-interaction-kind={interaction.kind}>
     <div><h3 className="text-sm font-semibold">{card.title}</h3>
       {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : !actionsAvailable && card.state === "actionable" ? "Status unavailable. Refresh to respond." : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
     {!actionsAvailable && card.state === "actionable" && payload?.kind === "question"
@@ -114,7 +114,12 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
         {action === "start" ? "Connect" : "Decline"}</button>)}</div>
     </> : null}
     {actionable && payload?.kind === "approval" ? <>
-      <p className="whitespace-pre-wrap text-sm">{payload.preview}</p>
+      <p className="whitespace-pre-wrap text-sm leading-6">{payload.preview}</p>
+      <details className="text-xs"><summary className="cursor-pointer font-medium">Approval details</summary><dl className="mt-2 grid gap-2">
+        {payload.account ? <div><dt style={chatAgentMutedStyle}>Account</dt><dd>{payload.account.label} · {payload.account.service.replaceAll("_", " ")}</dd></div> : null}
+        <div><dt style={chatAgentMutedStyle}>Action</dt><dd>{payload.tool.replaceAll("_", " ")}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Permission</dt><dd>This action only</dd></div>
+      </dl></details>
       <div className="flex flex-wrap gap-2">{(["approve", "deny"] as const).map((decision) => <button key={decision} type="button"
         className={chatAgentButtonClass} disabled={pending} onClick={() => { void decide({ kind: "approval", baseRevision: interaction.revision, decision }); }}>
         {decision === "approve" ? "Approve" : "Deny"}</button>)}</div>

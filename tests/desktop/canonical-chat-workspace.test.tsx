@@ -118,7 +118,7 @@ describe("CanonicalChatWorkspace", () => {
 
     expect(await screen.findByRole("complementary", { name: "Global chats" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Global Chat" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "What should we build today?" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Build a new feature, app, or tool" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
@@ -209,7 +209,7 @@ describe("CanonicalChatWorkspace", () => {
       />,
     );
 
-    expect(await screen.findByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    expect(await screen.findByRole("textbox", { name: "Start a chat" })).toBeTruthy();
 
     view.rerender(
       <CanonicalChatWorkspace
@@ -229,7 +229,8 @@ describe("CanonicalChatWorkspace", () => {
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 20));
     });
-    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    if (projectId === null) expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    else expect(screen.queryByRole("button", { name: "Explore and understand code" })).toBeNull();
     expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
     expect(onActiveChatChanged).not.toHaveBeenCalled();
   });
@@ -313,10 +314,8 @@ describe("CanonicalChatWorkspace", () => {
     expect(preview.className).toContain("text-[12px]");
     expect(preview.className).toContain("leading-[16px]");
 
-    const hero = screen.getByRole("heading", { name: "What should we build today?" });
-    expect(hero.className).toContain("text-[24px]");
-    expect(hero.className).toContain("font-medium");
-    expect(hero.className).toContain("leading-[32px]");
+    expect(screen.queryByRole("heading", { name: "What should we build today?" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
   });
 
   it("uses a single-column New Chat layout at the OS View minimum width", async () => {
@@ -1042,7 +1041,8 @@ describe("CanonicalChatWorkspace", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 20));
     });
 
-    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Explore and understand code" })).toBeNull();
     expect(reportedIds).toEqual([]);
   });
 

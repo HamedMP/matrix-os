@@ -300,9 +300,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     </header>
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
-      matrixModels={matrixBotModelChoices(models)} catalog={state.catalog} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? (chatId) => { onClose(); onOpenBotChat(chatId); } : undefined}
-      onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection) =>
-        (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}) })).chatId : undefined}
+      matrixModels={matrixBotModelChoices(models)} catalog={state.catalog} catalogLoading={state.loading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}
+      onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection, name) =>
+        (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}), ...(name ? { name } : {}) })).chatId : undefined}
       onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
     <AgentLibraryBody state={state} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")

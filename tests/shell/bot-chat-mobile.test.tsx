@@ -10,6 +10,7 @@ afterEach(cleanup);
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
+  useAuth: () => ({ userId: null, sessionId: null }),
 }));
 
 it("shows bot identity, questions, and memory in Web Mobile Chat", async () => {
@@ -25,7 +26,7 @@ it("shows bot identity, questions, and memory in Web Mobile Chat", async () => {
         pendingInteractions: [], memory: { items: [{ itemId: "mem_abcdefgh", kind: "preference", scope: "bot",
           content: "Keep briefs concise", source: { at: "2026-09-28T12:00:00.000Z" }, confirmed: true, revision: 1 }] } })),
     },
-    list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit" }] })),
+    list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" }, recipeRef: { recipeId: "research", version: "1" } }] })),
   } as unknown as ChatAgentClient;
 
   render(<ChatApp mobile messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
@@ -33,6 +34,6 @@ it("shows bot identity, questions, and memory in Web Mobile Chat", async () => {
 
   expect(await screen.findByText("Research Rabbit")).toBeTruthy();
   expect(await screen.findByText("Which company?")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Show bot authority" }));
+  fireEvent.click(screen.getByRole("button", { name: "Details" }));
   expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
 });

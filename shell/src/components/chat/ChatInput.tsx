@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { CircleStop, Loader2Icon, MicIcon, SendIcon, XCircleIcon } from "@/lib/hugeicons";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
-import { ChatMentionControls, useChatMentionPermission, type ChatAgentClient } from "@matrix-os/ui";
+import { ChatMentionControls, useChatMentionPermission, useBotMentionNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import { ChatMentionTokens } from "./ChatInputExtras";
 import { handleChatInputKey } from "./chat-input-keyboard";
 import { chatInputPlaceholder, canSendChatInput } from "./chat-input-placeholder";
@@ -29,7 +29,7 @@ import {
   PlatformSpeechRecorderError,
 } from "@/lib/platform-speech-recorder";
 export function ChatInput({
-  composer, agentClient, scope, permissionMode,
+  composer, agentClient, scope, permissionMode, onOpenBotMention,
   connected,
   busy,
   activeRunId,
@@ -45,6 +45,7 @@ export function ChatInput({
   speechCaptureAdapter,
 }: {
   composer: ChatComposerDraft;
+  onOpenBotMention?: (chatId: string, text: string) => boolean | Promise<boolean>;
   agentClient?: ChatAgentClient;
   scope: string;
   permissionMode: string;
@@ -62,6 +63,7 @@ export function ChatInput({
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
 }) {
+  const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention);
   const { text: input, setText: setInput, setDraft, resources } = composer;
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,9 +143,9 @@ export function ChatInput({
   return (
     <div className="flex flex-col gap-2">
       <ChatMentionPicker listRef={mentionListRef} onDismiss={() => { setDismissedQuery(input); textareaRef.current?.focus(); }} client={agentClient} scope={scope} query={query} resources={resources} onSelect={(resource) => {
-        composer.setResources([...resources, resource]);
-        setInput(input.replace(/@[^\s@]*$/, ""));
-        textareaRef.current?.focus();
+        const text = input.replace(/@[^\s@]*$/, "");
+        const insert = () => { composer.setResources([...resources, resource]); setInput(text); textareaRef.current?.focus(); };
+        if (!botMention.select(resource, text.trimEnd(), insert)) insert();
       }} />
       <CompanyDriveContextControl identity={scope} resources={resources} enabled={driveContextEnabled} query={query} onSelect={resource => {
         composer.setResources([...resources, resource]);
@@ -152,6 +154,8 @@ export function ChatInput({
       }}/>
       <ChatMentionTokens resources={resources} onRemove={(resource) => composer.setResources(resources.filter((item) => item !== resource))} />
       <ChatMentionControls client={agentClient} resources={resources} permissionMode={permissionMode} confirmed={permission.confirmed} onConfirm={permission.confirm} />
+      {botMention.pending ? <p role="status" className="text-xs">Opening bot Chat…</p> : null}
+      {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
       {speech.error ? <p role="alert" className="text-xs text-destructive">{speech.error}</p> : null}
       <Attachments attachments={attachments} onRemove={removeFile} />

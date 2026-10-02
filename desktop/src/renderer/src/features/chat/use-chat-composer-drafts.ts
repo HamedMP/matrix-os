@@ -52,6 +52,8 @@ export function useChatComposerDrafts({
   const scope = conversation && chatId ? `chat:${chatId}` : newChatDraftScope(projectId);
   const [drafts, setDrafts] = useState<Record<string, ComposerDraft>>({});
   const requestSequence = useRef(0);
+  const draftsRef = useRef(drafts);
+  useLayoutEffect(() => { draftsRef.current = drafts; }, [drafts]);
   const previousClientIdentity = useRef(clientIdentity);
   const draft = drafts[scope];
 
@@ -69,6 +71,17 @@ export function useChatComposerDrafts({
   }, [scope, updateScope]);
 
   return {
+    seedChatDraft: (targetChatId: string, text: string) => {
+      const target = `chat:${targetChatId}`;
+      const saved = draftsRef.current[target];
+      if (saved && (saved.text.trim() || saved.referenceTokens.length)) return false;
+      setDrafts(current => {
+        const existing = current[target];
+        return existing && (existing.text.trim() || existing.referenceTokens.length) ? current
+          : rememberDraft(current, target, { text, referenceTokens: [] }, null);
+      });
+      return true;
+    },
     requestIdentity: draft?.requestIdentity ?? 0,
     revision: draft?.revision ?? 0,
     updateIfUnchanged: useCallback((revision: number, patch: Pick<ComposerDraft, "text" | "referenceTokens">) => {

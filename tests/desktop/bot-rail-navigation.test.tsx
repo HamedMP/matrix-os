@@ -3,7 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatAgentsRailSection } from "../../packages/ui/src/chat-agents/ChatAgentsRailSection.js";
-import { ChatAgentsWorkspace } from "../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
+import { ChatAgentsWorkspace, useChatAgentsNavigation } from "../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
 import { clientFixture, saved } from "./chat-agents-fixture";
 import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client.js";
 afterEach(cleanup);
@@ -34,7 +34,40 @@ describe("bot sidebar navigation", () => {
   it("preserves ordinary Agent drafts", async () => {
     const handlers = setup(async () => null, false);
     fireEvent.click(await screen.findByRole("button", { name: `Chat with ${saved.name}` }));
-    expect(handlers.onStartChat).toHaveBeenCalledWith("", [{ kind: "agent", id: saved.id, label: saved.name, revision: "1" }]);
-    expect(handlers.directChat).not.toHaveBeenCalled();
+    await waitFor(() => expect(handlers.onStartChat).toHaveBeenCalledWith("", [{ kind: "agent", id: saved.id, label: saved.name, revision: "1" }]));
+    expect(handlers.directChat).toHaveBeenCalledWith(saved.id);
+  });
+  it("finishes the host's accepted navigation when the host closes Agents", async () => {
+    const base = clientFixture();
+    base.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipeRef: { recipeId: "writing-bot", version: "1" } }] });
+    const client = { ...base, bots: { directChat: vi.fn(async () => "chat_bot_direct") } } as unknown as ChatAgentClient;
+    const onOpen = vi.fn(), openedChat = vi.fn();
+    function Host() {
+      const navigation = useChatAgentsNavigation();
+      return <ChatAgentsRailSection client={client} onOpen={onOpen} onOpenBotChat={chatId => {
+        navigation?.close(); openedChat(chatId);
+      }} />;
+    }
+    render(<ChatAgentsWorkspace><Host /></ChatAgentsWorkspace>);
+    fireEvent.click(await screen.findByRole("button", { name: `Chat with ${saved.name}` }));
+    await waitFor(() => expect(onOpen).toHaveBeenCalledOnce());
+    expect(openedChat).toHaveBeenCalledWith("chat_bot_direct");
+  });
+  it("discards a pending binding lookup after a newer navigation", async () => {
+    let finish!: (chatId: string) => void;
+    const base = clientFixture();
+    base.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipeRef: { recipeId: "writing-bot", version: "1" } }] });
+    const client = { ...base, bots: { directChat: vi.fn(() => new Promise<string>(resolve => { finish = resolve; })) } } as unknown as ChatAgentClient;
+    const openedChat = vi.fn();
+    function Host() {
+      const navigation = useChatAgentsNavigation();
+      return <><button onClick={() => navigation?.close()}>Open another Chat</button><ChatAgentsRailSection client={client} onOpenBotChat={openedChat} /></>;
+    }
+    render(<ChatAgentsWorkspace><Host /></ChatAgentsWorkspace>);
+    fireEvent.click(await screen.findByRole("button", { name: `Chat with ${saved.name}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Open another Chat" }));
+    finish("chat_bot_direct");
+    await waitFor(() => expect(screen.getByRole("button", { name: `Chat with ${saved.name}` }).getAttribute("aria-busy")).toBe("false"));
+    expect(openedChat).not.toHaveBeenCalled();
   });
 });

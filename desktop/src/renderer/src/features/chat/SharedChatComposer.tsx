@@ -155,6 +155,7 @@ export function SharedChatComposer({
   draftScopeKey,
   referenceTokens = [],
   onReferenceTokensChange,
+  onAgentMention,
   onSubmit,
   onAbort,
   busy,
@@ -192,6 +193,7 @@ export function SharedChatComposer({
   draftScopeKey?: string;
   referenceTokens?: ComposerReferenceToken[];
   onReferenceTokensChange?: (tokens: ComposerReferenceToken[]) => void;
+  onAgentMention?: (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void) => boolean;
   onSubmit: (submission: SharedChatComposerSubmission) => void;
   onAbort?: () => void;
   busy: boolean;
@@ -343,7 +345,10 @@ export function SharedChatComposer({
       // Keep keyboard behavior deterministic after mouse or Enter selection:
       // the next Enter belongs to the composer, not the stale resource menu.
       setDismissedSuggestionKey(suggestionKey);
-      editorRef.current?.insertToken({ type: "resource", resource }, `@${resourceMatch?.[1] ?? ""}`, cursor);
+      const insert = () => editorRef.current?.insertToken({ type: "resource", resource }, `@${resourceMatch?.[1] ?? ""}`, cursor);
+      const token = `@${resourceMatch?.[1] ?? ""}`;
+      const text = value.slice(0, cursor - token.length) + value.slice(cursor);
+      if (!onAgentMention?.(resource, text.trimEnd(), insert)) insert();
     }
   };
   const onSuggestionKeyDown = (
@@ -386,11 +391,10 @@ export function SharedChatComposer({
   };
   const insertResource = (resource: CanonicalChatResourceReference) => {
     setDismissedSuggestionKey(suggestionKey);
-    editorRef.current?.insertToken(
-      { type: "resource", resource },
-      resourceQuery !== null ? `@${resourceMatch?.[1] ?? ""}` : "",
-      cursor,
-    );
+    const token = resourceQuery !== null ? `@${resourceMatch?.[1] ?? ""}` : "";
+    const insert = () => editorRef.current?.insertToken({ type: "resource", resource }, token, cursor);
+    const text = token ? value.slice(0, cursor - token.length) + value.slice(cursor) : value;
+    if (!onAgentMention?.(resource, text.trimEnd(), insert)) insert();
   };
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []

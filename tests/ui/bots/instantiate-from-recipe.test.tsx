@@ -6,6 +6,8 @@ import { AgentRecipesPanel } from "../../../packages/ui/src/chat-agents/AgentRec
 import { createBotClient } from "../../../packages/ui/src/chat-agents/bots/client.js";
 
 afterEach(cleanup);
+HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
+HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
 
 const recipe = { recipeId: "writing-bot", version: "2026-09-27.1", name: "Writing Bot",
   description: "Writes drafts", output: "A draft" };
@@ -16,6 +18,7 @@ describe("launch recipe creation", () => {
     const open = vi.fn();
     render(<AgentRecipesPanel botRecipes={[recipe]} onInstantiateBot={create} onOpenBotChat={open} />);
     fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith("chat_0123456789abcdef"));
     expect(create).toHaveBeenCalledWith({ recipeId: recipe.recipeId, version: recipe.version }, expect.stringMatching(/^req_/));
   });
@@ -26,9 +29,10 @@ describe("launch recipe creation", () => {
     const open = vi.fn();
     render(<AgentRecipesPanel botRecipes={[recipe]} onInstantiateBot={create} onOpenBotChat={open} />);
     fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     await screen.findByRole("alert");
     expect(screen.getByRole("alert").textContent).not.toMatch(/provider|token|\/home/);
-    fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     await waitFor(() => expect(open).toHaveBeenCalledOnce());
     expect(create.mock.calls[0]?.[1]).toBe(create.mock.calls[1]?.[1]);
   });
@@ -83,4 +87,17 @@ it("resolves a bot's owner-bound chat with validated transport responses", async
   expect(request).toHaveBeenCalledWith("/api/chat-agents/bot_0123456789abcdef/direct-chat", "GET", undefined);
   await expect(createBotClient(async () => ({ chatId: "invalid!" })).directChat("bot_0123456789abcdef"))
     .rejects.toThrow("Bots are temporarily unavailable.");
+});
+it('keeps the same creation request when opening the created Chat fails',async()=>{
+ const create=vi.fn(async()=> 'chat_bot');const open=vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(undefined);
+ render(<AgentRecipesPanel botRecipes={[recipe]} onInstantiateBot={create} onOpenBotChat={open}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Use Writing Bot'}));fireEvent.click(screen.getByRole('button',{name:'Create bot'}));
+ await screen.findByRole('alert');fireEvent.click(screen.getByRole('button',{name:'Create bot'}));
+ await waitFor(()=>expect(open).toHaveBeenCalledTimes(2));expect(create.mock.calls[0]?.[1]).toBe(create.mock.calls[1]?.[1]);
+});
+it('does not navigate after a recipe panel has been left',async()=>{
+ let finish!:(id:string)=>void;const create=vi.fn(()=>new Promise<string>(resolve=>{finish=resolve;}));const open=vi.fn();
+ const view=render(<AgentRecipesPanel botRecipes={[recipe]} onInstantiateBot={create} onOpenBotChat={open}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Use Writing Bot'}));fireEvent.click(screen.getByRole('button',{name:'Create bot'}));
+ await waitFor(()=>expect(create).toHaveBeenCalledOnce());view.unmount();finish('chat_bot');await Promise.resolve();await Promise.resolve();expect(open).not.toHaveBeenCalled();
 });

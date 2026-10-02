@@ -5,6 +5,7 @@ export function WorkRailSection({
   expanded,
   onToggle,
   action,
+  count,
   divider: _divider = true,
   children,
 }: {
@@ -12,6 +13,7 @@ export function WorkRailSection({
   expanded: boolean;
   onToggle: () => void;
   action?: ReactNode;
+  count?: number;
   divider?: boolean;
   children: ReactNode;
 }) {
@@ -27,6 +29,7 @@ export function WorkRailSection({
           onClick={onToggle}
         >
           {label}
+          {count ? <span aria-hidden className="ml-2 text-[10px] font-normal tabular-nums">{count}</span> : null}
         </button>
         {action}
       </div>

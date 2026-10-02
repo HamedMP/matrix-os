@@ -229,3 +229,20 @@ it("preserves a drive draft on an unsupported route and sends its exact typed re
  fireEvent.click(screen.getByRole("button",{name:"Send"}));await waitFor(()=>expect(submit).toHaveBeenCalled());expect(submit.mock.calls[0]![2]).toMatchObject({resources:[ref]});
  expect(screen.getByRole("button",{name:"Remove Authority"})).toBeTruthy();
 });
+
+it('opens @Bot with a prefilled draft and keeps the original Chat provider and text', async () => {
+  const open = vi.fn(), submit = vi.fn();
+  client.bots = { directChat:vi.fn(async()=> 'chat_bot'), directBot:vi.fn(async(id:string)=>id === 'chat_bot' ? agent.id:null), interactions:vi.fn(async()=>[]), tasks:vi.fn(async()=>[]), authority:vi.fn(async()=>({grants:[],connections:[],memory:{items:[]},routines:[],pendingInteractions:[]})) } as never;
+  vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[{id:agent.id,name:agent.label,recipeRef:{recipeId:'writer',version:'1'},selection:{instanceId:'matrix_bot_default',model:'automatic'}} as never]});
+  const props={...base,onSwitchConversation:open,onSubmit:submit,agentClient:client};
+  const {rerender}=render(<ChatApp {...props}/>);
+  const editor=screen.getByRole('textbox',{name:'Message chat'});
+  fireEvent.change(editor,{target:{value:'Please draft a note @mee'}});
+  fireEvent.click(await screen.findByRole('option',{name:/Meeting helper/}));
+  await waitFor(()=>expect(open).toHaveBeenCalledWith('chat_bot'));
+  expect(submit).not.toHaveBeenCalled();
+  expect((editor as HTMLTextAreaElement).value).toBe('Please draft a note @mee');
+  rerender(<ChatApp {...props} sessionId='chat_bot'/>);
+  expect((screen.getByRole('textbox',{name:'Message chat'}) as HTMLTextAreaElement).value).toBe('Please draft a note');
+  expect(screen.queryByRole('button',{name:'Remove Meeting helper'})).toBeNull();
+});

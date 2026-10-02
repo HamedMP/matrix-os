@@ -672,3 +672,23 @@ describe("shared Agents entry", () => {
     expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe(saved.name);
   });
 });
+it('ignores a sidebar Bot lookup after New chat changes the navigation generation', async () => {
+ const {useChatAgentsNavigation}=await import('../../packages/ui/src/chat-agents/ChatAgentsNavigation.js');
+ const client=clientFixture();const bot={...saved,recipeRef:{recipeId:'writer',version:'1'}};
+ client.list.mockResolvedValue({enabled:true,agents:[bot]});let finish!:(id:string|null)=>void;
+ client.bots={directChat:vi.fn(()=>new Promise<string|null>(resolve=>{finish=resolve;}))} as never;
+ const open=vi.fn();
+ function Cancel(){const nav=useChatAgentsNavigation();return <button onClick={()=>nav?.close()}>New chat</button>;}
+ render(<ChatAgentsWorkspace><Cancel/><ChatAgentsRailSection client={client} onOpenBotChat={open} onStartChat={vi.fn()}/></ChatAgentsWorkspace>);
+ fireEvent.click(await screen.findByRole('button',{name:`Chat with ${bot.name}`}));
+ await waitFor(()=>expect(finish).toBeTypeOf('function'));fireEvent.click(screen.getByRole('button',{name:'New chat'}));
+ finish('chat_bot');await Promise.resolve();await Promise.resolve();expect(open).not.toHaveBeenCalled();
+});
+it('closes the mobile drawer when accepted host navigation itself closes Agents',async()=>{
+ const {useChatAgentsNavigation}=await import('../../packages/ui/src/chat-agents/ChatAgentsNavigation.js');
+ const client=clientFixture();const bot={...saved,recipeRef:{recipeId:'writer',version:'1'}};client.list.mockResolvedValue({enabled:true,agents:[bot]});
+ client.bots={directChat:vi.fn(async()=> 'chat_bot')} as never;const opened=vi.fn();
+ function Host(){const nav=useChatAgentsNavigation();return <ChatAgentsRailSection client={client} onStartChat={vi.fn()} onOpenBotChat={()=>{nav?.close();}} onOpen={opened}/>;}
+ render(<ChatAgentsWorkspace><Host/></ChatAgentsWorkspace>);fireEvent.click(await screen.findByRole('button',{name:`Chat with ${bot.name}`}));
+ await waitFor(()=>expect(opened).toHaveBeenCalledOnce());
+});

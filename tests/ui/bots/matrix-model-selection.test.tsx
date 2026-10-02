@@ -8,6 +8,8 @@ import { AgentRecipesPanel } from "../../../packages/ui/src/chat-agents/AgentRec
 import type { CanonicalProviderChoice } from "../../../packages/ui/src/canonical-provider-choice.js";
 
 afterEach(cleanup);
+HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
+HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
 const model: CanonicalProviderChoice = { instanceId: "matrix_pi_default", driverKind: "matrix_pi", harnessLabel: "Pi",
   connectionLabel: "Matrix AI", modelId: "cloudflare:@cf/zai-org/glm-5.3-flash", modelLabel: "GLM 5.3 Flash",
   interactionMode: "default", interactionModes: ["default"], permissionMode: "full_access", permissionModes: ["full_access"],
@@ -25,10 +27,11 @@ function editor(selection = MATRIX_BOT_SELECTION, models = [model]) {
 it("creates a recipe with an exact Matrix model while retaining Automatic as the default", async () => {
   const create = vi.fn(async () => "chat_abcdefgh");
   render(<AgentRecipesPanel botRecipes={[recipe]} matrixModels={[model]} onInstantiateBot={create} onOpenBotChat={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
   const picker = screen.getByRole("combobox", { name: "Bot model" });
   expect((picker as HTMLSelectElement).value).toBe("");
   fireEvent.change(picker, { target: { value: JSON.stringify([model.instanceId, model.modelId]) } });
-  fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(create).toHaveBeenCalledWith({ recipeId: recipe.recipeId, version: recipe.version }, expect.stringMatching(/^req_/), selected));
 });
 it("edits recipe model intent without changing its bot identity or grants", () => {
@@ -54,9 +57,10 @@ it("uses a new idempotency key when the model changes after a failed creation", 
   const create = vi.fn().mockRejectedValueOnce(new Error("unavailable")).mockResolvedValueOnce("chat_abcdefgh");
   render(<AgentRecipesPanel botRecipes={[recipe]} matrixModels={[model]} onInstantiateBot={create} onOpenBotChat={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await screen.findByRole("alert");
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: JSON.stringify([model.instanceId, model.modelId]) } });
-  fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
   expect(create.mock.calls[0]?.[1]).not.toBe(create.mock.calls[1]?.[1]);
 });
@@ -89,7 +93,7 @@ it("shows a bot's saved Matrix model instead of claiming automatic routing", asy
   const { BotChatPanel } = await import("../../../packages/ui/src/chat-agents/bots/BotChatPanel.js");
   const client = { bots: { directBot: vi.fn(async () => bot.id), interactions: vi.fn(async () => []), tasks: vi.fn(async () => []),
     authority: vi.fn(async () => ({ agentId: bot.id, revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) },
-    list: vi.fn(async () => ({ enabled: true, agents: [{ ...bot, name: "Writer", selection: selected }] })) };
+    list: vi.fn(async () => ({ enabled: true, agents: [{ ...bot, name: "Writer", revision: 1, selection: selected }] })) };
   render(<BotChatPanel chatId="chat_abcdefgh" client={client as never} />);
   expect(await screen.findByText(`Runtime: Pi · Matrix AI · ${selected.model}`)).toBeTruthy();
   expect(screen.queryByText("Runtime: Pi · Model routing: automatic")).toBeNull();
@@ -99,9 +103,10 @@ it("blocks creation when a previously selected Matrix model disappears", () => {
   const create = vi.fn();
   const props = { botRecipes: [recipe], onInstantiateBot: create, onOpenBotChat: vi.fn() };
   const { rerender } = render(<AgentRecipesPanel {...props} matrixModels={[model]} />);
+  fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: JSON.stringify([model.instanceId, model.modelId]) } });
   rerender(<AgentRecipesPanel {...props} matrixModels={[]} />);
-  expect((screen.getByRole("button", { name: "Use Writing Bot" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Create bot" }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole("combobox", { name: "Bot model" }) as HTMLSelectElement).value).toBe(JSON.stringify([selected.instanceId, selected.model]));
   expect(create).not.toHaveBeenCalled();
 });
@@ -128,10 +133,11 @@ it("offers an exact managed recipe model through the legacy catalog client witho
   const client = { ...clientFixture(), catalog: legacyClient.catalog,
     bots: { ...legacyClient.bots!, recipes: vi.fn(async () => [recipe]), instantiate } };
   render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()} onOpenBotChat={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Use Writing Bot" }));
   const option = await screen.findByRole("option", { name: "Claude Sonnet 5 · Matrix AI" });
   expect(request).toHaveBeenCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", "GET");
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: (option as HTMLOptionElement).value } });
-  fireEvent.click(await screen.findByRole("button", { name: "Use Writing Bot" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(instantiate).toHaveBeenCalledWith(expect.objectContaining({
     selection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" },
   })));

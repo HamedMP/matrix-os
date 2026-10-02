@@ -245,7 +245,10 @@ describe("WorkTab rail integration", () => {
     const recipe = (await screen.findByText("Watch pages")).closest("article")!;
     const create = within(recipe).getByRole("button", { name: "Use Competitor Watch" });
     expect((create as HTMLButtonElement).disabled).toBe(false);
+    HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
     fireEvent.click(create);
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     await waitFor(() => expect(api.post).toHaveBeenCalled());
     await waitFor(() => expect(activeWorkTab()?.chatId).toBe("chat_bot_created"));
     expect(activeWorkTab()?.chatView).toBe("conversation");
@@ -279,6 +282,7 @@ describe("WorkTab rail integration", () => {
     globalThis.ResizeObserver = WorkResizeObserver;
     const get = vi.fn(async (path: string) => {
       if (path === "/api/chat-agents") return { enabled: true, agents: [] };
+      if (/^\/api\/chats\/[^/]+\/bot$/.test(path)) return { agentId: null };
       if (path === "/api/chats/chat_global?limit=200&messageVersion=2&inputVersion=1&readStateVersion=1") return {
         record: globalChat,
         messages: [],
@@ -470,7 +474,7 @@ describe("WorkTab rail integration", () => {
       />,
     );
     await screen.findByRole("button", { name: "Alpha" });
-    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
 
     fireEvent.click(screen.getByRole("button", { name: "New chat in Alpha" }));
     expect(activeWorkTab()).toMatchObject({
@@ -500,7 +504,7 @@ describe("WorkTab rail integration", () => {
       projectSlug: undefined,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
     fireEvent.click(screen.getByRole("button", { name: "Alpha chat" }));
     expect(activeWorkTab()).toMatchObject({
       kind: "work",
@@ -954,7 +958,7 @@ describe("WorkTab rail integration", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Show Chat navigation" })));
 
     fireEvent.click(screen.getByRole("button", { name: "Show Chat navigation" }));
-    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
     fireEvent.click(screen.getByRole("button", { name: "New chat in Alpha" }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Show Chat navigation" })));
 

@@ -197,5 +197,11 @@ export { CompanyDriveContextPicker } from "./organization-drive/CompanyDriveCont
 export {companyDriveChatReference} from "./organization-drive/context-reference.js";
 export type {DriveChatContextSelection} from "./organization-drive/OrganizationDriveBrowser.js";
 
-export { useDirectBotChat } from "./chat-agents/bots/use-direct-bot-chat.js";
+export { BotBindingStatus } from "./chat-agents/bots/BotBindingStatus.js";
+export { useDirectBotBinding, useDirectBotChat } from "./chat-agents/bots/use-direct-bot-chat.js";
 export { ChatProviderLoadingIndicator } from "./chat-provider-loading-indicator.js";
+export { useBotConversationSummaries, type BotConversationSummary, type BotConversationSummaries } from './chat-agents/bots/use-bot-conversation-summaries.js';
+export { useBotMentionNavigation } from './chat-agents/bots/use-bot-mention-navigation.js';
+export { AgentAvatar } from './chat-agents/AgentAvatar.js';
+
+export { resolveCanonicalChatAttention, type CanonicalChatAttentionState } from './chat/attention-state.js';
