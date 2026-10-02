@@ -18,6 +18,7 @@ export interface WhatsAppAgentStart {
   chatId?: string; machineId?: string;
   /** Only pass true after versioned owner consent is persisted by account linking. */
   allowFullAccess?: boolean;
+  preparedAdmission?: WhatsAppPreparedAdmission;
 }
 export type WhatsAppAgentPoll = { state: "pending" | "attention" } | { state: "complete"; text: string };
 export class WhatsAppAgentClientError extends Error {
@@ -28,11 +29,21 @@ export class WhatsAppAgentClientError extends Error {
 }
 
 const reference = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
+export const WhatsAppPreparedAdmissionSchema = z.object({
+  machineId: reference, chatId: CanonicalChatIdSchema, replacedChatId: CanonicalChatIdSchema.optional(),
+  request: CanonicalCreateChatTurnRequestSchema.omit({ executionRoot: true }).extend({
+    parts: z.array(z.object({ type: z.literal("text"), text: z.string().trim().min(1).max(4096) }).strict()).length(1),
+    permissionMode: z.enum(["supervised", "read_only", "default", "full_access"]),
+    interactionMode: z.enum(["default", "chat"]),
+  }).strict(),
+}).strict();
+export type WhatsAppPreparedAdmission = z.infer<typeof WhatsAppPreparedAdmissionSchema>;
 const StartSchema = z.object({
   owner: reference, sender: WhatsAppSenderSchema,
   messageId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_.:+/=-]+$/),
   text: z.string().trim().min(1).max(4096), chatId: CanonicalChatIdSchema.optional(),
   machineId: reference.optional(), allowFullAccess: z.boolean().optional(),
+  preparedAdmission: WhatsAppPreparedAdmissionSchema.optional(),
 }).strict().refine((value) => Boolean(value.chatId) === Boolean(value.machineId));
 const CheckpointSchema = z.object({ machineId: reference, chatId: CanonicalChatIdSchema, runId: CanonicalChatRunIdSchema }).strict();
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -163,15 +174,26 @@ export function createWhatsAppAgentClient(
     return result;
   }
   return {
-    async start(inputValue: WhatsAppAgentStart, authorizeAdmission?: () => Promise<boolean>): Promise<WhatsAppAgentStartResult> {
+    async start(inputValue: WhatsAppAgentStart, authorizeAdmission?: () => Promise<boolean>,
+      persistAdmission?: (prepared: WhatsAppPreparedAdmission) => Promise<boolean>): Promise<WhatsAppAgentStartResult> {
       const input = parse(StartSchema, inputValue);
-      const target = await targetFor(input.owner, input.machineId);
-      let chatId = input.chatId;
-      let replacedChatId: string | undefined;
+      const prepared = input.preparedAdmission;
+      const target = await targetFor(input.owner, input.machineId ?? prepared?.machineId);
+      const clientRequestId = requestId("whatsapp-turn", input.owner, target.machineId, input.sender, input.messageId);
+      if (prepared && (prepared.machineId !== target.machineId
+        || (input.chatId && input.chatId !== prepared.chatId && input.chatId !== prepared.replacedChatId)
+        || prepared.request.clientRequestId !== clientRequestId || prepared.request.parts[0]!.text !== input.text
+        || (prepared.request.permissionMode === "full_access" && input.allowFullAccess !== true))) {
+        throw new WhatsAppAgentClientError("invalid_response");
+      }
+      let chatId = prepared?.chatId ?? input.chatId;
+      let replacedChatId = prepared?.replacedChatId;
       let current: CanonicalChatDetailResponse | undefined;
       if (chatId) {
         try { current = await detail(target, input.owner, chatId); }
         catch (error) {
+          // An uncertain admission belongs to its original Chat generation only.
+          if (prepared) throw error;
           if (!(error instanceof WhatsAppAgentClientError) || error.code !== "chat_not_found") throw error;
           // Only the authenticated owner's canonical missing-Chat response permits
           // replacement. Auth, proxy, transient and malformed errors fail closed.
@@ -193,7 +215,6 @@ export function createWhatsAppAgentClient(
       }
       current ??= await detail(target, input.owner, chatId);
       const replacement = replacedChatId ? { replacedChatId } : {};
-      const clientRequestId = requestId("whatsapp-turn", input.owner, target.machineId, input.sender, input.messageId);
       // A crash after admission must recover the existing run before reselecting model/modes.
       const previous = current.turns.find((turn) => turn.clientRequestId === clientRequestId);
       if (previous) {
@@ -201,15 +222,24 @@ export function createWhatsAppAgentClient(
         if (!original) throw new WhatsAppAgentClientError("invalid_response");
         return { machineId: target.machineId, chatId, runId: original.id, ...replacement };
       }
-      const catalog = await request(target, "/api/chat-providers?includeConnectionState=true", CanonicalProviderCatalogSchema);
-      const route = selectRoute(catalog, current.record, input.allowFullAccess === true);
-      const payload = CanonicalCreateChatTurnRequestSchema.parse({
-        clientRequestId, baseRevision: current.record.chat.revision,
-        parts: [{ type: "text", text: input.text }], ...route,
-      });
+      let payload;
+      if (prepared) {
+        // Canonical admission performs an indexed replay lookup before route validation.
+        // Keep every hash-bearing field immutable; revision alone may advance.
+        payload = CanonicalCreateChatTurnRequestSchema.parse({ ...prepared.request, baseRevision: current.record.chat.revision });
+      } else {
+        const catalog = await request(target, "/api/chat-providers?includeConnectionState=true", CanonicalProviderCatalogSchema);
+        const route = selectRoute(catalog, current.record, input.allowFullAccess === true);
+        payload = CanonicalCreateChatTurnRequestSchema.parse({
+          clientRequestId, baseRevision: current.record.chat.revision,
+          parts: [{ type: "text", text: input.text }], ...route,
+        });
+      }
       // Catalog and Chat reads can take time. Recheck the durable consent/fence
       // immediately before submission; revocation during preparation must stop admission.
       if (authorizeAdmission && !await authorizeAdmission()) throw new WhatsAppAgentClientError("unavailable");
+      const snapshot = parse(WhatsAppPreparedAdmissionSchema, { machineId: target.machineId, chatId, request: payload, ...replacement });
+      if (persistAdmission && !await persistAdmission(snapshot)) throw new WhatsAppAgentClientError("unavailable");
       const admitted = await request(target, `/api/chats/${chatId}/turns`, CanonicalChatTurnAdmissionResponseSchema, payload);
       assertOwner(admitted.record, input.owner, chatId);
       if (admitted.turn.clientRequestId !== clientRequestId) throw new WhatsAppAgentClientError("invalid_response");

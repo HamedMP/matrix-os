@@ -74,6 +74,19 @@ describe("WhatsApp general Matrix agent client", () => {
     expect(await client.start(input)).toEqual(checkpoint);
     expect(calls.find((call) => call.url.endsWith("/turns"))!.body!.selection).toEqual(selection);
   });
+  it("keeps a bound unavailable Matrix Pi route closed even when another general agent is ready", async () => {
+    const matrixPi = catalog("matrix_pi", "system_agent");
+    const { defaultSelection: _default, ...instance } = matrixPi.instances[0]!;
+    const ready = catalog();
+    const bound = detail();
+    bound.record.chat.currentSelection = { ...selection, instanceId: "matrix_pi_default" };
+    const { client, calls } = fixture({ detail: bound, catalog: {
+      revision: ready.revision, drivers: [...matrixPi.drivers, ...ready.drivers],
+      instances: [{ ...instance, id: "matrix_pi_default", availability: "unavailable" }, ...ready.instances],
+    } });
+    await expect(client.start({ ...input, chatId: checkpoint.chatId, machineId: target.machineId })).rejects.toMatchObject({ code: "unavailable" });
+    expect(calls.some((call) => call.url.endsWith("/turns"))).toBe(false);
+  });
 
   it("recreates only a canonically missing saved Chat with stable generation-specific creation", async () => {
     const base = fixture();

@@ -7,6 +7,9 @@ import { createWhatsAppService } from '../../packages/platform/src/whatsapp/serv
 import { createWhatsAppRoutes } from '../../packages/platform/src/whatsapp/routes.js';
 import { createWhatsAppAgentClient } from '../../packages/platform/src/whatsapp/agent-client.js';
 import { createWhatsAppAgentApiFixture } from './whatsapp-agent-fixtures.js';
+import { detail, message, record, selection } from './whatsapp-agent-fixtures.js';
+import { decryptWhatsAppPayload } from '../../packages/platform/src/whatsapp/crypto.js';
+import { sql } from 'kysely';
 
 const sender = '46701234567';
 const owner = 'user_owner';
@@ -61,6 +64,72 @@ function call(path: string, payload: unknown, token = 'owner-token', requestOrig
 }
 
 describe('WhatsApp account linking and delivery', () => {
+  it('waits for lease recovery after a prepared snapshot commits but its response is lost', async () => {
+    const { token } = await repo.startLink(sender, 'link-unknown-preparation');
+    await repo.claim(token, owner);
+    const proof = await repo.lease();
+    const code = String(proof!.payload.text).match(/\b\d{6}\b/)![0];
+    await repo.finish(proof!.id, proof!.fence, 'complete');
+    await repo.confirm(token, owner, code, 'whatsapp-general-agent-v1');
+    const original = repo.checkpoint;
+    let interrupted = false;
+    const save = vi.spyOn(repo, 'checkpoint').mockImplementation(async (id, fence, payload) => {
+      const committed = await original(id, fence, payload);
+      if (!interrupted && payload.preparedAdmission) { interrupted = true; throw new Error('Commit response lost'); }
+      return committed;
+    });
+    service = createWhatsAppService({ config, repository: repo, agent, now: () => now,
+      send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; }, logError: () => {},
+    });
+    try {
+      await service.ingest([{ id: 'wamid.unknown-preparation', sender, timestamp: now / 1000, type: 'text', text: 'Hello' }]);
+      await service.tick();
+      expect(api.admissionCount).toBe(0);
+      const stored = await sql<{ payload: string; state: string }>`SELECT payload,state FROM whatsapp_jobs WHERE id='wamid.unknown-preparation'`.execute(db.kysely);
+      expect(stored.rows[0]!.state).toBe('leased');
+      expect(decryptWhatsAppPayload(stored.rows[0]!.payload, Buffer.from(config.encryptionKey, 'hex')))
+        .toMatchObject({ kind: 'incoming', preparedAdmission: { machineId: 'machine_1', chatId: 'chat_whatsapp' } });
+      now += 60_001;
+      await service.tick();
+      expect(api.admissionCount).toBe(1);
+      expect(await repo.getConnection(owner)).toMatchObject({ chatId: 'chat_whatsapp' });
+      expect(api.calls.filter((call) => call.url.includes('chat-providers'))).toHaveLength(1);
+    } finally { save.mockRestore(); }
+  });
+  it('recovers the durable original admission after a lost response and model changes beyond 200 messages', async () => {
+    const { token } = await repo.startLink(sender, 'link-recovery');
+    await repo.claim(token, owner);
+    const proof = await repo.lease();
+    const code = String(proof!.payload.text).match(/\b\d{6}\b/)![0];
+    await repo.finish(proof!.id, proof!.fence, 'complete');
+    await repo.confirm(token, owner, code, 'whatsapp-general-agent-v1');
+    let lost = false;
+    agent = createWhatsAppAgentClient(api.resolveTarget, async (input, init) => {
+      if (lost && init?.method === 'GET' && String(input).includes('/api/chats/')) {
+        return Response.json({ ...detail(), record: { chat: { ...record(owner, 1000).chat,
+          messageCount: 1000, currentSelection: { ...selection, model: 'changed-model' } } },
+        messages: Array.from({ length: 200 }, (_, index) => ({ ...message(`msg_recent_${index}`), seq: 801 + index })),
+        nextCursor: 'chatcur_older' });
+      }
+      const response = await api.fetchImpl(input, init);
+      if (!lost && String(input).endsWith('/turns')) { lost = true; throw new Error('Response lost after admission'); }
+      return response;
+    });
+    service = createWhatsAppService({ config, repository: repo, agent, now: () => now,
+      send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; }, logError: () => {},
+    });
+    await service.ingest([{ id: 'wamid.recovery', sender, timestamp: now / 1000, type: 'text', text: 'Hello' }]);
+    await service.tick();
+    expect(api.admissionCount).toBe(1);
+    now += 31_000;
+    await service.tick();
+    expect(await repo.getConnection(owner)).toMatchObject({ machineId: 'machine_1', chatId: 'chat_whatsapp' });
+    expect(api.admissionCount).toBe(1);
+    const admissions = api.calls.filter((call) => call.url.endsWith('/turns'));
+    expect(admissions).toHaveLength(2);
+    expect(admissions[1]!.body).toMatchObject({ ...(admissions[0]!.body as object), baseRevision: 1000 });
+    expect(api.calls.filter((call) => call.url.includes('chat-providers'))).toHaveLength(1);
+  });
   it('does not admit an agent turn if STOP arrives while the model catalog is loading', async () => {
     const { token } = await repo.startLink(sender, 'link-stop-race');
     await repo.claim(token, owner);
@@ -127,7 +196,7 @@ describe('WhatsApp account linking and delivery', () => {
     expect((await call('/api/whatsapp/confirm', { token, code, consentVersion: 'whatsapp-general-agent-v1' })).status).toBe(200);
     expect((await webhook('wamid.question', 'Who are you?')).status).toBe(200);
     await service.tick(); await service.tick();
-    expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({ owner, sender, text: 'Who are you?', allowFullAccess: true }), expect.any(Function));
+    expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({ owner, sender, text: 'Who are you?', allowFullAccess: true }), expect.any(Function), expect.any(Function));
     expect(sends.at(-1)?.text).toBe('Your Matrix agent is here.');
     const count = sends.length;
     await webhook('wamid.question', 'Who are you?'); await service.tick();

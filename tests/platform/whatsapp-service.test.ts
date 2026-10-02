@@ -8,6 +8,7 @@ import { createWhatsAppRepository } from '../../packages/platform/src/whatsapp/r
 import { decryptWhatsAppPayload } from '../../packages/platform/src/whatsapp/crypto.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { sql } from 'kysely';
+import { record, selection } from './whatsapp-agent-fixtures.js';
 
 const sender = '46701234567';
 const owner = 'user_owner';
@@ -140,6 +141,36 @@ describe('WhatsApp delivery boundaries', () => {
 });
 
 describe('WhatsApp agent checkpoint and retry lifecycle', () => {
+  it.each(['saved', 'denied', 'unknown'])('persists the prepared admission before POST with %s checkpoint outcome', async (outcome) => {
+    const preparedAdmission = { machineId: checkpoint.machineId, chatId: checkpoint.chatId, request: {
+      clientRequestId: 'req_original', baseRevision: record().chat.revision, selection,
+      parts: [{ type: 'text' as const, text: 'Hello' }], permissionMode: 'supervised', interactionMode: 'default',
+    } };
+    agent.start.mockImplementation(async (_input, _authorize, persist) => {
+      expect(persist).toBeTypeOf('function');
+      if (outcome === 'denied') repo.getConnectionBySender.mockResolvedValue(null);
+      if (outcome === 'unknown') repo.checkpoint.mockRejectedValueOnce(new Error('Commit outcome unknown'));
+      if (!await persist(preparedAdmission)) throw new Error('Not admitted');
+      return checkpoint;
+    });
+    const value = await process(incoming('Hello'));
+    if (outcome === 'saved') {
+      expect(repo.checkpoint).toHaveBeenCalledWith(value.id, value.fence,
+        expect.objectContaining({ kind: 'incoming', preparedAdmission }));
+      expect(repo.bindChat).toHaveBeenCalledOnce();
+    } else {
+      expect(repo.bindChat).not.toHaveBeenCalled();
+      if (outcome === 'unknown') expect(repo.retry).not.toHaveBeenCalled();
+    }
+  });
+  it('forwards the persisted prepared admission when retrying the same incoming job', async () => {
+    const preparedAdmission = { machineId: checkpoint.machineId, chatId: checkpoint.chatId, request: {
+      clientRequestId: 'req_original', baseRevision: 7, selection,
+      parts: [{ type: 'text' as const, text: 'Hello' }], permissionMode: 'supervised', interactionMode: 'default',
+    } };
+    await process({ ...incoming('Hello'), preparedAdmission });
+    expect(agent.start.mock.calls[0]![0]).toMatchObject({ preparedAdmission });
+  });
   it.each(['fetch', 'stream'])('logs the real client %s failure cause while sending only safe recovery text', async (failure) => {
     const diagnostic = new Error('private-token at /private/runtime connection failure');
     const fetcher = vi.fn(async () => {

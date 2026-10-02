@@ -2,13 +2,14 @@ import { z } from 'zod/v4';
 import type { WhatsAppConfig } from './config.js';
 import { canAdmitWhatsAppMessage, isWhatsAppSenderEligible, isWhatsAppReplyWindowOpen, sendWhatsAppText, WhatsAppSendError, type WhatsAppMessage } from './cloud-api.js';
 import type { createWhatsAppRepository } from './repository.js';
-import type { WhatsAppAgentClient, WhatsAppAgentCheckpoint } from './agent-client.js';
+import { WhatsAppPreparedAdmissionSchema, type WhatsAppAgentClient, type WhatsAppAgentCheckpoint } from './agent-client.js';
 
 const checkpointSchema = z.object({ machineId: z.string().min(1).max(160), chatId: z.string().min(1).max(160), runId: z.string().min(1).max(160) });
 const inputSchema = z.object({
   kind: z.literal('incoming'), text: z.string().max(4096).optional(), type: z.string().max(80),
   owner: z.string().max(160).nullable(), connectionId: z.string().max(160).nullable(),
   timestamp: z.number().int().positive(),
+  preparedAdmission: WhatsAppPreparedAdmissionSchema.optional(),
 });
 const runSchema = z.object({ kind: z.literal('run'), owner: z.string().max(160), connectionId: z.string().max(160), checkpoint: checkpointSchema });
 const replySchema = z.object({ kind: z.literal('reply'), text: z.string().min(1).max(4096), owner: z.string().max(160).optional(), connectionId: z.string().max(160).optional() });
@@ -133,9 +134,12 @@ export function createWhatsAppService(deps: {
     const connection = await repo.getConnection(payload.owner);
     if (!await saveCheckpoint(job, job.payload)) return;
     const checkpoint = await agent.start({ owner: payload.owner, sender: job.sender, messageId: job.id, text: payload.text ?? '',
+      ...(payload.preparedAdmission ? { preparedAdmission: payload.preparedAdmission } : {}),
       ...(connection?.chatId ? { chatId: connection.chatId } : {}), ...(connection?.machineId ? { machineId: connection.machineId } : {}), allowFullAccess: true },
       async () => await associationValid(job.sender, payload.owner!, payload.connectionId!)
-        && await saveCheckpoint(job, job.payload));
+        && await saveCheckpoint(job, job.payload),
+      async (preparedAdmission) => await associationValid(job.sender, payload.owner!, payload.connectionId!)
+        && await saveCheckpoint(job, { ...job.payload, preparedAdmission }));
     if (!await associationValid(job.sender, payload.owner, payload.connectionId)) { await repo.finish(job.id, job.fence, 'failed'); return; }
     const binding = [payload.owner, job.sender, checkpoint.machineId, checkpoint.chatId, payload.connectionId] as const;
     if (checkpoint.replacedChatId) await repo.bindChat(...binding, checkpoint.replacedChatId);
