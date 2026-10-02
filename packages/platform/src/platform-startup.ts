@@ -78,6 +78,7 @@ import {
   loadPlatformSpeechConfig,
 } from './speech/config.js';
 import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
+import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -194,6 +195,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  whatsappRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
@@ -919,6 +921,8 @@ async function startPlatformServerWithCleanup(
   });
 
   const appEnv = process.env;
+  const whatsappRuntime = createConfiguredWhatsAppRuntime({ db, env: appEnv, clerkAuth });
+  registerCustomMcpStartupCleanup(async () => { await whatsappRuntime?.shutdown(); });
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
   const app = createPlatformApp({
@@ -938,6 +942,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
+    whatsappRoutes: whatsappRuntime?.routes,
     fundedAiRepository,
     fundedModelProbes,
     collaboration,
@@ -963,6 +968,7 @@ async function startPlatformServerWithCleanup(
   const server = serve({ fetch: app.fetch, port }, () => {
     console.log(`Platform listening on :${port}`);
   });
+  if (backgroundWorkersEnabled) whatsappRuntime?.start();
 
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -989,6 +995,7 @@ async function startPlatformServerWithCleanup(
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           collaboration?.shutdown(),
+          whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
