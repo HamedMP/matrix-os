@@ -109,6 +109,12 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+import {
+  isSharedEntryDocumentRequest,
+  isSharedEntryIdentity,
+  resolveSharedEntryTarget,
+  sharedEntryUnavailableResponse,
+} from './shared-entry-routing.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -299,6 +305,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       assetRequest?: boolean;
       preserveUpstreamCacheHeaders?: boolean;
       redirectToBillingOnFailure?: boolean;
+      sharedEntry?: boolean;
       upstreamPath?: string;
     } = {},
   ): Promise<Response> {
@@ -342,6 +349,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       logRouteError('app-domain auth-shell proxy', err);
       if (isPlatformRuntimeShellPath(c.req.path)) {
         return platformRuntimeShellUnavailableResponse(c, applyNoStoreHeaders);
+      }
+      if (proxyOpts.sharedEntry) {
+        return sharedEntryUnavailableResponse(c, applyNoStoreHeaders);
       }
       if (proxyOpts.assetRequest) {
         applyNoStoreHeaders(c);
@@ -882,6 +892,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
 
+    const sharedEntry = !legacyContainerRoutingEnabled
+      && isSharedEntryDocumentRequest({ isAppDomain, method: c.req.method, path })
+      && isSharedEntryIdentity(identity);
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine = identity.userId
@@ -901,8 +914,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     if (runningMachine) {
       runtimeSlot = runningMachine.runtimeSlot;
     }
-    if ((runningMachine && !canRouteMachineOnPreviewHost(host, runningMachine))
-      || (requestedActiveMachine && !canRouteMachineOnPreviewHost(host, requestedActiveMachine))) {
+    if (!sharedEntry && ((runningMachine && !canRouteMachineOnPreviewHost(host, runningMachine))
+      || (requestedActiveMachine && !canRouteMachineOnPreviewHost(host, requestedActiveMachine)))) {
       applyNoStoreHeaders(c);
       return c.text('Matrix OS computer unavailable', 404);
     }
@@ -923,6 +936,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           requestedActiveMachine.provisioningClass,
         )
         : getRuntimeEntitlementDecision(appEnv);
+    if (sharedEntry && resolveSharedEntryTarget({ host, machine: runningMachine, entitlement }) === 'platform') {
+      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false, sharedEntry: true });
+    }
     if (runningMachine) {
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       if (!entitlement.runtimeProxyAllowed) {

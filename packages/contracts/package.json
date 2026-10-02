@@ -50,6 +50,7 @@
     "#canonical-chat-surface": "./src/canonical-chat-surface.ts",
     "#collaboration": "./src/collaboration.ts",
     "#collaboration-capabilities": "./src/collaboration-capabilities.ts",
+    "#collaboration-entry": "./src/collaboration-entry.ts",
     "#collaboration-direct": "./src/collaboration-direct.ts",
     "#collaboration-execution": "./src/collaboration-execution.ts",
     "#collaboration-peer": "./src/collaboration-peer.ts",
