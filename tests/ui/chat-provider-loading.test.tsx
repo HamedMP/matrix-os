@@ -77,10 +77,12 @@ it("shows shared Web loading in the trigger and open picker for initial and expl
   expect(screen.getByRole("searchbox")).not.toHaveFocus();
   expect(screen.getByRole("listbox")).toHaveAttribute("aria-busy", "true");
   expect(within(screen.getByRole("listbox")).getByRole("option")).toBeDisabled();
-  await act(async () => refreshed.resolve(Response.json(catalog)));
-  await waitFor(() => expect(screen.queryByRole("status", { name: "Checking model availability" })).toBeNull());
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   expect(trigger).toHaveFocus();
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
+  await act(async () => refreshed.resolve(Response.json(catalog)));
+  await waitFor(() => expect(screen.queryByRole("status", { name: "Checking model availability" })).toBeNull());
   expect(submit).not.toHaveBeenCalled();
 });
 
@@ -177,5 +179,10 @@ it.each(["credit_reserved", "credit_required"] as const)("keeps the confirmed %s
   expect(trigger).toHaveAttribute("data-model", instance.models[0]!.id);
   fireEvent.click(option);
   expect(client.admitTurn).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
+  if (creditState === "credit_reserved") expect(within(trigger).getByText("Credit reserved")).toBeVisible();
   await act(async () => refreshed.resolve(catalog));
 });

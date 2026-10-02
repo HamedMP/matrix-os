@@ -253,6 +253,8 @@ Native Pi, kernel and other instance identities remain excluded from this select
    `catalogLoading` state, including query refreshes. Electron
    `useChatProviderCatalog` returns `catalog`, `status`, `refresh` and
    `hasTrustedCatalog`, bound to API, principal/runtime identity and generation.
+   Before API creation, only an active route with connection `status=loading`
+   reports discovery loading; settled no-API and inactive states remain idle.
 3. **Contracts:** old SDK-bound Chat records, history, checkpoints and owner grants
    remain readable and retain historical identity. New, retried and persisted
    queued SDK Matrix turns fail closed with safe new-Chat recovery; they never
@@ -264,7 +266,10 @@ Native Pi, kernel and other instance identities remain excluded from this select
    discovery and the Pi broker keep their existing authority. Opening the picker
    focuses its accessible container rather than search; explicit search interaction
    and focus return remain supported. Initial and refresh loading show an accessible
-   spinner while preserving any bound model and safe funding reason. Cached
+   spinner directly in the closed Chat panel provider/model trigger; opening the
+   picker is not required to see loading. Global, project and agent-conversation
+   composers propagate that state and block Send while discovery is pending.
+   The trigger preserves any bound model and safe funding reason. Cached
    discovery may remain visible only within its original scope/generation;
    pending refresh does not admit a Send or establish current execution readiness.
 4. **Validation / error matrix:** stale catalogs cannot offer or send through the
@@ -284,7 +289,9 @@ Native Pi, kernel and other instance identities remain excluded from this select
    cover old-catalog filtering, labels, focus, initial/refresh spinner and preserved
    selection/held-credit/cancellation. Exact final Preview plus Electron acceptance
    verifies a single Matrix model row, no Pi/SDK detail, no search autofocus and a
-   visible loading spinner. Paid GLM or cancellation remains a separate funded gate.
+   visible loading spinner with the picker closed, including project and agent
+   conversation startup. Popup-only animation does not satisfy this requirement.
+   Paid GLM or cancellation remains a separate funded gate.
 7. **Wrong / correct:** hiding an SDK row alone does not retire its execution.
    Enforce retirement at the credential and actual dispatch boundaries, preserve
    historical owner data, and use current catalog authority. Do not migrate opaque

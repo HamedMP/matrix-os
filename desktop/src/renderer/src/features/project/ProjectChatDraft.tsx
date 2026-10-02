@@ -192,7 +192,7 @@ export function ProjectChatDraft({
   );
   const projectCatalog = useMemo(
     () => canonicalClient
-      ? liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
+      ? liveCatalog.status === "fallback" ? unavailableCatalog : liveCatalog.catalog
       : filterCatalogForLegacyProject(liveCatalog.catalog, summary),
     [canonicalClient, liveCatalog.catalog, liveCatalog.status, summary, unavailableCatalog],
   );
@@ -305,7 +305,7 @@ export function ProjectChatDraft({
   }, [active, typeToStartEnabled, canCreate]);
 
   async function submit(submission: SharedChatComposerSubmission) {
-    if (canonicalBlocked || submitting || submitInFlightRef.current) return;
+    if (liveCatalog.status === "loading" || canonicalBlocked || submitting || submitInFlightRef.current) return;
     const selectedInstance = projectCatalog.instances.find((instance) => (
       instance.id === canonicalSelection?.instanceId
     ));
@@ -468,6 +468,7 @@ export function ProjectChatDraft({
                   )}
                   catalog={projectCatalog}
                   onProviderPickerOpen={liveCatalog.refresh}
+                  providerCatalogLoading={liveCatalog.status === "loading"}
                   selection={canonicalSelection}
                   onSelectionChange={(selection) => {
                     providerSelectionTouchedRef.current = true;

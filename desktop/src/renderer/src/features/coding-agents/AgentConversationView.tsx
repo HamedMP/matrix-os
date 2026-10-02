@@ -670,6 +670,7 @@ function ConversationComposer({
   async function submit(submission: SharedChatComposerSubmission) {
     if (
       (!submission.agentPrompt && attachments.items.length === 0)
+      || liveCatalog.status === "loading"
       || readiness?.blocked
       || waitingForAction
       || threadBusy
@@ -740,6 +741,7 @@ function ConversationComposer({
           }
           catalog={projectCatalog}
           onProviderPickerOpen={liveCatalog.refresh}
+          providerCatalogLoading={liveCatalog.status === "loading"}
           selection={selection}
           onSelectionChange={setSelection}
           onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}

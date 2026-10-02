@@ -45,6 +45,7 @@ export function useChatProviderCatalog(
   hasTrustedCatalog: boolean;
 } {
   const connectionApi = useConnection((state) => state.api);
+  const connectionStatus = useConnection((state) => state.status);
   const identityKey = useConnection(desktopProviderIdentityKey);
   const catalogGeneration = useConnection((state) => state.providerCatalogGeneration);
   const { api: apiOverride, active = true } = options;
@@ -133,7 +134,10 @@ export function useChatProviderCatalog(
   // state must never be observable by a composer or a layout-effect consumer.
   const current = state.identityKey === identityKey && state.generation === catalogGeneration && state.api === api;
   const trusted = trustedCatalogRef.current;
+  // Auth bootstrap precedes API creation. Show pending discovery only for
+  // that explicit loading state, never for inactive or settled offline routes.
+  const bootstrapLoading = active && !api && connectionStatus === "loading";
   const hasTrustedCatalog = Boolean(current && trusted && trusted.api === api && trusted.identityKey === identityKey && trusted.generation === catalogGeneration);
-  return { catalog: current && (state.status !== "loading" || hasTrustedCatalog) ? state.catalog : unavailableCatalog,
-    status: current ? state.status : "loading", refresh, hasTrustedCatalog };
+  return { catalog: !bootstrapLoading && current && (state.status !== "loading" || hasTrustedCatalog) ? state.catalog : unavailableCatalog,
+    status: bootstrapLoading ? "loading" : current ? state.status : "loading", refresh, hasTrustedCatalog };
 }
