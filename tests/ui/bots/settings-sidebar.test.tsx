@@ -125,7 +125,10 @@ it("moves focus into the drawer when an open wide inspector becomes narrow", asy
   vi.stubGlobal("ResizeObserver", class { constructor(callback: ResizeObserverCallback) { resize = callback; }
     observe() {} disconnect() {} });
   render(<BotChatPanel chatId="chat_research" client={client() as never}><textarea aria-label="Reply" /></BotChatPanel>);
+  // Wait for routing/status effects to settle before exercising an already-open inspector.
+  await screen.findByText("Research Rabbit");
   fireEvent.click(await screen.findByRole("button", { name: "Bot settings" }));
+  await screen.findByRole("button", { name: "Close bot settings" });
   screen.getByRole("textbox", { name: "Reply" }).focus();
   act(() => resize([{ contentRect: { width: 500 } } as ResizeObserverEntry], {} as ResizeObserver));
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close bot settings" }));
