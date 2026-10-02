@@ -2,6 +2,7 @@ import type { createPiSettingsConnection } from "./pi-settings-auth.js";
 import type { createOpenClawSettingsConnection } from "./openclaw-settings-auth.js";
 import type { createOpenCodeSettingsConnection } from "./opencode-settings-auth.js";
 import type { createClaudeSettingsLogin } from "./provider-workflow-browser.js";
+import type { createCodexSettingsLogin } from "./provider-workflow-codex-login.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -30,6 +31,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
   runtimePrefix?: string;
   hermesCodexReuse?: () => Promise<void>;
   claudeBrowserLogin?: ReturnType<typeof createClaudeSettingsLogin>;
+  codexSettingsLogin?: ReturnType<typeof createCodexSettingsLogin>;
   piConnection?: ReturnType<typeof createPiSettingsConnection>;
   openclawConnection?: ReturnType<typeof createOpenClawSettingsConnection>;
   opencodeConnection?: ReturnType<typeof createOpenCodeSettingsConnection>;
@@ -100,7 +102,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
     const keyAdapter = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
     return {
       harnessInstanceId: harness.id, harness: harness.harness, displayName: harness.displayName, installState: harness.installState,
-      loginMethods: opencodeCapability.login ? ['device_code' as const] : canReuseCodex ? ['existing_codex' as const] : canBrowserLogin ? ['browser' as const, 'terminal' as const] : canLogin ? [harness.harness === 'codex' ? 'device_code' as const : 'terminal' as const] : [],
+      loginMethods: opencodeCapability.login ? ['device_code' as const] : canReuseCodex ? ['existing_codex' as const] : canBrowserLogin ? ['browser' as const, 'terminal' as const] : canLogin ? [harness.harness === 'codex' && options.codexSettingsLogin ? 'device_code' as const : 'terminal' as const] : [],
       apiKeyProviders: opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [],
       install: (!!packageName || system && hostControl.available) && harness.installState !== 'installed', uninstall: !!packageName && managed || system && hostControl.available,
       ...(opencodeCapability.apiKey && settingsConnection ? { verifyKey: settingsConnection.verifyKey } : keyAdapter ? { async verifyKey(key) {
@@ -108,6 +110,15 @@ export async function createNativeProviderWorkflowAdapters(options: {
         await enableConnectedHarness(harness.id, `key-connect-${randomUUID()}`);
       } } : {}),
       async start({ request, publish }) {
+        if (request.kind === 'login' && request.method === 'device_code' && harness.harness === 'codex') {
+          if (!canLogin || !options.codexSettingsLogin) throw new ProviderWorkflowError('unavailable');
+          return options.codexSettingsLogin({ publish, onSuccess: async () => {
+            const fresh = await options.store.getSnapshot({ refresh: true });
+            const exact = fresh.harnesses.find(row => row.id === harness.id);
+            if (!exact || exact.authState !== 'authenticated') throw new ProviderWorkflowError('unavailable');
+            await enableConnectedHarness(harness.id, `connect-${createHash('sha256').update(request.idempotencyKey).digest('hex')}`);
+          } });
+        }
         if (request.kind === 'login' && ['pi', 'opencode'].includes(harness.harness)) {
           const loginConnection = harness.harness === "pi" ? options.piConnection : options.opencodeConnection;
           if (!opencodeCapability.login || !loginConnection) throw new ProviderWorkflowError('unavailable');

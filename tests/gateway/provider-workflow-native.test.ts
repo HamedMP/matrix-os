@@ -22,10 +22,25 @@ function nativeFixture(kind: 'codex' | 'claude' | 'hermes' | 'openclaw' = 'codex
   const terminal = { ensureWorkspace: vi.fn(async () => ({ id: ref.workspaceId })), createTab: vi.fn(async () => ({ id: ref.tabId, workspaceId: ref.workspaceId, incarnation: 'ti_11111111111111111111111111111111' })), listWorkspaces: vi.fn(async () => [{ tabs: [{ id: ref.tabId, workspaceId: ref.workspaceId }] }]), terminateTab: vi.fn(async () => { order.push('terminate'); }), attach: vi.fn(input => { observer = input; return { close, send: vi.fn() }; }) } as unknown as Pick<TerminalRuntimeSocketClient, 'ensureWorkspace' | 'createTab' | 'listWorkspaces' | 'terminateTab' | 'attach'>;
   return { store, terminal, row, observer: () => observer, order };
 }
+it('uses native Codex account RPC in Settings without a Terminal login mutation', async () => {
+  const f = nativeFixture();
+  const cancel = vi.fn(async () => {});
+  const login = vi.fn(async ({ onSuccess }) => {
+    expect(f.store.mutate).not.toHaveBeenCalled();
+    f.row.authState = 'authenticated';
+    await onSuccess(); return { cancel };
+  });
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+    codexSettingsLogin: login, hostControl: { available: false, run: vi.fn() } });
+  const result = await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'device_code', idempotencyKey: 'rpc-connect' }, publish: vi.fn() });
+  expect(login).toHaveBeenCalledOnce(); expect(result.terminalSessionId).toBeUndefined();
+  expect(f.terminal.attach).not.toHaveBeenCalled();
+  expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', enabled: true }));
+});
 describe('native workflow runtime wiring', () => {
   it('does not treat exit zero as verified authentication without exact credential observation', async () => {
     const f = nativeFixture(); const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
-    const publish = vi.fn(); const running = await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'device_code', idempotencyKey: 'exact' }, publish });
+    const publish = vi.fn(); const running = await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'terminal', idempotencyKey: 'exact' }, publish });
     expect(running.terminalSessionId).toBe(`${ref.workspaceId}:${ref.tabId}`);
     f.observer().onFrame({ type: 'exit', exitCode: 0, terminalRef: ref });
     await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'failed', safeFailure: 'unavailable' }));
@@ -42,7 +57,7 @@ it('reaps the newly opened native login when terminal identity lookup fails', as
   const f = nativeFixture();
   vi.mocked(f.terminal.listWorkspaces).mockRejectedValueOnce(new Error('synthetic lookup failure'));
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
-  await expect(adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'device_code', idempotencyKey: 'lookup-failure' }, publish: vi.fn() })).rejects.toThrow();
+  await expect(adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'terminal', idempotencyKey: 'lookup-failure' }, publish: vi.fn() })).rejects.toThrow();
   expect(f.terminal.terminateTab).toHaveBeenCalledWith(ref, undefined);
 });
 it('retains deadline cleanup after a transient stream cleanup failure', async () => {
@@ -52,7 +67,7 @@ it('retains deadline cleanup after a transient stream cleanup failure', async ()
     vi.mocked(f.terminal.terminateTab).mockRejectedValueOnce(new Error('synthetic transport failure'));
     const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
     const publish = vi.fn();
-    await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'device_code', idempotencyKey: 'cleanup-retry' }, publish });
+    await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'terminal', idempotencyKey: 'cleanup-retry' }, publish });
     f.observer().onError(new Error('synthetic stream failure'));
     await vi.advanceTimersByTimeAsync(600_000);
     expect(f.terminal.terminateTab).toHaveBeenCalledTimes(2);
@@ -66,7 +81,7 @@ it('does not declare expiry until failed deadline cleanup is retried successfull
     vi.mocked(f.terminal.terminateTab).mockRejectedValueOnce(new Error('synthetic deadline failure'));
     const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
     const publish = vi.fn();
-    await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'device_code', idempotencyKey: 'expiry-retry' }, publish });
+    await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'terminal', idempotencyKey: 'expiry-retry' }, publish });
     await vi.advanceTimersByTimeAsync(600_000);
     expect(publish).not.toHaveBeenCalledWith({ state: 'expired', safeFailure: 'expired' });
     await vi.advanceTimersByTimeAsync(30_000);
@@ -110,7 +125,7 @@ it('deliberate successful login enables the exact saved harness before reporting
   Object.assign(f.row, { enabled: false, authState: 'authenticated' });
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
   const publish = vi.fn();
-  await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'device_code', idempotencyKey: 'connect-off' }, publish });
+  await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'terminal', idempotencyKey: 'connect-off' }, publish });
   f.observer().onFrame({ type: 'exit', exitCode: 0, terminalRef: ref });
   await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }));
   expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', harnessInstanceId: 'harness_codex', enabled: true, expectedRevision: 0 }));
@@ -177,5 +192,14 @@ it('advertises the wired Claude browser flow so Settings never falls back to Ter
   expect(adapter!.loginMethods).toEqual(['browser', 'terminal']);
   await adapter!.start({ request: { harnessInstanceId: 'harness_claude', kind: 'login', method: 'browser', idempotencyKey: 'settings-browser' }, publish: vi.fn() });
   expect(claudeBrowserLogin).toHaveBeenCalledOnce();
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+});
+
+it('does not advertise or fall back from Settings device login when native Codex RPC is missing', async () => {
+  const f = nativeFixture();
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
+  expect(adapter!.loginMethods).toEqual(['terminal']);
+  await expect(adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'device_code', idempotencyKey: 'no-rpc' }, publish: vi.fn() })).rejects.toThrow('unavailable');
+  expect(f.store.mutate).not.toHaveBeenCalled();
   expect(f.terminal.createTab).not.toHaveBeenCalled();
 });

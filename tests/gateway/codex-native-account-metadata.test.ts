@@ -27,17 +27,20 @@ describe("native Codex account metadata", () => {
   it("rejects unsafe identity instead of echoing arbitrary native strings", () => {
     expect(normalizeCodexNativeAccountMetadata({ account: { type: "chatgpt", email: "/private/secret" } }, limits, now)).toBeNull();
   });
-  function fixture(changed = false, quotaFails = false, accountResult = account, notification?: "initial" | "during_quota") {
+  function fixture(changed = false, quotaFails = false, accountResult = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }) {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => { queueMicrotask(() => child.emit("close")); return true; }) });
     const methods: unknown[] = [];
     child.stdin.on("data", chunk => {
       const request = JSON.parse(chunk.toString()); methods.push(request);
       if (!request.id) return;
-      const result = request.id === 1 ? {} : request.id === 3 ? limits : changed && request.id === 4 ? { account: { type: "chatgpt", email: "other@example.test" } } : accountResult;
+      const result = request.id >= 5 && retry
+        ? request.method === "account/rateLimits/read" ? retry.limits : request.id === 7 ? retry.finalAccount ?? retry.account : retry.account
+        : request.id === 1 ? {} : request.method === "account/rateLimits/read" ? limits : changed && request.id === 4 ? { account: { type: "chatgpt", email: "other@example.test" } } : accountResult;
       queueMicrotask(() => {
-        if (notification === "initial" && request.id === 2 || notification === "during_quota" && request.id === 3)
+        if (notification === "initial" && request.id === 2 || notification === "during_quota" && request.method === "account/rateLimits/read" || notification === "late_initial" && request.id === 3)
           child.stdout.write(JSON.stringify({ method: "account/updated", params: { authMode: "chatgpt", planType: "plus" } }) + "\n");
         child.stdout.write(JSON.stringify(request.id === 3 && quotaFails ? { id: 3, error: { message: "private-token" } } : { id: request.id, result }) + "\n");
+        if (notification === "late_initial" && request.id === 3) child.stdout.write(JSON.stringify({ id: 4, result: accountResult }) + "\n");
       });
     });
     const spawnProcess = vi.fn(() => child as never);
@@ -61,6 +64,36 @@ describe("native Codex account metadata", () => {
   it("still discards quota when an account notification arrives after the identity baseline", async () => {
     const f = fixture(false, false, account, "during_quota");
     expect(await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess })()).toBeNull();
+  });
+  it("restarts a bounded metadata sequence when the initial native notification arrives late", async () => {
+    const f = fixture(false, false, account, "late_initial");
+    const value = await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess })();
+    expect(value).toMatchObject({ accountLabel: "owner@example.test", usage: { usedBasisPoints: 2500 } });
+    expect(f.methods).toContainEqual({ id: 5, method: "account/read", params: { refreshToken: false } });
+    expect(f.methods).toContainEqual({ id: 6, method: "account/rateLimits/read", params: {} });
+    expect(f.methods).toContainEqual({ id: 7, method: "account/read", params: { refreshToken: false } });
+    expect(f.spawnProcess).toHaveBeenCalledOnce();
+  });
+  it("ignores stale prior-sequence identity and quota when retry observes another account", async () => {
+    const freshAccount = { account: { type: "chatgpt", email: "fresh@example.test", id: "fresh-principal" } };
+    const freshLimits = { rateLimits: { primary: { ...limits.rateLimits.primary, usedPercent: 73 } } };
+    const f = fixture(false, false, account, "late_initial", { account: freshAccount, limits: freshLimits });
+    const value = await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess })();
+    expect(value).toMatchObject({ accountLabel: "fresh@example.test", usage: { usedBasisPoints: 7300 } });
+    expect(JSON.stringify(value)).not.toContain("owner@example.test");
+    expect(JSON.stringify(value)).not.toContain("never-return");
+  });
+  it("rejects another principal change during the restarted quota sequence", async () => {
+    const f = fixture(false, false, account, "late_initial", { account: { account: { type: "chatgpt", email: "fresh@example.test" } }, limits,
+      finalAccount: { account: { type: "chatgpt", email: "third@example.test" } } });
+    expect(await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess })()).toBeNull();
+  });
+  it("never carries old subscription identity or quota into an API-key retry", async () => {
+    const f = fixture(false, false, account, "late_initial", { account: { account: { type: "apiKey" } }, limits });
+    const value = await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess })();
+    expect(value).toMatchObject({ accountLabel: "API key", authMethod: "api_key" });
+    expect(value?.usage).toBeUndefined();
+    expect(f.methods).not.toContainEqual(expect.objectContaining({ id: 6 }));
   });
   it("API-key metadata skips the subscription allowance request", async () => {
     const f = fixture(false, false, { account: { type: "apiKey" } } as never);

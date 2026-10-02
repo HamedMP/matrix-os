@@ -68,6 +68,8 @@ export function createCodexNativeAccountMetadataReader(input: {
       let account: unknown;
       let accountObservedAt: Date | undefined;
       let quota: unknown;
+      let sequenceOffset = 0;
+      let restarted = false;
       let outcome: CodexNativeAccountMetadata | null = null;
       let finishing = false;
       let settled = false;
@@ -107,23 +109,30 @@ export function createCodexNativeAccountMetadataReader(input: {
           let message: { id?: number; result?: unknown; error?: unknown; method?: unknown };
           try { message = JSON.parse(line); } catch (error) { if (error instanceof SyntaxError) { finish(); return; } throw error; }
           if (!message || typeof message !== "object" || Array.isArray(message)) { finish(); return; }
-          // The native server announces its initial account before account/read.
-          // Only notifications after our identity baseline invalidate quota reads.
-          if (message.method === "account/updated" && accountObservedAt) { finish(); return; }
+          // Initial account notification can race the first account/read reply.
+          // Discard the entire in-flight identity/quota sequence and retry once
+          // with new IDs. Never combine an old quota reply with a new principal.
+          if (message.method === "account/updated" && accountObservedAt) {
+            if (restarted) { finish(); return; }
+            restarted = true; sequenceOffset = 3;
+            account = undefined; quota = undefined; accountObservedAt = undefined;
+            send(5, "account/read", { refreshToken: false });
+            continue;
+          }
           if (message.id === 1) {
             if (message.error) { finish(); return; }
             child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
             send(2, "account/read", { refreshToken: false });
-          } else if (message.id === 2) {
+          } else if (message.id === 2 + sequenceOffset) {
             account = message.result;
             accountObservedAt = (input.now ?? (() => new Date()))();
             if (message.error || !normalizeCodexNativeAccountMetadata(account, undefined, (input.now ?? (() => new Date()))())) { finish(); return; }
             const kind = AccountSchema.parse(account).account?.type;
-            send(kind === "apiKey" ? 4 : 3, kind === "apiKey" ? "account/read" : "account/rateLimits/read", kind === "apiKey" ? { refreshToken: false } : {});
-          } else if (message.id === 3) {
+            send((kind === "apiKey" ? 4 : 3) + sequenceOffset, kind === "apiKey" ? "account/read" : "account/rateLimits/read", kind === "apiKey" ? { refreshToken: false } : {});
+          } else if (message.id === 3 + sequenceOffset) {
             quota = message.error ? undefined : message.result;
-            send(4, "account/read", { refreshToken: false });
-          } else if (message.id === 4) {
+            send(4 + sequenceOffset, "account/read", { refreshToken: false });
+          } else if (message.id === 4 + sequenceOffset) {
             const first = AccountSchema.safeParse(account); const last = AccountSchema.safeParse(message.result);
             if (message.error || !first.success || !last.success || JSON.stringify(first.data) !== JSON.stringify(last.data)) { finish(); return; }
             finish(normalizeCodexNativeAccountMetadata(account, quota, (input.now ?? (() => new Date()))()));

@@ -162,6 +162,7 @@ import { createProvisioner } from "./provisioner.js";
 import { getOptionalRequestPrincipal, requireRequestPrincipal } from "./request-principal.js";
 import { registerProviderWorkflowRuntime } from "./server/provider-workflow-runtime.js";
 import { createClaudeSettingsLogin } from "./ai-providers/provider-workflow-browser.js";
+import { createCodexSettingsLogin } from "./ai-providers/provider-workflow-codex-login.js";
 import { createHermesCodexReuse } from "./ai-providers/provider-workflow-hermes.js";
 import { createNativeProviderWorkflowAdapters } from "./ai-providers/provider-workflow-native.js";
 import { createCodexKeySaver, createProviderKeyVerifier } from "./ai-providers/provider-workflow-key.js";
@@ -1664,6 +1665,8 @@ export async function createGateway(config: GatewayConfig) {
       store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
       hermesCodexReuse: createHermesCodexReuse({ homePath }),
       claudeBrowserLogin: createClaudeSettingsLogin({ command: "claude", cwd: homePath, env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("claude", { kind: "write" }) }),
+      codexSettingsLogin: createCodexSettingsLogin({ command: join(process.env.MATRIX_NODE_PREFIX ?? "/opt/matrix/runtime/node", "bin/codex"), cwd: homePath,
+        env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("codex", { kind: "write" }) }),
       opencodeConnection: opencodeSettingsConnection,
       piConnection: piSettingsConnection,
       openclawConnection: openclawSettingsConnection,

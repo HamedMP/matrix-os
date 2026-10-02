@@ -276,3 +276,26 @@ The owner's seven review corrections supersede older row-status, Enable UI and p
 7. Display actual scoped account identity and authoritative usage/reset when available. Missing/unsupported data must remain honest, never a fabricated zero. Hermes must project its supported existing Codex connection without returning credentials.
 
 Acceptance requires exact-head Preview VPS and Electron Desktop, current runtime/account provenance, visual proof and real connection/account/usage readback. Owner-only credential authority remains unchanged; collaborator access does not grant guided login authority. Human Review remains pending.
+
+### Codex native sign-in and account preservation
+
+Settings device login uses the supported native app-server `account/login/start`
+with `chatgptDeviceCode`, not the CLI login command that clears existing auth
+before consent. Native device URL/code and matching login completion drive the
+Settings operation. `account/login/cancel` and bounded process reaping cancel only
+that attempt; existing account credentials remain owned by the native runtime.
+No raw credentials are read or transferred by the Settings adapter. A missing
+native adapter must fail closed rather than silently use the destructive CLI
+flow. Successful native completion enables only the exact current agent.
+
+Cancellation cannot be acknowledged until the native process is reaped. A failed
+cleanup retains its profile guard, supports retry and releases the guard once on
+observed exit. Code/URL validation, output bounds, startup and consent deadlines
+apply to the native protocol. Tests cover cancellation with an existing account,
+another login's completion, unsafe URLs/codes and an unreapable process.
+
+Initial native account notifications may precede or follow the first identity
+response. One late notification invalidates the entire in-flight metadata
+sequence and starts a fresh identity/quota/identity sequence with new RPC IDs in
+the same process. Old replies are discarded, final principal equality remains
+required and repeated invalidation fails closed within the original deadline.
