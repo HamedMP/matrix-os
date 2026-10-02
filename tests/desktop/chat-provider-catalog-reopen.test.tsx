@@ -247,7 +247,7 @@ describe("native Chat catalog freshness", () => {
     }
   });
 
-  it.each([true, false])("keeps same-runtime truth when projects change and revalidation fails (savedOff=%s)", async (savedOff) => {
+  it.each([true, false])("reuses same-runtime truth when projects change and keeps explicit revalidation (savedOff=%s)", async (savedOff) => {
     useBoard.setState({ projects: [] });
     const trusted = catalog("trusted_before_project_change", savedOff);
     let failRefresh = false;
@@ -263,6 +263,8 @@ describe("native Chat catalog freshness", () => {
     await waitFor(() => expect(trigger.hasAttribute("disabled")).toBe(false));
     failRefresh = true;
     act(() => useBoard.setState({ projects: [{ slug: "new-project", name: "New project" }] }));
+    expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(1);
+    act(() => window.dispatchEvent(new Event("focus")));
     await waitFor(() => expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(2));
     await act(async () => undefined);
     if (savedOff) {
@@ -289,7 +291,7 @@ describe("native Chat catalog freshness", () => {
     expect(screen.getByTestId("availability").textContent).toBe("unavailable");
   });
 
-  it("ignores old fallback-effect responses in both UI and the trusted error snapshot", async () => {
+  it("keeps a pending read across fallback changes and ignores it after an explicit newer response", async () => {
     const older = deferred<CanonicalProviderCatalog>();
     const newer = deferred<CanonicalProviderCatalog>();
     const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockImplementationOnce(() => older.promise)
@@ -299,6 +301,8 @@ describe("native Chat catalog freshness", () => {
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     act(() => window.dispatchEvent(new Event("focus")));
     view.rerender(<CatalogComposer api={api} fallback={catalog("project_changed_fallback")} />);
+    expect(get).toHaveBeenCalledTimes(2);
+    refreshCatalog();
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
     await act(async () => newer.resolve(newCatalog));
     await act(async () => older.resolve(oldCatalog));
@@ -317,7 +321,7 @@ describe("native Chat catalog freshness", () => {
     render(<CatalogComposer api={{ get }} />);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     act(() => window.dispatchEvent(new Event("focus")));
-    act(() => window.dispatchEvent(new Event("focus")));
+    refreshCatalog();
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
     await act(async () => newer.resolve(newCatalog));
     expect(screen.getByText("after_update")).not.toBeNull();

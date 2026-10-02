@@ -51,6 +51,9 @@ export function useChatProviderCatalog(
   const { api: apiOverride, active = true } = options;
   const api = apiOverride === undefined ? connectionApi : apiOverride;
   const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallback), [fallback]);
+  // Local fallback presentation is not a provider-authority invalidation.
+  const presentationRef = useRef({ fallback, unavailableCatalog });
+  useEffect(() => { presentationRef.current = { fallback, unavailableCatalog }; }, [fallback, unavailableCatalog]);
   const [state, setState] = useState<{
     catalog: CanonicalProviderCatalog;
     status: "fallback" | "loading" | "ready" | "error";
@@ -68,6 +71,7 @@ export function useChatProviderCatalog(
   useEffect(() => {
     let cancelled = false;
     let requestSequence = 0;
+    let inFlight = 0;
     let lastTrustedCatalog = trustedCatalogRef.current?.api === api
       && trustedCatalogRef.current.identityKey === identityKey
       && trustedCatalogRef.current.generation === catalogGeneration
@@ -75,7 +79,7 @@ export function useChatProviderCatalog(
     if (!active || !api || typeof api.get !== "function") {
       trustedCatalogRef.current = null;
       refreshRef.current = () => undefined;
-      setState({ catalog: fallback, status: "fallback", identityKey, generation: catalogGeneration, api });
+      setState({ catalog: presentationRef.current.fallback, status: "fallback", identityKey, generation: catalogGeneration, api });
       return () => {
         cancelled = true;
       };
@@ -83,7 +87,7 @@ export function useChatProviderCatalog(
     if (!lastTrustedCatalog) trustedCatalogRef.current = null;
     const retainedCatalog = lastTrustedCatalog;
     setState((current) => ({
-      catalog: retainedCatalog ?? unavailableCatalog,
+      catalog: retainedCatalog ?? presentationRef.current.unavailableCatalog,
       identityKey, generation: catalogGeneration, api,
       status: retainedCatalog ? current.status === "error" ? "error" : "ready" : "loading",
     }));
@@ -92,9 +96,13 @@ export function useChatProviderCatalog(
       return desktopProviderIdentityKey(current) === identityKey
         && current.providerCatalogGeneration === catalogGeneration;
     };
-    const update = () => {
+    const update = (lifecycleOnly = false) => {
+      // Restoring a window often emits both focus and visibility. Join its
+      // current read; explicit post-change refresh still starts a fresh one.
+      if (lifecycleOnly && inFlight > 0) return;
+      inFlight += 1;
       const request = ++requestSequence;
-      setState({ catalog: lastTrustedCatalog ?? unavailableCatalog,
+      setState({ catalog: lastTrustedCatalog ?? presentationRef.current.unavailableCatalog,
         identityKey, generation: catalogGeneration, api, status: "loading" });
       void fetchCanonicalProviderCatalog(api, true).then((catalog) => {
         if (!cancelled && request === requestSequence && isCurrentScope()) {
@@ -108,15 +116,15 @@ export function useChatProviderCatalog(
           error instanceof Error ? error.name : "UnknownError",
         );
         if (!cancelled && request === requestSequence && isCurrentScope()) setState({
-          catalog: lastTrustedCatalog ?? unavailableCatalog,
+          catalog: lastTrustedCatalog ?? presentationRef.current.unavailableCatalog,
           identityKey, generation: catalogGeneration, api,
           status: "error",
         });
-      });
+      }).finally(() => { inFlight -= 1; });
     };
     refreshRef.current = update;
     update();
-    const refresh = update;
+    const refresh = () => update(true);
     window.addEventListener("focus", refresh);
     const visibility = () => {
       if (document.visibilityState === "visible") refresh();
@@ -128,7 +136,7 @@ export function useChatProviderCatalog(
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [active, api, fallback, unavailableCatalog, identityKey, catalogGeneration]);
+  }, [active, api, identityKey, catalogGeneration]);
 
   // A scope/change render must fail closed before passive effects run. Old
   // state must never be observable by a composer or a layout-effect consumer.
@@ -138,6 +146,7 @@ export function useChatProviderCatalog(
   // that explicit loading state, never for inactive or settled offline routes.
   const bootstrapLoading = active && !api && connectionStatus === "loading";
   const hasTrustedCatalog = Boolean(current && trusted && trusted.api === api && trusted.identityKey === identityKey && trusted.generation === catalogGeneration);
-  return { catalog: !bootstrapLoading && current && (state.status !== "loading" || hasTrustedCatalog) ? state.catalog : unavailableCatalog,
+  return { catalog: !bootstrapLoading && current && (state.status !== "loading" || hasTrustedCatalog)
+    ? state.status === "fallback" ? fallback : state.catalog : unavailableCatalog,
     status: bootstrapLoading ? "loading" : current ? state.status : "loading", refresh, hasTrustedCatalog };
 }
