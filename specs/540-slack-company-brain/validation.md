@@ -127,3 +127,29 @@ those auth requests. Runtime paths remain denied. The combined focused auth,
 preview and Worker regression passes 12 suites / 136 tests, including 38
 Worker tests; platform and Worker strict TypeScript checks pass. Redeployment
 and the browser journey remain acceptance gates.
+
+### Current-main rebase and browser installation handoff
+
+The Slack/Pi stack is rebased onto main `33c53cb24`, retaining merged
+organization selection, company-drive Chat context, supervised saved Agents,
+Chat onboarding and Web/Electron sharing. The still-unmerged Pi dependency
+from #2048 is replayed on a separate integration-base branch; its contributor
+branch is not rewritten. The combined platform schema generation and source
+fingerprint are refreshed.
+
+A browser callback without a fresh Matrix session now redirects to the exact
+public `/slack/oauth/complete` brand auth page without reading or consuming its
+installation permit. Clerk sign-in refreshes only the browser's own session;
+explicit Finish installation submits a fresh Bearer token to the existing
+callback. The callback still checks the initiating account, current organization
+administrator, single-use expiry, app identity and post-exchange authority.
+Invalid/native unauthenticated callbacks remain unauthorized. The completion
+page and callback disable referrer disclosure; credentials and codes are not
+stored by the client.
+
+Qualification: 83 suites / 813 tests passed, including actual Postgres Slack,
+Brain and shared-session races. The completion helper additionally covers
+ambiguous query rejection, signed-out/expired/error states and a stalled token
+refresh. Gateway, platform, Pi runtime and Web Desktop strict TypeScript pass;
+public documentation passes 233 tests. Production build and live browser/VPS
+acceptance are separate gates and remain pending at this checkpoint.
