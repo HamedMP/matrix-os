@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { updateWorkflowRowStatus } from "./workflow-row-status.js";
 import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { useHarnessEnablement } from "./use-harness-enablement.js";
 import { useGatewaySelection } from "./use-gateway-selection.js";
@@ -96,10 +97,7 @@ export function AgentsProvidersView({
     ProviderWorkflowCapability[]
   >([]);
   const [workflowPermission, setWorkflowPermission] = useState<"unknown" | "available" | "forbidden">("unknown");
-  const [workflowStatus, setWorkflowStatus] = useState<{
-    id: string;
-    status: string | null;
-  } | null>(null);
+  const [workflowStatus, setWorkflowStatus] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!workflowClient) return;
     const controller = new AbortController();
@@ -137,7 +135,7 @@ export function AgentsProvidersView({
     setWorkflowPermission("unknown");
     setExpandedRowId(null);
     setExpandedRowKind(null);
-    setWorkflowStatus(null);
+    setWorkflowStatus({});
   }
   const inventoryHarnesses = workflowCapabilities.filter(
     (item) =>
@@ -302,12 +300,7 @@ export function AgentsProvidersView({
                 onOpenTerminal={onOpenTerminal}
                 onOpenAuthorizationUrl={onOpenAuthorizationUrl}
                 onStateChange={(status) =>
-                  setWorkflowStatus((current) =>
-                    current?.id === item.harnessInstanceId &&
-                    current.status === status
-                      ? current
-                      : { id: item.harnessInstanceId, status },
-                  )
+                  setWorkflowStatus(current => updateWorkflowRowStatus(current, item.harnessInstanceId, status))
                 }
               />
             ) : null
@@ -430,11 +423,7 @@ export function AgentsProvidersView({
                     onOpenTerminal={onOpenTerminal}
                     onOpenAuthorizationUrl={onOpenAuthorizationUrl}
                     onStateChange={(status) =>
-                      setWorkflowStatus((current) =>
-                        current?.id === harness.id && current.status === status
-                          ? current
-                          : { id: harness.id, status },
-                      )
+                      setWorkflowStatus(current => updateWorkflowRowStatus(current, harness.id, status))
                     }
                     onDisconnect={
                       supports("logout_account") && harness.selectedAccountId

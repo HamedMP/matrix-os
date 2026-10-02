@@ -47,6 +47,61 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     if (await row.getAttribute("aria-expanded") !== "true") await row.click();
     await expect.poll(() => row.getAttribute("aria-expanded"), { timeout: 5_000 }).toBe("true");
   }
+  it("animates the first lazy disclosure, reverses without jumping, and respects reduced motion", async () => {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    const row = feature().locator(".matrix-ap-rail-item").filter({ hasText: "Codex" }).first();
+    const id = await row.getAttribute("aria-controls");
+    if (!id) throw new Error("Missing accordion controls");
+    await row.scrollIntoViewIfNeeded();
+    const samples = await page.evaluate(async (detailsId) => {
+      const body = document.getElementById(detailsId)!;
+      const trigger = document.getElementById(`${detailsId}-trigger`)!;
+      const frames: { height: number; opacity: number }[] = [];
+      const baseline = body.getBoundingClientRect().height;
+      trigger.click();
+      const start = performance.now();
+      while (performance.now() - start < 280) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        frames.push({ height: body.getBoundingClientRect().height, opacity: Number(getComputedStyle(body).opacity) });
+      }
+      return { baseline, frames };
+    }, id);
+    const full = samples.frames.at(-1)!.height;
+    expect(samples.baseline).toBe(0);
+    expect(full).toBeGreaterThan(40);
+    expect(samples.frames.some(frame => frame.height > 1 && frame.height < full - 1 && frame.opacity > 0 && frame.opacity < 1)).toBe(true);
+    const reversal = await page.evaluate(async detailsId => {
+      const body = document.getElementById(detailsId)!;
+      const trigger = document.getElementById(`${detailsId}-trigger`)!;
+      const fullHeight = body.getBoundingClientRect().height;
+      trigger.click();
+      await new Promise(resolve => setTimeout(resolve, 60));
+      const closingHeight = body.getBoundingClientRect().height;
+      trigger.click();
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      const reversingHeight = body.getBoundingClientRect().height;
+      await new Promise(resolve => setTimeout(resolve, 250));
+      return { fullHeight, closingHeight, reversingHeight, restoredHeight: body.getBoundingClientRect().height };
+    }, id);
+    expect(reversal.closingHeight).toBeGreaterThan(0);
+    expect(reversal.closingHeight).toBeLessThan(reversal.fullHeight);
+    expect(reversal.reversingHeight).toBeGreaterThan(0);
+    expect(reversal.reversingHeight).toBeLessThan(reversal.fullHeight);
+    expect(reversal.restoredHeight).toBeCloseTo(reversal.fullHeight, 0);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await row.click();
+    const collapsed = await page.locator(`[id="${id}"]`).evaluate(body => ({
+      height: body.getBoundingClientRect().height,
+      inert: body.inert,
+      transition: getComputedStyle(body).transitionDuration,
+    }));
+    expect(collapsed.height).toBe(0);
+    expect(collapsed.inert).toBe(true);
+    // The shared desktop reduced-motion reset uses a near-zero duration.
+    expect(Number.parseFloat(collapsed.transition)).toBeLessThanOrEqual(0.001);
+    expect(gateway.events).not.toContain("login");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+  }, 15_000);
   it("executes grouped inventory, history, device-code recovery, key validation, install cancellation, and disconnect", async () => {
     try {
       expect(await app.evaluate(({ app }) => app.getAppPath())).toBe(join(root, "desktop/out/main"));
@@ -86,6 +141,11 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       await codex.getByRole("button", { name: "Copied", exact: true }).waitFor();
       expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe("TEST-CODE");
       await capture("04-device-code");
+      await select("Claude");
+      expect(await feature().locator(".matrix-ap-rail-item").filter({ hasText: "Codex" }).first().innerText()).toContain("Connecting");
+      await select("Codex");
+      await codex.getByText("TEST-CODE", { exact: true }).waitFor();
+      expect(gateway.events.filter(event => event === "login")).toHaveLength(1);
       await page.getByRole("dialog", { name: "Settings window", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
       await feature().waitFor({ state: "hidden" });
       await page.getByRole("button", { name: "Open account menu", exact: true }).click();

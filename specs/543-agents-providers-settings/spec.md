@@ -299,3 +299,13 @@ response. One late notification invalidates the entire in-flight metadata
 sequence and starts a fresh identity/quota/identity sequence with new RPC IDs in
 the same process. Old replies are discarded, final principal equality remains
 required and repeated invalidation fails closed within the original deadline.
+
+## Provider accordion motion and contextual feedback — 2026-10-02
+
+Provider rows share expand/collapse behavior across Web Desktop, Web Canvas and Electron Desktop. Animate natural body height and restrained opacity for200ms using project easing, rotate the same chevron, and skip transitions under prefers-reduced-motion. Once opened, retain the body so transient connection fields and workflow progress survive close/reopen; closed controls must be inert and excluded from accessibility. Reversing a toggle must reverse from the current interpolated state without timers, fixed maximum heights or delayed workflow changes. Initial hydration/restoration must not replay expansion.
+
+Do not render persistent workspace-restriction, credit-purchases-unavailable or owner-only connection prose in the designed overview/chooser. Keep authoritative policy/auth checks and disabled actions; expose contextual explanations on relevant controls and preserve actual operation errors. Removal of explanatory prose never grants collaborators credential authority.
+
+Pi's official registry latest is1.0.0 as verified2026-10-02. Main was updated only at its managed runtime prefix through the official package; CLI version and Settings native capability discovery were independently read back. New installation paths already use @earendil-works/pi-coding-agent@latest. Existing auth/config/session paths remain untouched; no fleet auto-update.
+
+Retained panel workflow progress is keyed independently per harness. Opening an idle provider must not clear another row’s Connecting status. Completion/cancellation clears only that exact row; switching runtime resets the scoped progress collection. Regression: start Codex login, open Hermes, confirm Codex remains Connecting, return and cancel the same operation.

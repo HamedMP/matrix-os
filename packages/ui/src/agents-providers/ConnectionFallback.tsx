@@ -20,6 +20,6 @@ export function ConnectionFallback({ harness, workflowPermission = "unknown" }: 
       <ConnectionMethodCard method="account" title={`${subscription} account`} recommended description={`Use your ${subscription} plan`} disabled tooltip={reason} />
       <ConnectionMethodCard method="key" title="API key" description={`Pay ${harness.harness === "codex" ? "OpenAI" : "Anthropic"} per request`} disabled tooltip={reason} />
     </div> : null}
-    <p className="matrix-ap-help" role="status">{reason}</p>
+    {workflowPermission !== "forbidden" ? <p className="matrix-ap-help" role="status">{reason}</p> : null}
   </section>;
 }

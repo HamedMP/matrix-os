@@ -183,25 +183,8 @@ export function GatewayPanel({
         </span>
       </div>
 
-      {!source || !policy ? (
-        <p className="matrix-ap-help">
-          Matrix AI is not available on this computer yet. Credit purchases are
-          unavailable.
-        </p>
-      ) : creditRequired ? (
+      {source && policy && creditRequired ? (
         <p className="matrix-ap-help">Add credit to use Matrix AI.</p>
-      ) : !ready ? (
-        <p className="matrix-ap-help">
-          {source.readiness.safeReason === "policy" ||
-          source.readiness.action === "contact_owner"
-            ? "Matrix AI is restricted by your workspace. Ask your administrator."
-            : "Matrix AI connection not verified. Check again."}
-        </p>
-      ) : null}
-      {source && policy && !policy.topUpEnabled ? (
-        <p className="matrix-ap-help">
-          Matrix AI credit purchases are not available yet.
-        </p>
       ) : null}
 
       <div className="matrix-ap-credit-row">
@@ -233,6 +216,9 @@ export function GatewayPanel({
               className="matrix-ap-button"
               disabled={disabled}
               onClick={onRefresh}
+              title={source?.readiness.safeReason === "policy" || source?.readiness.action === "contact_owner"
+                ? "Matrix AI is restricted by your workspace. Ask your administrator."
+                : "Check Matrix AI availability"}
             >
               Check again
             </button>

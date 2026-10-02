@@ -391,6 +391,7 @@ it("recovers an owner-scoped active operation on a fresh Settings view and cance
           logs: false,
           activeOperationId: operation.id,
         },
+        { harnessInstanceId: "harness_codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: [], install: false, uninstall: false, logs: false },
       ]),
     start: vi.fn(),
     get: vi.fn().mockResolvedValue(operation),
@@ -426,6 +427,11 @@ it("recovers an owner-scoped active operation on a fresh Settings view and cance
   fireEvent.click(
     await screen.findByRole("button", { name: /Hermes.*Not installed/ }),
   );
+  await screen.findByRole("button", { name: /Hermes.*Installing/ });
+  fireEvent.click(screen.getByRole("button", { name: /Codex.*Not connected/ }));
+  await screen.findByRole("button", { name: /ChatGPT account/ });
+  expect(screen.getByRole("button", { name: /Hermes.*Installing/ })).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(screen.getByRole("button", { name: /Hermes.*Installing/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
   await waitFor(() =>
     expect(workflowClient.cancel).toHaveBeenCalledWith(
@@ -439,4 +445,23 @@ it("recovers an owner-scoped active operation on a fresh Settings view and cance
   );
   expect(workflowClient.start).not.toHaveBeenCalled();
   await waitFor(() => expect(refresh).toHaveBeenCalled());
+});
+
+it("keeps Matrix AI policy and purchase restrictions out of persistent overview prose", async () => {
+  const { GatewayPanel } = await import("../../packages/ui/src/agents-providers/GatewayPanel");
+  const source = { id: "matrix", kind: "matrix_gateway", eligibleModelIds: [], readiness: { state: "unavailable", safeReason: "policy", action: "contact_owner" }, usage: { kind: "unavailable", reason: "unknown" } } as unknown as import("@matrix-os/contracts").ProviderAccessSource;
+  const policy = { allowedModelIds: [], monthlyBudgetMicrousd: null, topUpEnabled: false } as unknown as import("@matrix-os/contracts").ProviderGatewayPolicy;
+  render(<GatewayPanel source={source} policy={policy} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
+  expect(screen.queryByText("Matrix AI is restricted by your workspace. Ask your administrator.")).not.toBeInTheDocument();
+  expect(screen.queryByText("Matrix AI credit purchases are not available yet.")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check again" })).toHaveAttribute("title", "Matrix AI is restricted by your workspace. Ask your administrator.");
+  expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+});
+
+it("keeps missing-runtime purchase explanations out of the overview while showing honest unavailable credit", async () => {
+  const { GatewayPanel } = await import("../../packages/ui/src/agents-providers/GatewayPanel");
+  render(<GatewayPanel source={null} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
+  expect(screen.queryByText(/Credit purchases are unavailable/)).not.toBeInTheDocument();
+  expect(screen.getByText("Credit unavailable")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
 });

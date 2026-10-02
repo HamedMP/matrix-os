@@ -57,7 +57,7 @@ it("omits separate Hermes enable before connecting an account", () => {
   expect(screen.queryByRole("button", { name: "Connect Hermes in Terminal" })).not.toBeInTheDocument();
   expect(screen.getByText(/Connection in Settings is unavailable/)).toBeInTheDocument();
 });
-it("explains typed owner-only workflow denial safely and clears it after capability recovery", async () => {
+it("keeps owner-only connections disabled without persistent prose and recovers capabilities", async () => {
   const { ProviderWorkflowClientError } = await import("../../packages/ui/src/agents-providers/provider-workflow-client");
   const p = props();
   const denied = new ProviderWorkflowClientError("forbidden");
@@ -65,7 +65,8 @@ it("explains typed owner-only workflow denial safely and clears it after capabil
   const client = { capabilities: vi.fn().mockRejectedValue(denied), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
   const { rerender } = render(<AgentsProvidersView {...p} workflowClient={client} />);
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
-  expect(await screen.findByText("Only this computer’s owner can manage connections.")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: /ChatGPT account Recommended/ })).toHaveAttribute("title", "Only this computer’s owner can manage connections."));
+  expect(screen.queryByText("Only this computer’s owner can manage connections.")).not.toBeInTheDocument();
   expect(screen.queryByText(/private upstream/)).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Agents & providers" })).toBeVisible();
   client.capabilities.mockResolvedValue([]);

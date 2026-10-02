@@ -1,3 +1,4 @@
+import { ProviderAccordion } from "./ProviderAccordion.js";
 import { hasConfiguredConnection } from "./harness-connection.js";
 import type { ReactNode } from "react";
 import type {
@@ -71,7 +72,7 @@ export function HarnessRail({
   sources: ProviderAccessSource[];
   selectedId: string | null;
   disabled: boolean;
-  statusOverride?: { id: string; status: string | null } | null;
+  statusOverride?: Record<string, string>;
   canRefreshEnable?: boolean;
   canEnable: (harness: ProviderHarnessInstance) => boolean;
   onSelect: (id: string) => void;
@@ -119,15 +120,13 @@ export function HarnessRail({
               if (item.inventory || item.catalog) {
                 const observed = item.inventory ?? item.catalog!;
                 const status =
-                  statusOverride?.id === item.id && statusOverride.status
-                    ? statusOverride.status
-                    : observed.installState === "missing"
+                  statusOverride?.[item.id] ?? (observed.installState === "missing"
                       ? "Not installed"
                       : observed.installState === "installing"
                         ? "Installing"
                         : observed.installState === "failed"
                           ? "Needs attention"
-                          : "Not connected";
+                          : "Not connected");
                 const detailsId = `matrix-ap-details-${item.id}`;
                 return (
                   <div key={item.id} className="matrix-ap-agent-row">
@@ -137,6 +136,7 @@ export function HarnessRail({
                         className="matrix-ap-rail-item"
                         aria-expanded={expanded}
                         aria-controls={detailsId}
+                        id={`${detailsId}-trigger`}
                         onClick={() => onSelect(item.id)}
                       >
                         <span className="matrix-ap-harness-mark">
@@ -157,13 +157,9 @@ export function HarnessRail({
                         <RowChevron expanded={expanded} />
                       </button>
                     </div>
-                    <div
-                      id={detailsId}
-                      hidden={!expanded}
-                      className="matrix-ap-agent-details"
-                    >
-                      {expanded ? item.inventory ? renderInventory?.(item.inventory) : renderCatalog?.(item.catalog!) : null}
-                    </div>
+                    <ProviderAccordion id={detailsId} expanded={expanded}>
+                      {item.inventory ? renderInventory?.(item.inventory) : renderCatalog?.(item.catalog!)}
+                    </ProviderAccordion>
                   </div>
                 );
               }
@@ -172,9 +168,7 @@ export function HarnessRail({
                 (source) => source.id === harness.accessSourceId,
               );
               const status =
-                statusOverride?.id === harness.id && statusOverride.status
-                  ? statusOverride.status
-                  : rowStatus(harness, source);
+                statusOverride?.[harness.id] ?? rowStatus(harness, source);
               const detailsId = `matrix-ap-details-${harness.id}`;
               return (
                 <div key={harness.id} className="matrix-ap-agent-row">
@@ -184,6 +178,7 @@ export function HarnessRail({
                       className="matrix-ap-rail-item"
                       aria-expanded={expanded}
                       aria-controls={detailsId}
+                        id={`${detailsId}-trigger`}
                       onClick={() => onSelect(harness.id)}
                     >
                       <span
@@ -209,17 +204,9 @@ export function HarnessRail({
                       <RowChevron expanded={expanded} />
                     </button>
                   </div>
-                  <div
-                    id={detailsId}
-                    className="matrix-ap-agent-details"
-                    hidden={!expanded}
-                  >
-                    {expanded ? (
-                      <>
-                        {renderDetails(harness)}
-                      </>
-                    ) : null}
-                  </div>
+                  <ProviderAccordion id={detailsId} expanded={expanded}>
+                    {renderDetails(harness)}
+                  </ProviderAccordion>
                 </div>
               );
             })}

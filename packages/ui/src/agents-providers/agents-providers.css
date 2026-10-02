@@ -82,9 +82,12 @@
 .matrix-ap-agent-row { border-bottom: 1px solid var(--matrix-ap-border); }
 .matrix-ap-agent-row-head { align-items: center; display: flex; gap: 12px; padding-right: 4px; }
 .matrix-ap-agent-details { padding: 0 4px 16px 44px; }
-.matrix-ap-agent-details[hidden] { display: none; }
+/* Natural content height, with reversible transitions and no measurement timers. */
+.matrix-ap-accordion { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows 200ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease-out, visibility 0s 200ms; }
+.matrix-ap-accordion[data-expanded="true"] { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition-delay: 0s; }
+.matrix-ap-accordion-clip { min-height: 0; overflow: hidden; }
 .matrix-ap-chevron { color: var(--matrix-ap-muted); display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 28px; }
-.matrix-ap-chevron svg { width: 16px; height: 16px; }
+.matrix-ap-chevron svg { width: 16px; height: 16px; transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1); }
 .matrix-ap-chevron[data-expanded="true"] svg { transform: rotate(180deg); }
 .matrix-ap-add-button { background: var(--matrix-ap-surface); border-color: var(--matrix-ap-border); color: var(--matrix-ap-text); font-size: 20px; height: 27px; width: 27px; }
 .matrix-ap-rail-list { display: flex; flex-direction: column; gap: 3px; }
@@ -340,6 +343,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .matrix-agents-providers .matrix-ap-accordion,
+  .matrix-agents-providers .matrix-ap-chevron svg,
   .matrix-agents-providers .matrix-ap-switch span,
   .matrix-agents-providers .matrix-ap-switch span::after { transition: none; }
 }
