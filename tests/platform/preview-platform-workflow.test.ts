@@ -17,6 +17,17 @@ describe("preview platform workflow", () => {
       expect(parsed.status, parsed.stderr).toBe(0);
     }
   });
+
+  it("keeps Slack pilot shell steps syntactically valid", () => {
+    const workflow = YAML.parse(readFileSync(join(root, ".github/workflows/preview-platform.yml"), "utf8"));
+    const steps = workflow.jobs["connect-slack-pilot-preview"].steps;
+    for (const name of ["Check PR, identity, and exact tagged preview", "Prove the Slack link and preview home have the same owner", "Connect the preview VM to the isolated Slack backend under a rollback guard"]) {
+      const script = steps.find((step: { name?: string }) => step.name === name)?.run;
+      expect(typeof script).toBe("string");
+      const parsed = spawnSync("bash", ["-n"], { input: script, encoding: "utf8" });
+      expect(parsed.status, parsed.stderr).toBe(0);
+    }
+  });
   it("sources the deployed control-plane origin from the selected environment", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/platform-cloud-run.yml"),
@@ -59,6 +70,8 @@ describe("preview platform workflow", () => {
     );
     const connectJob = workflow.slice(workflow.indexOf("  connect-share-preview:"));
     const connectJobHeader = connectJob.slice(0, connectJob.indexOf("    steps:"));
+    const slackJob = workflow.slice(workflow.indexOf("  connect-slack-pilot-preview:"));
+    const slackJobHeader = slackJob.slice(0, slackJob.indexOf("    steps:"));
 
     expect(workflow).toContain("PLATFORM_SPEECH_ENABLED=true");
     expect(workflow).toContain("PLATFORM_SPEECH_PROVIDER=openai");
@@ -91,6 +104,10 @@ describe("preview platform workflow", () => {
     expect(workflow).not.toContain("os.fchown(fd, 0, 0)");
     expect(workflow).not.toContain("PRODUCTION_PLATFORM_SECRET");
     expect(workflow).not.toContain("PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}");
+    expect(slackJobHeader).not.toContain("PLATFORM_SECRET");
+    expect(slackJob).toContain('PREVIEW_VPS_CONTROL_URL: https://app.matrix-os.com');
+    expect(slackJob).toContain('scripts/preview-collaboration-probe.py');
+    expect(slackJob).toContain('PREVIEW_RUNTIME_OWNER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}');
     expect(workflow).toContain("systemctl\",\"is-active\",\"--quiet\",\"matrix-gateway.service");
     expect(workflow).toContain("--retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30");
     expect(connectJob).toContain('terminal_url="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"');
