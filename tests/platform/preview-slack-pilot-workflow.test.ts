@@ -11,8 +11,13 @@ describe("protected Slack preview connection", () => {
     expect(workflow).toContain("SLACK_PILOT_PR_NUMBER");
     expect(workflow).toContain("preview-isolated");
     expect(workflow).toContain("node scripts/slack-preview-runtime.mjs verify");
-    expect(workflow).toContain("clerkUserId == $owner");
+    expect(workflow).toContain('[[ "$PREVIEW_RUNTIME_OWNER_ID" =~ ^user_[A-Za-z0-9]+$ ]]');
+    expect(workflow).toContain("/api/terminal/run");
+    expect(workflow).toContain('identity "$handle" "$PREVIEW_RUNTIME_OWNER_ID"');
+    expect(workflow).toContain("test \"$observed_machine\" = \"$PREVIEW_MACHINE_ID\"");
     expect(workflow).toContain("node scripts/slack-preview-runtime.mjs register");
+    const slackJob = workflow.slice(workflow.indexOf("  connect-slack-pilot-preview:"));
+    expect(slackJob).not.toContain("PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}");
   });
 
   it("binds the preview VM to the exact tagged backend under the host rollback guard", () => {

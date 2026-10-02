@@ -1496,7 +1496,7 @@ jobs:
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
           test "$PR_NUMBER" = "$SLACK_PILOT_PR_NUMBER"
           test "$CLOUD_RUN_PREVIEW_SERVICE" = matrix-platform-preview
-          [[ "$PREVIEW_CLERK_USER_ID" =~ ^user_[A-Za-z0-9]+$ ]]
+          [[ "$PREVIEW_RUNTIME_OWNER_ID" =~ ^user_[A-Za-z0-9]+$ ]]
           pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           if ! jq -e --arg repository "$GITHUB_REPOSITORY" --arg head "$EXPECTED_HEAD_SHA" '
             .state == "open" and .head.repo.full_name == $repository and .head.sha == $head
