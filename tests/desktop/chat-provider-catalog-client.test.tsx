@@ -130,6 +130,7 @@ describe("Desktop canonical Provider catalog client", () => {
     act(() => window.dispatchEvent(new Event("focus")));
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
     expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
+    await screen.findByText("ready:catalog_refreshed");
 
     act(() => document.dispatchEvent(new Event("visibilitychange")));
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));

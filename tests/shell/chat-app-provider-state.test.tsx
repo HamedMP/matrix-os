@@ -298,8 +298,8 @@ describe("Chat canonical provider state", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     resolveFirst!(Response.json(providerCatalog()));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Pi")).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes the canonical catalog after provider settings change", async () => {

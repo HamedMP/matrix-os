@@ -119,7 +119,9 @@ export function useChatProviderState(
     const refresh = async (force = false) => {
       forcePending = forcePending || force;
       if (refreshing) {
-        pending = true;
+        // Focus/visibility belong to the read already in progress. Only an
+        // explicit post-change refresh must queue a newer observation.
+        pending = pending || force;
         return;
       }
       refreshing = true;
