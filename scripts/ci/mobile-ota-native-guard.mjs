@@ -39,6 +39,9 @@ const PLATFORMS = ['ios', 'android'];
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const FINGERPRINT_TIMEOUT_MS = 2 * 60 * 1000;
 const MAX_REPORTED_SOURCES = 25;
+// Upper bound on the native inputs held in memory. The app has well under 200
+// today; a fingerprint beyond this is treated as a fault, never truncated.
+export const MAX_FINGERPRINT_SOURCES = 2000;
 // Directories inside a package that are not its source: output of a local native
 // build, and the package manager's nested node_modules, whose .bin shims embed
 // the absolute install path.
@@ -154,6 +157,13 @@ export function hashDirectory(directory) {
  * source's path as the fingerprint reports it.
  */
 export function nativeInputs(fingerprint, hashDir) {
+  if (fingerprint.sources.length > MAX_FINGERPRINT_SOURCES) {
+    throw new Error(
+      `The fingerprint lists ${fingerprint.sources.length} sources, more than the ${MAX_FINGERPRINT_SOURCES} ` +
+        'the guard accepts. Dropping any would hide native changes, so this needs a look.',
+    );
+  }
+  // Bounded by MAX_FINGERPRINT_SOURCES: at most one entry per source.
   const hashesByName = new Map();
   for (const source of fingerprint.sources) {
     let name;

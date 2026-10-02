@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  MAX_FINGERPRINT_SOURCES,
   diffNativeInputs,
   findVersionConflict,
   hashDirectory,
@@ -372,6 +373,19 @@ describe('mobile OTA native guard', () => {
         { change: 'changed', source: 'expo-blur/ios' },
         { change: 'removed', source: 'expo-camera/ios' },
       ]);
+    });
+
+    it('refuses a fingerprint with more sources than the cap instead of dropping any', () => {
+      // The map of inputs is bounded. Evicting entries would hide native
+      // changes, so an oversized fingerprint is an error.
+      const sources = Array.from({ length: MAX_FINGERPRINT_SOURCES + 1 }, (_, index) => ({
+        type: 'file',
+        filePath: `file-${index}`,
+        hash: 'h',
+      }));
+
+      expect(() => nativeInputs({ sources }, hashDir)).toThrow(/more than/);
+      expect(nativeInputs({ sources: sources.slice(1) }, hashDir).size).toBe(MAX_FINGERPRINT_SOURCES);
     });
 
     it('does not let two sources with the same package path hide each other', () => {
