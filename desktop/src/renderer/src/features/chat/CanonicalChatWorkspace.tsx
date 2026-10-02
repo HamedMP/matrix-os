@@ -20,7 +20,7 @@ import {
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { createChatMentionRequestTracker } from "@matrix-os/ui";
 import { ChatMentionControls, useChatMentionPermission } from "@matrix-os/ui";
-import { BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { ChatSharingButton } from "./ChatSharingButton";
 import { ChatContextMenu } from "@matrix-os/ui";
 import { openChatWebLink } from "./chat-web-navigation";
@@ -137,6 +137,7 @@ export function CanonicalChatWorkspace({
   const fileNavigation = useChatFileNavigation();
   const chromeHost = useSurfaceChromeHost();
   const botHeaderContainer = useContext(BotHeaderContext);
+  const reportBotHeaderBinding = useContext(BotHeaderBindingContext);
   const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
@@ -242,6 +243,10 @@ export function CanonicalChatWorkspace({
   });
   const botBinding = useDirectBotBinding(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
   const directBotId = botBinding.agentId;
+  useEffect(() => {
+    if (explicitSharedRoute || !routedComposerChatId || !reportBotHeaderBinding) return;
+    return reportBotHeaderBinding({ chatId: routedComposerChatId, client, status: botBinding.status, agentId: directBotId });
+  }, [explicitSharedRoute, routedComposerChatId, client, reportBotHeaderBinding, botBinding.status, directBotId]);
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error";
   const selection = botIdentityUnknown ? null : directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : providerSelection;
   const selectionAvailable = !botIdentityUnknown && Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));

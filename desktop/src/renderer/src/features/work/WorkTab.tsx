@@ -1,4 +1,4 @@
-import { useDirectBotBinding, mergeCanonicalChatRecord } from "@matrix-os/ui";
+import { mergeCanonicalChatRecord } from "@matrix-os/ui";
 import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
 import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
@@ -37,7 +37,8 @@ import ProjectChatsView from "../project/ProjectChatsView";
 import ProjectsIndex from "../project/ProjectsIndex";
 import { WorkRail } from "./WorkRail";
 import { WorkFilesInspector } from "./WorkFilesInspector";
-import { BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { useWorkBotHeaderBinding } from "./use-work-bot-header-binding";
 import { OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
 import type { WorkFilesScope } from "./work-files-scope";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
@@ -289,7 +290,9 @@ function WorkTabContent({
     });
   }, [api, authGeneration, hostedRuntime, runtimeSlot, visible]);
   const client = hostedRuntime?.client ?? localClient;
-  const chromeBotBinding = useDirectBotBinding(sharedScopeId ? undefined : initialChatId, client?.agents);
+  const { agentId: headerAgentId, report: reportContentBinding } = useWorkBotHeaderBinding({
+    client, chatId: initialChatId, sharedScopeId, runtimeSlot, authGeneration, route, projectSlug, initialChatView,
+  });
   const agentsNavigation = useChatAgentsNavigation();
   const agentsOpen = Boolean(client?.agents && agentsNavigation?.opened?.client === client.agents);
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
@@ -785,7 +788,7 @@ function WorkTabContent({
       className="no-drag pointer-events-auto flex items-center gap-1" />
   ) : sharingControl, [sharedScopeId, sharingControl]);
   const chromeSpec = useMemo(() => ({
-    title: agentsOpen ? "Agents" : chromeBotBinding.agentId
+    title: agentsOpen ? "Agents" : headerAgentId
       ? <div ref={setBotHeaderContainer} data-slot="desktop-bot-header" className="no-drag pointer-events-auto h-12 min-w-0 w-full" />
       : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
@@ -807,7 +810,7 @@ function WorkTabContent({
         </PaneButton>
       </div>
     ) : sharedChromeSlot,
-  }), [agentsOpen, chromeBotBinding.agentId, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+  }), [agentsOpen, headerAgentId, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;
@@ -905,13 +908,15 @@ function WorkTabContent({
             ? "hidden"
             : "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"}
         >
-          <BotHeaderContext.Provider value={!agentsOpen && chromeBotBinding.agentId ? botHeaderContainer : null}>
+          <BotHeaderBindingContext.Provider value={sharedScopeId ? null : reportContentBinding}>
+          <BotHeaderContext.Provider value={!agentsOpen && headerAgentId ? botHeaderContainer : null}>
           <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
             onOpenBotChat={openBotChat}>
             {content}
             {draftInspector}
           </ChatAgentsContent>
           </BotHeaderContext.Provider>
+          </BotHeaderBindingContext.Provider>
         </div>
       </div>
     </div>

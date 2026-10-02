@@ -5,7 +5,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
-import { SurfaceChromeContext, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
+import { BotHeaderBindingContext, SurfaceChromeContext, type BotHeaderBindingReport, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
+import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
+import { createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical-chat-workspace-test-utils";
+import { clientFixture, saved } from "./chat-agents-fixture";
+import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useBoard, type Project } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
@@ -30,6 +34,8 @@ function DraftHarness({ chatId }: { chatId?: string }) {
   </>;
 }
 const chatTabProps = vi.hoisted(() => ({
+  contentClient: null as CanonicalChatClient | null,
+  bindingReporters: [] as Array<(binding: BotHeaderBindingReport) => () => void>,
   tabIds: [] as Array<string | undefined>,
   draftRequests: [] as Array<{ id: number; text: string } | null | undefined>,
 }));
@@ -74,7 +80,7 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", async (importOriginal) =
 });
 
 vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
-  default: ({
+  default: function MockChatTab({
     tabId,
     initialChatId,
     eventSource,
@@ -88,10 +94,14 @@ vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
     renderInspector?: (detail: unknown) => React.ReactNode;
     inspectorExclusive?: boolean;
     draftRequest?: { id: number; text: string } | null;
-  }) => {
+  }) {
+    const report = React.useContext(BotHeaderBindingContext);
+    React.useEffect(() => { if (report) chatTabProps.bindingReporters.push(report); }, [report]);
     chatTabProps.tabIds.push(tabId);
     chatTabProps.draftRequests.push(draftRequest);
     eventSourceProps.chat.push(eventSource);
+    if (chatTabProps.contentClient) return <CanonicalChatWorkspace client={chatTabProps.contentClient}
+      initialChatId={initialChatId} initialView="conversation" active catalog={providerCatalog} externalNavigation />;
     return (
       <>
         <main aria-hidden={inspectorExclusive || undefined}>Chat center
@@ -225,6 +235,16 @@ function chat(id: string, title: string, projectId?: string): CanonicalChatRecor
 }
 
 const globalChat = chat("chat_global", "Global chat");
+function botContentClient(directBot: () => Promise<string | null>) {
+  const content = createCanonicalChatWorkspaceClient();
+  vi.mocked(content.getDetail).mockResolvedValue({ record: globalChat, messages: [], turns: [], runs: [], activities: [] });
+  const agents = clientFixture();
+  agents.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipeRef: { recipeId: "writer", version: "1" } }] });
+  agents.bots = { directBot, interactions: vi.fn(async () => []), tasks: vi.fn(async () => []),
+    authority: vi.fn(async () => ({ grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) } as never;
+  content.agents = agents;
+  return content;
+}
 const projectChat = chat("chat_alpha", "Alpha chat", "project_alpha_id");
 
 function activeWorkTab() {
@@ -258,6 +278,8 @@ describe("WorkTab rail integration", () => {
     resizeObserverEntries.length = 0;
     inspectorProps.active = [];
     chatTabProps.tabIds = [];
+    chatTabProps.contentClient = null;
+    chatTabProps.bindingReporters = [];
     chatTabProps.draftRequests = [];
     eventSourceProps.rail = [];
     eventSourceProps.chat = [];
@@ -763,9 +785,7 @@ describe("WorkTab rail integration", () => {
   });
 
   it("replaces the generic title with a Bot identity target on the existing native toolbar after authenticated binding", async () => {
-    const api = useConnection.getState().api!;
-    const original = api.get;
-    api.get = vi.fn(async (path: string) => path === "/api/chats/chat_global/bot" ? {agentId:"bot_writer01"} : original(path)) as typeof api.get;
+    chatTabProps.contentClient = botContentClient(vi.fn(async () => saved.id));
     function HostedBot() {
       const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
       const host = React.useMemo(() => ({setChrome}), []);
@@ -776,6 +796,87 @@ describe("WorkTab rail integration", () => {
     await waitFor(()=>expect(document.querySelector("header [data-slot='desktop-bot-header']")).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Rename Chat" })).toBeNull();
     expect(within(document.querySelector("header")!).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
+  });
+
+  it("recovers the same toolbar when its Bot query failed and content resolves identity after Retry", async () => {
+    const api = useConnection.getState().api!;
+    const original = api.get;
+    api.get = vi.fn(async (path: string) => {
+      if (path === "/api/chats/chat_global/bot") throw new Error("temporary toolbar lookup");
+      return original(path);
+    }) as typeof api.get;
+    const directBot = vi.fn().mockRejectedValueOnce(new Error("temporary content lookup")).mockResolvedValue(saved.id);
+    chatTabProps.contentClient = botContentClient(directBot);
+    function HostedBot() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header data-testid="recovered-bot-toolbar">{chrome?.title}{chrome?.rightActions}</header>
+        <WorkTab route="chat" active initialChatId="chat_global" initialChatTitle="Global chat" initialChatView="conversation" />
+      </SurfaceChromeContext.Provider>;
+    }
+    render(<HostedBot />);
+    const retry = await screen.findByRole("button", { name: "Retry", exact: true });
+    expect(screen.queryByRole("button", { name: "Choose model and connection" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Choose bot agent and model" })).toBeNull();
+    fireEvent.click(retry);
+    await screen.findByRole("button", { name: "Choose bot agent and model" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Details" }).closest("header")).toBe(screen.getByTestId("recovered-bot-toolbar")));
+    expect(screen.queryByRole("button", { name: "Rename Global chat" })).toBeNull();
+    expect(document.querySelectorAll(".matrix-bot-identity-bar")).toHaveLength(1);
+    expect(directBot).toHaveBeenCalledTimes(2);
+    expect(api.get).not.toHaveBeenCalledWith("/api/chats/chat_global/bot");
+  });
+
+  it("rejects stale content identity reports after changing Chat or runtime authority", async () => {
+    function HostedBot({ chatId }: { chatId: string }) {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}</header>
+        <WorkTab route="chat" active initialChatId={chatId} initialChatTitle={`Title ${chatId}`} initialChatView="conversation" />
+      </SurfaceChromeContext.Provider>;
+    }
+    const view = render(<HostedBot chatId="chat_global" />);
+    await waitFor(() => expect(chatTabProps.bindingReporters.length).toBeGreaterThan(0));
+    const firstChatReport = chatTabProps.bindingReporters.at(-1)!;
+    const reportClient = {};
+    act(() => firstChatReport({ chatId: "chat_global", client: reportClient, status: "bot", agentId: saved.id }));
+    await waitFor(() => expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeTruthy());
+    view.rerender(<HostedBot chatId="chat_other" />);
+    await waitFor(() => expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull());
+    act(() => firstChatReport({ chatId: "chat_global", client: reportClient, status: "bot", agentId: saved.id }));
+    expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull();
+    const oldRuntimeReport = chatTabProps.bindingReporters.at(-1)!;
+    act(() => useConnection.setState({ api: { ...useConnection.getState().api!, baseUrl: "https://preview.matrix.test" }, runtimeSlot: "preview", authGeneration: 2 }));
+    await waitFor(() => expect(chatTabProps.bindingReporters.at(-1)).not.toBe(oldRuntimeReport));
+    act(() => oldRuntimeReport({ chatId: "chat_other", client: reportClient, status: "bot", agentId: saved.id }));
+    expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull();
+    const currentReport = chatTabProps.bindingReporters.at(-1)!;
+    act(() => currentReport({ chatId: "chat_global", client: reportClient, status: "bot", agentId: saved.id }));
+    expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull();
+    let releaseOld!: () => void;
+    act(() => { releaseOld = currentReport({ chatId: "chat_other", client: reportClient, status: "bot", agentId: saved.id }); });
+    act(() => currentReport({ chatId: "chat_other", client: reportClient, status: "bot", agentId: saved.id }));
+    act(() => releaseOld());
+    expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeTruthy();
+    act(() => currentReport({ chatId: "chat_other", client: {}, status: "ordinary", agentId: null }));
+    expect(screen.getByRole("button", { name: "Rename Title chat_other" })).toBeTruthy();
+  });
+
+  it("releases the Bot toolbar identity when canonical content unmounts without changing Chat", async () => {
+    chatTabProps.contentClient = botContentClient(vi.fn(async () => saved.id));
+    function HostedBot() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}</header>
+        <WorkTab route="chat" active initialChatId="chat_global" initialChatTitle="Global chat" initialChatView="conversation" />
+      </SurfaceChromeContext.Provider>;
+    }
+    const view = render(<HostedBot />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Details" }).closest("header")).toBeTruthy());
+    chatTabProps.contentClient = null;
+    view.rerender(<HostedBot />);
+    await waitFor(() => expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull());
+    expect(screen.getByRole("button", { name: "Rename Global chat" })).toBeTruthy();
   });
 
   it("leaves the sidebar trigger to OSWindow while registering shared Chat chrome", async () => {
