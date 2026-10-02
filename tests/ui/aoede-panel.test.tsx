@@ -70,6 +70,29 @@ describe("AoedePanel standalone presentation", () => {
     expect(screen.getByText("Microphone off")).toBeVisible();
   });
 
+  it.each([
+    ["thinking", {}],
+    ["using_tool", {}],
+    ["listening", { utterance: "Draft words", provisional: true }],
+  ] as const)("shows Chat-style working dots during %s work", (status, captions) => {
+    setup({ status, captions });
+    const dots = screen.getByTestId("aoede-working-indicator");
+    expect(dots).toHaveAttribute("aria-hidden", "true");
+    expect(dots.children).toHaveLength(3);
+  });
+
+  it.each(["idle", "listening", "speaking", "paused"] as const)("does not show working dots while %s", (status) => {
+    setup({ status });
+    expect(screen.queryByTestId("aoede-working-indicator")).not.toBeInTheDocument();
+  });
+
+  it("suppresses working-dot animation while an approval decision is required", async () => {
+    setup({ status: "thinking", children: <section aria-label="Action approval"><div role="group" aria-label="Approval decision">Approve</div></section> });
+    expect(screen.getByTestId("aoede-working-indicator")).toBeInTheDocument();
+    const css = await readFile(`${process.cwd()}/packages/ui/src/aoede/aoede-panel.css`, "utf8");
+    expect(css).toMatch(/:has\(\[aria-label="Approval decision"\]\)[^{]*matrix-aoede__working-dots\s*{[^}]*display:\s*none/);
+  });
+
   it("starts with one gesture: no interstitial confirmation and no second button", () => {
     const view = setup();
     const start = screen.getByRole("button", { name: "Start" });
