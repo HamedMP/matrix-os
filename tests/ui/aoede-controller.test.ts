@@ -399,6 +399,35 @@ describe("Aoede shell owner", () => {
     ]) h.controller.openNavigation(bad);
     expect(nav).toHaveBeenCalledTimes(2); h.controller.dispose();
   });
+  it("discovers the first action through contiguous content events and opens its completed navigation", async () => {
+    const nav = vi.fn();
+    const initial = { ...runningDetail(), operations: [] };
+    const h = harness(undefined, initial, { onOpenNavigation: nav });
+    await h.controller.open();
+    const runId = initial.runs[0]!.id;
+    const action = { ...operationView, runId, toolId: "matrix_open_app", state: "running" as const };
+    const emit = (revision: number, state: "running" | "succeeded") => {
+      const record = { ...initial.record, chat: { ...initial.record.chat, revision } };
+      const activity = { id: "activity_open", chatId: binding.chatId, runId,
+        occurredAt: initial.record.chat.createdAt, type: "tool.progress" as const,
+        toolCallId: action.id, label: "matrix_open_app", status: state === "running" ? "running" as const : "completed" as const };
+      h.detailFn.mockResolvedValue({ ...initial, record, activities: [activity], operations: [{ ...action, state,
+        ...(state === "succeeded" ? { result: { navigation: { kind: "open_app" as const, app: "notes", path: "apps/notes" } } } : {}) }] });
+      const event = { chatId: binding.chatId, cursor: revision, revision, eventType: "run.activity" as const, createdAt: initial.record.chat.createdAt };
+      h.source.subscribe.mock.calls[0]![0]({ type: "chat.changed", ...event,
+        content: { type: "chat.content", event, content: { record, activities: [activity] } } });
+    };
+    emit(1, "running");
+    await vi.waitFor(() => expect(h.controller.getSnapshot().canonical.operations).toEqual([expect.objectContaining({ id: action.id, state: "running" })]));
+    expect(nav).not.toHaveBeenCalled();
+    emit(2, "succeeded");
+    await vi.waitFor(() => expect(nav).toHaveBeenCalledWith({ app: "notes", path: "apps/notes" }));
+    expect(h.controller.getSnapshot().canonical.navigation?.operationId).toBe(action.id);
+    emit(2, "succeeded");
+    await h.controller.refresh();
+    expect(nav).toHaveBeenCalledTimes(1);
+    h.controller.dispose();
+  });
   it("automatically opens newly succeeded navigation once, but not history or unsafe results", async () => {
     const nav = vi.fn();
     const historical = { ...operationView, id: "action_history", state: "succeeded" as const,
@@ -420,6 +449,24 @@ describe("Aoede shell owner", () => {
     h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision: 2 } }, operations: [malicious, succeeded, historical] });
     await h.controller.refresh();
     expect(nav).toHaveBeenCalledTimes(1);
+    h.controller.dispose();
+  });
+  it("streams contiguous message content without refetching action details for every token", async () => {
+    const initial = { ...runningDetail(), operations: [operationView] };
+    const h = harness(undefined, initial);
+    await h.controller.open();
+    for (const [revision, offset, text] of [[1, 0, "Hello"], [2, 5, " world"]] as const) {
+      const event = { chatId: binding.chatId, cursor: revision, revision, eventType: "run.message" as const, createdAt: initial.record.chat.createdAt };
+      h.source.subscribe.mock.calls[0]![0]({ type: "chat.changed", ...event,
+        content: { type: "chat.content", event, content: {
+          record: { ...initial.record, chat: { ...initial.record.chat, revision } },
+          messageDelta: { message: { id: "msg_stream", chatId: binding.chatId, seq: 100,
+            role: "assistant", state: "pending", runId: initial.runs[0]!.id,
+            createdAt: initial.record.chat.createdAt, parts: [{ type: "text", text }] }, partIndex: 0, offset },
+        } } });
+    }
+    expect(h.controller.getSnapshot().canonical.captions.response).toBe("Hello world");
+    expect(h.detailFn).toHaveBeenCalledTimes(1);
     h.controller.dispose();
   });
   it("does not replay navigation completed while the controller is hidden or reconnecting", async () => {

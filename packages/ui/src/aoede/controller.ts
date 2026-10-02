@@ -243,9 +243,9 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       if (event.type === "chat.changed" && event.eventType === "chat.deleted") { fail(new AoedeRequestError(410)); return; }
       if (event.type === "chat.changed" && event.content && detail) {
         const next = applyCanonicalChatContent(detail, event.content);
-        // A clean content merge carries the prior operations array unchanged —
-        // refetch so operation state transitions do not go stale.
-        if (next) { acceptDetail(next); if (!next.operations?.length) return; }
+        // Content frames never carry operations. Discover new/changed actions
+        // on activity and lifecycle events, without refetching for text deltas.
+        if (next) { acceptDetail(next); if (event.eventType === "run.message") return; }
       }
       void refresh();
     });
