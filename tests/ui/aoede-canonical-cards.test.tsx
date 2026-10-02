@@ -58,10 +58,35 @@ it("canonical cancellation remains available after media End without stopping sp
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel generation" })); });
   expect(controller.cancelGeneration).toHaveBeenCalledTimes(1); expect(controller.stopSpeaking).not.toHaveBeenCalled();
 });
-it("renders real terminal progress without percentage or fabricated success", () => {
+it("keeps failed activity visible without percentage or fabricated success", () => {
   const projection = { ...projectAoedeCanonical(null), progress: [{ id: "tool_1", kind: "tool", state: "failed", label: "Create app" }], outcome: "failed" } as ReturnType<typeof projectAoedeCanonical>;
   const { container } = render(<AoedeCanonicalCards projection={projection} controller={{} as AoedeController} />);
   expect(screen.getByText("Create app")).toBeTruthy(); expect(screen.getByText("Failed")).toBeTruthy(); expect(container.textContent).not.toContain("100%");
+});
+
+it("collapses duplicate technical activity into a distinct tool-call count with friendly labels", () => {
+  const projection = {
+    ...projectAoedeCanonical(null), runId: "run_live",
+    progress: [
+      { id: "activity_list", kind: "tool", state: "running", label: "List installed apps" },
+      { id: "activity_open", kind: "tool", state: "completed", label: "Open Timer" },
+    ],
+    operations: [
+      operationView({ id: "operation_list", toolId: "matrix_list_apps", state: "running" }),
+      operationView({ id: "operation_open", toolId: "matrix_open_app", state: "succeeded" }),
+    ],
+  } as ReturnType<typeof projectAoedeCanonical>;
+  render(<AoedeCanonicalCards projection={projection} controller={{} as AoedeController} />);
+  const disclosure = screen.getByRole("button", { name: "2 tools" });
+  expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText("List installed apps")).toBeNull();
+  expect(screen.queryByText("matrix_list_apps")).toBeNull();
+  fireEvent.click(disclosure);
+  expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByText("List installed apps")).toBeTruthy();
+  expect(screen.getByText("Open Timer")).toBeTruthy();
+  expect(screen.queryByText("matrix_list_apps")).toBeNull();
+  expect(screen.queryByText("matrix_open_app")).toBeNull();
 });
 
 function operationView(overrides: Partial<CanonicalOperationView> = {}): CanonicalOperationView {
@@ -81,7 +106,7 @@ function operationView(overrides: Partial<CanonicalOperationView> = {}): Canonic
   };
 }
 
-it("renders per-operation status for the active run with exact state labels and no arguments", async () => {
+it("keeps cancellable operations visible and hides non-active-run operations", async () => {
   const operations = [
     operationView({ id: "action_card_run", state: "running" }),
     operationView({ id: "action_card_wait", state: "waiting_for_approval" }),
@@ -97,9 +122,8 @@ it("renders per-operation status for the active run with exact state labels and 
     projection={projection as ReturnType<typeof projectAoedeCanonical>}
     controller={{ cancelAction: vi.fn(async () => "requested") } as unknown as AoedeController}
   />);
-  expect(screen.getByText("Running")).toBeTruthy();
   expect(screen.getByText("Waiting for approval")).toBeTruthy();
-  expect(screen.getAllByText("matrix_open_app")).toHaveLength(2);
+  expect(screen.getAllByText("Open app")).toHaveLength(2);
   // Operations on other runs stay in the projection but do not get cards.
   expect(screen.queryByText("Proposed")).toBeNull();
   expect(container.textContent).not.toContain("claim");

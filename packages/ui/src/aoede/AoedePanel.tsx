@@ -145,7 +145,6 @@ export function AoedePanel({
   const displayTitle = boundedAoedeText(title, 80) || "Aoede";
   const actionCopy = aoedeActionCopy(capability);
   const canStart = status === "idle" || status === "ended";
-  const showWorking = status === "thinking" || status === "using_tool" || captions.provisional === true;
   // Fail closed: an omitted canCancel means "not qualified", never "show it
   // anyway". When canonical children render, the CancellationCard inside owns
   // the affordance — the built-in button is the fallback for card-free panels.
@@ -182,12 +181,7 @@ export function AoedePanel({
           <span className="matrix-aoede__orb-glass" />
         </div>
         <div role="status" aria-live="polite" aria-atomic="true" className="matrix-aoede__status">
-          <p className="matrix-aoede__literal">
-            <span>{AOEDE_STATUS_LABELS[status]}</span>
-            {showWorking ? <span className="matrix-aoede__working-dots" data-testid="aoede-working-indicator" aria-hidden="true">
-              <span /><span /><span />
-            </span> : null}
-          </p>
+          <p className="matrix-aoede__literal">{AOEDE_STATUS_LABELS[status]}</p>
           <p className="matrix-aoede__meta">
             <span className="matrix-aoede__mic" data-active={microphoneActive}>{microphoneActive ? "Microphone active" : "Microphone off"}</span>
             <span className="matrix-aoede__scope">{boundedAoedeText(scopeLabel, 160)}</span>

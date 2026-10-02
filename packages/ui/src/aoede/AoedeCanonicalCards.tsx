@@ -19,6 +19,16 @@ const operationStates: Record<CanonicalOperationView["state"], string> = {
   timed_out: "Timed out",
   outcome_unknown: "Outcome unknown — will be reconciled",
 };
+function friendlyToolLabel(toolId: string): string {
+  const words = toolId.replace(/^matrix_/, "").replace(/[_-]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "Tool";
+}
+function WrenchIcon() {
+  return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5-5L12 3.6 9.6 6 7.3 3.7a4 4 0 0 0 5 5L4 17a2.1 2.1 0 1 0 3 3l8.3-8.3a4 4 0 0 0 5-5L18 9l-2.4-2.4 2.3-2.3a4 4 0 0 0-3.2 2Z" /></svg>;
+}
+function ChevronIcon() {
+  return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>;
+}
 function ApprovalCard({ view, controller }: { view: CanonicalChatApprovalView; controller: AoedeController }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -73,12 +83,23 @@ function OperationCard({ view, cancellable, controller }: {
     catch (error: unknown) { console.warn("[aoede] action cancellation unavailable", error instanceof Error ? error.name : "UnknownError"); setFailed(true); }
     finally { setBusy(false); }
   };
-  return <section aria-label={`Action ${view.toolId}`}>
-    <p><span>{view.toolId}</span> · <span>{operationStates[view.state]}</span></p>
+  return <section aria-label={`Action ${friendlyToolLabel(view.toolId)}`}>
+    <p><span>{friendlyToolLabel(view.toolId)}</span> · <span>{operationStates[view.state]}</span></p>
     {view.cancellationRequested ? <p>Cancel requested</p> : null}
     {requested ? <p>Cancel requested — the effect may still complete</p> : null}
     {cancellable ? <button type="button" disabled={busy} onClick={() => void cancel()}>{busy ? "Cancelling…" : "Cancel action"}</button> : null}
     {failed ? <p role="alert">The action could not be cancelled. Its current state is shown above.</p> : null}
+  </section>;
+}
+type ToolDetail = { id: string; label: string; state: string };
+function ToolDisclosure({ tools }: { tools: ToolDetail[] }) {
+  const [open, setOpen] = useState(false);
+  const label = `${tools.length} ${tools.length === 1 ? "tool" : "tools"}`;
+  return <section className="matrix-aoede__tool-card">
+    <button type="button" aria-label={label} aria-expanded={open} onClick={() => setOpen(value => !value)}>
+      <span><WrenchIcon /><strong>{label}</strong></span><ChevronIcon />
+    </button>
+    {open ? <ul>{tools.map(tool => <li key={tool.id}><span>{tool.label}</span><span>{tool.state}</span></li>)}</ul> : null}
   </section>;
 }
 export interface AoedeCanonicalCardsProps { projection: AoedeCanonicalProjection; controller: AoedeController }
@@ -86,17 +107,35 @@ export interface AoedeCanonicalCardsProps { projection: AoedeCanonicalProjection
 export function AoedeCanonicalCards({ projection, controller }: AoedeCanonicalCardsProps) {
   const runOperations = projection.operations.filter(operation => operation.runId === projection.runId);
   const cancellable = new Set(projection.cancellableActionIds);
+  const exposedOperations = runOperations.filter(operation => cancellable.has(operation.id)
+    || operation.cancellationRequested || operation.state === "failed" || operation.state === "outcome_unknown");
+  const exposedOperationIds = new Set(exposedOperations.map(operation => operation.id));
+  const hiddenOperations = runOperations.filter(operation => !exposedOperationIds.has(operation.id));
+  const hiddenProgress = projection.progress.filter(activity => activity.state !== "failed");
+  // Progress and operation views describe the same calls through different canonical
+  // channels. Pair them one-for-one, preferring operation IDs for stable identity and
+  // activity labels for readable copy, rather than counting state updates twice.
+  const technicalTools: ToolDetail[] = Array.from({ length: Math.max(hiddenProgress.length, hiddenOperations.length) }, (_, index) => {
+    const activity = hiddenProgress[index];
+    const operation = hiddenOperations[index];
+    return {
+      id: operation?.id ?? activity!.id,
+      label: activity?.label || friendlyToolLabel(operation!.toolId),
+      state: activity?.state === "completed" ? "Done" : activity?.state ? friendlyToolLabel(activity.state) : operationStates[operation!.state],
+    };
+  });
   return <>
     {projection.approvals.map(view => <ApprovalCard key={`${view.runId}:${view.approvalId}:${view.argumentDigest}`} view={view} controller={controller} />)}
     {projection.inputs.map(request => <CanonicalChatInputForm key={`${request.runId}:${request.requestId}:${request.id}`} request={request} onSubmit={answer => controller.submitInput(request, answer)} />)}
-    {projection.progress.length ? <section aria-label="Canonical activity"><h3>Activity</h3><ul>{projection.progress.map(activity =>
+    {technicalTools.length ? <ToolDisclosure tools={technicalTools} /> : null}
+    {projection.progress.some(activity => activity.state === "failed") ? <section aria-label="Activity errors"><h3>Errors</h3><ul>{projection.progress.filter(activity => activity.state === "failed").map(activity =>
       <li key={`${projection.runId}:${activity.id}`}><span>{activity.label}</span><span> · {activity.state}</span>
         {activity.subagent ? <span> · Delegated work</span> : null}</li>)}</ul></section> : null}
-    {runOperations.map(view => <OperationCard key={view.id} view={view}
+    {exposedOperations.map(view => <OperationCard key={view.id} view={view}
       cancellable={cancellable.has(view.id)} controller={controller} />)}
     {projection.outcomeUnknown.length ? <p role="status">The action's outcome is unknown; it will be reconciled — not retried.</p> : null}
     {projection.canCancel ? <CancellationCard key={projection.runId} controller={controller} /> : null}
-    {projection.outcome ? <p role="status">{projection.outcome === "completed" ? "Completed" : projection.outcome === "aborted" ? "Generation cancelled" : "Failed"}</p> : null}
+    {projection.outcome && projection.outcome !== "completed" ? <p role="status">{projection.outcome === "aborted" ? "Generation cancelled" : "Failed"}</p> : null}
     {projection.navigation ? <button type="button" onClick={() => controller.openNavigation({ app: projection.navigation!.app, path: projection.navigation!.path })}>Open {projection.navigation.app}</button> : null}
     {projection.artifacts.length ? <section aria-label="Results"><h3>Results</h3>{projection.artifacts.map(artifact =>
       <button type="button" key={artifact.path} onClick={() => controller.openResult(artifact.path)}>Open result: {artifact.label}</button>)}</section> : null}
