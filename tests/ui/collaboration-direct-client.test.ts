@@ -14,6 +14,10 @@ import { CollaborationDirectError, createCollaborationDirectClient } from "../..
 import { createCollaborationDirectApi } from "../../packages/ui/src/collaboration/direct-api.js";
 import { CLIENT_ORIGIN, PLATFORM, RELAY, actorId, fakeDirectWorld, otherScopeId, runtimeId, scopeId, type Json } from "../helpers/collaboration-direct-world.js";
 
+/** Real-time wait for Web Crypto and fetch work that fake timers do not drive. */
+const realSetTimeout = setTimeout;
+const settle = () => new Promise<void>((resolve) => { realSetTimeout(resolve, 50); });
+
 describe("collaboration direct client", () => {
   let world: ReturnType<typeof fakeDirectWorld>;
   beforeEach(() => { world = fakeDirectWorld(); });
@@ -228,6 +232,73 @@ describe("collaboration direct client", () => {
     expect(unavailable).toHaveBeenCalledTimes(2);
     expect(world.sockets).toHaveLength(2);
     expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(1);
+  });
+
+  it("keeps a terminal stream the home reports temporarily unavailable retrying, backing off until it is admitted again", async () => {
+    // Spec 535 FR-027: a missing server dependency is retryable and never reads as ended access.
+    vi.useFakeTimers();
+    const direct = client();
+    const handlers = {
+      onReady: vi.fn(), onOutput: vi.fn(), onState: vi.fn(), onRefreshRequired: vi.fn(),
+      onUnavailable: vi.fn(), onTemporarilyUnavailable: vi.fn(), onDisconnected: vi.fn(),
+    };
+    direct.subscribeTerminal(scopeId, handlers);
+    const refuse = (index: number) => {
+      const socket = world.sockets[index]!;
+      socket.onopen?.();
+      socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.unavailable", scopeId, resourceId: "terminal_unavailable",
+        authorityGeneration: "3", incarnation: "terminal-unavailable", code: "unavailable" }) });
+      expect(socket.close).toHaveBeenCalledWith(1000, "Unavailable");
+      socket.onclose?.();
+    };
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1), { interval: 1 });
+    refuse(0);
+    expect(handlers.onTemporarilyUnavailable).toHaveBeenCalledOnce();
+    expect(handlers.onUnavailable).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(500);
+    await settle();
+    expect(world.sockets).toHaveLength(2);
+    // The home upgraded the socket before refusing it, so an open alone must not reset the backoff.
+    refuse(1);
+    await vi.advanceTimersByTimeAsync(500);
+    await settle();
+    expect(world.sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(500);
+    await settle();
+    expect(world.sockets).toHaveLength(3);
+    // Admission resets it: the next drop re-dials at the base delay.
+    const admitted = world.sockets[2]!;
+    admitted.onopen?.();
+    admitted.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.ready", scopeId, resourceId: "terminal-1", authorityGeneration: "3",
+      incarnation: `terminal-${"a".repeat(32)}`, connectionId: "connection_1", sequence: "0", terminal: terminalProjection() }) });
+    expect(handlers.onReady).toHaveBeenCalledOnce();
+    admitted.onclose?.();
+    await vi.advanceTimersByTimeAsync(500);
+    await settle();
+    expect(world.sockets).toHaveLength(4);
+    expect(handlers.onUnavailable).not.toHaveBeenCalled();
+    expect(handlers.onTemporarilyUnavailable).toHaveBeenCalledTimes(2);
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(4);
+  });
+
+  it("reconnects an event stream the home reports temporarily unavailable instead of ending it", async () => {
+    vi.useFakeTimers();
+    const direct = client();
+    const onUnavailable = vi.fn();
+    const states: string[] = [];
+    direct.subscribeEvents(scopeId, { onEvent: vi.fn(), onUnavailable, onConnectionChange: (state) => states.push(state) });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1), { interval: 1 });
+    const socket = world.sockets[0]!;
+    socket.onopen?.();
+    socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "unavailable", scopeId, resourceId: "chat-1", authorityGeneration: "3", code: "unavailable" }) });
+    expect(onUnavailable).not.toHaveBeenCalled();
+    expect(states).toEqual(["reconnecting"]);
+    expect(socket.close).toHaveBeenCalledWith(1000, "Unavailable");
+    socket.onclose?.();
+    await vi.advanceTimersByTimeAsync(500);
+    await settle();
+    expect(world.sockets).toHaveLength(2);
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "events")).toHaveLength(2);
   });
 
   it("fences an exchange completed after sign-out and does not restore its session", async () => {

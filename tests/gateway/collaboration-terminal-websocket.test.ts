@@ -97,9 +97,7 @@ describe("shared terminal WebSocket", () => {
       upgradeWebSocket,
       verifier,
       authority,
-      dispatcher,
-      registry,
-      control,
+      terminal: { dispatcher, registry, control },
       createConnectionId: () => "connection_editor",
       now: () => now,
     });
@@ -208,9 +206,7 @@ describe("shared terminal WebSocket", () => {
       upgradeWebSocket,
       verifier,
       authority,
-      dispatcher,
-      registry,
-      control,
+      terminal: { dispatcher, registry, control },
       createConnectionId: () => "connection_read_only",
       now: () => now,
     });
@@ -299,7 +295,7 @@ describe("shared terminal WebSocket", () => {
     });
     const app = new Hono();
     registerCollaborationTerminalWebSocketRoute({
-      app, upgradeWebSocket, verifier, authority, dispatcher, registry, control,
+      app, upgradeWebSocket, verifier, authority, terminal: { dispatcher, registry, control },
       createConnectionId: () => "connection_flood",
       now: () => now,
     });
@@ -346,6 +342,60 @@ describe("shared terminal WebSocket", () => {
     releaseInput();
     // Drain the accepted frames so nothing is left pending when the fixture is destroyed.
     await vi.waitFor(() => expect(terminal.input.mock.calls.length).toBe(16));
+  });
+
+  it("stays mounted without the shared terminal and answers a retryable unavailable after authorization", async () => {
+    // Issue #1829 / spec 535 FR-027: a missing dependency never falls through to a not-found.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const repository = new CollaborationRepository(fixture.db, { now: () => now });
+    const authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition: allowAllOrganizationPrecondition });
+    const authorize = vi.spyOn(authority, "authorize");
+    let socketEvents: WSEvents<unknown> | undefined;
+    const upgradeWebSocket = ((factory: (context: Context) => WSEvents<unknown>) => (
+      async (context: Context) => {
+        socketEvents = factory(context);
+        return context.text("upgrade captured");
+      }
+    )) as unknown as UpgradeWebSocket;
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: collaborationIds.runtime,
+      keys: { "collaboration-key-1": key },
+      now: () => now,
+      authority,
+    });
+    const app = new Hono();
+    registerCollaborationTerminalWebSocketRoute({ app, upgradeWebSocket, verifier, authority, now: () => now });
+    const signer = new CollaborationProofSigner({
+      activeKeyId: "collaboration-key-1",
+      keys: { "collaboration-key-1": key },
+      now: () => now,
+      createNonce: () => "d".repeat(32),
+    });
+    const proof = signer.signSocket({
+      actorId: collaborationActors.editor,
+      ownerId: collaborationActors.owner,
+      runtimeId: collaborationIds.runtime,
+      scopeId: collaborationIds.scope,
+      purpose: "terminal",
+      path,
+    });
+    const response = await app.request(path, { headers: { "x-matrix-collaboration-proof": encoded(proof) } });
+    expect(response.status).not.toBe(404);
+    const ws = { send: vi.fn(), close: vi.fn(), bufferedAmount: 0 };
+    socketEvents!.onOpen?.({} as never, ws as never);
+    await vi.waitFor(() => expect(ws.close).toHaveBeenCalledWith(1013, "Unavailable"));
+    expect(authorize).toHaveBeenCalled();
+    expect(parsedFrames(ws)).toEqual([{
+      version: 1,
+      type: "terminal.unavailable",
+      scopeId: collaborationIds.scope,
+      resourceId: "terminal_unavailable",
+      authorityGeneration: "1",
+      incarnation: "terminal-unavailable",
+      code: "unavailable",
+    }]);
+    expect(warn).toHaveBeenCalledWith("[collaboration-terminal-ws] shared terminal dependency missing");
+    socketEvents!.onClose?.({} as never, ws as never);
   });
 });
 
