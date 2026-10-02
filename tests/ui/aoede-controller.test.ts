@@ -230,13 +230,39 @@ it("client calls providers, PATCH selection and POST action cancel with schema v
 });
 
 describe("Aoede shell owner", () => {
-  it.each(["refresh", "mutation"])("keeps live microphone truth on transient %s failure", async failure => {
+  it.each([new DOMException("Timed out", "TimeoutError"), new AoedeRequestError(503)])("does not report a passive refresh failure as a live voice failure: %s", async error => {
+    const h = harness(undefined, runningDetail()); await h.controller.open();
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "speaking", muted: false, turnMode: "hands_free" }, error: null, notice: null } as ReturnType<VoiceSessionClient["getSnapshot"]>);
+    h.notifyMedia();
+    const canonical = h.controller.getSnapshot().canonical;
+    h.detailFn.mockRejectedValueOnce(error); await h.controller.refresh();
+    expect(h.controller.getSnapshot()).toMatchObject({ status: "speaking", microphoneActive: true, error: null });
+    expect(h.controller.getSnapshot().canonical).toEqual(canonical);
+    h.notifyMedia();
+    expect(h.controller.getSnapshot().error).toBeNull();
+    expect(h.media.end).not.toHaveBeenCalled();
+    const mediaError = { code: "input_unavailable", retryable: false, recovery: "choose_input" } as const;
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "failed", voice: null, error: mediaError, notice: null } as ReturnType<VoiceSessionClient["getSnapshot"]>);
+    h.notifyMedia();
+    await h.controller.refresh();
+    expect(h.controller.getSnapshot()).toMatchObject({ status: "failed", microphoneActive: false, error: mediaError });
+    h.controller.dispose();
+  });
+  it.each([403, 404, 410])("stops live media when a refresh loses chat access (%s)", async status => {
+    const h = harness(); await h.controller.open();
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "speaking", muted: false, turnMode: "hands_free" }, error: null, notice: null } as ReturnType<VoiceSessionClient["getSnapshot"]>);
+    h.notifyMedia();
+    h.detailFn.mockRejectedValueOnce(new AoedeRequestError(status)); await h.controller.refresh();
+    expect(h.controller.getSnapshot()).toMatchObject({ status: "failed", microphoneActive: false, error: { code: "chat_unavailable" } });
+    expect(h.media.end).toHaveBeenCalled();
+    h.controller.dispose();
+  });
+  it("keeps live microphone truth but reports an explicit mutation failure", async () => {
     const h = harness(undefined, runningDetail()); await h.controller.open();
     vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "listening", muted: false, turnMode: "hands_free" }, error: null, notice: null } as ReturnType<VoiceSessionClient["getSnapshot"]>);
     h.notifyMedia();
     expect(h.controller.getSnapshot()).toMatchObject({ status: "listening", microphoneActive: true });
-    if (failure === "refresh") { h.detailFn.mockRejectedValueOnce(new AoedeRequestError(503)); await h.controller.refresh(); }
-    else { h.cancelRun.mockRejectedValueOnce(new AoedeRequestError(503)); expect(await h.controller.cancelGeneration()).toBe(false); }
+    h.cancelRun.mockRejectedValueOnce(new AoedeRequestError(503)); expect(await h.controller.cancelGeneration()).toBe(false);
     expect(h.controller.getSnapshot()).toMatchObject({ status: "listening", microphoneActive: true, error: { code: "internal_failure" } });
     h.notifyMedia();
     expect(h.controller.getSnapshot().error?.code).toBe("internal_failure");

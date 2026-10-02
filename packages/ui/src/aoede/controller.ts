@@ -198,7 +198,17 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       do {
         refreshAgain = false;
         try { const value = await api.detail(chatId); if (current(epoch)) acceptDetail(value); }
-        catch (error: unknown) { if (current(epoch)) fail(error); }
+        catch (error: unknown) {
+          if (!current(epoch)) continue;
+          const transient = error instanceof AoedeRequestError
+            ? error.status === 408 || error.status === 429 || error.status >= 500
+            : error instanceof TypeError || (error instanceof Error && error.name === "TimeoutError");
+          // A passive Chat read cannot establish that live voice has failed.
+          // Retain confirmed content; later events still refresh it normally.
+          // Access loss, explicit actions and media errors keep their own paths.
+          if (transient && mediaLive()) console.warn("[aoede] canonical refresh delayed", error instanceof Error ? error.name : "UnknownError");
+          else fail(error);
+        }
       } while (refreshAgain && current(epoch) && !unavailable);
     };
     const pending = work().finally(() => { if (refreshFlight === pending) refreshFlight = null; });
