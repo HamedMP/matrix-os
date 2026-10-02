@@ -416,11 +416,11 @@ describe("CanonicalChatWorkspace", () => {
   });
 
   it("keeps the focused prompt editable during a background full refresh", async () => {
-    let listener: ((event: CanonicalChatInvalidation) => void) | undefined;
+    const listeners: Array<(event: CanonicalChatInvalidation) => void> = [];
     const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
       subscribe(next) {
-        listener = next;
-        return { dispose: () => { listener = undefined; } };
+        listeners.push(next);
+        return { dispose: () => { const index = listeners.indexOf(next); if (index >= 0) listeners.splice(index, 1); } };
       },
     };
     let resolveRefresh!: (value: { items: typeof record[] }) => void;
@@ -443,7 +443,7 @@ describe("CanonicalChatWorkspace", () => {
     prompt.focus();
     vi.mocked(routeClient.list).mockImplementationOnce(() => refresh);
 
-    act(() => listener?.({ type: "chat.full_refresh", cursor: 2 }));
+    act(() => listeners.slice().forEach((listener) => listener({ type: "chat.full_refresh", cursor: 2 })));
     await waitFor(() => expect(routeClient.list).toHaveBeenCalledTimes(2));
 
     expect(prompt.getAttribute("contenteditable")).toBe("true");

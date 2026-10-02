@@ -17,6 +17,7 @@ import {
   FundedAiSettlementRequestSchema,
   FundedAiStartRequestSchema,
   IsoTimestampSchema,
+  FundedAiRuntimeCredentialIssueRequestSchema,
   type FundedAiSafeError,
 } from "@matrix-os/contracts";
 import { createHash } from "node:crypto";
@@ -168,7 +169,9 @@ function policyErrorResponse(c: Context, error: unknown) {
   if (error instanceof AiFundedPolicyError) {
     if (error.code === "unauthorized") return c.json(safeError("unauthorized"), 401);
     if (error.code === "identity_mismatch") return c.json(safeError("not_found"), 404);
-    if (error.code === "rate_limited") return c.json(safeError("rate_limited"), 429);
+    if (error.code === "rate_limited") {
+      return c.json(error.reason ? { error: { ...safeError("rate_limited").error, reason: error.reason } } : safeError("rate_limited"), 429);
+    }
     if (error.code === "revision_conflict") return c.json(safeError("revision_conflict"), 409);
     if (error.code === "idempotency_conflict") return c.json(safeError("idempotency_conflict"), 409);
     if (error.code === "reservation_expired") return c.json(safeError("reservation_expired"), 409);
@@ -228,14 +231,17 @@ export function createAiFundedRuntimeRoutes(options: {
       return policyErrorResponse(c, error);
     }
     if (!machine) return c.json(safeError("unauthorized"), 401);
-    const body = EmptyBodySchema.safeParse(await readStrictJson(c));
+    const raw = await readStrictJson(c);
+    const body = FundedAiRuntimeCredentialIssueRequestSchema.safeParse(raw);
     if (!body.success) return c.json(safeError("invalid_request"), 400);
+    // A legacy `{}` body stays interactive and gets the legacy response shape.
+    const explicitClass = typeof raw === "object" && raw !== null && "requestClass" in raw;
     try {
       const issued = await options.repository.issueRuntimeCredential({
         ownerId: machine.clerkUserId,
         machineId: machine.machineId,
         runtimeSlot: machine.runtimeSlot,
-      });
+      }, explicitClass ? { requestClass: body.data.requestClass } : undefined);
       return c.json(issued, 200);
     } catch (error) {
       return policyErrorResponse(c, error);

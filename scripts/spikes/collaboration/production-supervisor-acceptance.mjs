@@ -23,6 +23,9 @@ const EXPECTED_PROFILE_DIGEST = "9f4e3e2ad9e63cb300854dfca7bc31370d4cbae6d15fab9
 const EXPECTED_PROFILE_ID = "scope-runtime-chat-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
 const EXPECTED_CODEX_VERSION = "0.154.0";
+const EXPECTED_BOT_PROFILE_ID = "scope-runtime-bot-v1";
+const EXPECTED_BOT_PROFILE_DIGEST = "1dbeca2618e45b0731d5c4b69af74c7df9ce80630fda2c5f32d5b62d4045593d";
+const EXPECTED_BOT_HARNESS_VERSION = "0.86.1";
 const MAX_FRAME_BYTES = 64 * 1024;
 const SUPERVISOR_QUERY_TIMEOUT_MS = 5_000;
 const SUPERVISOR_OPERATION_TIMEOUT_MS = 30_000;
@@ -203,6 +206,23 @@ function validateCapability(response) {
     && profile.adapters[1]?.harnessVersion === EXPECTED_CODEX_VERSION
     && JSON.stringify(profile.adapters[1]?.workloads) === '["chat_ai"]',
   "adapter_capability_invalid");
+  // A catalog-aware supervisor lists every launchable profile; the Chat entry must match the legacy one.
+  if (response.profiles !== undefined) {
+    assert(Array.isArray(response.profiles) && response.profiles.length >= 1 && response.profiles.length <= 2,
+      "profile_catalog_invalid");
+    assert(JSON.stringify(response.profiles[0]) === JSON.stringify(profile), "profile_catalog_chat_invalid");
+    const bot = response.profiles[1];
+    if (bot !== undefined) {
+      assert(bot.profileId === EXPECTED_BOT_PROFILE_ID && bot.profileVersion === 1
+        && bot.profileDigest === EXPECTED_BOT_PROFILE_DIGEST
+        && bot.executionGeneration === profile.executionGeneration, "bot_profile_invalid");
+      assert(bot.adapters?.length === 1
+        && bot.adapters[0]?.adapterId === "matrix-bot"
+        && bot.adapters[0]?.harnessVersion === EXPECTED_BOT_HARNESS_VERSION
+        && JSON.stringify(bot.adapters[0]?.workloads) === '["bot_agent"]'
+        && JSON.stringify(bot.sandbox?.workloads) === '["bot_agent"]', "bot_adapter_capability_invalid");
+    }
+  }
   return profile;
 }
 

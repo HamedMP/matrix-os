@@ -26,6 +26,28 @@ describe("provider-neutral conversation transcript", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    { kind: "project" as const, projectId: "project-one" },
+    { kind: "worktree" as const, projectId: "project-one", worktreeId: "worktree-one" },
+    { kind: "bot_workspace" as const, botId: "bot-one" },
+    undefined,
+  ])("keeps app links scoped to the run execution root %j", (executionRoot) => {
+    const resolveApp = vi.fn(() => ({ name: "Run app" }));
+    const openApp = vi.fn(() => true);
+    const turns: ConversationTurnPresentation[] = [{
+      id: "turn-app-root", startedAt: 1_000, endedAt: 2_000, active: false,
+      executionRoot, work: [],
+      final: {
+        kind: "message", id: "message-app-root", role: "assistant", phase: "final",
+        markdown: "[Run app](apps/demo/index.html)", copyText: "Run app", timestamp: 2_000,
+      },
+    }];
+    render(<ConversationTranscript turns={turns} callbacks={{ resolveApp, openApp }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open app Run app" }));
+    expect(resolveApp).toHaveBeenCalledWith("apps/demo/index.html", executionRoot);
+    expect(openApp).toHaveBeenCalledWith("apps/demo/index.html", executionRoot);
+  });
+
   it("keeps code block Copy and Wrap actions alive while streamed markdown rerenders", async () => {
     let finishCopy: (() => void) | undefined;
     const copyText = vi.fn(() => new Promise<void>((resolve) => {

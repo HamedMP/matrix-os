@@ -102,7 +102,16 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       activeChatId,
       detailKey: mobileQueryKeys.canonicalChatDetail(uid, key, activeChatId ?? "none"),
     });
-    const unsubscribe = source.subscribe(sync.handle);
+    const botKey = activeChatId && computer
+      ? mobileQueryKeys.botChat(uid, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, activeChatId)
+      : null;
+    const unsubscribe = source.subscribe((event) => {
+      sync.handle(event);
+      if (botKey && (event.type === "chat.full_refresh"
+        || (event.chatId === activeChatId && event.eventType !== "run.message"))) {
+        void queryClient.invalidateQueries({ queryKey: botKey });
+      }
+    });
     return () => {
       unsubscribe();
       sync.dispose();

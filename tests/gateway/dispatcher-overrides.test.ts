@@ -137,6 +137,7 @@ describe("dispatcher per-message kernel overrides", () => {
         ANTHROPIC_API_KEY: expect.stringMatching(/^sk-matrix-funded-/),
         ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
       });
+      expect(provider.getCredential).toHaveBeenCalledWith({ requestClass: "interactive" });
       await expect(dispatched).rejects.toThrow("run aborted");
   });
 
@@ -194,6 +195,33 @@ describe("dispatcher per-message kernel overrides", () => {
 
     expect(configs).toHaveLength(2);
     expect(configs.every((config) => config.ownerAudioTranscriber === ownerAudioTranscriber)).toBe(true);
+  });
+
+  it("uses a server-set background class for background dispatches and batches", async () => {
+    const getCredential = vi.fn<MatrixFundedCredentialProvider["getCredential"]>(async ({ requestClass }) => ({
+      token: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
+      tokenId: "credential_123",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      relayBaseUrl: "https://relay.matrix-os.com",
+      maxRunMs: 60_000,
+      requestClass,
+    }));
+    const provider: MatrixFundedCredentialProvider = {
+      enabled: true, maxRunMs: 60_000, getCredential, invalidate: vi.fn(), close: vi.fn(),
+    };
+    const dispatcher = createDispatcher({
+      homePath: makeHomePath(),
+      spawnFn: vi.fn<SpawnFn>(async function* () { yield resultEvent(); }),
+      maxConcurrency: 1,
+      fundedCredentialProvider: provider,
+    });
+
+    await dispatcher.dispatch("heartbeat", undefined, () => {}, undefined, undefined, {
+      accessSourceId: "matrix_included", fundedRequestClass: "background",
+    });
+    await dispatcher.dispatchBatch([{ taskId: "batch-1", message: "batch", onEvent: () => {} }]);
+
+    expect(getCredential.mock.calls.map(([options]) => options.requestClass)).toEqual(["background", "background"]);
   });
 
   it("waits for async event admission before consuming the next kernel event", async () => {

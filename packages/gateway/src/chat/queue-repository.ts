@@ -39,7 +39,7 @@ import type {
   ChatRunsTable,
   ChatsTable,
 } from "./database.js";
-import { ChatBusyError, ChatConflictError, ChatNotFoundError, ChatProviderInstanceLockedError } from "./errors.js";
+import { ChatBusyError, ChatConflictError, ChatQueuedTurnCancelledError, ChatNotFoundError, ChatProviderInstanceLockedError } from "./errors.js";
 import {
   asIso,
   jsonb,
@@ -260,9 +260,11 @@ export class ChatQueueRepository {
         .where("chat_id", "=", chatId).where("client_request_id", "=", clientRequestId).executeTakeFirst();
       if (!row) return null;
       const queuedTurn = toQueuedTurn(row);
-      if (!["queued", "claimed"].includes(row.status) || (requestHash !== undefined && (row.request_hash ?? queuedTurn.context?.requestHash ?? chatContextRequestHash(queuedTurn)) !== requestHash)) {
+      if (requestHash !== undefined && (row.request_hash ?? queuedTurn.context?.requestHash ?? chatContextRequestHash(queuedTurn)) !== requestHash) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
+      if (row.status === "cancelled") throw new ChatQueuedTurnCancelledError(chatId, Number(chat.revision));
+      if (!["queued", "claimed"].includes(row.status)) throw new ChatConflictError(chatId, Number(chat.revision));
       return { queuedTurn, queueDepth: await this.queueDepth(trx, chatId), alreadyQueued: true, ...(row.status === "claimed" ? { alreadyClaimed: true } : {}) };
     });
   }

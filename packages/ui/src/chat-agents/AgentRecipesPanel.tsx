@@ -1,4 +1,4 @@
-import { buildAgentRecipePrompt } from "./recipe-handoff.js";
+import { buildAgentRecipePrompt, isLaunchBotRecipeId, LAUNCH_BOT_RECIPE_IDS } from "./recipe-handoff.js";
 import type { ChatAgentIntegrationConnection, StartAgentChat } from "./client.js";
 import { activeConnections } from "./recipe-integrations.js";
 import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME } from "./jev-agent-template.js";
@@ -7,6 +7,8 @@ import { agentInspirations, type AgentInspiration } from "./agent-inspirations.g
 import { RecipeRabbit } from "./RecipeRabbit.js";
 import { JevLabelPermission } from "./JevLabelPermission.js";
 import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "./theme.js";
+import type { BotRecipeRef, BotRecipeSummary } from "@matrix-os/contracts";
+import { useRef } from "react";
 
 
 const jevRecipe = {
@@ -15,36 +17,83 @@ const jevRecipe = {
   skills: ["matrix-jev-email-triage", "matrix-integrations"], integrations: ["Gmail"],
 };
 export const AGENT_RECIPE_COUNT = agentInspirations.length + 1;
+export const BOT_RECIPE_COUNT = agentInspirations.filter((recipe) => !isLaunchBotRecipeId(recipe.id)).length + LAUNCH_BOT_RECIPE_IDS.length;
+const EMPTY_BOT_RECIPES: BotRecipeSummary[] = [];
 
-export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "" }: {
+export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
+  botRecipes = EMPTY_BOT_RECIPES, onInstantiateBot, onOpenBotChat }: {
   onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
   connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
+  botRecipes?: BotRecipeSummary[];
+  onInstantiateBot?: (recipe: BotRecipeRef, clientRequestId: string) => Promise<string>;
+  onOpenBotChat?: (chatId: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [selectedGmail, setSelectedGmail] = useState("");
+  const [botPending, setBotPending] = useState<string | null>(null);
+  const [botError, setBotError] = useState("");
+  const botAttempt = useRef<{ key: string; requestId: string } | null>(null);
+  const createBot = async (recipe: BotRecipeSummary) => {
+    if (!onInstantiateBot || !onOpenBotChat || botPending) return;
+    const key = `${recipe.recipeId}@${recipe.version}`;
+    if (botAttempt.current?.key !== key) {
+      const bytes = new Uint8Array(16);
+      globalThis.crypto.getRandomValues(bytes);
+      botAttempt.current = { key, requestId: `req_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}` };
+    }
+    setBotPending(key);
+    setBotError("");
+    try {
+      const chatId = await onInstantiateBot({ recipeId: recipe.recipeId, version: recipe.version }, botAttempt.current.requestId);
+      botAttempt.current = null;
+      onOpenBotChat(chatId);
+    } catch (error: unknown) {
+      console.warn("[chat-agents] Bot creation failed:", error instanceof Error ? error.name : "UnknownError");
+      setBotError("Bot could not be created. Try again.");
+    } finally {
+      setBotPending(null);
+    }
+  };
   const [labeling, setLabeling] = useState(false);
   const gmailAccounts = activeConnections("gmail", connections);
   const accountLabel = gmailAccounts.length === 1 ? gmailAccounts[0]!.account_label
     : gmailAccounts.some((account) => account.account_label === selectedGmail) ? selectedGmail : "";
   const normalized = query.trim().toLocaleLowerCase();
-  const showJev = !normalized || [jevRecipe.name, jevRecipe.description, jevRecipe.category,
-    ...jevRecipe.skills, ...jevRecipe.integrations].some((value) => value.toLocaleLowerCase().includes(normalized));
+  const botMode = !!onInstantiateBot;
+  const launchIds = useMemo(() => Object.fromEntries(botRecipes.map((recipe) => [recipe.recipeId, true] as const)), [botRecipes]);
+  const visibleBotRecipes = botRecipes.filter((recipe) => !normalized || [recipe.name, recipe.description, recipe.output]
+    .some((value) => value.toLocaleLowerCase().includes(normalized)));
+  const showJev = !botMode && !Object.hasOwn(launchIds, jevRecipe.id) && (!normalized || [jevRecipe.name, jevRecipe.description, jevRecipe.category,
+    ...jevRecipe.skills, ...jevRecipe.integrations].some((value) => value.toLocaleLowerCase().includes(normalized)));
   const matches = useMemo(() => normalized ? agentInspirations.filter((recipe) =>
+    (!botMode || !isLaunchBotRecipeId(recipe.id)) && !Object.hasOwn(launchIds, recipe.id) &&
     [recipe.name, recipe.description, ...recipe.categories, ...recipe.skills, ...recipe.integrations]
-      .some((value) => value.toLocaleLowerCase().includes(normalized))) : agentInspirations, [normalized]);
+      .some((value) => value.toLocaleLowerCase().includes(normalized))) : agentInspirations.filter((recipe) =>
+      (!botMode || !isLaunchBotRecipeId(recipe.id)) && !Object.hasOwn(launchIds, recipe.id)), [normalized, launchIds, botMode]);
 
   return <div className="matrix-chat-agent-recipes mx-auto grid w-full max-w-5xl gap-6 py-5 sm:py-7">
     <div className="matrix-chat-agent-recipes__intro grid gap-2 rounded-3xl border p-5 sm:p-6">
       <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={chatAgentMutedStyle}>Agent library</p>
       <h3 className="text-2xl font-semibold tracking-[-0.035em]">Recipes</h3>
       <p className="max-w-2xl text-sm leading-6" style={chatAgentMutedStyle}>Create a Matrix bot from a ready recipe, or explore public marketplace examples.</p>
-      <p className="text-xs" style={chatAgentMutedStyle}>{AGENT_RECIPE_COUNT} recipe ideas</p>
+      <p className="text-xs" style={chatAgentMutedStyle}>{botMode ? BOT_RECIPE_COUNT : AGENT_RECIPE_COUNT} recipe ideas</p>
     </div>
     <label className="grid gap-1.5 text-xs font-medium">
       <span className="sr-only">Search recipes</span>
       <input className={chatAgentInputClass} type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search roles, skills, or integrations" aria-label="Search recipes" />
     </label>
-    {showJev || matches.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
+    {botError ? <p role="alert" className="text-xs">{botError}</p> : null}
+    {showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
+      {visibleBotRecipes.map((recipe) => <article key={`${recipe.recipeId}@${recipe.version}`} data-matrix-recipe={recipe.recipeId}
+        className="matrix-chat-agent-card matrix-chat-agent-recipe-card grid min-w-0 gap-4 rounded-2xl border p-4">
+        <div className="flex min-w-0 items-start gap-4"><RecipeRabbit id={recipe.recipeId} name={recipe.name} category="Matrix" />
+          <div className="min-w-0 flex-1"><h4 className="text-base font-semibold">{recipe.name}</h4>
+            <p className="mt-2 text-xs leading-5" style={chatAgentMutedStyle}>{recipe.description}</p></div></div>
+        <p className="text-xs" style={chatAgentMutedStyle}>Creates: {recipe.output}</p>
+        <button type="button" aria-label={`Use ${recipe.name}`} disabled={!onInstantiateBot || !onOpenBotChat || !!botPending}
+          className={`${chatAgentButtonClass} justify-self-start`} onClick={() => { void createBot(recipe); }}>
+          {botPending === `${recipe.recipeId}@${recipe.version}` ? "Creating…" : "Build in Chat"}</button>
+      </article>)}
       {showJev ? <article data-matrix-recipe={jevRecipe.id} className="matrix-chat-agent-card matrix-chat-agent-recipe-card grid min-w-0 gap-4 rounded-2xl border p-4">
         <div className="flex min-w-0 items-start gap-4">
           <RecipeRabbit id={jevRecipe.id} name={jevRecipe.name} category={jevRecipe.category} />

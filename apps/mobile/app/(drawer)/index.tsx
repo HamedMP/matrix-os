@@ -5,6 +5,7 @@ import {
   FlatList,
   InteractionManager,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   Text,
@@ -40,13 +41,18 @@ import { Icon, IconButton } from "@/components/ui";
 import { AnalyticsMask } from "@/lib/analytics";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
+import { BotChatControls } from "@/components/BotChatControls";
+import { BotRecipeChooser, type BotCreationAttempt } from "@/components/BotRecipeChooser";
+import { useBotChat } from "@/lib/queries/use-bot-chat";
+import { useBotRecipes } from "@/lib/queries/use-bot-recipes";
+import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
 export default function ChatScreen() {
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, userId } = useAuth();
   const { user } = useUser();
   const { theme } = useUnistyles();
   const {
@@ -55,6 +61,7 @@ export default function ChatScreen() {
     setSelectionOverride,
     selectedProjectId,
     setSelectedProjectId,
+    selectChat,
   } = useCanonicalChatSession();
   const firstName = user?.firstName
     ?? user?.fullName?.trim().split(/\s+/)[0]
@@ -62,6 +69,12 @@ export default function ChatScreen() {
     ?? "there";
 
   const { detail, computer, refresh } = useCanonicalChatDetail(activeChatId);
+  const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
+  const botChat = useBotChat(activeChatId, gatewayUrl);
+  const [showBotRecipes, setShowBotRecipes] = useState(false);
+  const botCreationAttempt = useRef<BotCreationAttempt | null>(null);
+  const botRecipes = useBotRecipes(gatewayUrl, showBotRecipes);
+  const chats = useCanonicalChats();
   const { catalog } = useChatProviderCatalog();
   const { projects } = useProjects();
   const sendMessage = useSendChatMessage();
@@ -205,6 +218,29 @@ export default function ChatScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={84}
     >
+      <Pressable accessibilityRole="button" accessibilityLabel="Bot recipes" disabled={!gatewayUrl}
+        style={styles.botRecipesToggle} onPress={() => setShowBotRecipes((value) => !value)}>
+        <Text style={styles.systemText}>Bot recipes</Text>
+      </Pressable>
+      {showBotRecipes && gatewayUrl ? botRecipes.isError
+        ? <Text accessibilityRole="alert" style={styles.systemText}>Bot recipes could not be loaded. Try again.</Text>
+        : botRecipes.isPending ? <Text style={styles.systemText}>Loading bot recipes…</Text>
+          : <BotRecipeChooser recipes={botRecipes.recipes} onCreate={botRecipes.create}
+            attemptRef={botCreationAttempt} attemptScope={`${userId ?? ""}:${gatewayUrl}`} onOpenChat={(chatId) => {
+            selectChat(chatId);
+            setShowBotRecipes(false);
+            void chats.invalidate();
+          }} /> : null}
+      {botChat.snapshot ? <BotChatControls snapshot={botChat.snapshot} actionsAvailable={!botChat.isError}
+        onResolve={botChat.resolve}
+        onRevoke={botChat.revoke} onMemory={botChat.memory} onRefresh={botChat.refresh}
+        onConnectUrl={async (url) => {
+          if (new URL(url).protocol !== "https:") throw new Error("Invalid consent link");
+          await Linking.openURL(url);
+        }} /> : null}
+      {botChat.isError && activeChatId ? <Text accessibilityRole="alert" style={styles.systemText}>
+        Bot status could not be loaded. Try again.
+      </Text> : null}
       <FlatList
         style={styles.hero}
         data={messages}
@@ -404,6 +440,15 @@ const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
     backgroundColor: theme.v2.appColors.canvas,
+  },
+  botRecipesToggle: {
+    alignSelf: "center",
+    marginVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: theme.v2.colors.borderSubtle,
+    borderRadius: 12,
   },
   hero: {
     flex: 1,

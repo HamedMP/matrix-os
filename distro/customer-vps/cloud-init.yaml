@@ -581,7 +581,7 @@ runcmd:
     # Cloud-init does not reapply supplementary groups to an existing snapshot
     # user. The restore gate must access the local Postgres container as matrix.
     usermod -aG docker matrix
-    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/home/projects /home/matrix/projects /var/lib/matrix/db /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/home/projects /home/matrix/home/bots /home/matrix/projects /var/lib/matrix/db /var/lib/matrix/db/snapshots /var/lib/matrix/logs
     ensure_owner_link() {
       local name="$1" mode="$2" legacy="/home/matrix/$1" target="/home/matrix/home/$1"
       install -d -o matrix -g matrix -m "$mode" "$target"
@@ -722,7 +722,7 @@ runcmd:
     systemctl start matrix-restore.service matrix-scope-runtime.service
     systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service
     if [ -f /etc/systemd/system/matrix-vps-registration.service ]; then
-      # Registration waits for selected tools; let their installers start below.
+      # Start installers while registration waits for tools.
       systemctl enable matrix-vps-registration.service
       systemctl start --no-block matrix-vps-registration.service
     fi
