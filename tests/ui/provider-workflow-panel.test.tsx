@@ -378,3 +378,13 @@ it("shows account actions for a configured native connection without claiming re
   expect(screen.queryByText("Connect Codex with")).not.toBeInTheDocument();
   expect(api.start).not.toHaveBeenCalled();
 });
+it("retains a disabled Disconnect action for connected accounts without logout capability", () => {
+  const api = client();
+  render(<HarnessWorkflowPanel harness={{ ...harness, authState: "authenticated" }} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} onOpenAuthorizationUrl={vi.fn()} />);
+  const button = screen.getByRole("button", { name: "Disconnect" });
+  expect(button).toBeDisabled();
+  expect(button).toHaveAttribute("title", "Disconnect is unavailable for this connection on this computer");
+  fireEvent.click(button);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(api.start).not.toHaveBeenCalled();
+});

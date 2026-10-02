@@ -9,12 +9,11 @@ import type {
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayCreditLines, money, shortDate, titleCase } from "./utils.js";
 
-const capabilityLabels = {
-  tools: "Tools",
-  vision: "Vision",
-  reasoning: "Reasoning",
-  long_context: "Long context",
-  audio: "Audio",
+// Purpose labels belong to the approved Matrix catalog, not arbitrary capability badges.
+const modelPurposes: Readonly<Record<string, string>> = {
+  "anthropic/claude-sonnet-5": "Coding",
+  "claude-sonnet-5": "Coding",
+  "@cf/zai-org/glm-5.3-flash": "General",
 };
 
 export function matrixGatewayEligibleModels(
@@ -180,13 +179,13 @@ export function GatewayPanel({
     <section
       className="matrix-ap-panel matrix-ap-gateway"
       role="region"
-      aria-labelledby="matrix-ap-gateway-title"
+      aria-label="Matrix AI"
     >
       <div className="matrix-ap-panel-head">
         <div>
           <h2 id="matrix-ap-gateway-title">
             Matrix AI{" "}
-            <span className="matrix-ap-beta" aria-hidden="true">
+            <span className="matrix-ap-beta">
               Beta
             </span>
           </h2>
@@ -212,9 +211,7 @@ export function GatewayPanel({
         <div>
           <span>Credit balance</span>
           <strong>{credit.primary}</strong>
-          {credit.secondary ? <span>{credit.secondary}</span> : null}
           {reservedCredit ? <span>{reservedCredit}</span> : null}
-          {reservedBudget ? <span>{reservedBudget}</span> : null}
           {credit.stale ? (
             <span>Credit last confirmed {shortDate(usageAsOf)}</span>
           ) : null}
@@ -233,6 +230,49 @@ export function GatewayPanel({
           >
             Usage history
           </button>
+          {(
+            <button
+              type="button"
+              className="matrix-ap-button matrix-ap-button-primary"
+              onClick={() => {
+                setCreditError(false);
+                setCreditRequestId(crypto.randomUUID());
+                setCreditDialogOpen(true);
+              }}
+              disabled={disabled || !checkoutAvailable}
+              title={
+                checkoutAvailable ? undefined : "Credit purchases are unavailable on this computer"
+              }
+            >
+              Buy credit
+            </button>
+          )}
+        </div>
+      </div>
+
+      {policy && source ? (
+        <div className="matrix-ap-model-inventory">
+          <h3>Available models</h3>
+          <ul>
+            {offeredModels
+              .map((model) => (
+                <li key={"accessSourceId" in model ? `${model.accessSourceId}:${model.id}` : model.id}>
+                  <span>{model.displayName}</span>
+                  {modelPurposes[model.id] ? <span className="matrix-ap-model-capability">{modelPurposes[model.id]}</span> : null}
+                </li>
+              ))}
+          </ul>
+          {offeredModels.length === 0 ? (
+            <p className="matrix-ap-help">
+              No models are enabled for this computer.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="matrix-ap-gateway-footer">
+        Already have Claude or ChatGPT? Connect it on the agent instead.
+      </p>
+      {!policy || !source ? <details className="matrix-ap-advanced"><summary>Advanced Matrix AI settings</summary>
           {!ready ? (
             <button
               type="button"
@@ -246,6 +286,28 @@ export function GatewayPanel({
               Check again
             </button>
           ) : null}
+      </details> : null}
+
+      {policy && source ? (
+        <details className="matrix-ap-advanced">
+          <summary>Advanced Matrix AI settings</summary>
+          {!ready ? (
+            <button
+              type="button"
+              className="matrix-ap-button"
+              disabled={disabled}
+              onClick={onRefresh}
+              title={source?.readiness.safeReason === "policy" || source?.readiness.action === "contact_owner"
+                ? "Matrix AI is restricted by your workspace. Ask your administrator."
+                : "Check Matrix AI availability"}
+            >
+              Check again
+            </button>
+          ) : null}
+
+          {source.usage.kind === "managed_credit" ? <p className="matrix-ap-help">{money(source.usage.usedMicrousd, source.usage.currency)} used of {money(source.usage.limitMicrousd, source.usage.currency)}</p> : null}
+          {reservedBudget ? <p className="matrix-ap-help">{reservedBudget}</p> : null}
+          <div className="matrix-ap-actions">
           {ready && onUseGateway && (!isSelected || !selectedAgentEnabled) ? (
             <button
               type="button"
@@ -273,55 +335,7 @@ export function GatewayPanel({
                 </button>
               ))
             : null}
-          {checkoutAvailable ? (
-            <button
-              type="button"
-              className="matrix-ap-button matrix-ap-button-primary"
-              onClick={() => {
-                setCreditError(false);
-                setCreditRequestId(crypto.randomUUID());
-                setCreditDialogOpen(true);
-              }}
-              disabled={disabled || !canAddCredit}
-              title={
-                canAddCredit ? undefined : "Adding credit is not available yet"
-              }
-            >
-              Buy credit
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {policy && source ? (
-        <div className="matrix-ap-model-inventory">
-          <h3>Available models</h3>
-          <ul>
-            {offeredModels
-              .map((model) => (
-                <li key={"accessSourceId" in model ? `${model.accessSourceId}:${model.id}` : model.id}>
-                  <span>{model.displayName}</span>
-                  {model.capabilities?.map((capability) => (
-                    <span
-                      key={capability}
-                      className="matrix-ap-model-capability"
-                    >
-                      {capabilityLabels[capability]}
-                    </span>
-                  ))}
-                </li>
-              ))}
-          </ul>
-          {offeredModels.length === 0 ? (
-            <p className="matrix-ap-help">
-              No models are enabled for this computer.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-      <p className="matrix-ap-gateway-footer">
-        Already have Claude or ChatGPT? Connect it on the agent instead.
-      </p>
+          </div>
       {ready && onUseGateway && !isSelected ? (
         <p className="matrix-ap-help">
           {selectedAgentName} · {selectedModelName}
@@ -341,9 +355,7 @@ export function GatewayPanel({
         </p>
       ) : null}
 
-      {policy && source ? (
-        <details className="matrix-ap-advanced">
-          <summary>Advanced Matrix AI settings</summary>
+
           <div className="matrix-ap-policy-grid">
             {canSetBudget ? (
               <>

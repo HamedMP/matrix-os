@@ -238,7 +238,13 @@ export const ProviderDependencyCountsSchema = z.object({
   resumableChatCount: DependencyCountSchema,
   harnessInstanceCount: DependencyCountSchema,
 }).strict();
+/** Owner-only native identity, emitted only after explicit GET negotiation. */
+export const ProviderConnectionDetailsSchema = z.object({
+  email: z.email().max(120).optional(),
+  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu"]).optional(),
+}).strict();
 export const ProviderAccountSchema = z.object({
+  connectionDetails: ProviderConnectionDetailsSchema.optional(),
   id: ReferenceIdSchema,
   providerId: ProviderIdSchema,
   displayName: DisplayNameSchema,

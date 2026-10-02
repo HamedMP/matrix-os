@@ -231,19 +231,19 @@ it("starts with every agent collapsed and opens or closes the chosen accordion",
   fireEvent.click(row);
   expect(row).toHaveAttribute("aria-expanded", "false");
 });
-it("renders only supplied canonical model capabilities", async () => {
+it("renders approved purposes for actual catalog IDs and omits unknown purposes", async () => {
   const { GatewayPanel } = await import(
     "../../packages/ui/src/agents-providers/GatewayPanel"
   );
   const source = {
     id: "matrix",
     kind: "matrix_gateway",
-    eligibleModelIds: ["known", "unknown"],
+    eligibleModelIds: ["claude-sonnet-5", "@cf/zai-org/glm-5.3-flash", "unknown"],
     readiness: { state: "ready" },
     usage: { kind: "unavailable", reason: "unknown" },
   } as unknown as import("@matrix-os/contracts").ProviderAccessSource;
   const policy = {
-    allowedModelIds: ["known", "unknown"],
+    allowedModelIds: ["claude-sonnet-5", "@cf/zai-org/glm-5.3-flash", "unknown"],
     monthlyBudgetMicrousd: null,
     topUpEnabled: false,
   } as unknown as import("@matrix-os/contracts").ProviderGatewayPolicy;
@@ -256,11 +256,12 @@ it("renders only supplied canonical model capabilities", async () => {
         displayName: "Provider",
         models: [
           {
-            id: "known",
+            id: "claude-sonnet-5",
             displayName: "Known",
             enabled: true,
             capabilities: ["tools", "vision"],
           },
+          { id: "@cf/zai-org/glm-5.3-flash", displayName: "GLM", enabled: true },
           { id: "unknown", displayName: "Unknown", enabled: true },
         ],
       }}
@@ -273,10 +274,11 @@ it("renders only supplied canonical model capabilities", async () => {
       onRefresh={vi.fn()}
     />,
   );
-  expect(screen.getByText("Tools")).toBeInTheDocument();
-  expect(screen.getByText("Vision")).toBeInTheDocument();
+  expect(screen.queryByText("Tools")).not.toBeInTheDocument();
+  expect(screen.queryByText("Vision")).not.toBeInTheDocument();
   expect(screen.queryByText("Reasoning")).not.toBeInTheDocument();
-  expect(screen.queryByText("Coding")).not.toBeInTheDocument();
+  expect(screen.getByText("Coding")).toBeVisible();
+  expect(screen.getByText("General")).toBeVisible();
 });
 it("wires Change account inside the authenticated shared account card", async () => {
   const { AgentsProvidersView } = await import(
@@ -352,7 +354,8 @@ it("wires Change account inside the authenticated shared account card", async ()
   );
   fireEvent.click(screen.getByRole("button", { name: /^codex/ }));
   const action = await screen.findByRole("button", { name: "Change account" });
-  expect(screen.getByTestId("account-owner")).toContainElement(action);
+  expect(action.closest(".matrix-ap-account")).toBeVisible();
+  expect(screen.getByTestId("account-owner")).not.toBeVisible();
   expect(
     screen.getAllByRole("button", { name: "Change account" }),
   ).toHaveLength(1);
@@ -454,8 +457,8 @@ it("keeps Matrix AI policy and purchase restrictions out of persistent overview 
   render(<GatewayPanel source={source} policy={policy} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   expect(screen.queryByText("Matrix AI is restricted by your workspace. Ask your administrator.")).not.toBeInTheDocument();
   expect(screen.queryByText("Matrix AI credit purchases are not available yet.")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Check again" })).toHaveAttribute("title", "Matrix AI is restricted by your workspace. Ask your administrator.");
-  expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check again", hidden: true })).toHaveAttribute("title", "Matrix AI is restricted by your workspace. Ask your administrator.");
+  expect(screen.getByRole("button", { name: "Buy credit" })).toBeDisabled();
 });
 
 it("keeps missing-runtime purchase explanations out of the overview while showing honest unavailable credit", async () => {
@@ -463,5 +466,5 @@ it("keeps missing-runtime purchase explanations out of the overview while showin
   render(<GatewayPanel source={null} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   expect(screen.queryByText(/Credit purchases are unavailable/)).not.toBeInTheDocument();
   expect(screen.getByText("Credit unavailable")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Buy credit" })).toBeDisabled();
 });

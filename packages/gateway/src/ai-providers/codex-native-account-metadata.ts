@@ -1,9 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { z } from "zod/v4";
-import type { ProviderAccessSource } from "@matrix-os/contracts";
+import type { ProviderAccessSource, ProviderAccount } from "@matrix-os/contracts";
 
 export interface CodexNativeAccountMetadata {
   accountLabel: string;
+  connectionDetails?: ProviderAccount["connectionDetails"];
   authMethod: "api_key" | "terminal";
   checkedAt: string;
   staleAfter: string;
@@ -29,6 +30,10 @@ export function normalizeCodexNativeAccountMetadata(accountRaw: unknown, limitsR
     checkedAt, staleAfter: new Date(now.getTime() + 30_000).toISOString(),
   };
   if (account.type !== "chatgpt") return value;
+  const plans = { free: "ChatGPT Free", go: "ChatGPT Go", plus: "ChatGPT Plus", pro: "ChatGPT Pro", team: "ChatGPT Team", business: "ChatGPT Business", enterprise: "ChatGPT Enterprise", edu: "ChatGPT Edu" } as const;
+  const plan = account.planType && Object.hasOwn(plans, account.planType)
+    ? plans[account.planType as keyof typeof plans] : undefined;
+  value.connectionDetails = { email: account.email, ...(plan ? { planName: plan } : {}) };
   const limits = LimitsSchema.safeParse(limitsRaw);
   if (!limits.success) return value;
   const bucket = BucketSchema.safeParse(limits.data.rateLimitsByLimitId

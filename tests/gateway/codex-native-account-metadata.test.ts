@@ -8,8 +8,14 @@ const limits = { rateLimits: { primary: { usedPercent: 25, windowDurationMins: 3
 describe("native Codex account metadata", () => {
   it("allowlists identity and authoritative quota without secrets", () => {
     const value = normalizeCodexNativeAccountMetadata(account, limits, now);
-    expect(value).toMatchObject({ accountLabel: "owner@example.test", usage: { kind: "subscription_allowance", usedBasisPoints: 2500, authority: "provider_allowance" } });
+    expect(value).toMatchObject({ accountLabel: "owner@example.test", connectionDetails: { email: "owner@example.test", planName: "ChatGPT Plus" }, usage: { kind: "subscription_allowance", usedBasisPoints: 2500, authority: "provider_allowance" } });
     expect(JSON.stringify(value)).not.toContain("never-return");
+  });
+  it("keeps identity when allowance is unavailable and does not echo an unknown plan", () => {
+    expect(normalizeCodexNativeAccountMetadata(account, undefined, now)).toMatchObject({ connectionDetails: { email: "owner@example.test", planName: "ChatGPT Plus" } });
+    const unknown = normalizeCodexNativeAccountMetadata({ account: { type: "chatgpt", email: "owner@example.test", planType: "private-token-secret" } }, undefined, now);
+    expect(unknown).toMatchObject({ connectionDetails: { email: "owner@example.test" } });
+    expect(JSON.stringify(unknown)).not.toContain("private-token-secret");
   });
   it.each([0, 100])("preserves real %i percent", usedPercent => {
     expect(normalizeCodexNativeAccountMetadata(account, { rateLimits: { primary: { ...limits.rateLimits.primary, usedPercent } } }, now)?.usage?.usedBasisPoints).toBe(usedPercent * 100);

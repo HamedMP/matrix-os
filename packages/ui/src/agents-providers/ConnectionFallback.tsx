@@ -1,15 +1,17 @@
 import { ConnectionMethodCard } from "./ConnectionMethodCard.js";
 import { hasConfiguredConnection } from "./harness-connection.js";
-import type { ProviderHarnessInstance } from "@matrix-os/contracts";
+import type { ProviderHarnessInstance, ProviderAccessSource } from "@matrix-os/contracts";
 
 /** Unsupported or owner-restricted connections remain in Settings without a Terminal detour. */
-export function ConnectionFallback({ harness, workflowPermission = "unknown" }: {
+export function ConnectionFallback({ harness, source, onRefresh, workflowPermission = "unknown" }: {
   harness: ProviderHarnessInstance;
   disabled: boolean;
+  source?: ProviderAccessSource;
+  onRefresh?: () => void;
   workflowPermission?: "unknown" | "available" | "forbidden";
   onSetupHarness?: (kind: ProviderHarnessInstance["harness"]) => Promise<boolean>;
 }) {
-  if (hasConfiguredConnection(harness) || harness.installState !== "installed") return null;
+  if (hasConfiguredConnection(harness, source) || harness.installState !== "installed") return null;
   const subscription = harness.harness === "codex" ? "ChatGPT" : harness.harness === "claude" ? "Claude" : null;
   const reason = workflowPermission === "forbidden"
     ? "Only this computer’s owner can manage connections."
@@ -20,6 +22,6 @@ export function ConnectionFallback({ harness, workflowPermission = "unknown" }: 
       <ConnectionMethodCard method="account" title={`${subscription} account`} recommended description={`Use your ${subscription} plan`} disabled tooltip={reason} />
       <ConnectionMethodCard method="key" title="API key" description={`Pay ${harness.harness === "codex" ? "OpenAI" : "Anthropic"} per request`} disabled tooltip={reason} />
     </div> : null}
-    {workflowPermission !== "forbidden" ? <p className="matrix-ap-help" role="status">{reason}</p> : null}
+    {workflowPermission !== "forbidden" ? <p className="matrix-ap-help" role="status">{reason} {onRefresh ? <button className="matrix-ap-link-button" type="button" onClick={onRefresh}>Check again</button> : null}</p> : null}
   </section>;
 }

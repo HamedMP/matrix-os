@@ -466,6 +466,7 @@ export async function projectProviderSettings(input: {
     ? nativeSource?.fundingKind === "owner_api_key" : nativeSource?.fundingKind === "owner_account";
   if (metadataFresh && methodMatches && nativeSource && nativeAccount) {
     nativeAccount.displayName = metadata.accountLabel;
+    if (metadata.connectionDetails) nativeAccount.connectionDetails = metadata.connectionDetails;
     nativeAccount.authState = "authenticated";
     nativeAccount.lastCheckedAt = metadata.checkedAt;
     if (metadata.usage) nativeSource.usage = metadata.usage;

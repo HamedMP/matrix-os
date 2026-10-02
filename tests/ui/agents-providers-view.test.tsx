@@ -483,7 +483,7 @@ describe("AgentsProvidersView", () => {
     const { rerender, props } = setup({ snapshot: next, selectedHarnessId: harness.id });
     let gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Ready")).toBeVisible();
-    expect(within(gateway).getByText("Selected for Pi")).toBeVisible();
+    expect(within(gateway).getByText("Selected for Pi")).not.toBeVisible();
 
     const unauthorized = structuredClone(next);
     unauthorized.gatewayPolicy!.allowedModelIds = ["anthropic/claude-opus-5"];
@@ -491,7 +491,7 @@ describe("AgentsProvidersView", () => {
     gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();
     expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
-    expect(within(gateway).getByRole("button", { name: "Check again" })).toBeVisible();
+    expect(within(gateway).getByRole("button", { name: "Check again", hidden: true })).not.toBeVisible();
   });
 
   it("keeps Matrix AI upstream providers private in an agent route", () => {
@@ -786,9 +786,14 @@ describe("AgentsProvidersView", () => {
 
   it("shows exact, stale, and unavailable gateway credit without inventing balances", () => {
     const current = snapshot();
+    const usage = current.accessSources[0]!.usage;
+    if (usage.kind !== "managed_credit") throw new Error("Expected managed credit fixture");
+    // Budget headroom is smaller than available credit; the card shows credit, not a budget cap.
+    usage.remainingMicrousd = 250_000;
+    usage.budget.remainingBudgetMicrousd = 250_000;
     const { rerender } = setup({ snapshot: current });
-    expect(screen.getByText("$0.75 remaining")).toBeVisible();
-    expect(screen.getByText("$0.20 used of $1.00")).toBeVisible();
+    expect(screen.getByText("$0.75")).toBeVisible();
+    expect(screen.getByText("$0.20 used of $1.00")).not.toBeVisible();
 
     const stale = structuredClone(current);
     stale.accessSources[0]!.usage = { ...stale.accessSources[0]!.usage, state: "stale" } as typeof stale.accessSources[0]["usage"];
@@ -826,7 +831,7 @@ describe("AgentsProvidersView", () => {
     const broken = structuredClone(current);
     broken.accessSources[0]!.readiness.safeReason = "provider_unavailable";
     rerender(<AgentsProvidersView {...setupProps(broken)} />);
-    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+    expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeDisabled();
 
     const ledgerMissing = structuredClone(current);
     ledgerMissing.accessSources[0]!.usage = {
@@ -834,7 +839,7 @@ describe("AgentsProvidersView", () => {
       scope: "owner_entitlement", reason: "ledger_not_available", asOf: null,
     };
     rerender(<AgentsProvidersView {...setupProps(ledgerMissing)} />);
-    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+    expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeDisabled();
   });
 
   it("shows per-account usage and keeps login, logout, and remove distinct", async () => {
@@ -1055,7 +1060,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByRole("button", { name: "+ Add account" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Log out Personal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove Personal" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Buy credit" })).toBeDisabled();
   });
 
   it("renders platform-authoritative gateway policy as read-only", () => {

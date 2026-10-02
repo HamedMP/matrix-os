@@ -532,3 +532,42 @@ describe("useProviderSettingsController", () => {
     expect(result.current.identityKey).toBe("owner-b:primary");
   });
 });
+
+it("refreshes negotiated account details after a confirmed mutation without treating metadata failure as mutation failure", async () => {
+  const initial = snapshot(1);
+  const account = { id: "native", providerId: "openai", displayName: "Codex", authMethod: "terminal", authState: "authenticated", lastCheckedAt: checkedAt, accessSourceId: "source_matrix", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } };
+  initial.modelProviders.push({ id: "openai", displayName: "OpenAI", models: [] });
+  initial.accessSources.push({ ...initial.accessSources[0]!, id: "source_native", kind: "provider_account", fundingKind: "owner_account", providerId: "openai", accountId: "native", eligibleModelIds: [] });
+  account.accessSourceId = "source_native";
+  initial.accounts = [account] as never;
+  const changed = { ...initial, revision: 2, projectionOf: { ...initial.projectionOf, revision: 2 } };
+  const enriched = structuredClone(changed);
+  enriched.accounts[0]!.connectionDetails = { email: "owner@example.com", planName: "ChatGPT Plus" };
+  const getSnapshot = vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(enriched).mockRejectedValueOnce(new Error("metadata unavailable"));
+  const controller = new ProviderSettingsController({ identityKey: "owner", transport: { getSnapshot, mutate: vi.fn().mockResolvedValue({ kind: "snapshot", snapshot: changed }) } });
+  await controller.refresh();
+  expect(await controller.mutate({ type: "update_harness", harnessInstanceId: "harness_one", displayName: "Renamed" })).toBe(true);
+  expect(controller.getState().snapshot?.accounts[0]?.connectionDetails?.planName).toBe("ChatGPT Plus");
+  expect(getSnapshot).toHaveBeenLastCalledWith(expect.any(AbortSignal), { refresh: false });
+  expect(await controller.mutate({ type: "update_harness", harnessInstanceId: "harness_one", displayName: "Renamed again" })).toBe(true);
+  expect(controller.getState().error).toBeNull();
+  controller.dispose();
+});
+
+it("retains login handoff recovery feedback after accepting negotiated native identity", async () => {
+  const changed = snapshot(2);
+  changed.harnesses[0]!.authState = "authenticating";
+  changed.accounts = [{ id: "native", providerId: "openai", displayName: "Codex", authMethod: "terminal", authState: "authenticated", lastCheckedAt: checkedAt, accessSourceId: "source_native", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } }];
+  changed.modelProviders.push({ id: "openai", displayName: "OpenAI", models: [] });
+  changed.accessSources.push({ ...changed.accessSources[0]!, id: "source_native", kind: "provider_account", fundingKind: "owner_account", providerId: "openai", accountId: "native", eligibleModelIds: [] });
+  const enriched = structuredClone(changed);
+  enriched.accounts[0]!.connectionDetails = { email: "owner@example.com", planName: "ChatGPT Plus" };
+  const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot(1)).mockResolvedValueOnce(enriched);
+  const controller = new ProviderSettingsController({ identityKey: "owner", transport: { getSnapshot, mutate: vi.fn().mockResolvedValue({ kind: "login_attempt", snapshot: changed, attempt: { id: "attempt_one", harnessInstanceId: "harness_one", accountId: null, method: "terminal", state: "pending", action: { kind: "open_terminal", terminalSessionId: "matrix-login" }, expiresAt: "2026-08-30T10:10:00.000Z", safeFailure: null } }) } });
+  await controller.refresh();
+  expect(await controller.mutate({ type: "start_login", harnessInstanceId: "harness_one", accountId: null, method: "terminal" }, { onLoginAction: async () => { throw new Error("private handoff failure"); } })).toBe(true);
+  expect(controller.getState().snapshot?.accounts[0]?.connectionDetails?.email).toBe("owner@example.com");
+  expect(controller.getState().connectionAttempt?.id).toBe("attempt_one");
+  expect(controller.getState().error).toBe("Sign-in started. Use Continue to open it again.");
+  controller.dispose();
+});

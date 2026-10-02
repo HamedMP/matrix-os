@@ -514,7 +514,7 @@ describe("draft chat implicit thread creation", () => {
     const composer = await openDraft();
     expect(api.forRuntime).toHaveBeenCalledWith("primary");
     await waitFor(() => expect(api.get).toHaveBeenCalledWith(
-      "/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeModelCapabilities=true&includeMatrixModelInventory=true", expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      "/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true", expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ));
     const pane = screen.getByRole("region", { name: "New chat in Matrix OS" });
     fireEvent.drop(pane, {

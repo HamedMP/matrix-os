@@ -92,7 +92,7 @@ describe("Matrix source fallback for native Pi setup", () => {
     fireEvent.click(within(screen.getByRole("region", { name: "Matrix AI" })).getByRole("button", { name: "Choose Pi" }));
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Ready")).toBeVisible();
-    expect(within(gateway).getByText("Pi · GLM")).toBeVisible();
+    expect(within(gateway).getByText("Pi · GLM")).not.toBeVisible();
     expect(next.harnesses[1]!.route.modelId).toBe(sonnet);
     expect(next.harnesses[1]).toEqual(originalPi);
     expect(onMutate).not.toHaveBeenCalled();
@@ -159,7 +159,7 @@ describe("Matrix source fallback for native Pi setup", () => {
       const gateway = screen.getByRole("region", { name: "Matrix AI" });
       expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();
       expect(within(gateway).getByText("Unavailable")).toBeVisible();
-      expect(within(gateway).getByRole("button", { name: "Check again" })).toBeEnabled();
+      expect(within(gateway).getByRole("button", { name: "Check again", hidden: true })).toBeEnabled();
       expect(within(gateway).queryByRole("button", { name: "Choose Pi" })).not.toBeInTheDocument();
     },
   );
@@ -230,7 +230,7 @@ describe("Matrix source fallback for native Pi setup", () => {
     setup(next, "harness_pi");
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Ready")).toBeVisible();
-    expect(within(gateway).getByText("Pi · GLM")).toBeVisible();
+    expect(within(gateway).getByText("Pi · GLM")).not.toBeVisible();
   });
 
   it("shows fresh authorized discovery for a connection failure before an empty policy anchor", () => {

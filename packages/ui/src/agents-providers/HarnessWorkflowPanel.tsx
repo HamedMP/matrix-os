@@ -691,11 +691,12 @@ export function HarnessWorkflowPanel({
             View logs
           </button>
         ) : null}
-        {onDisconnect && connected ? (
+        {connected ? (
           <button
             type="button"
             className="matrix-ap-link-button"
-            disabled={disabled || pending}
+            disabled={disabled || pending || !onDisconnect}
+            title={!onDisconnect ? "Disconnect is unavailable for this connection on this computer" : undefined}
             onClick={() => {
               setDisconnectOpen(true);
               setUninstall(false);

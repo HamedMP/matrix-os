@@ -1,8 +1,9 @@
 import { ProviderAccordion } from "./ProviderAccordion.js";
-import { hasConfiguredConnection } from "./harness-connection.js";
+import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
 import type { ReactNode } from "react";
 import type {
   ProviderAccessSource,
+  ProviderAccount,
   ProviderHarnessInstance,
   ProviderHarnessKind,
   ProviderWorkflowCapability,
@@ -60,6 +61,7 @@ function RowChevron({ expanded }: { expanded: boolean }) {
 export function HarnessRail({
   harnesses,
   sources,
+  accounts = [],
   selectedId,
   onSelect,
   renderDetails,
@@ -75,6 +77,7 @@ export function HarnessRail({
   renderCatalog?: (entry: ProviderSettingsSnapshot["harnessCatalog"][number]) => ReactNode;
   renderInventory?: (item: ProviderWorkflowCapability) => ReactNode;
   sources: ProviderAccessSource[];
+  accounts?: ProviderAccount[];
   selectedId: string | null;
   disabled: boolean;
   statusOverride?: Record<string, string>;
@@ -169,9 +172,7 @@ export function HarnessRail({
                 );
               }
               const harness = item.instance!;
-              const source = sources.find(
-                (source) => source.id === harness.accessSourceId,
-              );
+              const source = resolveHarnessConnection(harness, accounts, sources).source;
               const status =
                 installationWorkflowStatus(harness.installState, statusOverride?.[harness.id]) ?? rowStatus(harness, source);
               const detailsId = `matrix-ap-details-${harness.id}`;

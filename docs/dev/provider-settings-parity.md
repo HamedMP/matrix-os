@@ -80,7 +80,8 @@ compatibility projections; they are not independent stores.
 
 V3 distinguishes native credential observation from remote execution readiness.
 Settings rows use the shared configured-connection derivation to display
-Connected / Not connected; Not installed is yellow. Settings must not expose
+Connected / Not connected; confirmed Not installed is red. Unknown installation
+remains Checking installation and does not imply absence. Settings must not expose
 local-login/unverified prose as its row status. A connection does not establish
 that a model call succeeds, and canonical Chat admission retains its readiness
 and saved-off guards. An explicit saved-off agent is Not connected until a
@@ -93,6 +94,28 @@ opening Terminal automatically. Codex and Hermes private native identity and
 allowance are enriched only for the runtime owner; Hermes reads its own current
 account, never an unrelated Codex account. Native helpers return bounded safe
 metadata, not credentials. Missing quota is unavailable, not zero.
+
+Connected agents present a Connection card with the selected account's available
+plan/email, authoritative usage and reset time, Change account, View logs, and
+Disconnect. Hide the connection chooser once the same shared derivation marks
+that agent Connected. Resolve optional account details from selectedAccountId,
+or the exact selected access source account identity; never borrow another
+account. The allowance bar represents remaining quota.
+
+Native account details are optional GET enrichment negotiated explicitly with
+`includeAccountDetails=true`, and returned only for a positively resolved runtime
+owner. Default/opt-out/non-owner reads and mutation responses omit the field for
+legacy schema compatibility. Fresh Codex metadata supplies allowlisted planName
+and email; unknown plan names are omitted. Hermes may expose its own current
+native email/usage without a plan name. After a successful mutation, the shared
+controller refreshes the negotiated projection without resetting the accordion;
+a metadata refresh failure must not claim the confirmed mutation failed.
+
+The Matrix AI primary card displays eligible credit balance, Usage history and
+Buy credit. Unsupported checkout retains a disabled explained control. Harness
+routing and spending limits belong under Advanced settings. Known Sonnet and
+GLM models use Coding and General purpose chips respectively; unknown purpose
+is omitted rather than fabricated.
 
 Web Canvas, Web Desktop, and Electron Desktop must expose the same:
 

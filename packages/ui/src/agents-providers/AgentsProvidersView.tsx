@@ -4,9 +4,10 @@ import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { useHarnessEnablement } from "./use-harness-enablement.js";
 import { useGatewaySelection } from "./use-gateway-selection.js";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
-import { hasConfiguredConnection } from "./harness-connection.js";
+import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
 import type { ProviderWorkflowCapability } from "@matrix-os/contracts";
+import { ConnectedAccountCard } from "./ConnectedAccountCard.js";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
@@ -307,6 +308,7 @@ export function AgentsProvidersView({
             ) : null
           }
           sources={snapshot.accessSources}
+          accounts={snapshot.accounts}
           statusOverride={workflowStatus}
           selectedId={resolvedExpandedId}
           disabled={mutationsDisabled}
@@ -328,18 +330,15 @@ export function AgentsProvidersView({
               (item) => item.harnessInstanceId === harness.id,
             );
             const guided = Boolean(workflowClient && capability);
-            const source = snapshot.accessSources.find(item => item.id === harness.accessSourceId);
+            const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
             const connected = hasConfiguredConnection(harness, source);
+            const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             const accountsPanel = (connectionAction?: ReactNode) =>
               !gatewaySelected ||
               (harness.harness !== "pi" && harness.harness !== "opencode") ||
               harness.accountIds.length > 0 ? (
                 <SavedAccounts
-                  collapsed={
-                    !connected ||
-                    (gatewaySelected &&
-                    (harness.harness === "pi" || harness.harness === "opencode"))
-                  }
+                  collapsed={true}
                 >
                   <AccountsPanel
                     harness={harness}
@@ -395,7 +394,7 @@ export function AgentsProvidersView({
                     : undefined}
 
                 />
-                {!guided ? <><ConnectionFallback harness={harness} workflowPermission={workflowPermission} disabled={mutationsDisabled} onSetupHarness={onSetupHarness} />{accountsPanel()}</> : null}
+                {!guided ? <>{connected ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}{accountsPanel()}</> : null}
                 {workflowClient &&
                 workflowCapabilities.find(
                   (item) => item.harnessInstanceId === harness.id,
@@ -403,7 +402,7 @@ export function AgentsProvidersView({
                   <HarnessWorkflowPanel
                     key={harness.id}
                     connectRequest={connectRequests[harness.id] ?? 0}
-                    renderConnection={connected ? accountsPanel : undefined}
+                    renderConnection={connected ? connectionCard : undefined}
                     source={source}
                     harness={harness}
                     capability={
@@ -427,17 +426,18 @@ export function AgentsProvidersView({
                       setWorkflowStatus(current => updateWorkflowRowStatus(current, harness.id, status))
                     }
                     onDisconnect={
-                      supports("logout_account") && harness.selectedAccountId
+                      supports("logout_account") && selectedAccount?.id
                         ? async () => {
                             return await onMutate({
                               type: "logout_account",
-                              accountId: harness.selectedAccountId!,
+                              accountId: selectedAccount!.id,
                             });
                           }
                         : undefined
                     }
                   />
                 ) : null}
+                {guided ? accountsPanel() : null}
                 <SavedAccounts
                   title="Advanced configuration"
                   collapsed={true}

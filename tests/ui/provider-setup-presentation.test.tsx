@@ -55,14 +55,18 @@ function fundedSnapshot(): ProviderSettingsSnapshot {
 afterEach(cleanup);
 
 describe("provider setup presentation", () => {
-  it("keeps Matrix AI first and explains missing setup even without any agents", () => {
+  it("keeps Matrix AI first with unavailable purchases disabled even without any agents", () => {
     const value = snapshot();
     value.harnesses = [];
     setup(value);
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Setup needed")).toBeVisible();
-    expect(within(gateway).getByText(/not available on this computer yet/i)).toBeVisible();
-    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+    expect(within(gateway).queryByText(/not available on this computer yet/i)).not.toBeInTheDocument();
+    const buy = within(gateway).getByRole("button", { name: "Buy credit" });
+    expect(buy).toBeDisabled();
+    expect(buy).toHaveAttribute("title", "Credit purchases are unavailable on this computer");
+    fireEvent.click(buy);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(within(gateway).queryByText(/\$0/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
   });
@@ -191,6 +195,8 @@ describe("provider setup presentation", () => {
     const { onMutate } = setup(value);
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
+    expect(within(gateway).getByText(/Saved Matrix model unavailable/)).not.toBeVisible();
+    fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
     expect(within(gateway).getByText(/Saved Matrix model unavailable/)).toBeVisible();
     fireEvent.click(within(gateway).getByRole("button", { name: "Use Matrix AI" }));
     expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({ route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" } }));

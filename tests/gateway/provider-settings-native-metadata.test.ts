@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ProviderAccountSchema } from '@matrix-os/contracts';
 import { createProviderSettingsRoutes } from '../../packages/gateway/src/ai-providers/provider-settings-routes.js';
 import { projectProviderSettings } from '../../packages/gateway/src/ai-providers/provider-settings-projector.js';
 import { initialProviderSettingsConfiguration } from '../../packages/gateway/src/ai-providers/provider-settings-persistence.js';
 import { providerSettingsCanonicalFixture, PROVIDER_SETTINGS_NOW as now } from './provider-settings-test-support.js';
 import { normalizeCodexNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
-const metadata = normalizeCodexNativeAccountMetadata({ account: { type: 'chatgpt', email: 'owner@example.test' } }, { rateLimits: { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: Math.floor(now.getTime() / 1000) + 3600 } } }, now)!;
+const metadata = normalizeCodexNativeAccountMetadata({ account: { type: 'chatgpt', email: 'owner@example.test', planType: 'pro' } }, { rateLimits: { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: Math.floor(now.getTime() / 1000) + 3600 } } }, now)!;
 describe('owner native account enrichment', () => {
   it('only trusted runtime owner reads request account metadata, regardless of query fields', async () => {
     const canonical = providerSettingsCanonicalFixture();
@@ -16,6 +17,22 @@ describe('owner native account enrichment', () => {
     const collaborator = createProviderSettingsRoutes({ store: { getSnapshot, mutate: vi.fn() }, getPrincipal: () => ({ userId: 'collaborator' }), canReadNativeAccountMetadata: () => false });
     expect((await collaborator.request('/provider-settings?includeNativeAccountMetadata=true')).status).toBe(200);
     expect(getSnapshot).toHaveBeenLastCalledWith({ refresh: false });
+  });
+  it('negotiates owner-only connection details without changing historical responses', async () => {
+    const canonical = providerSettingsCanonicalFixture();
+    const snapshot = await projectProviderSettings({ canonical, config: initialProviderSettingsConfiguration(canonical), now, supportedActions: [] });
+    snapshot.accounts[0]!.connectionDetails = { email: 'owner@example.test', planName: 'ChatGPT Pro' };
+    const store = { getSnapshot: vi.fn(async () => structuredClone(snapshot)), mutate: vi.fn() };
+    const owner = createProviderSettingsRoutes({ store, getPrincipal: () => true, canReadNativeAccountMetadata: () => true });
+    const historicalAccount = (await (await owner.request('/provider-settings')).json()).accounts[0];
+    expect(historicalAccount.connectionDetails).toBeUndefined();
+    expect(ProviderAccountSchema.omit({ connectionDetails: true }).safeParse(historicalAccount).success).toBe(true);
+    expect((await (await owner.request('/provider-settings?includeAccountDetails=true')).json()).accounts[0].connectionDetails).toEqual(snapshot.accounts[0]!.connectionDetails);
+    expect((await owner.request('/provider-settings?includeAccountDetails=bogus')).status).toBe(400);
+    const collaborator = createProviderSettingsRoutes({ store, getPrincipal: () => true, canReadNativeAccountMetadata: () => false });
+    expect((await (await collaborator.request('/provider-settings?includeAccountDetails=true')).json()).accounts[0].connectionDetails).toBeUndefined();
+    const noOwnerResolver = createProviderSettingsRoutes({ store, getPrincipal: () => true });
+    expect((await (await noOwnerResolver.request('/provider-settings?includeAccountDetails=true')).json()).accounts[0].connectionDetails).toBeUndefined();
   });
   it('does not opt in when no owner authority resolver exists', async () => {
     const canonical = providerSettingsCanonicalFixture();
@@ -36,9 +53,11 @@ describe('owner native account enrichment', () => {
     const config = initialProviderSettingsConfiguration(canonical);
     const after = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(after.accounts.find(account => account.id === 'owner_openai')?.displayName).toBe('owner@example.test');
+    expect(after.accounts.find(account => account.id === 'owner_openai')?.connectionDetails).toEqual({ email: 'owner@example.test', planName: 'ChatGPT Pro' });
     expect(after.accessSources.find(source => source.id === 'owner_openai_profile')).toMatchObject({ readiness: { state: 'unknown' }, usage: { kind: 'subscription_allowance', usedBasisPoints: 2000 } });
     const expired = await projectProviderSettings({ canonical, config, now: new Date(now.getTime() + 31_000), supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(expired.accounts.find(account => account.id === 'owner_openai')?.displayName).toBe('Codex');
+    expect(expired.accounts.find(account => account.id === 'owner_openai')?.connectionDetails).toBeUndefined();
   });
   it('Hermes projects its own exact native metadata without borrowing standalone Codex', async () => {
     const canonical = providerSettingsCanonicalFixture();
