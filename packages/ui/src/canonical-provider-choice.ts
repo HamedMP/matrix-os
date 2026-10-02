@@ -97,10 +97,16 @@ export function deriveCanonicalProviderChoices(
     const interactionMode = instance.supports.interactionModes[0];
     const permissionMode = instance.supports.permissionModes[0];
     if (!interactionMode || !permissionMode) return [];
+    // These managed instances share the funding label, but have different executors.
+    const managedExecution = (instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default")
+      || (instance.driverKind === "kernel" && instance.id === "kernel_matrix_included");
+    const harnessLabel = managedExecution
+      ? catalog.drivers.find((driver) => driver.kind === instance.driverKind)?.displayName ?? instance.displayName
+      : instance.displayName;
     return instance.models.flatMap((model) => model.availability === "available" ? [{
       instanceId: instance.id,
       driverKind: instance.driverKind,
-      harnessLabel: instance.displayName,
+      harnessLabel,
       ...(instance.connectionLabel ? { connectionLabel: instance.connectionLabel } : {}),
       modelId: model.id,
       modelLabel: model.displayName,

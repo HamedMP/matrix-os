@@ -6,6 +6,9 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CompactChatProviderChoices } from "../../packages/ui/src/compact-chat-provider-choices.js";
 import type { CanonicalProviderChoice } from "../../packages/ui/src/canonical-provider-choice.js";
+import { deriveCanonicalProviderChoices } from "../../packages/ui/src/canonical-provider-choice.js";
+import { managedChatInstances, managedPiChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 
 const matrix: CanonicalProviderChoice = {
@@ -53,6 +56,38 @@ const catalog: CanonicalProviderCatalog = {
 };
 
 describe("compact shared Chat choices", () => {
+  it("distinguishes actual Pi and legacy kernel choices while preserving exact selection and legacy locking", () => {
+    const snapshot = makeAiProviderSnapshot();
+    const managedCatalog: CanonicalProviderCatalog = {
+      revision: "managed-pi-and-kernel",
+      drivers: [
+        { kind: "kernel", displayName: "Claude SDK", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+        { kind: "matrix_pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+      ],
+      instances: [...managedChatInstances(snapshot, []), ...managedPiChatInstances(snapshot)]
+        .map((instance) => ({ ...instance, catalogRevision: "managed-pi-and-kernel" })),
+    };
+    const choices = deriveCanonicalProviderChoices(managedCatalog);
+    const selectedPi = choices.find((choice) => choice.instanceId === "matrix_pi_default")!;
+    const selectedKernel = choices.find((choice) => choice.instanceId === "kernel_matrix_included")!;
+    const select = vi.fn();
+    const view = render(<CompactChatProviderChoices catalog={managedCatalog} choices={choices} selected={selectedPi} onSelect={select} />);
+    expect(screen.getAllByRole("button", { name: "Matrix AI agent, Available" })).toHaveLength(1);
+    const piOption = screen.getByRole("option", { name: "Claude Sonnet 5 via Pi · Matrix AI" });
+    expect(piOption).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(piOption);
+    expect(select).toHaveBeenCalledWith(selectedPi);
+    expect(select.mock.calls[0]![0].instanceId).toBe("matrix_pi_default");
+    view.rerender(<CompactChatProviderChoices catalog={managedCatalog} choices={choices} selected={selectedKernel}
+      lockedInstanceId="kernel_matrix_included" onSelect={select} />);
+    expect(screen.getByRole("option", { name: "Claude Sonnet 5 via Pi · Matrix AI" })).toBeDisabled();
+    const kernelOption = screen.getByRole("option", { name: "Claude Sonnet 5 via Claude SDK · Matrix AI" });
+    expect(kernelOption).toHaveAttribute("aria-selected", "true");
+    expect(kernelOption).toBeEnabled();
+    fireEvent.click(kernelOption);
+    expect(select).toHaveBeenLastCalledWith(selectedKernel);
+  });
+
   it("shows Matrix AI at the top level and selects its actual Pi execution route", () => {
     const select = vi.fn();
     const managed = { ...pi, modelId: "cloudflare:@cf/zai-org/glm-5.3-flash", modelLabel: "GLM Flash", connectionLabel: "Matrix AI" };
