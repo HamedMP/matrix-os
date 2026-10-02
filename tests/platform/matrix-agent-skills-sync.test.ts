@@ -127,6 +127,37 @@ describe("Matrix coding-agent skill sync", () => {
     expect(extractHermesFallbackSkillList(hermesInstaller)).toEqual(shippedSkillDirs);
   });
 
+  it.each(["default", "custom-home", "custom-root"])("preserves Agent skill collisions before invoking its installer (%s)", (location) => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-agent-collisions-${location}-${Date.now()}`), { recursive: true }));
+    const cliHome = join(root, "cli-home");
+    const agentHome = location === "custom-home" ? join(root, "custom-agent-home") : join(cliHome, ".agent");
+    const skillsRoot = location === "custom-root" ? join(root, "custom-skills") : join(agentHome, "skills");
+    const fakeAgent = join(root, "agent");
+    const logPath = join(root, "calls.log");
+    try {
+      writeSkill(skillsRoot, "animate", "animate");
+      mkdirSync(join(skillsRoot, "matrix-app-builder"));
+      execFileSync("ln", ["-s", join(root, "missing-owner-skill"), join(skillsRoot, "animation-accessibility")]);
+      writeFileSync(join(skillsRoot, "css-animations"), "owner file\n");
+      writeFileSync(fakeAgent, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${logPath}"\n`);
+      chmodSync(fakeAgent, 0o755);
+      execFileSync("bash", [join(process.cwd(), "scripts/install-agent-matrix-skills.sh"), "Example/remote-repo"], {
+        env: { ...process.env, AGENT_BIN: fakeAgent, HOME: cliHome,
+          ...(location === "custom-home" ? { AGENT_HOME: agentHome } : {}),
+          ...(location === "custom-root" ? { MATRIX_AGENT_SKILLS_ROOT: skillsRoot } : {}) }, stdio: "pipe",
+      });
+      const calls = readFileSync(logPath, "utf-8").split("\n");
+      expect(calls.some((call) => call.endsWith("/animate"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/app-builder"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/animation-accessibility"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/css-animations"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/integrations"))).toBe(true);
+      expect(readFileSync(join(skillsRoot, "animate", "SKILL.md"), "utf-8")).toContain("animate test skill");
+      expect(lstatSync(join(skillsRoot, "animation-accessibility")).isSymbolicLink()).toBe(true);
+      expect(readFileSync(join(skillsRoot, "css-animations"), "utf-8")).toBe("owner file\n");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("lets the Agent installer consume a direct skills/matrix source path", () => {
     const root = resolve(mkdirSync(join(tmpdir(), `matrix-agent-install-${Date.now()}`), { recursive: true }));
     const source = join(root, "skills", "matrix");
@@ -162,6 +193,31 @@ printf '%s\\n' "$*" >> "${logPath}"
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("preserves remote Hermes destination collisions before invoking its installer", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-hermes-remote-${Date.now()}`), { recursive: true }));
+    const hermesHome = join(root, "hermes-home");
+    const fakeHermes = join(root, "hermes");
+    const logPath = join(root, "calls.log");
+    try {
+      writeSkill(join(hermesHome, "skills"), "animate", "animate");
+      mkdirSync(join(hermesHome, "skills", "matrix-app-builder"));
+      execFileSync("ln", ["-s", join(root, "missing-owner-skill"), join(hermesHome, "skills", "animation-accessibility")]);
+      writeFileSync(fakeHermes, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${logPath}"\n`);
+      chmodSync(fakeHermes, 0o755);
+      execFileSync("bash", [join(process.cwd(), "scripts/install-hermes-matrix-skills.sh"), "Example/remote-repo"], {
+        env: { ...process.env, HERMES_BIN: fakeHermes, HERMES_HOME: hermesHome }, stdio: "pipe",
+      });
+      const calls = readFileSync(logPath, "utf-8").split("\n");
+      expect(calls.some((call) => call.endsWith("/animate"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/app-builder"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/animation-accessibility"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/integrations"))).toBe(true);
+      expect(calls.join("\n")).not.toContain("--force");
+      expect(readFileSync(join(hermesHome, "skills", "animate", "SKILL.md"), "utf-8")).toContain("animate test skill");
+      expect(lstatSync(join(hermesHome, "skills", "animation-accessibility")).isSymbolicLink()).toBe(true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it("lets the Hermes installer sync from a direct skills/matrix source path", () => {

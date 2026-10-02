@@ -4,6 +4,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ChatRunContextSchema } from "@matrix-os/contracts";
+import { ChatAgentContextError } from "../../packages/gateway/src/chat/agent-context.js";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
 import { createHermesStdioClient } from "../../packages/gateway/src/chat/hermes-stdio-client.js";
 import { createJevHermesCredentialResolver } from "../../packages/gateway/src/chat/jev-hermes-credentials.js";
@@ -51,13 +52,16 @@ describe("production isolated Hermes recipe launch", () => {
     const resolveCredentials = createJevHermesCredentialResolver({ homePath: home, ownerId: input.owner.ownerId,
       settings: { getSnapshot: async () => jevReadySettingsSnapshot(Date.now()) }, runtimeSource });
     const gateway = fakeGateway(); const preflight = vi.fn(async () => undefined);
+    const verifyRuntime = vi.fn(async () => undefined);
     const adapter = createHermesChatProviderAdapter({ homePath: home, spawnFn: gateway.spawnFn,
-      jev: { resolveCredentials, verifyRuntime: async () => undefined, preflight, clearRun: vi.fn(), summary: () => null } });
+      jev: { resolveCredentials, verifyRuntime, preflight, clearRun: vi.fn(), summary: () => null } });
     try {
       const result = collect(adapter.start({ ...input, selection: { instanceId: "hermes_default", model: `${provider}:${model}` } }));
       await vi.waitFor(() => expect(gateway.requests.some(request => request.method === "session.create")).toBe(true));
       expect(gateway.requests.find(request => request.method === "session.create")?.params).toMatchObject({ provider, model });
       const launch = gateway.spawnFn.mock.calls[0]![2];
+      expect(verifyRuntime).toHaveBeenCalledWith(join(home, ".hermes/hermes-agent"), expect.any(AbortSignal),
+        provider === "openrouter" ? "chat_completions" : "codex_responses");
       expect(launch.env.MATRIX_JEV_PRIMARY_KEY).toBe(key);
       expect(launch.env.MATRIX_JEV_PRIMARY_PROVIDER).toBe(provider);
       expect(launch.env.MATRIX_JEV_PRIMARY_MODEL).toBe(model);
@@ -171,6 +175,21 @@ describe("production isolated Hermes recipe launch", () => {
     f.gateway.event("session.info", { provider: "anthropic", model: "claude-sonnet-5", lazy: false, tools: { matrix_jev_recipe: mode === "extra-tool" ? ["terminal", "mcp__matrix_jev_recipe__jev_inbox_preview"] : ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
     expect(await events).toContainEqual(expect.objectContaining({ type: "run.completed", outcome: "failed" }));
     expect(f.gateway.requests.some((r) => r.method === "prompt.submit")).toBe(false);
+    expect(f.clearRun).toHaveBeenCalledWith(input.owner.ownerId, input.runId);
+  });
+  it.each([
+    ["workflow_funding_required", "service_unavailable", "Inbox triage funding is unavailable. Check Matrix AI readiness and retry."],
+    ["workflow_setup_required", "capability_mismatch", "Inbox triage requires a supported configured Hermes account. Check Agents & providers."],
+  ] as const)("preserves %s preflight failure instead of reporting a Hermes connection failure", async (reason, code, safeMessage) => {
+    const f = fixture();
+    f.preflight.mockRejectedValue(new ChatAgentContextError(reason));
+    const events = collect(f.adapter.start(input));
+    await vi.waitFor(() => expect(f.gateway.requests.some(r => r.method === "session.create")).toBe(true));
+    f.gateway.event("session.info", { provider: "anthropic", model: "claude-sonnet-5", lazy: false,
+      tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
+    expect(await events).toContainEqual(expect.objectContaining({ type: "run.completed", outcome: "failed",
+      error: expect.objectContaining({ code, safeMessage, retryable: false }) }));
+    expect(f.gateway.requests.some(r => r.method === "prompt.submit")).toBe(false);
     expect(f.clearRun).toHaveBeenCalledWith(input.owner.ownerId, input.runId);
   });
   it("never submits primary inference after cancellation during delayed profile/probe preflight", async () => {

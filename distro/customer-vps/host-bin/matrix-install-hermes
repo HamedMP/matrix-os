@@ -94,6 +94,21 @@ run_installer_as_runtime_user env \
   PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
   bash "$HERMES_INSTALLER_PATH" --branch main --commit "$HERMES_COMMIT" --force-commit --skip-setup
 
+# Native Anthropic is an upstream optional extra, so the base installer may
+# omit it. Provision all supported native routes from the same pinned source
+# dependency contract rather than duplicating provider SDK versions here.
+# A failed dependency install fails the unit and is retried by systemd; never
+# claim successful setup while leaving the selected provider unusable.
+log "installing pinned Hermes native-provider dependencies"
+run_installer_as_runtime_user env \
+  HOME="$MATRIX_RUNTIME_HOME" \
+  UV_HTTP_TIMEOUT=60 \
+  PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
+  timeout 300 uv --no-config pip install \
+  --python "${HERMES_HOME}/hermes-agent/venv/bin/python" \
+  --index-url https://pypi.org/simple \
+  --editable "${HERMES_HOME}/hermes-agent[anthropic]"
+
 for cli in uv uvx hermes; do
   if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/$cli" ]; then
     ln -sf "$MATRIX_RUNTIME_HOME/.local/bin/$cli" "/usr/local/bin/$cli"

@@ -1,3 +1,5 @@
+import type { JevHermesCredentials } from "./jev-hermes-credentials.js";
+
 /** Skip Python site initialization in the restricted credential-bearing process.
  * Fixed verified source and installed dependencies are appended explicitly;
  * PYTHONPATH, user/sitecustomize and executable .pth hooks never execute.
@@ -36,6 +38,23 @@ export function restrictedHermesPythonArguments(root: string, cachePrefix: strin
     "runpy.run_module('tui_gateway.entry', run_name='__main__')",
   ].join("\n"), true);
 }
-export function hermesDependencyArguments(root: string, cachePrefix: string): string[] {
-  return isolatedArguments(root, cachePrefix, 'import anthropic, openai; import importlib.metadata; print(importlib.metadata.version("anthropic")); print(importlib.metadata.version("openai"))', false);
+/** SDK versions belong to the audited upstream source pin's pyproject.toml.
+ * OpenAI is core (including auxiliary imports); Anthropic is an optional extra.
+ * Keep this contract updated together with the upstream source verification.
+ */
+export function hermesSdkRequirements(apiMode: JevHermesCredentials["apiMode"]): readonly { name: string; version: string }[] {
+  switch (apiMode) {
+    case "codex_responses":
+    case "chat_completions": return [{ name: "openai", version: "2.24.0" }];
+    case "anthropic_messages": return [{ name: "openai", version: "2.24.0" }, { name: "anthropic", version: "0.87.0" }];
+    default: throw new Error("Restricted runtime setup required");
+  }
+}
+export function hermesDependencyArguments(root: string, cachePrefix: string, apiMode: JevHermesCredentials["apiMode"]): string[] {
+  const requirements = hermesSdkRequirements(apiMode);
+  const body = ["import importlib, importlib.metadata", ...requirements.flatMap(({ name }) => [
+    `importlib.import_module(${JSON.stringify(name)})`,
+    `print(importlib.metadata.version(${JSON.stringify(name)}))`,
+  ])].join("\n");
+  return isolatedArguments(root, cachePrefix, body, false);
 }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FundedAiAuthorizationResponseSchema,
+  JEV_MODEL_ID,
   FundedAiOperatorGlobalPolicyResponseSchema,
   FundedAiOperatorRuntimePolicyResponseSchema,
   FundedAiPromotionalGrantResponseSchema,
@@ -879,6 +880,34 @@ describe("funded AI policy routes", () => {
     expect(finalized.status).toBe(200);
     expect(FundedAiFinalizationResponseSchema.parse(await finalized.json()))
       .toMatchObject({ finalizationMode: "conservative", actualCostMicrousd: 100, releasedMicrousd: 0 });
+  });
+
+  it("limits no-dispatch zero settlement to the trusted relay and bound Jev request", async () => {
+    const { app, repository } = await createTestApp();
+    const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" };
+    await repository.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
+    await repository.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
+      allowedModelIds: [modelId, JEV_MODEL_ID], monthlyBudgetMicrousd: 1_000, expiresAt: null });
+    const credential = (await repository.issueRuntimeCredential(identity)).credential;
+    const authorization = await repository.authorize({ credential: credential.token, requestId: "jev_no_dispatch_route",
+      modelId: JEV_MODEL_ID, maxCostMicrousd: 500, billingMode: "usage", jevPricingVersion: "typesafe-jev-input-2026-09" });
+    const locator = { reservationId: authorization.reservation.reservationId, tokenId: credential.tokenId };
+    await repository.startReservation(locator);
+    const request = { ...locator, mode: "not_dispatched", expectedRequestId: "jev_no_dispatch_route",
+      jevPricingVersion: "typesafe-jev-input-2026-09" };
+    const finalize = (body = request, authorization = relayControlToken) => app.request("/internal/ai/funded/finalize", {
+      method: "POST", headers: { authorization: `Bearer ${authorization}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    for (const caller of ["", credential.token, bearerFor("alice")]) expect((await finalize(request, caller)).status).toBe(401);
+    expect((await finalize({ ...request, expectedRequestId: "wrong_request" })).status).toBe(409);
+    expect(await repository.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 500 });
+    const result = await finalize();
+    expect(result.status).toBe(200);
+    const settled = await result.json();
+    expect(settled).toMatchObject({ status: "settled", actualCostMicrousd: 0, chargedCostMicrousd: 0,
+      releasedMicrousd: 500, finalizationMode: "exact" });
+    expect(await (await finalize()).json()).toEqual(settled);
   });
 
   it("returns temporary unavailability for unresolved usage instead of disabling access", async () => {

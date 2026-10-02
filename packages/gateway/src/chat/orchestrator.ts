@@ -695,6 +695,7 @@ export class CanonicalChatOrchestrator {
         selection: run.selection,
         interactionMode: run.interactionMode,
         permissionMode: run.permissionMode,
+        ...(sharedScopeId ? { sharedScopeId } : {}),
         ...(resolvedRoot ? { executionRoot: resolvedRoot.primaryWorkspaceRoot } : {}),
         ...(resolvedRoot ? { projectSlug: resolvedRoot.projectSlug } : {}),
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),

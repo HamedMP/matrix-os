@@ -58,7 +58,7 @@ it("never labels an old preview bot even when Jev confidently proposes categorie
   expect(await f.execute({ operation: "evaluate", receipt: evidence.receipt })).toMatchObject({ kind: "proposal", readonly: true });
   expect(f.label).not.toHaveBeenCalled();
 });
-it("reports review-required instead of disabled permission when an enabled bot's scores need review", async () => {
+it("adds verified Newsletter and Review labels with the saved labeling grant", async () => {
   const f = fixture("valid", true); const evidence = await selected(f);
   if (evidence.kind !== "evidence") throw new Error("Missing evidence");
   const original = f.evaluate.getMockImplementation()!;
@@ -66,15 +66,34 @@ it("reports review-required instead of disabled permission when an enabled bot's
     const result = await original(...args);
     return { ...result, answers: result.answers.map(a => ({ ...a, probability: a.id === "newsletter" ? 0.96 : a.id === "urgent" ? 0.5 : 0.1 })) };
   });
+  f.label.mockImplementation(async (_owner, _scope, input) => ({ confirmed: true, messageIds: input.messageIds,
+    labelIds: ["Label_Newsletter", "Label_Review"] }));
   expect(await f.execute({ operation: "evaluate", receipt: evidence.receipt })).toMatchObject({
-    kind: "proposal", readonly: true, labelingSkipped: "review_required",
+    kind: "labeled", readonly: false,
     labels: [EMAIL_TRIAGE_LABELS.newsletter, EMAIL_TRIAGE_LABELS.review],
   });
-  expect(f.label).not.toHaveBeenCalled();
+  expect(f.label).toHaveBeenCalledOnce();
+  expect(f.label.mock.calls[0]?.[2]).toMatchObject({ labels: [EMAIL_TRIAGE_LABELS.newsletter, EMAIL_TRIAGE_LABELS.review] });
 });
-it("rechecks changed evidence after paid classification and performs no write", async () => {
+it.each([true, false])("handles a verified Review-only classification with labeling grant %s", async labeling => {
+  const f = fixture("valid", labeling); const evidence = await selected(f);
+  if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+  const original = f.evaluate.getMockImplementation()!;
+  f.evaluate.mockImplementation(async (...args) => {
+    const result = await original(...args);
+    return { ...result, answers: result.answers.map(a => ({ ...a, probability: a.id === "urgent" ? 0.5 : 0.1 })) };
+  });
+  expect(await f.execute({ operation: "evaluate", receipt: evidence.receipt })).toMatchObject({
+    kind: labeling ? "labeled" : "proposal", readonly: !labeling, labels: [EMAIL_TRIAGE_LABELS.review],
+  });
+  expect(f.label).toHaveBeenCalledTimes(labeling ? 1 : 0);
+});
+it.each([false, true])("rechecks changed evidence after classification (Review %s) and performs no write", async review => {
   const f = fixture("valid", true); const evidence = await selected(f);
   if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+  if (review) f.evaluate.mockImplementation(async () => ({ requestId: "jev_req_fixture_result", recipe: "email-triage-v1" as const,
+    model: "typesafe/jev" as const, latencyMs: 1,
+    answers: JEV_EMAIL_TRIAGE_ANSWER_IDS.map(id => ({ id, type: "boolean" as const, probability: id === "urgent" ? 0.5 : 0.1 })) }));
   const original = f.read.getMockImplementation()!;
   f.read.mockImplementation(async (...args) => {
     const value = await original(...args);

@@ -28,6 +28,33 @@ describe("window resizing", () => {
   ] as const)("resizes %s while anchoring the opposite edges", (direction, expected) => {
     expect(resizeWindowBounds(bounds, direction, 40, 20, minimum)).toEqual(expected);
   });
+  it.each([1, 0.5, 2])("resizes from every outside hit region with native content filling the frame at scale %s", (scale) => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    const changed = vi.fn();
+    const view = render(<WindowResizeControls bounds={bounds} minimum={minimum} scale={scale} placement="outside" onBoundsChange={changed} />);
+    const edge = 12 / scale;
+    const corner = 24 / scale;
+    const grip = view.container.querySelector<HTMLElement>("[data-window-resize-grip]")!;
+    expect(grip).toBeTruthy();
+    expect(grip.closest("[data-window-resize]")?.getAttribute("data-window-resize")).toBe("se");
+    expect(grip.getAttribute("aria-hidden")).toBe("true");
+    for (const direction of ["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const) {
+      const handle = view.container.querySelector<HTMLElement>(`[data-window-resize="${direction}"]`)!;
+      expect(handle.style[direction.includes("n") ? "top" : direction.includes("s") ? "bottom" : direction === "e" ? "right" : "left"])
+        .toBe(`${-(direction.length === 2 ? corner : edge)}px`);
+      expect(Number.parseFloat(handle.style[direction.length === 2 || !["n", "s"].includes(direction) ? "width" : "height"]) * scale).toBeGreaterThanOrEqual(direction.length === 2 ? 24 : 12);
+      handle.setPointerCapture = vi.fn();
+      changed.mockClear();
+      fireEvent.pointerDown(handle, { button: 0, clientX: 100, clientY: 100 });
+      expect(handle.setPointerCapture).toHaveBeenCalled();
+      fireEvent.pointerMove(window, { clientX: 120, clientY: 110 });
+      expect(changed).toHaveBeenLastCalledWith(resizeWindowBounds(bounds, direction, 20 / scale, 10 / scale, minimum));
+      fireEvent.pointerUp(window);
+      fireEvent.pointerMove(window, { clientX: 130, clientY: 120 });
+      expect(changed).toHaveBeenCalledTimes(1);
+    }
+    vi.unstubAllGlobals();
+  });
   it("anchors the far corner when the minimum is reached", () => {
     expect(resizeWindowBounds(bounds, "nw", 999, 999, minimum)).toEqual({ x: 380, y: 300, ...minimum });
   });
