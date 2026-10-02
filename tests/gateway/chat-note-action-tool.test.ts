@@ -125,6 +125,55 @@ describe("canonical create-note tool", () => {
     });
   });
 
+  it("marks list previews truncated and reads one exact full note before replacement", async () => {
+    const head = "same-prefix-" + "x".repeat(2_100);
+    const content = `${head}\nTAIL-ONLY-IN-FULL-READ`;
+    const created = await tool().execute(invocation("action_long", { ...args, content })) as { note: { id: string } };
+    const list = tools().find(item => item.toolId === "matrix_list_notes")!;
+
+    const preview = await list.execute(invocation("action_preview", { app: "notes" })) as {
+      notes: Array<{ id: string; content: string; contentTruncated: boolean; editable: boolean }>;
+    };
+    expect(preview.notes[0]).toMatchObject({
+      id: created.note.id,
+      content: content.slice(0, 2_000),
+      contentTruncated: true,
+      editable: false,
+    });
+    expect(preview.notes[0]!.content).not.toContain("TAIL-ONLY-IN-FULL-READ");
+
+    await expect(list.execute(invocation("action_full", { app: "notes", id: created.note.id }))).resolves.toEqual({
+      app: "notes",
+      notes: [expect.objectContaining({
+        id: created.note.id,
+        content,
+        contentTruncated: false,
+        editable: true,
+        updatedAt: expect.any(String),
+      })],
+    });
+  });
+
+  it("reports notes beyond the replacement bound as explicitly uneditable", async () => {
+    const id = "22222222-2222-4222-8222-222222222222";
+    await db.raw(
+      `INSERT INTO notes.notes (id, title, content, content_json, pinned, tags)
+       VALUES ($1, 'Oversized', $2, '{"type":"doc"}'::jsonb, false, '')`,
+      [id, "x".repeat(16_001)],
+    );
+    const list = tools().find(item => item.toolId === "matrix_list_notes")!;
+    await expect(list.execute(invocation("action_oversized", { app: "notes", id }))).resolves.toEqual({
+      app: "notes",
+      notes: [expect.objectContaining({
+        id,
+        content: "x".repeat(16_000),
+        contentTruncated: true,
+        editable: false,
+        uneditableReason: "content_exceeds_16000_character_edit_limit",
+      })],
+    });
+  });
+
   it("edits exactly one existing note with optimistic concurrency and idempotent reconciliation", async () => {
     const create = tool();
     const created = await create.execute(invocation()) as { note: { id: string } };

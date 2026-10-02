@@ -29,7 +29,7 @@ export function createCanonicalVoiceInstructions({ executionPolicy, descriptors 
   }
   if (["matrix_create_note", "matrix_list_notes", "matrix_edit_note"].some(id => granted.has(id))) {
     capabilities.push(granted.has("matrix_create_note") && granted.has("matrix_list_notes") && granted.has("matrix_edit_note")
-      ? "You can create, list, and safely edit notes. List notes first when an exact note ID and current concurrency timestamp are not already known. You cannot delete notes."
+      ? "You can create, list, and safely edit notes. List notes to identify the exact ID, then read that ID in full before every replacement; never edit from a truncated preview. Only edit when that full read says the note is editable, using its current concurrency timestamp. You cannot delete notes."
       : "You have only the explicitly listed bounded Notes actions; do not infer missing read, edit, create, or delete authority.");
   }
   if (granted.has("matrix_close_app")) capabilities.push("You can close an installed app window without deleting the app or its data.");

@@ -11,7 +11,10 @@ const noteSchema = z.object({
   title: z.string().trim().min(1).max(160),
   content: z.string().trim().min(1).max(16_000),
 }).strict();
-const listNotesSchema = z.object({ app: z.literal("notes") }).strict();
+const listNotesSchema = z.object({
+  app: z.literal("notes"),
+  id: z.uuid().optional(),
+}).strict();
 const editNoteSchema = noteSchema.extend({
   id: z.uuid(),
   expectedUpdatedAt: z.string().min(20).max(40).regex(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)$/),
@@ -160,8 +163,8 @@ export function createNoteActionTools(options: {
   };
   const list: CanonicalActionTool = {
     toolId: "matrix_list_notes",
-    schemaRevision: "list_notes_v1",
-    description: "List up to 16 actual Notes records with exact IDs, current text, and concurrency timestamps before editing.",
+    schemaRevision: "list_notes_v2",
+    description: "List up to 16 note previews, or pass one exact note ID to read its complete editable content and current concurrency timestamp before replacement. Preview content is explicitly truncated and cannot be used for editing.",
     inputSchema: z.toJSONSchema(listNotesSchema),
     effect: "read",
     approval: false,
@@ -171,14 +174,33 @@ export function createNoteActionTools(options: {
     async execute(input) {
       await options.homeForOwner(input.owner);
       input.signal.throwIfAborted();
-      listNotesSchema.parse(input.arguments);
+      const args = listNotesSchema.parse(input.arguments);
       await requireInstalledNotes(options.db);
-      const rows = await options.db.raw(
-        `SELECT id::text, title, LEFT(content, 2000) AS content, updated_at::text
-         FROM notes.notes ORDER BY updated_at DESC, id LIMIT 16`,
-      );
+      const fullRead = args.id !== undefined;
+      const rows = fullRead
+        ? await options.db.raw(
+          `SELECT id::text, title, LEFT(content, 16000) AS content,
+                  char_length(content) > 16000 AS content_truncated, updated_at::text
+           FROM notes.notes WHERE id = $1 LIMIT 1`,
+          [args.id],
+        )
+        : await options.db.raw(
+          `SELECT id::text, title, LEFT(content, 2000) AS content,
+                  char_length(content) > 2000 AS content_truncated, updated_at::text
+           FROM notes.notes ORDER BY updated_at DESC, id LIMIT 16`,
+        );
       return { app: "notes", notes: rows.rows.map(row => ({
-        id: row.id, title: row.title, content: row.content, updatedAt: row.updated_at,
+        id: row.id,
+        title: row.title,
+        content: row.content,
+        contentTruncated: Boolean(row.content_truncated),
+        editable: fullRead && !row.content_truncated,
+        ...(!fullRead
+          ? { uneditableReason: "full_read_required" }
+          : row.content_truncated
+            ? { uneditableReason: "content_exceeds_16000_character_edit_limit" }
+            : {}),
+        updatedAt: row.updated_at,
       })) };
     },
   };
