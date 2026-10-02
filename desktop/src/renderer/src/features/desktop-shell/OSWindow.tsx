@@ -331,6 +331,7 @@ export function OSWindow({
       style={{ ...paneSurface, ...style }}
       {...props}
     >
+      <div data-os-window-clip className="absolute inset-0 overflow-hidden" style={{ borderRadius: "inherit" }}>
       <div data-os-window-body className="absolute inset-0 flex min-h-0">
         {sidebarWidth ? (
           <aside
@@ -364,6 +365,7 @@ export function OSWindow({
           {topBar}
         </div>
       ) : null}
+      </div>
       {frameControls}
     </section>
     </OSWindowSafeAreaContext.Provider>

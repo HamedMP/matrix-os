@@ -102,6 +102,7 @@ const BoundsSchema = z
     y: z.number().int().min(-16_384).max(16_384),
     width: z.number().int().min(0).max(16_384),
     height: z.number().int().min(0).max(16_384),
+    cornerRadius: z.number().int().min(0).max(64).optional(),
   })
   .strict();
 

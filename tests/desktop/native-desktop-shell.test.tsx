@@ -983,13 +983,47 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Go forward" })).toBeNull();
   });
 
-  it("keeps the native resize handle clear of floating Browser content", () => {
+  it("fills floating Browser windows and keeps resize targets outside native content", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
 
     const content = screen.getByTestId("desktop-surface-content-browser");
-    expect(content.style.paddingRight).toBe(`${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`);
-    expect(content.style.paddingBottom).toBe(`${NATIVE_DESKTOP_LAYOUT.resizeHandleSize}px`);
+    expect(content.style.paddingRight).toBe("");
+    expect(content.style.paddingBottom).toBe("");
+    const frame = content.closest("[data-os-window]")!;
+    expect(frame.querySelector<HTMLElement>('[data-window-resize="e"]')?.style.right).toBe("-12px");
+    expect(frame.querySelector<HTMLElement>('[data-window-resize="se"]')?.style.bottom).toBe("-24px");
+  });
+
+  it("keeps native app resize corners reachable at restored work-area boundaries", () => {
+    render(<NativeDesktopShell overlayOpen={false} />);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
+    const id = useTabs.getState().activeTabId!;
+    act(() => useDesktopSurfaces.setState((state) => ({
+      surfaces: { ...state.surfaces, [id]: { ...state.surfaces[id]!, bounds: { x: 0, y: 0, width: 1200, height: 700 } } },
+    })));
+    const frame = screen.getByRole("dialog", { name: "Browser window" });
+    expect(frame.style.left).toBe("24px");
+    expect(frame.style.top).toBe("24px");
+    expect(Number.parseFloat(frame.style.left) + Number.parseFloat(frame.style.width) + 24).toBeLessThanOrEqual(1200);
+    expect(Number.parseFloat(frame.style.top) + Number.parseFloat(frame.style.height) + 24)
+      .toBeLessThanOrEqual(800 - NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight - NATIVE_DESKTOP_LAYOUT.tabStripHeight);
+    const content = screen.getByTestId("desktop-surface-content-browser");
+    expect(content.style.paddingLeft).toBe("");
+    expect(content.style.paddingBottom).toBe("");
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    const east = frame.querySelector<HTMLElement>('[data-window-resize="e"]')!;
+    fireEvent.pointerDown(east, { button: 0, clientX: 1176, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 1400, clientY: 100 });
+    fireEvent.pointerUp(window);
+    expect(frame.style.left).toBe("24px");
+    expect(frame.style.width).toBe("1152px");
+    const moved = useDesktopSurfaces.getState().surfaces[id]!.bounds;
+    expect(moved.x + moved.width + 24).toBe(1200);
+    vi.unstubAllGlobals();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+    fireEvent(window, new Event("resize"));
+    expect(Number.parseFloat(frame.style.left) + Number.parseFloat(frame.style.width) + 24).toBeLessThanOrEqual(900);
   });
 
   it("unmounts a closed root surface and reopens it from its desktop icon", () => {
