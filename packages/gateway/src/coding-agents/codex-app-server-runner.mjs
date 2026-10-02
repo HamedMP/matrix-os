@@ -17,7 +17,7 @@ import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex
 import { CodexDeferredInputControlSchema, deferCodexNativeInput } from "./codex-deferred-input.mjs";
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 import { initializeCodexProvider, ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
-import { MATRIX_INTEGRATIONS_INSTRUCTIONS } from "./codex-matrix-integration-instructions.mjs";
+import { MATRIX_INTEGRATIONS_INSTRUCTIONS, createCanonicalVoiceInstructions } from "./codex-matrix-integration-instructions.mjs";
 import { CodexExecutionPolicySchema, CodexCanonicalToolResultControlSchema, createCodexCanonicalTools } from "./codex-canonical-tools.mjs";
 import { createCodexQualifiedConfig, assertCodexCanonicalConfigLayers } from "./codex-qualified-config.mjs";
 
@@ -1502,7 +1502,9 @@ try {
     // Matrix only needs the identity; Codex retains the complete model context.
     ...(config.providerThreadId ? { threadId: config.providerThreadId, excludeTurns: true } : {}),
     model: config.model,
-    ...(!canonicalRuntime ? { developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS } : {}),
+    ...(!canonicalRuntime
+      ? { developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS }
+      : { developerInstructions: createCanonicalVoiceInstructions(canonicalTools.qualified) }),
     serviceTier: config.serviceTier,
     cwd: process.cwd(),
     approvalPolicy: config.approvalPolicy,
