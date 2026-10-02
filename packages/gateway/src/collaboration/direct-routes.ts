@@ -56,7 +56,11 @@ export function directErrorResponse(c: Context, error: unknown): Response | null
     case "replayed": return safeJson(c, "Collaboration state changed", 409);
     case "limit": return safeJson(c, "Too many collaboration connections", 429);
     case "unavailable": return safeJson(c, "Collaboration unavailable", 503);
-    default: return safeJson(c, "Collaboration request denied", 401);
+    default:
+      // The client only ever sees a generic denial; the code is what tells an operator which
+      // check refused it (origin, ticket, proof). Without it a misconfigured home is a bare 401.
+      console.warn("[collaboration-direct] request denied", error.code);
+      return safeJson(c, "Collaboration request denied", 401);
   }
 }
 
