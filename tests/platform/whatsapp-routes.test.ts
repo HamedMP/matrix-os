@@ -33,6 +33,19 @@ function event(raw: string) {
   } });
 }
 describe('WhatsApp route authority and failures', () => {
+  it.each(['/api/whatsapp/claim', '/api/whatsapp/confirm'])(
+    'rejects oversized authenticated streams on %s before any linking mutation', async (path) => {
+      const response = await routes.request(path, { method: 'POST', body: JSON.stringify({ token, code: '123456',
+        consentVersion: 'whatsapp-general-agent-v1', padding: 'x'.repeat(4096) }),
+      headers: { authorization: 'Bearer owner-token', origin, 'content-type': 'application/json' } });
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({ error: 'Request too large' });
+      expect(authenticate).toHaveBeenCalledWith('owner-token');
+      expect(repository.claim).not.toHaveBeenCalled();
+      expect(repository.confirm).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+    },
+  );
   it('preserves 413 for oversized webhook streams without ingestion or operational-error logs', async () => {
     for (const headers of [{}, { 'content-length': '262145' }]) {
       const response = await routes.request('/whatsapp/webhook', { method: 'POST', body: 'x'.repeat(262145), headers });

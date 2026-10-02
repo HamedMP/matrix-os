@@ -64,6 +64,7 @@ export function createWhatsAppRoutes(deps: {
     return c.html(whatsappConnectPage(deps.publishableKey, nonce));
   });
   function failure(c: import('hono').Context, error: unknown) {
+    if (error instanceof Error && error.name === 'BodyLimitError') return c.json({ error: 'Request too large' }, 413);
     if (error instanceof WhatsAppRepositoryError) return c.json({ error: 'Could not connect. Request a fresh link and try again.' }, error.code === 'capacity' ? 503 : error.code === 'conflict' ? 409 : 403);
     log(error); return c.json({ error: 'Connection unavailable' }, 503);
   }
