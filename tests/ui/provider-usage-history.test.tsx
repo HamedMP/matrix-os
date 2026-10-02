@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
+import type { AiCreditHistoryResponse } from "@matrix-os/contracts";
 import "@testing-library/jest-dom/vitest";
 import {
   cleanup,
@@ -11,6 +12,16 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import { UsageHistoryDialog } from "../../packages/ui/src/agents-providers/UsageHistoryDialog";
 afterEach(cleanup);
+it("preserves subcent usage precision without changing ordinary credit amounts", async () => {
+  const load = vi.fn().mockResolvedValue({ entries: [111, 1660, -100000].map(amount => ({
+    occurredAt: "2026-10-01T00:00:00Z", kind: amount > 0 ? "usage" : "credit",
+    amountMicrousd: -amount, modelId: null,
+  })), nextCursor: null });
+  render(<UsageHistoryDialog load={load} onClose={vi.fn()} />);
+  expect(await screen.findByText("-$0.000111")).toBeInTheDocument();
+  expect(screen.getByText("-$0.00166")).toBeInTheDocument();
+  expect(screen.getByText("$0.10")).toBeInTheDocument();
+});
 it("renders authoritative history pages and safe error recovery", async () => {
   const load = vi
     .fn()
@@ -41,7 +52,7 @@ it("aborts the history request when the dialog closes", () => {
   let signal: AbortSignal | undefined;
   const load = vi.fn((_: string | null, s: AbortSignal) => {
     signal = s;
-    return new Promise<any>(() => {});
+    return new Promise<AiCreditHistoryResponse>(() => {});
   });
   const result = render(<UsageHistoryDialog load={load} onClose={vi.fn()} />);
   result.unmount();

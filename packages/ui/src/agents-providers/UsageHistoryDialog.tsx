@@ -4,7 +4,15 @@ import type {
   AiCreditHistoryResponse,
 } from "@matrix-os/contracts";
 import { useDialogFocus } from "./use-dialog-focus.js";
-import { money } from "./utils.js";
+
+// Ledger entries are exact microUSD amounts; cent rounding would make real
+// subcent inference charges appear free. Balance cards keep their own format.
+const historyMoney = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 6,
+});
 
 export function UsageHistoryDialog({
   load,
@@ -107,7 +115,7 @@ export function UsageHistoryDialog({
                         : "Adjustment"}
                     {entry.modelId ? <small>{entry.modelId}</small> : null}
                   </td>
-                  <td>{money(entry.amountMicrousd)}</td>
+                  <td>{historyMoney.format(entry.amountMicrousd / 1_000_000)}</td>
                 </tr>
               ))}
             </tbody>
