@@ -64,7 +64,7 @@ import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import * as Haptics from "expo-haptics";
 import * as Clipboard from "expo-clipboard";
-import { Alert } from "react-native";
+import { Alert, StyleSheet as NativeStyleSheet } from "react-native";
 import DrawerLayout from "../app/(drawer)/_layout";
 import { DrawerContent } from "../components/shell/DrawerContent";
 
@@ -199,6 +199,38 @@ describe("authenticated drawer layout", () => {
 
     fireEvent.press(screen.getByLabelText("New chat"));
     expect(navigate).toHaveBeenCalledWith("index");
+  });
+
+  it("left-aligns the primary navigation rows", () => {
+    render(
+      <DrawerContent
+        {...({
+          state: { index: 0, routeNames: ["index", "files", "terminal", "integrations", "apps", "shared", "settings"] },
+          navigation: { navigate: jest.fn(), closeDrawer: jest.fn() },
+          descriptors: {},
+          computerName: "Studio Mac",
+          collaborationEnabled: true,
+          pendingInvitationCount: 3,
+          recentChatsLoading: false,
+          recentChats: [],
+          projects: [],
+          activeSessionId: null,
+          onSelectConversation: jest.fn(),
+          onNewConversation: jest.fn(),
+        } as unknown as React.ComponentProps<typeof DrawerContent>)}
+      />,
+    );
+    for (const label of ["Files", "Terminal", "Integrations", "Apps", "Shared with me, 3 pending invitations"]) {
+      // The button stacks its vertical Spacers around the row. Laid out as a
+      // row itself, those Spacers become flex items on either side of the
+      // label and `space-between` pushes the label to the center.
+      const button = NativeStyleSheet.flatten(screen.getByLabelText(label).props.style);
+      expect(button.flexDirection).not.toBe("row");
+      expect(button.justifyContent).toBeUndefined();
+    }
+    // The pending-invitation badge still sits at the row's trailing edge.
+    const badgeRow = NativeStyleSheet.flatten(screen.getByTestId("drawer-primary-row-shared").props.style);
+    expect(badgeRow).toMatchObject({ flexDirection: "row", justifyContent: "space-between" });
   });
 
   it("shows skeleton rows while recent conversations are loading", () => {
