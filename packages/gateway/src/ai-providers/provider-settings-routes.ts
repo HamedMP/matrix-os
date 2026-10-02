@@ -15,10 +15,9 @@ import {
 const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
-function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeFundingState: boolean): ProviderSettingsSnapshot {
-  const publicSnapshot = { ...snapshot, harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness),
-    accessSources: snapshot.accessSources.map(source => source.readiness.safeReason === "credit_reserved" && !includeFundingState
-      ? { ...source, readiness: { ...source.readiness, safeReason: "credit_required" as const } } : source) };
+function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeModels = false, includeInventory = false, includeFundingState = false): ProviderSettingsSnapshot {
+  const { matrixModelInventory, ...baseSnapshot } = snapshot;
+  const publicSnapshot = { ...baseSnapshot, ...(includeInventory && matrixModelInventory ? { matrixModelInventory } : {}), modelProviders: snapshot.modelProviders.map(provider => ({ ...provider, models: provider.models.map(({ capabilities, ...model }) => includeModels ? { ...model, ...(capabilities ? { capabilities } : {}) } : model) })), accessSources: snapshot.accessSources.map(source => source.readiness.safeReason === "credit_reserved" && !includeFundingState ? { ...source, readiness: { ...source.readiness, safeReason: "credit_required" as const } } : source), harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness) };
   if (include) return { ...publicSnapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
     && snapshot.supportedActions.includes("set_harness_enabled") };
   return {
@@ -36,6 +35,7 @@ const DeleteAccountBodySchema = z.object({
 
 export interface ProviderSettingsRouteOptions {
   store: ProviderSettingsStoreWriter;
+  canReadNativeAccountMetadata?: (context: Context) => boolean;
   getPrincipal: (context: Context) => unknown;
 }
 
@@ -152,10 +152,22 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (authError) return authError;
     const refresh = RefreshQuerySchema.safeParse(context.req.query("refresh"));
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
+    const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
     const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
-    if (!refresh.success || !capabilities.success || !fundingState.success) return invalidRequest(context);
+    const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
+    if (!refresh.success || !capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success) return invalidRequest(context);
     try {
-      return context.json(withCapabilities(await options.store.getSnapshot({ refresh: refresh.data === "true" }), capabilities.data === "true", fundingState.data === "true"));
+      const ownerMetadata = options.canReadNativeAccountMetadata?.(context) === true;
+      const snapshot = await options.store.getSnapshot({ refresh: refresh.data === "true", ...(ownerMetadata ? { includeNativeAccountMetadata: true } : {}) });
+      if (options.canReadNativeAccountMetadata && !ownerMetadata) {
+        snapshot.accessSources = snapshot.accessSources.map(source => source.id === "owner_openai_profile"
+          || source.kind === "harness_profile" && source.harness === "hermes"
+          ? { ...source, displayName: source.kind === "harness_profile" ? "Hermes account" : source.displayName,
+              usage: { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "account", reason: "read_only", asOf: null } } : source);
+        snapshot.accounts = snapshot.accounts.map(account => account.accessSourceId === "owner_openai_profile"
+          ? { ...account, displayName: account.authMethod === "api_key" ? "API key" : "Codex account" } : account);
+      }
+      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -165,13 +177,15 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const authError = authorize(context, options);
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
+    const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
     const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
-    if (!capabilities.success || !fundingState.success) return invalidRequest(context);
+    const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
+    if (!capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse(await readJson(context));
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", fundingState.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -181,8 +195,10 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const authError = authorize(context, options);
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
+    const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
     const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
-    if (!capabilities.success || !fundingState.success) return invalidRequest(context);
+    const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
+    if (!capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success) return invalidRequest(context);
     const body = DeleteAccountBodySchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse({
@@ -196,7 +212,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", fundingState.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }

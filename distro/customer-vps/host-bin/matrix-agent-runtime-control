@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 validate_request() {
   case "${1:-}" in
     status)
       [ "$#" -eq 1 ] || return 1
       ;;
-    install|switch|stop)
+    install|switch|stop|cancel-install|uninstall)
       [ "$#" -eq 2 ] || return 1
       case "${2:-}" in
         hermes|openclaw) ;;
@@ -41,11 +42,19 @@ MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$MATRIX_RUNTIME_USER}"
 install_timeout_seconds=1810
 action_timeout_seconds=50
 active_wait_seconds=45
-lock_dir="$MATRIX_RUNTIME_HOME/system/agent-runtime"
-install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_GROUP" -m 0700 "$lock_dir"
-exec 9>"$lock_dir/host-control.lock"
-chown "$MATRIX_RUNTIME_USER:$MATRIX_RUNTIME_GROUP" "$lock_dir/host-control.lock" 2>/dev/null || true
-flock -w 30 9 || { printf '{"ok":false,"code":"runtime_busy"}\n'; exit 4; }
+# This root-owned directory holds control state only, never owner data. Status
+# reads need no lock; cancellation must not wait on an installer holding it.
+readonly state_dir=/var/lib/matrix-agent-runtime
+ensure_control_state() {
+  [ ! -L "$state_dir" ] || { printf '{"ok":false,"code":"runtime_unavailable"}\n'; exit 3; }
+  install -d -o root -g root -m 0755 "$state_dir"
+}
+acquire_control_lock() {
+  ensure_control_state
+  [ ! -L "$state_dir/host-control.lock" ] || { printf '{"ok":false,"code":"runtime_unavailable"}\n'; exit 3; }
+  exec 9>"$state_dir/host-control.lock"
+  flock -w 30 9 || { printf '{"ok":false,"code":"runtime_busy"}\n'; exit 4; }
+}
 
 is_active() {
   systemctl is-active --quiet "$1"
@@ -95,15 +104,95 @@ install_runtime() {
     *) printf '{"ok":false,"code":"invalid_request"}\n'; exit 2 ;;
   esac
 
+  acquire_control_lock
+  rm -f -- "$state_dir/disabled-$runtime"
+  # Stop automatic installation before opening the user-visible managed unit.
+  if [ "$runtime" = hermes ]; then
+    timeout "$action_timeout_seconds" systemctl stop matrix-hermes.service || { printf '{"ok":false,"code":"install_failed"}\n'; exit 5; }
+  fi
   [ -x "$installer" ] || { printf '{"ok":false,"code":"runtime_unavailable"}\n'; exit 3; }
   if [ ! -x "$executable" ]; then
-    if ! timeout "$install_timeout_seconds" "$installer"; then
+    if ! systemd-run --unit="matrix-agent-install-$runtime" --wait --pipe --collect \
+      --service-type=exec --property=KillMode=control-group \
+      --property="RuntimeMaxSec=$install_timeout_seconds" --property=TimeoutStopSec=15 \
+      "$installer"; then
       printf '{"ok":false,"code":"install_failed"}\n'
       exit 5
     fi
   fi
   [ -x "$executable" ] || { printf '{"ok":false,"code":"install_failed"}\n'; exit 5; }
   printf '{"ok":true,"runtime":"%s","installed":true}\n' "$runtime"
+}
+
+stop_install_unit() {
+  local unit="matrix-agent-install-$1.service" load_state
+  load_state="$(systemctl show --property=LoadState --value "$unit")" || return 1
+  [ "$load_state" = not-found ] && return 0
+  timeout "$action_timeout_seconds" systemctl stop "$unit"
+}
+
+cancel_install() {
+  local runtime="$1"
+  if ! stop_install_unit "$runtime"; then
+    printf '{"ok":false,"code":"cancellation_failed"}\n'
+    exit 5
+  fi
+  if [ "$runtime" = hermes ] && ! timeout "$action_timeout_seconds" systemctl stop matrix-hermes.service; then
+    printf '{"ok":false,"code":"cancellation_failed"}\n'
+    exit 5
+  fi
+  printf '{"ok":true,"runtime":"%s","cancelled":true}\n' "$runtime"
+}
+
+uninstall_runtime() {
+  local runtime="$1" unit launcher
+  ensure_control_state
+  # The durable opt-out is written before stopping services so reconciliation
+  # cannot reinstall a package during or after a partial uninstall.
+  if [ ! -f "$state_dir/disabled-$runtime" ]; then
+    (set -o noclobber; printf 'disabled\n' >"$state_dir/disabled-$runtime") || {
+      printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5;
+    }
+  fi
+  if ! stop_install_unit "$runtime"; then
+    printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5
+  fi
+  if [ "$runtime" = hermes ] && ! timeout "$action_timeout_seconds" systemctl disable --now matrix-hermes.service; then
+    printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5
+  fi
+  acquire_control_lock
+  case "$runtime" in
+    hermes) unit=matrix-hermes-dashboard.service ;;
+    openclaw) unit=matrix-openclaw-gateway.service ;;
+  esac
+  if ! timeout "$action_timeout_seconds" systemctl disable --now "$unit"; then
+    printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5
+  fi
+  case "$runtime" in
+    hermes)
+      # Hermes stores its code and personal state together in .hermes. Retain
+      # that entire directory; remove only the managed executable entrypoint.
+      for directory in "$MATRIX_RUNTIME_HOME" "$MATRIX_RUNTIME_HOME/.local" "$MATRIX_RUNTIME_HOME/.local/bin"; do
+        [ ! -L "$directory" ] || { printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5; }
+      done
+      launcher="$MATRIX_RUNTIME_HOME/.local/bin/hermes"
+      if ! timeout "$action_timeout_seconds" setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_GROUP" --init-groups rm -f -- "$launcher"; then
+        printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5
+      fi
+      if [ -L /usr/local/bin/hermes ] && [ "$(readlink /usr/local/bin/hermes)" = "$launcher" ]; then
+        rm -f -- /usr/local/bin/hermes
+      fi
+      ;;
+    openclaw)
+      [ -x "$MATRIX_NODE_PREFIX/bin/npm" ] || { printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5; }
+      if ! timeout 300 setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_GROUP" --init-groups \
+        env HOME="$MATRIX_RUNTIME_HOME" PATH="$MATRIX_NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin" \
+        "$MATRIX_NODE_PREFIX/bin/npm" uninstall --global --ignore-scripts --prefix "$MATRIX_NODE_PREFIX" openclaw; then
+        printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5
+      fi
+      ;;
+  esac
+  printf '{"ok":true,"runtime":"%s","installed":false}\n' "$runtime"
 }
 
 switch_runtime() {
@@ -170,7 +259,14 @@ case "${1:-}" in
   install)
     install_runtime "$2"
     ;;
+  cancel-install)
+    cancel_install "$2"
+    ;;
+  uninstall)
+    uninstall_runtime "$2"
+    ;;
   switch)
+    acquire_control_lock
     case "${2:-}" in
       hermes) switch_runtime hermes ;;
       openclaw) switch_runtime openclaw ;;
@@ -178,6 +274,7 @@ case "${1:-}" in
     esac
     ;;
   stop)
+    acquire_control_lock
     case "${2:-}" in
       hermes) stop_runtime hermes ;;
       openclaw) stop_runtime openclaw ;;

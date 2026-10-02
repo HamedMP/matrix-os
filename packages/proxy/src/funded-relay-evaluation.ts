@@ -1,3 +1,4 @@
+import { LEGACY_JEV_PRICING_REVIEW, assertJevPricingReviewCurrent, type JevPricingReview } from "./jev-pricing-review.js";
 import {
   JEV_EMAIL_TRIAGE_ANSWER_IDS,
   JEV_EMAIL_TRIAGE_INSTRUCTIONS,
@@ -11,7 +12,7 @@ import { z } from "zod/v4";
 
 const MAX_STATE_BYTES = 32 * 1024;
 const JEV_INPUT_PRICE_NANOUSD_PER_TOKEN = 42n;
-export const JEV_PRICING_VALID_THROUGH = "2026-09-30T23:59:59.999Z";
+export const JEV_PRICING_VALID_THROUGH = LEGACY_JEV_PRICING_REVIEW.validThrough;
 const NANOUSD_PER_USD = 1_000_000_000n;
 const NANOUSD_PER_MICROUSD = 1_000n;
 const textEncoder = new TextEncoder();
@@ -88,13 +89,14 @@ export interface NormalizedFundedJevEvaluation {
 export interface JevPricingSnapshot {
   version: typeof JEV_PRICING_VERSION;
   nanoUsdPerInputToken: bigint;
+  reviewedAt: string;
+  validThrough: string;
 }
 
-export function reviewedJevPricing(at: Date): JevPricingSnapshot {
-  if (!Number.isFinite(at.getTime()) || at.getTime() > Date.parse(JEV_PRICING_VALID_THROUGH)) {
-    throw new Error("Jev pricing has expired");
-  }
-  return { version: JEV_PRICING_VERSION, nanoUsdPerInputToken: JEV_INPUT_PRICE_NANOUSD_PER_TOKEN };
+export function reviewedJevPricing(at: Date, review: JevPricingReview = LEGACY_JEV_PRICING_REVIEW): JevPricingSnapshot {
+  assertJevPricingReviewCurrent(at, review);
+  return { version: JEV_PRICING_VERSION, nanoUsdPerInputToken: JEV_INPUT_PRICE_NANOUSD_PER_TOKEN,
+    reviewedAt: review.reviewedAt, validThrough: review.validThrough };
 }
 
 export function serializeFundedJevEvaluationRequest(input: unknown): SerializedFundedJevEvaluationRequest {

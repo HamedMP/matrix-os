@@ -171,6 +171,7 @@ function toWebContentsViewBounds(
     y: Math.round(bounds.y * factor),
     width: Math.round(bounds.width * factor),
     height: Math.round(bounds.height * factor),
+    ...(bounds.cornerRadius !== undefined ? { cornerRadius: Math.round(bounds.cornerRadius * factor) } : {}),
   };
 }
 

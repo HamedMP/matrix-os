@@ -44,7 +44,7 @@ it("does not describe unrelated failures or stale ledger values as a current cre
   show(source);
   expect(screen.queryByText("Credit reserved")).toBeNull();
   expect(screen.queryByText("Your credit is reserved while usage is confirmed.")).toBeNull();
-  expect(screen.getByText("Matrix AI connection not verified. Check again.")).toBeVisible();
+  expect(screen.queryByText("Matrix AI connection not verified. Check again.")).toBeNull();
   expect(screen.getByText("$4.80 reserved (last confirmed)")).toBeVisible();
 });
 it("identifies a monthly budget reservation separately when its amount differs from credit reserved", () => {
@@ -69,6 +69,6 @@ it("does not direct a credit-needed owner to an unavailable purchase action", ()
   show(source);
   expect(screen.getByText("Matrix AI needs spendable credit.")).toBeVisible();
   expect(screen.queryByText("Add credit to use Matrix AI.")).toBeNull();
-  expect(screen.getByText("Matrix AI credit purchases are not available yet.")).toBeVisible();
+  expect(screen.queryByText("Matrix AI credit purchases are not available yet.")).toBeNull();
   expect(screen.queryByRole("button", { name: "Add credit" })).toBeNull();
 });

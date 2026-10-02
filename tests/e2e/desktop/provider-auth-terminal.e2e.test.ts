@@ -19,10 +19,10 @@ let app: ElectronApplication;
 let page: Page;
 let profile: string;
 
-suite("Desktop provider authentication Terminal", () => {
+suite("Electron Desktop provider authentication Settings", () => {
 beforeAll(async () => {
   mkdirSync(output, { recursive: true });
-  gateway = await startProviderAuthGateway();
+  gateway = await startProviderAuthGateway({ inlineClaude: true });
   profile = mkdtempSync(join(tmpdir(), "matrix-om255-"));
   app = await _electron.launch({ executablePath,
     args: [join(root, "desktop/out/main/index.js"), "--remote-debugging-port=9353"],
@@ -46,9 +46,11 @@ async function settings() {
   await page.getByRole("button", { name: "Open account menu", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
+  const claude = page.locator(".matrix-ap-rail-item").filter({ hasText: "Claude" }).first();
+  if (await claude.getAttribute("aria-expanded") !== "true") await claude.click();
 }
 
-it("reveals a closed Terminal for Connect and refreshes auth after logout", async () => {
+it("keeps browser login, cancellation, completion and logout in Settings without opening Terminal", async () => {
   try {
     const identity = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
     expect(identity).toBe(join(root, "desktop/out/main"));
@@ -58,25 +60,36 @@ it("reveals a closed Terminal for Connect and refreshes auth after logout", asyn
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await terminal.waitFor({ state: "hidden" });
     await settings();
-    await page.getByRole("button", { name: "Log in Claude", exact: true }).click();
-    await terminal.waitFor();
-    await terminal.getByText("Connect Claude", { exact: true }).first().waitFor();
-    expect(gateway.commands).toHaveLength(1);
-    expect(gateway.commands[0]).toMatchObject({ name: "Connect Claude", command: ["sh", "-lc", "claude auth login"] });
-    await page.screenshot({ path: join(output, "connect-visible.png") });
-
-    gateway.setAuthenticated(true);
-    await terminal.getByRole("button", { name: "Close", exact: true }).click();
-    await settings();
-    const disconnect = page.getByRole("button", { name: "Log out Claude", exact: true });
-    await disconnect.waitFor();
-    expect(await page.getByRole("button", { name: "Log in Claude", exact: true }).count()).toBe(0);
-    await page.screenshot({ path: join(output, "authenticated-disconnect.png") });
-    await disconnect.click();
-    await page.getByRole("button", { name: "Log in Claude", exact: true }).waitFor();
+    const accountChoice = page.getByRole("button", { name: /Claude account.*Use your Claude plan/ });
+    await accountChoice.click();
+    await page.getByRole("heading", { name: "Finish signing in to Claude", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Open sign-in page", exact: true }).waitFor();
+    await page.getByLabel("Paste the sign-in code", { exact: true }).waitFor();
+    expect(gateway.workflowEvents).toEqual(["browser-login"]);
     await terminal.waitFor({ state: "hidden" });
-    expect(gateway.commands).toHaveLength(1);
-    await page.screenshot({ path: join(output, "logged-out.png") });
+    expect(gateway.commands).toHaveLength(0);
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await accountChoice.waitFor();
+    expect(gateway.workflowEvents).toEqual(["browser-login", "cancel"]);
+    await accountChoice.click();
+    await page.getByLabel("Paste the sign-in code", { exact: true }).fill("synthetic-fixture-code");
+    await page.getByRole("button", { name: "Finish connecting", exact: true }).click();
+    const disconnect = page.getByRole("button", { name: "Disconnect", exact: true });
+    await disconnect.waitFor();
+    const claudeRow = page.locator(".matrix-ap-rail-item").filter({ hasText: "Claude" }).first();
+    expect(await claudeRow.getAttribute("aria-expanded")).toBe("true");
+    expect(await claudeRow.textContent()).toContain("Connected");
+    expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed"]);
+    await terminal.waitFor({ state: "hidden" });
+    expect(gateway.commands).toHaveLength(0);
+    await page.screenshot({ path: join(output, "settings-browser-connected.png") });
+    await disconnect.click();
+    await page.getByRole("dialog", { name: "Disconnect Claude?", exact: true }).getByRole("button", { name: "Disconnect", exact: true }).click();
+    await accountChoice.waitFor();
+    expect(await claudeRow.textContent()).toContain("Not connected");
+    await terminal.waitFor({ state: "hidden" });
+    expect(gateway.commands).toHaveLength(0);
+    await page.screenshot({ path: join(output, "settings-browser-disconnected.png") });
   } catch (error) {
     await page.screenshot({ path: join(output, "failure.png") });
     throw error;

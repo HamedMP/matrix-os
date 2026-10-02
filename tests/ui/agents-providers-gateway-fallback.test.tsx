@@ -88,12 +88,12 @@ describe("Matrix source fallback for native Pi setup", () => {
     next.gatewayPolicy!.allowedModelIds.push(glm);
     const originalPi = structuredClone(next.harnesses[1]);
     const { onRefresh, onMutate } = setup(next);
-    expect(screen.getByLabelText("Model")).toHaveValue(sonnet);
+    expect(next.harnesses[1]!.route.modelId).toBe(sonnet);
     fireEvent.click(within(screen.getByRole("region", { name: "Matrix AI" })).getByRole("button", { name: "Choose Pi" }));
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Ready")).toBeVisible();
     expect(within(gateway).getByText("Pi · GLM")).toBeVisible();
-    expect(screen.getByLabelText("Model")).toHaveValue(sonnet);
+    expect(next.harnesses[1]!.route.modelId).toBe(sonnet);
     expect(next.harnesses[1]).toEqual(originalPi);
     expect(onMutate).not.toHaveBeenCalled();
     expect(onRefresh).not.toHaveBeenCalled();
@@ -136,8 +136,8 @@ describe("Matrix source fallback for native Pi setup", () => {
       expect(within(gateway).getByText("Ready")).toBeVisible();
       const connection = screen.getByRole("group", { name: "Pi connection" });
       expect(within(connection).getByRole("button", { name: /Use Matrix AI/ })).toBeEnabled();
-      expect(within(connection).getByRole("button", { name: /Own account/ })).toBeEnabled();
-      expect(screen.getByLabelText("Model")).toHaveValue(sonnet);
+      expect(within(connection).getByRole("button", { name: /Own account/ })).toBeDisabled();
+      expect(next.harnesses[1]!.route.modelId).toBe(sonnet);
       expect(next.harnesses[1]).toEqual(originalPi);
       expect(onMutate).not.toHaveBeenCalled();
       expect(onRefresh).not.toHaveBeenCalled();
@@ -177,7 +177,6 @@ describe("Matrix source fallback for native Pi setup", () => {
     const { onMutate, onRefresh } = setup(next, "harness_pi");
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText(reason === "credit_reserved" ? "Credit reserved" : "Credit needed")).toBeVisible();
-    fireEvent.click(within(gateway).getByText("Usage & available models"));
     expect(within(gateway).getByText("Claude Sonnet 5")).toBeVisible();
     expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();
     expect(within(gateway).queryByRole("button", { name: /Choose|Use Matrix AI/ })).not.toBeInTheDocument();
@@ -192,7 +191,6 @@ describe("Matrix source fallback for native Pi setup", () => {
     setup(next, "harness_pi");
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Unavailable")).toBeVisible();
-    fireEvent.click(within(gateway).getByText("Usage & available models"));
     expect(within(gateway).queryByText("Claude Sonnet 5")).not.toBeInTheDocument();
     expect(within(gateway).queryByText("Credit reserved")).not.toBeInTheDocument();
   });
@@ -241,7 +239,6 @@ describe("Matrix source fallback for native Pi setup", () => {
     setup(next, "harness_pi");
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Unavailable")).toBeVisible();
-    fireEvent.click(within(gateway).getByText("Usage & available models"));
     expect(within(gateway).getByText("Claude Sonnet 5")).toBeVisible();
     expect(within(gateway).queryByText("Credit reserved")).not.toBeInTheDocument();
     expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();

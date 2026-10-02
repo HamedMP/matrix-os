@@ -1,3 +1,4 @@
+import { createNativeProviderProfileGuard } from "../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,7 +49,7 @@ describe("provider login exited-terminal recovery", () => {
     writes.count = 0; writes.failAt = 0;
   });
   afterEach(async () => { await rm(homePath, { recursive: true, force: true }); });
-  function login() { return createProviderTerminalLoginCoordinator({ homePath, registry, enabledHarnesses: ["codex"], now: () => clock }); }
+  function login() { return createProviderTerminalLoginCoordinator({ homePath, registry, profileGuard: createNativeProviderProfileGuard({ homePath, registry }), enabledHarnesses: ["codex"], now: () => clock }); }
   const retry = { ...input, mutation: { ...input.mutation, expectedRevision: 1, idempotencyKey: "retry" } };
 
   it.each([false, true])("preserves ended login output and starts a fresh login when expired=%s", async expired => {
@@ -104,7 +105,7 @@ describe("provider login exited-terminal recovery", () => {
     const service = login(); const first = await service.startLogin(input);
     clock = new Date(Date.parse(first.expiresAt) - 1);
     liveness = "stopped";
-    if (crossesExpiry) registry.observeAgentLiveness.mockImplementationOnce(async () => {
+    if (crossesExpiry) registry.observeAgentLiveness.mockResolvedValueOnce("stopped").mockImplementationOnce(async () => {
       clock = new Date(clock.getTime() + 2); return "stopped";
     });
     const second = await service.startLogin(retry);

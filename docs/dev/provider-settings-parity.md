@@ -38,16 +38,24 @@ intersection with a different account or funding source.
 
 This is the operational setup surface. It owns:
 
-- harness installation, health, enable/disable, and instances;
+- harness installation, connection, health, and instances;
 - model-provider accounts, authentication, account selection, and logout;
 - access-source and funding labels;
 - model routing, capability-compatible controls, and model allowlists;
 - truthful usage or credit displays when an authoritative source exists.
 
-The left rail is labeled **Harness instances**. The add button creates another
-harness instance; it does not create an inference vendor. Generic harnesses can
-select a model provider and model. Model-specific harnesses expose only routes
-that the harness contract proves they support.
+The page presents **Matrix AI** first, followed by **Coding agents** (Claude
+Code, Codex, OpenCode, Pi) and **General agents** (Hermes, OpenClaw). Agent rows
+are accessible accordions with one derived status. Additional configured
+instances remain visible. Advanced controls retain instance creation, account
+dependencies, route selection, budgets, and allowlists. There is no Enable
+switch: a successful explicit Connect enables the exact agent route. Refresh
+and credential discovery preserve previously disabled configuration.
+Creating an instance does not create an inference vendor. Generic harnesses
+can select a model provider and model; model-specific harnesses expose only
+routes that the harness contract proves they support. The redesign and its
+delivery gates are specified in
+[`specs/543-agents-providers-settings/spec.md`](../../specs/543-agents-providers-settings/spec.md).
 
 ### Identity & personality
 
@@ -70,22 +78,27 @@ truth. Owner harness configuration is the bounded Provider Settings projection.
 is the sole executable Chat catalog. Legacy Settings and Chat shapes are
 compatibility projections; they are not independent stores.
 
-For Codex, V3 distinguishes a bounded local CLI observation from remote
-readiness. A source-matched, fresh ChatGPT `login status` result can say
-"Local login found; access not verified" in shared Settings and Chat copy;
-it cannot set the account/source/instance to ready. An API-key result does not
-authenticate the selected profile, and stale, mismatched, or failed checks
-say only "Access not verified". Chat may still offer the existing native
-route for a user-initiated attempt, while an explicit saved-off harness stays
-off. `authStatus: unknown` in the compatibility catalog must not be rendered
-as a remote authentication verdict; successful execution on the exact
-selected source remains a separate release validation step.
+V3 distinguishes native credential observation from remote execution readiness.
+Settings rows use the shared configured-connection derivation to display
+Connected / Not connected; Not installed is yellow. Settings must not expose
+local-login/unverified prose as its row status. A connection does not establish
+that a model call succeeds, and canonical Chat admission retains its readiness
+and saved-off guards. An explicit saved-off agent is Not connected until a
+successful deliberate Connect restores its scoped route.
 
-Canvas, Web Desktop, and Electron must expose the same:
+Normal supported sign-in stays in Settings: code, masked key, cancellation,
+progress and completion use owner-scoped native adapters. Provider consent may
+open the browser. An unsupported native method is unavailable rather than
+opening Terminal automatically. Codex and Hermes private native identity and
+allowance are enriched only for the runtime owner; Hermes reads its own current
+account, never an unrelated Codex account. Native helpers return bounded safe
+metadata, not credentials. Missing quota is unavailable, not zero.
+
+Web Canvas, Web Desktop, and Electron Desktop must expose the same:
 
 - harnesses, accounts, access sources, models, and readiness states;
 - add-instance and add-account flows;
-- login, logout, removal, re-authentication, and enable/disable actions;
+- login, logout, removal, re-authentication, and explicit connection actions;
 - gateway credit, usage, model-policy, and error states when those features
   exist;
 - draft preservation, active-Chat reassignment guards, and safe errors.
@@ -97,11 +110,12 @@ temporary shell-specific exception requires an issue, a documented capability
 reason, and a disabled or explanatory state on the other shells; silent omission
 is not acceptable.
 
-Electron Desktop is the visual and interaction ground truth while the surfaces
-converge. Canvas is the primary product surface and is validated first. The
+Electron Desktop is the ongoing visual and interaction reference while the
+surfaces converge. Web Desktop and Electron Desktop are the default
+presentations; Web Canvas is a first-class presentation. The
 required manual order for user-visible changes is:
 
-1. Canvas on the browser shell;
+1. Web Canvas on the browser shell;
 2. Web Desktop on the same runtime;
 3. Electron Desktop against the same V3 fixture.
 
@@ -119,10 +133,10 @@ renders provider settings.
 
 | Surface | UI | Behavior | Recovery | Automated tests | Evidence |
 |---|---|---|---|---|---|
-| Web Canvas | Shared `Settings` → `AgentSection` → `AgentsProvidersView`; Chat uses the canonical picker. | Reads Provider V3/settings and `/api/chat-providers`; unavailable Pi/OpenCode routes remain visible and disabled. | Retry refreshes authoritative settings; setup opens the visible `__terminal__` flow and preserves the draft. | `tests/ui/agents-providers-view.test.tsx`, `tests/ui/provider-settings-controller.test.tsx`, `tests/shell/agent-section.test.tsx`, `tests/shell/chat-app-provider-state.test.tsx` | Shared browser-shell state reference: `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-desktop.jpg`. Canvas and Web Desktop share the same feature component and controller; a release smoke must still exercise Canvas first. |
-| Web Desktop | Same shared settings and Chat components as Web Canvas, with Desktop window chrome. | Same snapshot, route availability, disabled reasons, and mutations as Canvas. | Same refresh and visible Terminal handoff; failed mutations retain confirmed state. | Canvas tests above plus `tests/shell/settings-panel.test.tsx` and `tests/shell/provider-settings-transport.test.ts` | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-desktop.jpg`; browser-shell parity is structural because both presentations mount the same settings feature. |
-| Electron Desktop | `SettingsView` mounts `AgentsProvidersAdapter`, which renders the shared `AgentsProvidersView`. | Uses the same strict contracts and derivations through the Electron transport adapter. | Retry reloads the snapshot; login/setup opens the visible Electron Terminal session. | `tests/desktop/agents-providers-adapter.test.tsx`, `tests/desktop/provider-settings-adapter.test.ts`, `tests/desktop/settings-view.test.tsx`, `tests/e2e/desktop/provider-auth-terminal.e2e.test.ts` | The automated Electron settings and Terminal E2E are the tracked interaction evidence. Current authenticated screenshot evidence remains a release gate because credentials cannot be committed. |
-| Web Mobile | MobileShell mounts the same responsive `Settings` and shared `AgentSection`; the canonical Chat picker remains available. | Uses the same provider snapshot and fail-closed route state with touch-adapted chrome. | The same retry and canonical visible Terminal setup actions are available from the responsive settings sheet. | Shared UI/controller tests above plus `tests/shell/settings-panel.test.tsx`; responsive state reference is covered by the shared component contract. | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-mobile.jpg`. The image is a responsive Web Mobile reference; it is not physical-device evidence. |
+| Web Canvas | Shared `Settings` → `AgentSection` → `AgentsProvidersView`; Chat uses the canonical picker. | Reads Provider V3/settings and `/api/chat-providers`; unavailable Pi/OpenCode routes remain visible and disabled. | Retry refreshes authoritative settings; supported login stays in Settings and preserves the draft. Installation opens the canonical `__terminal__` flow. | `tests/ui/agents-providers-view.test.tsx`, `tests/ui/provider-settings-controller.test.tsx`, `tests/shell/agent-section.test.tsx`, `tests/shell/chat-app-provider-state.test.tsx` | Shared browser-shell state reference: `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-desktop.jpg`. Canvas and Web Desktop share the same feature component and controller; a release smoke must still exercise Canvas first. |
+| Web Desktop | Same shared settings and Chat components as Web Canvas, with Desktop window chrome. | Same snapshot, route availability, disabled reasons, and mutations as Canvas. | Same Settings workflow and optional visible Terminal handoff; failed mutations retain confirmed state. | Canvas tests above plus `tests/shell/settings-panel.test.tsx` and `tests/shell/provider-settings-transport.test.ts` | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-desktop.jpg`; browser-shell parity is structural because both presentations mount the same settings feature. |
+| Electron Desktop | `SettingsView` mounts `AgentsProvidersAdapter`, which renders the shared `AgentsProvidersView`. | Uses the same strict contracts and derivations through the Electron transport adapter. | Retry reloads the snapshot; supported login stays in Settings. Install and optional advanced actions open the canonical Electron Terminal session. | `tests/desktop/agents-providers-adapter.test.tsx`, `tests/desktop/provider-settings-adapter.test.ts`, `tests/desktop/settings-view.test.tsx`, `tests/e2e/desktop/provider-auth-terminal.e2e.test.ts` | The automated Electron settings and Terminal E2E are the tracked interaction evidence. Current authenticated screenshot evidence remains a release gate because credentials cannot be committed. |
+| Web Mobile | MobileShell mounts the same responsive `Settings` and shared `AgentSection`; the canonical Chat picker remains available. | Uses the same provider snapshot and fail-closed route state with touch-adapted chrome. | The same retry and supported Settings login workflows are available from the responsive settings sheet, with canonical Terminal install actions. | Shared UI/controller tests above plus `tests/shell/settings-panel.test.tsx`; responsive state reference is covered by the shared component contract. | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-mobile.jpg`. The image is a responsive Web Mobile reference; it is not physical-device evidence. |
 | Native Mobile | **N/A for Agents & providers management UI:** Native Mobile currently exposes the canonical Chat model picker, but it does not expose the shared provider-management settings feature changed here. | Existing Chat catalog consumption remains unchanged; this PR adds no native settings behavior. | **N/A for this settings change:** provider management is completed in Web/Electron settings. Native setup workspace/Terminal support is an existing separate capability. | Existing `apps/mobile/__tests__/home-screen.test.tsx` guards the Chat surface; no native settings test applies because that surface does not exist. | **N/A:** no Native Mobile provider-settings screen exists to capture. Physical Native Mobile Chat validation remains a separate release gate and this matrix does not claim it occurred. |
 
 The Native Mobile N/A entries describe an absent product surface rather than a
@@ -130,7 +144,7 @@ silent omission from an existing settings implementation. If Native Mobile
 adds provider management, it must consume the same contracts, derivations,
 actions, recovery semantics, tests, and current device evidence before release.
 
-Canvas, Web Desktop, and Electron admit turns through the canonical Chat
+Web Canvas, Web Desktop, and Electron Desktop admit turns through the canonical Chat
 orchestrator (`/api/chats` and `/api/chats/:id/turns`) and resolve picker choices
 from `/api/chat-providers`. A shell must not pair the canonical picker with the
 legacy `/api/message` execution path: that would display a harness selection
@@ -147,12 +161,14 @@ responses cannot retarget a newly selected Chat.
 
 ## Authentication and account lifecycle
 
-Authentication should be guided from Settings or Chat. When a provider
-requires a CLI login, open a visible canonical Terminal flow. Canvas and Web
-Desktop use the `__terminal__` built-in on the owner VPS; Electron opens its
-visible terminal surface through the same account-attempt orchestration. The UI
-must show pending, succeeded, denied, expired, failed, and retry states without
-inferring success from a file's existence.
+Authentication is guided from Settings or Chat through the supported native
+adapter. Settings owns code presentation, key entry, progress, cancellation,
+and completion; external provider consent may open the browser. Terminal is
+optional advanced tooling and the visible installation surface, not the primary
+login fallback. When explicitly opened, it uses the canonical `__terminal__`
+built-in and the same owner-scoped account-attempt orchestration. The UI shows
+pending, succeeded, denied, expired, failed, and retry states without inferring
+success from a file's existence.
 
 These actions are distinct:
 
@@ -162,9 +178,12 @@ These actions are distinct:
 - **Remove account** deletes the owner credential/profile and account binding.
   If active or resumable Chats reference it, require explicit reassignment or
   confirmation. Removing an account never deletes Chat history.
-- **Disable harness** prevents new selection/execution for that harness while
-  preserving its installation, instances, accounts, and configuration. Existing
-  Chats stay readable and require a compatible route before another turn.
+- **Disable harness** prevents new canonical Matrix Chat selection/execution for
+  that harness while preserving its installation, instances, accounts, and
+  configuration. Existing Chats stay readable and require a compatible route
+  before another turn. It does not stop independently configured native channel
+  services or scheduled jobs. With no alternate system harness installed,
+  disabling preserves the native runtime selection and persists explicit Off.
 - **Remove harness instance** is available only after that instance is disabled.
   It removes the owner Settings instance, not the installed binary, credentials,
   or existing Chat history. A later turn in an existing Chat still resolves its
@@ -418,10 +437,91 @@ the required active tax registrations.
 
 ## Delivery stack
 
+### Additive Settings workflows and credit history
+
+The shared grouped page consumes separate workflow capabilities and typed
+workflow/history endpoints. Do not add new secrets, codes, or lifecycle fields
+to historical strict Settings snapshots or generic mutation receipts. A
+missing workflow capability leaves an explanatory unavailable state or the
+existing supported Terminal fallback; it does not manufacture a working action.
+
+Login, install, and uninstall operations keep exact harness/operation identity,
+bounded lifetimes, and visible canonical Terminal sessions. Device codes and
+allowlisted sign-in URLs belong only to the foreground authorized attempt.
+Cancellation must terminate the corresponding process before reporting
+success. Completed local login setup remains distinct from remote access
+verification: a Codex `login status` observation cannot prove a subscription
+or inference request succeeds. Row/account readiness still comes from the
+canonical source, not a workflow's `succeeded` label.
+
+The injected native-profile guard serializes canonical/legacy login and logout,
+key verification/save, and managed install/uninstall for Claude and Codex.
+Persisted receipts and live Terminal incarnations both participate in admission;
+receipt expiry cannot release a running process. Exact recovery remains
+idempotent, and uncertain launch or failed cleanup retains protection until
+liveness can be resolved. Direct owner Terminal commands are outside this API
+boundary. Fresh credential fingerprints and readback verify observed mode;
+they do not promise a universal filesystem lock.
+
+An owner-scoped active operation ID in capabilities lets a fresh Settings view
+recover the exact harness receipt and cancellation control. Renderer reads use
+a 15-second deadline and mutations 90 seconds. Uncertain starts reuse their
+idempotency key; a lost key-save response shows uncertainty rather than claiming
+the old key was preserved or the new one saved.
+
+API-key submission uses a dedicated bounded secret payload and provider probe
+before replacing the native credential. Rejection preserves the prior
+credential and route. Codex retains its `owner_openai_profile` access-source
+identity; its funding mode follows the native profile's actual authentication
+mode. Neither CLI metadata nor a renderer account label can upgrade an
+unverified subscription to remotely authenticated. Verified key readiness and
+successful inference remain separate facts.
+
+Disconnect keeps the existing logout/dependency guard. Optional uninstall is a
+separate operation over a verified Matrix-managed executable prefix, not
+`remove_harness` and not owner-home deletion. No chats, projects, Settings,
+native owner configuration, or immutable Chat bindings are deleted. Progress
+and reset/allowance data are shown only when authoritative; otherwise use
+actual phases or explicitly unknown information. Diagnostic views expose only
+bounded sanitized operation events, never arbitrary native output or secrets.
+
+`GET /billing/ai-credit/history` uses the same platform Clerk identity resolver
+as credit checkout. It accepts a validated runtime slot, limit (1–50, default
+20), and opaque pagination marker. It derives the active authorized computer
+server-side and applies owner, machine, and runtime predicates to the existing
+`ai_funded_credit_ledger`. A cursor from another owner/computer is invalid.
+Created-at/entry ordering provides stable keyset pagination; markers are not
+authentication credentials. Responses use `Cache-Control: no-store` and
+contain only timestamp, signed microusd amount, credit/usage/adjustment kind,
+and nullable model ID. Model metadata joins only a settled reservation in the
+same owner/computer/runtime scope. Missing metadata remains unknown. Split
+promotional/add-on debits remain separate exact ledger entries. No request,
+reservation, ledger, payment, or source-reference identifiers are returned.
+
+`tests/platform/ai-credit-history.test.ts` checks scope isolation, pagination,
+invalid/duplicate query values, private-field redaction, unknown metadata,
+empty history, safe database errors, and billing route registration. These
+automated tests do not establish deployed history availability, paid checkout,
+native login, or real Electron Desktop inference acceptance. Capture exact
+client/runtime versions and those outcomes independently during Human Review.
+
 ### Setup interaction contract
 
-- Agent artwork reuses the Terminal new-tab assets; do not replace recognizable
-  coding-agent logos with text glyphs.
+- Settings uses the shipped real OpenCode, Hermes, Pi and OpenClaw artwork,
+  following the owner's override of the Figma lettermarks. Claude/OpenAI SVGs
+  remain in neutral icon slots. Expanded and collapsed controls use one stable
+  chevron size; disclosure animates natural height and opacity and respects
+  reduced motion.
+- Missing guided workflow capabilities preserve the compact connection chooser
+  and catalog inventory while showing the unavailable method honestly. Only
+  explicit advanced actions may open a server-advertised Terminal session.
+  Legacy account/routing fields remain under collapsed disclosures.
+- Successful explicit Connect enables the exact eligible configured account
+  route; there is no Enable toggle. Refresh preserves saved disabled state.
+  Failed mutations retain the last confirmed settings and expanded agent.
+- Settings setup reads negotiate `includeSettingsSetupActions=true` so saved Off
+  does not remove the original server-issued connection command. Ordinary Chat
+  reads remain unavailable with empty models/actions for disabled instances.
 - Installed Pi/OpenCode instances offer **Use Matrix AI** and **Own account**
   before advanced routing fields. Matrix AI is still an access source, not a
   fabricated inference vendor.
@@ -435,9 +535,10 @@ the required active tax registrations.
   Older runtimes retain plain route selection for enabled agents and show an
   update requirement for one-step connection of disabled agents. Default wire
   snapshots stay unchanged for older strict-schema clients.
-- First sign-in opens the newly returned Terminal action directly. Reopening
-  Settings must not replay an old login attempt. Keep Continue as recovery if
-  the window could not open, and guard handoff against a runtime switch.
+- First sign-in starts the supported Settings workflow only after an explicit
+  action. Reopening Settings recovers the active scoped attempt without
+  restarting or replaying it. External consent and optional advanced Terminal
+  handoffs retain the owner/computer guard.
 - Provider-login named Terminal IDs can be 64 characters; route them through
   the canonical named-session protocol, not the legacy UUID attach protocol.
 - Mounting Settings or Chat reads the existing catalog without forcing health
@@ -507,3 +608,25 @@ first, applicable build/pattern gates, current visual evidence, and Greptile
 Do not claim a later layer in UI copy or documentation before its source of
 truth, security boundaries, tests, and all-shell behavior ship. Production
 activation and public product documentation are separate reviewed deliverables.
+
+
+### Settings and owned Pi integration
+
+The display-only Matrix model inventory is negotiated independently through
+`includeMatrixModelInventory=true`; model capability labels use
+`includeModelCapabilities=true`. These fields do not establish execution
+readiness. Updated Settings and Chat transports also negotiate
+`includeFundingState=true` to distinguish reserved credit. Historical strict
+clients omit the inventory/capability additions and receive the compatible
+credit-required projection rather than an unknown reserved-credit reason.
+
+Matrix-owned ordinary Chat executes on the distinct `matrix_pi_default`
+instance with the exact canonical Sonnet or GLM model ID and independent owned
+Pi profile. Policy-authorized discovery never grants admission, silently
+changes native routes, or rewrites an existing Chat binding. Missing managed
+worker registration, stale readiness, or unconfirmed usage fails closed.
+Unknown-usage holds remain held; only trusted no-dispatch Jev attestation may
+settle an exact zero without provider usage. Current Sonnet/GLM price reviews
+and the independent Jev review retain their original version and validity
+checks. Process health, model discovery, admission, actual replies and
+authoritative settlement require separate evidence.

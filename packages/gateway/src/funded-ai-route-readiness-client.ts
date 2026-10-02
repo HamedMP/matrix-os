@@ -14,9 +14,9 @@ export function createFundedAiRouteReadinessClient(
   return {
     async getRouteReadiness(options = {}) {
       // Generic readiness also waits for a cold relay. Do not extend credential
-      // issuance/funding-summary timeouts or the separate owner-funded Jev probe.
+      // issuance/funding-summary timeouts. Jev has its own bounded settlement window.
       const timeout = AbortSignal.timeout(options.modelId === JEV_MODEL_ID
-        ? config.requestTimeoutMs : FUNDED_AI_READINESS_TIMEOUTS.gatewayRequestMs);
+        ? FUNDED_AI_READINESS_TIMEOUTS.jevGatewayRequestMs : FUNDED_AI_READINESS_TIMEOUTS.gatewayRequestMs);
       const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
       const response = await fetchFn(config.routeReadinessUrl, {
         method: "POST", redirect: "error", signal,

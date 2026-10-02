@@ -1,3 +1,4 @@
+import { assertJevNoDispatchSettlement, type JevNoDispatchAttestation } from "./ai-funded-no-dispatch.js";
 import { createHmac, randomUUID } from "node:crypto";
 import { CleanupSchema, cleanupExpiredReservations as cleanupReservations } from "./ai-funded-reservation-cleanup.js";
 import {
@@ -518,6 +519,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     actualCostMicrousd: number | null;
     jevProvenance?: z.infer<typeof JevProvenanceSchema>;
     manualReview?: { expectedRequestId: string; evidenceRef: string; reviewer: string };
+    notDispatched?: JevNoDispatchAttestation;
   }, finalizationMode: "exact" | "conservative"): Promise<{
     response: FundedAiSettlementResponse;
     finalizationMode: "exact" | "conservative";
@@ -542,6 +544,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         ? FundedAiAuthorizationResponseSchema.parse(JSON.parse(reservation.authorization_response))
           .reservation.jevPricingVersion
         : undefined;
+      if (request.notDispatched) assertJevNoDispatchSettlement({
+        attestation: request.notDispatched, modelId: reservation.model_id, usageLimit,
+        storedPricingVersion: storedJevPricingVersion, requestId: reservation.request_id,
+        actualCostMicrousd: request.actualCostMicrousd, finalizationMode,
+        hasProviderProvenance: request.jevProvenance !== undefined,
+      });
       if (reservation.model_id !== JEV_MODEL_ID && request.jevProvenance !== undefined) {
         throw new AiFundedPolicyError("idempotency_conflict");
       }
@@ -551,7 +559,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
             || request.jevProvenance.pricingVersion !== storedJevPricingVersion)) {
           throw new AiFundedPolicyError("idempotency_conflict");
         }
-        if (storedJevPricingVersion !== undefined && !request.manualReview
+        if (storedJevPricingVersion !== undefined && !request.manualReview && !request.notDispatched
           && finalizationMode === "exact" && request.jevProvenance === undefined) {
           throw new AiFundedPolicyError("idempotency_conflict");
         }
@@ -731,10 +739,13 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const settlement = await settleReservationInternal({
       reservationId: request.reservationId,
       tokenId: request.tokenId,
-      actualCostMicrousd: request.mode === "exact" ? request.actualCostMicrousd : null,
+      actualCostMicrousd: request.mode === "not_dispatched" ? 0 : request.mode === "exact" ? request.actualCostMicrousd : null,
+      ...(request.mode === "not_dispatched" ? { notDispatched: {
+        expectedRequestId: request.expectedRequestId, jevPricingVersion: request.jevPricingVersion,
+      } } : {}),
       ...(request.mode === "exact" && request.jevProvenance
         ? { jevProvenance: request.jevProvenance } : {}),
-    }, request.mode);
+    }, request.mode === "not_dispatched" ? "exact" : request.mode);
     return FundedAiFinalizationResponseSchema.parse({
       ...settlement.response,
       finalizationMode: settlement.finalizationMode,

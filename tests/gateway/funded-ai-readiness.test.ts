@@ -26,6 +26,17 @@ function setup() {
 }
 
 describe("funded AI readiness", () => {
+  it("keeps Jev model-specific readiness while discovering policy-authorized models", async () => {
+    const f = setup();
+    f.state.policy.allowedModelIds = ["typesafe/jev"];
+    const getRouteReadiness = vi.fn(async () => { throw new Error("Unavailable relay"); });
+    const reader = createFundedAiReadinessReader({ summary: { getFundingSummary: f.getFundingSummary },
+      routes: { getRouteReadiness }, modelId: "typesafe/jev", now: () => now });
+    expect(await reader.read()).toMatchObject({ allowedModelIds: [], discoverableModelIds: ["typesafe/jev"],
+      readiness: { state: "unavailable" } });
+    expect(getRouteReadiness).toHaveBeenCalledWith(expect.objectContaining({ modelId: "typesafe/jev", signal: expect.any(AbortSignal) }));
+  });
+
   it("cancels an explicit recipe readiness observer without returning a late ready decision", async () => {
     const f = setup(); const pending = Promise.withResolvers<Awaited<ReturnType<typeof f.getRouteReadiness>>>();
     let observed: AbortSignal | undefined;

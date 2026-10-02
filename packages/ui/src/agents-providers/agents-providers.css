@@ -82,8 +82,13 @@
 .matrix-ap-agent-row { border-bottom: 1px solid var(--matrix-ap-border); }
 .matrix-ap-agent-row-head { align-items: center; display: flex; gap: 12px; padding-right: 4px; }
 .matrix-ap-agent-details { padding: 0 4px 16px 44px; }
-.matrix-ap-agent-details[hidden] { display: none; }
-.matrix-ap-chevron { color: var(--matrix-ap-muted); font-size: 20px; padding: 6px; }
+/* Natural content height, with reversible transitions and no measurement timers. */
+.matrix-ap-accordion { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows 200ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease-out, visibility 0s 200ms; }
+.matrix-ap-accordion[data-expanded="true"] { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition-delay: 0s; }
+.matrix-ap-accordion-clip { min-height: 0; overflow: hidden; }
+.matrix-ap-chevron { color: var(--matrix-ap-muted); display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 28px; }
+.matrix-ap-chevron svg { width: 16px; height: 16px; transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1); }
+.matrix-ap-chevron[data-expanded="true"] svg { transform: rotate(180deg); }
 .matrix-ap-add-button { background: var(--matrix-ap-surface); border-color: var(--matrix-ap-border); color: var(--matrix-ap-text); font-size: 20px; height: 27px; width: 27px; }
 .matrix-ap-rail-list { display: flex; flex-direction: column; gap: 3px; }
 .matrix-ap-rail-item {
@@ -128,7 +133,7 @@
 .matrix-ap-agent-logo img { display: block; height: 20px; object-fit: contain; width: 20px; }
 .matrix-ap-connection { margin-bottom: 16px; }
 .matrix-ap-connection-options { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.matrix-ap-connection-choice { background: var(--matrix-ap-surface); border: 1px solid var(--matrix-ap-border); border-radius: 9px; color: var(--matrix-ap-text); cursor: pointer; display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 12px; text-align: left; }
+.matrix-ap-connection-choice { position: relative; background: var(--matrix-ap-surface); border: 1px solid var(--matrix-ap-border); border-radius: 9px; color: var(--matrix-ap-text); cursor: pointer; display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 12px; text-align: left; }
 .matrix-ap-connection-choice strong { font-size: 13px; }
 .matrix-ap-connection-choice span { color: var(--matrix-ap-muted); font-size: 11px; }
 .matrix-ap-connection-choice[aria-pressed="true"] { background: var(--matrix-ap-accent-muted); border-color: var(--matrix-ap-accent); }
@@ -210,7 +215,7 @@
 .matrix-ap-accents { border: 0; margin: 0; padding: 0; }
 .matrix-ap-accents legend { color: var(--matrix-ap-muted); font-size: 11px; font-weight: 600; margin-bottom: 8px; }
 .matrix-ap-accents > div { display: flex; gap: 6px; }
-.matrix-ap-accent { background: var(--matrix-ap-accent); border: 2px solid var(--matrix-ap-surface); border-radius: 50%; box-shadow: 0 0 0 1px var(--matrix-ap-border); cursor: pointer; height: 24px; width: 24px; }
+.matrix-ap-accent { background: var(--matrix-ap-accent); border: 2px solid var(--matrix-ap-surface); border-radius: 50%; box-shadow: 0 0 0 1px var(--matrix-ap-border); cursor: pointer; height: 20px; width: 20px; }
 .matrix-ap-accent[data-accent="green"] { background: var(--ap-green, var(--matrix-ap-success)); }
 .matrix-ap-accent[data-accent="orange"] { background: var(--ap-orange, var(--matrix-ap-warning)); }
 .matrix-ap-accent[data-accent="red"] { background: var(--ap-red, var(--matrix-ap-danger)); }
@@ -338,6 +343,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .matrix-agents-providers .matrix-ap-accordion,
+  .matrix-agents-providers .matrix-ap-chevron svg,
   .matrix-agents-providers .matrix-ap-switch span,
   .matrix-agents-providers .matrix-ap-switch span::after { transition: none; }
 }
@@ -356,3 +363,96 @@
 .matrix-chat-connection-recovery p { margin: 0; }
 .matrix-chat-connection-recovery button { min-height: 32px; padding: 4px 10px; font-size: 12px; }
 .matrix-chat-connection-recovery .matrix-chat-provider-attempt { gap: 8px; margin: 0; }
+
+/* Shared Settings reference: Figma 1112:9707. Runtime values remain canonical. */
+.matrix-agents-providers { width: 100%; max-width: 1080px; font-size: 14px; line-height: 1.45; }
+.matrix-ap-page-head h1 { font-size: 18px; line-height: 24px; font-weight: 500; letter-spacing: -.025em; }
+.matrix-ap-workspace { gap: 32px; }
+.matrix-ap-agent-groups { display: flex; flex-direction: column; gap: 32px; }
+.matrix-ap-list-heading { padding: 0 0 12px; }
+.matrix-ap-list-heading h2, .matrix-ap-gateway h2 { font-size: 14px; font-weight: 500; line-height: 20px; }
+.matrix-ap-agent-list { border: 0; overflow: visible; margin-top: 0; }
+.matrix-ap-agent-row-head { padding-right: 0; }
+.matrix-ap-agent-row { border: 1px solid var(--matrix-ap-border); background: var(--matrix-ap-surface); }
+.matrix-ap-agent-row + .matrix-ap-agent-row { border-top: 0; }
+.matrix-ap-agent-row:nth-child(2) { border-radius: 12px 12px 0 0; }
+.matrix-ap-agent-row:last-child { border-radius: 0 0 12px 12px; }
+.matrix-ap-agent-row:nth-child(2):last-child { border-radius: 12px; }
+.matrix-ap-rail-item { min-height: 56px; padding: 12px 16px; gap: 12px; border: 0; border-radius: inherit; }
+.matrix-ap-rail-name { font-size: 14px; font-weight: 500; }
+.matrix-ap-status-chip { font-size: 12px; font-weight: 400; border: 0; background: var(--matrix-ap-sunken); padding: 3px 8px; }
+.matrix-ap-status-chip[data-state="connected"] { color: var(--matrix-ap-success); background: color-mix(in srgb, var(--matrix-ap-success) 8%, transparent); }
+.matrix-ap-status-chip[data-state="connected"] i { background: var(--matrix-ap-success); }
+.matrix-ap-status-chip[data-state="not-connected"] i, .matrix-ap-status-chip[data-state="not-installed"] i, .matrix-ap-status-chip[data-state^="off-in-settings"] i { background: var(--matrix-ap-faint); }
+.matrix-ap-status-chip[data-state="needs-attention"] i { background: var(--matrix-ap-warning); }
+.matrix-ap-agent-details { padding: 0 16px 20px; }
+.matrix-ap-enablement { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; color: var(--matrix-ap-muted); font-size: 11px; }
+.matrix-ap-gateway { padding: 0; background: transparent; border: 0; }
+.matrix-ap-gateway .matrix-ap-panel-head { margin-bottom: 12px; }
+.matrix-ap-beta { border: 1px solid var(--matrix-ap-border); border-radius: 26px; color: var(--matrix-ap-muted); font-size: 11px; font-weight: 400; padding: 2px 8px; }
+.matrix-ap-gateway .matrix-ap-credit-row { padding: 20px; margin: 0; background: var(--matrix-ap-surface); border: 1px solid var(--matrix-ap-border); border-radius: 12px 12px 0 0; }
+.matrix-ap-credit-row strong { font-size: 24px; font-weight: 600; line-height: 35px; }
+.matrix-ap-credit-row span { font-size: 12px; }
+.matrix-ap-model-inventory { border: 1px solid var(--matrix-ap-border); border-top: 0; padding: 16px 20px 8px; background: var(--matrix-ap-surface); }
+.matrix-ap-model-inventory h3 { margin: 0; font-size: 12px; font-weight: 500; }
+.matrix-ap-model-inventory ul { list-style: none; margin: 0; padding: 0; }
+.matrix-ap-model-inventory li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--matrix-ap-border); padding: 12px 0; font-size: 14px; }
+.matrix-ap-model-inventory li:last-child { border: 0; }
+.matrix-ap-gateway-footer { margin: 0; border: 1px solid var(--matrix-ap-border); border-top: 0; border-radius: 0 0 12px 12px; background: var(--matrix-ap-surface); padding: 12px 20px; color: var(--matrix-ap-muted); font-size: 12px; }
+.matrix-ap-button { border-radius: 10px; font-size: 12px; min-height: 28px; }
+@media (max-width: 520px) { .matrix-ap-agent-details { padding-left: 20px; } .matrix-ap-rail-item { padding-inline: 12px; gap: 8px; } .matrix-ap-status-chip { font-size: 11px; } }
+.matrix-ap-workflow h3 { font-size: 12px; font-weight: 500; margin: 14px 0 8px; }
+.matrix-ap-workflow-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.matrix-ap-key-form { display: grid; gap: 10px; margin-top: 16px; max-width: 520px; }
+.matrix-ap-key-form input[aria-invalid="true"] { border-color: var(--matrix-ap-danger); }
+.matrix-ap-device-login { margin: 16px 0; }
+.matrix-ap-device-code { display: flex; align-items: center; gap: 12px; padding: 12px; margin: 12px 0; background: var(--matrix-ap-sunken); border: 1px solid var(--matrix-ap-border); border-radius: 10px; }
+.matrix-ap-device-code code { font-size: 20px; letter-spacing: .08em; }
+.matrix-ap-install progress, .matrix-ap-account-usage progress { width: 100%; accent-color: var(--matrix-ap-accent); height: 6px; }
+.matrix-ap-operation-logs { background: var(--matrix-ap-sunken); border-radius: 10px; padding: 12px; margin-top: 12px; font-size: 12px; }
+.matrix-ap-operation-logs ol { padding-left: 18px; }
+.matrix-ap-uninstall-choice { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; margin-top: 18px; font-size: 13px; }
+.matrix-ap-uninstall-choice span { grid-column: 2; color: var(--matrix-ap-muted); font-size: 12px; }
+.matrix-ap-history-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 12px; text-align: left; }
+.matrix-ap-history-table th, .matrix-ap-history-table td { padding: 10px 6px; border-bottom: 1px solid var(--matrix-ap-border); }
+.matrix-ap-history-table small { display: block; color: var(--matrix-ap-muted); }
+
+.matrix-ap-model-capability { font-size: 11px; color: var(--matrix-ap-muted); border-radius: 26px; background: var(--matrix-ap-sunken); padding: 2px 8px; }
+
+.matrix-ap-connection-choice .matrix-ap-method-check { position: absolute; right: 12px; top: 12px; color: var(--matrix-ap-accent); font-size: 14px; }
+
+/* The connection chooser stays compact even on runtimes without guided workflows. */
+.matrix-ap-agent-details > .matrix-ap-advanced { border: 0; padding-top: 0; margin-top: 16px; }
+.matrix-ap-agent-details .matrix-ap-workflow h3 { margin: 4px 0 8px; font-size: 13px; font-weight: 500; }
+.matrix-ap-connection-choice { min-height: 66px; padding: 12px 16px; border-radius: 10px; justify-content: center; }
+.matrix-ap-connection-choice strong { font-size: 14px; font-weight: 500; }
+.matrix-ap-connection-choice > span { font-size: 12px; }
+.matrix-ap-connection-choice .matrix-ap-selected-tag { border: 0; padding: 2px 8px; font-size: 12px; color: var(--matrix-ap-text); background: color-mix(in srgb, var(--matrix-ap-text) 5%, transparent); }
+.matrix-ap-agent-logo, .matrix-ap-harness-mark:has(.matrix-ap-agent-logo) { height: 32px; width: 32px; }
+.matrix-ap-agent-logo { border: 1px solid var(--matrix-ap-border); background: var(--matrix-ap-sunken); border-radius: 8px; }
+.matrix-ap-agent-logo img { height: 20px; width: 20px; }
+.matrix-ap-status-chip[data-state="not-connected"], .matrix-ap-status-chip[data-state="not-installed"] { color: var(--matrix-ap-warning); background: color-mix(in srgb, var(--matrix-ap-warning) 8%, transparent); }
+.matrix-ap-status-chip[data-state="not-connected"] i, .matrix-ap-status-chip[data-state="not-installed"] i { background: var(--matrix-ap-warning); }
+.matrix-ap-gateway .matrix-ap-advanced { border: 0; padding-top: 0; }
+.matrix-ap-gateway .matrix-ap-panel-head > .matrix-ap-status-chip { display: none; }
+.matrix-ap-gateway .matrix-ap-credit-row { padding: 24px; min-height: 112px; }
+.matrix-ap-model-inventory { padding: 18px 24px 8px; }
+.matrix-ap-gateway-footer { padding: 14px 24px; background: var(--matrix-ap-sunken); }
+.matrix-ap-gateway .matrix-ap-button { min-height: 32px; border: 0; background: color-mix(in srgb, var(--matrix-ap-text) 5%, transparent); }
+.matrix-ap-gateway .matrix-ap-button-primary { color: var(--matrix-ap-overlay); background: var(--matrix-ap-text); }
+@media (max-width: 520px) { .matrix-ap-agent-details { padding-inline: 12px; } .matrix-ap-connection-options { grid-template-columns: 1fr; } .matrix-ap-rail-item { gap: 10px; padding-inline: 12px; } }
+
+.matrix-ap-agent-lettermark { font-size: 12px; font-weight: 600; color: var(--matrix-ap-text); }
+
+.matrix-ap-agent-logo img.matrix-ap-claude-logo { width: 22px; height: 22px; }
+
+.matrix-ap-method-card { flex-direction: row; align-items: flex-start; justify-content: flex-start; gap: 12px; }
+.matrix-ap-method-copy { display: flex; flex-direction: column; gap: 4px; }
+.matrix-ap-method-copy > span { font-size: 12px; color: var(--matrix-ap-muted); }
+.matrix-ap-method-icon { flex: 0 0 auto; display: flex; align-items: center; padding-top: 1px; }
+
+/* Keep the exact monochrome SVG readable on the shared dark presentation. */
+[data-theme="dark"] .matrix-ap-agent-logo img.matrix-ap-openai-logo,
+.dark .matrix-ap-agent-logo img.matrix-ap-openai-logo { filter: invert(1); }
+
+.matrix-ap-agent-logo img.matrix-ap-upstream-logo { width: 24px; height: 24px; }
