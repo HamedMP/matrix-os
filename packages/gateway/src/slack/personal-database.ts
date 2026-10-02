@@ -86,5 +86,11 @@ export class SlackPersonalRepository {
   return {outbox,inbox:await trx.selectFrom("slack_personal_inbox").selectAll().where("id","=",row.event_id).executeTakeFirstOrThrow()};
  });}
  async replyStatus(id:string,lease:string|null,state:SlackPersonalOutboxTable["state"],messageTs?:string){await this.db.updateTable("slack_personal_outbox").set({state,lease:null,lease_until:state==="pending"?new Date(this.now().getTime()+30_000):null,message_ts:messageTs??null,updated_at:this.now()}).where("event_id","=",id).where("lease","=",lease).execute();}
- async cleanup(){await this.db.deleteFrom("slack_personal_inbox").where("owner_id","=",this.ownerId).where("state","in",["completed","failed"]).where("updated_at","<",new Date(this.now().getTime()-30*86400_000)).where("id","not in",this.db.selectFrom("slack_personal_outbox").select("event_id").where("state","in",["pending","sending","uncertain"])).execute();}
+ /** Retain ambiguous outcomes for review for 30 days, then expire without retrying. */
+ async cleanup(){
+  const cutoff=new Date(this.now().getTime()-30*86400_000);
+  await this.db.deleteFrom("slack_personal_inbox").where("owner_id","=",this.ownerId).where("state","in",["completed","failed"])
+   .where("updated_at","<",cutoff).where("id","not in",this.db.selectFrom("slack_personal_outbox").select("event_id")
+    .where(eb=>eb.or([eb("state","in",["pending","sending"]),eb.and([eb("state","=","uncertain"),eb("updated_at",">=",cutoff)])]))).execute();
+ }
 }
