@@ -49,11 +49,14 @@ describe("aoede fixture scenario registry", () => {
 });
 
 describe("aoede fixture payloads", () => {
-  it("names only the five real canonical tools and real revisions — never invented ids", () => {
+  it("names only real canonical app tools and revisions — never invented ids", () => {
     const canonical = createCanonicalActionTools({ homeForOwner: async () => "/tmp/unused" });
     const realToolIds = new Set(canonical.map(tool => tool.toolId));
     const realSchemaRevisions = new Set(canonical.map(tool => tool.schemaRevision));
-    expect(realToolIds.size).toBe(5);
+    expect([...realToolIds].sort()).toEqual([
+      "matrix_apply_app_files", "matrix_close_app", "matrix_inspect_app",
+      "matrix_list_apps", "matrix_open_app", "matrix_search_workspace",
+    ]);
 
     // Capability/catalog tool advertisements must be a subset of the real inventory.
     for (const tools of [
