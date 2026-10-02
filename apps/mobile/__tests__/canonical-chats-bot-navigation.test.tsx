@@ -19,6 +19,7 @@ import { mobileQueryKeys } from "@/lib/requests/query-keys";
 function Chats() {
   const query = useCanonicalChats();
   return <>
+    <Text>{query.isPending ? "loading chats" : "ready chats"}</Text>
     <Text>{query.chats.map(record => record.chat.id).join(",") || "no ordinary chats"}</Text>
     <Text>{query.botConversations.map(bot => `${bot.chatId}:${bot.pendingApprovalCount}`).join(",") || "no bots"}</Text>
   </>;
@@ -26,6 +27,7 @@ function Chats() {
 let client: QueryClient;
 beforeEach(() => {
   jest.useFakeTimers();
+  jest.spyOn(AppState, "addEventListener").mockImplementation(() => ({remove:jest.fn()}));
   mockAuth.userId = "owner"; mockAuth.isSignedIn = true;
   mockFetchChats.mockResolvedValue({ items: ["chat_ordinary", "chat_bot", "chat_unknown"].map(id => ({ chat: { id } })) });
   mockFetchNavigation.mockResolvedValue({ ordinaryChatIds: ["chat_ordinary"],
@@ -49,9 +51,9 @@ it("clears the previous runtime and signed-out projections before a new binding 
   const { rerender } = render(<QueryClientProvider client={client}><Chats /></QueryClientProvider>);
   await waitFor(() => expect(screen.getByText("chat_ordinary")).toBeTruthy());
   mockFetchNavigation.mockImplementation(() => new Promise(() => {}));
-  act(() => client.setQueryData(mobileQueryKeys.activeComputer("owner"), {
+  act(() => { client.setQueryData(mobileQueryKeys.activeComputer("owner"), {
     handle: "second", runtimeSlot: "second", gatewayPath: "/vm/second?runtime=second",
-  }));
+  }); });
   await waitFor(() => expect(mockFetchNavigation).toHaveBeenCalledWith("token", "https://example.test/vm/second?runtime=second", expect.any(Array), expect.any(Object)));
   expect(screen.getByText("no ordinary chats")).toBeTruthy();
   expect(screen.getByText("no bots")).toBeTruthy();
@@ -77,4 +79,21 @@ it("pauses navigation polling in the background and refreshes when Native return
   unmount();
   expect(remove).toHaveBeenCalled();
   subscribe.mockRestore();
+});
+
+it("retains verified classifications during new-ID refresh and drops stale approval counts on failure", async () => {
+  render(<QueryClientProvider client={client}><Chats /></QueryClientProvider>);
+  await waitFor(() => expect(screen.getByText("chat_ordinary")).toBeTruthy());
+  let reject!: (error: Error) => void;
+  mockFetchNavigation.mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
+  act(() => { client.setQueryData(mobileQueryKeys.canonicalChats("owner", "primary:primary"), {
+    items: ["chat_ordinary", "chat_bot", "chat_unknown", "chat_new"].map(id => ({ chat: { id } })),
+  }); });
+  await waitFor(() => expect(mockFetchNavigation).toHaveBeenCalledWith("token", "https://example.test/vm/primary", ["chat_bot", "chat_new", "chat_ordinary", "chat_unknown"], expect.any(Object)));
+  expect(screen.getByText("chat_ordinary")).toBeTruthy();
+  expect(screen.queryByText(/chat_new/)).toBeNull();
+  expect(screen.getByText("ready chats")).toBeTruthy();
+  await act(async () => reject(new Error("unavailable")));
+  await waitFor(() => expect(screen.getByText("chat_bot:0")).toBeTruthy());
+  expect(screen.getByText("chat_ordinary")).toBeTruthy();
 });

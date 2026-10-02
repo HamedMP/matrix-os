@@ -467,7 +467,6 @@ export function ProjectChatDraft({
                     || referenceTokens.length > 0
                   )}
                   catalog={projectCatalog}
-                  onProviderPickerOpen={liveCatalog.refresh}
                   providerCatalogLoading={liveCatalog.status === "loading"}
                   selection={canonicalSelection}
                   onSelectionChange={(selection) => {

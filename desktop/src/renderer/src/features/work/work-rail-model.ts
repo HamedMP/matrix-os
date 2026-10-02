@@ -1,4 +1,4 @@
-import { compareCanonicalChatActivity, resolveCanonicalChatAttention as resolveWorkRailAgentState } from "@matrix-os/ui";
+import { compareCanonicalChatActivity, resolveCanonicalChatLifecycleGroup, resolveCanonicalChatAttention as resolveWorkRailAgentState } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { Project } from "../../stores/board";
 
@@ -132,11 +132,8 @@ export function buildWorkRailModel(
       groupByProjectReference.get(record.projectId)?.chats.push(record);
       continue;
     }
-    const state = resolveWorkRailAgentState(record);
-    if (state === "approval_required" || state === "input_required" || state === "failed") needsYou.push(record);
-    else if (state === "running") working.push(record);
-    else if (state === "unseen_completion" || record.latestSuccessfulCompletion) done.push(record);
-    else recents.push(record);
+    const group = resolveCanonicalChatLifecycleGroup(record);
+    ({needsYou, working, done, recent:recents})[group].push(record);
   }
   return {
     pinned,

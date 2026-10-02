@@ -7,7 +7,6 @@ export function WorkRailSection({
   onToggle,
   action,
   count,
-  divider: _divider = true,
   children,
 }: {
   label: string;

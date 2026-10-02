@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); clearDraftChats(); });
 
-it.each(["project draft", "canonical project draft", "existing agent conversation"] as const)("shows initial and forced loading directly on the closed %s trigger and prevents sending", async (surface) => {
+it.each(["project draft", "canonical project draft", "existing agent conversation"] as const)("reuses the loaded %s picker while initial and lifecycle loading still blocks sending", async (surface) => {
   const catalog = createLegacyProjectProviderCatalog(summary);
   const initial = deferred<CanonicalProviderCatalog>();
   const refreshed = deferred<CanonicalProviderCatalog>();
@@ -73,9 +73,19 @@ it.each(["project draft", "canonical project draft", "existing agent conversatio
   await setSharedComposerText(screen.getByRole("textbox", { name: surface === "existing agent conversation" ? "Message conversation" : "Message new chat" }), "Keep this draft");
   await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
   fireEvent.click(trigger);
-  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  await screen.findByRole("searchbox");
+  expect(get).toHaveBeenCalledTimes(1);
+  expect(within(trigger).queryByRole("status")).toBeNull();
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
   await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
+  fireEvent.click(trigger);
+  await screen.findByRole("searchbox");
+  expect(get).toHaveBeenCalledTimes(1);
+  fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
+  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
+  act(() => window.dispatchEvent(new Event("focus")));
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   expect(screen.queryByRole("listbox")).toBeNull();
   expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
   expect(trigger).toHaveAttribute("data-model", model);

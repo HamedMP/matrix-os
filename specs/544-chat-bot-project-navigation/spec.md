@@ -2,6 +2,8 @@
 
 Status: implementation in progress; the first UI delivery was rejected in Human Review on 2026-10-03. User additionally requires reference to current Matrix AI Gateway changes and matching Preview testing after implementation.
 
+Current review scope override (2026-10-03): the user excludes further Mobile and documentation work. Complete the sixteen corrections and exact-source Preview/Electron Desktop acceptance. Preserve already completed shared fixes; additional Mobile or public-docs work is not a gate for this correction delivery.
+
 ## Goal and value
 
 Separate task-style ordinary Chat from persistent Bot conversations, remove provider-mismatch failures caused by inline @Bot execution, and make Projects navigable without replacing the shared sidebar. Implement the reviewed Figma presentation using existing backend capabilities and reuse the work from the Codex chat titled `Pi bot`.

@@ -18,4 +18,3 @@ export function projectContext(
     status: project || fallbackLabel ? "ready" : "unavailable",
   };
 }
-

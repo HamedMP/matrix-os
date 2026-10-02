@@ -4,6 +4,16 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { useBotMentionNavigation } from '../../../packages/ui/src/chat-agents/bots/use-bot-mention-navigation.js';
 import type { ChatAgentClient } from '../../../packages/ui/src/chat-agents/client.js';
 afterEach(cleanup);
+it('has no stale feedback when leaving and returning to a source, including an unavailable client',async()=>{
+ const c=client('chat_bot');
+ const {result,rerender}=renderHook(({scope,owner})=>useBotMentionNavigation(owner,scope,async()=>false),{initialProps:{scope:'source',owner:c as ChatAgentClient | undefined}});
+ act(()=>{result.current.select(resource,'draft',vi.fn());});
+ await waitFor(()=>expect(result.current.notice).toMatch(/original Chat/));
+ rerender({scope:'other',owner:undefined});
+ expect(result.current.notice).toBe('');
+ rerender({scope:'source',owner:c});
+ expect(result.current.notice).toBe('');
+});
 const resource={kind:'agent' as const,id:'bot_one',label:'Writer'};
 const client = (chatId: string|null) => ({ list: vi.fn(async()=>({agents:[{id:resource.id,recipeRef:chatId ? {}:undefined}]})), bots:{directChat:vi.fn(async()=>chatId)} }) as unknown as ChatAgentClient;
 it('navigates with text only and does not insert a Bot resource or send',async()=>{

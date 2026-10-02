@@ -740,7 +740,6 @@ function ConversationComposer({
             && (message.trim().length > 0 || attachments.items.length > 0 || referenceTokens.length > 0)
           }
           catalog={projectCatalog}
-          onProviderPickerOpen={liveCatalog.refresh}
           providerCatalogLoading={liveCatalog.status === "loading"}
           selection={selection}
           onSelectionChange={setSelection}

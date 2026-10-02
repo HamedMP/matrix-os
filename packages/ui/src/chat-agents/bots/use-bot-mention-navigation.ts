@@ -9,10 +9,16 @@ export function useBotMentionNavigation(client: ChatAgentClient | undefined, sco
   const sequence = useRef(0);
   const identity = useRef({ client, scope, blockedReason });
   useLayoutEffect(() => { identity.current = { client, scope, blockedReason }; }, [client, scope, blockedReason]);
-  const [state, setState] = useState({ pending: false, error: '', notice: '' });
+  const [stored, setStored] = useState<{client:ChatAgentClient | undefined;scope:string;value:{pending:boolean;error:string;notice:string}} | null>(null);
+  const [previousScope,setPreviousScope]=useState({client,scope});
+  if (previousScope.client!==client || previousScope.scope!==scope) {
+    setPreviousScope({client,scope});
+    setStored(null);
+  }
+  const state = stored && stored.client === client && stored.scope === scope ? stored.value : {pending:false,error:'',notice:''};
+  const setState = (value:typeof state) => setStored({client,scope,value});
   useEffect(() => {
     sequence.current += 1;
-    setState({ pending: false, error: '', notice: '' });
     return () => { sequence.current += 1; };
   }, [client, scope]);
   const select = (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void): boolean => {

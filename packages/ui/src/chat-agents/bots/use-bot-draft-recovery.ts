@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 /** One scoped routing reference to an existing bounded draft store; no text copy or persistence. */
 export function useBotDraftRecovery<Source>({ client, identityKey, scope, targetScope, seed, open, capture, restore }: {
@@ -6,9 +6,13 @@ export function useBotDraftRecovery<Source>({ client, identityKey, scope, target
   seed(chatId:string,text:string):boolean; open(chatId:string):void; capture():Source; restore(source:Source):void;
 }) {
   const [saved,setSaved]=useState<{client:unknown;identityKey:string;scope:string;source:Source}|null>(null);
+  const [previousScope,setPreviousScope]=useState({client,identityKey,scope});
+  if (previousScope.client!==client || previousScope.identityKey!==identityKey || previousScope.scope!==scope) {
+    setPreviousScope({client,identityKey,scope});
+    if (saved && (saved.client!==client || saved.identityKey!==identityKey || saved.scope!==scope)) setSaved(null);
+  }
   const current=useRef({client,identityKey,scope});
   useLayoutEffect(()=>{current.current={client,identityKey,scope};},[client,identityKey,scope]);
-  useEffect(()=>{setSaved(value=>value && (value.client!==client || value.identityKey!==identityKey || value.scope!==scope) ? null:value);},[client,identityKey,scope]);
   const visible=saved && saved.client===client && saved.identityKey===identityKey && saved.scope===scope ? saved:null;
   return {recovery:visible?.source ?? null, clearNotice:()=>setSaved(null),
     openBotMention:(chatId:string,text:string)=>{

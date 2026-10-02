@@ -415,11 +415,11 @@ function ChatAppContent({
           </div>
         </div>
 
-        <div className="px-2 pb-2"><ChatAgentsRailSection activeChatId={sessionId} client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => { providerState.refresh(); setSetupOpen(true); }} /></div>
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
+        <div className="px-2 pb-2"><ChatAgentsRailSection activeChatId={sessionId} client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
         <div className="flex gap-2 px-3 pb-2 text-xs">
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
@@ -549,7 +549,7 @@ function ChatAppContent({
             variant={setupOpen ? "secondary" : "ghost"}
             size="sm"
             className="h-8 max-w-[12rem] gap-1.5 px-2.5 text-xs"
-            onClick={() => { if (!setupOpen) providerState.refresh(); setSetupOpen((value) => !value); }}
+            onClick={() => setSetupOpen((value) => !value)}
           >
             <span className="truncate">{providerState.selected ? `${providerState.selected.harnessLabel}${providerState.selected.connectionLabel && providerState.selected.connectionLabel !== providerState.selected.harnessLabel ? ` · ${providerState.selected.connectionLabel}` : ""} · Model` : "Model"}</span>
             {providerState.loading ? <ChatProviderLoadingIndicator /> : null}

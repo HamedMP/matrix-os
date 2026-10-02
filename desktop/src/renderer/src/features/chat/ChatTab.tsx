@@ -257,7 +257,6 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
           disabled={uploadingAttachments}
           canSubmit={composerReady}
           catalog={providerCatalog}
-          onProviderPickerOpen={liveProviderCatalog.refresh}
           providerCatalogLoading={liveProviderCatalog.status === "loading"}
           selection={canonicalSelection}
           onSelectionChange={(selection) => {

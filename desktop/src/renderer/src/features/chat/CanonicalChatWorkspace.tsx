@@ -64,7 +64,6 @@ import ConversationContextPicker from "./ConversationContextPicker";
 import {
   SharedChatComposer,
   supportsNativeFileAttachments,
-  type ComposerReferenceToken,
   type SharedChatComposerSubmission,
 } from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
@@ -709,7 +708,6 @@ export function CanonicalChatWorkspace({
         catalog={providerCatalog}
         automaticRouting={Boolean(directBotId)}
         botControls={directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={client.agents} catalog={providerCatalog} catalogLoading={providerCatalogLoading} zIndex={DESKTOP_Z_INDEX.popover} disabled={uploadingAttachments} refreshKey={botEventRevision} onChanged={() => setBotEventRevision(value => value + 1)}/> : undefined}
-        onProviderPickerOpen={catalog ? undefined : liveCatalog.refresh}
         providerCatalogLoading={!directBotId && providerCatalogLoading}
         selection={selection}
         onSelectionChange={onSelectionChange}

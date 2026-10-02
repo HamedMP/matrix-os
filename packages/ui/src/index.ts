@@ -204,7 +204,7 @@ export { useBotConversationSummaries, type BotConversationSummary, type BotConve
 export { useBotMentionNavigation, BOT_ATTACHMENT_HANDOFF_REASON } from './chat-agents/bots/use-bot-mention-navigation.js';
 export { AgentAvatar } from './chat-agents/AgentAvatar.js';
 
-export { resolveCanonicalChatAttention, type CanonicalChatAttentionState } from './chat/attention-state.js';
+export { resolveCanonicalChatAttention, resolveCanonicalChatLifecycleGroup, type CanonicalChatAttentionState } from './chat/attention-state.js';
 
 export { useBotDraftRecovery } from './chat-agents/bots/use-bot-draft-recovery.js';
 export { BotDraftRecoveryPanel } from './chat-agents/bots/BotDraftRecoveryPanel.js';

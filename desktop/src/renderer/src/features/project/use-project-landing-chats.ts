@@ -47,7 +47,7 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
     });
     return () => { current = false; subscription?.dispose(); };
   }, [client, active, eventSource, project.id, project.slug, refreshRequest]);
-  const records = snapshot && snapshot.client === client ? snapshot.records : [];
+  const records = useMemo(() => snapshot && snapshot.client === client ? snapshot.records : [], [snapshot,client]);
   const ids = useMemo(() => records.map(record => record.chat.id), [records]);
   const bots = useBotConversationSummaries(client?.agents, ids, active);
   const chats = useMemo(() => records.filter(record => (

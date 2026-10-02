@@ -10,3 +10,11 @@ export function resolveCanonicalChatAttention(record: CanonicalChatRecord): Cano
   if (record.chat.attention === 'failed') return 'failed';
   return isChatUnread(record) ? 'unseen_completion' : 'idle';
 }
+
+/** Completion placement survives read acknowledgement; attention still wins. */
+export function resolveCanonicalChatLifecycleGroup(record: CanonicalChatRecord): 'needsYou' | 'working' | 'done' | 'recent' {
+  const state = resolveCanonicalChatAttention(record);
+  if (state === 'approval_required' || state === 'input_required' || state === 'failed') return 'needsYou';
+  if (state === 'running') return 'working';
+  return state === 'unseen_completion' || record.latestSuccessfulCompletion ? 'done' : 'recent';
+}

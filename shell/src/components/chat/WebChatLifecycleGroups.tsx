@@ -1,5 +1,5 @@
 import React, { Fragment, type ReactNode } from 'react';
-import { resolveCanonicalChatAttention } from '@matrix-os/ui';
+import { resolveCanonicalChatLifecycleGroup } from '@matrix-os/ui';
 import type { RenameableConversation } from './ChatTitleRename';
 
 type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done' | 'recent';
@@ -9,10 +9,7 @@ export function groupWebChats(items: readonly RenameableConversation[]): Record<
     const record = item.canonicalRecord;
     if (!record) { result.recent.push(item); continue; }
     if (record.chat.userState?.pinned) { result.pinned.push(item); continue; }
-    const state = resolveCanonicalChatAttention(record);
-    const key = state === 'approval_required' || state === 'input_required' || state === 'failed' ? 'needsYou'
-      : state === 'running' ? 'working' : state === 'unseen_completion' ? 'done' : 'recent';
-    result[key].push(item);
+    result[resolveCanonicalChatLifecycleGroup(record)].push(item);
   }
   return result;
 }
