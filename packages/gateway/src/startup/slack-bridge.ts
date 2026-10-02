@@ -14,8 +14,8 @@ export function createSlackBridgeRoutes(options:{ownerId:string;token:string;aut
     console.warn("[slack-bridge] request failed",error.name);
     return c.json({error:"Slack unavailable"},503);
   });
-  app.use("*",bodyLimit({maxSize:256*1024,onError:c=>c.json({error:"Request too large"},413)}));
-  app.use("*",async(c,next)=>{
+  app.use("/api/internal/slack/*",bodyLimit({maxSize:256*1024,onError:c=>c.json({error:"Request too large"},413)}));
+  app.use("/api/internal/slack/*",async(c,next)=>{
     const body=await c.req.text();
     if(c.req.method!=="POST" || !await verifySlackBridgeRequest({token:options.token,path:c.req.path,body,
       timestamp:c.req.header("x-matrix-slack-timestamp"),signature:c.req.header("x-matrix-slack-signature"),now:options.now?.()})) {
