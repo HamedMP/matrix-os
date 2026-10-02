@@ -2,6 +2,16 @@ import {describe,it,expect,vi} from "vitest";
 import {createSlackOwnerClient} from "../../packages/gateway/src/startup/slack-owner-client.js";
 describe("Slack owner client",()=>{
   const envelope={event:{teamId:"T123",eventId:"Ev123"}} as never;
+  it("rejects remote plaintext origins before any bearer token can be sent",()=>{
+    const fetchImpl=vi.fn();
+    for(const platformUrl of ["http://platform.example", "http://10.0.0.2", "http://localhost.example", "http://127.0.0.1.example"]){
+      expect(()=>createSlackOwnerClient({platformUrl,handle:"alice",token:"a".repeat(64),fetchImpl})).toThrow("Slack transport unavailable");
+    }
+    for(const platformUrl of ["http://localhost:9000", "http://127.0.0.1:9000", "http://[::1]:9000", "https://platform.example"]){
+      expect(()=>createSlackOwnerClient({platformUrl,handle:"alice",token:"a".repeat(64),fetchImpl})).not.toThrow();
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
   it("never sends a caller-selected Slack destination or credentials in source material",async()=>{
     const fetchImpl=vi.fn().mockResolvedValue(new Response(JSON.stringify({sent:true,messageTs:"123.45"})));
     const client=createSlackOwnerClient({platformUrl:"https://platform.example",handle:"alice",token:"a".repeat(64),fetchImpl});
