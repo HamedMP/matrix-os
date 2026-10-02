@@ -60,6 +60,14 @@ describe("Electron provider workflow transport", () => {
     await expect(loadDesktopAiCreditHistory({ api, runtimeSlot: "pr-1", cursor: null,
       signal: new AbortController().signal, isIdentityCurrent: () => true })).resolves.toEqual({ entries: [], nextCursor: null });
   });
+  it("accepts settled Cloudflare model history through the real bounded API client", async () => {
+    const page = { entries: [{ occurredAt: "2026-10-01T00:00:00.000Z", kind: "usage",
+      amountMicrousd: -111, modelId: "@cf/zai-org/glm-5.3-flash" }], nextCursor: null };
+    const api = createApiClient({ baseUrl: "https://matrix.invalid", getRuntimeSlot: () => "primary",
+      fetchFn: async () => Response.json(page) });
+    await expect(loadDesktopAiCreditHistory({ api, runtimeSlot: "primary", cursor: null,
+      signal: new AbortController().signal, isIdentityCurrent: () => true })).resolves.toEqual(page);
+  });
   it("will not open an untrusted authorization target", async () => {
     const openExternal = vi.fn();
     expect(await openDesktopProviderWorkflowAuthorization("https://auth.openai.com.evil.example/", openExternal)).toBe(false);

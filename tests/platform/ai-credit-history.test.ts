@@ -64,6 +64,19 @@ describe("Matrix AI credit history", () => {
     await db.executor.updateTable("ai_funded_usage_reservations").set({ owner_id: "alice", status: "in_flight" }).where("reservation_id", "=", "private-reservation").execute();
     expect((await (await app().request("/history")).json()).entries[0].modelId).toBeNull();
   });
+  it("returns settled Cloudflare GLM usage alongside the scoped credit ledger", async () => {
+    await db.executor.updateTable("ai_funded_usage_reservations")
+      .set({ model_id: "@cf/zai-org/glm-5.3-flash", resolved_model: "@cf/zai-org/glm-5.3-flash", actual_microusd: 111 })
+      .where("reservation_id", "=", "private-reservation").execute();
+    await db.executor.updateTable("ai_funded_credit_ledger").set({ amount_microusd: -111 })
+      .where("entry_id", "=", "private-entry-b").execute();
+    const response = await app().request("/history");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ entries: [
+      { kind: "usage", amountMicrousd: -111, modelId: "@cf/zai-org/glm-5.3-flash" },
+      { kind: "credit", modelId: null },
+    ], nextCursor: null });
+  });
   it("returns a truthful empty page for a computer without ledger entries", async () => {
     await db.executor.deleteFrom("ai_funded_credit_ledger").where("machine_id", "=", "computer-a").execute();
     expect(await (await app().request("/history")).json()).toEqual({ entries: [], nextCursor: null });

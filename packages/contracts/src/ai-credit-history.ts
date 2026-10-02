@@ -10,7 +10,9 @@ export const AiCreditHistoryEntrySchema = z.object({
   occurredAt: z.iso.datetime(),
   kind: z.enum(["usage", "credit", "adjustment"]),
   amountMicrousd: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
-  modelId: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/).nullable(),
+  // Cloudflare's canonical funded GLM identifier carries the literal @cf/
+  // namespace. Keep the remaining identifier alphabet and size bound strict.
+  modelId: z.string().min(1).max(160).regex(/^(?:@cf\/)?[A-Za-z0-9][A-Za-z0-9._:/-]*(?![\s\S])/).nullable(),
 }).strict();
 
 export const AiCreditHistoryResponseSchema = z.object({
