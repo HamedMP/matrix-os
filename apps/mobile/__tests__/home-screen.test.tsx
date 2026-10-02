@@ -127,8 +127,17 @@ describe("drawer home screen", () => {
         parts: [{ type: "text", text }], createdAt: "2026-09-09T00:00:00.000Z" };
     }
 
-    function detailFor(chatId: string, messages: ReturnType<typeof sentMessage>[]) {
-      return { record: { chat: { id: chatId, revision: 4 } }, runs: [], turns: [], activities: [], messages };
+    /** The turn the server records for a send: it echoes the send's request id. */
+    function admittedTurn(clientRequestId: string, inputMessageId: string, chatId: string) {
+      return { id: `cturn_${inputMessageId}`, chatId, clientRequestId, inputMessageId };
+    }
+
+    function detailFor(
+      chatId: string,
+      messages: ReturnType<typeof sentMessage>[],
+      turns: ReturnType<typeof admittedTurn>[] = [],
+    ) {
+      return { record: { chat: { id: chatId, revision: 4 } }, runs: [], turns, activities: [], messages };
     }
 
     function sendDraft(text: string) {
@@ -192,12 +201,17 @@ describe("drawer home screen", () => {
       view.rerender(<ChatScreen />);
       expect(screen.getAllByText("Ship it")).toHaveLength(1);
 
-      mockDetail = detailFor("chat_new", [sentMessage("msg_new", 1, "Ship it", "chat_new")]);
+      const { turnRequestId } = mockSendMessage.mock.calls[0][0];
+      mockDetail = detailFor(
+        "chat_new",
+        [sentMessage("msg_new", 1, "Ship it", "chat_new")],
+        [admittedTurn(turnRequestId, "msg_new", "chat_new")],
+      );
       view.rerender(<ChatScreen />);
       expect(screen.getAllByText("Ship it")).toHaveLength(1);
     });
 
-    it("appends to an existing chat that already holds the same text", () => {
+    it("is not replaced by the same text arriving from someone else", () => {
       mockActiveChatId = "chat_existing";
       mockDetail = detailFor("chat_existing", [sentMessage("msg_old", 1, "Ship it", "chat_existing")]);
       const view = render(<ChatScreen />);
@@ -206,12 +220,43 @@ describe("drawer home screen", () => {
       expect(mockSendMessage.mock.calls[0][0]).toMatchObject({ chatId: "chat_existing", baseRevision: 4 });
       expect(screen.getAllByText("Ship it")).toHaveLength(2);
 
-      mockDetail = detailFor("chat_existing", [
-        sentMessage("msg_old", 1, "Ship it", "chat_existing"),
-        sentMessage("msg_new", 2, "Ship it", "chat_existing"),
+      // Another client sends the same words before this send is admitted: a
+      // different message, so the pending one stays on screen.
+      const theirs = sentMessage("msg_theirs", 2, "Ship it", "chat_existing");
+      const old = sentMessage("msg_old", 1, "Ship it", "chat_existing");
+      mockDetail = detailFor("chat_existing", [old, theirs], [admittedTurn("req_theirs", "msg_theirs", "chat_existing")]);
+      view.rerender(<ChatScreen />);
+      expect(screen.getAllByText("Ship it")).toHaveLength(3);
+
+      // This send's own turn arrives: the server's copy replaces the pending one.
+      const { turnRequestId } = mockSendMessage.mock.calls[0][0];
+      mockDetail = detailFor("chat_existing", [old, theirs, sentMessage("msg_mine", 3, "Ship it", "chat_existing")], [
+        admittedTurn("req_theirs", "msg_theirs", "chat_existing"),
+        admittedTurn(turnRequestId, "msg_mine", "chat_existing"),
       ]);
       view.rerender(<ChatScreen />);
-      expect(screen.getAllByText("Ship it")).toHaveLength(2);
+      expect(screen.getAllByText("Ship it")).toHaveLength(3);
+    });
+
+    it("returns a failed send's text to the chat it was sent in, not the one on screen", () => {
+      mockActiveChatId = "chat_a";
+      mockDetail = detailFor("chat_a", []);
+      const view = render(<ChatScreen />);
+      sendDraft("Ship it");
+
+      // The user opens another chat while the send is in flight, and it fails.
+      mockActiveChatId = "chat_b";
+      mockDetail = detailFor("chat_b", []);
+      view.rerender(<ChatScreen />);
+      act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
+
+      // Back in the original chat, the text is waiting in the composer.
+      mockActiveChatId = "chat_a";
+      mockDetail = detailFor("chat_a", []);
+      view.rerender(<ChatScreen />);
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
+      expect(screen.queryByText("Ship it")).toBeNull();
     });
 
     it("does not show the pending message in a different chat", () => {

@@ -162,15 +162,11 @@ export interface OptimisticUserMessage {
   /** The chat it was sent in, or null while the draft's chat has not been created yet. */
   chatId: string | null;
   text: string;
-  /** The chat's highest message seq when it was sent -- the server's copy lands after it. */
-  afterSeq: number;
+  /** The `clientRequestId` its turn is admitted with; the server echoes it on the turn. */
+  turnRequestId: string;
   createdAt: number;
-  /** The server's id for it, known once the turn is admitted. */
+  /** The server's id for it, known once the admission response arrives. */
   messageId?: string;
-}
-
-export function latestMessageSeq(detail: CanonicalChatDetailResponse | null): number {
-  return detail?.messages.reduce((latest, message) => Math.max(latest, message.seq), 0) ?? 0;
 }
 
 export function optimisticTranscriptMessage(optimistic: OptimisticUserMessage): TranscriptMessage {
@@ -187,18 +183,19 @@ export function optimisticTranscriptMessage(optimistic: OptimisticUserMessage): 
 
 /**
  * True once `detail` holds the server's copy of an optimistic message, at
- * which point the transcript shows that copy instead. The copy can arrive
- * over the event stream before the admission response names it, so until
- * then it is recognised as a newer user message with the same text.
+ * which point the transcript shows that copy instead.
+ *
+ * The copy can arrive over the event stream before the admission response
+ * does, so it is recognised by the turn that carries this send's request id
+ * rather than by the response alone. It is never matched by its text: the
+ * same words from another client or participant are a different message.
  */
 export function isOptimisticMessageDelivered(
   detail: CanonicalChatDetailResponse | null,
   optimistic: OptimisticUserMessage,
 ): boolean {
   if (!detail || detail.record.chat.id !== optimistic.chatId) return false;
-  return detail.messages.some((message) => message.id === optimistic.messageId || (
-    message.role === "user"
-    && message.seq > optimistic.afterSeq
-    && messageText(message) === optimistic.text
-  ));
+  const turn = detail.turns.find((candidate) => candidate.clientRequestId === optimistic.turnRequestId);
+  const messageId = turn?.inputMessageId ?? optimistic.messageId;
+  return messageId !== undefined && detail.messages.some((message) => message.id === messageId);
 }
