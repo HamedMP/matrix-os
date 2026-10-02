@@ -88,6 +88,12 @@ function qualifiedFiles(app: string, value: unknown): CanonicalOperationResultVi
 }
 
 const projectors: Record<string, (result: ResultRecord, op: CanonicalOperation) => CanonicalOperationResultView | undefined> = {
+  matrix_create_note: (result, op) => {
+    const app = operationApp(op, result);
+    const navigation = pick(NavigationSchema, result.navigation);
+    return app === "notes" && navigation?.app === app && navigation.path === "apps/notes"
+      ? assemble({ navigation }) : undefined;
+  },
   // Result is `{...inspect, navigation}`; only the navigation intent projects.
   matrix_open_app: (result, op) => {
     const app = operationApp(op, result);

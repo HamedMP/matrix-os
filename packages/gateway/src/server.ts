@@ -52,6 +52,7 @@ import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider
 import { createCanonicalActionAuthority, type CanonicalActionAuthority } from "./chat/action-authority.js";
 import { ActionRepository } from "./chat/action-repository.js";
 import { createCanonicalActionTools, type CanonicalActionTool } from "./chat/action-tools.js";
+import { createNoteActionTool } from "./chat/note-action-tool.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
@@ -916,14 +917,18 @@ export async function createGateway(config: GatewayConfig) {
   if (chatRepository) {
     canonicalActionRepository = new ActionRepository(chatRepository.kysely);
     const ownerHomeIds = new Set([...codingAgentOwnerIds, ...terminalRuntimeOwnerIds]);
-    canonicalActionTools = createCanonicalActionTools({
-      homeForOwner: async (owner) => {
-        if (owner.type !== "personal" || !ownerHomeIds.has(owner.ownerId)) {
-          throw new Error("Canonical action owner is unavailable");
-        }
-        return homePath;
-      },
-    });
+    const homeForOwner: Parameters<typeof createCanonicalActionTools>[0]["homeForOwner"] = async (owner) => {
+      if (owner.type !== "personal" || !ownerHomeIds.has(owner.ownerId)) {
+        throw new Error("Canonical action owner is unavailable");
+      }
+      return homePath;
+    };
+    canonicalActionTools = [
+      ...createCanonicalActionTools({ homeForOwner }),
+      ...(appDb ? [createNoteActionTool({ db: appDb, homeForOwner,
+        notify: (ownerId) => broadcastToOwner(ownerId, { type: "data:change", app: "notes", key: "notes" }),
+      })] : []),
+    ];
     aoedeBindings = new AoedeBindingRepository(chatRepository);
   }
 

@@ -8,7 +8,7 @@ import { resolveWithinHome } from "../path-security.js";
 import { BoundedActionJsonSchema } from "@matrix-os/contracts";
 import { normalizedArgumentDigest, sha256Hex } from "./argument-digest.js";
 import { CanonicalActionError } from "./action-repository.js";
-export interface QualifiedActionTool { toolId: string; schemaRevision: string; description: string; inputSchema: Record<string, unknown>; effect: "read" | "navigation" | "files"; approval: boolean; reconciliation: boolean; cancellation: "before_dispatch" }
+export interface QualifiedActionTool { toolId: string; schemaRevision: string; description: string; inputSchema: Record<string, unknown>; effect: "read" | "navigation" | "files" | "data"; approval: boolean; reconciliation: boolean; cancellation: "before_dispatch" }
 export interface ActionToolInput { owner: CanonicalOwnerScope; actionId: string; arguments: unknown; signal: AbortSignal }
 export interface CanonicalActionTool extends QualifiedActionTool {
   normalize(input: unknown): unknown;

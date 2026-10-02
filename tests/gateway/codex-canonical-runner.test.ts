@@ -13,14 +13,15 @@ async function lines(path: string): Promise<any[]> { try { return (await readFil
 it("fake child: isolates actual launch and bridges only exact dynamic calls while denying native approval/MCP/plugin/delegation requests", async () => {
   const dir = await mkdtemp("/tmp/mx-canonical-runner-"); const fake = join(dir, "provider.mjs"); const events = codexProviderEventPath(dir, "sess_canonical"); const requests = join(dir, "requests.jsonl");
   await writeFile(fake, `#!${process.execPath}\nimport {createInterface} from 'node:readline'; import {appendFile} from 'node:fs/promises';
+    let hostEnabled=false;
     if(process.argv.includes('--version')) { console.log('codex-cli 0.156.1'); process.exit(0); }
     for await(const line of createInterface({input:process.stdin})) { const m=JSON.parse(line); await appendFile(${JSON.stringify(requests)}, JSON.stringify({m,cwd:process.cwd(),env:{HOME:process.env.HOME,CODEX_HOME:process.env.CODEX_HOME,NODE_OPTIONS:process.env.NODE_OPTIONS,OPENAI_API_KEY:process.env.OPENAI_API_KEY},argv:process.argv})+'\\n');
       if(m.method==='initialize') console.log(JSON.stringify({id:m.id,result:{}}));
       else if(m.method==='config/read') console.log(JSON.stringify({id:m.id,result:{config:{mcp_servers:{},plugins:{}},layers:[]}}));
-      else if(m.method==='thread/start') console.log(JSON.stringify({id:m.id,result:{thread:{id:'native1'}}}));
+      else if(m.method==='thread/start') { hostEnabled=m.params.config?.['features.code_mode_host']===true && process.argv.includes('features.code_mode_host=true'); console.log(JSON.stringify({id:m.id,result:{thread:{id:'native1'}}})); }
       else if(m.method==='turn/start') { console.log(JSON.stringify({id:m.id,result:{turn:{id:'turn1'}}}));
         for(const [id,method] of [[11,'item/commandExecution/requestApproval'],[12,'item/fileChange/requestApproval'],[13,'mcpServer/elicitation/request'],[14,'plugin/install'],[15,'agent/spawn']]) console.log(JSON.stringify({id,method,params:{threadId:'native1',turnId:'turn1',itemId:'item1'}}));
-        console.log(JSON.stringify({id:42,method:'item/tool/call',params:{threadId:'native1',turnId:'turn1',callId:'call1',namespace:null,tool:'matrix_list_apps',arguments:{}}}));
+        if(hostEnabled) console.log(JSON.stringify({id:42,method:'item/tool/call',params:{threadId:'native1',turnId:'turn1',callId:'call1',namespace:null,tool:'matrix_list_apps',arguments:{}}}));
       } else if(m.id===42 && m.result) console.log(JSON.stringify({method:'turn/completed',params:{turn:{id:'turn1',status:'completed'}}}));
     }`, { mode: 0o700 });
   const config = Buffer.from(JSON.stringify({ prompt: "List apps", approvalPolicy: "never", sandbox: "read-only", writableRoots: [], canonical: { executionPolicy: policy, inventory, identity: { owner: { type: "personal", ownerId: "u1" }, chatId: "chat_1", runId: "run_1" } } })).toString("base64");
@@ -31,6 +32,7 @@ it("fake child: isolates actual launch and bridges only exact dynamic calls whil
     await expect.poll(async () => ({ event: (await lines(events)).find(e => e.type === "matrix.codex.action.requested"), stderr }), { timeout: 3000 }).toMatchObject({ event: { toolId: "matrix_list_apps" }, stderr: "" });
     const records = await lines(requests); const start = records.find(r => r.m.method === "thread/start");
     expect(start.m.params).toMatchObject({ environments: [], ephemeral: true, dynamicTools: [{ name: "matrix_list_apps" }] });
+    expect(start.m.params.config).toMatchObject({ "features.code_mode": false, "features.code_mode_host": true, "features.shell_tool": false, "features.plugins": false, "features.multi_agent": false });
     expect(start.cwd).not.toBe(dir); expect(start.env.OPENAI_API_KEY).toBeUndefined();
     expect(records.filter(r => [11,12,13,14,15].includes(r.m.id)).every(r => r.m.error)).toBe(true);
     expect(records.some(r => r.m.id === 42 && r.m.result)).toBe(false);

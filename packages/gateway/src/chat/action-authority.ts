@@ -38,7 +38,7 @@ export function createCanonicalActionAuthority(options: {
       if (executionPolicy.workspaceScope !== input.workspaceScope || executionPolicy.delegation || !/^apps(?::[a-z0-9][a-z0-9-]{0,63})?$/.test(executionPolicy.workspaceScope)) throw new CanonicalActionError();
       const tools = executionPolicy.tools.map((id) => {
         const { toolId, schemaRevision, description, inputSchema, effect, approval, reconciliation, cancellation } = toolFor(id);
-        if (executionPolicy.actionMode === "conversation_only" || executionPolicy.actionMode === "safe_reads" && effect === "files" || effect === "files" && (!approval || !reconciliation)) throw new CanonicalActionError();
+        if (executionPolicy.actionMode === "conversation_only" || executionPolicy.actionMode === "safe_reads" && (effect === "files" || effect === "data") || effect === "files" && (!approval || !reconciliation) || effect === "data" && !reconciliation) throw new CanonicalActionError();
         return { toolId, schemaRevision, description, inputSchema, effect, approval, reconciliation, cancellation };
       });
       return { executionPolicy, tools };
@@ -47,8 +47,9 @@ export function createCanonicalActionAuthority(options: {
       const identity: ActionIdentity = { ...input, actionId: input.actionId };
       await repository.verify(identity, input.executionPolicy);
       const tool = toolFor(input.toolId);
-      if (!input.executionPolicy.tools.includes(tool.toolId) || input.executionPolicy.actionMode === "conversation_only" || input.executionPolicy.actionMode === "safe_reads" && tool.effect === "files") throw new CanonicalActionError();
+      if (!input.executionPolicy.tools.includes(tool.toolId) || input.executionPolicy.actionMode === "conversation_only" || input.executionPolicy.actionMode === "safe_reads" && (tool.effect === "files" || tool.effect === "data")) throw new CanonicalActionError();
       if (tool.effect === "files" && (!tool.approval || !tool.reconciliation || !tool.reconcile)) throw new CanonicalActionError();
+      if (tool.effect === "data" && (!tool.reconciliation || !tool.reconcile)) throw new CanonicalActionError();
       const args = BoundedActionJsonSchema.parse(tool.normalize(input.arguments));
       const scope = input.executionPolicy.workspaceScope;
       const app = (args as { app?: string }).app;
@@ -93,13 +94,14 @@ export function createCanonicalActionAuthority(options: {
         const current = await repository.get(identity);
         op = await repository.transition(current, { state: "succeeded", result });
         await options.onEvent(identity, { type: "tool.progress", toolCallId: op.id, label: tool.toolId, status: "completed" });
-        const text = canonicalJsonStringify(result);
-        await options.onEvent(identity, { type: "tool.output", toolCallId: op.id, text: text.slice(0, 4_000), truncated: text.length > 4_000 });
+        // Raw app data is returned to the model, never copied into public-safe
+        // activity text. The operation view separately projects allowed fields.
+        await options.onEvent(identity, { type: "tool.output", toolCallId: op.id, text: "Tool returned a result.", truncated: false });
         return result;
       } catch (error: unknown) {
         console.warn("[chat/actions] execution outcome unresolved", error instanceof Error ? error.name : "UnknownError");
         const current = await repository.get(identity);
-        if (current.state !== "succeeded") await repository.transition(current, { state: tool.effect === "files" ? "outcome_unknown" : input.signal.aborted ? "cancelled" : "failed" });
+        if (current.state !== "succeeded") await repository.transition(current, { state: tool.effect === "files" || tool.effect === "data" ? "outcome_unknown" : input.signal.aborted ? "cancelled" : "failed" });
         throw new CanonicalActionError();
       } finally { if (timer) clearTimeout(timer); input.signal.removeEventListener("abort", aborted); }
     },

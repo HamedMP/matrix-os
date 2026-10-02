@@ -12,7 +12,7 @@ export const CODEX_CONSTRAINED_CONFIG = Object.freeze({
   "features.shell_tool": false, "features.view_image": false, "features.hooks": false,
   "features.apps": false, "features.plugins": false, "features.recommended_plugins": false,
   "features.tool_suggest": false, "features.multi_agent": false, "features.multi_agent_v2": false,
-  "features.agent_message_board": false, "features.code_mode": false, "features.code_mode_host": false,
+  "features.agent_message_board": false, "features.code_mode": false, "features.code_mode_host": true,
   "features.code_mode_prewarm": false, "features.code_mode_only": false,
   "features.browser_use": false, "features.computer_use": false, "features.image_generation": false,
   "features.web_search_request": false, "features.web_search_cached": false, "features.standalone_web_search": false,

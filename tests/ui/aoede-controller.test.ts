@@ -399,6 +399,47 @@ describe("Aoede shell owner", () => {
     ]) h.controller.openNavigation(bad);
     expect(nav).toHaveBeenCalledTimes(2); h.controller.dispose();
   });
+  it("automatically opens newly succeeded navigation once, but not history or unsafe results", async () => {
+    const nav = vi.fn();
+    const historical = { ...operationView, id: "action_history", state: "succeeded" as const,
+      result: { navigation: { kind: "open_app" as const, app: "notes", path: "apps/notes" } } };
+    const h = harness(undefined, { ...detail, operations: [historical] }, { onOpenNavigation: nav });
+    await h.controller.open();
+    expect(nav).not.toHaveBeenCalled();
+
+    const succeeded = { ...historical, id: "action_new", updatedAt: "2026-09-30T00:00:01.000Z" };
+    h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision: 1 } }, operations: [succeeded, historical] });
+    await h.controller.refresh();
+    expect(nav).toHaveBeenCalledTimes(1);
+    expect(nav).toHaveBeenCalledWith({ app: "notes", path: "apps/notes" });
+    await h.controller.refresh();
+    expect(nav).toHaveBeenCalledTimes(1);
+
+    const malicious = { ...historical, id: "action_malicious", updatedAt: "2026-09-30T00:00:02.000Z",
+      result: { navigation: { kind: "open_app" as const, app: "notes", path: "apps/notes/../../etc/passwd" } } };
+    h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision: 2 } }, operations: [malicious, succeeded, historical] });
+    await h.controller.refresh();
+    expect(nav).toHaveBeenCalledTimes(1);
+    h.controller.dispose();
+  });
+  it("does not replay navigation completed while the controller is hidden or reconnecting", async () => {
+    const nav = vi.fn(); const h = harness(undefined, detail, { onOpenNavigation: nav });
+    await h.controller.open();
+    await h.controller.dismiss();
+    const hidden = { ...operationView, id: "action_hidden", state: "succeeded" as const,
+      result: { navigation: { kind: "open_app" as const, app: "notes", path: "apps/notes" } } };
+    h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision: 1 } }, operations: [hidden] });
+    await h.controller.refresh();
+    await h.controller.open();
+    expect(nav).not.toHaveBeenCalled();
+
+    h.controller.suspend(); h.controller.activate();
+    const reconnect = { ...hidden, id: "action_reconnect", updatedAt: "2026-09-30T00:00:01.000Z" };
+    h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision: 2 } }, operations: [reconnect, hidden] });
+    await h.controller.refresh();
+    expect(nav).not.toHaveBeenCalled();
+    h.controller.dispose();
+  });
   it("serves the provider catalog once per owner and degrades when the api lacks it", async () => {
     const h = harness(); await h.controller.open();
     expect(await h.controller.listProviders()).toBe(catalog);

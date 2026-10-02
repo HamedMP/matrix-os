@@ -15,6 +15,7 @@ import { AoedeSpeechLanguageSchema, loadAoedePreferences, saveAoedePreferences, 
 const SAFE_NAV_APP = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const NAV_PATH_MAX = 160;
 const NAV_PATH_FORBIDDEN = /[\\%?#:\x00-\x1f]/;
+const AUTO_NAV_OPERATION_LIMIT = 256;
 /** Voice wire-format device ids (SAFE_ID_BODY, bounded). */
 const DEVICE_ID_SAFE = /^[A-Za-z0-9_-]{1,256}$/;
 
@@ -102,6 +103,8 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   let providerFlight: Promise<CanonicalProviderCatalog | null> | null = null;
   let deviceEnumerationRevision = 0;
   const actions: Array<{ key: string; id: string; busy: boolean }> = [];
+  const autoNavigatedOperations = new Set<string>();
+  let autoNavigationBaselineReady = false;
   const id = () => `req_${crypto.randomUUID().replaceAll("-", "")}`;
   /** Preference writes are merge-only and never throw (storage may be absent). */
   const persistPrefs = (next: Partial<AoedePreferences>) => {
@@ -147,8 +150,33 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     patch({ ...(!lost && mediaLive() ? {} : { status: "failed", microphoneActive: false }), error: requestError });
     if (lost) { source?.dispose(); source = null; void endMedia(false); }
   };
+  const dispatchNavigation = (nav: { app: string; path: string }) => {
+    const app = typeof nav?.app === "string" ? nav.app : "";
+    const path = typeof nav?.path === "string" ? nav.path : "";
+    if (!SAFE_NAV_APP.test(app) || path.length === 0 || path.length > NAV_PATH_MAX) return;
+    if (path.includes("..") || path.includes("//") || NAV_PATH_FORBIDDEN.test(path)) return;
+    const prefix = `apps/${app}`;
+    if (path !== prefix && path !== `${prefix}.html` && !path.startsWith(`${prefix}/`)) return;
+    options.onOpenNavigation?.({ app, path });
+  };
   const acceptDetail = (value: CanonicalChatDetailResponse) => {
     if (value.record.chat.id !== snapshot.binding?.chatId || (detail && value.record.chat.revision < detail.record.chat.revision)) return;
+    const navigations = (value.operations ?? []).filter(operation => operation.state === "succeeded" && operation.result?.navigation);
+    if (!autoNavigationBaselineReady) {
+      for (const operation of navigations) {
+        if (autoNavigatedOperations.size < AUTO_NAV_OPERATION_LIMIT) autoNavigatedOperations.add(operation.id);
+      }
+      autoNavigationBaselineReady = true;
+    } else {
+      for (const operation of navigations) {
+        if (autoNavigatedOperations.has(operation.id)) continue;
+        // Fail closed once the bounded deduplication ledger is full: dispatching
+        // without remembering could replay navigation on every later refresh.
+        if (autoNavigatedOperations.size >= AUTO_NAV_OPERATION_LIMIT) continue;
+        autoNavigatedOperations.add(operation.id);
+        if (snapshot.visible && !suspended) dispatchNavigation(operation.result!.navigation!);
+      }
+    }
     detail = value;
     const recovered = requestError !== null;
     requestError = null;
@@ -432,6 +460,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
           return;
         }
         media?.dispose(); media = null; detail = null; actions.length = 0;
+        autoNavigatedOperations.clear(); autoNavigationBaselineReady = false;
         if (disposed) return;
         unavailable = false;
         patch({ binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null, canonical: projectAoedeCanonical(null) });
@@ -469,13 +498,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     openResult(path: string) { const safe = safeAoedeArtifactPath(path); if (safe && (snapshot.canonical.artifacts.some(item => item.path === safe) || snapshot.canonical.actionArtifacts.includes(safe))) options.onOpenResult?.(safe); },
     /** Canonical navigation into installed app windows; unsafe destinations never reach the host. */
     openNavigation(nav: { app: string; path: string }) {
-      const app = typeof nav?.app === "string" ? nav.app : "";
-      const path = typeof nav?.path === "string" ? nav.path : "";
-      if (!SAFE_NAV_APP.test(app) || path.length === 0 || path.length > NAV_PATH_MAX) return;
-      if (path.includes("..") || path.includes("//") || NAV_PATH_FORBIDDEN.test(path)) return;
-      const prefix = `apps/${app}`;
-      if (path !== prefix && path !== `${prefix}.html` && !path.startsWith(`${prefix}/`)) return;
-      options.onOpenNavigation?.({ app, path });
+      dispatchNavigation(nav);
     },
     /** Provider catalog for Settings. Cached per controller; retry() refetches. */
     listProviders(): Promise<CanonicalProviderCatalog | null> {
@@ -596,6 +619,9 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       // later activate() never replays a stale live status.
       patch({ microphoneActive: false,
         status: ["idle", "ended", "failed"].includes(snapshot.status) ? snapshot.status : "ended" });
+      // Treat the first post-activation detail as a reconnect baseline. Results
+      // completed while this controller did not own observation must not replay.
+      autoNavigationBaselineReady = false;
       suspended = true;
       void media?.end().catch(error => console.warn("[aoede] suspended cleanup failed", error instanceof Error ? error.name : "UnknownError"));
     },

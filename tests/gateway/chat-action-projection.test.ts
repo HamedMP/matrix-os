@@ -84,6 +84,16 @@ describe("canonical operation client projection", () => {
     });
   });
 
+  it("projects create-note navigation without exposing private note content", () => {
+    const view = toOperationView(operation({
+      toolId: "matrix_create_note",
+      arguments: { app: "notes", title: "Groceries", content: "Private list" },
+      result: { app: "notes", note: { id: "note-id", title: "Groceries" }, content: "Private list",
+        navigation: { kind: "open_app", app: "notes", path: "apps/notes" } },
+    }));
+    expect(view.result).toEqual({ navigation: { kind: "open_app", app: "notes", path: "apps/notes" } });
+  });
+
   it("projects apply_app_files artifact, navigation and hashed file list without contents", () => {
     const view = toOperationView(operation({
       toolId: "matrix_apply_app_files",

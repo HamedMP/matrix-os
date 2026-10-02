@@ -11,9 +11,9 @@ export const CodexExecutionPolicySchema = z.object({
 // These descriptors are injected by the server's canonical authority, never a
 // Chat request or a model. Authority still validates normalized arguments again.
 const supported = Object.freeze({ matrix_list_apps: "read", matrix_inspect_app: "read",
-  matrix_search_workspace: "read", matrix_open_app: "navigation", matrix_apply_app_files: "files" });
+  matrix_search_workspace: "read", matrix_open_app: "navigation", matrix_apply_app_files: "files", matrix_create_note: "data" });
 const DescriptorSchema = z.object({ toolId: z.enum(Object.keys(supported)), schemaRevision: ref,
-  description: z.string().min(1).max(1600), effect: z.enum(["read", "navigation", "files"]), inputSchema: z.unknown(),
+  description: z.string().min(1).max(1600), effect: z.enum(["read", "navigation", "files", "data"]), inputSchema: z.unknown(),
 }).strict();
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const CodexCanonicalResultSchema = z.object({ success: z.boolean(),
@@ -111,7 +111,7 @@ export function freezeCodexCanonicalInventory(policyValue, inventoryValue) {
   for (const descriptor of inventory) { checkSchema(descriptor.inputSchema); if (descriptor.effect !== supported[descriptor.toolId]) throw new Error("canonical_inventory_effect"); }
   const descriptors = executionPolicy.tools.map(id => {
     const tool = inventory.find(t => t.toolId === id);
-    if (!tool || (executionPolicy.actionMode === "safe_reads" && tool.effect === "files")) throw new Error("canonical_tool_unqualified");
+    if (!tool || (executionPolicy.actionMode === "safe_reads" && ["files", "data"].includes(tool.effect))) throw new Error("canonical_tool_unqualified");
     return tool;
   });
   return frozen({ executionPolicy, descriptors, inventoryDigest: codexCanonicalDigest({ executionPolicy, descriptors }),
