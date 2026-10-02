@@ -33,24 +33,26 @@ export function canonicalChatSafeError(
   });
 }
 
-export function mapRepositoryError(error: unknown): never {
-  if (error instanceof ChatAgentContextError) {
-    if (error.code === "workflow_setup_required" || error.code === "workflow_funding_required") {
-      throw new CanonicalChatOrchestrationError(canonicalChatSafeError(
-        error.code === "workflow_setup_required" ? "capability_mismatch" : "service_unavailable",
-        error.code === "workflow_setup_required"
-          ? "Inbox triage requires a supported configured Hermes account. Check Agents & providers."
-          : "Inbox triage funding is unavailable. Check Matrix AI readiness and retry.",
-      ), error.code === "workflow_setup_required" ? 400 : 503);
-    }
-    if (error.code === "workflow_unavailable") {
-      throw new CanonicalChatOrchestrationError(canonicalChatSafeError(
-        "service_unavailable", "Inbox preview is not available yet."), 503);
-    }
-    throw new CanonicalChatOrchestrationError(error.code === "context_unavailable"
-      ? canonicalChatSafeError("resource_unavailable", "The selected Agent or Chat is unavailable.")
-      : canonicalChatSafeError("capability_mismatch", "Agents and Chat references are disabled."), 400);
+export function mapChatAgentContextError(error: ChatAgentContextError): CanonicalChatOrchestrationError {
+  if (error.code === "workflow_setup_required" || error.code === "workflow_funding_required") {
+    return new CanonicalChatOrchestrationError(canonicalChatSafeError(
+      error.code === "workflow_setup_required" ? "capability_mismatch" : "service_unavailable",
+      error.code === "workflow_setup_required"
+        ? "Inbox triage requires a supported configured Hermes account. Check Agents & providers."
+        : "Inbox triage funding is unavailable. Check Matrix AI readiness and retry.",
+    ), error.code === "workflow_setup_required" ? 400 : 503);
   }
+  if (error.code === "workflow_unavailable") {
+    return new CanonicalChatOrchestrationError(canonicalChatSafeError(
+      "service_unavailable", "Inbox preview is not available yet."), 503);
+  }
+  return new CanonicalChatOrchestrationError(error.code === "context_unavailable"
+    ? canonicalChatSafeError("resource_unavailable", "The selected Agent or Chat is unavailable.")
+    : canonicalChatSafeError("capability_mismatch", "Agents and Chat references are disabled."), 400);
+}
+
+export function mapRepositoryError(error: unknown): never {
+  if (error instanceof ChatAgentContextError) throw mapChatAgentContextError(error);
   if (error instanceof ChatNotFoundError) {
     throw new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_not_found", "Chat not found."), 404);
   }

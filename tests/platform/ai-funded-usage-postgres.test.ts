@@ -1,3 +1,4 @@
+import { JEV_MODEL_ID } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -108,6 +109,27 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     await expect(second.authorize({ credential: credentials[1], requestId: "after_exact_settlement",
       modelId, maxCostMicrousd: 100, billingMode: "usage" }))
       .resolves.toMatchObject({ authorized: true });
+  });
+
+  it("replays matching no-dispatch zero settlement across independent pools without releasing twice", async () => {
+    await first.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
+    await first.setRuntimePolicy({ identity: identities[0], expectedRevision: 1, enabled: true,
+      allowedModelIds: [modelId, JEV_MODEL_ID], monthlyBudgetMicrousd: 1_000, expiresAt: null });
+    const authorization = await first.authorize({ credential: credentials[0], requestId: "jev_known_no_dispatch",
+      modelId: JEV_MODEL_ID, maxCostMicrousd: 100, billingMode: "usage", jevPricingVersion: "typesafe-jev-input-2026-09" });
+    const key = { reservationId: authorization.reservation.reservationId, tokenId: tokenIds[0] };
+    await first.startReservation(key);
+    const attestation = { ...key, mode: "not_dispatched" as const, expectedRequestId: "jev_known_no_dispatch",
+      jevPricingVersion: "typesafe-jev-input-2026-09" };
+    const results = await Promise.all([first.finalizeReservation(attestation), second.finalizeReservation(attestation)]);
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0]).toMatchObject({ status: "settled", actualCostMicrousd: 0, releasedMicrousd: 100 });
+    expect(await first.getFundingSummary(identities[0])).toMatchObject({ reservedMicrousd: 0,
+      remainingBalanceMicrousd: 1_000, settledThisMonthMicrousd: 0 });
+    await expect(second.finalizeReservation({ ...attestation, expectedRequestId: "different_request" }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
+    await expect(second.authorize({ credential: credentials[1], requestId: "after_zero_settlement",
+      modelId, maxCostMicrousd: 100, billingMode: "usage" })).resolves.toMatchObject({ authorized: true });
   });
 
   it("serializes campaign handoff with authorization without deadlock or duplicate credit", async () => {

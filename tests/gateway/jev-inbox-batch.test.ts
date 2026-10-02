@@ -145,7 +145,7 @@ it("does not start another thread when a completed step is retried with the same
   expect(f.process).toHaveBeenCalledOnce();
   expect(replay.processed).toBe(1);
 });
-it("counts a verified classification requiring Review as Review rather than disabled-permission preview", async () => {
+it("retains historical Review-required proposal counters without replaying writes", async () => {
   const f = fixture();
   f.process.mockResolvedValueOnce({ kind: "proposal", messageCount: 1, labelingSkipped: "review_required" } as never);
   const start = await f.batch.execute("owner_1", scope, { operation: "batch_start" });
@@ -221,4 +221,11 @@ it("ready checkpoint ownership changes on resume, denying old-run continuation a
   await f.batch.pause("owner_1", scope);
   expect(await f.batch.execute("owner_1", fresh, { operation: "batch_status", jobId: start.jobId })).toMatchObject({ status: "ready" });
   expect(f.read).not.toHaveBeenCalled();
+});
+
+it("counts confirmed Review labeling as labeled threads and messages", async () => {
+  const f = fixture();
+  f.process.mockResolvedValueOnce({ kind: "labeled", messageCount: 2, labels: ["00 • Jev/Z Review"] } as never);
+  const start = await f.batch.execute("owner_1", scope, { operation: "batch_start" });
+  expect(await next(f, start.jobId)).toMatchObject({ processed: 1, labeled: 1, review: 0, preview: 0, messagesLabeled: 2 });
 });
