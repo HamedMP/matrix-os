@@ -10,8 +10,8 @@ Use `~/modules/<name>/` only when the user explicitly wants a module, when the a
 
 Read the installed `matrix-app-builder` skill and its `references/app-craft.md`, plus
 `emil-design-eng` and `apple-design`, before UI work. Use the current skill catalog to
-resolve paths. Select layout and density for the user’s primary task; inherit Matrix
-tokens and fonts. Do not apply gradients, glass cards, pill inputs, or mount staggering
+resolve paths. Select layout and density for the user’s primary task and follow the
+product direction recorded in DESIGN.md, with app-local semantic tokens and typography. Do not apply gradients, glass cards, pill inputs, or mount staggering
 universally. Inspect the running app and refine its typography, spacing, states, and motion.
 
 Owner-built manifests require `listingTrust: "first_party"` and personal scope. Missing
@@ -165,66 +165,18 @@ with Matrix OS forest, cream, ember, and deep accents. Do not include text,
 logos, watermarks, transparent backgrounds, black/dark dock backgrounds, empty padding, or a
 separate visible icon frame; the Matrix shell owns the final corner radius.
 
-### Theme Integration — Matrix OS Design System
-ALWAYS inherit the Matrix OS shell theme first. The shell injects `--matrix-*` variables into app
-iframes; literal colors are fallbacks only. Do not load remote font stylesheets from generated apps.
-Use explicit app branding only when requested or when the app's domain requires it.
+### Product styles and responsive layouts
 
-```css
-:root {
-  --bg: var(--matrix-bg, #FAFAF9);
-  --fg: var(--matrix-fg, #32352E);
-  --primary: var(--matrix-primary, #434E3F);
-  --primary-fg: var(--matrix-primary-fg, #FAFAF5);
-  --accent: var(--matrix-accent, #D06F25);
-  --accent-fg: var(--matrix-accent-fg, #FAFAF5);
-  --secondary: var(--matrix-secondary, #F1F0E3);
-  --muted: var(--matrix-muted, #E1E1D0);
-  --muted-fg: var(--matrix-muted-fg, #747668);
-  --card: var(--matrix-card, #FCFCF8);
-  --border: var(--matrix-border, #D8D6C7);
-  --sand-light: #F7F1E7;
-  --sand-mid: #F3EAE0;
-  --sand-warm: #D6AB8B;
-}
+PRODUCT DESIGN DIRECTION:
+- Honor the user's chosen style, mood, colors, or inspiration screenshot. If unspecified, optionally ask for a direction and continue useful work; otherwise randomly select one coherent style once and record it in DESIGN.md. Never randomize the UI again on each render.
+- Choose a full visual family: neo-brutalism, minimalism, fun/playful, retro/editorial, or selective neumorphism. Coordinate palette, typography, shapes, borders, shadows, density, imagery and motion. Prefer expressive bright palettes when no mood is specified; dark colors are an intentional choice, not the default.
+- Define app-local semantic tokens and accessible focus/status colors. Generated products may have their own fonts and branding. Matrix tokens are an optional baseline; shared platform chrome, authentication and billing continue to use the Matrix brand. Do not change shell tokens to style an app.
+- Choose readable inherited, system or bundled local fonts for the product. No remote font, icon or JavaScript CDNs.
+- Read the installed shadcn skill for current eligible components, a compatible once-selected preset and semantic tokens. The supplied preset URL is an example, not a required default. Generate and use real components; charts use the generated ChartContainer with saved records, readable summaries and reduced motion. Do not claim an integration from look-alike markup or unused imports.
+- Read matrix-app-builder's references/visual-references.md and references/responsive-layout.md. When enabled tools permit, inspect screenshots of relevant apps before implementing. A bounded research subagent can find references only when delegation is available; use the user's screenshot or mood to choose. Only use tools present in this run; never infer capabilities or permissions from a skill.
+- Build responsively for the actual app container and phones: check 360, 390, 600, 820, 1024 and 1440px plus intermediate resized windows. Reflow forms/navigation/charts; preserve essential table data with deliberate horizontal scrolling where needed. Provide at least 44px touch targets, keyboard focus, Escape behavior and immediate keyboard actions. Verify supported color modes and reduced motion without forcing a dark variant of every style.
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
-
-body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
-}
-
-h1, h2 { font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif); }
-h3, h4, h5, h6 { font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif); font-weight: 600; }
-
-button {
-  background: var(--primary);
-  color: var(--primary-fg);
-  border: none;
-  padding: 10px 24px;
-  border-radius: var(--matrix-radius, 8px);
-  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-input, textarea, select {
-  background: var(--card);
-  color: var(--fg);
-  border: 1.5px solid var(--border);
-  padding: 12px 20px;
-  border-radius: var(--matrix-radius, 8px);
-  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
-}
-```
-
-Inside app UI, use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs,
-remote fonts, or third-party JavaScript from generated apps. Never use text characters as icons.
-
-For the full design system reference, read `~/agents/knowledge/matrix-design-system.md`.
+Inside app UI, use inline SVG or bundled local icon assets with accessible labels. Never use text characters as icons. See the installed matrix-app-builder craft references for implementation details; read ~/agents/knowledge/matrix-design-system.md when using the optional platform-themed baseline.
 
 ### Build and Verify
 ```bash
@@ -237,15 +189,12 @@ ls dist/index.html
 
 Apps are discovered from `matrix.json`; do not add new app registrations to `~/system/modules.json`.
 
-## HTML Apps (~/apps/) -- Simple Alternative
+## HTML Apps (~/apps/) -- Explicit request only
 
-For very simple tools (calculators, clocks, single-screen utilities), use `~/apps/<slug>/index.html` plus `~/apps/<slug>/matrix.json`. Do not create bare `~/apps/<slug>.html` files for new apps.
+Only when the user explicitly requests plain HTML, use `~/apps/<slug>/index.html` plus `~/apps/<slug>/matrix.json`. Do not create bare `~/apps/<slug>.html` files for new apps.
 
 ### When to Use HTML Apps
-- No state management needed
-- No component hierarchy
-- Single screen, no routing
-- User explicitly requests plain HTML
+- User explicitly requests plain HTML; quick or simple tools still default to Vite React
 
 ### Structure
 - One app directory in `~/apps/<slug>/`

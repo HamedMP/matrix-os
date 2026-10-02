@@ -1,10 +1,12 @@
 ---
+triggers: ["email triage", "Inbox cleanup", "label email"]
 name: matrix-jev-email-triage
 description: Classify a bound Gmail Inbox in resumable batches with Matrix-funded Jev and add verified labels under the bot owner permission.
 version: 1.2.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-integrations]
 metadata:
   agent:
     tags: [Matrix OS, Jev, Gmail, email triage]

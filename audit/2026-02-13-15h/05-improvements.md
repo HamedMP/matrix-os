@@ -191,7 +191,7 @@ headers: {
 
 ### 4a. The blank canvas problem is the biggest UX risk
 
-The vision documents explicitly state "You open Matrix OS and you see almost nothing -- a clean, quiet surface." This sounds poetic but is a UX cliff. Lovable and Bolt solve this with immediate template options. Replit shows you what other people built.
+The vision documents explicitly state "You open Matrix OS and you see almost nothing -- a clean, quiet surface." This sounds poetic but is a UX cliff. Other app builders use immediate template options and examples of completed projects.
 
 **Concrete fix -- staged onboarding flow**:
 
@@ -405,8 +405,8 @@ For companies that want Matrix OS on their own infrastructure, offer a self-host
 
 ### 9d. What competitors charge (for reference)
 
-- **Lovable**: $20/month hobby, $50/month pro (250 messages). Hit $100M ARR in 8 months.
-- **Replit**: $25/month pro (unlimited AI). Revenue jumped $10M to $100M in 9 months after Agent launch.
+- **AI app builder segment**: $20/month hobby, $50/month pro (250 messages). Hit $100M ARR in 8 months.
+- **Cloud coding segment**: $25/month pro (unlimited AI). Revenue jumped $10M to $100M in 9 months after Agent launch.
 - **Bolt**: $10-50/month range.
 - **Cursor**: $20/month pro. Valued at $9 billion (2025).
 
@@ -497,7 +497,7 @@ Since Matrix protocol is core to the vision, the community should live on Matrix
 
 ## Key Insight from Competitor Analysis
 
-Lovable hit $100M ARR in 8 months. Replit went from $10M to $100M in 9 months after launching Agent. Both prove the market for AI-generated software is real and enormous.
+Public market traction suggests substantial demand for AI-generated software.
 
 Matrix OS differentiates on three axes competitors do not cover:
 1. **Persistence** -- generated apps are files you own, not ephemeral previews
@@ -512,7 +512,6 @@ The biggest risk is trying to ship all of Web 4 for the hackathon instead of nai
 
 - [AI App Builder Comparison 2026](https://getmocha.com/blog/best-ai-app-builder-2026/)
 - [Vibe Coding Landscape 2026](https://www.creolestudios.com/vibe-coding-comparison-for-decision-makers/)
-- [2026 AI Coding Platform Wars](https://medium.com/@aftab001x/the-2026-ai-coding-platform-wars-replit-vs-windsurf-vs-bolt-new-f908b9f76325)
 - [OpenDAN Personal AI OS](https://github.com/fiatrete/OpenDAN-Personal-AI-OS)
 - [AIOS: AI Agent Operating System](https://github.com/agiresearch/AIOS)
 - [Local AI Agents 2026](https://aimultiple.com/local-ai-agent)

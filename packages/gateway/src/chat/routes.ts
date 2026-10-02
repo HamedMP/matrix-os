@@ -1,3 +1,4 @@
+import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
 import { LegacyUpdateChatTitleRequestSchema, type LegacyUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { ChatReadStateWireVersionSchema, projectChatReadStateResponse } from "@matrix-os/contracts";
@@ -294,7 +295,7 @@ function handleError(c: Context, error: unknown) {
 }
 
 function chatJson(context: Context, value: object, status: 200 | 201 | 202 = 200) {
-  return context.json(projectChatReadStateResponse(value,
+  return context.json(projectChatReadStateResponse(projectChatRecipeSources(value),
     ChatReadStateWireVersionSchema.parse(context.req.query("readStateVersion"))), status);
 }
 
