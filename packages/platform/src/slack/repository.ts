@@ -47,12 +47,13 @@ export class SlackRepository {
   async revokeInstallation(appId: string, teamId: string): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtext(${`slack-install:${appId}`}))`.execute(trx);
-      const installed = await trx.selectFrom("slack_installations").select("organization_id").where("app_id", "=", appId).where("team_id", "=", teamId).executeTakeFirst();
+      const installed = await trx.selectFrom("slack_installations").select(["organization_id", "state"]).where("app_id", "=", appId).where("team_id", "=", teamId).executeTakeFirst();
       if (!installed) {
         // Without a recorded team/org, cancellation conservatively closes every pending app permit.
         await trx.deleteFrom("slack_oauth_states").where("app_id", "=", appId).execute();
         return;
       }
+      if (installed.state === "revoked") return;
       await trx.updateTable("slack_installations").set({ state: "revoked", encrypted_bot_token: "", generation: sql<number>`generation + 1`, updated_at: this.now() })
         .where("app_id", "=", appId).where("team_id", "=", teamId).where("state", "=", "active").execute();
       for (const table of ["slack_employee_links", "slack_channel_bindings", "slack_link_challenges"] as const) {
