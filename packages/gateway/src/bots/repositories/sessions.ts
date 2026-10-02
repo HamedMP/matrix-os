@@ -114,13 +114,13 @@ export function createBotSessionsRepository(db: BotExecutor) {
     /**
      * Flags every transcript of a bot for regeneration, e.g. after a memory
      * item is forgotten. The revision advances, so a worker holding an older
-     * copy cannot save over the flag; it must reload and see it.
+     * copy cannot save over the flag; it must reload and see it. Every forget
+     * advances the revision, including when another forget is already pending.
      */
     async markNeedsRecompaction(input: { ownerId: string; botId: string; now: string }, executor: BotExecutor = db): Promise<number> {
       const rows = await executor.updateTable("bot_agent_sessions")
         .set({ needs_recompaction: true, revision: sql<number>`revision + 1`, updated_at: input.now })
         .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
-        .where("needs_recompaction", "=", false)
         .returning("session_id")
         .execute();
       return rows.length;

@@ -121,3 +121,17 @@ it("admits a direct bot turn when the ordinary provider catalog is empty", async
   await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
     expect.objectContaining({ selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default" }), expect.anything()));
 });
+
+it("withholds ordinary models and submission while bot routing is unverified", async () => {
+  const client = createCanonicalChatWorkspaceClient();
+  const directBot = vi.fn(async () => { throw new Error("offline"); });
+  client.agents = { bots: { directBot }, list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
+  render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation"
+    active catalog={providerCatalog} />);
+  await waitFor(() => expect(directBot).toHaveBeenCalled());
+  expect(screen.getByText("Checking Chat routing")).toBeTruthy();
+  const composer = screen.getByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(composer, "Check the pages");
+  expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
+  expect(client.admitTurn).not.toHaveBeenCalled();
+});

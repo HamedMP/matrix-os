@@ -253,8 +253,8 @@ export function CanonicalChatWorkspace({
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
   const directBotId = useDirectBotChat(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
-  const selection = directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : providerSelection;
-  const selectionAvailable = Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));
+  const selection = directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : directBotId === undefined ? null : providerSelection;
+  const selectionAvailable = directBotId !== undefined && Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, mentionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -709,6 +709,7 @@ export function CanonicalChatWorkspace({
         ))}
         catalog={providerCatalog}
         automaticRouting={Boolean(directBotId)}
+        routingPending={directBotId === undefined}
         onProviderPickerOpen={catalog ? undefined : liveCatalog.refresh}
         selection={selection}
         onSelectionChange={onSelectionChange}

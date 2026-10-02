@@ -249,7 +249,10 @@ export function createBotBrokerActions(deps: {
             return success(request.requestId, BotImageChunkSchema.parse(await deps.runs.readImageChunk(binding, request.image)));
           case "bot.session.load": {
             const snapshot = await deps.sessions.load(key);
-            return success(request.requestId, { revision: snapshot.revision, messages: snapshot.messages });
+            // Without per-message memory provenance, reusing any old history can
+            // reintroduce the forgotten item. Keep visible Chat history; reset model context.
+            return success(request.requestId, { revision: snapshot.revision,
+              messages: snapshot.needsRecompaction ? [] : snapshot.messages, needsRecompaction: snapshot.needsRecompaction });
           }
           case "bot.session.save": {
             const saved = await deps.sessions.save({

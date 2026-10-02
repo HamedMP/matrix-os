@@ -119,6 +119,27 @@ describe("bot broker actions", () => {
       .resolves.toMatchObject({ ok: false, code: "stale_generation" });
   });
 
+  it("never sends invalidated memory-derived history to a worker", async () => {
+    const sessions = createBotSessionsRepository(db);
+    const key = { ownerId: OWNER, botId: BOT, chatId: "chat_direct1" };
+    await sessions.save({ ...key, baseRevision: 0, messages: [{ role: "user", content: "forgotten secret", timestamp: 1 }],
+      tokenEstimate: 4, runtimeVersions: {}, now: NOW });
+    await sessions.markNeedsRecompaction({ ownerId: OWNER, botId: BOT, now: NOW });
+    const { actions } = setup();
+    await expect(actions.handleFrame(frame({ action: "bot.session.load" }))).resolves.toMatchObject({
+      ok: true, result: { revision: 2, messages: [], needsRecompaction: true },
+    });
+    // A worker that began before the forget cannot restore its stale context.
+    await expect(actions.handleFrame(frame({ action: "bot.session.save", session: { baseRevision: 1, messages: [{ content: "forgotten secret" }] } })))
+      .resolves.toMatchObject({ ok: false, code: "stale_generation" });
+    await expect(actions.handleFrame(frame({ action: "bot.session.save", session: { baseRevision: 2,
+      compactedThroughSeq: 0, messages: [{ role: "user", content: "new turn", timestamp: 2 }] } })))
+      .resolves.toMatchObject({ ok: true, result: { revision: 3 } });
+    await expect(actions.handleFrame(frame({ action: "bot.session.load" }))).resolves.toMatchObject({
+      ok: true, result: { revision: 3, needsRecompaction: false, messages: [{ role: "user", content: "new turn", timestamp: 2 }] },
+    });
+  });
+
   it("accepts events only in order, starting at 0 for each run", async () => {
     const { actions, events } = setup();
     const event = (seq: number) => frame({ action: "bot.event", event: { seq, event: { type: "assistant_delta", text: `part ${seq}` } } });

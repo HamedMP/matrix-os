@@ -48,15 +48,25 @@ describe("bot sessions repository", () => {
     const repo = createBotSessionsRepository(db);
     await repo.save({ ...key, baseRevision: 0, messages: [], tokenEstimate: 0, runtimeVersions: versions, now: NOW });
     await expect(repo.markNeedsRecompaction({ ownerId: OWNER, botId: BOT, now: at(1) })).resolves.toBe(1);
-    await expect(repo.markNeedsRecompaction({ ownerId: OWNER, botId: BOT, now: at(2) })).resolves.toBe(0);
+    await expect(repo.markNeedsRecompaction({ ownerId: OWNER, botId: BOT, now: at(2) })).resolves.toBe(1);
     // A worker that loaded revision 1 before the flag cannot save or clear it.
     await expect(repo.save({ ...key, baseRevision: 1, messages: [], tokenEstimate: 0, compactedThroughSeq: 9, runtimeVersions: versions, now: at(3) }))
       .rejects.toEqual(new BotStateError("revision_conflict"));
-    await expect(repo.load(key)).resolves.toMatchObject({ revision: 2, needsRecompaction: true });
-    await repo.save({ ...key, baseRevision: 2, messages: [], tokenEstimate: 0, runtimeVersions: versions, now: at(4) });
+    await expect(repo.load(key)).resolves.toMatchObject({ revision: 3, needsRecompaction: true });
+    await repo.save({ ...key, baseRevision: 3, messages: [], tokenEstimate: 0, runtimeVersions: versions, now: at(4) });
     await expect(repo.load(key)).resolves.toMatchObject({ needsRecompaction: true });
-    await repo.save({ ...key, baseRevision: 3, messages: [], tokenEstimate: 0, compactedThroughSeq: 40, runtimeVersions: versions, now: at(5) });
-    await expect(repo.load(key)).resolves.toMatchObject({ needsRecompaction: false, compactedThroughSeq: 40, revision: 4 });
+    await repo.save({ ...key, baseRevision: 4, messages: [], tokenEstimate: 0, compactedThroughSeq: 40, runtimeVersions: versions, now: at(5) });
+    await expect(repo.load(key)).resolves.toMatchObject({ needsRecompaction: false, compactedThroughSeq: 40, revision: 5 });
+  });
+
+  it("advances the revision for a second forget while an invalidated worker is running", async () => {
+    const repo = createBotSessionsRepository(db);
+    await repo.save({ ...key, baseRevision: 0, messages: [], tokenEstimate: 0, runtimeVersions: versions, now: NOW });
+    await repo.markNeedsRecompaction({ ownerId: OWNER, botId: BOT, now: at(1) });
+    const loaded = await repo.load(key);
+    await repo.markNeedsRecompaction({ ownerId: OWNER, botId: BOT, now: at(2) });
+    await expect(repo.save({ ...key, baseRevision: loaded.revision, messages: [], tokenEstimate: 0,
+      compactedThroughSeq: 0, runtimeVersions: versions, now: at(3) })).rejects.toEqual(new BotStateError("revision_conflict"));
   });
 
   it("refuses a transcript for a chat the owner does not own", async () => {

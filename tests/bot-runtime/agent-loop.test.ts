@@ -12,7 +12,7 @@ function scripted(responses: Parameters<ReturnType<typeof fauxProvider>["setResp
 
 function memoryBroker(options: {
   messages?: Record<string, unknown>[];
-  load?: () => Promise<{ revision: number; messages: Record<string, unknown>[] }>;
+  load?: () => Promise<{ revision: number; messages: Record<string, unknown>[]; needsRecompaction?: boolean }>;
   tool?: (request: BotToolRequest) => Promise<BotToolResult>;
   event?: (event: BotEvent) => Promise<void>;
   save?: () => Promise<{ revision: number }>;
@@ -65,6 +65,17 @@ const run = (input: {
 });
 
 describe("bot agent loop", () => {
+  it("starts fresh after forgetting and clears invalidation only through the revision-checked save", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxText("Fresh reply."))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker } = memoryBroker({ load: async () => ({ revision: 8, needsRecompaction: true,
+      messages: [{ role: "user", content: "forgotten secret", timestamp: 1 }] }) });
+    expect((await run({ broker, route })).status).toBe("completed");
+    expect(JSON.stringify(stream.mock.calls)).not.toContain("forgotten secret");
+    expect(broker.saveSession).toHaveBeenCalledWith(expect.objectContaining({ baseRevision: 8, compactedThroughSeq: 0 }));
+    expect(JSON.stringify(vi.mocked(broker.saveSession).mock.calls)).not.toContain("forgotten secret");
+  });
+
   it("passes the bridge placeholder key to Pi for every model stream", async () => {
     const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
     const streamSimple = vi.spyOn(route.provider, "streamSimple");

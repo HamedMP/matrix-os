@@ -200,7 +200,7 @@ Limits and admission:
 
 - At most 2,000 live items per bot, checked in the insert transaction. Episodes are summarized before eviction; preferences are never evicted silently.
 - Unconfirmed items are never admitted into context.
-- Forgetting sets `forgotten_at` and marks `bot_agent_sessions` rows whose compaction summary cites the item for regeneration (`needs_recompaction`).
+- Forgetting sets `forgotten_at` and marks the bot’s `bot_agent_sessions` for regeneration (`needs_recompaction`). Each forget advances the session revision, including a second forget while regeneration is pending. Until per-message memory provenance supports selective rebuilding, the broker withholds the whole invalidated model transcript. The next turn starts with the current prompt and only live admitted memory, then clears invalidation through a revision-checked fresh save. Visible Chat history remains available to its owner; the bot does not reuse it as context after forgetting.
 
 ### `bot_routines` and `bot_routine_fires` (M2)
 

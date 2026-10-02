@@ -118,10 +118,12 @@ describe("bot questions", () => {
     await expect(service().resolve(OWNER, CHAT, pending.interactionId, body)).rejects.toEqual(new BotInteractionError("expired"));
   });
 
-  it("gives a non-blocking question's answer no continuation", async () => {
+  it("delivers a non-blocking answer once with a stable continuation request", async () => {
     const pending = await ask(false);
     const result = await service().resolve(OWNER, CHAT, pending.interactionId, { kind: "question", baseRevision: 1, answer: "Later" });
-    expect(result.continuation).toBeUndefined();
+    expect(result.continuation).toEqual({ chatId: CHAT, clientRequestId: `req_answer_${pending.interactionId}`, text: "Later" });
+    await expect(service().resolve(OWNER, CHAT, pending.interactionId, { kind: "question", baseRevision: 1, answer: "Later" })).resolves.toEqual(result);
+    expect((await events()).filter((event) => event.type === "interaction.resolved")).toHaveLength(1);
   });
 
   it("lets a reply in Chat answer the task's open question", async () => {

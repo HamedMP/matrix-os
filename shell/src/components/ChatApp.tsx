@@ -292,7 +292,7 @@ function ChatAppContent({
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
   const providerState = useChatProviderState(providerSelection, boundProviderInstanceId);
   const directBotId = useDirectBotChat(collaborationView ? undefined : sessionId, agentClient);
-  const providerReady = Boolean(directBotId || providerState.selected);
+  const providerReady = directBotId !== undefined && Boolean(directBotId || providerState.selected);
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
@@ -306,6 +306,7 @@ function ChatAppContent({
     files?: Array<{ name: string; type: string; data: string }>,
     mentionOptions?: ChatSubmitOptions,
   ) => {
+    if (directBotId === undefined) return Promise.resolve(false);
     if (directBotId) return onSubmit(text, files, { displayText: text, instanceId: MATRIX_BOT_SELECTION.instanceId, model: MATRIX_BOT_SELECTION.model,
       interactionMode: "default", permissionMode: "default", modelOptions: [],
       ...(mentionOptions?.resources?.length ? { resources: mentionOptions.resources, clientRequestId: mentionOptions.clientRequestId } : {}),
@@ -548,14 +549,14 @@ function ChatAppContent({
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
                   {collaborationView
                     ? activeSharedMetadata ? `Shared · ${activeSharedMetadata.role}` : "Shared session"
-                    : directBotId ? "Automatic" : providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
+                    : directBotId === undefined ? "Checking Chat routing" : directBotId ? "Automatic" : providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
                 </p>
               </div>
             </div>
           </div>
           {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
           {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
-          {!collaborationView && !directBotId ? <Button
+          {!collaborationView && directBotId === null ? <Button
             data-chat-model-trigger
             aria-label="Choose model and connection"
             aria-haspopup="dialog"
@@ -586,7 +587,7 @@ function ChatAppContent({
           )}
         </header>
         {!collaborationView && sessionId ? <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} refreshKey={botEventRevision} /> : null}
-        {!collaborationView && !directBotId && setupOpen && (
+        {!collaborationView && directBotId === null && setupOpen && (
           <ChatProviderSetupPanel
             onDismiss={() => {
               setSetupOpen(false);
@@ -623,7 +624,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <EmptyState
-            composerProps={{ composer, agentClient, scope: composerScope, permissionMode: directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised", driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true }}
+            composerProps={{ composer, agentClient, scope: composerScope, permissionMode: directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised", driveContextEnabled: directBotId === null && providerState.selected?.supportsCompanyDriveContext === true }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             suggestions={suggestions}
@@ -632,7 +633,7 @@ function ChatAppContent({
             onComposerDraftConsumed={consumeDraftRequest}
             modelLabel={directBotId ? "Automatic" : providerState.selected?.modelLabel ?? null}
             providerReady={providerReady}
-            attachmentsEnabled={!directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
+            attachmentsEnabled={directBotId === null && (providerState.selected?.supportsFileAttachments ?? false)}
           />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -718,7 +719,7 @@ function ChatAppContent({
                 </div>
               )}
               <ChatInput
-                driveContextEnabled={!directBotId && providerState.selected?.supportsCompanyDriveContext === true}
+                driveContextEnabled={directBotId === null && providerState.selected?.supportsCompanyDriveContext === true}
                 key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} permissionMode={directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised"}
                 connected={connected && providerReady}
                 busy={busy}
@@ -728,7 +729,7 @@ function ChatAppContent({
                 unavailablePlaceholder={!providerState.loading && !providerReady
                   ? "Write or dictate a draft — connect a harness to send"
                   : undefined}
-                attachmentsEnabled={!directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
+                attachmentsEnabled={directBotId === null && (providerState.selected?.supportsFileAttachments ?? false)}
               />
             </div>
           </div>

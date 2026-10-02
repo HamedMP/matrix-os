@@ -140,3 +140,14 @@ it("sends a verified direct bot Chat without an ordinary harness selection", asy
     instanceId: "matrix_bot_default", model: "auto", interactionMode: "default", permissionMode: "default",
   })));
 });
+
+it("keeps model selection unavailable when direct bot routing cannot be checked", async () => {
+  const directBot = vi.fn(async () => { throw new Error("offline"); });
+  const client = { bots: { directBot }, list: vi.fn(async () => ({ enabled: true, agents: [] })),
+    search: vi.fn(async () => ({ enabled: true, resources: [] })) } as unknown as ChatAgentClient;
+  render(<ChatApp messages={[]} sessionId="chat_unknown" busy={false} connected conversations={[]}
+    onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} />);
+  await waitFor(() => expect(directBot).toHaveBeenCalled());
+  expect(screen.queryByRole("button", { name: "Choose model and connection" })).toBeNull();
+  expect(screen.getByText("Checking Chat routing")).toBeTruthy();
+});

@@ -158,8 +158,8 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
     },
 
     /**
-     * Records the responder's answer at the interaction's revision. A blocking
-     * interaction returns the continuation to admit. Repeating the same answer
+     * Records the responder's answer at the interaction's revision. Every answered
+     * interaction returns the continuation to admit; busy Chats queue it. Repeating the same answer
      * after it was recorded returns the same result, so a client can retry a
      * request whose continuation failed.
      */
@@ -190,7 +190,7 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
         if (current.kind !== input.kind) throw new BotInteractionError("invalid_request");
         const respond = (interaction: BotInteractionRecord, text: string | undefined) => ({
           response: ResolveBotInteractionResponseSchema.parse({ interaction: { interactionId: interaction.interactionId, status: interaction.status, revision: interaction.revision } }),
-          ...(interaction.blocking && text ? { continuation: { chatId: interaction.chatId, clientRequestId: `req_answer_${interaction.interactionId}`, text } } : {}),
+          ...(text ? { continuation: { chatId: interaction.chatId, clientRequestId: `req_answer_${interaction.interactionId}`, text } } : {}),
         });
         const { continuation: storedText, ...stored } = current.resolution ?? {};
         if (current.status === "resolved" && current.revision === input.baseRevision + 1 && JSON.stringify(stored) === JSON.stringify(requested)) {

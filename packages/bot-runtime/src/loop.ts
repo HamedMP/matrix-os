@@ -67,12 +67,12 @@ function failureCodeOf(error: unknown, context: string): BotToolErrorCode {
 export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome> {
   const { command, broker } = input;
   const now = input.now ?? Date.now;
-  let snapshot: { revision: number; messages: readonly Record<string, unknown>[] };
+  let snapshot: { revision: number; messages: readonly Record<string, unknown>[]; needsRecompaction?: boolean };
   let history: AgentMessage[];
   try {
     snapshot = await broker.loadSession();
     // Leading prompt/tool system messages are rebuilt from this run's revision.
-    history = decodeSession(snapshot.messages).filter((message) => message.role !== "system");
+    history = decodeSession(snapshot.needsRecompaction ? [] : snapshot.messages).filter((message) => message.role !== "system");
   } catch (error: unknown) {
     return outcome(command, { status: "failed", failureCode: failureCodeOf(error, "session load"), toolActions: 0 });
   }
@@ -218,7 +218,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     if (!fitsWithToolPayloadCaps(messages)) {
       messages = await compactSession({ messages, now, summarize, keepRecentUserTurns: 1 });
     }
-    const saved = await broker.saveSession({ baseRevision: snapshot.revision, messages: encodeSession(fitForStorage(messages, undefined, now, { allowDroppingTurns: input.signal?.aborted !== true })) });
+    const saved = await broker.saveSession({ baseRevision: snapshot.revision, ...(snapshot.needsRecompaction ? { compactedThroughSeq: 0 } : {}), messages: encodeSession(fitForStorage(messages, undefined, now, { allowDroppingTurns: input.signal?.aborted !== true })) });
     return outcome(command, { ...status, sessionRevision: saved.revision, toolActions });
   } catch (error: unknown) {
     const failureCode = failureCodeOf(error, "session save");

@@ -167,6 +167,7 @@ export function SharedChatComposer({
   onSelectionChange,
   instanceLocked,
   automaticRouting = false,
+  routingPending = false,
   resources = [],
   resourceSearch,
   onAttach,
@@ -203,6 +204,7 @@ export function SharedChatComposer({
   onSelectionChange: (selection: CanonicalComposerSelection) => void;
   instanceLocked: boolean;
   automaticRouting?: boolean;
+  routingPending?: boolean;
   resources?: CanonicalChatResourceReference[];
   resourceSearch?: (query: string) => Promise<CanonicalChatResourceReference[]>;
   onAttach?: () => void;
@@ -543,7 +545,7 @@ export function SharedChatComposer({
               />
             ) : null}
             {runActions}
-            {automaticRouting ? <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Automatic</span> : <ProviderModelPicker
+            {routingPending ? <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Checking Chat routing</span> : automaticRouting ? <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Automatic</span> : <ProviderModelPicker
               catalog={catalog}
               selection={selection}
               instanceLocked={instanceLocked}

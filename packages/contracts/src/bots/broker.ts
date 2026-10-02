@@ -165,6 +165,8 @@ export const BotBrokerRequestSchema = z.discriminatedUnion("action", [
 ]).refine((request) => canonicalEncodedByteLength(request) <= BOT_BROKER_MAX_FRAME_BYTES, { message: "Broker request is too large" });
 
 export const BotSessionSnapshotSchema = z.object({
+  /** Old workers may omit this; the gateway also withholds invalidated history. */
+  needsRecompaction: z.boolean().optional(),
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   messages: z.array(z.record(z.string(), z.unknown())).max(4_000),
 }).strict();
