@@ -1,0 +1,211 @@
+name: Preview Chat Candidate Edge Route
+
+# One-time operator label on the same-repository PR. workflow_dispatch cannot
+# trigger a new workflow before that workflow exists on the default branch.
+on:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: preview-chat-candidate-edge
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Verify exact-head Edge candidate
+    if: >-
+      github.event.label.name == 'preview-chat-candidate-route' &&
+      github.event.pull_request.number == 2045 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'codex/eng-43-claude-integrations'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify Edge Router
+        run: |
+          pnpm --filter @matrix-os/edge-router typecheck
+          pnpm --filter @matrix-os/edge-router test
+          pnpm --filter @matrix-os/edge-router deploy:dry-run
+
+  deploy:
+    name: Deploy one-chat candidate route
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: Production
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Check current PR head and trigger label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/2045" |
+            jq -e --arg sha "$REVIEWED_SHA" --arg repo "$GITHUB_REPOSITORY" '
+              .state == "open" and .head.sha == $sha and
+              .head.repo.full_name == $repo and
+              any(.labels[]?; .name == "preview-chat-candidate-route")
+            ' >/dev/null
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+      - name: Deploy exact reviewed Edge Router and selector
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GCP_PROJECT_ID" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo 'Production deployment credentials are unavailable.' >&2
+            exit 1
+          fi
+          raw_selector="$(mktemp)"
+          wrangler_secrets="$(mktemp)"
+          response_headers="$(mktemp)"
+          response_body="$(mktemp)"
+          gateway_response="$(mktemp)"
+          cleanup() { rm -f "$raw_selector" "$wrangler_secrets" "$response_headers" "$response_body" "$gateway_response"; }
+          trap cleanup EXIT
+          chmod 600 "$raw_selector" "$wrangler_secrets" "$response_headers" "$response_body" "$gateway_response"
+          gcloud secrets versions access latest \
+            --secret pr2045-preview-chat-candidate \
+            --project "$GCP_PROJECT_ID" \
+            --out-file="$raw_selector" --quiet
+          python3 - "$raw_selector" "$wrangler_secrets" "$REVIEWED_SHA" <<'PY'
+          import datetime
+          import json
+          import re
+          import sys
+          import tomllib
+          import urllib.parse
+          from pathlib import Path
+
+          raw_path, output_path, reviewed_sha = sys.argv[1:]
+          data = json.loads(Path(raw_path).read_text())
+          if not isinstance(data, dict) or set(data) != {
+              "prNumber", "approvedHeadSha", "handle", "chatId", "candidateOrigin", "expiresAt"
+          }:
+              raise SystemExit("Invalid candidate selector payload")
+          if type(data["prNumber"]) is not int or data["prNumber"] != 2045:
+              raise SystemExit("Wrong Preview PR")
+          if not re.fullmatch(r"[0-9a-f]{40}", reviewed_sha) or data["approvedHeadSha"] != reviewed_sha:
+              raise SystemExit("Candidate selector does not approve this exact head")
+          if data["handle"] != "pr-2045" or not isinstance(data["chatId"], str) or not re.fullmatch(r"chat_[A-Za-z0-9_-]{1,128}", data["chatId"]):
+              raise SystemExit("Invalid Preview handle or Chat ID")
+          expires_at = data["expiresAt"]
+          if not isinstance(expires_at, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z", expires_at):
+              raise SystemExit("Invalid candidate expiry")
+          expiry = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+          remaining = (expiry - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+          if not 0 < remaining <= 7200:
+              raise SystemExit("Candidate selector expired or exceeds two hours")
+          base_text = tomllib.loads(Path("packages/edge-router/wrangler.toml").read_text())["vars"]["PLATFORM_ORIGIN"]
+          base = urllib.parse.urlsplit(base_text)
+          origin = data["candidateOrigin"]
+          if not isinstance(origin, str):
+              raise SystemExit("Invalid candidate origin")
+          try:
+              candidate = urllib.parse.urlsplit(origin)
+              candidate_port = candidate.port
+              host = candidate.hostname or ""
+          except ValueError:
+              raise SystemExit("Invalid candidate origin") from None
+          suffix = "---" + (base.hostname or "")
+          tag = host[:-len(suffix)] if host.endswith(suffix) else ""
+          if (candidate.scheme != "https" or candidate.username or candidate.password or candidate_port
+              or candidate.path not in ("", "/") or candidate.query or candidate.fragment
+              or not re.fullmatch(r"pr2045(?:-[a-z0-9]+)+", tag)
+              or candidate.netloc != host):
+              raise SystemExit("Candidate origin is not the tagged production Platform service")
+          bindings = {
+              "PREVIEW_CHAT_CANDIDATE_ORIGIN": origin,
+              "PREVIEW_CHAT_CANDIDATE_HANDLE": data["handle"],
+              "PREVIEW_CHAT_CANDIDATE_CHAT_ID": data["chatId"],
+              "PREVIEW_CHAT_CANDIDATE_EXPIRES_AT": expires_at,
+          }
+          Path(output_path).write_text(json.dumps(bindings, separators=(",", ":")))
+          PY
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/2045" |
+            jq -e --arg sha "$REVIEWED_SHA" --arg repo "$GITHUB_REPOSITORY" '
+              .state == "open" and .head.sha == $sha and
+              .head.repo.full_name == $repo and
+              any(.labels[]?; .name == "preview-chat-candidate-route")
+            ' >/dev/null
+          # Cloudflare AI Gateway read permission probe. Never print the response body.
+          gateway_status=000
+          if gateway_status="$(curl --silent --connect-timeout 5 --max-time 15 \
+            --request GET --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            --output "$gateway_response" --write-out '%{http_code}' \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/matrix-funded-preview" 2>/dev/null)"; then
+            :
+          else
+            gateway_status=000
+          fi
+          readable=false
+          if [ "$gateway_status" = 200 ] &&
+            jq -e '.success == true and .result.id == "matrix-funded-preview"' "$gateway_response" >/dev/null 2>&1; then
+            readable=true
+          fi
+          echo "Cloudflare AI Gateway probe: HTTP ${gateway_status}; readable=${readable}"
+          pnpm --filter @matrix-os/edge-router exec wrangler deploy --secrets-file "$wrangler_secrets"
+          chat_id="$(python3 - "$wrangler_secrets" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          print(json.loads(Path(sys.argv[1]).read_text())["PREVIEW_CHAT_CANDIDATE_CHAT_ID"])
+          PY
+          )"
+          status_code="$(curl --silent --show-error --max-time 20 \
+            --request POST --header 'content-type: application/json' --data '{}' \
+            --dump-header "$response_headers" --output "$response_body" --write-out '%{http_code}' \
+            "https://app.matrix-os.com/vm/pr-2045/~runtime/pr-2045/api/chats/${chat_id}/turns")"
+          if ! grep -Eqi '^x-matrix-preview-platform-route: candidate[[:space:]]*$' "$response_headers"; then
+            echo 'The selected Preview Chat request did not reach the tagged Platform candidate.' >&2
+            exit 1
+          fi
+          unauth_login=false
+          if [ "$status_code" = "200" ] &&
+            grep -Eqi '^content-type: text/html' "$response_headers" &&
+            grep -Fq 'Sign in to continue to your Matrix computer' "$response_body"; then
+            unauth_login=true
+          fi
+          if [ "$status_code" != "401" ] && [ "$status_code" != "403" ] && [ "$unauth_login" != true ]; then
+            echo "The candidate did not reject an unauthenticated Chat turn (HTTP ${status_code})." >&2
+            exit 1
+          fi
+          echo 'The exact Preview Chat route reached the tagged Platform candidate.'

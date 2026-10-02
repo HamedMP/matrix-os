@@ -208,6 +208,8 @@ export class CanonicalChatOrchestrator {
     };
     onAiGeneration?: (input: AiGenerationInput) => void;
     onSharedEvent?: (scopeId: string) => Promise<void>;
+    beforePreviewDispatch?: (input: { actorId: string; chatId: string; turnId: string; runId: string;
+      clientRequestId: string; body: CanonicalCreateChatTurnRequest; proof: string }) => Promise<void>;
     sharedExecutionCoordinatorFactory?: (
       options: SharedChatExecutionCoordinatorOptions,
     ) => SharedChatExecutionCoordinator;
@@ -303,6 +305,7 @@ export class CanonicalChatOrchestrator {
   async admitTurn(
     principal: RequestPrincipal, owner: ChatOwner, chatId: string,
     inputValue: CanonicalCreateChatTurnRequest,
+    provenance?: { previewTurnProof?: string },
   ): Promise<CanonicalChatTurnAdmissionResponse> {
     return admitCanonicalTurn({
       ...this.options,
@@ -314,7 +317,7 @@ export class CanonicalChatOrchestrator {
       atCapacity: (scope) => this.atCapacity(scope),
       hasStoppingExecution: (scope, id, admissionKey) => hasStoppingChatExecution(this.active.values(), scope, id, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
-    }, principal, owner, chatId, inputValue);
+    }, principal, owner, chatId, inputValue, provenance);
   }
 
   async enqueueQueuedTurn(

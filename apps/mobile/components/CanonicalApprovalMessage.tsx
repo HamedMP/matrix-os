@@ -34,7 +34,8 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
       const token = await getToken();
       if (!token) throw new Error("Not signed in");
       const clientRequestId = requestIds.current[decision] ??= canonicalChatRequestId();
-      const body = CanonicalSubmitChatApprovalRequestSchema.parse({ decision, clientRequestId });
+      const body = CanonicalSubmitChatApprovalRequestSchema.parse({ decision, clientRequestId,
+        ...(approval.actionDigest !== undefined ? { actionDigest: approval.actionDigest } : {}) });
       await fetchAuthenticatedJson({
         url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/runs/${encodeURIComponent(approval.runId)}/approvals/${encodeURIComponent(approval.approvalId)}`),
         token, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),

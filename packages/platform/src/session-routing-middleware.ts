@@ -5,6 +5,8 @@ import {
 } from "./preview-terminal-access.js";
 import { randomBytes } from 'node:crypto';
 import { CUSTOM_MCP_APPROVAL_PROOF_HEADER, isCustomMcpApprovalSubmitPath, mintCustomMcpApprovalProof } from './custom-mcp-approval-proof.js';
+import { authenticatedPreviewDriveProxyProof } from './preview-drive-proxy-proof.js';
+import { PREVIEW_DRIVE_TURN_PROOF_HEADER } from './preview-drive-turn-proof.js';
 import { parseChatShareRoute, proxyChatShare } from './chat-share-proxy.js';
 import { fetchRuntimeProxy, shouldReleaseRuntimeProxyTimeout } from "./runtime-proxy-fetch.js";
 export { fetchRuntimeProxy } from "./runtime-proxy-fetch.js";
@@ -788,6 +790,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         method: c.req.method, path: explicitVmRoute.upstreamPath, handle: machine.handle,
         identity, platformSecret });
       if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
+      const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
+        method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
+      if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
         if (shouldForwardProxyHeader(key, value)) {
@@ -795,6 +800,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         }
       }
       if (typeof approvalProof === 'string') headers.set(CUSTOM_MCP_APPROVAL_PROOF_HEADER, approvalProof);
+      if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
       const rawCookie = c.req.header('cookie');
       if (rawCookie) {
         const forwarded = rawCookie
@@ -953,6 +959,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const approvalProof = await authenticatedApprovalProxyProof({ request: c.req.raw,
         method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret });
       if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
+      const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
+        method: c.req.method, path, machine: runningMachine, identity, platformSecret });
+      if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
       const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
       const headers = isCodeDomain
         ? buildCodeDomainProxyHeaders(
@@ -968,6 +977,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           }
         }
         if (typeof approvalProof === 'string') headers.set(CUSTOM_MCP_APPROVAL_PROOF_HEADER, approvalProof);
+        if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
         const rawCookie = c.req.header('cookie');
         if (rawCookie) {
           const forwarded = rawCookie

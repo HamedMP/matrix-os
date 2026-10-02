@@ -245,7 +245,7 @@ describe("server-resolved Chat mention context", () => {
   });
 });
 
-it("marks unavailable ordinary integration steps while retaining real pinned and custom skill text", async () => {
+it("defers integration availability to the run while retaining real pinned and custom skill text", async () => {
   const resolver = createChatAgentRecipeResolver({
     skillsRoot: join(process.cwd(), "skills/matrix"), services: [{ id: "gmail", name: "Gmail" }],
   });
@@ -263,9 +263,10 @@ it("marks unavailable ordinary integration steps while retaining real pinned and
         id: "custom-integration-notes", name: "Matrix Integrations Custom", instructions: customBody, sha256: "b".repeat(64),
       }] } },
   };
-  const annotation = "Ordinary Matrix integration steps in the pinned skills are unavailable on this route; do not execute them.";
+  const annotation = "Follow the actual run tool guidance for built-in integrations and Custom MCP availability.";
   const scoped = contextPrompt("Find public documentation", context, { deferIntegrationGuidance: true });
   expect(scoped).toContain(annotation);
+  expect(scoped).not.toContain("Ordinary Matrix integration steps in the pinned skills are unavailable");
   expect(scoped).toContain(bundledBody);
   expect(scoped).toContain(customBody);
   expect(scoped).not.toContain("Before making integration calls, call list_integration_inventory");

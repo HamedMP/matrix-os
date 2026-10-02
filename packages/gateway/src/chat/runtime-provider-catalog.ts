@@ -25,8 +25,10 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
     })
     : undefined;
   const nativeCodingModelCatalogSource = createNativeCodingModelCatalogSource({ homePath });
-  const resolveClaudeCredentialLaunch = () => buildKernelCredentialLaunch(
-    homePath, process.env, undefined, fundedCredentialProvider,
+  const resolveClaudeCredentialLaunch = (instanceId?: string) => buildKernelCredentialLaunch(
+    homePath, process.env,
+    instanceId === "claude_code_matrix_included" ? "matrix_included" : undefined,
+    fundedCredentialProvider,
   );
   const claudeModelCatalogSource = createRuntimeClaudeModelCatalogSource({
     homePath, resolveCredentialLaunch: resolveClaudeCredentialLaunch,

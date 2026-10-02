@@ -37,6 +37,8 @@ import {
 } from './runtime-mode.js';
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { createInternalCustomMcpApprovalRouteOptions } from './custom-mcp-approval-route-options.js';
+import { createPreviewDriveStore } from './preview-drive-store.js';
+import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
@@ -83,6 +85,16 @@ interface GatewayPlatformUser {
   id: string;
   clerk_id: string;
   handle: string;
+  pipedream_external_id?: string | null;
+}
+
+interface GatewayConnectedService {
+  id: string;
+  service: string;
+  account_label: string;
+  account_email: string | null;
+  status: string;
+  pipedream_account_id: string;
 }
 
 export function parseGoldenSnapshotReconciliationInterval(raw: string | undefined): number | undefined {
@@ -97,6 +109,8 @@ interface GatewayPlatformDb {
   sweepCustomMcpApprovals(now: Date): Promise<number>;
   getUserByClerkId(clerkId: string): Promise<GatewayPlatformUser | null>;
   getUserById(id: string): Promise<GatewayPlatformUser | null>;
+  listConnectedServices(userId: string): Promise<GatewayConnectedService[]>;
+  touchServiceUsage(connectionId: string): Promise<void>;
   ensureUser(input: {
     clerkId: string;
     handle: string;
@@ -161,6 +175,17 @@ interface GatewayIntegrationRoutesModule {
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
     mcpPresetBroker?: unknown;
   }): Hono;
+  executeIntegrationAction(opts: {
+    pipedream: unknown; externalUserId: string;
+    connection: { pipedream_account_id: string };
+    def: any; actionDef: any; serviceId: string; actionId: string;
+    params: Record<string, unknown>;
+  }): Promise<{ data: unknown; summary?: string }>;
+}
+
+interface GatewayIntegrationRegistryModule {
+  getService(serviceId: string): any;
+  getAction(serviceId: string, actionId: string): any;
 }
 
 type GatewayR2Client = import("./r2-client.js").R2Client;
@@ -186,6 +211,7 @@ type CreatePlatformApp = (deps: {
   matrixProvisioner?: MatrixProvisioner;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  previewDriveIntegration?: PreviewDriveIntegration;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -435,6 +461,8 @@ async function startPlatformServerWithCleanup(
 
   let integrationRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
+  let previewDriveIntegration: PreviewDriveIntegration | undefined;
+  let previewDriveSweepInterval: NodeJS.Timeout | undefined;
   let customMcpRoutes: Hono | undefined;
   let internalCustomMcpRoutes: Hono | undefined;
   let internalCustomMcpApprovalRoutes: Hono | undefined;
@@ -460,13 +488,15 @@ async function startPlatformServerWithCleanup(
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
   if (integrationConfig) {
     const [
-      { createIntegrationRoutes, authorizeInternalJevLabels },
+      { createIntegrationRoutes, executeIntegrationAction, authorizeInternalJevLabels },
       { createPipedreamClient },
       { createPlatformDb: createGatewayPlatformDb },
+      { getService, getAction },
     ] = await Promise.all([
       importRuntimeModule<GatewayIntegrationRoutesModule>('../../gateway/dist/integrations/routes.js'),
       importRuntimeModule<GatewayPipedreamModule>('../../gateway/dist/integrations/pipedream.js'),
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
+      importRuntimeModule<GatewayIntegrationRegistryModule>('../../gateway/dist/integrations/registry.js'),
     ]);
 
     const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
@@ -524,7 +554,43 @@ async function startPlatformServerWithCleanup(
       },
       ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
+    previewDriveIntegration = {
+      listConnections: async (clerkActorId) => {
+        const uid = await resolveIntegrationUserId(clerkActorId, undefined);
+        if (!uid) return [];
+        return (await trustedPlatformDb.listConnectedServices(uid))
+          .filter(row => row.service === 'google_drive' && row.status === 'active')
+          .map(row => ({ service: row.service, account_label: row.account_label,
+            account_email: row.account_email, status: row.status }));
+      },
+      execute: async (clerkActorId, label, params) => {
+        const uid = await resolveIntegrationUserId(clerkActorId, undefined);
+        if (!uid) throw new Error('Preview Drive account unavailable');
+        const connected = (await trustedPlatformDb.listConnectedServices(uid))
+          .filter(row => row.service === 'google_drive' && row.status === 'active' && row.account_label === label);
+        if (connected.length !== 1) throw new Error('Preview Drive account unavailable');
+        const user = await trustedPlatformDb.getUserById(uid);
+        if (!user?.pipedream_external_id) throw new Error('Preview Drive account unavailable');
+        const def = getService('google_drive');
+        const actionDef = getAction('google_drive', 'list_files');
+        if (!def || !actionDef || actionDef.risk !== 'read') throw new Error('Preview Drive action unavailable');
+        const result = await executeIntegrationAction({ pipedream, externalUserId: user.pipedream_external_id,
+          connection: connected[0]!, def, actionDef, serviceId: 'google_drive', actionId: 'list_files', params });
+        await trustedPlatformDb.touchServiceUsage(connected[0]!.id);
+        return result.data;
+      },
+    };
   }
+
+  // Authorizations are durable across Cloud Run instances; recurring cleanup
+  // keeps the control-plane table bounded even after a Preview disappears.
+  const previewDriveStore = createPreviewDriveStore(db);
+  previewDriveSweepInterval = setInterval(() => {
+    void previewDriveStore.sweep().catch(error => {
+      console.warn('[preview-drive] Grant cleanup failed', error instanceof Error ? error.name : typeof error);
+    });
+  }, 5 * 60_000);
+  previewDriveSweepInterval.unref();
 
   if (process.env.CUSTOM_MCP_ENABLED === 'true') {
     const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
@@ -930,6 +996,7 @@ async function startPlatformServerWithCleanup(
     matrixProvisioner,
     integrationRoutes,
     internalIntegrationRoutes,
+    previewDriveIntegration,
     customMcpRoutes,
     internalCustomMcpRoutes,
     internalCustomMcpApprovalRoutes,
@@ -972,6 +1039,7 @@ async function startPlatformServerWithCleanup(
     customerVpsReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
+    if (previewDriveSweepInterval) clearInterval(previewDriveSweepInterval);
     const shutdownTimer = setTimeout(() => {
       console.error('[platform] Graceful shutdown timed out');
       process.exit(1);

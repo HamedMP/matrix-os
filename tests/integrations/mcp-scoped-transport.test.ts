@@ -8,12 +8,14 @@ import { describe, expect, it, vi } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import { requireRequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { authorizeChatIntegrationRequest } from "../../packages/gateway/src/integrations/chat-action-guard.js";
 
 const serverId = "123e4567-e89b-42d3-a456-426614174000";
 
 describe("scoped Claude-to-Matrix MCP transport", () => {
   it.each([
     { surface: "custom-mcp-call", scope: "call" as const },
+    { surface: "chat-call", scope: "chat_call" as const },
     { surface: "full", scope: "call" as const },
     { surface: "full", scope: "discovery" as const },
   ])("keeps $surface presentation within the $scope grant and denies reuse after revoke", async ({ surface, scope }) => {
@@ -27,9 +29,17 @@ describe("scoped Claude-to-Matrix MCP transport", () => {
       return { result: "Synthetic public documentation result" };
     });
     const app = new Hono();
-    app.use("*", authMiddleware("machine-secret", { resolveMatrixMcpCapability: registry.resolve }));
-    const forbiddenInventory = vi.fn(() => []);
+    app.use("*", authMiddleware("machine-secret", { resolveMatrixMcpRunContext: registry.resolveRunContext }));
+    const forbiddenInventory = vi.fn(() => [{ service: "google_drive", account_label: "work", account_email: null, status: "active" }]);
     app.get("/api/integrations", c => c.json(forbiddenInventory()));
+    app.get("/api/integrations/agent-catalog", c => c.json([{ id: "google_drive", name: "Google Drive",
+      actions: { list_files: { description: "List bounded file metadata", risk: "read", params: { max_results: { type: "number" } } } } }]));
+    const providerRead = vi.fn(async (_input: unknown) => ({ files: [{ id: "fixture-public", name: "Synthetic document" }] }));
+    app.post("/api/integrations/call", async c => {
+      const denied = await authorizeChatIntegrationRequest(c);
+      if (denied) return denied;
+      return c.json(await providerRead(await c.req.json()));
+    });
     app.get("/api/mcp-servers", (c) => c.json([{
       id: serverId, name: "Public docs fixture", status: "ready", enabled: true, revision: 10,
     }]));
@@ -87,9 +97,28 @@ describe("scoped Claude-to-Matrix MCP transport", () => {
       const result = await client.callTool({
         name: "call_custom_mcp_tool", arguments: { server_id: serverId, tool: "search", arguments: { query: "public docs" } },
       });
-      if (scope === "call") expect(JSON.stringify(result.content)).toContain("Synthetic public documentation result");
+      const canCall = scope === "call" || scope === "chat_call";
+      if (canCall) expect(JSON.stringify(result.content)).toContain("Synthetic public documentation result");
       else expect(JSON.stringify(result.content)).toContain("tool call was rejected");
-      expect(fakeBrokerCall).toHaveBeenCalledTimes(scope === "call" ? 1 : 0);
+      expect(fakeBrokerCall).toHaveBeenCalledTimes(canCall ? 1 : 0);
+      if (surface === "chat-call") {
+        const inventory = await client.callTool({ name: "list_integration_inventory" });
+        expect(JSON.stringify(inventory.content)).toContain("google_drive (work) [active]");
+        const schema = await client.callTool({ name: "describe_service", arguments: { service: "google_drive" } });
+        expect(JSON.stringify(schema.content)).toContain("list_files");
+        const action = { service: "google_drive", action: "list_files", label: "work", params: { max_results: 3 } };
+        const denied = await client.callTool({ name: "call_service", arguments: action });
+        expect(JSON.stringify(denied.content)).toContain("approval required");
+        expect(providerRead).not.toHaveBeenCalled();
+        const grant = capability.grantIntegrationTool!("mcp__matrix-integrations__call_service", action)!;
+        const approved = { ...action, matrix_approval_receipt: grant.receipt };
+        const read = await client.callTool({ name: "call_service", arguments: approved });
+        expect(JSON.stringify(read.content)).toContain("Synthetic document");
+        const replay = await client.callTool({ name: "call_service", arguments: approved });
+        expect(JSON.stringify(replay.content)).toContain("approval required");
+        expect(providerRead).toHaveBeenCalledOnce();
+        expect(providerRead).toHaveBeenCalledWith(action);
+      }
       if (surface === "full") {
         const deniedInventory = await client.callTool({ name: "list_integration_inventory" });
         expect(JSON.stringify(deniedInventory.content)).toContain("unavailable");
@@ -99,7 +128,7 @@ describe("scoped Claude-to-Matrix MCP transport", () => {
       capability.revoke();
       const denied = await client.callTool({ name: "list_custom_mcp_servers" });
       expect(JSON.stringify(denied.content)).toContain("currently unavailable");
-      expect(fakeBrokerCall).toHaveBeenCalledTimes(scope === "call" ? 1 : 0);
+      expect(fakeBrokerCall).toHaveBeenCalledTimes(canCall ? 1 : 0);
     } finally {
       await client.close();
       httpServer.closeAllConnections();

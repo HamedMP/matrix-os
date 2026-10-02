@@ -35,6 +35,8 @@ export const CanonicalChatTurnIdSchema = prefixedId("cturn_");
 export const CanonicalChatRunIdSchema = prefixedId("run_");
 export const CanonicalChatMessageIdSchema = prefixedId("msg_");
 export const CanonicalChatRequestIdSchema = prefixedId("req_");
+/** Lowercase SHA-256 digest of one normalized integration action. */
+export const CanonicalChatActionDigestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 export const CanonicalProviderInstanceIdSchema = canonicalReferenceId(128);
 export const CanonicalChatAttachmentKindSchema = z.enum(["file", "image", "diff", "structured_ref"]);
 export const CanonicalChatModelReferenceSchema = ProviderModelReferenceSchema;
@@ -307,6 +309,7 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("approval_request"),
     approvalId: canonicalReferenceId(128),
+    actionDigest: CanonicalChatActionDigestSchema.optional(),
     title: canonicalSafeLabel(160, 640),
     description: canonicalSafeLabel(1_000, 4_000),
     risk: z.enum(["low", "medium", "high"]),
@@ -549,6 +552,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("approval.requested"),
     approvalId: canonicalReferenceId(128),
+    actionDigest: CanonicalChatActionDigestSchema.optional(),
     title: canonicalSafeLabel(160, 640),
     risk: z.enum(["low", "medium", "high"]),
     safeDescription: z.string().min(1).max(4_000).optional(),

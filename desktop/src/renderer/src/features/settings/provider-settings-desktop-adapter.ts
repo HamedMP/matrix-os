@@ -28,6 +28,9 @@ const PROVIDER_SETTINGS_ACTIONS_PATH = "/api/ai/provider-settings/actions";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MUTATION_BYTES = 64 * 1024;
 const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
+const PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS = 8;
+const PROVIDER_TERMINAL_DISCOVERY_INTERVAL_MS = 250;
+const PROVIDER_AUTH_SESSION_PATTERN = /^provider-auth-[0-9a-z]{50}$/;
 let latestTerminalHandoff: symbol | undefined;
 
 export { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
@@ -97,39 +100,58 @@ export async function openExistingProviderTerminalSession(
   terminalSessionId: string,
   isIdentityCurrent: () => boolean = () => true,
 ): Promise<boolean> {
-  if (!isValidShellSessionName(terminalSessionId) || !isIdentityCurrent()) return false;
+  const isTerminalRef = isValidShellSessionName(terminalSessionId);
+  if ((!isTerminalRef && !PROVIDER_AUTH_SESSION_PATTERN.test(terminalSessionId)) || !isIdentityCurrent()) return false;
   const handoff = Symbol();
   latestTerminalHandoff = handoff;
   const generation = captureRuntimeGeneration();
-  const revision = useShellSessions.getState().authoritativeRevision;
-  const sequence = useShellSessions.getState().loadSequence + 1;
-  // Invalidate polls issued before this read, while allowing polls issued after
-  // it to complete normally. Completion order alone is not snapshot freshness.
-  useShellSessions.setState({ loadSequence: sequence, loading: true, error: null });
-  // A background poll can supersede store.load while this user action waits.
-  // Validate the handoff independently without weakening latest-only polling.
-  try {
-    const sessions: ShellSessionSummary[] = await readShellSessions(api);
-    if (latestTerminalHandoff !== handoff || !isIdentityCurrent() || !isCurrentRuntimeGeneration(generation)) return false;
-    const current = useShellSessions.getState();
-    // A completed newer list or deletion owns the truth. In-flight polls alone
-    // cannot turn this successfully validated exact reference into "missing".
-    const superseded = current.authoritativeRevision !== revision;
-    const authoritativeSessions = superseded ? current.sessions : sessions;
-    if (!superseded) {
-      useShellSessions.setState((state) => ({
-        sessions,
-        authoritativeRevision: state.authoritativeRevision + 1,
-      }));
-    }
-    const exists = authoritativeSessions.some((session) => (
-      session.name === terminalSessionId && session.status === "active"
-    ));
-    if (!exists) return false;
+  const matchingSession = (sessions: ShellSessionSummary[]) => {
+    const matches = sessions.filter((session) => isTerminalRef
+      ? session.name === terminalSessionId : session.subtitle === terminalSessionId);
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+  const openSession = (session: ShellSessionSummary) => {
     const tabId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
     useDesktopSurfaces.getState().activateSurface(tabId);
-    useTabs.getState().requestTerminalSession(terminalSessionId);
+    useTabs.getState().requestTerminalSession(session.name);
     return true;
+  };
+  let sequence = useShellSessions.getState().loadSequence;
+  let acceptedRevision: number | undefined;
+  try {
+    for (let attempt = 0; attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS; attempt += 1) {
+      if (latestTerminalHandoff !== handoff || !isIdentityCurrent() || !isCurrentRuntimeGeneration(generation)) return false;
+      const currentBeforeRead = useShellSessions.getState();
+      if (acceptedRevision !== undefined && currentBeforeRead.authoritativeRevision !== acceptedRevision) {
+        const latest = matchingSession(currentBeforeRead.sessions);
+        return latest?.status === "active" ? openSession(latest) : false;
+      }
+      const revision = currentBeforeRead.authoritativeRevision;
+      sequence = useShellSessions.getState().loadSequence + 1;
+      // Fence older polls; newer completed lists or deletions remain authoritative.
+      useShellSessions.setState({ loadSequence: sequence, loading: true, error: null });
+      const sessions: ShellSessionSummary[] = await readShellSessions(api);
+      if (latestTerminalHandoff !== handoff || !isIdentityCurrent() || !isCurrentRuntimeGeneration(generation)) return false;
+      const current = useShellSessions.getState();
+      const superseded = current.authoritativeRevision !== revision;
+      const authoritativeSessions = superseded ? current.sessions : sessions;
+      if (!superseded) {
+        useShellSessions.setState((state) => ({
+          sessions,
+          authoritativeRevision: state.authoritativeRevision + 1,
+        }));
+      }
+      acceptedRevision = useShellSessions.getState().authoritativeRevision;
+      const matching = matchingSession(authoritativeSessions);
+      if (matching?.status === "active") return openSession(matching);
+      if (authoritativeSessions.filter((session) => isTerminalRef
+        ? session.name === terminalSessionId : session.subtitle === terminalSessionId).length > 1) return false;
+      if (superseded || matching?.status === "exited" || matching?.status === "degraded") return false;
+      if (attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, PROVIDER_TERMINAL_DISCOVERY_INTERVAL_MS));
+      }
+    }
+    return false;
   } catch (error) {
     console.warn("[provider-settings] Terminal handoff unavailable:", error instanceof Error ? error.name : typeof error);
     return false;

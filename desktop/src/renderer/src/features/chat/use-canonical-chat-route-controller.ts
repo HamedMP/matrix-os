@@ -1,5 +1,5 @@
 import { useChatReadState, mergeChatReadState } from "@matrix-os/ui";
-import type { CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
+import { canonicalChatApprovals, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
@@ -795,9 +795,12 @@ export function useCanonicalChatRouteController({
     const routeScope = routeScopeRef.current;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
     try {
+      const approval = canonicalChatApprovals(current).find(item =>
+        item.pending && item.runId === activeRun.runId && item.approvalId === approvalId);
       await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, {
         clientRequestId: canonicalChatRequestId(),
         decision,
+        ...(approval?.actionDigest !== undefined ? { actionDigest: approval.actionDigest } : {}),
       });
       if (!isCurrentScope()) return false;
       await loadDetail(current.record.chat.id);

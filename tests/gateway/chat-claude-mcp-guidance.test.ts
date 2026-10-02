@@ -12,11 +12,15 @@ const context: ChatRunContext = {
 };
 
 it.each([
-  { mode: "default", permission: "supervised", ownerMatches: true, scope: "call" },
-  { mode: "review", permission: "full_access", ownerMatches: true, scope: "discovery" },
+  { mode: "default", permission: "supervised", ownerMatches: true, scope: "chat_call" },
+  { mode: "review", permission: "full_access", ownerMatches: true, scope: "chat_discovery" },
   { mode: "default", permission: "supervised", ownerMatches: false, scope: null },
-])("projects successful $scope authority into the actual Claude stdin prompt", async ({ mode, permission, ownerMatches, scope }) => {
-  const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: ownerMatches ? "owner_fixture" : "other_owner" });
+  { mode: "default", permission: "supervised", ownerMatches: true, preview: true, scope: "preview_drive_call" },
+])("projects successful $scope authority into the actual Claude stdin prompt", async ({ mode, permission, ownerMatches, scope, preview }) => {
+  const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: ownerMatches ? "owner_fixture" : "other_owner",
+    previewRuntime: preview === true });
+  if (preview) registry.authorizePreviewDriveRun({ actorId: "owner_fixture", chatId: "chat_fixture",
+    runId: "run_fixture", runGrant: "a".repeat(64) });
   const frames: Array<{ type: string; message?: { content: string } }> = [];
   const spawnFn = vi.fn(() => {
     const process = new EventEmitter();
@@ -44,12 +48,22 @@ it.each([
     })) { /* Drain the native transport. */ }
     const prompt = frames.find(frame => frame.type === "user")!.message!.content;
     expect(prompt).not.toContain("call list_integration_inventory");
-    expect(prompt).toContain("Selected integration dependencies are unavailable through this route");
+    expect(prompt).toContain("Follow the actual run tool guidance for built-in integrations and Custom MCP availability.");
+    expect(prompt).not.toContain("Selected integration dependencies are unavailable through this route");
     if (scope) {
-      expect(prompt).toContain("list_custom_mcp_servers");
-      expect(prompt).toContain("describe_custom_mcp_server");
-      if (scope === "call") expect(prompt).toContain("call_custom_mcp_tool");
-      else {
+      if (scope !== "preview_drive_call") {
+        expect(prompt).toContain("Discover built-in integrations with list_integration_inventory and describe_service");
+        expect(prompt).toContain("Preserve the exact account label for calls");
+      }
+      if (scope === "preview_drive_call") {
+        expect(prompt).toContain("Google Drive");
+        expect(prompt).not.toContain("list_custom_mcp_servers");
+      } else {
+        expect(prompt).toContain("list_custom_mcp_servers");
+        expect(prompt).toContain("describe_custom_mcp_server");
+      }
+      if (scope === "chat_call") expect(prompt).toContain("call_custom_mcp_tool");
+      else if (scope !== "preview_drive_call") {
         expect(prompt).not.toContain("call_custom_mcp_tool");
         expect(prompt).toContain("discovery only");
       }

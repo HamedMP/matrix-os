@@ -11,6 +11,41 @@ import {
 
 const root = process.cwd();
 
+it("deploys the Claude advisor beta and attested Jev pricing in one candidate revision", () => {
+  const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+  const block = workflow.split("- name: Deploy candidate revision")[1]!
+    .split("- name: Smoke candidate relay")[0]!.split("run: |\n")[1]!;
+  const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
+  const result = spawnSync("bash", ["-c", `
+gcloud() {
+  if [ "$1 $2 $3" = "run deploy fixture" ]; then
+    for arg in "$@"; do printf '%s\\n' "$arg"; done
+    exit 0
+  fi
+  return 1
+}
+${script}
+`], { encoding: "utf8", timeout: 10_000, env: {
+    ...process.env, AI_RELAY_CLOUD_RUN_SERVICE: "fixture", GCP_PROJECT_ID: "fixture",
+    GCP_REGION: "fixture", IMAGE_DIGEST: `fixture@sha256:${"a".repeat(64)}`,
+    AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture",
+    PLATFORM_INTERNAL_URL: "https://platform.example.test",
+    CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,
+    MATRIX_JEV_PRICING_REVIEW_VERSION: "typesafe-jev-input-2026-09",
+    MATRIX_JEV_PRICING_REVIEWED_AT: "2026-09-30T00:00:00.000Z",
+    MATRIX_JEV_PRICING_VALID_THROUGH: "2026-10-30T00:00:00.000Z",
+  } });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
+  const envArgs = result.stdout.split("\n").filter(line => line.startsWith("^|^"));
+  expect(envArgs).toHaveLength(1);
+  expect(envArgs[0]).toContain(",advisor-tool-2026-03-01,");
+  expect(envArgs[0]).toContain("|MATRIX_JEV_PRICING_REVIEW_VERSION=typesafe-jev-input-2026-09");
+  expect(envArgs[0]).toContain("|MATRIX_JEV_PRICING_REVIEWED_AT=2026-09-30T00:00:00.000Z");
+  expect(envArgs[0]).toContain("|MATRIX_JEV_PRICING_VALID_THROUGH=2026-10-30T00:00:00.000Z");
+  expect(result.stdout).toContain("--no-traffic\n");
+});
+
 function enabledEnv(): NodeJS.ProcessEnv {
   return {
     MATRIX_FUNDED_AI_ENABLED: "true",
@@ -165,6 +200,7 @@ describe("funded relay Cloud Run service", () => {
       "context-management-2025-06-27",
       "prompt-caching-scope-2026-01-05",
       "mid-conversation-system-2026-04-07",
+      "advisor-tool-2026-03-01",
       "effort-2025-11-24",
     ]) expect(workflow).toContain(beta);
     expect(workflow).toContain("CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest");

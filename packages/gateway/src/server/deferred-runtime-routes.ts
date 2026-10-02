@@ -7,6 +7,7 @@ import { registerCustomMcpGatewayRoutes, type CustomMcpGatewayRegistration } fro
 import { resolveCustomMcpRuntimeRouting } from "../integrations/custom-mcp/preview-routing.js";
 import { httpRequestDuration, httpRequestsTotal, metricsRegistry, normalizePath } from "../metrics.js";
 import { registerAppRuntimeRoutes } from "./app-runtime-routes.js";
+import { authorizeChatIntegrationRequest } from "../integrations/chat-action-guard.js";
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 
@@ -55,6 +56,11 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
 
   // Deferred route mounts -- must come AFTER auth middleware
   if (integrationRoutes) {
+    app.use("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c, next) => {
+      const denied = await authorizeChatIntegrationRequest(c, { localRoutes: true });
+      if (denied) return denied;
+      await next();
+    });
     app.route("/api/integrations", integrationRoutes);
     console.log("[platform-db] Integration routes mounted (after auth)");
   } else if (internalIntegrationBaseUrl && internalPlatformToken && internalPlatformUrl) {

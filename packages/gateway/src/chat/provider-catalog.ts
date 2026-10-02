@@ -131,8 +131,8 @@ function codingSupports(
     attachments: driverKind === "pi" || driverKind === "opencode"
       ? ["file", "structured_ref"]
       : ["file", "image", "structured_ref"],
-    tools: [],
-    approvals: isCodex,
+    tools: driverKind === "claude_code" ? ["integrations", "custom_mcp"] : [],
+    approvals: isCodex || driverKind === "claude_code",
     userInput: true,
     worktrees: "optional",
     resources: ["file", "folder", "project", "task", "app", "terminal_session", ],
@@ -625,11 +625,14 @@ export function createChatProviderCatalogService(options: {
         ? aiProviderResult.value
         : undefined;
       const executableDriverKinds = options.executableDriverKinds;
+      const fundedClaudeExecutable = coding.some((provider) =>
+        codingDriverKind(provider) === "claude_code" && provider.installStatus === "installed")
+        && (executableDriverKinds === undefined || executableDriverKinds.includes("claude_code"));
       const instances = applyHarnessSettings({
         systemRepairAction,
         now: options.now?.() ?? new Date(),
         instances: [
-        ...managedChatInstances(aiSnapshot, skills),
+        ...managedChatInstances(aiSnapshot, skills, options.now?.().getTime() ?? Date.now(), fundedClaudeExecutable),
         ...systemInstances,
         ...completeCodingInstances,
         ],

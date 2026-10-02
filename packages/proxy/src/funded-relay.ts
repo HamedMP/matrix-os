@@ -26,6 +26,7 @@ import {
   type FundedPlatformClient,
 } from "./funded-relay-platform-client.js";
 import {
+  assertFundedSystemMessageBeta,
   resolveRequestedBetas,
   serializeCountTokensRequest,
   serializeFundedRequest,
@@ -199,6 +200,11 @@ function cloudflareHeaders(input: {
   return headers;
 }
 
+function rateLimitHeader(response: Response, name: string): number | undefined {
+  const value = response.headers.get(name);
+  return value && /^\d{1,12}$/.test(value) ? Number(value) : undefined;
+}
+
 function identitiesMatch(left: VerifiedFundedIdentity, right: VerifiedFundedIdentity): boolean {
   return left.tokenId === right.tokenId && left.ownerId === right.ownerId
     && left.machineId === right.machineId && left.runtimeSlot === right.runtimeSlot
@@ -304,6 +310,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       parsedBody = serialized.request;
       requestBody = serialized.body;
       anthropicBeta = resolveRequestedBetas(c.req.header("anthropic-beta"), config.allowedBetas);
+      if (!isOpenAi) assertFundedSystemMessageBeta(parsedBody as FundedRequest, anthropicBeta);
       model = mapFundedModel(parsedBody.model);
       if ((model.nativeModelId === FUNDED_GLM_FLASH) !== isOpenAi) throw new Error("Unsupported funded AI model");
     } catch (error) {
@@ -475,7 +482,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
-        enqueueFinalization({ mode: "conservative" });
+        // An upstream 429 rejects generation before billable usage. Usage-mode
+        // reservations cannot be finalized conservatively and otherwise hold the full cap.
+        enqueueFinalization(upstream.status === 429 && reservation.billingMode === "usage"
+          ? { mode: "exact", actualCostMicrousd: 0 }
+          : { mode: "conservative" });
+        if (upstream.status === 429) {
+          console.warn("[proxy] Funded AI upstream rate limited", {
+            retryAfterSeconds: rateLimitHeader(upstream, "retry-after"),
+            inputTokensRemaining: rateLimitHeader(upstream, "anthropic-ratelimit-input-tokens-remaining"),
+          });
+        }
         await upstream.body?.cancel("upstream rejected request");
         resourceLease.release();
         state.resourceLease = null;

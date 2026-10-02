@@ -7,6 +7,7 @@ export interface CanonicalChatApprovalView {
   id: string;
   runId: string;
   approvalId: string;
+  actionDigest?: string;
   title: string;
   description: string;
   risk: "low" | "medium" | "high";
@@ -40,9 +41,14 @@ export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse,
     if (activity.type === "approval.resolved") resolved.set(key(activity.runId, activity.approvalId), activity.decision);
     if (activity.type !== "approval.requested") continue;
     const identity = key(activity.runId, activity.approvalId);
-    if (approvals.has(identity)) continue;
+    const existing = approvals.get(identity);
+    if (existing) {
+      if (!existing.actionDigest && activity.actionDigest) existing.actionDigest = activity.actionDigest;
+      continue;
+    }
     approvals.set(identity, {
       id: activity.id, runId: activity.runId, approvalId: activity.approvalId,
+      ...(activity.actionDigest ? { actionDigest: activity.actionDigest } : {}),
       ...canonicalChatApprovalDisplay(activity.title, activity.safeDescription ?? "The agent is waiting for your decision."),
       risk: activity.risk, allowedDecisions: activity.allowedDecisions,
       pending: false, timestamp: Date.parse(activity.occurredAt),

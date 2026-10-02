@@ -75,6 +75,7 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     risk: z.enum(["low", "medium", "high"]),
     safeDescription: z.string().min(1).max(4_000).optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
+    actionDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   }).strict(),
   z.object({
     type: z.literal("approval.resolved"),

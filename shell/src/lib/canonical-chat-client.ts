@@ -62,6 +62,7 @@ export interface CanonicalShellChatClient {
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
     clientRequestId: string,
+    actionDigest?: string,
   ): Promise<CanonicalChatApprovalSubmissionResponse>;
 }
 
@@ -321,13 +322,14 @@ export function createCanonicalShellChatClient(options: {
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
       ));
     },
-    async submitApproval(chatId, runId, approvalId, decision, clientRequestId) {
+    async submitApproval(chatId, runId, approvalId, decision, clientRequestId, actionDigest) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
       const parsedApprovalId = safeReference(approvalId);
       const body = CanonicalSubmitChatApprovalRequestSchema.parse({
         clientRequestId: CanonicalChatRequestIdSchema.parse(clientRequestId),
         decision: CanonicalChatApprovalDecisionSchema.parse(decision),
+        ...(actionDigest !== undefined ? { actionDigest } : {}),
       });
       return CanonicalChatApprovalSubmissionResponseSchema.parse(await request(
         `/api/chats/${encodeURIComponent(id)}/runs/${encodeURIComponent(parsedRunId)}/approvals/${encodeURIComponent(parsedApprovalId)}`,
@@ -388,6 +390,7 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
       ...(approvalRequest?.type === "approval_request" ? { metadata: { canonicalApproval: {
         ...(message.runId ? { runId: message.runId } : {}),
         approvalId: approvalRequest.approvalId,
+        ...(approvalRequest.actionDigest ? { actionDigest: approvalRequest.actionDigest } : {}),
         title: approvalRequest.title,
         description: approvalRequest.description,
         risk: approvalRequest.risk,

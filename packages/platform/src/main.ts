@@ -1,3 +1,4 @@
+import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -252,6 +253,7 @@ export function createApp(deps: {
   platformSecret?: string;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  previewDriveIntegration?: PreviewDriveIntegration;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -675,6 +677,9 @@ export function createApp(deps: {
   }));
 
   app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
+  app.route('/internal/containers/:handle/preview-drive', createPreviewDriveRoutes({
+    db, platformSecret, integration: deps.previewDriveIntegration,
+  }));
   registerCustomMcpRoutes(app, {
     db,
     platformSecret,
@@ -689,6 +694,7 @@ export function createApp(deps: {
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
     privatePreviewEligibility,
   });
+
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
   }

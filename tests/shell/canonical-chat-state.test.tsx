@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import React, { StrictMode, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
 
@@ -35,6 +36,30 @@ beforeEach(() => {
 });
 
 describe("canonical shell Chat state", () => {
+  it("submits the digest from the displayed active approval in Web Chat", async () => {
+    const actionDigest = "e".repeat(64);
+    const { snapshot } = createCanonicalChatFixture("approval_required");
+    const run = snapshot.runs[0]!;
+    const { project: _project, providerBinding: _binding, activeRun, ...chat } = snapshot.chat;
+    const recordWithRun = { chat, activeRun };
+    const details = { record: recordWithRun, messages: snapshot.messages, turns: snapshot.turns,
+      runs: snapshot.runs, activities: [...snapshot.activities, { id: "evt_drive_approval", chatId: snapshot.chat.id,
+        runId: run.id, occurredAt: run.updatedAt, type: "approval.requested", approvalId: "approval_drive",
+        title: "List three files", risk: "low", allowedDecisions: ["approve", "decline"], actionDigest }] };
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [recordWithRun] });
+      if (url.includes(`/api/chats/${snapshot.chat.id}?`)) return Response.json(details);
+      if (url.includes("/approvals/")) return Response.json({ approvalId: "approval_drive", decision: "approve", submission: "accepted" });
+      throw new Error(`Unexpected request: ${url} ${init?.method ?? "GET"}`);
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages.some(message =>
+      message.metadata?.canonicalApproval?.actionDigest === actionDigest)).toBe(true));
+    await act(async () => { await result.current.submitApproval?.(run.id, "approval_drive", "approve"); });
+    const approvalCall = fetchFn.mock.calls.find(([url]) => url.includes("/approvals/"));
+    expect(JSON.parse(String(approvalCall?.[1]?.body))).toMatchObject({ actionDigest, decision: "approve" });
+  });
   it("uses streamed invalidations without polling an active Run while attached", async () => {
     vi.useFakeTimers();
     let streamController!: ReadableStreamDefaultController<Uint8Array>;

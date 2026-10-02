@@ -19,8 +19,9 @@ const checkedAt = "2026-08-30T10:00:00.000Z";
 const providerWorkspaceId = "tws_11111111111111111111111111111111";
 const providerTabId = "tt_22222222222222222222222222222222";
 const providerTerminalRef = `${providerWorkspaceId}:${providerTabId}`;
+const providerAuthSessionName = `provider-auth-${"0".repeat(50)}`;
 
-function providerTerminalWorkspaces(status: "running" | "exited" = "running") {
+function providerTerminalWorkspaces(status: "running" | "exited" = "running", name = "provider-login") {
   return {
     workspaces: [{
       id: providerWorkspaceId,
@@ -28,7 +29,7 @@ function providerTerminalWorkspaces(status: "running" | "exited" = "running") {
       tabs: [{
         id: providerTabId,
         revision: 1,
-        name: "provider-login",
+        name,
         cwd: "projects",
         status,
       }],
@@ -341,13 +342,73 @@ describe("desktop provider connection actions", () => {
     expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
   });
 
-  it("rejects invalid, missing, or exited terminal refs without opening Terminal", async () => {
+  it("resolves a server-issued provider auth name to its unique existing Terminal ref", async () => {
+    const get = vi.fn().mockResolvedValue(providerTerminalWorkspaces("running", providerAuthSessionName));
+    await expect(openExistingProviderTerminalSession(
+      api({ get }), providerAuthSessionName,
+    )).resolves.toBe(true);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
+  });
+
+  it("rejects an ambiguous provider auth name without opening either Terminal", async () => {
+    const listing = providerTerminalWorkspaces("running", providerAuthSessionName);
+    listing.workspaces[0]!.tabs.push({
+      ...listing.workspaces[0]!.tabs[0]!, id: "tt_33333333333333333333333333333333",
+    });
+    await expect(openExistingProviderTerminalSession(
+      api({ get: vi.fn().mockResolvedValue(listing) }), providerAuthSessionName,
+    )).resolves.toBe(false);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
+  it("rejects invalid or exited terminal refs without opening Terminal", async () => {
     const get = vi.fn().mockResolvedValue(providerTerminalWorkspaces("exited"));
     const client = api({ get });
     await expect(openExistingProviderTerminalSession(client, "../../secret")).resolves.toBe(false);
     await expect(openExistingProviderTerminalSession(client, providerTerminalRef)).resolves.toBe(false);
     expect(useTabs.getState().tabs).toEqual([]);
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops looking for a missing provider terminal after a short bounded wait", async () => {
+    vi.useFakeTimers();
+    const get = vi.fn().mockResolvedValue({ workspaces: [] });
+    const opening = openExistingProviderTerminalSession(api({ get }), providerTerminalRef);
+    await vi.runAllTimersAsync();
+
+    await expect(opening).resolves.toBe(false);
+    expect(get).toHaveBeenCalledTimes(8);
+    expect(useTabs.getState().tabs).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("waits briefly for a newly created provider terminal to appear before opening it", async () => {
+    vi.useFakeTimers();
+    const get = vi.fn()
+      .mockResolvedValueOnce({ workspaces: [] })
+      .mockResolvedValueOnce(providerTerminalWorkspaces());
+    const opening = openExistingProviderTerminalSession(api({ get }), providerTerminalRef);
+    await vi.advanceTimersByTimeAsync(300);
+
+    await expect(opening).resolves.toBe(true);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
+    vi.useRealTimers();
+  });
+
+  it("stops waiting for a provider terminal when the desktop identity changes", async () => {
+    vi.useFakeTimers();
+    let current = true;
+    const get = vi.fn().mockImplementation(async () => {
+      current = false;
+      return { workspaces: [] };
+    });
+    await expect(openExistingProviderTerminalSession(
+      api({ get }), providerTerminalRef, () => current,
+    )).resolves.toBe(false);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(useTabs.getState().tabs).toEqual([]);
+    vi.useRealTimers();
   });
 
   it("continues an existing login while an ordinary Terminal poll is still pending", async () => {
