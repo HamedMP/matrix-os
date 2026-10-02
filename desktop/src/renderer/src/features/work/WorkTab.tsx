@@ -1,4 +1,4 @@
-import { mergeCanonicalChatRecord } from "@matrix-os/ui";
+import { useDirectBotBinding, mergeCanonicalChatRecord } from "@matrix-os/ui";
 import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
 import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
@@ -288,6 +288,7 @@ function WorkTabContent({
     });
   }, [api, authGeneration, hostedRuntime, runtimeSlot, visible]);
   const client = hostedRuntime?.client ?? localClient;
+  const chromeBotBinding = useDirectBotBinding(sharedScopeId ? undefined : initialChatId, client?.agents);
   const agentsNavigation = useChatAgentsNavigation();
   const agentsOpen = Boolean(client?.agents && agentsNavigation?.opened?.client === client.agents);
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
@@ -699,7 +700,7 @@ function WorkTabContent({
   const selectedProject = projects.find(project => project.slug === projectSlug);
   const projectChats = projectSlug ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} /> : null;
   const projectCenter = selectedProject
-    ? <ProjectLanding project={selectedProject} showMetadata={!initialChatId}>{projectChats}</ProjectLanding>
+    ? <ProjectLanding project={selectedProject} client={client ?? undefined} eventSource={eventSource ?? undefined} active={active} onSelectChat={record => selectRailChat(record, selectedProject)} showMetadata={!initialChatId}>{projectChats}</ProjectLanding>
     : projectChats;
   const content = route === "chat"
     ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView}
@@ -734,6 +735,9 @@ function WorkTabContent({
       onSelectProject={openProjectDraft}
       onNewProjectChat={openProjectDraft}
       onSelectChat={selectRailChat}
+      onChatMoved={(record, project) => {
+        if (record.chat.id === initialChatId) selectRailChat(record, project);
+      }}
       onChatDeleted={handleRailChatDeleted}
       onChatRenamed={applyRenamedChat}
       onOpenAgents={() => { if (layout === "narrow") showChat(); }}
@@ -781,6 +785,7 @@ function WorkTabContent({
   ) : sharingControl, [sharedScopeId, sharingControl]);
   const chromeSpec = useMemo(() => ({
     title: agentsOpen ? "Agents" : chromeTitle,
+    hideTitle: !agentsOpen && Boolean(chromeBotBinding.agentId),
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
     rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
     rightActions: agentsOpen ? null : hasInspector ? (
@@ -800,7 +805,7 @@ function WorkTabContent({
         </PaneButton>
       </div>
     ) : sharedChromeSlot,
-  }), [agentsOpen, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+  }), [agentsOpen, chromeBotBinding.agentId, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;

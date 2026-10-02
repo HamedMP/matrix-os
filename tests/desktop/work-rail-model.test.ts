@@ -91,6 +91,13 @@ describe("buildWorkRailModel", () => {
     expect(model.recents.map(record => record.chat.id)).toEqual(["idle"]);
   });
 
+  it("keeps acknowledged successful terminal chats in Done while failed or active work wins", () => {
+    const completed = statusRecord({ unacknowledged: false });
+    expect(buildWorkRailModel([completed], []).done).toEqual([completed]);
+    expect(buildWorkRailModel([statusRecord({ unacknowledged: false, attention: "failed" })], []).done).toEqual([]);
+    expect(buildWorkRailModel([statusRecord({ unacknowledged: false, activeRunStatus: "running" })], []).done).toEqual([]);
+  });
+
   it("resolves rail state with attention ahead of running, failed, and unseen completion", () => {
     const cases: Array<[Parameters<typeof statusRecord>[0], string]> = [
       [{ attention: "approval_required", activeRunStatus: "running", unacknowledged: true }, "approval_required"],

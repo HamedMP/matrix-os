@@ -27,6 +27,8 @@ function stampJevCreate(client: ReturnType<typeof clientFixture>, expectedEmail:
   }));
 }
 afterEach(cleanup);
+HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
+HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
 
 describe("shared Agents entry", () => {
   it("offers only the configured Hermes model when editing a Jev bot", async () => {
@@ -50,9 +52,9 @@ describe("shared Agents entry", () => {
       <ChatAgentsRailSection client={client} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Current Chat</p></ChatAgentsContent>
     </ChatAgentsWorkspace>);
-    expect((await screen.findByRole("button", { name: "Create an agent" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByRole("button", { name: "Add new agent" })).toBeTruthy();
     expect((screen.getByRole("button", { name: `Chat with ${saved.name}` }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Manage agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Agents" }));
     expect(await screen.findByRole("button", { name: `Edit ${saved.name}` })).toBeTruthy();
   });
 
@@ -62,10 +64,8 @@ describe("shared Agents entry", () => {
       <ChatAgentsRailSection client={client} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Current Chat</p></ChatAgentsContent>
     </ChatAgentsWorkspace>);
-    expect((await screen.findByRole("button", { name: "Build a research scout" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "Build a daily planner" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "Build a meeting follow-up agent" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Browse agent recipes" }));
+    await screen.findByRole("button", { name: "Add new agent" });
+    fireEvent.click(screen.getByRole("button", { name: "Add new agent" }));
     const useRecipe = await screen.findByRole("button", { name: "Use Account Research Desk" }) as HTMLButtonElement;
     expect(useRecipe.disabled).toBe(true);
     fireEvent.click(useRecipe);
@@ -84,7 +84,7 @@ describe("shared Agents entry", () => {
     client.list.mockResolvedValue({ enabled: true, agents: [saved] });
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Current Chat</p></ChatAgentsContent></ChatAgentsWorkspace>);
-    fireEvent.click(await screen.findByRole("button", { name: "Manage agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
     expect((screen.getByRole("textbox", { name: "Instructions" }) as HTMLTextAreaElement).value).toBe(saved.instructions);
   });
@@ -96,7 +96,7 @@ describe("shared Agents entry", () => {
     client.list.mockResolvedValue({ enabled: true, agents: [bot] });
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Current Chat</p></ChatAgentsContent></ChatAgentsWorkspace>);
-    fireEvent.click(await screen.findByRole("button", { name: "Manage agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     expect(await screen.findByText("Own Chat")).toBeTruthy();
     expect(screen.queryByText("Pi · own Chat")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
@@ -116,36 +116,31 @@ describe("shared Agents entry", () => {
     expect(await screen.findByText("Saved. Open this bot’s Chat from the sidebar to send a request.")).toBeTruthy();
   });
 
-  it("presents Agents as a collapsible rail section with Recipes first and conversational creation", async () => {
+  it("opens management from the heading, folds Bots independently, and adds through Templates", async () => {
     const client = clientFixture();
-    client.list.mockResolvedValue({ enabled: true, agents: [saved] });
-    const onStartChat = vi.fn();
-    render(<ChatAgentsWorkspace>
-      <aside><ChatAgentsRailSection client={client} onStartChat={onStartChat} /></aside>
-      <main><ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></main>
-    </ChatAgentsWorkspace>);
-
-    const heading = await screen.findByRole("button", { name: "Agents" });
-    expect(heading.getAttribute("aria-expanded")).toBe("true");
-    const items = screen.getAllByRole("button");
-    expect(items.findIndex((item) => item.getAttribute("aria-label") === "Browse agent recipes"))
-      .toBeLessThan(items.findIndex((item) => item.getAttribute("aria-label") === "Chat with Meeting helper"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Create an agent" }));
-    expect(onStartChat).toHaveBeenCalledWith(expect.stringContaining("create an agent"));
-    fireEvent.click(screen.getByRole("button", { name: "Chat with Meeting helper" }));
-    expect(onStartChat).toHaveBeenCalledWith("", [{ kind: "agent", id: saved.id, label: saved.name, revision: String(saved.revision) }]);
-
-    fireEvent.click(heading);
-    expect(heading.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByRole("button", { name: "Browse agent recipes" })).toBeNull();
+    client.list.mockResolvedValue({enabled:true,agents:[saved]});
+    const onStartChat=vi.fn();
+    render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} /><ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
+    await screen.findByRole("button",{name:"Chat with Meeting helper"});
+    const items=screen.getAllByRole("button");
+    expect(items.findIndex(item=>item.getAttribute("aria-label")==="Chat with Meeting helper")).toBeLessThan(items.findIndex(item=>item.getAttribute("aria-label")==="Add new agent"));
+    fireEvent.click(screen.getByRole("button",{name:"Chat with Meeting helper"}));
+    expect(onStartChat).toHaveBeenCalledWith("",[{kind:"agent",id:saved.id,label:saved.name,revision:String(saved.revision)}]);
+    fireEvent.click(screen.getByRole("button",{name:"Collapse agents"}));
+    expect(screen.queryByRole("button",{name:"Chat with Meeting helper"})).toBeNull();
+    expect(screen.queryByRole("button",{name:"Add new agent"})).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"Agents"}));
+    expect(await screen.findByRole("button",{name:`Edit ${saved.name}`})).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Expand agents"}));
+    fireEvent.click(screen.getByRole("button",{name:"Add new agent"}));
+    expect(await screen.findByRole("region",{name:"Agent recipes"})).toBeTruthy();
+    expect(onStartChat).toHaveBeenCalledTimes(1);
   });
 
-  it("offers useful build prompts when the Agents section is empty", async () => {
-    render(<ChatAgentsWorkspace><ChatAgentsRailSection client={clientFixture()} onStartChat={vi.fn()} /></ChatAgentsWorkspace>);
-    expect(await screen.findByRole("button", { name: "Build a research scout" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Build a daily planner" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Build a meeting follow-up agent" })).toBeTruthy();
+  it("keeps only Add new in an empty expanded Agents list", async () => {
+    render(<ChatAgentsWorkspace><ChatAgentsRailSection client={clientFixture()} /></ChatAgentsWorkspace>);
+    expect(await screen.findByRole("button",{name:"Add new agent"})).toBeTruthy();
+    expect(screen.queryByText("What should your first agent own?")).toBeNull();
   });
 
   it("opens the complete persisted inspiration catalogue from Recipes without a top divider", async () => {
@@ -155,11 +150,11 @@ describe("shared Agents entry", () => {
       <ChatAgentsRailSection client={client} onStartChat={onStartChat} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent>
     </ChatAgentsWorkspace>);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     const surface = await screen.findByRole("region", { name: "Agent recipes" });
-    expect(screen.getByRole("button", { name: "Browse agent recipes" }).textContent).toContain("72");
+    fireEvent.click(screen.getByRole("button", { name: /See all/ }));
     expect(surface.querySelector("header")?.className).not.toContain("border-b");
-    expect(screen.getByText("72 recipe ideas")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What should your agent do?" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Use Jev Inbox Triage" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Use Account Research Desk" })).toBeTruthy();
     const rabbits = surface.querySelectorAll('[data-recipe-rabbit]');
@@ -195,7 +190,7 @@ describe("shared Agents entry", () => {
     const onStartChat = vi.fn();
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Search recipes" }), { target: { value: "Jev" } });
     const useJev = screen.getByRole("button", { name: "Use Jev Inbox Triage" });
     expect(useJev.textContent).toBe("Build in Chat");
@@ -221,7 +216,7 @@ describe("shared Agents entry", () => {
       { id: "matrix-jev-email-triage", name: "Jev email triage", description: "Classify mail." }] });
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     expect(await screen.findByText(/uses your configured Hermes account/i)).toBeTruthy();
   });
 
@@ -241,7 +236,7 @@ describe("shared Agents entry", () => {
     const onStartChat = vi.fn();
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     fireEvent.click(await screen.findByRole("button", { name: "Use Jev Inbox Triage" }));
     await waitFor(() => expect(onStartChat).toHaveBeenCalledWith("", [
       { kind: "agent", id: saved.id, label: "Jev Inbox Triage", revision: "1" },
@@ -268,7 +263,7 @@ describe("shared Agents entry", () => {
       const onStartChat = vi.fn();
       render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />
         <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
-      fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
       fireEvent.click(await screen.findByRole("button", { name: "Use Jev Inbox Triage" }));
       expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("could not be verified"));
       expect(onStartChat).not.toHaveBeenCalled();
@@ -282,7 +277,7 @@ describe("shared Agents entry", () => {
     const onStartChat = vi.fn();
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     const useJev = await screen.findByRole("button", { name: "Use Jev Inbox Triage" });
     expect((useJev as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByRole("combobox", { name: "Gmail account for Jev" }), { target: { value: "Personal" } });
@@ -299,7 +294,7 @@ describe("shared Agents entry", () => {
     })) });
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     const useJev = await screen.findByRole("button", { name: "Use Jev Inbox Triage" });
     expect((useJev as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/100.Agent limit/)).toBeTruthy();
@@ -313,7 +308,7 @@ describe("shared Agents entry", () => {
     const onStartChat = vi.fn();
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     fireEvent.click(await screen.findByRole("button", { name: "Use Jev Inbox Triage" }));
     await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
     expect(onStartChat).not.toHaveBeenCalled();
@@ -379,7 +374,7 @@ describe("shared Agents entry", () => {
     expect(content.style.background).toBe("var(--bg-surface, var(--matrix-card, var(--card)))");
     expect(content.style.color).toBe("var(--text-primary, var(--matrix-card-fg, var(--foreground)))");
     expect(content.style.border).toBe("1px solid var(--border-default, var(--matrix-border, var(--border)))");
-    expect((await screen.findByText(/Open recipe bots in their own Chat/)).getAttribute("style")).toContain("var(--muted-foreground)");
+    expect((await screen.findByText("No agents yet. Add an agent to get started.")).getAttribute("style")).toContain("var(--muted-foreground)");
     const newAgent = await screen.findByRole("button", { name: "New Agent" });
     expect(newAgent.className).toContain("hover:enabled:bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))]");
     expect(newAgent.className).toContain("focus-visible:ring-[var(--ring,var(--accent,var(--matrix-accent,var(--matrix-ring))))]");
@@ -413,31 +408,19 @@ describe("shared Agents entry", () => {
     const row = await screen.findByRole("button", { name: "Edit Meeting helper" });
     expect(row.querySelector('[data-agent-avatar="bot_meeting01"]')).toBeTruthy();
     expect(row.querySelector('[data-agent-avatar="bot_meeting01"]')?.getAttribute("data-rabbit-state")).toBe("idle");
-    expect(row.textContent).toContain("Ready to mention");
-    expect(row.textContent).toContain("2 skills · 2 integrations");
+    expect(row.textContent).toContain(saved.description);
+    expect(row.textContent).toContain(`@${saved.name}`);
   });
 
-  it("presents the library as a polished AI team workspace with clear starter and roster hierarchy", async () => {
-    const client = clientFixture();
-    client.list.mockResolvedValue({ enabled: true, agents: [saved] });
+  it("presents saved Agents as a compact list and opens settings in a dialog", async () => {
+    const client = clientFixture(); client.list.mockResolvedValue({ enabled: true, agents: [saved] });
     render(<ChatAgentsEntry client={client} />);
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
-
-    const surface = screen.getByRole("region", { name: "Agents" });
-    expect(surface.getAttribute("data-agent-surface")).toBe("library");
-    expect(surface.className).toContain("matrix-chat-agents-panel");
     expect(await screen.findByRole("heading", { name: "Your AI team" })).toBeTruthy();
-    expect(screen.getByText("Build your team")).toBeTruthy();
-
-    const template = await screen.findByRole("button", { name: "Personal Daily Brief" });
-    expect(template.getAttribute("data-agent-template")).toBe("daily-brief");
-    expect(template.className).toContain("matrix-chat-agent-card");
-
-    const savedAgent = screen.getByRole("button", { name: "Edit Meeting helper" });
-    expect(savedAgent.getAttribute("data-agent-card")).toBe("saved");
-    expect(savedAgent.className).toContain("matrix-chat-agent-card");
-    expect(savedAgent.querySelector(".matrix-chat-agent-card__content")).toBeTruthy();
-    expect(savedAgent.textContent).toContain("@Meeting helper");
+    expect(screen.queryByText("Build your team")).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit Meeting helper" }).textContent).toContain("@Meeting helper");
+    fireEvent.click(screen.getByRole("button", { name: "Edit Meeting helper" }));
+    expect(screen.getByRole("dialog", { name: "Edit Agent" })).toBeTruthy();
   });
 
 
@@ -604,7 +587,7 @@ describe("shared Agents entry", () => {
     expect((screen.getByRole("combobox", { name: "Gmail account" }) as HTMLSelectElement).value).toBe("Work");
     expect(screen.getByRole("option", { name: "Work · status unavailable" })).toBeTruthy();
     expect(screen.getByText("Account status could not be verified. Your saved choice is preserved.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
 
     expect(screen.getByText("Connection status is unavailable. Saved account choices are preserved.")).toBeTruthy();

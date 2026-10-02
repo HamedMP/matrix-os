@@ -208,3 +208,5 @@ export { resolveCanonicalChatAttention, type CanonicalChatAttentionState } from 
 
 export { useBotDraftRecovery } from './chat-agents/bots/use-bot-draft-recovery.js';
 export { BotDraftRecoveryPanel } from './chat-agents/bots/BotDraftRecoveryPanel.js';
+
+export { BotComposerControls } from "./chat-agents/bots/BotComposerControls.js";

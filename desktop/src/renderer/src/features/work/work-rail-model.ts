@@ -135,7 +135,7 @@ export function buildWorkRailModel(
     const state = resolveWorkRailAgentState(record);
     if (state === "approval_required" || state === "input_required" || state === "failed") needsYou.push(record);
     else if (state === "running") working.push(record);
-    else if (state === "unseen_completion") done.push(record);
+    else if (state === "unseen_completion" || record.latestSuccessfulCompletion) done.push(record);
     else recents.push(record);
   }
   return {

@@ -14,9 +14,8 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 it("loads on demand, browses a folder and pins a selected file without sending or reading content", async () => {
     load.mockResolvedValue([{ scopeId, organizationId, name: "Authority", state: "ready", snapshot: { files: [file], nextCursor: "plans/roadmap.md" } }]);
     const select = vi.fn();
-    render(<CompanyDriveContextPicker api={api} resources={[]} onSelect={select} enabled/>);
-    expect(load).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Add company drive context" }));
+    render(<CompanyDriveContextPicker api={api} resources={[]} onSelect={select} enabled mentionQuery=""/>);
+    expect(screen.queryByRole("button", { name: "Add company drive context" })).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Browse Authority" }));
     fireEvent.click(screen.getByRole("button", { name: "Open folder plans" }));
     expect(screen.getByText(/Search covers loaded files/)).toBeTruthy();
@@ -34,14 +33,13 @@ it("offers drive context from an @ query and clears a previous account listing",
 });
 it("preserves drafts when unavailable and reports a failed listing instead of an empty drive", async () => {
     load.mockRejectedValue(new Error("private upstream detail"));
-    render(<CompanyDriveContextPicker api={api} resources={[]} onSelect={vi.fn()} enabled/>);
-    fireEvent.click(screen.getByRole("button", { name: "Add company drive context" }));
+    render(<CompanyDriveContextPicker api={api} resources={[]} onSelect={vi.fn()} enabled mentionQuery=""/>);
     expect((await screen.findByRole("alert")).textContent).toBe("Company drives could not be loaded. Try again.");
     expect(screen.queryByText(/private upstream/)).toBeNull();
     cleanup();
     render(<CompanyDriveContextPicker api={api} resources={[]} onSelect={vi.fn()} enabled={false}/>);
-    expect((screen.getByRole("button", { name: "Add company drive context" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/Choose Claude Code/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add company drive context" })).toBeNull();
+    expect(screen.queryByText(/Choose Claude Code/)).toBeNull();
 });
 it("keeps distinct folder and file references, caps drive context at three and marks it as a context mention", () => {
     const one = reference("plans"), two = reference("reports"), three = reference();
@@ -51,15 +49,14 @@ it("keeps distinct folder and file references, caps drive context at three and m
     expect(canAddChatMention([one], { ...one, label: "Renamed" })).toBe(false);
     expect(canAddChatMention([one, two, three], reference("fourth"))).toBe(false);
 });
-it('shows a Bot capability reason and keeps discovery disabled even with retained ordinary capability',()=>{
+it('hides context chrome and keeps discovery disabled for Bots even with retained ordinary capability',()=>{
     const select=vi.fn();
     const view=render(<CompanyDriveContextPicker api={api} resources={[]} onSelect={select} enabled botContext mentionQuery="auth"/>);
-    expect(screen.getByText("Company drive context is not available in Bot chats.")).toBeTruthy();
+    expect(screen.queryByText("Company drive context is not available in Bot chats.")).toBeNull();
     expect(screen.queryByText("Choose Claude Code to use company drive context.")).toBeNull();
-    const add=screen.getByRole("button",{name:"Add company drive context"});
-    expect((add as HTMLButtonElement).disabled).toBe(true);fireEvent.click(add);
+    expect(screen.queryByRole("button",{name:"Add company drive context"})).toBeNull();
     expect(load).not.toHaveBeenCalled();expect(select).not.toHaveBeenCalled();
     view.rerender(<CompanyDriveContextPicker api={api} resources={[]} onSelect={select} enabled={false}/>);
-    expect(screen.getByText("Choose Claude Code to use company drive context.")).toBeTruthy();
+    expect(screen.queryByText("Choose Claude Code to use company drive context.")).toBeNull();
     expect(screen.queryByText("Company drive context is not available in Bot chats.")).toBeNull();
 });

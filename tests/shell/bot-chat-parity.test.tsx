@@ -26,7 +26,7 @@ it("renders a direct bot's identity, pending interaction and authority from its 
     resolve: vi.fn(), revoke: vi.fn(), memory: vi.fn(),
   }, list: vi.fn(async () => ({ agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" }, recipeRef: { recipeId: "research", version: "1" } }] })) };
   render(<BotChatPanel chatId="chat_research" client={client as never} />);
-  expect(await screen.findByText("Research Rabbit")).toBeTruthy();
+  expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
   expect(await screen.findByText("Which company?")).toBeTruthy();
   expect(screen.getByText("Waiting for your answer")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Details" })).toBeTruthy();
@@ -118,7 +118,7 @@ for (const surface of ["Web Canvas", "Web Desktop"] as const) {
 
     render(<ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} />);
-    expect(await screen.findByText("Research Rabbit")).toBeTruthy();
+    expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Which company?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
@@ -133,10 +133,10 @@ it("sends a verified direct bot Chat without an ordinary harness selection", asy
   }, list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
   render(<ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
     onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit} agentClient={client} />);
-  await screen.findByText("Persistent history");
-  expect(screen.getByText("Company drive context is not available in Bot chats.")).toBeTruthy();
+  await screen.findByRole("button", { name: "Choose bot agent and model" });
+  expect(screen.queryByText("Company drive context is not available in Bot chats.")).toBeNull();
   expect(screen.queryByText("Choose Claude Code to use company drive context.")).toBeNull();
-  expect((screen.getByRole("button", { name: "Add company drive context" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole("button", { name: "Add company drive context" })).toBeNull();
   fireEvent.change(screen.getByRole("textbox", { name: /message/i }), { target: { value: "Check the pages" } });
   fireEvent.click(screen.getByRole("button", { name: /send/i }));
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Check the pages", undefined, expect.objectContaining({

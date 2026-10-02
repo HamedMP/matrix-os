@@ -42,7 +42,7 @@ describe("Electron Desktop bot Chat", () => {
     render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
       initialView="conversation" active catalog={providerCatalog} />);
 
-    expect(await screen.findByText("Research Rabbit")).toBeTruthy();
+    expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Which company?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
@@ -113,11 +113,11 @@ it("admits a direct bot turn when the ordinary provider catalog is empty", async
     list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
   render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation"
     active catalog={{ ...providerCatalog, instances: [] }} />);
-  await screen.findByText("Persistent history");
-  expect(screen.getByText("Model: Checking bot model…")).toBeTruthy();
-  expect(screen.getByText("Company drive context is not available in Bot chats.")).toBeTruthy();
+  await screen.findByRole("button", { name: "Choose bot agent and model" });
+  expect(screen.queryByText("Bot model")).toBeNull();
+  expect(screen.queryByText("Company drive context is not available in Bot chats.")).toBeNull();
   expect(screen.queryByText("Choose Claude Code to use company drive context.")).toBeNull();
-  expect((screen.getByRole("button", { name: "Add company drive context" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole("button", { name: "Add company drive context" })).toBeNull();
   const composer = screen.getByRole("textbox", { name: "Reply to chat" });
   await setSharedComposerText(composer, "Check the pages");
   fireEvent.click(screen.getByRole("button", { name: "Send" }));

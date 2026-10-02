@@ -3,12 +3,21 @@ import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectLanding } from "@desktop/renderer/src/features/project/ProjectLanding";
+import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { Project } from "@desktop/renderer/src/stores/board";
 const actions = vi.hoisted(() => ({ showInFiles: vi.fn(), setDialog: vi.fn(), update: vi.fn(), dialog: null as null | "edit", pending: false, error: null, available: true }));
 vi.mock("@desktop/renderer/src/features/work/work-rail/use-project-actions", () => ({ useProjectActions: () => actions }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const project: Project = { id: "project_alpha_id", slug: "alpha", name: "Alpha", kind: "folder", description: "Build the customer portal" };
 describe("ProjectLanding", () => {
+  it("shows ordinary Project chats including pinned chats as metadata-style cards and opens their stable identity", () => {
+    const record = {chat:{id:"chat_alpha",title:"Implementation plan",userState:{pinned:true},attention:"none"},projectId:project.id} as CanonicalChatRecord;
+    const onSelectChat=vi.fn();
+    render(<ProjectLanding project={project} records={[record]} onSelectChat={onSelectChat}><textarea aria-label="Draft" /></ProjectLanding>);
+    fireEvent.click(screen.getByRole("button",{name:"Open Implementation plan"}));
+    expect(onSelectChat).toHaveBeenCalledWith(record);
+  });
+
   it("shows real Project metadata and keeps the existing composer mounted", () => {
     const { rerender } = render(<ProjectLanding project={project}><textarea aria-label="Existing project composer" defaultValue="Unsaved draft" /></ProjectLanding>);
     expect(screen.getByRole("heading", { name: "Alpha" })).toBeTruthy();

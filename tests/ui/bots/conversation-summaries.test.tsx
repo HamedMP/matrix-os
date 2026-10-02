@@ -47,3 +47,28 @@ it('classifies a Bot beyond the old 200-record boundary with bounded concurrency
  expect(result.current.conversations.some(item=>item.chatId==='chat_250')).toBe(true);
  expect(result.current.unresolvedChatIds).toEqual([]);expect(peak).toBeLessThanOrEqual(4);
 });
+
+it('retains verified ordinary identities and Bot reminders when a new Chat arrives during refresh', async () => {
+ const client=fixture(); const {result,rerender}=renderHook(({ids})=>useBotConversationSummaries(client,ids),{initialProps:{ids:['chat_regular','chat_old']}});
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ let finish!: (value:any)=>void;
+ vi.mocked(client.list).mockImplementation(()=>new Promise(resolve=>{finish=resolve}));
+ rerender({ids:['chat_regular','chat_old','chat_new']});
+ expect(result.current.loading).toBe(true);
+ expect(result.current.unresolvedChatIds).toEqual(['chat_new']);
+ expect(result.current.conversations.find(item=>item.chatId==='chat_old')?.pendingApprovalCount).toBe(1);
+ await act(async()=>finish({enabled:true,agents:[]}));
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ expect(result.current.unresolvedChatIds).toEqual([]);
+});
+
+it('keeps verified ordinary identity after a same-client background list failure while new IDs fail closed',async()=>{
+ const client=fixture(); const {result,rerender}=renderHook(({ids})=>useBotConversationSummaries(client,ids),{initialProps:{ids:['chat_regular']}});
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ vi.mocked(client.list).mockRejectedValue(new Error('temporary private failure'));
+ rerender({ids:['chat_regular','chat_new']});
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ expect(result.current.unresolvedChatIds).toEqual(['chat_new']);
+ expect(result.current.error).not.toContain('private');
+ expect(result.current.conversations[0]?.pendingApprovalCount).toBe(0);
+});

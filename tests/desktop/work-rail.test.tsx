@@ -164,7 +164,7 @@ describe("WorkRail", () => {
       .map(button => button.getAttribute("aria-label") ?? button.textContent?.trim())
       .filter(label => ["New chat", "Search chats", "Agents", "Pinned", "Projects", "Needs you", "Working", "Done", "Recent"].includes(label ?? ""));
     expect(orderedLabels).toEqual(["New chat", "Search chats", "Agents", "Pinned", "Projects", "Needs you", "Working", "Done", "Recent"]);
-    fireEvent.click(screen.getByRole("button", { name: "Agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse agents" }));
     expect(screen.queryByRole("button", { name: "Chat with Research bot" })).toBeNull();
     expect(screen.getByRole("button", { name: "Review Research bot approval" })).toBeTruthy();
 
@@ -375,14 +375,16 @@ describe("WorkRail", () => {
       expect(item.className).toContain("text-sm");
       expect(item.className).toContain("font-medium");
     }
-    for (const heading of [pinnedHeading, projectsHeading, recentsHeading]) {
+    expect(projectsHeading.className).toContain("text-sm");
+    expect(projectsHeading.className).not.toContain("uppercase");
+    for (const heading of [pinnedHeading, recentsHeading]) {
       expect(heading.className).toContain("px-2.5");
       expect(heading.className).toContain("pt-2");
       expect(heading.className).toContain("pb-1");
       expect(heading.className).toContain("text-xs");
       expect(heading.className).toContain("font-semibold");
       expect(heading.className).toContain("tracking-wide");
-      expect(heading.querySelector("svg")).toBeNull();
+      expect(heading.querySelector("svg")).toBeTruthy();
     }
   });
 
@@ -1232,6 +1234,23 @@ describe("WorkRail", () => {
 
     expect(screen.queryByRole("button", { name: "Unpin Recent global" })).toBeNull();
     expect((screen.getByRole("button", { name: "Pin Recent global" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("moves a Chat through the existing-project submenu with CAS and retains old placement on failure", async () => {
+    const {client} = setup();
+    const updated = {...recent,projectId:alpha.id,chat:{...recent.chat,revision:2}};
+    client.updateProject=vi.fn().mockRejectedValueOnce(new Error("private failure")).mockResolvedValueOnce(updated);
+    fireEvent.contextMenu(await screen.findByRole("button",{name:"Recent global"}));
+    const trigger=await screen.findByRole("menuitem",{name:"Move to project"});
+    fireEvent.keyDown(trigger,{key:"ArrowRight"});
+    fireEvent.click(await screen.findByRole("menuitem",{name:"Alpha"}));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("button",{name:"Recent global"}).closest('[data-placement]')?.getAttribute("data-placement")).toBe("recent");
+    fireEvent.contextMenu(screen.getByRole("button",{name:"Recent global"}));
+    fireEvent.keyDown(await screen.findByRole("menuitem",{name:"Move to project"}),{key:"ArrowRight"});
+    fireEvent.click(await screen.findByRole("menuitem",{name:"Alpha"}));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Recent global"}).closest('[data-placement]')?.getAttribute("data-placement")).toBe("project"));
+    expect(client.updateProject).toHaveBeenLastCalledWith("chat_recent",{baseRevision:1,projectId:alpha.id});
   });
 
   it("shows Rename, Pin, and Delete in the Chat context menu", async () => {

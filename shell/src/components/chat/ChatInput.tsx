@@ -43,6 +43,7 @@ export function ChatInput({
   attachmentsEnabled,
   driveContextEnabled = false,
   botContext = false,
+  botControls,
   speechClient,
   speechCaptureAdapter,
 }: {
@@ -63,6 +64,7 @@ export function ChatInput({
   attachmentsEnabled: boolean;
   driveContextEnabled?: boolean;
   botContext?: boolean;
+  botControls?: React.ReactNode;
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
 }) {
@@ -246,6 +248,7 @@ export function ChatInput({
           ) : null}
         </div>
       </div>
+      {botControls ? <div className="flex min-w-0 justify-end pt-1">{botControls}</div> : null}
     </div>
   );
 }

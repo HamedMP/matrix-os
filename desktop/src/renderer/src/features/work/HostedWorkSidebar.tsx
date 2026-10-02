@@ -64,6 +64,9 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       onSelectProject={openWorkProject}
       onNewProjectChat={openWorkProject}
       onSelectChat={selectChat}
+      onChatMoved={(record, project) => {
+        if (record.chat.id === tab.chatId) selectChat(record, project);
+      }}
       onChatRenamed={(record) => {
         useTabs.getState().updateChatTitle(record.chat.id, record.chat.title);
       }}

@@ -1,3 +1,5 @@
+import { Dialog } from "../Dialog.js";
+import { BotEditorApps } from "./bots/BotEditorApps.js";
 import { matrixBotModelChoices } from "./bots/MatrixBotModelField.js";
 import { isChatAgentDriver } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
@@ -42,69 +44,49 @@ async function loadRecipeResources(client: ChatAgentClient) {
   };
 }
 
-function AgentLibraryBody({ state, models, edit, change, save, archive, back, retryRecipes, setup }: {
-  state: Library; models: ReturnType<typeof deriveCanonicalProviderChoices>;
+function AgentLibraryBody({ state, client, models, edit, change, save, archive, back, retryRecipes, setup }: {
+  state: Library; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   edit(agent: ChatAgent | "new" | "daily-brief"): void; change(value: Partial<Draft>): void;
   save(): Promise<void>; archive(): Promise<void>; back(): void; retryRecipes(): void; setup?: () => void;
 }) {
   if (state.loading) return <p role="status" className="mt-5 text-sm">Loading Agents…</p>;
   if (!state.enabled) return <p className="mt-5 text-sm">Agents are disabled for this computer.</p>;
-  if (state.draft && state.editing) return <AgentEditor draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog}
-    recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
-    connectionError={state.connectionError}
-    change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRetryRecipe={retryRecipes} />;
-  return <div className="matrix-chat-agents-library mt-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-7">
-      <section className="matrix-chat-agents-hero overflow-hidden rounded-2xl border p-5 sm:p-6" aria-labelledby="agent-team-heading">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={muted}>Agent library</p>
-            <h3 id="agent-team-heading" className="mt-2 text-2xl font-semibold tracking-[-0.035em]">Your AI team</h3>
-            <p className="mt-2 max-w-xl text-sm leading-6" style={muted}>Open recipe bots in their own Chat, or bring custom specialists into a Chat with @.</p>
-          </div>
-          <div className="matrix-chat-agents-presence flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs">
-            <span className="relative flex h-2.5 w-2.5" aria-hidden="true"><span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500/25" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" /></span>
-            <span>{state.agents.length ? `${state.agents.length} ready` : "Ready when you are"}</span>
-          </div>
-        </div>
-      </section>
-      <section aria-labelledby="agent-starters-heading" className="grid gap-3">
-        <div className="flex items-end justify-between gap-3">
-          <div><h3 id="agent-starters-heading" className="text-base font-semibold tracking-[-0.015em]">Build your team</h3>
-            <p className="mt-1 text-xs" style={muted}>Start with a proven workflow or make a specialist from scratch.</p></div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-        {state.recipeCatalog?.enabled ? <button type="button" aria-label="Personal Daily Brief" data-agent-template="daily-brief" className={`${button} matrix-chat-agent-card group min-h-32 min-w-0 overflow-hidden rounded-2xl p-4 text-left`} disabled={!state.catalog || state.agents.length >= 100}
-          onClick={() => edit("daily-brief")}><span className="matrix-chat-agent-card__content flex h-full min-w-0 flex-col justify-between gap-5"><span className="flex items-start justify-between gap-3"><AgentAvatar id="template_daily_brief" name="Personal Daily Brief" /><span className="matrix-chat-agent-chip rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em]">Starter</span></span><span className="min-w-0"><span className="block truncate text-base font-semibold" title="Personal Daily Brief">Personal Daily Brief</span><span className="mt-1 block text-xs leading-5" style={muted}>Turns email and calendar into a focused plan for your day.</span></span></span></button> : null}
-        <button type="button" aria-label="New Agent" data-agent-template="custom" className={`${button} matrix-chat-agent-card group min-h-32 overflow-hidden rounded-2xl p-4 text-left`} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>
-          <span className="matrix-chat-agent-card__content flex h-full flex-col justify-between gap-5"><span className="grid h-12 w-12 place-items-center rounded-2xl border border-dashed text-2xl font-light" aria-hidden="true">+</span><span><span className="block text-base font-semibold">Create a specialist</span><span className="mt-1 block text-xs leading-5" style={muted}>Choose its role, instructions, model, and capabilities.</span></span></span>
-        </button>
-        </div>
-      </section>
-      {state.recipeLoading ? <p role="status" className="text-xs" style={muted}>Loading recipe templates…</p> : null}
-      {state.recipeError || state.connectionError ? <div className="flex flex-wrap items-center gap-2"><p className="text-xs">{state.recipeError
-        ? "Recipe templates are unavailable." : "Connection status is unavailable. Recipe account choices will ask when run."}</p>
-        <button type="button" className={button} onClick={retryRecipes}>Retry recipe options</button></div> : null}
-      <section aria-labelledby="agent-roster-heading" className="grid gap-3">
-        <div><h3 id="agent-roster-heading" className="text-base font-semibold tracking-[-0.015em]">Your collaborators</h3>
-          <p className="mt-1 text-xs" style={muted}>Recipe bots have their own Chat; custom specialists can be mentioned with @.</p></div>
-        {!state.agents.length && !state.error ? <div className="matrix-chat-agents-empty rounded-2xl border border-dashed px-5 py-8 text-center"><p className="text-sm font-medium">Your team is waiting to take shape.</p><p className="mx-auto mt-1 max-w-md text-xs leading-5" style={muted}>Create a reusable specialist for briefs, reviews, research, or any work you repeat.</p></div> : null}
-        <div className="grid gap-3 sm:grid-cols-2">
-        {state.agents.map((agent) => {
-          const skills = agent.recipe?.skills.length ?? 0;
-          const integrations = agent.recipe?.integrations.length ?? 0;
-          const capabilitySummary = agent.recipe
-            ? `${skills} ${skills === 1 ? "skill" : "skills"} · ${integrations} ${integrations === 1 ? "integration" : "integrations"}`
-            : "Custom instructions";
-          return <button key={agent.id} type="button" aria-label={`Edit ${agent.name}`} data-agent-card="saved" className={`${button} matrix-chat-agent-card group min-h-36 min-w-0 max-w-full overflow-hidden rounded-2xl p-4 text-left`} onClick={() => edit(agent)}>
-            <span className="matrix-chat-agent-card__content flex h-full min-w-0 flex-col justify-between gap-5">
-              <span className="flex min-w-0 items-start gap-3"><AgentAvatar id={agent.id} name={agent.name} /><span className="min-w-0 flex-1"><span className="flex min-w-0 items-center gap-2"><span className="min-w-0 flex-1 truncate text-base font-semibold" title={agent.name}>{agent.name}</span><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" title={agent.recipeRef ? "Bot Chat" : "Ready to mention"} aria-hidden="true" /></span><span className="mt-1.5 block w-full min-w-0 text-xs leading-5" title={agent.description} style={muted}>{agent.description || "Saved specialist"}</span></span></span>
-              <span className="flex min-w-0 flex-wrap items-center gap-2 text-[11px]"><span className="matrix-chat-agent-mention max-w-full truncate rounded-full px-2 py-1 font-medium">{agent.recipeRef ? "Own Chat" : `@${agent.name}`}</span><span className="matrix-chat-agent-chip truncate rounded-full border px-2 py-1" style={muted}><span className="sr-only">{agent.recipeRef ? "Bot Chat · " : "Ready to mention · "}</span>{agent.recipeRef ? "Recipe bot" : capabilitySummary}</span></span>
-            </span>
-          </button>;
-        })}
-        </div>
-      </section>
-    </div>;
+  return <div className="matrix-chat-agents-library mx-auto grid w-full max-w-3xl gap-5 py-8">
+    <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)} className="grid gap-5">
+    <header className="flex items-center justify-between gap-3">
+      <h3 className="text-xl font-semibold">Your AI team</h3>
+      <button type="button" aria-label="New Agent" className={button} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>+ New agent</button>
+    </header>
+    {!state.agents.length && !state.error ? <p className="py-6 text-sm" style={muted}>No agents yet. Add an agent to get started.</p> : null}
+    <div className="grid gap-2" aria-label="Saved agents">
+      {state.agents.map(agent => <button key={agent.id} type="button" aria-label={`Edit ${agent.name}`} data-agent-card="saved"
+        className={`${button} matrix-chat-agent-list-row flex min-w-0 items-center gap-3 p-3 text-left`} onClick={() => edit(agent)}>
+        <AgentAvatar id={agent.id} name={agent.name} size="small" />
+        <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium" title={agent.name}>{agent.name}</span>
+          <span className="mt-1 block truncate text-xs" title={agent.description} style={muted}>{agent.description || "Saved specialist"}</span></span>
+        <span className="shrink-0 text-xs" style={muted}>{agent.recipeRef ? "Own Chat" : `@${agent.name}`}</span>
+        <span aria-hidden="true" style={muted}>›</span>
+      </button>)}
+    </div>
+    {state.recipeCatalog?.enabled ? <button type="button" aria-label="Personal Daily Brief" className={`${button} justify-self-start text-xs`}
+      disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("daily-brief")}>Personal Daily Brief</button> : null}
+    {state.recipeLoading ? <p role="status" className="text-xs" style={muted}>Loading recipe templates…</p> : null}
+    {state.recipeError || state.connectionError ? <div className="flex flex-wrap items-center gap-2"><p className="text-xs">{state.recipeError
+      ? "Recipe templates are unavailable." : "Connection status is unavailable. Recipe account choices will ask when run."}</p>
+      <button type="button" className={button} onClick={retryRecipes}>Retry recipe options</button></div> : null}
+    </div>
+    {state.draft && state.editing ? <Dialog open aria-label={state.editing === "new" ? "New Agent" : "Edit Agent"}
+      className="matrix-agent-edit-dialog" style={{...chatAgentSurfaceStyle, width:"min(92vw,440px)"}} onClose={() => { if (!state.pending) back(); }}>
+      <header className="flex items-center gap-3"><AgentAvatar id={state.editing === "new" ? "new-agent" : state.editing.id} name={state.draft.name || "New agent"} size="small" />
+        <div className="min-w-0 flex-1"><h3 className="text-base font-semibold">{state.editing === "new" ? "New agent" : "Edit agent"}</h3><p className="truncate text-xs" style={muted}>{state.draft.name}</p></div>
+        <button type="button" className={button} aria-label="Close agent settings" disabled={state.pending} onClick={back}>×</button>
+      </header>
+      <AgentEditor draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog}
+        recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
+        connectionError={state.connectionError} change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRetryRecipe={retryRecipes} cancelLabel="Cancel" apps={state.editing !== "new" && state.editing.recipeRef ? <BotEditorApps key={state.editing.id} agentId={state.editing.id} client={client}/> : undefined} />
+      {state.error ? <p role="alert" className="mt-3 text-xs">{state.error}</p> : null}
+    </Dialog> : null}
+  </div>;
 }
 
 export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat }: {
@@ -305,12 +287,12 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
         (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}), ...(name ? { name } : {}) })).chatId : undefined}
       onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
-    <AgentLibraryBody state={state} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
+    <AgentLibraryBody state={state} client={client} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
       ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model) : models}
       edit={edit} change={change} save={save} archive={archive}
       back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes}
       setup={onSetup ? () => { onClose(); onSetup(); } : undefined} />
-    {state.error ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 min-w-0 truncate text-sm" title={state.notice}>{state.notice}</p> : null}
+    {state.error && !state.editing ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 min-w-0 truncate text-sm" title={state.notice}>{state.notice}</p> : null}
     </div>}
     </div>
   </section>;

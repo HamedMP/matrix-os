@@ -168,6 +168,7 @@ export function SharedChatComposer({
   onSelectionChange,
   instanceLocked,
   automaticRouting = false,
+  botControls,
   resources = [],
   resourceSearch,
   onAttach,
@@ -206,6 +207,7 @@ export function SharedChatComposer({
   onSelectionChange: (selection: CanonicalComposerSelection) => void;
   instanceLocked: boolean;
   automaticRouting?: boolean;
+  botControls?: ReactNode;
   resources?: CanonicalChatResourceReference[];
   resourceSearch?: (query: string) => Promise<CanonicalChatResourceReference[]>;
   onAttach?: () => void;
@@ -549,7 +551,7 @@ export function SharedChatComposer({
               />
             ) : null}
             {runActions}
-            {automaticRouting ? <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Bot model</span> : <ProviderModelPicker
+            {automaticRouting ? botControls : <ProviderModelPicker
               catalog={catalog}
               selection={selection}
               instanceLocked={instanceLocked}

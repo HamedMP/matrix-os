@@ -65,7 +65,16 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
         if (current) setSnapshot({ client, key: idsKey, value: { conversations, unresolvedChatIds: [...unresolved], loading: false, error: failed ? 'Some bot status is unavailable. Refresh to try again.' : null } });
       } catch (error: unknown) {
         console.warn('[bots] List unavailable:', error instanceof Error ? error.name : 'UnknownError');
-        if (current) setSnapshot(previous => ({ client, key: idsKey, value: { conversations: previous?.client === client ? previous.value.conversations.map(item => ({ ...item, pendingApprovalCount: 0 })) : [], unresolvedChatIds: allIds, loading: false, error: 'Bot status is unavailable. Refresh to try again.' } }));
+        if (current) setSnapshot(previous => {
+          const known = previous?.client === client ? previous : null;
+          const verified = new Set(known ? JSON.parse(known.key) as string[] : []);
+          const unresolved = new Set(known?.value.unresolvedChatIds ?? []);
+          return { client, key: idsKey, value: {
+            conversations: known ? known.value.conversations.map(item => ({...item,pendingApprovalCount:0})) : [],
+            unresolvedChatIds: allIds.filter(id => !verified.has(id) || unresolved.has(id)),
+            loading:false,error:'Bot status is unavailable. Refresh to try again.',
+          }};
+        });
       } finally { pending = false; }
     };
     void refresh();
@@ -76,5 +85,10 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
   }, [client, idsKey, active, refreshKey]);
   if (!active || !client?.bots) return empty;
   if (snapshot?.client === client && snapshot.key === idsKey) return snapshot.value;
-  return { ...empty, loading: true, unresolvedChatIds: [...new Set(recordIds)] };
+  // A changed list is a background refresh within this authenticated client.
+  // Keep verified identities visible; only new/unverified IDs wait for binding lookup.
+  const previous = snapshot?.client === client ? snapshot.value : empty;
+  const verifiedIds = new Set(snapshot?.client === client ? JSON.parse(snapshot.key) as string[] : []);
+  const unresolved = new Set(previous.unresolvedChatIds);
+  return { ...previous, loading: true, unresolvedChatIds: [...new Set(recordIds)].filter(id => !verifiedIds.has(id) || unresolved.has(id)) };
 }

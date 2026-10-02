@@ -22,11 +22,11 @@ export function applyProjectedChats(
 }
 
 
-export async function loadWorkRailChats(client: CanonicalChatClient, unreadOnly = false): Promise<CanonicalChatRecord[]> {
+export async function loadWorkRailChats(client: CanonicalChatClient, unreadOnly = false, projectId?: string): Promise<CanonicalChatRecord[]> {
   const records: CanonicalChatRecord[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_CHAT_PAGES; page += 1) {
-    const response = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), limit: 100, ...(cursor ? { cursor } : {}) });
+    const response = await client.list({ ...(projectId ? {projectId} : {}), ...(unreadOnly ? { unreadOnly: true } : {}), limit: 100, ...(cursor ? { cursor } : {}) });
     records.push(...response.items);
     if (!response.nextCursor || response.nextCursor === cursor) break;
     cursor = response.nextCursor;

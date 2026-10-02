@@ -184,12 +184,12 @@ export function TopBar({
   };
 
   return (
-    <div className="relative shrink-0" style={{ height: OS_WINDOW_GESTURE_HEIGHT }}>
+    <div className="relative shrink-0" style={{ height: OS_WINDOW_GESTURE_HEIGHT, pointerEvents: "none" }}>
       {onDragStart ? (
         <div
           data-os-window-gesture-layer
           data-testid="desktop-window-drag-handle"
-          className="absolute inset-0 z-20"
+          className="pointer-events-auto absolute inset-0 z-20"
           onPointerDown={onDragStart}
           onDoubleClick={handleDoubleClick}
         />
@@ -360,7 +360,7 @@ export function OSWindow({
         </main>
       </div>
       {topBar ? (
-        <div data-os-window-top-bar-overlay className="absolute inset-x-0 top-0 z-20">
+        <div data-os-window-top-bar-overlay className="absolute inset-x-0 top-0 z-20" style={{ pointerEvents: "none" }}>
           {topBar}
         </div>
       ) : null}

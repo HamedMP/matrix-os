@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ChevronRight, Folder } from "@renderer/lib/hugeicons";
 
 export function WorkRailSection({
   label,
@@ -24,12 +25,14 @@ export function WorkRailSection({
           type="button"
           aria-label={label}
           aria-expanded={expanded}
-          className="min-w-0 flex-1 rounded-sm px-2.5 pt-2 pb-1 text-left text-xs font-semibold tracking-wide uppercase outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 text-left outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${label === "Projects" ? "min-h-9 text-sm font-medium" : "pb-1 pt-2 text-xs font-semibold uppercase tracking-wide"}`}
           style={{ color: "var(--text-tertiary)" }}
           onClick={onToggle}
         >
-          {label}
-          {count ? <span aria-hidden className="ml-2 text-[10px] font-normal tabular-nums">{count}</span> : null}
+          {label === "Projects" ? <Folder size={14} aria-hidden /> : null}
+          <span>{label}</span>
+          <span className="ml-auto text-[10px] font-normal tabular-nums" aria-hidden>{count || null}</span>
+          <ChevronRight size={12} aria-hidden className={expanded ? "rotate-90" : undefined} />
         </button>
         {action}
       </div>

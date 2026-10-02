@@ -5,6 +5,18 @@ import { describe, expect, it } from "vitest";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
 
 describe("Chat-bound composer drafts", () => {
+  it("keeps an explicitly removed Project detached through edits and navigation", () => {
+    const view = renderHook(({ projectId }) => useChatComposerDrafts({ clientIdentity: "client", chatId: null, projectId, conversation: false }), { initialProps: { projectId: "matrix-os" as string | null } });
+    act(() => { view.result.current.setText("keep this draft"); view.result.current.setDraftProjectId(null); });
+    expect(view.result.current.draftProjectId).toBeNull();
+    act(() => view.result.current.setText("keep this draft edited"));
+    view.rerender({ projectId: null });
+    view.rerender({ projectId: "matrix-os" });
+    expect(view.result.current.draftProjectId).toBeNull();
+    expect(view.result.current.text).toBe("keep this draft edited");
+    act(() => view.result.current.prepareNewChatDraft());
+    expect(view.result.current.draftProjectId).toBe("matrix-os");
+  });
   it("clears an abandoned new-Chat draft without changing existing Chat drafts", () => {
     const clientIdentity = {};
     const view = renderHook(

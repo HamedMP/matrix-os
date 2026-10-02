@@ -1,3 +1,5 @@
+import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { projectContext } from "./canonical-project-context";
 import { useBotDraftNavigation } from "./use-bot-draft-navigation";
 import { CanonicalChatIdentityGate } from "./CanonicalChatIdentityGate";
 import { CanonicalNewChatContent } from "./CanonicalNewChatContent";
@@ -9,6 +11,7 @@ import {
   chatReadAction,
   CanonicalSharedChatPanel,
   BotChatPanel,
+  BotComposerControls,
   useDirectBotBinding,
   BotDraftRecoveryPanel,
   SharedChatPanel,
@@ -31,7 +34,6 @@ import type {
   CanonicalChatDetailResponse,
   CanonicalProviderCatalog,
   CanonicalChatQueuedTurn,
-  KernelConversationContextProjection,
 } from "@matrix-os/contracts";
 import { Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -79,23 +81,6 @@ import { useChatArtifactActions } from "./use-chat-artifact-actions";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
-function projectContext(
-  projectId: string | undefined,
-  projects: ReturnType<typeof useBoard.getState>["projects"],
-  fallbackLabel?: string,
-): KernelConversationContextProjection | null {
-  if (!projectId) return null;
-  const project = projects.find((candidate) => (
-    candidate.id === projectId || candidate.slug === projectId
-  ));
-  return {
-    projectId,
-    projectName: project?.name ?? fallbackLabel ?? projectId,
-    projectKind: project?.kind ?? "folder",
-    ...(project?.repository ? { repositoryLabel: project.repository } : {}),
-    status: project || fallbackLabel ? "ready" : "unavailable",
-  };
-}
 
 export function CanonicalChatWorkspace({
   api,
@@ -152,6 +137,7 @@ export function CanonicalChatWorkspace({
   const projects = useBoard((state) => state.projects);
   const fileNavigation = useChatFileNavigation();
   const chromeHost = useSurfaceChromeHost();
+  const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
@@ -333,8 +319,9 @@ export function CanonicalChatWorkspace({
     onActiveChatChanged?.(record.chat.id, record.chat.title);
   }, [controller.activeChatId, controller.detail?.record, initialChatId, initialView, onActiveChatChanged]);
 
+  const composerProjectId = controller.detail ? controller.detail.record.projectId ?? null : draftProjectId;
   const context = projectContext(
-    controller.detail?.record.projectId ?? draftProjectId ?? projectId ?? undefined,
+    composerProjectId ?? undefined,
     projects,
     projectLabel,
   );
@@ -390,8 +377,7 @@ export function CanonicalChatWorkspace({
     action.kind === "retry" || action.kind === "approval"
   ), []);
   const activeProjectSlug = projects.find((project) => (
-    project.id === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
-    || project.slug === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
+    project.id === composerProjectId || project.slug === composerProjectId
   ))?.slug;
   const resourceSearch = useCallback(async (resourceQuery: string) => {
     const results = await Promise.allSettled([
@@ -507,7 +493,7 @@ export function CanonicalChatWorkspace({
       };
       const admitted = attempt?.operation === "queue"
         ? await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted)
-        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId, acknowledgeAccepted);
+        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId, acknowledgeAccepted);
       if (!admitted || !isCurrentOwner()) return;
       if ("record" in admitted) {
         reportedChatId.current = admitted.record.chat.id;
@@ -722,6 +708,7 @@ export function CanonicalChatWorkspace({
         ))}
         catalog={providerCatalog}
         automaticRouting={Boolean(directBotId)}
+        botControls={directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={client.agents} catalog={providerCatalog} catalogLoading={providerCatalogLoading} zIndex={DESKTOP_Z_INDEX.popover} disabled={uploadingAttachments} refreshKey={botEventRevision} onChanged={() => setBotEventRevision(value => value + 1)}/> : undefined}
         onProviderPickerOpen={catalog ? undefined : liveCatalog.refresh}
         providerCatalogLoading={!directBotId && providerCatalogLoading}
         selection={selection}
@@ -882,13 +869,14 @@ export function CanonicalChatWorkspace({
         </div>
       </aside>)}
       <SharedChatSurface
+        ref={setBotDetailsContainer}
         ariaLabel={projectId ? "Project Chat" : "Global Chat"}
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
         aria-hidden={inspectorExclusive || undefined}
         inert={inspectorExclusive || undefined}
         hidden={inspectorExclusive}
         className={cn(
-          "relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+          "matrix-bot-chat-layout @container/bot-chat relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
           inspectorExclusive ? "hidden" : "flex",
         )}
         {...attachments.paneProps}
@@ -916,7 +904,7 @@ export function CanonicalChatWorkspace({
           <>
             {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
-              client={client.agents} directBotId={directBotId} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
+              client={client.agents} directBotId={directBotId} detailsContainer={botDetailsContainer} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{

@@ -40,6 +40,8 @@ export function WorkRailChatRow({
   readPending = false,
   onPin,
   onDelete,
+  moveItems,
+  moving = false,
 }: {
   record: CanonicalChatRecord;
   active: boolean;
@@ -56,6 +58,8 @@ export function WorkRailChatRow({
   readPending?: boolean;
   onPin: () => void;
   onDelete: () => void;
+  moveItems?: {label: string; disabled?: boolean; onSelect: () => void}[];
+  moving?: boolean;
 }) {
   const selectTimerRef = useRef<number | null>(null);
   const renameTimerRef = useRef<number | null>(null);
@@ -84,6 +88,7 @@ export function WorkRailChatRow({
         disabled: pinning,
         onSelect: onPin,
       },
+      ...(moveItems ? [{ label: "Move to project", disabled: moving || Boolean(record.activeRun), children: moveItems }] : []),
       {
         label: "Delete",
         danger: true,

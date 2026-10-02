@@ -1,6 +1,6 @@
 # Chat and Bot redesign with Project navigation
 
-Status: final scope approved for implementation by the user on 2026-10-02. User additionally requires reference to current Matrix AI Gateway changes and matching Preview testing after implementation.
+Status: implementation in progress; the first UI delivery was rejected in Human Review on 2026-10-03. User additionally requires reference to current Matrix AI Gateway changes and matching Preview testing after implementation.
 
 ## Goal and value
 
@@ -22,14 +22,14 @@ Backend rules inspected on the active unmerged #2117 head `d687fc468cdcf29db9aca
 | R2 | Separate conversation lists | Bot conversations do not appear as ordinary Chat entries in Pinned, Project Chats, Working, Done or Recent. Bot identity comes from authenticated bindings, not names. Preserve transcripts, artifacts, memory, grants, stable IDs and older histories. |
 | R3 | @Bot navigation | Selecting a Bot candidate opens that Bot Chat and carries composed text into its input without sending or changing the source Chat provider. Preserve an existing target draft; keep source text recoverable on conflict/failure. @Chat and Drive references retain current behavior. |
 | R4 | Project center view | Current expandable Project/Chat tree remains. Project name opens its center view with existing description/files/new-Chat capabilities; expansion is a separate action. Shared sidebar persists and state survives navigation. |
-| R5 | Sidebar | Exact order: New chat, Search, Agents (collapsible), Pinned, Projects, Needs you, Working, Done, Recent. New chat stays sticky and visible while scrolling. Preserve current rabbit AgentAvatar/RecipeRabbit icons. Counts/subtitles/status derive from actual state. |
+| R5 | Sidebar | Exact order: New chat, Search, Shared with me, Agents (collapsible), Pinned, Projects, Needs you, Working, Done, Recent. New chat stays sticky and visible while scrolling. Preserve current rabbit AgentAvatar/RecipeRabbit icons. Counts/subtitles/status derive from actual state. |
 | R6 | Existing lifecycle controls | Restyle supported pin/rename/move/delete/settle controls without new lifecycle semantics. Preserve provider/execution-root and current active-run/conflict restrictions; unsupported actions are not offered as working features. |
 | R7 | Home states | Align new/returning-user landing, starters and composer with design using existing state and working connection actions. Suggestions do not promise unavailable capabilities. |
 | R8 | Bot creation | Restyle existing templates/setup, name/model controls and available integration metadata/actions. Preserve idempotent creation and direct binding. Only working triggers are actionable. New scratch-builder, trial and automatic-first-run engines are deferred. |
 | R9 | Bot Chat/details/editor | Align persistent identity, activity/results, instructions and existing editable fields/actions with design. Preserve supported managed model edits and immutable recipe runtime; show runtime/model/source truthfully. No new switching/schedule/pause/archive behavior. |
 | R10 | Approval and attention | Existing scoped effect preview/details/allow-deny controls remain in Bot Chat. Pending Bot approval also appears as a Needs you reminder that opens the same Bot Chat, without adding an ordinary Chat entry. Derive reminder state from actual unresolved approvals and remove stale reminders when resolved/refreshed. |
 | R11 | Existing shared discovery | Restyle current authorized sharing/search results, resource/actor badges and filters. Preserve access checks and existing scope; add no new invitation engine or terminal-wide search backend. |
-| R12 | Bot-specific selector/context | At Bot conversation start, show current Automatic and available managed Matrix AI models without exposing the owned execution runtime with authoritative availability/reasons/source. Exclude unsupported Hermes/native Pi/coding routes for recipe Bots. If resolved source is unavailable, display Automatic without guessing. Reflect current Company Drive restriction; preserve backend funding/routing semantics. |
+| R12 | Bot-specific selector/context | At Bot conversation start, show current Automatic and available managed Matrix AI models without exposing the owned execution runtime with authoritative availability/reasons/source. Exclude unsupported Hermes/native Pi/coding routes for recipe Bots. If resolved source is unavailable, display Automatic without guessing. Remove the standalone Add context button and eligibility hint from composer presentation; preserve current authorized references and backend funding/routing semantics. |
 
 ## Scope and constraints
 
@@ -57,3 +57,18 @@ Deliver focused Conventional Commit PR(s) with one primary English Linear issue 
 New Hermes/personal-subscription Pi channels, cross-runtime switching, Company Drive on Pi/Hermes, scratch/trial/first-run engines, meeting/daily schedulers, new sharing/search endpoints, new lifecycle semantics, broad Settings redesign and cross-provider memory import are deferred. No auto-merge of dependencies or owner-data cleanup.
 
 Technical risks are active unmerged dependency heads, legacy Bot identity/draft compatibility and limited Figma token extraction. Resolve version/base/visual details during implementation preparation without widening the approved UI behavior; escalate any unavoidable backend expansion before changing scope. Rollback removes presentation changes while preserving bindings and owner data.
+
+## Human Review acceptance additions (2026-10-03)
+
+The user supplied actual Electron screenshots and16 required corrections. Earlier layout alignment is not accepted. These requirements override the earlier presentation choices without adding channels or changing backend authority.
+
+- Agents and Projects use compact navigation rows with count/disclosure on the right. Agents label opens existing management; its separate disclosure expands all Bot entries, and Add new opens Templates. Shared with me is immediately below Search. Rabbit avatars remain.
+- Project title, Description/Files cards, connection guide and bottom composer share an aligned content width. Its ordinary Chats appear in matching cards; both Project tree and center navigate stable IDs.
+- Bot Chat has one compact identity header and a bottom composer showing the actual Agent and authoritative provider/model/source. Details is a side panel, editor a compact dialog. Templates and management share compact cards/list styling; no invented hero/starter grid. Template CTAs have consistent geometry.
+- The standalone Add context button/hint is removed, and model-search empty/loading/results states have one separator. Existing reference capabilities and unavailable provider reasons remain truthful.
+- Removing Project context stays removed from the draft/Chat; selected Project route must not silently reassign it. Explicit New chat in a Project can create a fresh Project draft separately.
+- Completed terminal Chats remain in Done after being seen. Newly added IDs or background identity refresh must not blank existing verified list classifications in the same authority scope. Changed clients/actors/runtimes fail closed.
+- Maximized New chat is physically clickable. Transparent window chrome must not intercept its pointer area; semantic accessibility clicks alone do not prove native pointer behavior.
+- Preserve existing Chat right-click actions and add Move to project submenu with existing Projects and New project. Reuse existing revision/active-run/root rules; successful moves update rail/Project center, failed moves retain original assignment. New Project creation then assignment catches both failure stages and ignores stale scope responses.
+
+Acceptance includes windowed and maximized Electron pixels, refresh/send list continuity, real menu actions, context detach, Bot model controls and editor save. Tests do not replace native interaction evidence. Existing after-reference mention cursor defect remains ENG-109.

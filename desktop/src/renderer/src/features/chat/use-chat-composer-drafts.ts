@@ -90,7 +90,7 @@ export function useChatComposerDrafts({
     }, [projectId, scope]),
     text: draft?.text ?? "",
     referenceTokens: draft?.referenceTokens ?? EMPTY_REFERENCE_TOKENS,
-    draftProjectId: draft?.projectId ?? projectId,
+    draftProjectId: draft ? draft.projectId : projectId,
     setText: useCallback((nextText: SetStateAction<string>) => {
       setDrafts((current) => {
         const currentText = current[scope]?.text ?? "";

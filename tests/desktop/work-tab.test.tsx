@@ -241,7 +241,7 @@ describe("WorkTab rail integration", () => {
     }) as typeof api.get;
     api.post = vi.fn(async () => ({ chatId: "chat_bot_created", operation: "created", agent: { id: "bot_competitor1", name: "Competitor Watch", avatarSeed: "a".repeat(16), revision: 1, status: "active" } })) as typeof api.post;
     render(<WorkTab route="chat" active />);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     const recipe = (await screen.findByText("Watch pages")).closest("article")!;
     const create = within(recipe).getByRole("button", { name: "Use Competitor Watch" });
     expect((create as HTMLButtonElement).disabled).toBe(false);
@@ -325,11 +325,11 @@ describe("WorkTab rail integration", () => {
     useUi.setState(useUi.getInitialState(), true);
   });
 
-  it("routes the Agents plus action into a fresh conversational Chat draft", async () => {
+  it("routes Add new into Templates while preserving the current Chat", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Create an agent" }));
-    await waitFor(() => expect(chatTabProps.draftRequests.at(-1)?.text).toContain("Help me create an agent"));
-    expect(useTabs.getState().tabs.find((tab) => tab.kind === "work")?.chatView).toBe("draft");
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
+    await screen.findByText("What should your agent do?");
+    expect(chatTabProps.draftRequests.filter(Boolean)).toEqual([]);
   });
 
   afterEach(() => {
@@ -760,6 +760,20 @@ describe("WorkTab rail integration", () => {
 
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
+  });
+
+  it("suppresses the generic native Chat title after authenticated Bot binding", async () => {
+    const api = useConnection.getState().api!;
+    const original = api.get;
+    api.get = vi.fn(async (path: string) => path === "/api/chats/chat_global/bot" ? {agentId:"bot_writer01"} : original(path)) as typeof api.get;
+    function HostedBot() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({setChrome}), []);
+      return <SurfaceChromeContext.Provider value={host}><output data-testid="hide-chat-title">{String(chrome?.hideTitle)}</output>
+        <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation"/></SurfaceChromeContext.Provider>;
+    }
+    render(<HostedBot/>);
+    await waitFor(()=>expect(screen.getByTestId("hide-chat-title").textContent).toBe("true"));
   });
 
   it("leaves the sidebar trigger to OSWindow while registering shared Chat chrome", async () => {

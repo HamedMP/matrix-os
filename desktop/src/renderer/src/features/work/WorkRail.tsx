@@ -24,9 +24,11 @@ import {
 } from "./work-rail-model";
 import { applyProjectedChats, loadWorkRailChats } from "./work-rail-data";
 import { OrganizationDrivesRail } from "./work-rail/OrganizationDrivesRail";
+import { useWorkRailMoves } from "./work-rail/use-work-rail-moves";
 import { WorkRailChatRow } from "./work-rail/WorkRailChatRow";
 import { WorkRailHeader, WorkRailSearchControls } from "./work-rail/WorkRailHeader";
 import { WorkRailProjectGroup } from "./work-rail/WorkRailProjectGroup";
+import { SharedWithMeRailRow } from "./work-rail/SharedWithMeRailRow";
 export { SharedWithMeRailRow } from "./work-rail/SharedWithMeRailRow";
 import { WorkRailGroups, type WorkRailSectionKey } from "./work-rail/WorkRailGroups";
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
@@ -53,6 +55,7 @@ export function WorkRail({
   onOpenBotChat,
   onChatDeleted,
   onChatRenamed,
+  onChatMoved,
   onCollapse,
   showCollapseControl = true,
   className = "w-[240px]",
@@ -74,6 +77,7 @@ export function WorkRail({
   onSelectChat: (record: CanonicalChatRecord, project?: Project) => void;
   onChatDeleted?: (record: CanonicalChatRecord, project?: Project) => void;
   onChatRenamed?: (record: CanonicalChatRecord, project?: Project) => void;
+  onChatMoved?: (record: CanonicalChatRecord, project?: Project) => void;
   onCollapse: () => void;
   showCollapseControl?: boolean;
   className?: string;
@@ -84,6 +88,8 @@ export function WorkRail({
   const onSelectProject = (project: Project) => { agentsNavigation?.close(); selectProject?.(project); };
   const onNewProjectChat = (project: Project) => { agentsNavigation?.close(); newProjectChat(project); };
   const onSelectChat = (...args: Parameters<typeof selectChat>) => { agentsNavigation?.close(); selectChat(...args); };
+  const projectChatMoveRefresh = useUi(state => state.projectChatMoveRefreshRequest);
+  const projectChatMoveError = useUi(state => state.projectChatMoveError);
   const [readPending, setReadPending] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -126,7 +132,7 @@ export function WorkRail({
   const recordIds = useMemo(() => records.map(record => record.chat.id), [records]);
   const botSummaries = useBotConversationSummaries(client?.agents, recordIds, active, botRefreshKey);
   const excludedChatIds = useMemo(() => [...botSummaries.unresolvedChatIds, ...botSummaries.conversations.map(bot => bot.chatId)], [botSummaries.unresolvedChatIds, botSummaries.conversations]);
-  const ordinaryRecords = useMemo(() => records.filter(record => !excludedChatIds.includes(record.chat.id)), [records, excludedChatIds]);
+  const ordinaryRecords = useMemo(() => recordsClientRef.current === client ? records.filter(record => !excludedChatIds.includes(record.chat.id)) : [], [client, records, excludedChatIds]);
   const model = useMemo(() => buildWorkRailModel(unreadOnly ? ordinaryRecords.filter(isChatUnread) : ordinaryRecords, projects), [projects, ordinaryRecords, unreadOnly]);
   const projectGroups = useMemo(
     () => [...model.pinnedProjects, ...model.projects],
@@ -209,7 +215,7 @@ export function WorkRail({
       refreshPending = false;
       subscription?.dispose();
     };
-  }, [active, activeChatId, activeProjectSlug, client, eventSource, unreadOnly]);
+  }, [active, activeChatId, activeProjectSlug, client, eventSource, unreadOnly, projectChatMoveRefresh]);
 
   useEffect(() => {
     if (!projectedChatTitles?.length) return;
@@ -337,12 +343,16 @@ export function WorkRail({
     }
   };
 
+  const { moveItems, movingChatId, error: moveError } = useWorkRailMoves({client,projects,routeScopeRef,setRecords,setExpandedProjects,onChatMoved});
+
   const renderProjectGroup = (group: (typeof projectGroups)[number]) => {
     const expanded = Boolean(expandedProjects[group.id]);
     return (
       <WorkRailProjectGroup
         key={group.id}
         group={group}
+        moveItems={moveItems}
+        movingChatId={movingChatId}
         expanded={expanded}
         activeProjectSlug={activeProjectSlug}
         activeChatId={activeChatId}
@@ -385,7 +395,7 @@ export function WorkRail({
   };
 
   const renderChatRow = (record: CanonicalChatRecord, placement: "pinned" | "recent") => <WorkRailChatRow
-    key={record.chat.id} record={record} placement={placement} active={record.chat.id === activeChatId}
+    key={record.chat.id} record={record} moveItems={moveItems(record)} moving={movingChatId === record.chat.id} placement={placement} active={record.chat.id === activeChatId}
     pinning={Boolean(pinning[record.chat.id])} renaming={renamingChatId === record.chat.id}
     renamePending={renamePending && renamingChatId === record.chat.id} renameDisabled={renamePending}
     onToggleRead={() => { void toggleRead(record); }} readPending={readPending}
@@ -407,6 +417,7 @@ export function WorkRail({
       />
       <div data-testid="work-rail-scroll" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
       <WorkRailSearchControls onSearch={() => setSearchOpen(true)} unreadOnly={unreadOnly} onUnreadOnlyChange={setUnreadOnly} />
+      <SharedWithMeRailRow />
       <ChatAgentsRailSection activeChatId={activeChatId} client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
@@ -422,6 +433,7 @@ export function WorkRail({
         {pinError ? (
           <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>{pinError}</p>
         ) : null}
+        {moveError || projectChatMoveError ? <p role="alert" className="px-3 text-xs">{moveError ?? projectChatMoveError}</p> : null}
         {readError ? <p role="alert" className="px-3 text-xs">{readError}</p> : null}
         {unreadOnly && !records.some(isChatUnread) ? <p className="px-3 text-xs">No unread chats.</p> : null}
         {renameError ? (

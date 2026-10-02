@@ -32,6 +32,8 @@ export function WorkRailProjectGroup({
   onDeleteChat,
   sharing = null,
   onShareProject,
+  moveItems,
+  movingChatId,
 }: {
   group: WorkRailProjectGroupModel;
   expanded: boolean;
@@ -54,6 +56,8 @@ export function WorkRailProjectGroup({
   onDeleteChat: (record: CanonicalChatRecord) => void;
   sharing?: DesktopProjectSharingContext | null;
   onShareProject?: (project: Project) => void;
+  moveItems?: (record: CanonicalChatRecord) => {label: string; disabled?: boolean; onSelect: () => void}[];
+  movingChatId?: string | null;
 }) {
   const actionButtonRef = useRef<HTMLButtonElement>(null);
   const actions = useProjectActions(group.project);
@@ -108,6 +112,8 @@ export function WorkRailProjectGroup({
             <WorkRailChatRow
               key={record.chat.id}
               record={record}
+              moveItems={moveItems?.(record)}
+              moving={movingChatId === record.chat.id}
               placement="project"
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}

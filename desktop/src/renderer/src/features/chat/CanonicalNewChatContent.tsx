@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { AgentAvatar } from "@matrix-os/ui";
-import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
 import { ChatStarterCards } from "./ChatStarterCards";
 import { ChatProviderOnboarding } from "./ChatProviderOnboarding";
+import { PROJECT_LANDING_CONTENT_CLASS } from "../project/ProjectLanding";
 
 /** Keeps the empty-state presentation separate from transcript and route orchestration. */
 export function CanonicalNewChatContent({ projectId, workspaceLayout, composer, onSelect }: {
@@ -33,12 +33,12 @@ export function CanonicalNewChatContent({ projectId, workspaceLayout, composer, 
           /></ChatProviderOnboarding>
         </div>
       </div>
-      <div className={cn("mx-auto w-full shrink-0", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "px-3 pb-3" : "px-5 pb-5")}>
+      <div className={cn("mx-auto w-full max-w-3xl shrink-0", workspaceLayout === "narrow" ? "px-3 pb-3" : "px-6 pb-5")}>
         {composer}
       </div>
     </div>
   ) : (
-    <div className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "px-3 pb-3" : "px-5 pb-5")}>
+    <div className={cn("flex min-h-0 flex-1 flex-col pb-5", PROJECT_LANDING_CONTENT_CLASS)}>
       <div data-slot="chat-project-draft-scroll" className="flex min-h-0 flex-1 flex-col overflow-y-auto"><ChatProviderOnboarding><div className="flex-1" /></ChatProviderOnboarding></div>
       <div className="shrink-0">{composer}</div>
     </div>
