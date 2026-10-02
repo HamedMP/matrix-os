@@ -43,7 +43,7 @@ it("reads saved Matrix model intent in Native Mobile bot controls and shows unav
     authority: { agentId: "bot_abcdefgh", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } } };
   render(<BotChatControls snapshot={snapshot} catalog={{ ...catalog, instances: [] }}
     onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
-  expect(screen.getByText(`Runtime: Pi · Matrix AI · ${selected.model} · unavailable`)).toBeTruthy();
+  expect(screen.getByText(`Model: Matrix AI · ${selected.model} · unavailable`)).toBeTruthy();
 });
 
 it("restores the exact saved identity when a creation attempt reopens with an unavailable route", () => {
@@ -94,5 +94,18 @@ it("shows disabled discovery in Native Mobile bot controls without a model-save 
   expect(row.props.onPress).toBeUndefined();
   fireEvent.press(row);
   expect(save).not.toHaveBeenCalled();
-  expect(screen.getByText("Runtime: Pi · Matrix AI · GLM 5.3 Flash · credit reserved")).toBeTruthy();
+  expect(screen.getByText("Model: Matrix AI · GLM 5.3 Flash · credit reserved")).toBeTruthy();
+});
+
+it.each([
+  [selected, "Model: Matrix AI · GLM 5.3 Flash"],
+  [{ instanceId: "matrix_bot_default", model: "auto" }, "Model: Model routing: automatic"],
+  [undefined, "Model: Checking bot model…"],
+])("preserves the Native Mobile bot model state without runtime details: %s", (selection, label) => {
+  const snapshot = { agentId: "bot_abcdefgh", name: "Writer", selection, interactions: [], tasks: [],
+    authority: { agentId: "bot_abcdefgh", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } } };
+  render(<BotChatControls snapshot={snapshot} catalog={catalog}
+    onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
+  expect(screen.getByText(label)).toBeTruthy();
+  expect(screen.queryByText(/Runtime: Pi/)).toBeNull();
 });

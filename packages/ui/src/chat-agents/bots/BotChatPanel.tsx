@@ -106,9 +106,9 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
       <div className="flex items-center gap-2">
         <AgentAvatar id={agentId} name={name ?? "Your bot"} />
         <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{name ?? "Your bot"}</p>
-          <p className="text-xs" style={chatAgentMutedStyle}>Persistent history</p><p className="text-xs" style={chatAgentMutedStyle}>Runtime: Pi · {modelRouting}</p></div>
+          <p className="text-xs" style={chatAgentMutedStyle}>Persistent history</p><p className="text-xs" style={chatAgentMutedStyle}>Model: {modelRouting}</p></div>
         <button type="button" aria-label="Choose bot model" aria-expanded={showModels} className={chatAgentButtonClass} disabled={!agent || modelPending || catalogLoading}
-          onClick={() => setShowModels(value => !value)}>Pi · Model</button>
+          onClick={() => setShowModels(value => !value)}>Model</button>
         <button type="button" aria-label="Details" aria-expanded={showAuthority} className={chatAgentButtonClass}
           onClick={() => setShowAuthority((value) => !value)}>Details</button>
       </div>

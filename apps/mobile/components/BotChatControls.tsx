@@ -196,7 +196,7 @@ export function BotChatControls({ snapshot, catalog, onSelectionChange, actionsA
   const authority = snapshot.authority;
   return <View style={styles.panel}>
     <View style={styles.header}>
-      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text><Text style={styles.muted}>Your bot&apos;s Chat</Text><Text style={styles.muted}>Runtime: Pi · {botModelRoutingLabel(snapshot.selection, catalog)}</Text></View>
+      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text><Text style={styles.muted}>Your bot&apos;s Chat</Text><Text style={styles.muted}>Model: {botModelRoutingLabel(snapshot.selection, catalog)}</Text></View>
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: showAuthority }} style={styles.button}
         onPress={() => setShowAuthority((value) => !value)}><Text style={styles.text}>Access &amp; memory</Text></Pressable>
     </View>

@@ -114,7 +114,7 @@ it("admits a direct bot turn when the ordinary provider catalog is empty", async
   render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation"
     active catalog={{ ...providerCatalog, instances: [] }} />);
   await screen.findByText("Persistent history");
-  expect(screen.getByText("Runtime: Pi · Checking bot model…")).toBeTruthy();
+  expect(screen.getByText("Model: Checking bot model…")).toBeTruthy();
   expect(screen.getByText("Company drive context is not available in Bot chats.")).toBeTruthy();
   expect(screen.queryByText("Choose Claude Code to use company drive context.")).toBeNull();
   expect((screen.getByRole("button", { name: "Add company drive context" }) as HTMLButtonElement).disabled).toBe(true);

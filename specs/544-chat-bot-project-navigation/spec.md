@@ -29,7 +29,7 @@ Backend rules inspected on the active unmerged #2117 head `d687fc468cdcf29db9aca
 | R9 | Bot Chat/details/editor | Align persistent identity, activity/results, instructions and existing editable fields/actions with design. Preserve supported managed model edits and immutable recipe runtime; show runtime/model/source truthfully. No new switching/schedule/pause/archive behavior. |
 | R10 | Approval and attention | Existing scoped effect preview/details/allow-deny controls remain in Bot Chat. Pending Bot approval also appears as a Needs you reminder that opens the same Bot Chat, without adding an ordinary Chat entry. Derive reminder state from actual unresolved approvals and remove stale reminders when resolved/refreshed. |
 | R11 | Existing shared discovery | Restyle current authorized sharing/search results, resource/actor badges and filters. Preserve access checks and existing scope; add no new invitation engine or terminal-wide search backend. |
-| R12 | Bot-specific selector/context | At Bot conversation start, show current Pi/Automatic and available managed Matrix AI models with authoritative availability/reasons/source. Exclude unsupported Hermes/native Pi/coding routes for recipe Bots. If resolved source is unavailable, display Automatic without guessing. Reflect current Company Drive restriction; preserve backend funding/routing semantics. |
+| R12 | Bot-specific selector/context | At Bot conversation start, show current Automatic and available managed Matrix AI models without exposing the owned execution runtime with authoritative availability/reasons/source. Exclude unsupported Hermes/native Pi/coding routes for recipe Bots. If resolved source is unavailable, display Automatic without guessing. Reflect current Company Drive restriction; preserve backend funding/routing semantics. |
 
 ## Scope and constraints
 
@@ -43,7 +43,7 @@ Snapshot from 2026-10-02; re-query live state/heads before integration:
 
 - ENG-49 / #2048: In Progress; OPEN Draft `bab5658e4c`, based on #2022. Reuse direct Pi Chat entry, editor route preservation, tools and confirmed-memory fixes.
 - #2022: OPEN Draft on #2015; #2015: OPEN on earlier Bot authority work. Audit lower stack dependencies before choosing a base. These are unmerged work, not main features.
-- ENG-107 / #2117: In Progress; OPEN Draft `d687fc468c`, based on `codex/matrix-ai-pi-routing`. Reuse managed choices and source policy; do not duplicate the backend work.
+- ENG-107 / #2117: In Progress; OPEN Draft `c5c32de453`, based on `codex/matrix-ai-pi-routing`. Reuse managed choices and source policy; its latest Bot presentation hides internal runtime details while retaining model/funding state. Backend inspection at d687 remains applicable; do not duplicate the backend work.
 - ENG-65 owns Agents & Providers Settings; keep this change scoped to the Chat/Bot selector and presentation. ENG-93 owns new recurring execution, excluded here.
 
 ## Validation and acceptance delivery

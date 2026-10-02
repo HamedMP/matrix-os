@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CanonicalChatResourceReference } from '@matrix-os/contracts';
 import type { ChatAgentClient } from '../client.js';
 
 /** Resolves identity before a host can attach an Agent token. Never changes provider or sends. */
-export function useBotMentionNavigation(client: ChatAgentClient | undefined, scope: string, open?: (chatId: string, text: string) => boolean | Promise<boolean>) {
+export const BOT_ATTACHMENT_HANDOFF_REASON = "Remove or send the attached files before opening a bot. Your draft and files are preserved.";
+
+export function useBotMentionNavigation(client: ChatAgentClient | undefined, scope: string, open?: (chatId: string, text: string) => boolean | Promise<boolean>, blockedReason?: string) {
   const sequence = useRef(0);
-  const identity = useRef({ client, scope });
-  identity.current = { client, scope };
+  const identity = useRef({ client, scope, blockedReason });
+  useLayoutEffect(() => { identity.current = { client, scope, blockedReason }; }, [client, scope, blockedReason]);
   const [state, setState] = useState({ pending: false, error: '', notice: '' });
   useEffect(() => {
     sequence.current += 1;
@@ -26,6 +28,10 @@ export function useBotMentionNavigation(client: ChatAgentClient | undefined, sco
         if (!agent || agent.recipeRef) throw new Error('Missing bot binding');
         insertLegacy();
         setState({ pending: false, error: '', notice: '' });
+        return;
+      }
+      if (identity.current.blockedReason) {
+        setState({ pending: false, notice: "", error: identity.current.blockedReason });
         return;
       }
       const accepted = await open(chatId, text);

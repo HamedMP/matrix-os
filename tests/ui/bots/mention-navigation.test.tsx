@@ -43,3 +43,9 @@ it('rejects a deleted candidate instead of inserting an unknown Agent',async()=>
  act(()=>{result.current.select(resource,'draft',insert)});
  await waitFor(()=>expect(result.current.error).toMatch(/Try again/));expect(insert).not.toHaveBeenCalled();
 });
+it('preserves files added while a Bot lookup is in flight instead of navigating',async()=>{
+ let finish!:(id:string)=>void;const c=client('chat_bot');vi.mocked(c.bots!.directChat).mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+ const open=vi.fn();const {result,rerender}=renderHook(({blocked})=>useBotMentionNavigation(c,'source',open,blocked),{initialProps:{blocked:undefined as string|undefined}});
+ act(()=>{result.current.select(resource,'draft',vi.fn());});rerender({blocked:'Remove or send the attached files before opening a bot.'});
+ await act(async()=>finish('chat_bot'));expect(open).not.toHaveBeenCalled();expect(result.current.error).toMatch(/attached files/);
+});

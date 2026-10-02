@@ -16,7 +16,7 @@ const model: CanonicalProviderChoice = { instanceId: "matrix_pi_default", driver
   options: [], selectedOptions: [], supportsFileAttachments: false };
 const recipe = { recipeId: "writing-bot", version: "2026-09-27.1", name: "Writing Bot", description: "Writes drafts", output: "A draft" };
 const selected = { instanceId: model.instanceId, model: model.modelId };
-const bot = { id: "bot_abcdefgh", recipeRef: recipe } as ChatAgent;
+const bot = { id: "bot_abcdefgh", revision: 1, recipeRef: recipe } as ChatAgent;
 function editor(selection = MATRIX_BOT_SELECTION, models = [model]) {
   const change = vi.fn();
   render(<AgentEditor draft={{ name: "Writer", description: "", instructions: "Write drafts", requestId: "req_test", selection }}
@@ -95,8 +95,10 @@ it("shows a bot's saved Matrix model instead of claiming automatic routing", asy
     authority: vi.fn(async () => ({ agentId: bot.id, revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) },
     list: vi.fn(async () => ({ enabled: true, agents: [{ ...bot, name: "Writer", revision: 1, selection: selected }] })) };
   render(<BotChatPanel chatId="chat_abcdefgh" client={client as never} />);
-  expect(await screen.findByText(`Runtime: Pi · Matrix AI · ${selected.model}`)).toBeTruthy();
-  expect(screen.queryByText("Runtime: Pi · Model routing: automatic")).toBeNull();
+  expect(await screen.findByText(`Model: Matrix AI · ${selected.model}`)).toBeTruthy();
+  expect(screen.queryByText("Model: Model routing: automatic")).toBeNull();
+  expect(screen.queryByText(/Runtime: Pi/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Choose bot model" }).textContent).toBe("Model");
 });
 
 it("blocks creation when a previously selected Matrix model disappears", () => {
@@ -141,4 +143,41 @@ it("offers an exact managed recipe model through the legacy catalog client witho
   await waitFor(() => expect(instantiate).toHaveBeenCalledWith(expect.objectContaining({
     selection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" },
   })));
+});
+
+it.each([
+  ["available", "Model: Matrix AI · GLM 5.3 Flash"],
+  ["credit_reserved", "Model: Matrix AI · GLM 5.3 Flash · credit reserved"],
+  ["unavailable", "Model: Matrix AI · GLM 5.3 Flash · unavailable"],
+] as const)("preserves the saved Matrix bot model and %s state without harness details", async (state, label) => {
+  const { BotChatPanel } = await import("../../../packages/ui/src/chat-agents/bots/BotChatPanel.js");
+  const { clientFixture } = await import("../../desktop/chat-agents-fixture.js");
+  const { createCanonicalProviderCatalogFixture } = await import("../../contracts/fixtures/canonical-chat.js");
+  const catalog = createCanonicalProviderCatalogFixture();
+  const base = catalog.instances[0]!;
+  catalog.instances = [{ ...base, id: model.instanceId, driverKind: "matrix_pi", displayName: "Pi", connectionLabel: "Matrix AI",
+    availability: state === "available" ? "available" : "unavailable", connectionState: state === "available" ? "ready" : state,
+    models: [{ ...base.models[0]!, id: selected.model, displayName: "GLM 5.3 Flash", availability: state === "available" ? "available" : "unavailable" }] }];
+  const fixture = clientFixture();
+  const client = { ...fixture, bots: { interactions: vi.fn(async () => []), tasks: vi.fn(async () => []),
+    authority: vi.fn(async () => ({ agentId: bot.id, revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) } };
+  client.list.mockResolvedValue({ enabled: true, agents: [{ ...bot, name: "Writer", selection: selected }] });
+  render(<BotChatPanel chatId="chat_abcdefgh" directBotId={bot.id} client={client as never} catalog={catalog} />);
+  expect(await screen.findByText(label)).toBeTruthy();
+  expect(screen.queryByText(/Runtime: Pi/)).toBeNull();
+  expect(client.update).not.toHaveBeenCalled();
+});
+it("keeps checking and automatic bot model states distinct while the saved bot loads", async () => {
+  const { BotChatPanel } = await import("../../../packages/ui/src/chat-agents/bots/BotChatPanel.js");
+  const { clientFixture } = await import("../../desktop/chat-agents-fixture.js");
+  const fixture = clientFixture();
+  const client = { ...fixture, bots: { interactions: vi.fn(async () => []), tasks: vi.fn(async () => []),
+    authority: vi.fn(async () => ({ agentId: bot.id, revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) } };
+  let resolve!: (value: { enabled: boolean; agents: ChatAgent[] }) => void;
+  client.list.mockReturnValue(new Promise(yes => { resolve = yes; }));
+  render(<BotChatPanel chatId="chat_abcdefgh" directBotId={bot.id} client={client as never} />);
+  expect(screen.getByText("Model: Checking bot model…")).toBeTruthy();
+  resolve({ enabled: true, agents: [{ ...bot, name: "Writer", selection: MATRIX_BOT_SELECTION }] });
+  expect(await screen.findByText("Model: Model routing: automatic")).toBeTruthy();
+  expect(screen.queryByText(/Runtime: Pi/)).toBeNull();
 });
