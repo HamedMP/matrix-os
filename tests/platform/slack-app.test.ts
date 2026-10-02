@@ -358,7 +358,12 @@ describe("Slack account-only setup", () => {
     expect(signedOut.headers.get("referrer-policy")).toBe("no-referrer");
     actor = "user_employee";
     const signedIn = await app.request(`/slack/link?token=${token}`);
-    expect(await signedIn.text()).toContain("Connect my Matrix");
+    const page = await signedIn.text();
+    expect(page).toContain("Connect your Slack account");
+    expect(page).toContain("Your private messages stay between this Slack account and your Matrix account.");
+    expect(page).toContain('aria-label="Matrix"');
+    expect(page).toContain("@media(max-width:640px)");
+    expect(page).toContain("Connect my Matrix");
     expect(signedIn.headers.get("content-security-policy")).toContain("script-src 'nonce-");
     expect((await app.request("/slack/link?token=%3Cscript%3E")).status).toBe(422);
   });
