@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderHarnessInstance } from "@matrix-os/contracts";
 import { HarnessRail } from "../../packages/ui/src/agents-providers/HarnessRail";
@@ -462,7 +462,7 @@ it("keeps Matrix AI policy and purchase restrictions out of persistent overview 
   expect(screen.queryByText("Matrix AI is restricted by your workspace. Ask your administrator.")).not.toBeInTheDocument();
   expect(screen.queryByText("Matrix AI credit purchases are not available yet.")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Check again", hidden: true })).toHaveAttribute("title", "Matrix AI is restricted by your workspace. Ask your administrator.");
-  expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Buy credit" })).toBeEnabled();
 });
 
 it("keeps missing-runtime purchase explanations out of the overview while showing honest unavailable credit", async () => {
@@ -470,5 +470,19 @@ it("keeps missing-runtime purchase explanations out of the overview while showin
   render(<GatewayPanel source={null} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   expect(screen.queryByText(/Credit purchases are unavailable/)).not.toBeInTheDocument();
   expect(screen.getByText("Credit unavailable")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Buy credit" })).toBeEnabled();
+});
+
+it("restores Buy credit without starting unsupported checkout and allows refresh", async () => {
+  const { GatewayPanel } = await import("../../packages/ui/src/agents-providers/GatewayPanel");
+  const onAddCredit = vi.fn(); const onRefresh = vi.fn();
+  render(<GatewayPanel source={null} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={onAddCredit} onRefresh={onRefresh} />);
+  fireEvent.click(screen.getByRole("button", {name: "Buy credit"}));
+  const dialog = screen.getByRole("dialog", {name: "Add Matrix AI credit"});
+  expect(within(dialog).getByText("Credit purchases are unavailable on this computer right now.")).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", {name: "Continue to checkout"})).toBeDisabled();
+  fireEvent.click(within(dialog).getByRole("button", {name: "Check again"}));
+  expect(onRefresh).toHaveBeenCalledOnce(); expect(onAddCredit).not.toHaveBeenCalled();
+  fireEvent.keyDown(dialog, {key: "Escape"});
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
 import type {
   ProviderAccessSource,
@@ -144,10 +145,11 @@ export function GatewayPanel({
       source.usage.state === "current" &&
       (ready || creditRequired),
   );
-  useGettingStartedBlocker(creditDialogOpen && checkoutAvailable);
-  useEffect(() => {
-    if (!checkoutAvailable) setCreditDialogOpen(false);
-  }, [checkoutAvailable]);
+  const creditDialog = useRef<HTMLElement | null>(null);
+  const closeCreditDialog = () => { if (!creditBusy) setCreditDialogOpen(false); };
+  useDialogFocus(creditDialog, creditDialogOpen, closeCreditDialog);
+  useGettingStartedBlocker(creditDialogOpen);
+  useEffect(() => { setCreditDialogOpen(false); }, [source?.id]);
   const status = !source || !policy ? "Setup needed" : ready ? "Ready" : creditReserved ? "Credit reserved" : creditRequired ? "Credit needed"
     : source.readiness.state === "ready" ? "Unavailable" : titleCase(source.readiness.state);
 
@@ -238,8 +240,7 @@ export function GatewayPanel({
           >
             Usage history
           </button>
-          {checkoutAvailable ? (
-            <button
+          <button
               type="button"
               className="matrix-ap-button matrix-ap-button-primary"
               onClick={() => {
@@ -251,7 +252,6 @@ export function GatewayPanel({
             >
               Buy credit
             </button>
-          ) : null}
         </div>
       </div>
 
@@ -455,9 +455,10 @@ export function GatewayPanel({
         </details>
       ) : null}
 
-      {creditDialogOpen && source && checkoutAvailable ? (
+      {creditDialogOpen ? (
         <div className="matrix-ap-dialog-backdrop" role="presentation">
           <section
+            ref={creditDialog}
             className="matrix-ap-dialog"
             role="dialog"
             aria-modal="true"
@@ -468,14 +469,13 @@ export function GatewayPanel({
                 <span className="matrix-ap-eyebrow">Matrix AI</span>
                 <h3 id="matrix-ap-credit-title">Add Matrix AI credit</h3>
                 <p className="matrix-ap-dialog-copy">
-                  Credit is added to this computer after Stripe confirms
-                  payment. It does not expire.
+                  {checkoutAvailable ? "Credit is added to this computer after Stripe confirms payment. It does not expire." : "Add credit to your Matrix AI balance."}
                 </p>
               </div>
             </div>
             <fieldset
               className="matrix-ap-credit-packages"
-              disabled={creditBusy}
+              disabled={creditBusy || disabled || !checkoutAvailable}
             >
               <legend>Choose an amount</legend>
               {([5, 10, 25] as const).map((amount) => {
@@ -487,6 +487,7 @@ export function GatewayPanel({
                   >
                     <input
                       type="radio"
+                      disabled={creditBusy || disabled || !checkoutAvailable}
                       name="matrix-ai-credit-package"
                       value={id}
                       checked={creditPackage === id}
@@ -499,6 +500,12 @@ export function GatewayPanel({
                 );
               })}
             </fieldset>
+            {!checkoutAvailable ? (
+              <div className="matrix-ap-notice" role="status">
+                <p>Credit purchases are unavailable on this computer right now.</p>
+                <button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button>
+              </div>
+            ) : null}
             {creditError ? (
               <p className="matrix-ap-credit-error" role="alert">
                 Checkout could not be opened. Try again.
@@ -509,14 +516,14 @@ export function GatewayPanel({
                 type="button"
                 className="matrix-ap-button"
                 disabled={creditBusy}
-                onClick={() => setCreditDialogOpen(false)}
+                onClick={closeCreditDialog}
               >
                 Cancel
               </button>
               <button
                 type="button"
                 className="matrix-ap-button matrix-ap-button-primary"
-                disabled={creditBusy}
+                disabled={creditBusy || disabled || !checkoutAvailable}
                 onClick={() => {
                   void submitCredit();
                 }}

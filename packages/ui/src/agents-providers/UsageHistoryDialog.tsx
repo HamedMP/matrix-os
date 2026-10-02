@@ -14,6 +14,20 @@ const historyMoney = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 6,
 });
 
+const modelNames: Readonly<Record<string, string>> = {
+  "anthropic/claude-sonnet-5": "Claude Sonnet 5",
+  "@cf/zai-org/glm-5.3-flash": "GLM 5.3 Flash",
+};
+const historyDate = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+const historyTime = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
 export function UsageHistoryDialog({
   load,
   onClose,
@@ -31,8 +45,11 @@ export function UsageHistoryDialog({
   const [loaded, setLoaded] = useState(false);
   const scope = useRef<AbortController | null>(null);
   const dialog = useRef<HTMLElement | null>(null);
+  const pending = useRef(false);
   useDialogFocus(dialog, true, onClose);
   const request = async (next: string | null, controller: AbortController) => {
+    if (pending.current) return;
+    pending.current = true;
     setBusy(true);
     setError(false);
     try {
@@ -54,12 +71,16 @@ export function UsageHistoryDialog({
         setError(true);
       }
     } finally {
-      if (!controller.signal.aborted) setBusy(false);
+      if (scope.current === controller) {
+        pending.current = false;
+        setBusy(false);
+      }
     }
   };
   useEffect(() => {
     const controller = new AbortController();
     scope.current = controller;
+    pending.current = false;
     void request(null, controller);
     return () => {
       controller.abort();
@@ -70,81 +91,129 @@ export function UsageHistoryDialog({
     <div className="matrix-ap-dialog-backdrop">
       <section
         ref={dialog}
-        className="matrix-ap-dialog"
+        className="matrix-ap-dialog matrix-ap-history-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="matrix-ap-history-title"
         aria-busy={busy}
       >
-        <div className="matrix-ap-dialog-head">
-          <h3 id="matrix-ap-history-title">Usage history</h3>
+        <header className="matrix-ap-dialog-head matrix-ap-history-head">
+          <div>
+            <span className="matrix-ap-eyebrow">Matrix AI</span>
+            <h3 id="matrix-ap-history-title">Usage history</h3>
+            <p className="matrix-ap-help">Credit activity for this computer · USD</p>
+          </div>
           <button
-            autoFocus
             type="button"
-            className="matrix-ap-button"
+            className="matrix-ap-icon-button"
+            aria-label="Close"
             onClick={onClose}
           >
-            Close
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              aria-hidden="true"
+            >
+              <path d="m6 6 12 12M18 6 6 18" />
+            </svg>
           </button>
-        </div>
-        <p className="matrix-ap-help">
-          Matrix AI credit activity for this computer.
-        </p>
-        {entries.length ? (
-          <table className="matrix-ap-history-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Activity</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((entry, index) => (
-                <tr key={`${entry.occurredAt}:${index}`}>
-                  <td>
-                    <time dateTime={entry.occurredAt}>
-                      {new Date(entry.occurredAt).toLocaleString()}
-                    </time>
-                  </td>
-                  <td>
-                    {entry.kind === "usage"
-                      ? "Usage"
-                      : entry.kind === "credit"
-                        ? "Credit"
-                        : "Adjustment"}
-                    {entry.modelId ? <small>{entry.modelId}</small> : null}
-                  </td>
-                  <td>{historyMoney.format(entry.amountMicrousd / 1_000_000)}</td>
+        </header>
+        <div
+          className="matrix-ap-history-scroll"
+          role="region"
+          aria-label="Credit activity"
+          tabIndex={0}
+        >
+          {entries.length ? (
+            <table className="matrix-ap-history-table">
+              <thead>
+                <tr>
+                  <th scope="col">Activity</th>
+                  <th scope="col">Date</th>
+                  <th scope="col">Amount</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : loaded ? (
-          <p className="matrix-ap-empty">No credit activity yet.</p>
-        ) : null}
-        {busy ? (
-          <p role="status" className="matrix-ap-help">
-            Loading usage history…
-          </p>
-        ) : null}
-        {error ? (
-          <p role="alert" className="matrix-ap-notice" data-tone="danger">
-            Usage history could not be loaded. Try again.
-          </p>
-        ) : null}
-        {(cursor || error) && !busy && entries.length < 500 ? (
-          <button
-            type="button"
-            className="matrix-ap-button"
-            onClick={() => {
-              if (scope.current)
-                void request(loaded ? cursor : null, scope.current);
-            }}
-          >
-            {error ? "Try again" : "Load more"}
-          </button>
-        ) : null}
+              </thead>
+              <tbody>
+                {entries.map((entry, index) => {
+                  const date = new Date(entry.occurredAt);
+                  const label = entry.kind === "usage"
+                    ? "Usage"
+                    : entry.kind === "credit" ? "Credit" : "Adjustment";
+                  return (
+                    <tr key={`${entry.occurredAt}:${index}`}>
+                      <td>
+                        <span
+                          className="matrix-ap-history-model"
+                          title={entry.modelId ?? undefined}
+                        >
+                          {entry.modelId
+                            ? modelNames[entry.modelId] ?? entry.modelId
+                            : entry.kind === "credit"
+                              ? "Credit added"
+                              : entry.kind === "usage"
+                                ? "Model usage"
+                                : "Balance adjustment"}
+                        </span>
+                        <span className="matrix-ap-history-kind" data-kind={entry.kind}>
+                          {label}
+                        </span>
+                      </td>
+                      <td>
+                        <time dateTime={entry.occurredAt}>
+                          {historyDate.format(date)}
+                          <small>{historyTime.format(date)}</small>
+                        </time>
+                      </td>
+                      <td className="matrix-ap-history-amount" data-kind={entry.kind}>
+                        {historyMoney.format(entry.amountMicrousd / 1_000_000)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : loaded ? (
+            <div className="matrix-ap-history-state">
+              <strong>No activity yet</strong>
+              <p>Credit purchases and model usage will appear here.</p>
+            </div>
+          ) : busy ? (
+            <div className="matrix-ap-history-state" role="status">
+              Loading usage history…
+            </div>
+          ) : null}
+          {error ? (
+            <p role="alert" className="matrix-ap-notice" data-tone="danger">
+              Usage history could not be loaded. Try again.
+            </p>
+          ) : null}
+        </div>
+        <footer className="matrix-ap-history-footer">
+          <span className="matrix-ap-help" role="status">
+            {loaded
+              ? `${entries.length} ${entries.length === 1 ? "activity" : "activities"}${entries.length >= 500 ? " · Showing the latest 500" : ""}`
+              : ""}
+          </span>
+          {(cursor || error) && entries.length < 500 ? (
+            <button
+              type="button"
+              className="matrix-ap-button"
+              disabled={busy}
+              onClick={() => {
+                if (scope.current)
+                  void request(loaded ? cursor : null, scope.current);
+              }}
+            >
+              {busy ? "Loading…" : error ? "Try again" : "Load more"}
+            </button>
+          ) : loaded ? (
+            <span className="matrix-ap-help">All activity loaded</span>
+          ) : null}
+        </footer>
       </section>
     </div>
   );

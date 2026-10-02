@@ -839,7 +839,7 @@ describe("AgentsProvidersView", () => {
     const broken = structuredClone(current);
     broken.accessSources[0]!.readiness.safeReason = "provider_unavailable";
     rerender(<AgentsProvidersView {...setupProps(broken)} />);
-    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+    expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeEnabled();
 
     const ledgerMissing = structuredClone(current);
     ledgerMissing.accessSources[0]!.usage = {
@@ -847,7 +847,7 @@ describe("AgentsProvidersView", () => {
       scope: "owner_entitlement", reason: "ledger_not_available", asOf: null,
     };
     rerender(<AgentsProvidersView {...setupProps(ledgerMissing)} />);
-    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+    expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeEnabled();
   });
 
   it("shows per-account usage and keeps login, logout, and remove distinct", async () => {
@@ -985,7 +985,7 @@ describe("AgentsProvidersView", () => {
     expect(onAddCredit.mock.calls[1]?.[2]).toBe(firstRequestId);
   });
 
-  it("closes a credit dialog when refreshed route eligibility is lost", async () => {
+  it("keeps the credit dialog open with honest unavailable feedback when eligibility is lost", async () => {
     const current = snapshot();
     const { rerender, props } = setup({ snapshot: current });
     fireEvent.click(screen.getByRole("button", { name: "Buy credit" }));
@@ -996,9 +996,11 @@ describe("AgentsProvidersView", () => {
       action: "retry", safeReason: "provider_unavailable",
     };
     rerender(<AgentsProvidersView {...props} snapshot={unavailable} />);
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull());
+    expect(screen.getByRole("dialog", { name: "Add Matrix AI credit" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeDisabled();
+    expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
     rerender(<AgentsProvidersView {...props} snapshot={current} />);
-    expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeEnabled();
   });
 
   it("shows install, offline, busy, and read-only states without inventing an install capability", () => {
@@ -1068,7 +1070,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByRole("button", { name: "+ Add account" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Log out Personal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove Personal" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Buy credit" })).toBeEnabled();
   });
 
   it("renders platform-authoritative gateway policy as read-only", () => {

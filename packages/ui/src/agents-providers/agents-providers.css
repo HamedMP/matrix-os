@@ -486,3 +486,33 @@
 .dark .matrix-ap-agent-logo img.matrix-ap-openai-logo { filter: invert(1); }
 
 .matrix-ap-agent-logo img.matrix-ap-upstream-logo { width: 24px; height: 24px; }
+
+/* Billing history keeps its title and pagination visible while the ledger scrolls. */
+.matrix-ap-dialog.matrix-ap-history-dialog { display: flex; flex-direction: column; max-width: 760px; width: min(760px, calc(100vw - 40px)); max-height: min(640px, 80dvh); overflow: hidden; padding: 0; }
+.matrix-ap-history-head { flex: 0 0 auto; gap: 16px; margin: 0; padding: 20px 24px 16px; }
+.matrix-ap-history-head .matrix-ap-help { margin: 6px 0 0; }
+.matrix-ap-history-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 24px; scrollbar-gutter: stable; }
+.matrix-ap-history-scroll:focus-visible { outline: 2px solid var(--matrix-ap-focus); outline-offset: -2px; }
+.matrix-ap-history-table { margin: 0; table-layout: fixed; font-size: 13px; }
+.matrix-ap-history-table th { background: var(--matrix-ap-overlay); color: var(--matrix-ap-muted); font-size: 11px; font-weight: 500; position: sticky; top: 0; z-index: 1; }
+.matrix-ap-history-table th, .matrix-ap-history-table td { padding: 12px 8px; vertical-align: middle; }
+.matrix-ap-history-table th:first-child { width: 46%; }
+.matrix-ap-history-table th:nth-child(2) { width: 28%; }
+.matrix-ap-history-table th:last-child, .matrix-ap-history-table td:last-child { text-align: right; white-space: nowrap; }
+.matrix-ap-history-model { display: block; font-weight: 500; overflow-wrap: anywhere; }
+.matrix-ap-history-kind { display: inline-block; color: var(--matrix-ap-muted); background: color-mix(in srgb, var(--matrix-ap-muted) 8%, transparent); border-radius: 4px; font-size: 10px; line-height: 1.4; padding: 2px 5px; margin-top: 5px; }
+.matrix-ap-history-kind[data-kind="credit"], .matrix-ap-history-amount[data-kind="credit"] { color: var(--matrix-ap-success); }
+.matrix-ap-history-amount { font-variant-numeric: tabular-nums; font-weight: 500; }
+.matrix-ap-history-table small { margin-top: 4px; font-size: 11px; }
+.matrix-ap-history-state { text-align: center; color: var(--matrix-ap-muted); padding: 48px 16px; font-size: 13px; }
+.matrix-ap-history-state strong { color: var(--matrix-ap-text); font-weight: 500; }
+.matrix-ap-history-state p { margin: 8px 0 0; }
+.matrix-ap-history-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--matrix-ap-border); padding: 12px 24px; min-height: 60px; }
+.matrix-ap-history-footer .matrix-ap-help { margin: 0; }
+@media (max-width: 520px) {
+  .matrix-ap-history-head { padding: 16px; }
+  .matrix-ap-history-scroll { padding: 0 8px; }
+  .matrix-ap-history-table { font-size: 12px; }
+  .matrix-ap-history-table th, .matrix-ap-history-table td { padding: 10px 6px; }
+  .matrix-ap-history-footer { padding: 12px 16px; }
+}

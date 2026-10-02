@@ -113,10 +113,12 @@ controller refreshes the negotiated projection without resetting the accordion;
 a metadata refresh failure must not claim the confirmed mutation failed.
 
 The Matrix AI primary card displays eligible credit balance and Usage history.
-Buy credit is shown only when the current server-backed checkout is supported.
-Unsupported purchase actions are omitted, without enabling policy or fabricating
-a payment route. Supported checkout preserves owner/runtime scope, idempotent
-request IDs and safe retry feedback.
+Buy credit remains a visible primary action. Opening it reads the current
+server-backed checkout capability: supported purchases offer real packages;
+unavailable purchases show a bounded explanatory state with retry and close.
+Rendering the button never enables a purchase policy or fabricates a payment
+route. Checkout preserves owner/runtime scope, idempotent request IDs and safe
+retry feedback. Actual payment remains a separate user action.
 Matrix AI spending limits remain under its Advanced settings. Known Sonnet and
 GLM models use Coding and General purpose chips respectively; unknown purpose
 is omitted rather than fabricated.
@@ -528,6 +530,12 @@ and nullable model ID. Model metadata joins only a settled reservation in the
 same owner/computer/runtime scope. Missing metadata remains unknown. Split
 promotional/add-on debits remain separate exact ledger entries. No request,
 reservation, ledger, payment, or source-reference identifiers are returned.
+
+History uses a compact responsive dialog with a fixed heading/close control,
+bounded inner table scroll and stable pagination footer. Amounts preserve exact
+microUSD precision (up to six decimals); friendly known-model labels retain the
+original model ID as secondary detail. Presentation labels never grant model
+execution. Pagination must preserve loaded rows and scoped abort protection.
 
 `tests/platform/ai-credit-history.test.ts` checks scope isolation, pagination,
 invalid/duplicate query values, private-field redaction, unknown metadata,
