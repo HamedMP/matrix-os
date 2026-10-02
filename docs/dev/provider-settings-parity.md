@@ -169,9 +169,12 @@ These actions are distinct:
 - **Remove account** deletes the owner credential/profile and account binding.
   If active or resumable Chats reference it, require explicit reassignment or
   confirmation. Removing an account never deletes Chat history.
-- **Disable harness** prevents new selection/execution for that harness while
-  preserving its installation, instances, accounts, and configuration. Existing
-  Chats stay readable and require a compatible route before another turn.
+- **Disable harness** prevents new canonical Matrix Chat selection/execution for
+  that harness while preserving its installation, instances, accounts, and
+  configuration. Existing Chats stay readable and require a compatible route
+  before another turn. It does not stop independently configured native channel
+  services or scheduled jobs. With no alternate system harness installed,
+  disabling preserves the native runtime selection and persists explicit Off.
 - **Remove harness instance** is available only after that instance is disabled.
   It removes the owner Settings instance, not the installed binary, credentials,
   or existing Chat history. A later turn in an existing Chat still resolves its

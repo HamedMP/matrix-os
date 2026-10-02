@@ -143,7 +143,10 @@ for an explicit Preview runtime. Invalid runtime values never enter asset paths.
 ### 4. Validation & Error Matrix
 
 Do not allow On for uninstalled or unsupported credential routes. Preserve Off
-even if credentials disappear. Native Claude/Codex preferences keep their existing
+even if credentials disappear. Disabling the last installed system harness must
+persist explicit Off without requiring an alternate installation; keep native
+configuration intact and block new canonical Chat runs. If an eligible alternate
+system harness exists, retain the existing runtime-switch behavior. Native Claude/Codex preferences keep their existing
 contract. Exact saved Hermes source-null payload is schema-valid; the route maps
 the store's invalid route to the safe public `invalid_request` HTTP 400.
 
@@ -166,7 +169,9 @@ workflow failure exposes the full legacy editor as the default connection UI.
 
 Red/green regressions cover capability-unavailable Codex chooser, missing OpenClaw
 catalog row, source-null Hermes enable prerequisite, typed workflow denial and
-failed-save retention/retry. Real route/store regression asserts public HTTP 400
+failed-save retention/retry. `provider-settings-last-system-harness-off.test.ts`
+asserts Hermes-only Off, store restart, idempotent retry, Chat admission denial and
+explicit re-enable without changing native provider/model configuration. Real route/store regression asserts public HTTP 400
 and zero runtime changes for the captured payload. Artwork regressions cover
 all four Settings SVGs, VM/runtime query and canonical path scopes, root Web,
 packaged Electron, and invalid scope values. Live acceptance must confirm nonzero
@@ -179,3 +184,39 @@ real advertised Terminal action. Incorrect: expose the legacy editor by default
 or manufacture a workflow operation ID. Correct: explain Hermes's connection
 prerequisite. Incorrect: change backend authorization or label an unconfigured
 agent connected to make Enable succeed.
+
+
+## Hermes native provider-switch inventory
+
+### 1. Scope / Trigger
+
+Native `hermes model` can briefly report a newly selected `openai-codex` provider with the previous provider's selected model. Do not turn that transient selection into Codex inventory or a generated Matrix route. The official Hermes setup flow may offer to import an existing Codex login; it is distinct from restricted child credential isolation.
+
+### 2. Signatures
+
+`parseModelIds(rawModels, currentModel, requireListedSelection)` enforces listed selections for the built-in `openai-codex` provider. No API or credential-storage signature changes.
+
+### 3. Contracts
+
+A selected Codex model must belong to the native provider's advertised validated model IDs. Preserve a valid advertised selection at the front of the bounded inventory, including beyond the initial 128-model slice. Provider-owned path-like model IDs remain valid when actually advertised. Native authentication observation alone does not establish a coherent runnable route. Preserve saved owner routes and explicit Off; recovering an existing unavailable route requires an explicit supported model selection.
+
+### 4. Validation & Error Matrix
+
+| Native state | Projection |
+| --- | --- |
+| Codex selected model advertised | Bounded inventory and native observation retain the model |
+| Codex selected model unlisted | Do not invent that model or a runnable generated default |
+| Other provider selected model unlisted | Existing compatibility behavior remains |
+| Saved owner route no longer eligible | Preserve it and expose unavailable model selection |
+
+### 5. Good/Base/Bad Cases
+
+Good: advertised `gpt-5.6-sol` initializes the correct native route. Base: a saved unavailable route remains recoverable through Settings. Bad: unlisted `anthropic/claude-opus-4.6` becomes `openai-codex:anthropic/claude-opus-4.6` and enables a generated default.
+
+### 6. Tests Required
+
+`tests/gateway/hermes-native-provider-switch.test.ts` asserts unlisted cross-provider models produce no native observation, advertised path-like IDs remain eligible, selected models survive inventory truncation, and transient then coherent observations initialize only the supported generated route. Live acceptance separately proves the imported login, explicit model selection, Hermes-selected Chat response, reloaded conversation and Off/On persistence on the exact installed bundle.
+
+### 7. Wrong vs Correct
+
+Wrong: prepend every selected model before native Codex projection. Correct: require membership in the advertised validated inventory before emitting the Codex selected model and native observation. Do not rewrite saved owner routes to conceal mismatches.
