@@ -454,8 +454,13 @@ export function createCodexEventBridge(options: {
       await Promise.all(entries.slice(start, start + 10).map(async (entry) => {
         await drainEntry(entry);
         if (!store || !options.isRuntimeAlive || watchers.get(entry.sessionId) !== entry) return;
+        // Evidence the runtime is working since the last probe: it is blocked on our own
+        // canonical action, or it produced output we ingested. Under load the systemctl probe
+        // itself times out; that is unknown, not death.
+        const working = (entry.canonicalControllers?.size ?? 0) > 0
+          || entry.lastTouchedAt > (entry.supervision.lastProbeAt ?? entry.supervision.startedAt);
         if (!entry.failureEvents && !await runtimeUnavailable(entry.supervision,
-          () => options.isRuntimeAlive!(entry.sessionId), nowMs())) return;
+          () => options.isRuntimeAlive!(entry.sessionId), nowMs(), working)) return;
         if (closed || watchers.get(entry.sessionId) !== entry || entry.supervision.terminal) return;
         // A final batch may have arrived during the probe; give persisted output priority.
         if (!await drainEntry(entry)) return;
