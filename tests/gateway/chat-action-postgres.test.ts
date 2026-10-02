@@ -19,6 +19,21 @@ const owner = { type: "personal" as const, ownerId: "owner_pg_actions" };
 const policy = { revision: "actions_pg_v1", actionMode: "canonical_actions" as const, workspaceScope: "apps", tools: ["matrix_apply_app_files"], delegation: false };
 let admin: Kysely<ChatDatabase>; let chat: ChatRepository; let actions: ActionRepository;
 let home: string | undefined;
+async function waitForActionLock(applicationName: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await sql<{ waiting: boolean }>`
+      select exists (
+        select 1 from pg_stat_activity
+        where application_name = ${applicationName}
+          and wait_event_type = 'Lock'
+      ) as waiting
+    `.execute(admin);
+    if (result.rows[0]?.waiting) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("action verification did not reach the expected row-lock wait");
+}
 describe.skipIf(!url)("disposable Postgres canonical action claims (explicit authorization gate)", () => {
   beforeAll(async () => {
     const parsed = new URL(url!);
@@ -33,6 +48,40 @@ describe.skipIf(!url)("disposable Postgres canonical action claims (explicit aut
     await chat.kysely.insertInto("chat_runs").values({ id: "run_pg_actions", chat_id: "chat_pg_actions", turn_id: "cturn_pg_actions", client_request_id: "req_run_pg_actions", attempt: 1, driver_kind: "codex", instance_id: "codex_default", selection: JSON.stringify({ instanceId: "codex_default", model: "fake_model" }), interaction_mode: "default", permission_mode: "supervised", execution_root: null, execution_root_fingerprint: null, status: "running", outcome: null, history_boundary_seq: 0, capability_snapshot: JSON.stringify({}), run_policy: JSON.stringify({ memoryMode: "ordinary", source: "typed", nativeCheckpointPolicy: "reusable", executionPolicy: policy }), created_at: new Date(), updated_at: new Date() }).execute();
   });
   afterAll(async () => { if (chat) await chat.kysely.destroy(); if (admin) { await sql`drop schema if exists ${sql.id(schema)} cascade`.execute(admin); await admin.destroy(); } if (home) await rm(home, { recursive: true, force: true }); });
+  it("locks the chat before the run while streamed activity holds the chat row", async () => {
+    const applicationName = `action_lock_order_${randomUUID()}`;
+    const actionDb = new Kysely<ChatDatabase>({ dialect: new PostgresDialect({
+      pool: new Pool({
+        connectionString: url,
+        max: 1,
+        connectionTimeoutMillis: 5_000,
+        application_name: applicationName,
+        options: `-c search_path=${schema} -c statement_timeout=10000 -c deadlock_timeout=100`,
+      }),
+    }) });
+    const lockingActions = new ActionRepository(actionDb);
+    let verification: Promise<unknown> | undefined;
+    try {
+      await chat.kysely.transaction().execute(async (tx) => {
+        await tx.selectFrom("chats").select("id").where("id", "=", "chat_pg_actions").forUpdate().executeTakeFirstOrThrow();
+        verification = lockingActions.db.transaction().execute((actionTx) =>
+          lockingActions.verify({ owner, chatId: "chat_pg_actions", runId: "run_pg_actions" }, policy, actionTx));
+        await waitForActionLock(applicationName);
+        await tx.insertInto("chat_run_events").values({
+          id: `activity_lock_order_${randomUUID()}`,
+          chat_id: "chat_pg_actions",
+          run_id: "run_pg_actions",
+          run_seq: 1,
+          event: JSON.stringify({ type: "agent.activity" }),
+          occurred_at: new Date().toISOString(),
+        }).execute();
+      });
+      await expect(verification).resolves.toEqual(policy);
+    } finally {
+      if (verification) await Promise.allSettled([verification]);
+      await actionDb.destroy();
+    }
+  });
   it("one concurrent authorization consumer wins; reconstructed running identity cannot be claimed", async () => {
     const now = new Date().toISOString();
     const op = await actions.propose({ id: "action_pg_claim", owner, chatId: "chat_pg_actions", runId: "run_pg_actions", toolId: policy.tools[0]!, workspaceScope: "apps", schemaRevision: "files_v1", executionPolicy: policy, policyRevision: policy.revision, arguments: { app: "notes" }, argumentDigest: normalizedArgumentDigest({ app: "notes" }), state: "waiting_for_approval", revision: 0, cancellationRequested: false, createdAt: now, updatedAt: now });

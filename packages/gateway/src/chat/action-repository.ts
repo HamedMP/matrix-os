@@ -19,12 +19,23 @@ export class ActionRepository {
     CanonicalOwnerScopeSchema.parse(identity.owner);
     CanonicalChatIdSchema.parse(identity.chatId);
     CanonicalChatRunIdSchema.parse(identity.runId);
-    let query = db.selectFrom("chat_runs").innerJoin("chats", "chats.id", "chat_runs.chat_id")
-      .select(["chat_runs.run_policy", "chat_runs.status"]).where("chats.id", "=", identity.chatId)
-      .where("chats.owner_type", "=", identity.owner.type).where("chats.owner_id", "=", identity.owner.ownerId)
-      .where("chat_runs.id", "=", identity.runId);
-    if (db.isTransaction) query = query.forUpdate();
-    const row = await query.executeTakeFirst();
+    let row: { run_policy: unknown; status: string } | undefined;
+    if (db.isTransaction) {
+      const ownedChat = await db.selectFrom("chats").select("id")
+        .where("id", "=", identity.chatId)
+        .where("owner_type", "=", identity.owner.type).where("owner_id", "=", identity.owner.ownerId)
+        .forUpdate().executeTakeFirst();
+      if (ownedChat) {
+        row = await db.selectFrom("chat_runs").select(["run_policy", "status"])
+          .where("id", "=", identity.runId).where("chat_id", "=", ownedChat.id)
+          .forUpdate().executeTakeFirst();
+      }
+    } else {
+      row = await db.selectFrom("chat_runs").innerJoin("chats", "chats.id", "chat_runs.chat_id")
+        .select(["chat_runs.run_policy", "chat_runs.status"]).where("chats.id", "=", identity.chatId)
+        .where("chats.owner_type", "=", identity.owner.type).where("chats.owner_id", "=", identity.owner.ownerId)
+        .where("chat_runs.id", "=", identity.runId).executeTakeFirst();
+    }
     if (!row || (!allowTerminal && !["accepted", "running", "waiting_for_approval", "waiting_for_input"].includes(row.status))) throw new CanonicalActionError();
     const parsed = CanonicalChatRunPolicySchema.safeParse(row.run_policy);
     const persisted = parsed.success ? parsed.data.executionPolicy : undefined;
