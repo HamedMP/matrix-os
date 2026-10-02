@@ -1815,7 +1815,7 @@ export async function createGateway(config: GatewayConfig) {
         const owner = { type: "personal" as const, ownerId: principal.userId };
         const selection = (await chatRepository!.get(owner, chatId))?.chat.currentSelection;
         if (!selection) return undefined;
-        const catalog = await voiceReadinessCatalog.getCatalog(principal);
+        const catalog = await voiceReadinessCatalog.getCatalog(principal, selection.instanceId);
         return canonicalVoiceDecision({
           selection,
           catalog,

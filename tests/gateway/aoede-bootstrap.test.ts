@@ -169,16 +169,24 @@ describe("standalone Aoede bootstrap (real owner-local PGlite, fake readiness on
     await expect(service.bootstrap(principal, request("forbidden", "continue", "project_denied"))).rejects.toMatchObject({ code: "chat_unavailable" });
   });
 
-  it("preserves canonical selection and resolves readiness before acquiring the transaction", async () => {
+  it("requests the complete readiness catalog for a saved non-Codex selection", async () => {
     const first = await service.bootstrap(principal, request("initial"));
     const owner = { type: "personal" as const, ownerId: principal.userId };
-    await chats.update(owner, first.chatId, { baseRevision: 0, currentSelection: { instanceId: "saved_model", model: "saved" } });
+    const saved = { instanceId: "claude_code_default", model: "saved" };
+    const savedInstance = { ...fakeCatalog.instances[0]!, id: saved.instanceId, driverKind: "claude_code" as const,
+      defaultSelection: saved, models: [{ ...fakeCatalog.instances[0]!.models[0]!, id: saved.model }] };
+    catalog.getCatalog.mockResolvedValueOnce({ ...fakeCatalog,
+      drivers: [...fakeCatalog.drivers, { kind: "claude_code", displayName: "Claude Code",
+        adapterVersion: "1.0.0", capabilityClass: "coding_agent" }],
+      instances: [...fakeCatalog.instances, savedInstance] });
+    await chats.update(owner, first.chatId, { baseRevision: 0, currentSelection: saved });
     const transact = vi.spyOn(bindings, "withTransaction");
     readiness.mockImplementation(async (input) => {
       expect(transact).not.toHaveBeenCalled();
       return { selection: input.selection ?? selection, capability };
     });
-    expect((await service.bootstrap(principal, request("continue"))).selection).toEqual({ instanceId: "saved_model", model: "saved" });
+    expect((await service.bootstrap(principal, request("continue"))).selection).toEqual(saved);
+    expect(catalog.getCatalog).toHaveBeenLastCalledWith(principal, saved.instanceId);
     expect(transact).toHaveBeenCalledTimes(1);
   });
 

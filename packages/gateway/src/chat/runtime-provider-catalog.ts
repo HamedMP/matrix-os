@@ -65,7 +65,10 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
       && instance.defaultSelection
       && instance.availability === "available");
   const readinessCatalog = {
-    async getCatalog(principal: Parameters<typeof codexReadinessCatalog.getCatalog>[0]) {
+    async getCatalog(principal: Parameters<typeof codexReadinessCatalog.getCatalog>[0], requestedInstanceId?: string) {
+      if (requestedInstanceId !== undefined && requestedInstanceId !== "codex_default") {
+        return completeReadinessCatalog.getCatalog(principal);
+      }
       try {
         const candidate = await codexReadinessCatalog.getCatalog(principal);
         if (hasRunnableCodex(candidate)) return candidate;

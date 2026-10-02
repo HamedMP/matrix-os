@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { CanonicalProviderCatalogSchema, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { validateChatProviderSelection, ProviderCatalogUnavailableError, type ChatProviderCatalogService } from "../chat/provider-catalog.js";
+import { validateChatProviderSelection, ProviderCatalogUnavailableError } from "../chat/provider-catalog.js";
 import type { SafeVoiceErrorCode, VoiceCapability, VoiceRecoveryAction } from "@matrix-os/contracts/voice-session";
 import {
   AoedeBootstrapRequestSchema, AoedeBootstrapResponseSchema, AoedeScopeSchema,
@@ -21,7 +21,9 @@ export class AoedeBootstrapError extends Error {
 }
 export interface AoedeBootstrapServiceDeps {
   repository: AoedeBindingRepository;
-  catalog: Pick<ChatProviderCatalogService, "getCatalog">;
+  catalog: {
+    getCatalog(principal: RequestPrincipal, requestedInstanceId?: string): Promise<CanonicalProviderCatalog>;
+  };
   /** Trusted immutable server configuration, never Host/query/body/client identity. */
   runtimeIdentity: { machineId: string; runtimeSlot: string } | { serverId: string };
   /** Existing project repository authorizes the exact requested project; null means unavailable. */
@@ -84,7 +86,7 @@ export class AoedeBootstrapService {
     // A catalog outage is a retryable provider failure, not a generic 500 —
     // the UI distinguishes "try again" from "something broke".
     const [rawCatalog, speechCapability] = await Promise.all([
-      this.deps.catalog.getCatalog(principal).catch((error: unknown) => {
+      this.deps.catalog.getCatalog(principal, savedSelection?.instanceId).catch((error: unknown) => {
         if (error instanceof ProviderCatalogUnavailableError) {
           throw new AoedeBootstrapError("provider_unavailable", 503, error.retryable, "retry_connection");
         }

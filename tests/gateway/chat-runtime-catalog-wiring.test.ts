@@ -101,9 +101,13 @@ describe("gateway Chat runtime catalog composition", () => {
     await expect(readinessCatalog.getCatalog(principal)).resolves.toBe(available);
     expect(completeService.getCatalog).not.toHaveBeenCalled();
 
+    await expect(readinessCatalog.getCatalog(principal, "claude_code_default")).resolves.toBe(unavailable);
+    expect(completeService.getCatalog).toHaveBeenCalledWith(principal);
+    expect(codexService.getCatalog).toHaveBeenCalledTimes(1);
+
     codexService.getCatalog.mockResolvedValueOnce(unavailable);
     await expect(readinessCatalog.getCatalog(principal)).resolves.toBe(unavailable);
-    expect(completeService.getCatalog).toHaveBeenCalledWith(principal);
+    expect(completeService.getCatalog).toHaveBeenCalledTimes(2);
   });
 
   it("returns owner-scoped Claude metadata without querying fallback sources", async () => {
