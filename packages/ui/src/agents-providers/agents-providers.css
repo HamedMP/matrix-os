@@ -431,8 +431,10 @@
 .matrix-ap-agent-logo, .matrix-ap-harness-mark:has(.matrix-ap-agent-logo) { height: 32px; width: 32px; }
 .matrix-ap-agent-logo { border: 1px solid var(--matrix-ap-border); background: var(--matrix-ap-sunken); border-radius: 8px; }
 .matrix-ap-agent-logo img { height: 20px; width: 20px; }
-.matrix-ap-status-chip[data-state="not-connected"], .matrix-ap-status-chip[data-state="not-installed"] { color: var(--matrix-ap-warning); background: color-mix(in srgb, var(--matrix-ap-warning) 8%, transparent); }
-.matrix-ap-status-chip[data-state="not-connected"] i, .matrix-ap-status-chip[data-state="not-installed"] i { background: var(--matrix-ap-warning); }
+.matrix-ap-status-chip[data-state="not-connected"] { color: var(--matrix-ap-warning); background: color-mix(in srgb, var(--matrix-ap-warning) 8%, transparent); }
+.matrix-ap-status-chip[data-state="not-connected"] i { background: var(--matrix-ap-warning); }
+.matrix-ap-status-chip[data-state="not-installed"], .matrix-ap-status-chip[data-state="install-failed"] { color: var(--matrix-ap-danger); background: color-mix(in srgb, var(--matrix-ap-danger) 8%, transparent); }
+.matrix-ap-status-chip[data-state="not-installed"] i, .matrix-ap-status-chip[data-state="install-failed"] i { background: var(--matrix-ap-danger); }
 .matrix-ap-gateway .matrix-ap-advanced { border: 0; padding-top: 0; }
 .matrix-ap-gateway .matrix-ap-panel-head > .matrix-ap-status-chip { display: none; }
 .matrix-ap-gateway .matrix-ap-credit-row { padding: 24px; min-height: 112px; }

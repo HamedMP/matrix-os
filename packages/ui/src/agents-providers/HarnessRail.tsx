@@ -38,9 +38,14 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
 export function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSource | undefined): string {
   if (harness.installState === "missing") return "Not installed";
   if (harness.installState === "installing") return "Installing";
-  if (harness.installState !== "installed") return "Not connected";
+  if (harness.installState === "unknown") return "Checking installation";
+  if (harness.installState === "failed") return "Install failed";
   if (harness.authState === "authenticating") return "Connecting";
   return hasConfiguredConnection(harness, source) ? "Connected" : "Not connected";
+}
+
+function installationWorkflowStatus(installState: string, override: string | undefined) {
+  return installState === "installed" || override === "Installing" || override === "Uninstalling" ? override : undefined;
 }
 
 function RowChevron({ expanded }: { expanded: boolean }) {
@@ -120,13 +125,13 @@ export function HarnessRail({
               if (item.inventory || item.catalog) {
                 const observed = item.inventory ?? item.catalog!;
                 const status =
-                  statusOverride?.[item.id] ?? (observed.installState === "missing"
+                  installationWorkflowStatus(observed.installState, statusOverride?.[item.id]) ?? (observed.installState === "missing"
                       ? "Not installed"
                       : observed.installState === "installing"
                         ? "Installing"
                         : observed.installState === "failed"
-                          ? "Needs attention"
-                          : "Not connected");
+                          ? "Install failed"
+                          : observed.installState === "unknown" ? "Checking installation" : "Not connected");
                 const detailsId = `matrix-ap-details-${item.id}`;
                 return (
                   <div key={item.id} className="matrix-ap-agent-row">
@@ -168,7 +173,7 @@ export function HarnessRail({
                 (source) => source.id === harness.accessSourceId,
               );
               const status =
-                statusOverride?.[harness.id] ?? rowStatus(harness, source);
+                installationWorkflowStatus(harness.installState, statusOverride?.[harness.id]) ?? rowStatus(harness, source);
               const detailsId = `matrix-ap-details-${harness.id}`;
               return (
                 <div key={harness.id} className="matrix-ap-agent-row">

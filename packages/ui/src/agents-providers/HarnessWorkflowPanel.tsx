@@ -340,7 +340,7 @@ export function HarnessWorkflowPanel({
       aria-label={`${harness.displayName} connection`}
       aria-busy={pending}
     >
-      {connected ? renderConnection?.(changeAccountAction) : null}
+      {harness.installState === "installed" && connected ? renderConnection?.(changeAccountAction) : null}
       {harness.installState === "installed" && !connected
         && !inlineLogin && capability.apiKeyProviders.length === 0 ? (
         <p className="matrix-ap-help" role="status">
@@ -352,7 +352,12 @@ export function HarnessWorkflowPanel({
           {failure}
         </p>
       ) : null}
-      {harness.installState === "missing" ||
+      {harness.installState === "unknown" || (harness.installState === "failed" && !capability.install) ? (
+        <div className="matrix-ap-install">
+          <p className="matrix-ap-help">Installation status is unavailable. Check again.</p>
+          <button type="button" className="matrix-ap-button" disabled={disabled || pending} onClick={onRefresh}>Check again</button>
+        </div>
+      ) : harness.installState === "missing" ||
       harness.installState === "installing" ||
       (harness.installState === "failed" && capability.install) ||
       operation?.kind === "install" ? (
