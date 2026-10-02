@@ -6,7 +6,8 @@ const ContextSchema=z.object({available:z.literal(true),untrusted:z.literal(true
 }).strict()).max(20)}).strict();
 export function createSlackOwnerClient(options:{platformUrl:string;handle:string;token:string;fetchImpl?:typeof fetch}) {
   const origin=new URL(options.platformUrl);
-  if(!["http:","https:"].includes(origin.protocol) || origin.username || origin.password || origin.search || origin.hash || origin.pathname!=="/"
+  const local=["localhost","127.0.0.1","[::1]"].includes(origin.hostname);
+  if((origin.protocol!=="https:" && !(origin.protocol==="http:" && local)) || origin.username || origin.password || origin.search || origin.hash || origin.pathname!=="/"
     || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(options.handle) || !/^[a-f0-9]{64}$/.test(options.token))throw new Error("Slack transport unavailable");
   const fetchImpl=options.fetchImpl??fetch;
   async function rpc(path:string,payload:unknown){

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql, type Kysely } from "kysely";
 import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
-import { bootstrapSlackPersonalDatabase, type SlackPersonalDatabase } from "../../packages/gateway/src/slack/personal-database.js";
+import { bootstrapSlackPersonalDatabase, SlackPersonalRepository, type SlackPersonalDatabase } from "../../packages/gateway/src/slack/personal-database.js";
 import { SlackPersonalService, type SlackPersonalResult } from "../../packages/gateway/src/slack/personal-service.js";
 import type { SlackBridgeEnvelope } from "@matrix-os/contracts/slack-bridge";
 const now=new Date("2026-09-30T11:00:00Z");
@@ -88,6 +88,18 @@ describe("durable private Slack personal transport",()=>{
   expect(resolvePersonalChat).toHaveBeenCalledWith(expect.objectContaining({prepared:{chatId:"chat_private",botId:"bot_aaaaaaaa"}}),expect.anything());
   expect(submitPersonal.mock.calls[0][0].text).toBe("x".repeat(8000)+"\n(Slack message truncated.)");
   await service.receive({...live,event:{...live.event,eventId:"EvNext"}});await service.drain();expect(preparePersonalChat).toHaveBeenCalledOnce();
+ });
+ it("expires uncertain receipts after bounded retention without resending them",async()=>{
+  sendReply.mockResolvedValue({status:"uncertain"});completed=true;
+  await service.receive(envelope);await service.drain();expect(sendReply).toHaveBeenCalledOnce();
+  let clock=new Date(now.getTime()+29*86400_000);
+  const repository=new SlackPersonalRepository(db,envelope.ownerId,()=>clock);
+  await repository.cleanup();expect(await db.selectFrom("slack_personal_inbox").selectAll().execute()).toHaveLength(1);
+  expect(await repository.claimReply()).toBeNull();
+  clock=new Date(now.getTime()+31*86400_000);await repository.cleanup();
+  expect(await db.selectFrom("slack_personal_inbox").selectAll().execute()).toHaveLength(0);
+  expect(await db.selectFrom("slack_personal_outbox").selectAll().execute()).toHaveLength(0);
+  expect(sendReply).toHaveBeenCalledOnce();
  });
  it("records a queued acceptance and rejects missing or malformed canonical admission IDs",async()=>{
   submitPersonal.mockResolvedValueOnce({queuedTurnId:"qturn_private"});await service.receive(envelope);await service.drain();
@@ -192,6 +204,25 @@ describe("personal Slack canonical Pi seams",()=>{
   await expect(read(accepted)).rejects.toMatchObject({code:"forbidden"});
  });
 
+ it("uses the stored mapping on later DMs with the production resolver",async()=>{
+  const db=fixture.db as unknown as Kysely<SlackPersonalDatabase>;
+  await bootstrapSlackPersonalDatabase(db);
+  const instantiate=vi.fn(async()=>({agent:{id:record.botId},chatId:record.chatId,operation:"replayed"}));
+  const resolver=createSlackPersonalChatResolver({ownerId:envelope.ownerId,instantiation:{instantiate} as never});
+  const submitPersonal=vi.fn(async(_input:SlackPersonalRecord)=>({runId:"run_dm"}));
+  const service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>now,...resolver,submitPersonal,
+    readResult:async()=>({status:"pending",requestingActorId:envelope.ownerId}),sendReply:vi.fn()});
+  try{
+    await service.receive(envelope);await service.drain();
+    await service.receive({...envelope,event:{...envelope.event,eventId:"EvSecond",text:"Follow-up"}});await service.drain();
+    expect(instantiate).toHaveBeenCalledOnce();
+    expect(submitPersonal).toHaveBeenCalledTimes(2);
+    expect(submitPersonal.mock.calls.map(([input])=>({chatId:input.chatId,botId:input.botId}))).toEqual([
+      {chatId:record.chatId,botId:record.botId},{chatId:record.chatId,botId:record.botId},
+    ]);
+    expect((await db.selectFrom("slack_personal_inbox").select("state").execute()).map(row=>row.state)).toEqual(["accepted","accepted"]);
+  }finally{await service.close();}
+ });
  it("denies missing preparation and substituted personal recipe identities",async()=>{
   const instantiate=vi.fn(),resolver=createSlackPersonalChatResolver({ownerId:envelope.ownerId,instantiation:{instantiate} as never});
   const {personalDmKey}=await import("../../packages/gateway/src/slack/personal-database.js");const request={envelope,dmKey:personalDmKey(envelope)};
