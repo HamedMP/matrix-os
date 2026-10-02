@@ -14,7 +14,12 @@ it.each([[undefined,null],['chat_original',null],[undefined,'project_alpha']] as
  const client=createCanonicalChatWorkspaceClient();const agents=clientFixture();const bot={...saved,recipeRef:{recipeId:'writer',version:'1'},selection:{instanceId:'matrix_bot_default',model:'automatic'}};
  agents.list.mockResolvedValue({enabled:true,agents:[bot]});agents.search.mockResolvedValue({enabled:true,resources:[{kind:'agent',id:bot.id,label:bot.name},{kind:'chat',id:'chat_notes',label:'Original notes'}]});
  agents.bots={directChat:vi.fn(async()=> 'chat_bot'),directBot:vi.fn(async(id:string)=>id==='chat_bot'?bot.id:null),interactions:vi.fn(async()=>[]),tasks:vi.fn(async()=>[]),authority:vi.fn(async()=>({grants:[],connections:[],memory:{items:[]},routines:[],pendingInteractions:[]}))} as never;client.agents=agents;
- vi.mocked(client.getDetail).mockImplementation(async id=>({record:{...canonicalChatRecord,chat:{...canonicalChatRecord.chat,id}},messages:[],turns:[],runs:[],activities:[]}));
+ let targetReload:Promise<void>|null=null;
+ let releaseTargetReload:()=>void=()=>{};
+ vi.mocked(client.getDetail).mockImplementation(async id=>{
+  if(id==='chat_bot' && targetReload) await targetReload;
+  return {record:{...canonicalChatRecord,chat:{...canonicalChatRecord.chat,id}},messages:[],turns:[],runs:[],activities:[]};
+ });
  function Workspace(){const[id,setId]=React.useState<string|undefined>('chat_bot');return <><button onClick={()=>setId(sourceId)}>Begin original source</button><CanonicalChatWorkspace client={client} projectId={projectId} initialChatId={id} initialView={id?'conversation':'draft'} active catalog={providerCatalog} onActiveChatChanged={next=>setId(next??undefined)}/></>;}
  render(<Workspace/>);let editor=await screen.findByRole('textbox',{name:'Reply to chat'});await setSharedComposerText(editor,'Protected target draft');
  fireEvent.click(screen.getByRole('button',{name:'Begin original source'}));editor=await screen.findByRole('textbox',{name:sourceId?'Reply to chat':'Start a chat'});
@@ -22,8 +27,13 @@ it.each([[undefined,null],['chat_original',null],[undefined,'project_alpha']] as
  await screen.findByTestId('composer-reference-token-chat-chat_notes');
  await act(async()=>{getNearestEditorFromDOMNode(editor).update(()=>{$getRoot().selectStart();const selection=$getSelection();if($isRangeSelection(selection))selection.insertText('Recover this original draft @Mee');},{discrete:true});});
  // Choose the Bot from the text preceding the retained inline reference.
+ targetReload=new Promise<void>(resolve=>{releaseTargetReload=resolve;});
  fireEvent.click(await screen.findByRole('option',{name:/Meeting helper/}));
- await screen.findByRole('button',{name:'Return to original draft'});expect(screen.getByRole('textbox',{name:'Reply to chat'}).textContent).toContain('Protected target draft');
+ // Recovery is available before the asynchronous target detail mounts its editor.
+ await screen.findByRole('button',{name:'Return to original draft'});
+ await act(async()=>{releaseTargetReload();await targetReload;});
+ await screen.findByRole('textbox',{name:'Reply to chat'});
+ await waitFor(()=>expect(screen.getByRole('textbox',{name:'Reply to chat'}).textContent).toContain('Protected target draft'));
  fireEvent.click(screen.getByRole('button',{name:'Return to original draft'}));editor=await screen.findByRole('textbox',{name:sourceId?'Reply to chat':'Start a chat'});
  await waitFor(()=>expect(editor.textContent).toContain('Recover this original draft @Mee'));expect(client.admitTurn).not.toHaveBeenCalled();expect(client.create).not.toHaveBeenCalled();expect(screen.getByTestId('composer-reference-token-chat-chat_notes')).toBeTruthy();
  if(projectId) {expect(document.querySelector('[data-slot=chat-project-draft-scroll]')).toBeTruthy();expect(screen.queryByText('What should we build today?')).toBeNull();}
