@@ -12,7 +12,7 @@ import { openProviderSettings } from "../settings/open-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export function ProviderModelPicker({ catalog, selection, instanceLocked, disabled = false, loading = false,
-  unavailableProviderLabel, menuSide = "top", onSetupAction, onNewChat, onChange, onOpen,
+  unavailableProviderLabel, menuSide = "top", onSetupAction, onNewChat, onChange,
 }: {
   catalog: CanonicalProviderCatalog;
   selection: CanonicalComposerSelection | null;
@@ -23,7 +23,6 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
   menuSide?: "top" | "bottom";
   onSetupAction?: (instance: CanonicalProviderInstanceDescriptor, action: CanonicalProviderSetupAction) => void;
   onNewChat?: () => void;
-  onOpen?: () => void;
   onChange: (selection: CanonicalComposerSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -35,10 +34,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
   const unavailableLabel = canonicalProviderUnavailableSelectionLabel(selectedInstance, selection?.model);
   const showUnavailable = unavailable && (!loading || unavailableLabel === "Credit reserved");
   const selectionLabel = `${routeLabel}${showUnavailable ? ` · ${unavailableLabel}` : ""}`;
-  return <><Popover.Root open={open && !disabled} onOpenChange={(nextOpen) => {
-    setOpen(nextOpen);
-    if (nextOpen) onOpen?.();
-  }}>
+  return <><Popover.Root open={open && !disabled} onOpenChange={setOpen}>
     <Popover.Trigger asChild>
       <button type="button" disabled={disabled} aria-label="Choose model and provider"
         data-provider-instance={selectedInstance?.id ?? selection?.instanceId ?? ""} data-model={selectedModel?.id ?? selection?.model ?? ""}

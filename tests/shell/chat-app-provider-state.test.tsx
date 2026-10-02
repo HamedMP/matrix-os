@@ -2,7 +2,7 @@
 
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
@@ -113,6 +113,27 @@ beforeEach(() => {
 });
 
 describe("Chat canonical provider state", () => {
+  it("reuses the loaded Web Desktop/Canvas catalog when opening and reopening model choices", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(providerCatalog()));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ChatApp messages={[]} busy={false} connected conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: "Choose model and connection" });
+    await waitFor(() => expect(within(trigger).queryByRole("status")).toBeNull());
+    const catalogReads = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chat-providers")).length;
+    expect(catalogReads()).toBe(1);
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Choose model and connection" })).toBeVisible();
+    expect(catalogReads()).toBe(1);
+    expect(within(trigger).queryByRole("status")).toBeNull();
+    fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
+    fireEvent.click(trigger);
+    expect(catalogReads()).toBe(1);
+    expect(within(trigger).queryByRole("status")).toBeNull();
+    act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
+    await waitFor(() => expect(catalogReads()).toBe(2));
+  });
+
   it("copies the canonical chat ID from Web Desktop and Web Canvas conversation content", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     const writeText = vi.fn(async () => undefined);

@@ -66,19 +66,23 @@ describe("native catalog consumer wiring", () => {
     await act(async () => pending.resolve(providerCatalog));
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
   });
-  it.each(["project", "conversation"])("refreshes the actual %s picker on reopen without restarting", async surface => {
-    const get = vi.fn().mockResolvedValueOnce(providerCatalog).mockResolvedValueOnce(providerCatalog).mockResolvedValue(disabledCatalog);
+  it.each(["project", "conversation"])("reuses the loaded %s catalog on open/reopen and still invalidates Settings changes", async surface => {
+    const get = vi.fn().mockResolvedValueOnce(providerCatalog).mockResolvedValue(disabledCatalog);
     useConnection.setState({ api: { get } as never });
     render(surface === "project" ? draft() : <AgentConversationView status="ready" snapshot={thread} error={null} canSendTurns summary={summary} />);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-model")).toBe("gpt-5.6-sol"));
     openPicker();
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await screen.findByRole("searchbox");
+    expect(get).toHaveBeenCalledTimes(1);
     openPicker();
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(1);
     openPicker();
+    await screen.findByRole("searchbox");
+    expect(get).toHaveBeenCalledTimes(1);
+    act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
     await screen.findByText("Disabled in Settings");
-    expect(get).toHaveBeenCalledTimes(3);
+    expect(get).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("button", { name: /GPT-5.6-Sol/ })).toBeNull();
     expect(screen.queryByText("Connect Codex")).toBeNull();
   });

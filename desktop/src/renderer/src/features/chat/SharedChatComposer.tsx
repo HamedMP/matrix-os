@@ -171,7 +171,6 @@ export function SharedChatComposer({
   resourceSearch,
   onAttach,
   onProviderSetup,
-  onProviderPickerOpen,
   providerCatalogLoading = false,
   onNewChat,
   attachments,
@@ -212,7 +211,6 @@ export function SharedChatComposer({
     action: CanonicalProviderSetupAction,
   ) => void;
   onNewChat?: () => void;
-  onProviderPickerOpen?: () => void;
   providerCatalogLoading?: boolean;
   attachments?: ReactNode;
   leadingControls?: ReactNode;
@@ -554,7 +552,6 @@ export function SharedChatComposer({
               unavailableProviderLabel={unavailableProviderLabel}
               menuSide={menuSide}
               onSetupAction={onProviderSetup}
-              onOpen={onProviderPickerOpen}
               onNewChat={onNewChat}
               onChange={onSelectionChange}
             />}

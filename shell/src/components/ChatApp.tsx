@@ -412,7 +412,7 @@ function ChatAppContent({
           </Button>
         </div>
 
-        <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => { providerState.refresh(); setSetupOpen(true); }} /></div>
+        <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
@@ -567,7 +567,7 @@ function ChatAppContent({
             variant={setupOpen ? "secondary" : "ghost"}
             size="sm"
             className="h-8 max-w-[12rem] gap-1.5 px-2.5 text-xs"
-            onClick={() => { if (!setupOpen) providerState.refresh(); setSetupOpen((value) => !value); }}
+            onClick={() => setSetupOpen((value) => !value)}
           >
             <span className="truncate">{providerState.selected ? `${providerState.selected.harnessLabel}${providerState.selected.connectionLabel && providerState.selected.connectionLabel !== providerState.selected.harnessLabel ? ` · ${providerState.selected.connectionLabel}` : ""} · Model` : "Model"}</span>
             {providerState.loading ? <ChatProviderLoadingIndicator /> : null}

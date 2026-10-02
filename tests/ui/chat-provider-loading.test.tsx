@@ -11,6 +11,7 @@ import { CanonicalChatWorkspace } from "../../desktop/src/renderer/src/features/
 import { createCanonicalChatWorkspaceClient } from "../desktop/canonical-chat-workspace-test-utils";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { ChatApp } from "../../shell/src/components/ChatApp";
+import { PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup";
 
 vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("@clerk/nextjs", async (original) => ({ ...(await original<typeof import("@clerk/nextjs")>()), useOrganization: () => ({ organization: null }), useAuth: () => ({ userId: null, sessionId: null }) }));
@@ -31,10 +32,10 @@ it("marks initial and forced Electron reads busy, retains its saved model, and b
   const change = vi.fn();
   function Composer() {
     const state = useChatProviderCatalog(catalog, { api });
-    return <SharedChatComposer value="Keep my draft" onChange={vi.fn()} onSubmit={submit} busy={false} canSubmit
-      catalog={state.catalog} providerCatalogLoading={state.status === "loading"} onProviderPickerOpen={state.refresh}
+    return <><button onClick={state.refresh}>Refresh catalog</button><SharedChatComposer value="Keep my draft" onChange={vi.fn()} onSubmit={submit} busy={false} canSubmit
+      catalog={state.catalog} providerCatalogLoading={state.status === "loading"}
       selection={{ instanceId: "codex_fixture", model: "gpt-5.6-sol", options: [], interactionMode: "default", permissionMode: "supervised" }}
-      instanceLocked={false} onSelectionChange={change} />;
+      instanceLocked={false} onSelectionChange={change} /></>;
   }
   render(<Composer />);
   const trigger = screen.getByRole("button", { name: "Choose model and provider" });
@@ -44,6 +45,8 @@ it("marks initial and forced Electron reads busy, retains its saved model, and b
   await act(async () => initial.resolve(catalog));
   await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
   fireEvent.click(trigger);
+  expect(get).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh catalog" }));
   await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
   expect(screen.getByRole("listbox")).toHaveAttribute("aria-busy", "true");
@@ -72,6 +75,8 @@ it("shows shared Web loading in the trigger and open picker for initial and expl
   await waitFor(() => expect(within(trigger).queryByRole("status")).toBeNull());
   trigger.focus();
   fireEvent.click(trigger);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
   expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
   expect(screen.getByRole("searchbox")).not.toHaveFocus();
@@ -102,6 +107,8 @@ it("wires loading through the production Electron workspace for initial and forc
   await waitFor(() => expect(within(trigger).queryByRole("status")).toBeNull());
   expect(trigger).toHaveAttribute("data-provider-instance", "codex_fixture");
   fireEvent.click(trigger);
+  expect(reads).toBe(1);
+  act(() => window.dispatchEvent(new Event("focus")));
   await waitFor(() => expect(reads).toBe(2));
   expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
   expect(within(trigger).getByText("GPT-5.6-Sol · Codex fixture")).toBeVisible();
@@ -169,7 +176,10 @@ it.each(["credit_reserved", "credit_required"] as const)("keeps the confirmed %s
   render(<CanonicalChatWorkspace client={client} api={{ get } as unknown as ApiClient} projectId={null} active initialChatId={record.chat.id} />);
   const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
   await waitFor(() => expect(trigger).toHaveAttribute("data-provider-instance", instance.id));
+  await waitFor(() => expect(within(trigger).queryByRole("status")).toBeNull());
   fireEvent.click(trigger);
+  expect(reads).toBe(1);
+  act(() => window.dispatchEvent(new Event("focus")));
   await waitFor(() => expect(reads).toBe(2));
   const option = within(screen.getByRole("listbox")).getByRole("option");
   expect(option).toBeDisabled();

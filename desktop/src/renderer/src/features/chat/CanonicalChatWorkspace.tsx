@@ -709,7 +709,6 @@ export function CanonicalChatWorkspace({
         ))}
         catalog={providerCatalog}
         automaticRouting={Boolean(directBotId)}
-        onProviderPickerOpen={catalog ? undefined : liveCatalog.refresh}
         providerCatalogLoading={!directBotId && providerCatalogLoading}
         selection={selection}
         onSelectionChange={onSelectionChange}

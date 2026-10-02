@@ -272,7 +272,11 @@ Native Pi, kernel and other instance identities remain excluded from this select
    focuses its accessible container rather than search; explicit search interaction
    and focus return remain supported. Initial and refresh loading show an accessible
    spinner directly in the closed Chat panel provider/model trigger; opening the
-   picker is not required to see loading. Global, project and agent-conversation
+   picker is not required to see loading. Opening or reopening a picker reuses the
+   current scope/generation catalog without another request or spinner. Only the
+   initial read, explicit refresh and existing lifecycle/Settings/account/runtime
+   invalidation paths may reload it; UI reuse never replaces server admission.
+   Global, project and agent-conversation
    composers propagate that state and block Send while discovery is pending.
    The trigger preserves any bound model and safe funding reason. Cached
    discovery may remain visible only within its original scope/generation;
@@ -291,7 +295,8 @@ Native Pi, kernel and other instance identities remain excluded from this select
 6. **Required tests:** actual catalog/admission/adapter and persisted queued-run
    paths reject retired SDK Matrix execution before lease/dispatch; old reads and
    non-Matrix routes remain intact. Shared/Web/Electron/Native presentation tests
-   cover old-catalog filtering, labels, focus, initial/refresh spinner and preserved
+   cover old-catalog filtering, labels, focus, initial/refresh spinner, no fetch on
+   picker open/reopen, preserved explicit and invalidation refresh, and preserved
    selection/held-credit/cancellation. Exact final Preview plus Electron acceptance
    verifies a single Matrix model row, no Pi/SDK detail, no search autofocus and a
    visible loading spinner with the picker closed, including project and agent
