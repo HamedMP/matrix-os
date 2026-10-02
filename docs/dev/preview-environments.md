@@ -79,6 +79,13 @@ do not recreate the preview or affect production machines to repair it.
 
 ### Provisioning workflow
 
+First boot queues the registration service without waiting for its oneshot to
+finish. Registration still checks gateway, Terminal, and selected-tool readiness
+and retries within its token deadline. The bootstrap can therefore start the
+selected tool installers while registration is pending. A registration timeout
+requires startup diagnostics before retrying; repeated workflow runs cannot fix
+an installer that never started.
+
 Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
 
 1. Builds the host bundle as `v<YYYY.MM.DD>-pr<N>-<run>-<attempt>-<sha7>` (re-runs
