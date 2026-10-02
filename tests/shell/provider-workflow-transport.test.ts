@@ -49,7 +49,7 @@ describe("web provider workflow transport", () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json([]));
     const caller = new AbortController();
     await createWebProviderWorkflowClient({ fetcher }).capabilities(caller.signal);
-    expect(fetcher.mock.calls[0][0]).toBe("/vm/review/api/ai/provider-settings/workflows/capabilities");
+    expect(fetcher.mock.calls[0][0]).toBe("/vm/review/api/ai/provider-settings/workflows/capabilities?connectionVersion=2");
     expect(fetcher.mock.calls[0][1]).toMatchObject({ cache: "no-store", credentials: "include" });
     caller.abort();
     expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);

@@ -40,7 +40,7 @@ describe("Electron provider workflow transport", () => {
     const api = { get } as unknown as ApiClient;
     const signal = new AbortController().signal;
     await expect(createDesktopProviderWorkflowClient(api, () => current).capabilities(signal)).rejects.toThrow();
-    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings/workflows/capabilities", expect.objectContaining({ signal, maxBytes: 65536, timeoutMs: 15000 }));
+    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings/workflows/capabilities?connectionVersion=2", expect.objectContaining({ signal, maxBytes: 65536, timeoutMs: 15000 }));
   });
   it("reads history for the exact runtime and validates the response", async () => {
     const get = vi.fn().mockResolvedValue({ entries: [], nextCursor: null });
