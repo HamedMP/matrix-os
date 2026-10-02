@@ -205,6 +205,10 @@ Native Pi, kernel and other instance identities remain excluded from this select
    internal snapshots. Display-only unavailable picker rows are limited to exact
    managed Matrix Pi and kernel identities; other harnesses retain existing
    executable-only rows. Unavailable models have no executable default or choice.
+   Electron accepts the catalog-matching `matrix_ai_settings` navigation action
+   only for `matrix_pi_default`/`matrix_pi` and
+   `kernel_matrix_included`/`kernel`; retired system-harness setup actions stay
+   rejected. Navigation changes no account, source configuration or permissions.
 4. **Validation / error matrix:** positive holds must explain every exhausted
    dimension before `credit_reserved` applies. Genuine credit exhaustion remains
    `credit_required`, independently of purchase capability; settled budget
