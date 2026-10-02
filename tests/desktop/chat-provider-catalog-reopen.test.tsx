@@ -113,7 +113,7 @@ describe("native Chat catalog freshness", () => {
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     openPicker();
     await screen.findByText("Disabled in Settings");
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
     expect(screen.queryByText("Owner model")).toBeNull();
     expect(screen.queryByText("Connect Pi")).toBeNull();
     // Closing and rendering do not issue reads; one explicit reopen does.
@@ -186,7 +186,7 @@ describe("native Chat catalog freshness", () => {
     openPicker();
     await screen.findByText("Disabled in Settings");
     expect(get).toHaveBeenCalledTimes(3);
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
     expect(screen.queryByText("Owner model")).toBeNull();
   });
 
