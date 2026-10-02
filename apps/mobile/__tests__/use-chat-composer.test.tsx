@@ -280,6 +280,32 @@ describe("chat composer send lifecycle", () => {
       expect(mockAdmitChatTurn.mock.calls.map((call) => call[3].clientRequestId)).toEqual(["req_2", "req_2"]);
     });
 
+    it("does not bring the earlier send's text back once it has been retried successfully", async () => {
+      let fail: (error: Error) => void = () => {};
+      mockAdmitChatTurn.mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
+      const composer = renderComposer();
+      sendText(composer, "Ship it");
+
+      composer.rerender(inAnotherChat);
+      composer.rerender(newChat);
+      act(() => { composer.result.current.setDraft("later"); });
+      await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+      await act(async () => { fail(new Error("Turn rejected")); });
+      await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+
+      // While the failed text is still held, the user types it again and sends it.
+      mockAdmitChatTurn.mockResolvedValue(admissionFor("chat_new", "msg_new"));
+      sendText(composer, "Ship it");
+      await waitFor(() => expect(mockBindDraftChatId).toHaveBeenCalledWith("chat_new"));
+      await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+      expect(mockAdmitChatTurn.mock.calls.map((call) => call[3].clientRequestId)).toEqual(["req_2", "req_2"]);
+
+      // It was sent, so the next new chat starts empty.
+      composer.rerender({ ...newChat, activeChatId: "chat_new" });
+      composer.rerender(newChat);
+      expect(composer.result.current.draft).toBe("");
+    });
+
     it("takes the earlier send's text straight away when nothing has been typed in it", async () => {
       let fail: (error: Error) => void = () => {};
       mockAdmitChatTurn.mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));

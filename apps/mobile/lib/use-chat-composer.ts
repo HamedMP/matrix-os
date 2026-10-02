@@ -186,9 +186,13 @@ export function useChatComposer({ scope, activeChatId, detail, selection, turnMo
     }, {
       onSuccess: (admission) => update((current) => ({
         ...current,
-        // This chat's earlier failures are settled too: text repeated later
-        // is a new message, not a retry.
-        failed: current.failed.filter((failed) => failed.held || failed.chatId !== activeChatId),
+        // This send is settled, even if it was a retry of a failure whose
+        // text was still being held. So are this chat's other failures whose
+        // text the user already has back: text repeated later is a new
+        // message, not a retry.
+        failed: current.failed.filter((failed) => (
+          failed.turnRequestId !== turnRequestId && (failed.held || failed.chatId !== activeChatId)
+        )),
         pending: current.pending.map((message) => (
           message.id === optimisticId ? { ...message, messageId: admission.message.id } : message
         )),
