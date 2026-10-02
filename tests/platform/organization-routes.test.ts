@@ -63,7 +63,7 @@ describe("platform organization routes (T018)", () => {
     members = [admin, member];
     projection = createOrganizationMembershipProjection({
       repository, now: () => clock,
-      upstream: { listMembers: async () => ({
+      upstream: { listOrganizationsForActor: async (actorId) => members.includes(actorId) ? [org] : [], listMembers: async () => ({
         organization: { organizationId: org, name: "Route org", slug: "route-org", aiSubmission: "members", sourceUpdatedAt: new Date(1_000) },
         members: members.map((actorId) => ({ membershipId: `orgmem_${actorId}`, actorId, role: actorId === admin ? "org:admin" : "org:member", sourceUpdatedAt: new Date(1_000) })),
       }) },
@@ -91,9 +91,9 @@ describe("platform organization routes (T018)", () => {
     await projection.reconcile(org);
     const response = await app.request("/api/organizations");
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ organizations: [{ organizationId: org, name: "Route org", slug: "route-org", role: "org:member", aiSubmission: "members", membershipEpoch: expect.any(Number) }] });
+    expect(await response.json()).toEqual({ complete: true, organizations: [{ organizationId: org, name: "Route org", slug: "route-org", role: "org:member", aiSubmission: "members", membershipEpoch: expect.any(Number) }] });
     actor = outsider;
-    expect(await (await app.request("/api/organizations")).json()).toEqual({ organizations: [] });
+    expect(await (await app.request("/api/organizations")).json()).toEqual({ complete: true, organizations: [] });
     actor = null;
     expect((await app.request("/api/organizations")).status).toBe(401);
   });
@@ -111,7 +111,7 @@ describe("platform organization routes (T018)", () => {
     try {
       const response = await app.request("/api/organizations");
       const current = await repository.getOrganization(org);
-      expect(await response.json()).toEqual({ organizations: [{ organizationId: org, name: "Updated org", slug: "updated-org", role: "org:admin", aiSubmission: "owner_only", membershipEpoch: current!.membershipEpoch }] });
+      expect(await response.json()).toEqual({ complete: true, organizations: [{ organizationId: org, name: "Updated org", slug: "updated-org", role: "org:admin", aiSubmission: "owner_only", membershipEpoch: current!.membershipEpoch }] });
     } finally { check.mockRestore(); }
   });
 
