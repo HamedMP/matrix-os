@@ -8,6 +8,7 @@ export class SlackRepositoryError extends Error {
 }
 const RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const STATE_LIFETIME_MS = 10 * 60_000;
+const MAX_INSTALLATIONS_PER_OAUTH_SNAPSHOT = 512;
 export type SlackReceiptKey = { appId: string; teamId: string; eventId: string };
 export type SlackReceiptClaim = { outcome: "claimed"; leaseToken: string } | { outcome: "completed" } | { outcome: "busy" } | { outcome: "conflict" };
 function installation(row: SlackDatabase["slack_installations"]): SlackInstallation {
@@ -28,11 +29,18 @@ export class SlackRepository {
       await sql`SELECT pg_advisory_xact_lock(hashtext(${`slack-install:${input.appId}`}))`.execute(trx);
       if (options.oauthStateHash !== undefined) {
         // The consumed state remains a durable installation permit until this transaction closes it.
-        // Uninstall removes the same permit under this lock, including callbacks waiting on Slack.
+        // The target workspace is only known after Slack responds. Its captured generation
+        // fences uninstall without invalidating another workspace's installation.
         const permit = await trx.deleteFrom("slack_oauth_states").where("hash", "=", options.oauthStateHash)
           .where("app_id", "=", input.appId).where("organization_id", "=", input.organizationId).where("actor_id", "=", input.installedBy)
-          .where("consumed_at", "is not", null).where("expires_at", ">", this.now()).returning("hash").executeTakeFirst();
-        if (!permit) throw new SlackRepositoryError("conflict");
+          .where("consumed_at", "is not", null).where("expires_at", ">", this.now()).returning("installation_generations").executeTakeFirst();
+        if (!permit?.installation_generations) throw new SlackRepositoryError("conflict");
+        const current = await trx.selectFrom("slack_installations").select(["generation", "organization_id"])
+          .where("app_id", "=", input.appId).where("team_id", "=", input.teamId).executeTakeFirst();
+        const captured = Object.hasOwn(permit.installation_generations, input.teamId) ? permit.installation_generations[input.teamId] : undefined;
+        if (current ? current.organization_id !== input.organizationId || captured !== current.generation : captured !== undefined) {
+          throw new SlackRepositoryError("conflict");
+        }
       }
       const saved = await trx.insertInto("slack_installations").values({ app_id: input.appId, team_id: input.teamId,
         organization_id: input.organizationId, installed_by: input.installedBy, bot_user_id: input.botUserId,
@@ -57,12 +65,12 @@ export class SlackRepository {
       // An explicit authorized administrator removal must cancel it, even after uninstall.
       if (installed.state === "revoked" && options.source !== "administrator") return;
       await trx.updateTable("slack_installations").set({ state: "revoked", encrypted_bot_token: "", generation: sql<number>`generation + 1`, updated_at: this.now() })
-        .where("app_id", "=", appId).where("team_id", "=", teamId).where("state", "=", "active").execute();
+        .where("app_id", "=", appId).where("team_id", "=", teamId).execute();
       for (const table of ["slack_employee_links", "slack_channel_bindings", "slack_link_challenges"] as const) {
         await trx.deleteFrom(table).where("app_id", "=", appId).where("team_id", "=", teamId).execute();
       }
-      // A native OAuth start has no team identity until exchange, so revoke app/org permits conservatively.
-      await trx.deleteFrom("slack_oauth_states").where("app_id", "=", appId).where("organization_id", "=", installed.organization_id).execute();
+      // Incrementing this workspace's generation fences its in-flight callbacks.
+      // Other workspaces' permits remain valid, including a first installation.
     });
   }
   async createOAuthState(input: { hash: string; appId: string; actorId: string; organizationId: string }): Promise<void> {
@@ -72,13 +80,19 @@ export class SlackRepository {
       const count = await trx.selectFrom("slack_oauth_states").select((eb) => eb.fn.countAll<number>().as("count"))
         .where("actor_id", "=", input.actorId).where("expires_at", ">", this.now()).where("consumed_at", "is", null).executeTakeFirstOrThrow();
       if (Number(count.count) >= 20) throw new SlackRepositoryError("capacity");
+      const installations = await trx.selectFrom("slack_installations").select(["team_id", "generation"])
+        .where("app_id", "=", input.appId).where("organization_id", "=", input.organizationId)
+        .limit(MAX_INSTALLATIONS_PER_OAUTH_SNAPSHOT + 1).execute();
+      if (installations.length > MAX_INSTALLATIONS_PER_OAUTH_SNAPSHOT) throw new SlackRepositoryError("capacity");
+      const generations = Object.fromEntries(installations.map(row => [row.team_id, row.generation]));
       await trx.insertInto("slack_oauth_states").values({ hash: input.hash, app_id: input.appId, actor_id: input.actorId, organization_id: input.organizationId,
+        installation_generations: sql`CAST(${JSON.stringify(generations)} AS JSONB)`,
         expires_at: new Date(this.now().getTime() + STATE_LIFETIME_MS), consumed_at: null }).execute();
     });
   }
   async getOAuthState(hash: string): Promise<{ appId: string; actorId: string; organizationId: string } | null> {
     const row = await this.db.selectFrom("slack_oauth_states").selectAll().where("hash", "=", hash)
-      .where("app_id", "!=", "").where("expires_at", ">", this.now()).where("consumed_at", "is", null).executeTakeFirst();
+      .where("app_id", "!=", "").where("installation_generations", "is not", null).where("expires_at", ">", this.now()).where("consumed_at", "is", null).executeTakeFirst();
     return row ? { appId: row.app_id, actorId: row.actor_id, organizationId: row.organization_id } : null;
   }
   async consumeOAuthState(hash: string, actorId: string): Promise<void> {
