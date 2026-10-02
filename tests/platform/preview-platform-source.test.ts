@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-const job = YAML.parse(readFileSync(".github/workflows/preview-platform.yml", "utf8")).jobs.preview;
+const workflow = YAML.parse(readFileSync(".github/workflows/preview-platform.yml", "utf8"));
+const job = workflow.jobs.preview;
 const sha = "a".repeat(40);
 function source(overrides: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "preview-source-"));
@@ -22,6 +23,23 @@ function source(overrides: Record<string, string> = {}) {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 describe("manual platform preview source", () => {
+  it("isolates unrelated labels while sharing a group for actual deployment events", () => {
+    // This group uses GitHub's string/boolean equality and short-circuit operators,
+    // which have the same outcomes as JavaScript for these concrete fixture values.
+    const group = (action: string, label: string, runId: number, pr = 2079) =>
+      workflow.concurrency.group.replace(/\$\{\{(.*?)\}\}/g, (_match: string, expression: string) =>
+        String(new Function("github", "inputs", `return (${expression});`)({
+          event: { action, label: { name: label }, pull_request: { number: pr } }, run_id: runId,
+        }, {})));
+    const active = group("synchronize", "", 1);
+    expect(group("labeled", "preview-platform", 2)).toBe(active);
+    expect(group("synchronize", "", 3)).toBe(active);
+    for (const label of ["ready-for-ci", "preview-vps", "documentation"]) {
+      expect(group("labeled", label, 4)).not.toBe(active);
+      expect(group("labeled", label, 5)).not.toBe(group("labeled", label, 4));
+    }
+    expect(group("synchronize", "", 6, 2078)).not.toBe(active);
+  });
   it("resolves the exact PR head and isolation label on manual deployment", () => {
     const result = source(); expect(result.status, result.stderr).toBe(0);
     expect(result.output).toBe(`head_sha=${sha}\n`);
