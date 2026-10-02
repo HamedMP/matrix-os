@@ -12,6 +12,7 @@ import {
 } from "../coding-agent-artwork.js";
 import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
 import { providerEnablementBlockReason } from "./provider-enablement.js";
+import { canRefreshNativeEnable } from "./use-harness-enablement.js";
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 
 /** Settings-specific Figma artwork and lettermarks; Terminal retains its own assets. */
@@ -103,6 +104,7 @@ export function HarnessRail({
   selectedId,
   disabled,
   canEnable,
+  canRefreshEnable = false,
   onSelect,
   onEnable,
   renderDetails,
@@ -121,6 +123,7 @@ export function HarnessRail({
   selectedId: string | null;
   disabled: boolean;
   statusOverride?: { id: string; status: string | null } | null;
+  canRefreshEnable?: boolean;
   canEnable: (harness: ProviderHarnessInstance) => boolean;
   onSelect: (id: string) => void;
   onEnable: (harness: ProviderHarnessInstance) => void;
@@ -230,7 +233,8 @@ export function HarnessRail({
               const blockReason = !configuredEnabled
                 ? providerEnablementBlockReason(harness, sources)
                 : null;
-              const toggleDisabled = disabled || blockReason !== null;
+              const refreshable = canRefreshEnable && canRefreshNativeEnable(harness, sources);
+              const toggleDisabled = disabled || (blockReason !== null && !refreshable);
               const status =
                 statusOverride?.id === harness.id && statusOverride.status
                   ? statusOverride.status

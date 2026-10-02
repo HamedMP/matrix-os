@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { useHarnessEnablement } from "./use-harness-enablement.js";
 import { useGatewaySelection } from "./use-gateway-selection.js";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
@@ -161,9 +162,12 @@ export function AgentsProvidersView({
     supports,
     onMutate,
   });
-  const mutationsDisabled = busy || readOnly || gatewayPending;
+  const enablement = useHarnessEnablement({ snapshot, refresh: onRefreshForConnection, mutate: onMutate });
+  const visibleError = error ?? enablement.error;
+  const refreshSettings = () => { enablement.clearError(); onRefresh(); };
+  const mutationsDisabled = busy || readOnly || gatewayPending || enablement.pending;
   const errorPresentation = settingsErrorPresentation(
-    gatewayError ? null : error,
+    gatewayError ? null : visibleError,
   );
 
   return (
@@ -194,7 +198,7 @@ export function AgentsProvidersView({
             type="button"
             className="matrix-ap-icon-button"
             aria-label="Refresh provider status"
-            onClick={onRefresh}
+            onClick={refreshSettings}
             disabled={busy}
           >
             ↻
@@ -212,7 +216,7 @@ export function AgentsProvidersView({
           </span>
         </div>
       ) : null}
-      {error || gatewayError ? (
+      {visibleError || gatewayError ? (
         <div className="matrix-ap-notice" data-tone="danger" role="alert">
           <strong>{errorPresentation.title}</strong>
           <span>{errorPresentation.message}</span>
@@ -231,7 +235,7 @@ export function AgentsProvidersView({
           canAddCredit={supports("add_credit")}
           onMutate={onMutate}
           onAddCredit={onAddCredit}
-          onRefresh={onRefresh}
+          onRefresh={refreshSettings}
           onUsageHistory={
             onLoadUsageHistory ? () => setHistoryOpen(true) : undefined
           }
@@ -255,7 +259,7 @@ export function AgentsProvidersView({
           harnesses={snapshot.harnesses}
           inventory={inventoryHarnesses}
           catalog={(snapshot.harnessCatalog ?? []).filter((entry) => !snapshot.harnesses.some((item) => item.harness === entry.harness) && !inventoryHarnesses.some((item) => item.harness === entry.harness))}
-          renderCatalog={(entry) => <CatalogSetupPanel entry={entry} disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={onRefresh} />}
+          renderCatalog={(entry) => <CatalogSetupPanel entry={entry} disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} />}
           renderInventory={(item) =>
             workflowClient ? (
               <HarnessWorkflowPanel
@@ -278,7 +282,7 @@ export function AgentsProvidersView({
                 client={workflowClient}
                 disabled={mutationsDisabled}
                 onSetupHarness={onSetupHarness}
-                onRefresh={onRefresh}
+                onRefresh={refreshSettings}
                 onOpenTerminal={onOpenTerminal}
                 onOpenAuthorizationUrl={onOpenAuthorizationUrl}
                 onStateChange={(status) =>
@@ -300,13 +304,8 @@ export function AgentsProvidersView({
             configurationHarnessKinds.includes(item.harness) &&
             supports("set_harness_enabled")
           }
-          onEnable={(item) => {
-            void onMutate({
-              type: "set_harness_enabled",
-              harnessInstanceId: item.id,
-              enabled: !(item.configuredEnabled ?? item.enabled),
-            });
-          }}
+          canRefreshEnable={onRefreshForConnection !== undefined}
+          onEnable={(item) => { void enablement.enable(item); }}
           onSelect={(id) => {
             setExpandedRowId((current) => (current === id ? null : id));
             if (snapshot.harnesses.some((item) => item.id === id)) {
@@ -359,7 +358,7 @@ export function AgentsProvidersView({
                     onOpenTerminal={onOpenTerminal}
                     onOpenBrowser={onOpenBrowser}
                     onSetupHarness={onSetupHarness}
-                    onRefresh={onRefresh}
+                    onRefresh={refreshSettings}
                   />
                 </SavedAccounts>
               ) : null;
@@ -404,7 +403,7 @@ export function AgentsProvidersView({
                     client={workflowClient}
                     disabled={mutationsDisabled}
                     onSetupHarness={onSetupHarness}
-                    onRefresh={onRefresh}
+                    onRefresh={refreshSettings}
                     onOpenTerminal={onOpenTerminal}
                     onOpenAuthorizationUrl={onOpenAuthorizationUrl}
                     onStateChange={(status) =>
@@ -445,7 +444,7 @@ export function AgentsProvidersView({
                       genericConfiguration && supports("select_account")
                     }
                     onMutate={onMutate}
-                    onRefresh={onRefresh}
+                    onRefresh={refreshSettings}
                   />
                 </SavedAccounts>
               </>
@@ -471,7 +470,7 @@ export function AgentsProvidersView({
           snapshot={snapshot}
           onMutate={onMutate}
           onClose={() => setAddOpen(false)}
-          onRefresh={onRefresh}
+          onRefresh={refreshSettings}
           onSetupHarness={onSetupHarness}
           busy={busy}
           error={error}

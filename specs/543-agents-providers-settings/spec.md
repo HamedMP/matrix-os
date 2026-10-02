@@ -220,3 +220,39 @@ Good: advertised `gpt-5.6-sol` initializes the correct native route. Base: a sav
 ### 7. Wrong vs Correct
 
 Wrong: prepend every selected model before native Codex projection. Correct: require membership in the advertised validated inventory before emitting the Codex selected model and native observation. Do not rewrite saved owner routes to conceal mismatches.
+
+
+## Explicit enable after a delayed native observation
+
+### 1. Scope / Trigger
+
+Native observations can expire while a Settings response travels to Electron Desktop. Do not require users to hit a five-second window between Check again and Enable.
+
+### 2. Signatures
+
+The shared explicit enable action uses the existing scoped `refreshForConnection` callback before its existing harness mutation. No backend endpoint, native observation TTL or credential permission changes.
+
+### 3. Contracts
+
+An otherwise coherent installed native route may expose an explicit refresh-and-enable action when its observation is stale. Await a fresh snapshot, verify the same runtime/actor, harness, access source, account, provider and model plus writable capability and advertised model inventory, then submit On. Off remains immediate and never requires connection refresh. No background refresh may automatically enable an agent.
+
+### 4. Validation & Error Matrix
+
+| Condition | Outcome |
+| --- | --- |
+| Unchanged writable route and fresh native observation | Submit explicit On |
+| Scope, route, source, account or model changed | No enable mutation |
+| Read-only capability, missing inventory or refresh failure | Keep Off and safe recoverable state |
+| Explicit Off | Existing immediate disable mutation |
+
+### 5. Good/Base/Bad Cases
+
+Good: the user clicks Enable after a slow response, the action refreshes and enables the unchanged route. Base: a failed refresh keeps Off. Bad: lengthen the native TTL, enable from expired data, or apply the earlier click to a newly selected runtime or route.
+
+### 6. Tests Required
+
+Delayed native responses remain explicitly recoverable. Scope, route, account, source, capability and model inventory changes reject On with zero enable mutations. Off bypasses refresh. Electron live acceptance covers Off, refreshed persistence, explicit On, fresh Chat and resumed Chat.
+
+### 7. Wrong vs Correct
+
+Wrong: disable Enable solely because a matching native observation expired in transit. Correct: make explicit On obtain and validate fresh scoped evidence before mutation, preserving backend freshness checks and explicit user intent.
