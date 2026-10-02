@@ -38,7 +38,14 @@ try {
     key="";send({type:"completed"});
   }
   process.stdout.write("",()=>process.exit(0));
-} catch { send({type:"failed"});process.stdout.write("",()=>process.exit(1)); }
+} catch (error) {
+  // Native errors can contain credential material. Log only fixed categories.
+  const category = stop.signal.aborted || error instanceof Error && error.name === "AbortError"
+    ? "cancelled" : error instanceof SyntaxError ? "invalid_input"
+    : error instanceof Error ? "sdk_failure" : "unexpected_failure";
+  console.error("[provider-workflow] Pi native authentication failed:", category);
+  send({type:"failed"});process.stdout.write("",()=>process.exit(1));
+}
 `;
 const recordSchema = z.discriminatedUnion("type", [z.object({ type: z.literal("capability"), supported: z.literal(true) }).strict(),
   z.object({ type: z.literal("device_code"), code: z.string().regex(/^[A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8})?$/), url: z.literal("https://auth.openai.com/codex/device") }).strict(),
@@ -78,7 +85,11 @@ export function createPiSettingsConnection(options: {
     let bytes = 0; let buffer = ""; let exited = false; let completed = false; let expired = false;
     let resolveDone!: () => void; let rejectDone!: (error: unknown) => void;
     const done = new Promise<void>((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
-    void done.catch(() => {});
+    // A child can fail before its caller attaches a completion listener (for
+    // example, a missing stdin). Observe that rejection without replacing the
+    // original rejected promise; callers still receive and handle the failure.
+    void done.catch(error => console.warn("[provider-workflow] Pi native task failed:",
+      error instanceof ProviderWorkflowError ? "workflow_failure" : "unexpected_failure"));
     let resolveExit!: () => void;
     const exit = new Promise<void>(resolve => { resolveExit = resolve; });
     let closePromise: Promise<void> | undefined;

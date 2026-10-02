@@ -45,6 +45,21 @@ describe("Pi sanctioned Settings auth", () => {
     const n = native(false); const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected: vi.fn() });
     await connection.start({ request, publish: vi.fn() }); await connection.close(); expect(n.children[0]!.kill).toHaveBeenCalledWith("SIGTERM"); await expect(connection.start({ request, publish: vi.fn() })).rejects.toThrow("unavailable");
   });
+  it("handles a native failure without leaking output or enabling the route", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const n = native(false); const enableConnected = vi.fn(); const publish = vi.fn();
+    const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected });
+    try {
+      await connection.start({ request, publish });
+      n.children[0]!.stderr.emit("data", Buffer.from("credential-private-error"));
+      n.children[0]!.stdout.emit("data", Buffer.from('{"type":"failed"}\n'));
+      await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: "failed", safeFailure: "unavailable" }));
+      expect(warning).toHaveBeenCalledWith("[provider-workflow] Pi native task failed:", "workflow_failure");
+      expect(JSON.stringify([warning.mock.calls, publish.mock.calls])).not.toContain("credential-private-error");
+      expect(enableConnected).not.toHaveBeenCalled();
+      expect(n.children[0]!.kill).toHaveBeenCalledWith("SIGTERM");
+    } finally { await connection.close(); warning.mockRestore(); }
+  });
   it("rejects a bad key before native persistence and passes a good key only over stdin", async () => {
     const n = native(); const enableConnected = vi.fn(); const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
     const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected, fetch });
@@ -52,6 +67,20 @@ describe("Pi sanctioned Settings auth", () => {
     fetch.mockResolvedValue(new Response(null, { status: 200 })); await connection.verifyKey({ harnessInstanceId: "pi", providerId: "openai", apiKey: "test-secret" });
     expect(n.children[0]!.stdin.end).toHaveBeenCalledWith('{"key":"test-secret"}'); expect(JSON.stringify(n.spawn.mock.calls[0])).not.toContain("test-secret"); expect(enableConnected).toHaveBeenCalledWith("pi", "openai", expect.any(String)); await connection.close();
   });
+});
+
+it.each([
+  ['throw new Error("credential-private-error")', "sdk_failure"],
+  ['throw "credential-private-error"', "unexpected_failure"],
+  ['throw new DOMException("credential-private-error", "AbortError")', "cancelled"],
+])("classifies native SDK failures and logs only a fixed category (%s)", async (failure, category) => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const entry = `data:text/javascript,${encodeURIComponent(`export class ModelRuntime { static async create() { return new ModelRuntime(); } async login() { ${failure}; } }`)}`;
+  let result: unknown;
+  try { await promisify(execFile)(process.execPath, ["--input-type=module", "--eval", PI_SETTINGS_AUTH_WORKER, entry, "oauth"], { timeout: 5000, maxBuffer: 8192 }); }
+  catch (error) { result = error; }
+  expect(result).toMatchObject({ code: 1, stdout: '{"type":"failed"}\n', stderr: `[provider-workflow] Pi native authentication failed: ${category}\n` });
 });
 
 it.each(["0.99.2", "1.0.0"])("discovers only the verified managed Pi %s package and strips operator credentials", async version => {
