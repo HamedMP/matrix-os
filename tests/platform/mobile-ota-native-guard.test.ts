@@ -1,16 +1,21 @@
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   diffNativeInputs,
+  findVersionConflict,
   hashDirectory,
   nativeInputs,
   normalizeContents,
   normalizeSourcePath,
+  parseVersion,
   resolveVersionAnchor,
   startsNewRuntime,
 } from '../../scripts/ci/mobile-ota-native-guard.mjs';
+
+const GUARD_SCRIPT = join(process.cwd(), 'scripts/ci/mobile-ota-native-guard.mjs');
 
 const tempDirs: string[] = [];
 
@@ -42,20 +47,187 @@ describe('mobile OTA native guard', () => {
       expect(resolveVersionAnchor(history, '0.2.3')).toBe('c4');
     });
 
-    it('does not reach past an older version to an earlier use of the same number', () => {
-      const history = [
-        { commit: 'c3', version: '0.2.3' },
-        { commit: 'c2', version: '0.2.2' },
-        { commit: 'c1', version: '0.2.3' },
-      ];
-
-      expect(resolveVersionAnchor(history, '0.2.3')).toBe('c3');
-    });
-
     it('returns null when the history never reaches the current version', () => {
       expect(resolveVersionAnchor([], '0.2.3')).toBeNull();
       expect(resolveVersionAnchor([{ commit: 'c1', version: '0.2.2' }], '0.2.3')).toBeNull();
       expect(resolveVersionAnchor([{ commit: 'c1', version: null }], '0.2.3')).toBeNull();
+    });
+  });
+
+  describe('parseVersion', () => {
+    it('reads numeric app versions and rejects anything else', () => {
+      expect(parseVersion('0.2.3')).toEqual([0, 2, 3]);
+      expect(parseVersion('1.10')).toEqual([1, 10, 0]);
+      expect(parseVersion('2')).toEqual([2, 0, 0]);
+      expect(parseVersion('0.2.3-beta.1')).toBeNull();
+      expect(parseVersion('0.2.3.4')).toBeNull();
+      expect(parseVersion('')).toBeNull();
+      expect(parseVersion(null)).toBeNull();
+    });
+  });
+
+  describe('findVersionConflict', () => {
+    // Newest first. Builds of every version main has ever carried may still be
+    // installed, and an update published for a version reaches all of them.
+    const mainHistory = [
+      { commit: 'c4', version: '0.2.3' },
+      { commit: 'c3', version: '0.2.2' },
+      { commit: 'c2', version: '0.2.2' },
+      { commit: 'c1', version: '0.2.1' },
+    ];
+
+    it('accepts a version higher than every version main has carried', () => {
+      expect(findVersionConflict(mainHistory, '0.2.4')).toBeNull();
+      expect(findVersionConflict(mainHistory, '0.3.0')).toBeNull();
+      expect(findVersionConflict([], '0.1.0')).toBeNull();
+    });
+
+    it('accepts the current version while it stays unchanged', () => {
+      expect(findVersionConflict(mainHistory, '0.2.3')).toBeNull();
+    });
+
+    it('rejects going back to a version that was used before', () => {
+      // 0.2.3 -> 0.2.2: the update would reach the old 0.2.2 installs.
+      expect(findVersionConflict(mainHistory, '0.2.2')).toEqual({ commit: 'c4', version: '0.2.3' });
+    });
+
+    it('rejects a reused version even after it has already landed on main', () => {
+      const afterReuse = [{ commit: 'c5', version: '0.2.2' }, ...mainHistory];
+
+      expect(findVersionConflict(afterReuse, '0.2.2')).toEqual({ commit: 'c4', version: '0.2.3' });
+    });
+
+    it('rejects a lower version that was never used', () => {
+      expect(findVersionConflict(mainHistory, '0.2.0')).toEqual({ commit: 'c4', version: '0.2.3' });
+    });
+
+    it('compares versions as numbers, not as text', () => {
+      const history = [{ commit: 'c1', version: '0.9.0' }];
+
+      expect(findVersionConflict(history, '0.10.0')).toBeNull();
+      expect(findVersionConflict([{ commit: 'c2', version: '0.10.0' }, ...history], '0.9.1')).toEqual({
+        commit: 'c2',
+        version: '0.10.0',
+      });
+    });
+
+    it('treats a differently written but equal version as a reuse', () => {
+      expect(findVersionConflict([{ commit: 'c1', version: '0.2.3' }], '0.2.03')).toEqual({
+        commit: 'c1',
+        version: '0.2.3',
+      });
+    });
+
+    it('ignores historical entries with no readable numeric version', () => {
+      const history = [
+        { commit: 'c3', version: '0.2.2' },
+        { commit: 'c2', version: null },
+        { commit: 'c1', version: 'not-a-version' },
+      ];
+
+      expect(findVersionConflict(history, '0.2.3')).toBeNull();
+    });
+  });
+
+  describe('version rule, end to end', () => {
+    function git(cwd: string, ...args: string[]): string {
+      const result = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Test',
+          GIT_AUTHOR_EMAIL: 'test@example.com',
+          GIT_COMMITTER_NAME: 'Test',
+          GIT_COMMITTER_EMAIL: 'test@example.com',
+        },
+      });
+      if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+      return result.stdout.trim();
+    }
+
+    function writeVersion(repo: string, version: string): void {
+      mkdirSync(join(repo, 'apps/mobile'), { recursive: true });
+      writeFileSync(join(repo, 'apps/mobile/app.json'), JSON.stringify({ expo: { version } }));
+    }
+
+    /** A repository whose main carries the given versions, oldest first. Returns each commit. */
+    function repoWithVersions(versions: string[]): { repo: string; commits: string[] } {
+      const repo = tempDir({});
+      git(repo, 'init', '--quiet', '--initial-branch=main');
+      const commits = versions.map((version) => {
+        writeVersion(repo, version);
+        git(repo, 'add', '.');
+        git(repo, 'commit', '--quiet', '--allow-empty', '-m', `version ${version}`);
+        return git(repo, 'rev-parse', 'HEAD');
+      });
+      return { repo, commits };
+    }
+
+    function runGuard(repo: string, baseSha?: string) {
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      delete env.BASE_SHA;
+      if (baseSha) env.BASE_SHA = baseSha;
+      return spawnSync(process.execPath, [GUARD_SCRIPT], { cwd: repo, encoding: 'utf8', env });
+    }
+
+    it('fails a pull request that goes back to an earlier version', () => {
+      const { repo, commits } = repoWithVersions(['0.2.2', '0.2.3']);
+      writeVersion(repo, '0.2.2');
+
+      const result = runGuard(repo, commits[1]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('App version 0.2.2 is not higher than 0.2.3');
+      expect(result.stdout).not.toContain('new runtime');
+    });
+
+    it('fails a pull request that lowers the version to one never used', () => {
+      const { repo, commits } = repoWithVersions(['0.2.2', '0.2.3']);
+      writeVersion(repo, '0.2.0');
+
+      const result = runGuard(repo, commits[1]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('App version 0.2.0 is not higher than 0.2.3');
+    });
+
+    it('refuses to publish from main once a reused version has landed', () => {
+      const { repo } = repoWithVersions(['0.2.2', '0.2.3', '0.2.2']);
+
+      const result = runGuard(repo);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('App version 0.2.2 is not higher than 0.2.3');
+    });
+
+    it('passes a pull request that moves to a new, higher version', () => {
+      const { repo, commits } = repoWithVersions(['0.2.2', '0.2.3']);
+      writeVersion(repo, '0.2.4');
+
+      const result = runGuard(repo, commits[1]);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('App version changes to 0.2.4');
+    });
+
+    it('fails with a clear message when the base commit is not available', () => {
+      const { repo } = repoWithVersions(['0.2.3']);
+
+      const result = runGuard(repo, '0000000000000000000000000000000000000000');
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('fetch-depth: 0');
+    });
+
+    it('rejects an app version that is not numeric', () => {
+      const { repo, commits } = repoWithVersions(['0.2.3']);
+      writeVersion(repo, '0.2.4-beta.1');
+
+      const result = runGuard(repo, commits[0]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('0.2.4-beta.1');
     });
   });
 

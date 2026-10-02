@@ -269,6 +269,13 @@ against it. If they differ and the version did not change, the check fails,
 names the inputs that changed, and nothing is published. A PR that bumps
 `version` passes, because it starts a new runtime.
 
+The bump has to be real: a version change must be to a version higher than
+every version `main` has ever carried. Builds of an earlier version may still be
+installed, and an update published for a version reaches all of them, so the
+guard rejects going back to an earlier version or below one. One consequence:
+reverting a version-bump PR is blocked. To back out of a bad release, roll
+forward to a new version.
+
 The guard compares package-relative paths and file contents, not Expo's
 fingerprint hash. That hash also covers install paths, and pnpm names each
 package directory after its peer versions, so an unrelated dependency bump would

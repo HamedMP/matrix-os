@@ -18,6 +18,11 @@
 // Instead both sides are computed here, on the same machine, and compared by
 // package-relative path and file content.
 //
+// A version bump is the way to start a new runtime, so the guard also checks
+// that the bump is real: the new version must be higher than every version main
+// has ever carried. Going back to an earlier version would publish to the builds
+// of that version that are still installed.
+//
 // Usage: node scripts/ci/mobile-ota-native-guard.mjs
 //   BASE_SHA  optional; the pull request base. When the app version differs
 //             from the base, the change starts a new runtime and passes.
@@ -51,6 +56,48 @@ export function resolveVersionAnchor(history, currentVersion) {
     anchor = entry.commit;
   }
   return anchor;
+}
+
+/** `0.2.3` -> `[0, 2, 3]`. Null for anything that is not a plain numeric version. */
+export function parseVersion(version) {
+  if (typeof version !== 'string' || !/^\d+(\.\d+){0,2}$/.test(version)) return null;
+  const parts = version.split('.').map(Number);
+  while (parts.length < 3) parts.push(0);
+  return parts;
+}
+
+function compareVersions(a, b) {
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
+}
+
+/**
+ * A version change must be to a version higher than every version main has ever
+ * carried. Builds of an earlier version may still be installed, and an update
+ * published for a version reaches all of them, so going back to a version (or
+ * below one) would deliver new code to old native binaries.
+ *
+ * `history` is newest first. The leading entries that already carry the current
+ * version are the current version itself; every entry after them must be lower.
+ * Returns the highest entry that is not, or null.
+ */
+export function findVersionConflict(history, currentVersion) {
+  const current = parseVersion(currentVersion);
+  if (!current) return null;
+
+  let index = 0;
+  while (index < history.length && history[index].version === currentVersion) index += 1;
+
+  let highest = null;
+  for (const entry of history.slice(index)) {
+    const parsed = parseVersion(entry.version);
+    if (!parsed) continue;
+    if (!highest || compareVersions(parsed, highest.parsed) > 0) highest = { entry, parsed };
+  }
+  if (!highest || compareVersions(current, highest.parsed) > 0) return null;
+  return { commit: highest.entry.commit, version: highest.entry.version };
 }
 
 /**
@@ -199,21 +246,43 @@ function reportMismatch(version, anchor, mismatches) {
 function main() {
   const root = git(['rev-parse', '--show-toplevel'], process.cwd());
   const version = JSON.parse(readFileSync(join(root, APP_CONFIG), 'utf8')).expo?.version;
-  if (typeof version !== 'string' || version.length === 0) {
-    throw new Error(`${APP_CONFIG} has no expo.version.`);
+  if (!parseVersion(version)) {
+    throw new Error(`${APP_CONFIG} expo.version must be a numeric version such as 1.2.3, got "${version}".`);
   }
 
+  // History of main: the pull request base, or this commit when publishing.
   const baseSha = process.env.BASE_SHA?.trim();
+  const historyRef = baseSha || 'HEAD';
+  let commits;
+  try {
+    commits = git(['log', '--first-parent', '--format=%H', historyRef, '--', APP_CONFIG], root)
+      .split('\n')
+      .filter(Boolean);
+  } catch (error) {
+    throw new Error(
+      `Could not read the history of ${APP_CONFIG} at ${historyRef} ` +
+        `(${error instanceof Error ? error.name : 'unknown'}). The guard needs full git history (fetch-depth: 0).`,
+    );
+  }
+  const history = commits.map((commit) => ({ commit, version: versionAt(root, commit) }));
+
+  const conflict = findVersionConflict(history, version);
+  if (conflict) {
+    throw new Error(
+      `App version ${version} is not higher than ${conflict.version}, which main carried at ` +
+        `${conflict.commit.slice(0, 9)}.\n` +
+        'A version change must be to a version higher than every version main has ever had.\n' +
+        'Builds of an earlier version may still be installed, and an update published for a\n' +
+        'version reaches all of them, so reusing or lowering a version would deliver this code\n' +
+        'to old native binaries. Roll forward to a new version instead.',
+    );
+  }
+
   if (baseSha && startsNewRuntime(versionAt(root, baseSha), version)) {
     console.log(`App version changes to ${version}: this starts a new runtime, nothing to compare.`);
     return;
   }
 
-  const historyRef = baseSha || 'HEAD';
-  const commits = git(['log', '--first-parent', '--format=%H', historyRef, '--', APP_CONFIG], root)
-    .split('\n')
-    .filter(Boolean);
-  const history = commits.map((commit) => ({ commit, version: versionAt(root, commit) }));
   const anchor = resolveVersionAnchor(history, version);
   if (!anchor) {
     throw new Error(
