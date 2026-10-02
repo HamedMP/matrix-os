@@ -105,12 +105,16 @@ describe("preview platform collaboration authority", () => {
     const isolated = deployedArguments({
       SLACK_PREVIEW_ENV_BINDINGS: "|SLACK_APP_ID=AEXAMPLE|SLACK_PREVIEW_RUNTIME_HANDLE=pr-1990",
       SLACK_PREVIEW_SECRET_BINDINGS: ",SLACK_SIGNING_SECRET=slack-preview-pr1990-signing-secret:1",
+      SLACK_PREVIEW_DATABASE_SECRET_BINDING: "slack-preview-pr1990-platform-database-url:1",
     });
     expect(isolated.env).toContain("|SLACK_APP_ID=AEXAMPLE|SLACK_PREVIEW_RUNTIME_HANDLE=pr-1990");
     expect(isolated.secrets).toContain(",SLACK_SIGNING_SECRET=slack-preview-pr1990-signing-secret:1");
+    expect(isolated.secrets.split(",")).toContain("PLATFORM_DATABASE_URL=slack-preview-pr1990-platform-database-url:1");
+    expect(isolated.secrets).not.toContain("platform-database-url-staging");
     const normal = deployedArguments();
     expect(normal.env).not.toContain("SLACK_APP_ID");
     expect(normal.secrets).not.toContain("SLACK_SIGNING_SECRET");
+    expect(normal.secrets.split(",")).toContain("PLATFORM_DATABASE_URL=platform-database-url-staging:latest");
   });
   it("binds ticket keys only from the preview-only secret, never the production one", () => {
     const { secrets } = deployedArguments();

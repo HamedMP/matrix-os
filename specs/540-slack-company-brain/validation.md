@@ -153,3 +153,12 @@ ambiguous query rejection, signed-out/expired/error states and a stalled token
 refresh. Gateway, platform, Pi runtime and Web Desktop strict TypeScript pass;
 public documentation passes 233 tests. Production build and live browser/VPS
 acceptance are separate gates and remain pending at this checkpoint.
+
+
+### Pilot database isolation after current-main deployment
+
+The current-main platform image built successfully, but its startup correctly rejected a different schema fingerprint already present at the same generation in the shared preview database. The selected Slack pilot now uses a separate empty database and restricted login. Existing preview schema metadata was not rewritten or bypassed, and no existing database data was copied or deleted.
+
+The workflow resolves the pilot database's PR-scoped, immutable secret version only for the explicitly selected isolated pilot, checks its enabled version and exact runner access before building, and preserves the existing database binding for other previews. Three new regression expectations fail before the repair; the combined workflow/migration regression passes 5 suites / 56 tests. A redeploy of the exact tested image with the isolated database is running; its pilot tag, image, database binding and unchanged shared traffic/other PR tags were verified. The live branded completion page renders without consuming an installation permit.
+
+The production Web Desktop/auth build and separate 34-suite / 347-test funded AI/speech regression also pass. These are distinct from live Slack/model/VPS acceptance, which remains pending.
