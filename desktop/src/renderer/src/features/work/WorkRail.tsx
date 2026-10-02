@@ -30,8 +30,8 @@ import { WorkRailProjectGroup } from "./work-rail/WorkRailProjectGroup";
 import { WorkRailSection } from "./work-rail/WorkRailSection";
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
-import { createDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
+import { useDesktopCollaborationApi } from "../collaboration/DesktopCollaborationOrganization";
 import { DesktopProjectSharingHost, useDesktopProjectSharingContext } from "../project/DesktopProjectSharing";
 
 type SectionKey = "pinned" | "projects" | "recents";
@@ -56,7 +56,8 @@ function applyProjectedChats(
 export function SharedWithMeRailRow() {
   const actorId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
-  const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
+  const organizationStatus = useConnection((state) => state.organizationStatus);
+  const api = useDesktopCollaborationApi(platformHost, organizationStatus !== "none");
   const [pendingCount, setPendingCount] = useState(0);
   useEffect(() => {
     let active = true;
@@ -73,7 +74,7 @@ export function SharedWithMeRailRow() {
     const unsubscribe = subscribeCollaborationDiscoveryChanged(load);
     return () => { active = false; unsubscribe(); };
   }, [actorId, api]);
-  if (!actorId || !api) return null;
+  if (organizationStatus === "none" || !actorId || !api) return null;
   return <button type="button" aria-label="Shared with me"
     className="mx-1 flex min-h-9 items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
     onClick={() => useTabs.getState().openTab({ kind: "shared", title: "Shared with me" })}>

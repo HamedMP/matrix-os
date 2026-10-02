@@ -99,6 +99,7 @@ vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
     patch: vi.fn(),
     delete: vi.fn(),
   }),
+  releaseDesktopCollaborationApi: vi.fn(),
 }));
 
 describe("Electron Shared with me navigation", () => {
@@ -162,6 +163,20 @@ describe("Electron Shared with me navigation", () => {
       kind: "shared",
       title: "Shared with me",
     });
+  });
+
+  it("hides Shared with me after a complete listing confirms no organizations", () => {
+    useConnection.setState({ organizationId: null, organizationStatus: "none" });
+    render(<SharedWithMeRailRow />);
+
+    expect(screen.queryByRole("button", { name: "Shared with me" })).toBeNull();
+  });
+
+  it("guards an already-open Shared with me tab after organization access ends", () => {
+    useConnection.setState({ organizationId: null, organizationStatus: "none" });
+    render(<DesktopChatCollaboration />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Organization sharing is no longer available");
   });
 
   it("refreshes the pending badge after an invitation mutation", async () => {

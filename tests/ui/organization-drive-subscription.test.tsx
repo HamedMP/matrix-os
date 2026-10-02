@@ -5,7 +5,7 @@ import {afterEach,describe,expect,it,vi} from "vitest";
 const {api,loadOptions}=vi.hoisted(()=>({api:{get:vi.fn(),direct:{close:vi.fn(),request:vi.fn()},subscribe:vi.fn(()=>vi.fn())},loadOptions:vi.fn()}));
 vi.mock("@matrix-os/ui",async original=>({...await original<object>(),loadOrganizationDriveOptions:loadOptions}));
 vi.mock("../../desktop/src/renderer/src/lib/collaboration",()=>({createDesktopCollaborationApi:()=>api,releaseDesktopCollaborationApi:vi.fn()}));
-vi.mock("../../shell/src/lib/collaboration",()=>({createShellCollaborationApi:()=>api}));
+vi.mock("../../shell/src/lib/collaboration",()=>({createShellCollaborationApi:()=>api,releaseShellCollaborationApi:vi.fn()}));
 vi.mock("../../shell/src/hooks/useBrowserOrigin",()=>({useBrowserOrigin:()=>"http://localhost:3000"}));
 import {DesktopOrganizationDrivesView} from "../../desktop/src/renderer/src/features/files/DesktopOrganizationDrivesView";
 import {OrganizationDrivesView} from "../../shell/src/components/file-browser/OrganizationDrivesView";
