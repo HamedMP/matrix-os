@@ -21,7 +21,7 @@ const operationStates: Record<CanonicalOperationView["state"], string> = {
 };
 function friendlyToolLabel(toolId: string): string {
   const words = toolId.replace(/^matrix_/, "").replace(/[_-]+/g, " ").trim();
-  return words ? words[0].toUpperCase() + words.slice(1) : "Tool";
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Tool";
 }
 function WrenchIcon() {
   return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5-5L12 3.6 9.6 6 7.3 3.7a4 4 0 0 0 5 5L4 17a2.1 2.1 0 1 0 3 3l8.3-8.3a4 4 0 0 0 5-5L18 9l-2.4-2.4 2.3-2.3a4 4 0 0 0-3.2 2Z" /></svg>;
@@ -109,21 +109,16 @@ export function AoedeCanonicalCards({ projection, controller }: AoedeCanonicalCa
   const cancellable = new Set(projection.cancellableActionIds);
   const exposedOperations = runOperations.filter(operation => cancellable.has(operation.id)
     || operation.cancellationRequested || operation.state === "failed" || operation.state === "outcome_unknown");
-  const exposedOperationIds = new Set(exposedOperations.map(operation => operation.id));
-  const hiddenOperations = runOperations.filter(operation => !exposedOperationIds.has(operation.id));
   const hiddenProgress = projection.progress.filter(activity => activity.state !== "failed");
-  // Progress and operation views describe the same calls through different canonical
-  // channels. Pair them one-for-one, preferring operation IDs for stable identity and
-  // activity labels for readable copy, rather than counting state updates twice.
-  const technicalTools: ToolDetail[] = Array.from({ length: Math.max(hiddenProgress.length, hiddenOperations.length) }, (_, index) => {
-    const activity = hiddenProgress[index];
-    const operation = hiddenOperations[index];
-    return {
-      id: operation?.id ?? activity!.id,
-      label: activity?.label || friendlyToolLabel(operation!.toolId),
-      state: activity?.state === "completed" ? "Done" : activity?.state ? friendlyToolLabel(activity.state) : operationStates[operation!.state],
-    };
-  });
+  // Qualified runs have authoritative operations. Provider progress can emit
+  // several differently ordered representations of each call; never zip them
+  // onto operations or let a stale provider status override a completed action.
+  const technicalTools: ToolDetail[] = runOperations.length
+    ? runOperations.map(operation => ({ id: operation.id, label: friendlyToolLabel(operation.toolId), state: operationStates[operation.state] }))
+    : hiddenProgress.map(activity => ({ id: activity.id,
+      label: activity.label.startsWith("matrix_") ? friendlyToolLabel(activity.label) : activity.label,
+      state: activity.state === "completed" ? "Done" : friendlyToolLabel(activity.state),
+    }));
   return <>
     {projection.approvals.map(view => <ApprovalCard key={`${view.runId}:${view.approvalId}:${view.argumentDigest}`} view={view} controller={controller} />)}
     {projection.inputs.map(request => <CanonicalChatInputForm key={`${request.runId}:${request.requestId}:${request.id}`} request={request} onSubmit={answer => controller.submitInput(request, answer)} />)}

@@ -424,8 +424,8 @@ describe("Aoede pure presentation helpers", () => {
     expect(aoedeReadinessCopy({ ...capability, status: "degraded" })).toBe("Voice available with limits");
     expect(aoedeActionCopy()).toBe("");
     expect(aoedeActionCopy({ ...capability, status: "unavailable" })).toBe("");
-    expect(aoedeActionCopy({ ...capability, actionMode: "safe_reads" })).toBe("Qualified reads only");
-    expect(aoedeActionCopy({ ...capability, actionMode: "canonical_actions" })).toBe("Individually qualified actions");
+    expect(aoedeActionCopy({ ...capability, actionMode: "safe_reads" })).toBe("Read-only app access");
+    expect(aoedeActionCopy({ ...capability, actionMode: "canonical_actions" })).toBe("App actions available");
     expect(aoedeActionCopy({ ...capability, actionMode: "constructor" } as unknown as VoiceCapability)).toBe("");
   });
 });

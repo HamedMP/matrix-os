@@ -64,16 +64,17 @@ it("keeps failed activity visible without percentage or fabricated success", () 
   expect(screen.getByText("Create app")).toBeTruthy(); expect(screen.getByText("Failed")).toBeTruthy(); expect(container.textContent).not.toContain("100%");
 });
 
-it("collapses duplicate technical activity into a distinct tool-call count with friendly labels", () => {
+it("uses canonical operation identity and state rather than pairing provider activity by array position", () => {
   const projection = {
     ...projectAoedeCanonical(null), runId: "run_live",
     progress: [
-      { id: "activity_list", kind: "tool", state: "running", label: "List installed apps" },
-      { id: "activity_open", kind: "tool", state: "completed", label: "Open Timer" },
+      { id: "activity_open", kind: "tool", state: "running", label: "Return navigation intent for an exact validated existing owner app." },
+      { id: "operation_list", kind: "tool", state: "completed", label: "matrix_list_apps" },
+      { id: "activity_list", kind: "tool", state: "running", label: "Use tool" },
     ],
     operations: [
-      operationView({ id: "operation_list", toolId: "matrix_list_apps", state: "running" }),
-      operationView({ id: "operation_open", toolId: "matrix_open_app", state: "succeeded" }),
+      operationView({ id: "operation_list", toolId: "matrix_list_apps", state: "succeeded" }),
+      operationView({ id: "operation_open", toolId: "matrix_open_app", state: "running" }),
     ],
   } as ReturnType<typeof projectAoedeCanonical>;
   render(<AoedeCanonicalCards projection={projection} controller={{} as AoedeController} />);
@@ -83,8 +84,9 @@ it("collapses duplicate technical activity into a distinct tool-call count with 
   expect(screen.queryByText("matrix_list_apps")).toBeNull();
   fireEvent.click(disclosure);
   expect(disclosure.getAttribute("aria-expanded")).toBe("true");
-  expect(screen.getByText("List installed apps")).toBeTruthy();
-  expect(screen.getByText("Open Timer")).toBeTruthy();
+  expect(screen.getByText("List apps").closest("li")?.textContent).toBe("List appsDone");
+  expect(screen.getByText("Open app").closest("li")?.textContent).toBe("Open appRunning");
+  expect(screen.queryByText("Use tool")).toBeNull();
   expect(screen.queryByText("matrix_list_apps")).toBeNull();
   expect(screen.queryByText("matrix_open_app")).toBeNull();
 });

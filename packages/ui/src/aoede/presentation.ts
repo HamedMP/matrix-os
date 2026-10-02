@@ -73,8 +73,8 @@ export function aoedeActionCopy(capability?: VoiceCapability): string {
   if (!capability || capability.status === "unavailable") return "";
   switch (capability.actionMode) {
     case "conversation_only": return "Conversation only";
-    case "safe_reads": return "Qualified reads only";
-    case "canonical_actions": return "Individually qualified actions";
+    case "safe_reads": return "Read-only app access";
+    case "canonical_actions": return "App actions available";
     default: return "";
   }
 }
