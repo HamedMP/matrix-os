@@ -231,7 +231,7 @@ it("starts with every agent collapsed and opens or closes the chosen accordion",
   fireEvent.click(row);
   expect(row).toHaveAttribute("aria-expanded", "false");
 });
-it("renders approved purposes for actual catalog IDs and omits unknown purposes", async () => {
+it("renders real capabilities alongside approved purposes and omits unknown metadata", async () => {
   const { GatewayPanel } = await import(
     "../../packages/ui/src/agents-providers/GatewayPanel"
   );
@@ -274,11 +274,15 @@ it("renders approved purposes for actual catalog IDs and omits unknown purposes"
       onRefresh={vi.fn()}
     />,
   );
-  expect(screen.queryByText("Tools")).not.toBeInTheDocument();
-  expect(screen.queryByText("Vision")).not.toBeInTheDocument();
+  expect(screen.getByText("Tools")).toBeVisible();
+  expect(screen.getByText("Vision")).toBeVisible();
   expect(screen.queryByText("Reasoning")).not.toBeInTheDocument();
   expect(screen.getByText("Coding")).toBeVisible();
   expect(screen.getByText("General")).toBeVisible();
+  const sonnetRow = screen.getByText("Known").closest("li");
+  expect(sonnetRow).toContainElement(screen.getByText("Coding"));
+  expect(sonnetRow).toContainElement(screen.getByText("Tools"));
+  expect(sonnetRow).toContainElement(screen.getByText("Vision"));
 });
 it("wires Change account inside the authenticated shared account card", async () => {
   const { AgentsProvidersView } = await import(

@@ -9,6 +9,14 @@ import type {
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayCreditLines, money, shortDate, titleCase } from "./utils.js";
 
+const capabilityLabels = {
+  tools: "Tools",
+  vision: "Vision",
+  reasoning: "Reasoning",
+  long_context: "Long context",
+  audio: "Audio",
+};
+
 // Purpose labels belong to the approved Matrix catalog, not arbitrary capability badges.
 const modelPurposes: Readonly<Record<string, string>> = {
   "anthropic/claude-sonnet-5": "Coding",
@@ -259,6 +267,9 @@ export function GatewayPanel({
                 <li key={"accessSourceId" in model ? `${model.accessSourceId}:${model.id}` : model.id}>
                   <span>{model.displayName}</span>
                   {modelPurposes[model.id] ? <span className="matrix-ap-model-capability">{modelPurposes[model.id]}</span> : null}
+                  {model.capabilities?.map(capability => (
+                    <span key={capability} className="matrix-ap-model-capability">{capabilityLabels[capability]}</span>
+                  ))}
                 </li>
               ))}
           </ul>
