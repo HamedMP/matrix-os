@@ -107,7 +107,8 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       : null;
     const unsubscribe = source.subscribe((event) => {
       sync.handle(event);
-      if (botKey && (event.type === "chat.full_refresh" || event.chatId === activeChatId)) {
+      if (botKey && (event.type === "chat.full_refresh"
+        || (event.chatId === activeChatId && event.eventType !== "run.message"))) {
         void queryClient.invalidateQueries({ queryKey: botKey });
       }
     });

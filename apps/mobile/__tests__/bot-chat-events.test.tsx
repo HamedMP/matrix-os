@@ -39,3 +39,16 @@ it("refreshes the active bot snapshot when its chat changes or a full refresh ar
     queryKey: mobileQueryKeys.botChat("owner", "https://example.test/vm/test", "chat_bot"),
   });
 });
+
+it("keeps message streaming on the Chat cache path without refetching bot state", () => {
+  render(<CanonicalChatSessionProvider><SelectChat /></CanonicalChatSessionProvider>);
+  fireEvent.press(screen.getByText("Open bot chat"));
+  mockInvalidateQueries.mockClear();
+  act(() => emitEvent?.({ type: "chat.changed", chatId: "chat_bot", cursor: 3, eventType: "run.message" }));
+  expect(mockInvalidateQueries).not.toHaveBeenCalledWith({
+    queryKey: mobileQueryKeys.botChat("owner", "https://example.test/vm/test", "chat_bot"),
+  });
+  expect(mockInvalidateQueries).toHaveBeenCalledWith({
+    queryKey: mobileQueryKeys.canonicalChatDetail("owner", "test:primary", "chat_bot"),
+  });
+});
