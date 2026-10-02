@@ -75,6 +75,20 @@ export interface ChatMessagesTable {
   created_at: Timestamp;
 }
 
+/** Encrypted assistant-prose values are never projected into normal Chat rows. */
+export interface ChatCredentialsTable {
+  id: string;
+  chat_id: string;
+  message_id: string;
+  run_id: string;
+  owner_id: string;
+  safe_offset: number;
+  placeholder_length: number;
+  envelope: JsonValue;
+  revealed: ColumnType<boolean, boolean | undefined, boolean>;
+  created_at: Timestamp;
+}
+
 export interface ChatAttachmentsTable {
   id: string;
   chat_id: string;
@@ -264,6 +278,7 @@ export interface ChatDatabase extends ChatImportDatabase {
   chat_members: ChatMembersTable;
   chat_user_state: ChatUserStateTable;
   chat_messages: ChatMessagesTable;
+  chat_credentials: ChatCredentialsTable;
   chat_attachments: ChatAttachmentsTable;
   chat_turns: ChatTurnsTable;
   chat_runs: ChatRunsTable;
@@ -405,6 +420,22 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       UNIQUE (turn_id, attempt)
     )
   `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_credentials (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+      owner_id TEXT NOT NULL,
+      safe_offset INTEGER NOT NULL CHECK (safe_offset >= 0 AND safe_offset <= 131072),
+      placeholder_length INTEGER NOT NULL CHECK (placeholder_length BETWEEN 1 AND 64),
+      envelope JSONB NOT NULL,
+      revealed BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (message_id, safe_offset)
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_chat_credentials_chat_message ON chat_credentials(chat_id, message_id)`.execute(db);
   await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS context_snapshot JSONB`.execute(db);
   await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS request_hash TEXT`.execute(db);
   await sql`

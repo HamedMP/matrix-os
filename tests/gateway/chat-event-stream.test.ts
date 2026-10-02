@@ -82,6 +82,7 @@ describe("canonical Chat event stream", () => {
       upgradeWebSocket: ((create: unknown) => create) as never,
       canonicalChatEventStream: { open: vi.fn() } as never,
       chatRepository: null,
+      runtimeOwnerIds: [],
       gatewayCollaboration: null,
       collaborationFailClosedReason: null,
       canonicalChatOrchestrator: null,

@@ -3,6 +3,7 @@ import { resolveHermesIntegrationCapability } from "../../packages/gateway/src/c
 import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
 import { ChatRunContextSchema } from "@matrix-os/contracts";
+import { openAssistantCredential } from "../../packages/gateway/src/chat/assistant-credential-crypto.js";
 
 import { fakeGateway, baseInput as privateBaseInput } from "./hermes-test-gateway.js";
 
@@ -41,6 +42,27 @@ async function collectRaw(iterable: AsyncIterable<unknown>): Promise<unknown[]> 
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("seals a private credential deferred across live Hermes deltas", async () => {
+    const gateway = fakeGateway();
+    const key = Buffer.alloc(32, 13);
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", toolOutputKey: key, spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(privateBaseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+    gateway.event("message.delta", { text: "API_" });
+    gateway.event("message.delta", { text: "KEY=hermes-fixture" });
+    gateway.event("message.complete", { text: "API_KEY=hermes-fixture", status: "complete" });
+    const events = await eventsPromise as Array<{ type: string; delta?: string; credentials?: Array<{ occurrenceId: string; envelope: unknown }> }>;
+    const deltas = events.filter((event) => event.type === "assistant.delta");
+    expect(deltas.map((event) => event.delta).join("")).toBe("[redacted credential]");
+    const sealed = deltas.flatMap((event) => event.credentials ?? []);
+    expect(sealed).toHaveLength(1);
+    expect(openAssistantCredential(key, {
+      ownerId: privateBaseInput.owner.ownerId, chatId: privateBaseInput.chatId,
+      runId: privateBaseInput.runId, messageId: `msg_${privateBaseInput.runId.slice(4)}_assistant`,
+      occurrenceId: sealed[0]!.occurrenceId,
+    }, sealed[0]!.envelope)).toBe("hermes-fixture");
+    expect(JSON.stringify(events)).not.toContain("hermes-fixture");
+  });
   it("shows complete paths in a private Chat but keeps shared paths projected", async () => {
     for (const [input, expected] of [
       [privateBaseInput, "Open /home/matrix/home/apps/chart/index.html."],

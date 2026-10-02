@@ -29,7 +29,10 @@ import {
   isCompleteAssistantCredentialKeyword,
   safeToolPreview,
   sanitizeAssistantText,
+  projectAssistantTextWithCaptures,
+  type CapturedAssistantText,
 } from "./safe-activity-projection.js";
+import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 
 const ClaudeChatStateSchema = z.object({
   sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/),
@@ -95,15 +98,6 @@ function permissionMode(value: string, interactionMode: string) {
   if (value === "auto") return "auto" as const;
   if (value === "full_access") return "bypassPermissions" as const;
   throw new Error("Unsupported Claude permission mode");
-}
-
-function outputChunks(text: string): string[] {
-  const chunks: string[] = [];
-  for (let index = 0; index < text.length; index += 4_000) {
-    const chunk = text.slice(index, index + 4_000);
-    if (chunk) chunks.push(chunk);
-  }
-  return chunks;
 }
 
 function claudeActivity(name: string) {
@@ -231,6 +225,7 @@ function classifiedClaudeCliFailure(error: unknown) {
 
 export function createClaudeChatProviderAdapter(options: {
   homePath: string;
+  credentialKey?: Buffer;
   spawnFn?: CanonicalCliSpawn;
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
@@ -357,6 +352,7 @@ export function createClaudeChatProviderAdapter(options: {
     let stderrEvidenceBytes = 0;
     let streamedText = false;
     let resultText = "";
+    let bufferedResultEvents: CanonicalProviderRunEvent[] = [];
     let sawResult = false;
     let resultFailed = false;
     let usageFailure: ReturnType<typeof classifyClaudeUsageFailure>;
@@ -442,6 +438,7 @@ export function createClaudeChatProviderAdapter(options: {
       if (activeRuns.get(input.runId) === activeRun) activeRuns.delete(input.runId);
     };
     let pendingDelta = "";
+    let pendingCaptures: CapturedAssistantText["captures"] = [];
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
     const pathProjection = {
@@ -450,6 +447,11 @@ export function createClaudeChatProviderAdapter(options: {
       showPrivatePaths: !input.sharedScopeId,
     };
     const textProjector = createAssistantTextStreamProjector(pathProjection);
+    const credentialEmitter = createAssistantCredentialEmitter({
+      ownerType: input.owner.type,
+      ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
+      key: options.credentialKey, sharedScopeId: input.sharedScopeId,
+    });
     let projectedMessageId: string | undefined;
     let boundaryProbe: {
       originMessageId?: string;
@@ -466,21 +468,19 @@ export function createClaudeChatProviderAdapter(options: {
       deltaFlushScheduled = false;
       if (!pendingDelta) return;
       const text = pendingDelta;
+      const captures = pendingCaptures;
       const messageId = pendingDeltaMessageId;
       pendingDelta = "";
+      pendingCaptures = [];
       pendingDeltaMessageId = undefined;
-      for (const delta of outputChunks(text)) {
-        queue.push(CanonicalProviderRunEventSchema.parse({
-          type: "assistant.delta",
-          ...(messageId ? { messageId } : {}),
-          delta,
-        }));
-      }
+      for (const event of credentialEmitter.emit({ text, captures }, messageId)) queue.push(event);
     };
 
-    const enqueueDelta = (delta: string, messageId?: string) => {
+    const enqueueDelta = (delta: string, messageId?: string, captures: CapturedAssistantText["captures"] = []) => {
       if (pendingDelta && pendingDeltaMessageId !== messageId) flushPendingDelta();
       pendingDeltaMessageId = messageId;
+      pendingCaptures.push(...captures.slice(0, Math.max(0, 16 - pendingCaptures.length))
+        .map((capture) => ({ ...capture, offset: capture.offset + pendingDelta.length })));
       pendingDelta += delta;
       if (pendingDelta.length >= 4_000) {
         flushPendingDelta();
@@ -505,8 +505,8 @@ export function createClaudeChatProviderAdapter(options: {
         // marker. Release it only when the old context cannot make it a token.
         const ordinaryCompletedKeyword = textProjector.hasNonCredentialPathContext()
           && isCompleteAssistantCredentialKeyword(boundaryProbe.text);
-        const projected = textProjector.flushIndependentBoundary();
-        if (projected) enqueueDelta(projected, projectedMessageId);
+        const projected = textProjector.flushIndependentBoundaryCaptured();
+        if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
         if (ordinaryCompletedKeyword) {
           for (const segment of boundaryProbe.segments) {
             const word = sanitizeAssistantText(segment.text, pathProjection);
@@ -517,8 +517,8 @@ export function createClaudeChatProviderAdapter(options: {
         projectedMessageId = undefined;
       }
       droppingBoundaryProbe = false;
-      const projected = textProjector.flush();
-      if (projected) enqueueDelta(projected, projectedMessageId);
+      const projected = textProjector.flushCaptured();
+      if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
       projectedMessageId = undefined;
     };
     const flushSafeProjectedText = (nextCharacter?: string) => {
@@ -533,8 +533,8 @@ export function createClaudeChatProviderAdapter(options: {
       droppingBoundaryProbe = false;
     };
     const flushIndependentProjectedText = () => {
-      const projected = textProjector.flushIndependentBoundary();
-      if (projected) enqueueDelta(projected, projectedMessageId);
+      const projected = textProjector.flushIndependentBoundaryCaptured();
+      if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
       projectedMessageId = undefined;
     };
     const projectResolvedDelta = (delta: string, messageId?: string) => {
@@ -546,21 +546,21 @@ export function createClaudeChatProviderAdapter(options: {
         // continuation to that block; the rest belongs to the new block.
         let offset = 0;
         for (const character of delta) {
-          const projected = textProjector.push(character);
-          if (projected) enqueueDelta(projected, projectedMessageId);
+          const projected = textProjector.pushCaptured(character);
+          if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
           offset += character.length;
           if (!textProjector.hasPending()) {
             projectedMessageId = messageId;
-            const remainder = textProjector.push(delta.slice(offset));
-            if (remainder) enqueueDelta(remainder, messageId);
+            const remainder = textProjector.pushCaptured(delta.slice(offset));
+            if (remainder.text) enqueueDelta(remainder.text, messageId, remainder.captures);
             return;
           }
         }
         return;
       }
       projectedMessageId = messageId;
-      const projected = textProjector.push(delta);
-      if (projected) enqueueDelta(projected, messageId);
+      const projected = textProjector.pushCaptured(delta);
+      if (projected.text) enqueueDelta(projected.text, messageId, projected.captures);
     };
     const projectDelta = (delta: string, messageId?: string) => {
       if (droppingBoundaryProbe) return;
@@ -717,17 +717,18 @@ export function createClaudeChatProviderAdapter(options: {
           : line.subtype === undefined
             ? undefined
             : "other";
-        resultText = sanitizeAssistantText(line.result ?? "", pathProjection);
+        const projectedResult = projectAssistantTextWithCaptures(line.result ?? "", pathProjection);
+        resultText = projectedResult.text;
         resultFailed = line.is_error === true || line.subtype === "error";
+        if (!resultFailed && !streamedText) bufferedResultEvents = credentialEmitter.emit(projectedResult);
         finishInput?.();
       }
     };
 
     const emitBufferedResult = () => {
       if (!resultFailed && !streamedText && resultText) {
-        for (const delta of outputChunks(resultText)) {
-          queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
-        }
+        for (const event of bufferedResultEvents) queue.push(event);
+        bufferedResultEvents = [];
       }
     };
 

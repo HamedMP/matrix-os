@@ -150,7 +150,8 @@ function ResponseMessage({
           ) : null}
           <Bubble variant="ghost">
             <BubbleContent className="w-full max-w-full overflow-visible">
-              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink} loadFileImage={callbacks.loadFileImage} resolveApp={callbacks.resolveApp} openApp={callbacks.openApp}>{visibleMarkdown}</MessageResponse>
+              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink} loadFileImage={callbacks.loadFileImage} resolveApp={callbacks.resolveApp} openApp={callbacks.openApp}
+                renderCredentialMarker={callbacks.renderCredentialMarker ? (offset, marker, number) => callbacks.renderCredentialMarker?.(message, offset, marker, number) : undefined}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
           {showMetadata ? (
