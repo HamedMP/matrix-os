@@ -7,6 +7,10 @@ import {
   type OptimisticUserMessage,
 } from "../lib/canonical-chat-transcript";
 
+// The contracts barrel pulls in ESM-only micromark, which Jest cannot load.
+jest.mock("micromark", () => ({ micromark: jest.fn() }));
+jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+
 function userMessage(id: string, seq: number, text: string) {
   return {
     id,

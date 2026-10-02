@@ -45,6 +45,10 @@ jest.mock("@/lib/queries/use-send-chat-message", () => ({
   useSendChatMessage: () => ({ mutate: mockSendMessage, isPending: mockSendPending }),
 }));
 
+// The contracts barrel pulls in ESM-only micromark, which Jest cannot load.
+jest.mock("micromark", () => ({ micromark: jest.fn() }));
+jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
+
 jest.mock("@expo/ui", () => {
   const React = jest.requireActual("react") as typeof import("react");
   const { View } = jest.requireActual("react-native") as typeof import("react-native");
