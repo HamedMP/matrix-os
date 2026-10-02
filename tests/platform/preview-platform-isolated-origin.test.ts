@@ -25,12 +25,12 @@ function resolve(overrides: Record<string, string> = {}) {
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
-function verifyPilotSecret(state = "ENABLED", accessor = "serviceAccount:synthetic-preview@example.test") {
+function verifyPilotSecret(state = "ENABLED", accessor = "serviceAccount:synthetic-preview@example.test", databaseState = "ENABLED") {
   const run = job.steps.find((step: { name?: string }) => step.name === "Verify selected Slack preview credentials").run;
-  const result = spawnSync("bash", ["-euc", `gcloud() { if [ "$2" = "versions" ]; then printf '%s\\n' "$SECRET_STATE"; else printf '%s\\n' "$ACCESSOR"; fi; }\n${run}`], {
+  const result = spawnSync("bash", ["-euc", `gcloud() { printf '%s\\n' "$*" >&2; if [ "$2" = "versions" ]; then if [[ "$*" == *platform-database-url* ]]; then printf '%s\\n' "$DATABASE_STATE"; else printf '%s\\n' "$SECRET_STATE"; fi; else printf '%s\\n' "$ACCESSOR"; fi; }\n${run}`], {
     encoding: "utf8", timeout: 5_000, env: {
       PATH: process.env.PATH, PR_NUMBER: "2079", GCP_PROJECT_ID: "synthetic-project",
-      CLOUD_RUN_SERVICE_ACCOUNT: "synthetic-preview@example.test", SECRET_STATE: state, ACCESSOR: accessor,
+      CLOUD_RUN_SERVICE_ACCOUNT: "synthetic-preview@example.test", SECRET_STATE: state, ACCESSOR: accessor, DATABASE_STATE: databaseState,
     },
   });
   return result;
@@ -42,6 +42,8 @@ describe("isolated preview browser origin", () => {
     expect(verifyPilotSecret("DISABLED").status).not.toBe(0);
     expect(verifyPilotSecret("DESTROYED").status).not.toBe(0);
     expect(verifyPilotSecret("ENABLED", "serviceAccount:other@example.test").status).not.toBe(0);
+    expect(verifyPilotSecret().stderr).toContain("slack-preview-pr2079-platform-database-url");
+    expect(verifyPilotSecret("ENABLED", "serviceAccount:synthetic-preview@example.test", "DISABLED").status).not.toBe(0);
     const names = job.steps.map((step: { name?: string }) => step.name);
     expect(names.indexOf("Verify selected Slack preview credentials")).toBeLessThan(names.indexOf("Build platform image"));
   });
@@ -65,6 +67,7 @@ describe("isolated preview browser origin", () => {
     expect(result.env).toContain("SLACK_CLIENT_SECRET=slack-preview-pr2079-client-secret:1");
     expect(result.env).toContain("SLACK_SIGNING_SECRET=slack-preview-pr2079-signing-secret:1");
     expect(result.env).toContain("SLACK_TOKEN_ENCRYPTION_KEY=slack-preview-pr2079-token-encryption-key:1");
+    expect(result.env).toContain("SLACK_PREVIEW_DATABASE_SECRET_BINDING=slack-preview-pr2079-platform-database-url:1");
   });
   it("does not grant another PR access to the pilot app", () => {
     expect(resolve({ SLACK_PILOT_PR_NUMBER: "2080", SLACK_PILOT_APP_ID: "AEXAMPLE", SLACK_PILOT_CLIENT_ID: "123.456" }).env)
