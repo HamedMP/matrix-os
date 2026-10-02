@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { restartLocalDemo } from "../../scripts/restart-local-demo.mjs";
+import { restartLocalDemo, waitForDemoRoute } from "../../scripts/restart-local-demo.mjs";
 
 function harness(fail?: (command: string, args: string[], input?: string) => void) {
   const run = vi.fn((command: string, args: string[], options?: { input?: string }) => {
     fail?.(command, args, options?.input);
     return command === "docker" && args[0] === "inspect" ? "/checkout\n" : "";
   });
-  return { run, invoke: () => restartLocalDemo({ root: "/checkout", run, log: vi.fn() }) };
+  const log = vi.fn();
+  return { run, log, invoke: () => restartLocalDemo({ root: "/checkout", run, log }) };
 }
 
 describe("local demo recovery", () => {
@@ -24,6 +25,13 @@ describe("local demo recovery", () => {
     expect(calls[start][2]?.input).toContain("http://127.0.0.1:4000/health");
     expect(calls[start][2]?.input).toContain("wait_http http://127.0.0.1:3000/health 120");
     expect(calls[start][2]?.input).not.toContain("wait_http http://127.0.0.1:3000/ 120");
+    const route = calls.findIndex(([command, args]) => command === "docker" && args[0] === "exec");
+    expect(route).toBeGreaterThan(start);
+    expect(route).toBeLessThan(calls.length - 1);
+    expect(calls[route][1]).toEqual(["exec", "-i", "matrix-os-parity-platform", "node", "--input-type=module"]);
+    expect(calls[route][2]?.input).toContain('from "undici"');
+    expect(calls[route][2]?.input).toContain("waitForDemoRoute");
+    expect(calls[route][2]?.input).toContain("dispatcher.close()");
     expect(calls.at(-1)?.[2]?.input).toContain("client.synthesize");
     expect(calls.at(-1)?.[2]?.input).toContain("client.transcribe");
     expect(calls.every(([command, args]) => command !== "docker" || !args.some(arg => ["rm", "run", "prune", "compose"].includes(arg)))).toBe(true);
@@ -53,5 +61,43 @@ describe("local demo recovery", () => {
     expect(h.invoke).toThrow("Speech unavailable");
     expect(h.run.mock.calls.filter(([, , options]) => options?.input?.includes("systemctl stop"))).toHaveLength(1);
     expect(h.run.mock.calls.at(-1)?.[2]?.input).toContain("client.synthesize");
+  });
+
+  it("does not report success or restart healthy services when the platform cannot reach the VM", () => {
+    const h = harness((command, args) => {
+      if (command === "docker" && args[0] === "exec") throw new Error("VPS unreachable");
+    });
+    expect(h.invoke).toThrow("VPS unreachable");
+    expect(h.log.mock.calls.some(([message]) => message.includes("Restart complete"))).toBe(false);
+    expect(h.run.mock.calls.at(-1)?.[0]).toBe("docker");
+    expect(h.run.mock.calls.filter(([, , options]) => options?.input?.includes("systemctl stop"))).toHaveLength(1);
+  });
+});
+
+describe("platform-to-VM readiness", () => {
+  it("retries connection errors, nginx failures and invalid health responses before accepting gateway health", async () => {
+    const fetch = vi.fn()
+      .mockRejectedValueOnce(new TypeError("Connection refused"))
+      .mockResolvedValueOnce(new Response("Bad Gateway", { status: 502 }))
+      .mockResolvedValueOnce(new Response("<html>Not the gateway</html>"))
+      .mockResolvedValueOnce(Response.json({ status: "starting" }))
+      .mockResolvedValueOnce(Response.json({ status: "ok" }));
+    const sleep = vi.fn();
+    await waitForDemoRoute(fetch, sleep, vi.fn());
+    expect(fetch).toHaveBeenCalledTimes(5);
+    expect(sleep.mock.calls).toEqual([[5000], [5000], [5000], [5000]]);
+    for (const [url, options] of fetch.mock.calls) {
+      expect(url).toBe("https://192.0.2.2/health");
+      expect(options.redirect).toBe("error");
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it("stops after bounded retries and identifies the failed route", async () => {
+    const fetch = vi.fn(async () => new Response("Bad Gateway", { status: 502 }));
+    const sleep = vi.fn();
+    await expect(waitForDemoRoute(fetch, sleep, vi.fn())).rejects.toThrow(/Platform.*router.*VM.*unavailable/);
+    expect(fetch).toHaveBeenCalledTimes(24);
+    expect(sleep).toHaveBeenCalledTimes(23);
   });
 });

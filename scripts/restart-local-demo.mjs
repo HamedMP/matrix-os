@@ -8,6 +8,30 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const containers = ["matrix-os-parity-platform", "matrix-os-parity-speech-tls",
   "matrix-os-parity-storage-tls", "matrix-os-parity-router"];
 
+// Serialized into the platform container below: keep this function self-contained.
+export async function waitForDemoRoute(fetch, sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms)), log = console.log) {
+  let reason = "No response";
+  for (let attempt = 1; attempt <= 24; attempt++) {
+    try {
+      // Fixed local fixture address from dev-production-parity.mjs, not a public VPS.
+      const response = await fetch("https://192.0.2.2/health", {
+        signal: AbortSignal.timeout(5000), redirect: "error",
+      });
+      const body = await response.text();
+      if (response.status === 200 && JSON.parse(body)?.status === "ok") {
+        log("HTTP ready: platform -> router -> VM gateway");
+        return;
+      }
+      reason = `HTTP ${response.status}, gateway not ready`;
+    } catch (error) {
+      reason = error instanceof Error ? error.name : "Request failed";
+    }
+    log(`Waiting for platform -> router -> VM (${attempt}/24): ${reason}`);
+    if (attempt < 24) await sleep(5000);
+  }
+  throw new Error(`Platform -> router -> VM is still unavailable (${reason}). VM services were left running; restart verification failed.`);
+}
+
 function execute(command, args, { input, timeout = 180_000 } = {}) {
   const result = spawnSync(command, args, { input, timeout, encoding: "utf8",
     maxBuffer: 1024 * 1024, stdio: ["pipe", "pipe", "inherit"] });
@@ -91,6 +115,20 @@ export function restartLocalDemo({ root = projectRoot, run = execute, log = cons
     log("Starting gateway, then shell. Waiting for HTTP readiness; cold startup can take several minutes.");
     remote(startAndWait, 600_000);
     restoreServices = false;
+    log("Checking platform -> router -> VM connectivity (up to four minutes).");
+    log(run("docker", ["exec", "-i", "matrix-os-parity-platform", "node", "--input-type=module"], {
+      timeout: 270_000,
+      input: `import { fetch, Agent } from "undici";
+// This ownership-checked local fixture uses a self-signed VM certificate.
+// Scope the TLS exception to this probe, never the platform process or public requests.
+const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+try {
+  await (${waitForDemoRoute.toString()})((url, options) => fetch(url, { ...options, dispatcher }));
+} finally {
+  await dispatcher.close();
+}
+`,
+    }).trim());
     log("Checking real speech synthesis and transcription (two speech operations).");
     remote(checkSpeech, 180_000);
     log("Restart complete. Reopen http://app.localhost:9003/ and start a NEW voice session.");
@@ -105,7 +143,7 @@ export function restartLocalDemo({ root = projectRoot, run = execute, log = cons
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.includes("--help")) {
-    console.log("Usage: node scripts/restart-local-demo.mjs\nClose Matrix tabs first. Restarts only this checkout's existing local demo; preserves data, volumes, credentials and container hotfixes. Uses two real speech operations. Does not rebuild or restart the VM/database/editor.");
+    console.log("Usage: node scripts/restart-local-demo.mjs\nClose Matrix tabs first. Restarts only this checkout's existing local demo; preserves data, volumes, credentials and container hotfixes. Verifies platform-to-VM routing and uses two real speech operations. Does not rebuild or restart the VM/database/editor.");
   } else if (process.argv.length > 2) {
     console.error("Unknown argument. Use --help.");
     process.exitCode = 1;
