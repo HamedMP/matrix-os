@@ -14,6 +14,7 @@ describe("bot recipe catalog", () => {
     const catalog = createBotRecipeCatalog();
     expect(catalog.list().map((recipe) => recipe.recipeId)).toEqual([
       "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book", "event-request-desk", "writing-bot", "echo", "spend-review",
+      "company-brain", "personal-assistant",
     ]);
     expect(catalog.resolve({ recipeId: "writing-bot", version: "2026-09-27.1" }).name).toBe("Writing Bot");
     for (const ref of [
@@ -38,10 +39,17 @@ describe("bot recipe catalog", () => {
       if (recipe.integrations.some((integration) => integration.required)) {
         expect(recipe.capabilities).toEqual(expect.arrayContaining(["integration.inventory", "integration.call"]));
       }
-      expect(recipe.capabilities).toEqual(expect.arrayContaining(["interaction.create", "artifact.write"]));
+      if(recipe.recipeId!=="company-brain") expect(recipe.capabilities).toEqual(expect.arrayContaining(["interaction.create", "artifact.write"]));
     }
     expect(createBotRecipeCatalog().resolve({ recipeId: "writing-bot", version: "2026-09-27.1" }).capabilities)
       .not.toContain("integration.call");
+  });
+  it("company recipe has no private memory or file tools and requires citations",()=>{
+    const recipe=createBotRecipeCatalog().resolve({recipeId:"company-brain",version:"2026-09-30.1"});
+    expect(recipe.capabilities).toEqual(["integration.inventory","integration.call"]);
+    expect(recipe.integrations).toEqual([]);
+    expect(recipe.instructions).toContain("source");
+    expect(recipe.instructions).toContain("untrusted");
   });
 });
 
@@ -54,6 +62,19 @@ describe("bot system prompt", () => {
       const longest = buildBotSystemPrompt({ botName: "x".repeat(80), instructions: "word ".repeat(1_600), recipe, now: NOW });
       expect(estimatePromptTokens(longest)).toBeLessThanOrEqual(BOT_SYSTEM_PROMPT_TOKEN_BUDGET);
     }
+  });
+
+  it("uses shared audience rules and drops private memory even when supplied by mistake", () => {
+    const recipe = { integrations: [], output: "Answer with cited company evidence" };
+    const prompt = buildBotSystemPrompt({ botName: "Company Brain", instructions: "Answer the company question", recipe,
+      now: NOW, audience: "group", memory: ["PRIVATE OWNER PREFERENCE"] });
+    expect(prompt).toContain("shared company thread");
+    expect(prompt).toContain("ask the question directly in your reply");
+    expect(prompt).toContain("Cite the provided evidence");
+    for (const privateText of ["private chat", "PRIVATE OWNER PREFERENCE", "question interaction", "connection request", "remember tool", "files in your workspace"]) {
+      expect(prompt).not.toContain(privateText);
+    }
+    expect(prompt).toContain("Only explicit grants for this shared Chat authorize integration access");
   });
 
   it("counts non-Latin prose conservatively and refuses a prompt over budget", () => {

@@ -4,6 +4,7 @@
  * is revision-checked in the write statement, so a stale worker cannot
  * overwrite a newer transcript.
  */
+import { MATRIX_BOT_INSTANCE_ID } from "@matrix-os/contracts";
 import { sql } from "kysely";
 import { BotStateError, isChatOwnerViolation, isoTimestamp, newBotStateId, toSafeInteger, type BotExecutor } from "./shared.js";
 
@@ -24,6 +25,10 @@ export interface BotSessionKey {
   ownerId: string;
   botId: string;
   chatId: string;
+  /** Server-derived shared run, policy session generation and root fingerprint hash. */
+  contextGeneration?: string;
+  /** Trusted canonical run from the admitted broker binding, never worker input. */
+  contextRunId?: string;
 }
 
 function assertRuntimeVersions(versions: Record<string, string>): void {
@@ -34,15 +39,43 @@ function assertRuntimeVersions(versions: Record<string, string>): void {
   }
 }
 
+async function requireCurrentSharedRun(executor: BotExecutor, key: BotSessionKey): Promise<void> {
+  if (!key.contextRunId || !/^run_[A-Za-z0-9_.:-]{1,123}$/.test(key.contextRunId)) throw new BotStateError("invalid_input");
+  // Admission/claim/completion use this same Chat lock. The active-run unique index
+  // makes a completed older run ineligible even if its broker authorization began earlier.
+  const chat = await executor.selectFrom("chats").select("id").where("id", "=", key.chatId)
+    .where("owner_type", "=", "personal").where("owner_id", "=", key.ownerId).where("lifecycle", "=", "active").forUpdate().executeTakeFirst();
+  const run = chat && await executor.selectFrom("chat_runs").select("id").where("id", "=", key.contextRunId)
+    .where("chat_id", "=", key.chatId).where("driver_kind", "=", "matrix_bot").where("instance_id", "=", MATRIX_BOT_INSTANCE_ID)
+    .where("status", "in", ["accepted", "running", "waiting_for_input", "waiting_for_approval"]).executeTakeFirst();
+  if (!run) throw new BotStateError("not_found");
+}
+
 export function createBotSessionsRepository(db: BotExecutor) {
   return {
     /** A chat with no saved transcript loads as revision 0 with no messages. */
     async load(key: BotSessionKey, executor: BotExecutor = db): Promise<BotSessionSnapshot> {
-      const row = await executor.selectFrom("bot_agent_sessions")
-        .select(["messages", "revision", "compacted_through_seq", "needs_recompaction", "updated_at"])
+      if (key.contextRunId !== undefined && key.contextGeneration === undefined) throw new BotStateError("invalid_input");
+      if (key.contextGeneration !== undefined && !/^[a-f0-9]{64}$/.test(key.contextGeneration)) throw new BotStateError("invalid_input");
+      if (key.contextGeneration && !executor.isTransaction) return executor.transaction().execute((trx) => this.load(key, trx));
+      if (key.contextGeneration) await requireCurrentSharedRun(executor, key);
+      let row = await executor.selectFrom("bot_agent_sessions")
+        .select(["messages", "revision", "compacted_through_seq", "needs_recompaction", "updated_at", "runtime_versions"])
         .where("owner_id", "=", key.ownerId).where("bot_id", "=", key.botId).where("chat_id", "=", key.chatId)
+        .$if(key.contextGeneration !== undefined, (query) => query.forUpdate())
         .executeTakeFirst();
       if (!row) return { revision: 0, messages: [], compactedThroughSeq: null, needsRecompaction: false, updatedAt: null };
+      const storedVersions = typeof row.runtime_versions === "string" ? JSON.parse(row.runtime_versions) as Record<string, string> : row.runtime_versions;
+      if (!key.contextGeneration && storedVersions["matrix-session-context"]) throw new BotStateError("not_found");
+      if (key.contextGeneration && storedVersions["matrix-session-run"] === key.contextRunId && storedVersions["matrix-session-context"] !== key.contextGeneration) throw new BotStateError("not_found");
+      if (key.contextGeneration && (storedVersions["matrix-session-context"] !== key.contextGeneration || storedVersions["matrix-session-run"] !== key.contextRunId)) {
+        row = await executor.updateTable("bot_agent_sessions").set({ messages: "[]", token_estimate: 0, compacted_through_seq: null,
+          needs_recompaction: false, runtime_versions: JSON.stringify({ ...storedVersions, "matrix-session-context": key.contextGeneration, "matrix-session-run": key.contextRunId! }),
+          revision: sql<number>`revision + 1`, updated_at: new Date().toISOString() })
+          .where("owner_id", "=", key.ownerId).where("bot_id", "=", key.botId).where("chat_id", "=", key.chatId)
+          .where("revision", "=", row.revision).returning(["messages", "revision", "compacted_through_seq", "needs_recompaction", "updated_at", "runtime_versions"])
+          .executeTakeFirstOrThrow();
+      }
       const messages = typeof row.messages === "string" ? JSON.parse(row.messages) as unknown : row.messages;
       return {
         revision: toSafeInteger(row.revision),
@@ -69,7 +102,12 @@ export function createBotSessionsRepository(db: BotExecutor) {
       if (encoder.encode(encoded).byteLength > BOT_SESSION_MAX_BYTES) throw new BotStateError("too_large");
       if (!Number.isSafeInteger(input.tokenEstimate) || input.tokenEstimate < 0) throw new BotStateError("invalid_input");
       assertRuntimeVersions(input.runtimeVersions);
-      const runtimeVersions = JSON.stringify(input.runtimeVersions);
+      if ("matrix-session-context" in input.runtimeVersions || "matrix-session-run" in input.runtimeVersions) throw new BotStateError("invalid_input");
+      if (input.contextRunId !== undefined && input.contextGeneration === undefined) throw new BotStateError("invalid_input");
+      if (input.contextGeneration !== undefined && !/^[a-f0-9]{64}$/.test(input.contextGeneration)) throw new BotStateError("invalid_input");
+      if (input.contextGeneration && !executor.isTransaction) return executor.transaction().execute((trx) => this.save(input, trx));
+      if (input.contextGeneration) await requireCurrentSharedRun(executor, input);
+      const runtimeVersions = JSON.stringify({ ...input.runtimeVersions, ...(input.contextGeneration ? { "matrix-session-context": input.contextGeneration, "matrix-session-run": input.contextRunId! } : {}) });
       if (input.baseRevision === 0) {
         const inserted = await executor.insertInto("bot_agent_sessions").values({
           session_id: newBotStateId("bses"),
@@ -106,6 +144,8 @@ export function createBotSessionsRepository(db: BotExecutor) {
         })
         .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId).where("chat_id", "=", input.chatId)
         .where("revision", "=", input.baseRevision)
+        .$if(input.contextGeneration === undefined, (query) => query.where(sql<boolean>`runtime_versions ->> 'matrix-session-context' IS NULL`))
+        .$if(input.contextGeneration !== undefined, (query) => query.where(sql<boolean>`runtime_versions ->> 'matrix-session-context' = ${input.contextGeneration}`).where(sql<boolean>`runtime_versions ->> 'matrix-session-run' = ${input.contextRunId}`))
         .returning("revision")
         .executeTakeFirst();
       if (!updated) throw new BotStateError("revision_conflict");

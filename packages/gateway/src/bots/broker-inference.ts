@@ -64,7 +64,7 @@ function failure(
 export async function forwardBotInference(
   request: ScopeRuntimeBotInferenceRequest,
   binding: BotRuntimeBinding,
-  authorize: (modelId: string) => BotInferenceAuthorization,
+  authorize: (modelId: string) => BotInferenceAuthorization | Promise<BotInferenceAuthorization>,
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResponse> {
   let modelId: string;
@@ -76,7 +76,7 @@ export async function forwardBotInference(
     }
     return failure(request.requestId, "invalid_request");
   }
-  const authorization = authorize(modelId);
+  const authorization = await authorize(modelId);
   if (!authorization.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
     return failure(request.requestId, "action_denied");
   }
@@ -89,8 +89,8 @@ export async function forwardBotInference(
   }
 
   const accessSourceId = authorization.accessSourceId;
-  const stillAuthorized = () => {
-    const current = authorize(modelId);
+  const stillAuthorized = async () => {
+    const current = await authorize(modelId);
     return current.allowed && current.accessSourceId === accessSourceId && current.allowedModelIds.includes(modelId);
   };
   const funded = accessSourceId === "matrix_included" ? deps.fundedAdmission : undefined;
@@ -129,7 +129,7 @@ export async function forwardBotInference(
     if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
     // Returns "denied" instead of sending when the run lost its authorization.
     const send = async (): Promise<Response | "denied"> => {
-      if (!stillAuthorized()) return "denied";
+      if (!await stillAuthorized()) return "denied";
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   type CanonicalChatModelSelection,
+  type CanonicalChatExecutionRootRef,
   type CanonicalProviderDriverKind,
   CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestSchema,
@@ -58,6 +59,11 @@ export class CollaborationChatExecutionAdapter {
       ownerId: string,
       selection: CollaborationAiRequest["selection"],
     ): Promise<CanonicalSharedProviderAuthority | null>;
+    /** Trusted server resolver; no request payload may select a shared execution root. */
+    resolveExecutionRoot?(context: AuthorizedCollaborationContext): Promise<{
+      ref: Exclude<CanonicalChatExecutionRootRef, { kind: "bot_workspace" }>;
+      fingerprint: string;
+    } | null>;
     resolveResourceRevision(scopeId: string, chatId: string): Promise<number | null>;
     requestDispatch(scopeId: string, chatId: string): Promise<void>;
     onCommitted?(scopeId: string): Promise<void>;
@@ -128,6 +134,7 @@ export class CollaborationChatExecutionAdapter {
     const eligibility = parseCollaborationAiEligibility(
       await this.options.resolveEligibility(context.scopeId),
     );
+    const executionRoot = await this.options.resolveExecutionRoot?.(context);
     const queued = await this.options.repository.enqueueSharedQueuedTurn(ownerFor(context), {
       chatId: context.resourceId,
       scopeId: context.scopeId,
@@ -156,6 +163,7 @@ export class CollaborationChatExecutionAdapter {
         permissionModes: ["supervised"],
       },
       acceptedAt: this.now().toISOString(),
+      ...(executionRoot ? { executionRoot: executionRoot.ref, executionRootFingerprint: executionRoot.fingerprint } : {}),
       ...(resolvedCapability.canonicalProviderAuthority ? {
         canonicalProviderAuthority: resolvedCapability.canonicalProviderAuthority,
       } : {}),

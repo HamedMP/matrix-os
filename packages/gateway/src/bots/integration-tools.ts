@@ -13,7 +13,7 @@
  * network call.
  */
 import { createHash } from "node:crypto";
-import type { BotEffect, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
+import type { BotAudience, BotEffect, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import { getAction, getService } from "../integrations/registry.js";
 import { BotBrokerActionError } from "./broker-actions.js";
@@ -26,7 +26,7 @@ import { createBotInteractionsRepository } from "./repositories/interactions.js"
 import { BotStateError, newBotStateId } from "./repositories/shared.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 
-const AUDIENCE = "direct";
+const audienceFor = (binding: BotRuntimeBinding): BotAudience => binding.group ? `group:${binding.chatId}` : "direct";
 const APPROVAL_TOOL = "integration.call";
 const REQUEST_LIFETIME_MS = 24 * 60 * 60_000;
 const CONNECT_LIFETIME_MS = 15 * 60_000;
@@ -156,7 +156,7 @@ export function createBotIntegrationTools(deps: {
   async function approved(binding: BotRuntimeBinding, args: CallArgs, grant: BotGrantRecord, preview: string): Promise<{ approved: true } | { approved: false; message: string }> {
     const argsHash = approvalDigest(args);
     const account = `${args.service}:${grant.accountLabel}`.slice(0, 256);
-    const policy = { taskId: binding.taskId, tool: APPROVAL_TOOL, argsHash, account, audience: AUDIENCE, policyRevision: grant.revision };
+    const policy = { taskId: binding.taskId, tool: APPROVAL_TOOL, argsHash, account, audience: audienceFor(binding), policyRevision: grant.revision };
     const at = now();
     return deps.transact(binding.ownerId, async (tx) => {
       const approvals = createBotApprovalsRepository(tx.db);
@@ -175,7 +175,7 @@ export function createBotIntegrationTools(deps: {
           ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId, taskId: binding.taskId, kind: "approval",
           payload: {
             kind: "approval", tool: APPROVAL_TOOL, argsDigest: argsHash,
-            account: { service: args.service, label: grant.accountLabel }, audience: AUDIENCE, preview, policyRevision: grant.revision,
+            account: { service: args.service, label: grant.accountLabel }, audience: audienceFor(binding), preview, policyRevision: grant.revision,
           },
           responderActorId: binding.ownerId, blocking: true,
           expiresAt: new Date(at.getTime() + REQUEST_LIFETIME_MS).toISOString(), now: at.toISOString(),
@@ -214,7 +214,7 @@ export function createBotIntegrationTools(deps: {
       if (services.length === 0) return text("This bot has no connected services for this task.");
       const connected = await inventory(binding.ownerId, signal);
       const grants = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).listLive({
-        ownerId: binding.ownerId, botId: binding.botId, audience: AUDIENCE, now: now().toISOString(),
+        ownerId: binding.ownerId, botId: binding.botId, audience: audienceFor(binding), now: now().toISOString(),
       }, tx.db));
       const lines = services.map((service) => {
         const granted = grants.filter((grant) => grant.service === service
@@ -224,7 +224,7 @@ export function createBotIntegrationTools(deps: {
             `account "${grant.accountLabel}", connection ${grant.connectionId}, allowed: ${grant.effects.join(", ")}`).join("; ")}`;
         }
         const count = connected.filter((connection) => connection.service === service).length;
-        return `${serviceName(service)} (${service}): ${count > 0 ? "connected, but this bot has no access yet" : "not connected"}`;
+        return `${serviceName(service)} (${service}): ${!binding.group && count > 0 ? "connected, but this bot has no access yet" : "not connected"}`;
       });
       return text(lines.join("\n"));
     },
@@ -233,6 +233,8 @@ export function createBotIntegrationTools(deps: {
     async call(binding: BotRuntimeBinding, args: CallArgs, signal?: AbortSignal): Promise<BotToolResult> {
       const effect = effectOf(args.service, args.action);
       if (!effect) throw new BotBrokerActionError("invalid_arguments");
+      // Group effects need an explicit group approval flow; the private owner prompt is never reused.
+      if (binding.group && effect !== "read") throw new BotBrokerActionError("denied");
       const declared = await declaredEffects(binding.ownerId, binding.botId, args.service);
       // A bot never exceeds what its recipe declares for a service.
       if (!declared.includes(effect)) throw new BotBrokerActionError("denied");
@@ -240,10 +242,11 @@ export function createBotIntegrationTools(deps: {
       const at = now().toISOString();
       const grant = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).findUsable({
         ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
-        audience: AUDIENCE, effect, now: at,
+        audience: audienceFor(binding), effect, now: at,
       }, tx.db));
       const account = connected.filter((connection) => connection.service === args.service && connection.label === grant?.accountLabel);
       if (!grant || account.length !== 1 || account[0]!.connectionId !== args.connectionId) {
+        if (binding.group) throw new BotBrokerActionError("not_granted");
         return text(await deps.transact(binding.ownerId, (tx) => requestAccess(tx, binding, args.service, declared, connected)));
       }
       if (effect !== "read") {
@@ -256,7 +259,7 @@ export function createBotIntegrationTools(deps: {
       // Check its identity and revision again at the last gateway checkpoint before dispatch.
       const live = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).findUsable({
         ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
-        audience: AUDIENCE, effect, now: now().toISOString(),
+        audience: audienceFor(binding), effect, now: now().toISOString(),
       }, tx.db));
       if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
         throw new BotBrokerActionError("not_granted");

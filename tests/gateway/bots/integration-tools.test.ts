@@ -255,3 +255,28 @@ describe("bot integration tools", () => {
     await expect(tools.call(binding, read, aborted.signal)).rejects.toEqual(new BotBrokerActionError("timeout"));
   });
 });
+
+
+describe("group integration isolation", () => {
+  const group = { scopeId: "scope-company", actorId: "user_member", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime" };
+  it("does not use direct grants, expose private account labels, or request private access", async () => {
+    await grant(WORK);
+    const { tools, call } = setup();
+    const shared = { ...binding, group };
+    const inventory = await tools.inventory(shared, {});
+    expect(JSON.stringify(inventory)).not.toContain('conn_work');
+    expect(JSON.stringify(inventory)).not.toContain('Work');
+    await expect(tools.call(shared, read)).rejects.toMatchObject({ code: "not_granted" });
+    expect(call).not.toHaveBeenCalled();
+    await expect(pending()).resolves.toEqual([]);
+  });
+  it("reads only from a grant explicitly scoped to this group chat", async () => {
+    await createBotGrantsRepository(db).grant({ ownerId: OWNER, botId: BOT, service: WORK.service,
+      connectionId: WORK.connectionId, accountLabel: WORK.label, effects: ["read"],
+      audience: `group:${CHAT}`, grantedByActorId: OWNER, now: AT });
+    const { tools, call } = setup();
+    await expect(tools.call({ ...binding, group }, read)).resolves.toMatchObject({ ok: true });
+    expect(call).toHaveBeenCalledTimes(1);
+    await expect(tools.call({ ...binding, chatId: "chat_othergroup", group }, read)).rejects.toMatchObject({ code: "not_granted" });
+  });
+});

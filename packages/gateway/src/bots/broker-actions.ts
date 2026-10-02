@@ -26,7 +26,7 @@ import { forwardBotInference, type BotInferenceDependencies } from "./broker-inf
 import type { BotCheckpointsRepository } from "./repositories/checkpoints.js";
 import type { BotSessionsRepository } from "./repositories/sessions.js";
 import { BotStateError, withTransaction, type BotExecutor } from "./repositories/shared.js";
-import type { BotRuntimeBinding, BotRuntimeRegistry } from "./runtime-registry.js";
+import { requireGroupBotAuthority, type GroupBotAuthorizer, type BotRuntimeBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
@@ -107,6 +107,7 @@ export function createBotBrokerActions(deps: {
   /** The owner database the repositories use; pre-dispatch checkpoint writes share one transaction on it. */
   db: BotExecutor;
   registry: BotRuntimeRegistry;
+  authorizeGroup?: GroupBotAuthorizer;
   sessions: BotSessionsRepository;
   checkpoints: BotCheckpointsRepository;
   runs: BotRunSource;
@@ -170,7 +171,20 @@ export function createBotBrokerActions(deps: {
     return true;
   }
 
+  async function reauthorize(binding: BotRuntimeBinding): Promise<void> {
+    if (!binding.group) return;
+    try {
+      await requireGroupBotAuthority({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, group: binding.group }, deps.authorizeGroup);
+    } catch (error: unknown) {
+      console.warn("[bots] group authorization denied:", error instanceof Error ? error.name : "UnknownError");
+      throw new BotBrokerActionError("denied");
+    }
+    if (!deps.registry.lookupRun(binding)) throw new BotBrokerActionError("stale_generation");
+  }
+
   async function runTool(binding: BotRuntimeBinding, request: BotToolRequest): Promise<BotToolResult> {
+    // Shared runs cannot reach personal artifacts, memory, or owner-private interactions.
+    if (binding.group && !["integration.inventory", "integration.call"].includes(request.capability)) throw new BotBrokerActionError("denied");
     if (!binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("denied");
     const effectClass = deps.tools.effectClass(request);
     const argsHash = createHash("sha256").update(canonicalJson(request.args)).digest("hex");
@@ -198,6 +212,7 @@ export function createBotBrokerActions(deps: {
     }
     const signal = AbortSignal.any([deps.inference.lifetime, AbortSignal.timeout(toolTimeoutMs)]);
     try {
+      await reauthorize(binding);
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
       await deps.checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });
       return result;
@@ -228,20 +243,35 @@ export function createBotBrokerActions(deps: {
         if (!request.success) return undefined;
         const binding = deps.registry.lookup(request.data);
         if (!binding) return { version: 1, requestId: request.data.requestId, ok: false, error: "action_denied" };
-        return forwardBotInference(request.data, binding, (modelId) => deps.registry.authorize({
+        try { await reauthorize(binding); } catch (error: unknown) {
+          if (!(error instanceof BotBrokerActionError)) console.warn("[bots] inference authorization failed:", error instanceof Error ? error.name : "UnknownError");
+          return { version: 1, requestId: request.data.requestId, ok: false, error: "action_denied" };
+        }
+        return forwardBotInference(request.data, binding, async (modelId) => {
+          try { await reauthorize(binding); } catch (error: unknown) {
+            if (!(error instanceof BotBrokerActionError)) console.warn("[bots] inference reauthorization failed:", error instanceof Error ? error.name : "UnknownError");
+            return { allowed: false };
+          }
+          return deps.registry.authorize({
           runtimeHandle: request.data.runtimeHandle,
           executionGeneration: request.data.executionGeneration,
           action: request.data.action,
           modelId,
-        }), deps.inference);
+        });
+        }, deps.inference);
       }
       const parsed = BotBrokerRequestSchema.safeParse(raw);
       if (!parsed.success) return undefined;
       const request = parsed.data;
       const binding = deps.registry.lookupRun(request);
       if (!binding) return refusal(request.requestId, "stale_generation");
-      const key = { ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId };
+      // Shared evidence is freshly admitted per run; never resume a prior run's
+      // source text after that evidence was erased or its audience changed.
+      const key = { ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId,
+        ...(binding.group ? { contextRunId: binding.runId, contextGeneration: createHash("sha256").update(`group:${binding.group.scopeId}:${binding.group.sessionGeneration}:${binding.rootFingerprint}:${binding.runId}`).digest("hex") } : {}) };
+      if (binding.group && !binding.group.sessionGeneration && ["bot.session.load", "bot.session.save"].includes(request.action)) return refusal(request.requestId, "denied");
       try {
+        await reauthorize(binding);
         switch (request.action) {
           case "bot.run.load":
             return success(request.requestId, BotRunSpecSchema.parse(await deps.runs.loadRunSpec(binding)));

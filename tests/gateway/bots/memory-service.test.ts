@@ -160,3 +160,15 @@ describe("bot memory", () => {
     await expect(service().confirm(OWNER, "not-a-bot", item!.item_id, { baseRevision: 1 })).rejects.toEqual(new BotMemoryError("invalid_request"));
   });
 });
+
+
+describe("group memory isolation", () => {
+  it("never searches or writes the private bot memory for a group run", async () => {
+    await propose({});
+    const shared = { ...binding, group: { scopeId: "scope-company", actorId: "user_member", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime" } };
+    await expect(service().search(shared, { query: "short", limit: 5 })).rejects.toMatchObject({ code: "denied" });
+    await db.updateTable("bot_chat_bindings").set({ kind: "group" }).where("chat_id", "=", CHAT).execute();
+    await expect(service().admitted({ ownerId: OWNER, botId: BOT, chatId: CHAT })).resolves.toEqual([]);
+    await expect(service().propose(shared, { kind: "fact", scope: "bot", content: "Company fact", source: { at: AT } })).rejects.toMatchObject({ code: "denied" });
+  });
+});
