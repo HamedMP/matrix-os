@@ -167,6 +167,49 @@ describe("usage-based funded AI admission", () => {
       .where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
   });
 
+  it("settles a trusted matching Jev no-dispatch attestation at zero without inventing provider usage", async () => {
+    await repo.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
+    await repo.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
+      allowedModelIds: [modelId, JEV_MODEL_ID], monthlyBudgetMicrousd: 1_000_000, expiresAt: null });
+    const authorization = await repo.authorize({ ...request(credential.token, "jev_not_dispatched"), modelId: JEV_MODEL_ID,
+      maxCostMicrousd: 5_000, jevPricingVersion: "typesafe-jev-input-2026-09" });
+    const key = { reservationId: authorization.reservation.reservationId, tokenId: credential.tokenId };
+    const attestation = { ...key, mode: "not_dispatched" as const, expectedRequestId: "jev_not_dispatched",
+      jevPricingVersion: "typesafe-jev-input-2026-09" };
+    await expect(repo.finalizeReservation(attestation)).rejects.toMatchObject({ code: "reservation_closed" });
+    await repo.startReservation(key);
+    for (const invalid of [ { ...attestation, expectedRequestId: "another_request" },
+      { ...attestation, jevPricingVersion: "typesafe-jev-input-2026-08" } ]) {
+      await expect(repo.finalizeReservation(invalid)).rejects.toMatchObject({ code: "idempotency_conflict" });
+    }
+    await expect(repo.finalizeReservation({ ...attestation, tokenId: "another_token" }))
+      .rejects.toMatchObject({ code: "unauthorized" });
+    await expect(repo.finalizeReservation({ ...key, mode: "conservative" })).rejects.toMatchObject({ code: "unavailable" });
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 5_000 });
+    const settled = await repo.finalizeReservation(attestation);
+    expect(settled).toMatchObject({ status: "settled", actualCostMicrousd: 0, chargedCostMicrousd: 0,
+      releasedMicrousd: 5_000, finalizationMode: "exact", funding: { reservedMicrousd: 0, settledThisMonthMicrousd: 0 } });
+    expect(await repo.finalizeReservation(attestation)).toEqual(settled);
+    await expect(repo.finalizeReservation({ ...attestation, expectedRequestId: "another_request" }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
+    const persisted = await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["status", "resolved_model", "pricing_version", "actual_microusd"])
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    expect(persisted).toEqual({ status: "settled", resolved_model: null, pricing_version: null, actual_microusd: 0 });
+    const ledger = await db.executor.selectFrom("ai_funded_credit_ledger").selectAll()
+      .where("reservation_id", "=", key.reservationId).execute();
+    expect(ledger.reduce((sum, entry) => sum + Number(entry.amount_microusd), 0)).toBe(0);
+  });
+
+  it("rejects a Jev no-dispatch attestation against another model", async () => {
+    const authorization = await repo.authorize(request(credential.token, "not_jev_no_dispatch"));
+    const key = { reservationId: authorization.reservation.reservationId, tokenId: credential.tokenId };
+    await repo.startReservation(key);
+    await expect(repo.finalizeReservation({ ...key, mode: "not_dispatched", expectedRequestId: "not_jev_no_dispatch",
+      jevPricingVersion: "typesafe-jev-input-2026-09" })).rejects.toMatchObject({ code: "idempotency_conflict" });
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 1_000_000 });
+  });
+
   it("binds versioned Jev authorization to exact settlement provenance and idempotent ledger replay", async () => {
     await repo.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
     await repo.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,

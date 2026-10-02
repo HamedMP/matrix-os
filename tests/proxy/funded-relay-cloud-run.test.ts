@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -9,6 +10,41 @@ import {
 } from "../../packages/proxy/src/funded-main-app.js";
 
 const root = process.cwd();
+
+it("deploys the Claude advisor beta and attested Jev pricing in one candidate revision", () => {
+  const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+  const block = workflow.split("- name: Deploy candidate revision")[1]!
+    .split("- name: Smoke candidate relay")[0]!.split("run: |\n")[1]!;
+  const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
+  const result = spawnSync("bash", ["-c", `
+gcloud() {
+  if [ "$1 $2 $3" = "run deploy fixture" ]; then
+    for arg in "$@"; do printf '%s\\n' "$arg"; done
+    exit 0
+  fi
+  return 1
+}
+${script}
+`], { encoding: "utf8", timeout: 10_000, env: {
+    ...process.env, AI_RELAY_CLOUD_RUN_SERVICE: "fixture", GCP_PROJECT_ID: "fixture",
+    GCP_REGION: "fixture", IMAGE_DIGEST: `fixture@sha256:${"a".repeat(64)}`,
+    AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture",
+    PLATFORM_INTERNAL_URL: "https://platform.example.test",
+    CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,
+    MATRIX_JEV_PRICING_REVIEW_VERSION: "typesafe-jev-input-2026-09",
+    MATRIX_JEV_PRICING_REVIEWED_AT: "2026-09-30T00:00:00.000Z",
+    MATRIX_JEV_PRICING_VALID_THROUGH: "2026-10-30T00:00:00.000Z",
+  } });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
+  const envArgs = result.stdout.split("\n").filter(line => line.startsWith("^|^"));
+  expect(envArgs).toHaveLength(1);
+  expect(envArgs[0]).toContain(",advisor-tool-2026-03-01,");
+  expect(envArgs[0]).toContain("|MATRIX_JEV_PRICING_REVIEW_VERSION=typesafe-jev-input-2026-09");
+  expect(envArgs[0]).toContain("|MATRIX_JEV_PRICING_REVIEWED_AT=2026-09-30T00:00:00.000Z");
+  expect(envArgs[0]).toContain("|MATRIX_JEV_PRICING_VALID_THROUGH=2026-10-30T00:00:00.000Z");
+  expect(result.stdout).toContain("--no-traffic\n");
+});
 
 function enabledEnv(): NodeJS.ProcessEnv {
   return {
@@ -145,6 +181,9 @@ describe("funded relay Cloud Run service", () => {
       "utf8",
     );
 
+    const triggers = workflow.split("permissions:")[0]!;
+    expect(triggers).toContain("workflow_dispatch:");
+    expect(triggers).not.toMatch(/^  (push|pull_request|workflow_run):/m);
     expect(dockerfile).toContain('CMD ["node", "packages/proxy/dist/funded-main.js"]');
     expect(dockerfile).toContain("COPY patches patches");
     expect(dockerfile).not.toContain("packages/platform");
@@ -233,4 +272,44 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("${funded_ai_env_bindings}");
     expect(workflow).toContain("${funded_ai_secret_bindings}");
   });
+});
+
+function runDeploymentValidation(reviewedAt: string, validThrough: string) {
+  const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+  const block = workflow.split("- name: Validate preview deployment configuration")[1]!
+    .split("- name: Authenticate to Google Cloud")[0]!.split("run: |\n")[1]!;
+  const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
+  return spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 10_000, env: {
+    ...process.env, DEPLOY_ENVIRONMENT: "staging", GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
+    ARTIFACT_REPOSITORY: "fixture", AI_RELAY_CLOUD_RUN_SERVICE: "fixture",
+    AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture", PLATFORM_INTERNAL_URL: "https://platform.example.test",
+    CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,
+    MATRIX_JEV_PRICING_REVIEW_VERSION: "typesafe-jev-input-2026-09",
+    MATRIX_JEV_PRICING_REVIEWED_AT: reviewedAt, MATRIX_JEV_PRICING_VALID_THROUGH: validThrough,
+  } });
+}
+it("rejects a format-correct nonexistent review date before Cloud Run authentication", () => {
+  expect(runDeploymentValidation("2026-02-30T00:00:00.000Z", "2026-03-31T00:00:00.000Z").status).not.toBe(0);
+});
+
+const dayMs = 24 * 60 * 60_000;
+it.each([
+  ["expired", -2, -1],
+  ["future", 1, 2],
+  ["reversed", -1, -2],
+  ["empty", -1, -1],
+  ["overlong", -1, 90],
+] as const)("rejects %s review windows before Cloud Run authentication", (_label, startDays, endDays) => {
+  const now = Date.now();
+  const result = runDeploymentValidation(new Date(now + startDays * dayMs).toISOString(),
+    new Date(now + endDays * dayMs).toISOString());
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("current window of at most 90 days");
+});
+it("accepts a current bounded deployment review without altering its attested timestamps", () => {
+  const now = Date.now();
+  const result = runDeploymentValidation(new Date(now - dayMs).toISOString(), new Date(now + dayMs).toISOString());
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
 });

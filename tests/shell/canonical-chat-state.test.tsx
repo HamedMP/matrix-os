@@ -97,6 +97,8 @@ describe("canonical shell Chat state", () => {
       streamController.enqueue(new TextEncoder().encode([
         'data: {"type":"chat.stream.attached"}',
         "",
+        'data: {"type":"chat.replay.end","nextCursor":1}',
+        "",
         'id: 2',
         'data: {"type":"chat.event","event":{"cursor":2,"chatId":"chat_stream","revision":2,"eventType":"run.message","createdAt":"2026-09-04T00:00:00.000Z"}}',
         "",

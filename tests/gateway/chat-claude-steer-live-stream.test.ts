@@ -29,7 +29,7 @@ it("publishes accepted Claude Steer text and tool progress over HTTP before resu
     await vi.waitFor(() => {
       expect(messageFrame(h.frames, AFTER_STEER)).toBeDefined();
       expect(contentFrames(h.frames).flatMap((frame) => frame.content.activities ?? []))
-        .toContainEqual(expect.objectContaining({ preview: "src/streaming.ts" }));
+        .toContainEqual(expect.objectContaining({ preview: "/safe/project/src/streaming.ts" }));
     });
     const before = messageFrame(h.frames, BEFORE_STEER)!.content.messageDelta!.message;
     const afterFrame = messageFrame(h.frames, AFTER_STEER)!;

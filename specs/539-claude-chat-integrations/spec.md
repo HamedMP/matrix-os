@@ -135,3 +135,12 @@ account and `google_drive.list_files` capped at three metadata records, followed
 visible model continuation. Credential-file presence alone is not provider
 readiness. Record actual authentication and live surface coverage before claiming
 success; file content and write operations are outside this acceptance scope.
+
+## Revised review and rollout order
+
+The owner approved source and regression verification of Claude built-in integrations
+and Custom MCP, followed by fresh Greptile 5/5 and green CI on the final PR head,
+then merge. Real Google Drive acceptance is performed after merge by the affected
+user on a matching runtime and Platform revision. Owner subscription login and an
+owner-runtime live test are no longer pre-merge gates. This changes rollout order,
+not the authorization contract or the evidence required to claim live success.

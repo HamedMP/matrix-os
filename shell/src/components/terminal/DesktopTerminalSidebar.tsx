@@ -1,6 +1,7 @@
 "use client";
 
 import { PlusIcon, SquareTerminalIcon, Trash2Icon } from "@/lib/hugeicons";
+import { ProjectSharing } from "@/components/projects/ProjectSharing";
 import type { ShellSessionSummary } from "./terminal-session-state";
 import { ThemePickerButton } from "./TerminalThemePicker";
 
@@ -19,6 +20,48 @@ export function DesktopTerminalSidebar({
   onOpen: (shell: ShellSessionSummary) => void;
   onDelete: (shell: ShellSessionSummary, anchor: HTMLButtonElement) => void;
 }) {
+  // Same grouping as the Canvas sidebar. Project headers carry the project share
+  // control, which Web Desktop could not reach at all (#1798). They appear only
+  // when a named project exists, so a member who only uses "main" sees no change.
+  const groups = Object.entries(Object.groupBy(sessions, (shell) => shell.project || "main"));
+  const grouped = groups.some(([project]) => project !== "main");
+  const renderShell = (shell: ShellSessionSummary) => {
+    const selected = selectedName === shell.name;
+    const active = shell.status === "active" || shell.visualStatus === "running";
+    return (
+      <li
+        key={shell.name}
+        className="group relative border-b"
+        style={{ borderColor: "var(--terminal-drawer-border)" }}
+      >
+        <button
+          type="button"
+          aria-label={`Open ${shell.name}`}
+          aria-current={selected || undefined}
+          data-session-name={shell.name}
+          className="flex min-h-12 w-full items-center gap-2 px-4 pr-12 text-left transition-colors hover:bg-[var(--terminal-drawer-card-bg)]"
+          style={{ background: selected ? "var(--terminal-drawer-card-selected-bg)" : "transparent" }}
+          onClick={() => onOpen(shell)}
+        >
+          <span
+            className="size-2.5 shrink-0 rounded-full"
+            style={{ background: active ? "var(--terminal-drawer-selected-stripe)" : "var(--terminal-drawer-muted)" }}
+          />
+          <span className="min-w-0 flex-1 truncate text-sm">{shell.subtitle?.trim() || shell.name}</span>
+        </button>
+        <button
+          type="button"
+          aria-label={`Delete ${shell.name}`}
+          className="absolute right-3 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-[var(--terminal-drawer-action-bg)] focus-visible:opacity-100 group-hover:opacity-100"
+          style={{ color: "var(--terminal-drawer-destructive-fg)" }}
+          onClick={(event) => onDelete(shell, event.currentTarget)}
+        >
+          <Trash2Icon className="size-3.5" aria-hidden="true" />
+        </button>
+      </li>
+    );
+  };
+
   return (
     <aside
       data-testid="terminal-sidebar-shell"
@@ -55,42 +98,20 @@ export function DesktopTerminalSidebar({
       </header>
 
       <ul aria-label="Terminal sessions" className="min-h-0 flex-1 overflow-y-auto">
-        {sessions.map((shell) => {
-          const selected = selectedName === shell.name;
-          const active = shell.status === "active" || shell.visualStatus === "running";
-          return (
-            <li
-              key={shell.name}
-              className="group relative border-b"
-              style={{ borderColor: "var(--terminal-drawer-border)" }}
+        {grouped ? groups.map(([project, projectShells]) => (
+          <li key={`project-${project}`} data-terminal-project-group={project}>
+            <div
+              className="flex items-center justify-between gap-2 px-4 pb-1 pt-3 text-[11px] font-bold uppercase tracking-[0.04em]"
+              style={{ color: "var(--terminal-drawer-subtle)" }}
             >
-              <button
-                type="button"
-                aria-label={`Open ${shell.name}`}
-                aria-current={selected || undefined}
-                data-session-name={shell.name}
-                className="flex min-h-12 w-full items-center gap-2 px-4 pr-12 text-left transition-colors hover:bg-[var(--terminal-drawer-card-bg)]"
-                style={{ background: selected ? "var(--terminal-drawer-card-selected-bg)" : "transparent" }}
-                onClick={() => onOpen(shell)}
-              >
-                <span
-                  className="size-2.5 shrink-0 rounded-full"
-                  style={{ background: active ? "var(--terminal-drawer-selected-stripe)" : "var(--terminal-drawer-muted)" }}
-                />
-                <span className="min-w-0 flex-1 truncate text-sm">{shell.subtitle?.trim() || shell.name}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Delete ${shell.name}`}
-                className="absolute right-3 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-[var(--terminal-drawer-action-bg)] focus-visible:opacity-100 group-hover:opacity-100"
-                style={{ color: "var(--terminal-drawer-destructive-fg)" }}
-                onClick={(event) => onDelete(shell, event.currentTarget)}
-              >
-                <Trash2Icon className="size-3.5" aria-hidden="true" />
-              </button>
-            </li>
-          );
-        })}
+              <span className="min-w-0 truncate">{project === "main" ? "Main" : project}</span>
+              {project !== "main" ? <ProjectSharing projectId={project} projectName={project} /> : null}
+            </div>
+            <ul aria-label={`${project === "main" ? "Main" : project} sessions`}>
+              {(projectShells ?? []).map(renderShell)}
+            </ul>
+          </li>
+        )) : sessions.map(renderShell)}
       </ul>
 
       <footer
