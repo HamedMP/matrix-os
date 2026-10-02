@@ -62,7 +62,8 @@ export function createManagedPiAdmission(deps: {
       const runtime = await deps.host.client.createRuntime({ scopeHandle, profileId: SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID, workload: "bot_agent",
         adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID, harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION,
         sandbox: { version: 1, scopeHandle, actorId: input.ownerId, worktree: { hostPath: root.path, mode: row.permission_mode === "full_access" ? "rw" : "ro", fingerprint: root.fingerprint }, network: "broker_only" } });
-      const binding: ManagedPiRuntimeBinding = { ...runtime, kind: "managed_chat", ownerId: input.ownerId, chatId: input.chatId,
+      const binding: ManagedPiRuntimeBinding = { runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration,
+        kind: "managed_chat", ownerId: input.ownerId, chatId: input.chatId,
         runId: input.runId, workspace: workspaceRef, rootFingerprint: root.fingerprint, route: input.resolved.route,
         accessSourceId: input.resolved.accessSourceId, capabilities, requestClass: "interactive" };
       try { deps.registry.bind(binding); }

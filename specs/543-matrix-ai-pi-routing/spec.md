@@ -46,9 +46,14 @@ files and managed Chat image attachments are explicitly unavailable in this incr
    profile/digest and `bots/` allowlist. The supervisor keeps `ProtectHome=tmpfs`
    and exposes only the four fixed roots read-only for validation; a child receives
    its one owner-authorized workspace. Provisioning prepares missing roots with
-   mode 0750 without replacing existing owner contents or permissions.
-4. **Validation / errors:** missing managed roots or worker sources disables only
-   managed capability; unknown profiles fail closed. Out-of-root, symlinked roots,
+   mode 0750 without replacing existing owner contents or permissions. The newly
+   installed host-prerequisites executable prepares them before its certified-host
+   early exit, so an already-loaded predecessor updater also creates bind sources
+   before the new supervisor namespace starts. Pre-activation golden certification
+   leaves owner-home creation to activation.
+4. **Validation / errors:** missing managed root configuration or worker sources disables only
+   managed capability; unknown profiles fail closed. A missing mounted workspace
+   fails admission before inference; catalog discovery alone is not launch evidence. Out-of-root, symlinked roots,
    wrong ownership/inode, hard links and world-writable mounts remain rejected.
 5. **Good / base / bad cases:** private Chat and standard project roots launch;
    existing recipe Bots remain isolated; an arbitrary external folder project or
@@ -105,3 +110,17 @@ faux-provider tests prove wiring; they do not prove deployed paid inference.
 
 Deferred: broader Hermes migration, arbitrary provider routes, full filesystem editing,
 managed attachments, fleet promotion, credit grants, and automatic pricing renewal.
+
+## Runtime and presentation boundary regressions
+
+Managed admission projects the supervisor response into an explicit runtime handle
+and execution generation before creating its strict owner/run broker binding. The
+transport-only running state must not leak into the binding. Regression fixtures
+use the actual typed client response and preserve rejection of unknown binding
+fields.
+
+Recipe Bot model choices identify the exact managed `matrix_pi` driver and
+`matrix_pi_default` instance. Optional negotiated connection labels are presentation,
+not authority; a label-free authenticated catalog must expose the same eligible
+models. Available-instance/model filtering and server admission remain enforced.
+Native Pi, kernel and other instance identities remain excluded from this selector.

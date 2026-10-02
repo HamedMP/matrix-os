@@ -4,7 +4,8 @@ import type { CanonicalChatModelSelection } from "#canonical-chat";
 export const MATRIX_PI_CHAT_INSTANCE_ID = "matrix_pi_default";
 
 export function isManagedPiBotRoute(route: { instanceId: string; driverKind: string; connectionLabel?: string }): boolean {
-  return route.instanceId === MATRIX_PI_CHAT_INSTANCE_ID && route.driverKind === "matrix_pi" && route.connectionLabel === "Matrix AI";
+  // Connection labels are optional negotiated presentation, not route identity.
+  return route.instanceId === MATRIX_PI_CHAT_INSTANCE_ID && route.driverKind === "matrix_pi";
 }
 
 /** Discovery reflects the authenticated catalog; it never acquires credentials or admits a run. */

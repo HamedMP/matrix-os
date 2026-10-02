@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { botModelRoutingLabel, managedPiBotModelChoices } from "@matrix-os/contracts";
+import { botModelRoutingLabel, isManagedPiBotRoute, managedPiBotModelChoices } from "@matrix-os/contracts";
 import { createCanonicalProviderCatalogFixture } from "../fixtures/canonical-chat.js";
 
 it("shares exact model choices and unavailable saved-route copy across shells", () => {
@@ -15,4 +15,25 @@ it("shares exact model choices and unavailable saved-route copy across shells", 
   expect(botModelRoutingLabel(selection, catalog)).toBe("Matrix AI · GLM 5.3 Flash · unavailable");
   expect(botModelRoutingLabel({ instanceId: "matrix_bot_default", model: "auto" }, catalog)).toBe("Model routing: automatic");
   expect(botModelRoutingLabel(undefined, catalog)).toBe("Checking bot model…");
+});
+
+it("identifies the exact managed Pi route without optional presentation labels", () => {
+  const route = { instanceId: "matrix_pi_default", driverKind: "matrix_pi" };
+  expect(isManagedPiBotRoute(route)).toBe(true);
+  expect(isManagedPiBotRoute({ ...route, connectionLabel: "Renamed connection" })).toBe(true);
+  expect(isManagedPiBotRoute({ ...route, instanceId: "pi_default", connectionLabel: "Matrix AI" })).toBe(false);
+  expect(isManagedPiBotRoute({ ...route, driverKind: "pi", connectionLabel: "Matrix AI" })).toBe(false);
+  expect(isManagedPiBotRoute({ ...route, driverKind: "kernel", connectionLabel: "Matrix AI" })).toBe(false);
+});
+
+it("projects only currently available advertised models when labels are not negotiated", () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  const base = catalog.instances[0]!;
+  catalog.instances = [{ ...base, id: "matrix_pi_default", driverKind: "matrix_pi",
+    models: [{ ...base.models[0]!, id: "claude-sonnet-5", displayName: "Claude Sonnet 5" },
+      { ...base.models[0]!, id: "unavailable-model", availability: "unavailable" }] }];
+  expect(managedPiBotModelChoices(catalog)).toEqual([{ selection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" },
+    label: "Claude Sonnet 5 · Matrix AI · Pi" }]);
+  catalog.instances[0]!.availability = "auth_required";
+  expect(managedPiBotModelChoices(catalog)).toEqual([]);
 });

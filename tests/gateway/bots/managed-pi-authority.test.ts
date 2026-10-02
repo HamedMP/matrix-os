@@ -11,7 +11,7 @@ import { CanonicalChatProviderRegistry } from "../../../packages/gateway/src/cha
 import { managedPiChatInstances } from "../../../packages/gateway/src/chat/managed-chat-catalog.js";
 import { createManagedPiAdmission } from "../../../packages/gateway/src/chat/managed-pi-admission.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
-import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
+import { BotRuntimeRegistry, BotRuntimeRegistryError } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { BotAdmissionError } from "../../../packages/gateway/src/bots/admission.js";
 import { resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
 import { managedPiWorkspace } from "../../../packages/gateway/src/chat/managed-pi-workspace.js";
@@ -40,7 +40,9 @@ async function setup(permissionMode = "full_access") {
     parts: [{ type: "text", text: "Hello" }],
   });
   const registry = new BotRuntimeRegistry();
-  const createRuntime = vi.fn(async () => ({ runtimeHandle: `runtime_${"c".repeat(32)}`, executionGeneration: "2" }));
+  const createRuntime = vi.fn(async (): Promise<Awaited<ReturnType<ScopeRuntimeHost["client"]["createRuntime"]>>> => ({
+    runtimeHandle: `runtime_${"c".repeat(32)}`, executionGeneration: "2", state: "running",
+  }));
   const stopRuntime = vi.fn(async () => undefined);
   const host = { available: true, client: { createRuntime, stopRuntime } } as unknown as ScopeRuntimeHost;
   const admission = createManagedPiAdmission({ db, homePath: home, host, registry, roots: { resolve: async () => { throw new Error("Unexpected project" ); } } });
@@ -58,6 +60,20 @@ it("requires exact private owner/chat/run identity and refuses live bot or wrong
   await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: input.chatId, now: new Date().toISOString() });
   await expect(admission.admit(input)).rejects.toEqual(new BotAdmissionError("not_found"));
   expect(createRuntime).not.toHaveBeenCalled();
+});
+it("admits a running supervisor result and registers only the managed run authority", async () => {
+  const { admission, input, registry } = await setup();
+  const binding = await admission.admit(input);
+  expect(registry.lookupRun({ runtimeHandle: binding.runtimeHandle, executionGeneration: "2", runId: input.runId }))
+    .toEqual(binding);
+  expect(registry.authorize({ runtimeHandle: binding.runtimeHandle, executionGeneration: "2",
+    action: "inference.messages", modelId: input.resolved.route.modelId }))
+    .toMatchObject({ allowed: true, accessSourceId: input.resolved.accessSourceId });
+  expect(binding).not.toHaveProperty("state");
+  const unprojected = { ...binding, state: "running" as const };
+  expect(() => registry.bind(unprojected)).toThrow(new BotRuntimeRegistryError("invalid_binding"));
+  await admission.release(binding.runtimeHandle);
+  expect(registry.lookup({ runtimeHandle: binding.runtimeHandle, executionGeneration: "2" })).toBeNull();
 });
 it("binds read-only authority and rejects workspace inode changes before any artifact effect", async () => {
   const { admission, input, registry, home, createRuntime } = await setup("supervised");

@@ -275,6 +275,9 @@ describe('golden snapshot host scripts', () => {
     await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'d'.repeat(64)}\n`);
     await copyFile(prerequisitesPath, join(binDir, 'matrix-prepare-host-prerequisites'));
     await chmod(join(binDir, 'matrix-prepare-host-prerequisites'), 0o755);
+    // Image certification has no Matrix account yet; NSS itself is still available.
+    await writeFile(join(fakeBin, 'getent'), '#!/bin/sh\nexit 2\n');
+    await chmod(join(fakeBin, 'getent'), 0o755);
     for (const [command, target] of [
       ['bash', '/bin/bash'],
       ['chmod', '/usr/bin/chmod'],
@@ -743,6 +746,9 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     const root = await mkdtemp(join(tmpdir(), 'matrix-host-prerequisites-'));
     const fakeBin = join(root, 'bin');
     await mkdir(fakeBin, { recursive: true });
+    // Certification precedes Matrix account activation, independently of the host's NSS.
+    await writeFile(join(fakeBin, 'getent'), '#!/bin/sh\nexit 2\n');
+    await chmod(join(fakeBin, 'getent'), 0o755);
     for (const command of [
       'add-apt-repository', 'apparmor_parser', 'aws', 'bwrap', 'cmatrix', 'curl', 'docker',
       'elixir', 'erl', 'file', 'git', 'nginx', 'openssl', 'psql', 'socat', 'sudo', 'unzip', 'zsh',

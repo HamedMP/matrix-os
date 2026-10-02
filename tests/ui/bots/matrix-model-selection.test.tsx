@@ -105,3 +105,34 @@ it("blocks creation when a previously selected Matrix model disappears", () => {
   expect((screen.getByRole("combobox", { name: "Bot model" }) as HTMLSelectElement).value).toBe(JSON.stringify([selected.instanceId, selected.model]));
   expect(create).not.toHaveBeenCalled();
 });
+
+it("offers an exact managed recipe model through the legacy catalog client without connection labels", async () => {
+  const { ChatAgentsPanel } = await import("../../../packages/ui/src/chat-agents/ChatAgentsEntry.js");
+  const { createChatAgentClient } = await import("../../../packages/ui/src/chat-agents/client.js");
+  const { createChatProviderRoutes } = await import("../../../packages/gateway/src/chat/provider-routes.js");
+  const { createCanonicalProviderCatalogFixture } = await import("../../contracts/fixtures/canonical-chat.js");
+  const { clientFixture } = await import("../../desktop/chat-agents-fixture.js");
+  const catalog = createCanonicalProviderCatalogFixture();
+  const base = catalog.instances[0]!;
+  catalog.drivers = [{ ...catalog.drivers[0]!, kind: "matrix_pi", displayName: "Pi" }];
+  catalog.instances = [{ ...base, id: model.instanceId, driverKind: "matrix_pi", connectionLabel: "Matrix AI",
+    models: [{ ...base.models[0]!, id: "claude-sonnet-5", displayName: "Claude Sonnet 5" }],
+    defaultSelection: { instanceId: model.instanceId, model: "claude-sonnet-5" },
+    supports: { ...base.supports, interactionModes: ["default"], permissionModes: ["full_access"] } }];
+  const routes = createChatProviderRoutes({ catalog: { getCatalog: async () => catalog, refresh: async () => catalog },
+    getPrincipal: () => ({ userId: "fixture_owner", source: "jwt" }) });
+  const request = vi.fn(async (path: string) => (await routes.request(path)).json());
+  const legacyClient = createChatAgentClient(request);
+  const instantiate = vi.fn(async () => ({ chatId: "chat_abcdefgh", operation: "created" as const,
+    agent: { id: "bot_abcdefgh", name: "Writing Bot", avatarSeed: "a".repeat(32), revision: 1, status: "active" as const } }));
+  const client = { ...clientFixture(), catalog: legacyClient.catalog,
+    bots: { ...legacyClient.bots!, recipes: vi.fn(async () => [recipe]), instantiate } };
+  render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()} onOpenBotChat={vi.fn()} />);
+  const option = await screen.findByRole("option", { name: "Claude Sonnet 5 · Matrix AI · Pi" });
+  expect(request).toHaveBeenCalledWith("/api/chat-providers", "GET");
+  fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: (option as HTMLOptionElement).value } });
+  fireEvent.click(await screen.findByRole("button", { name: "Use Writing Bot" }));
+  await waitFor(() => expect(instantiate).toHaveBeenCalledWith(expect.objectContaining({
+    selection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" },
+  })));
+});
