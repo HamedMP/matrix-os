@@ -351,11 +351,16 @@ jobs:
               --format='value(bindings.members)' \
               | head -1
           )"
-          project_grants="$(
-            gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json \
-              | jq --arg member "$runtime_member" \
-                '[.bindings[] | select(.role == "roles/secretmanager.secretAccessor" and .condition == null and (.members | index($member)))] | length'
-          )"
+          # Only fall back to the project policy when the secret has no direct grant, so a
+          # deployer without project IAM read access is not blocked by a valid direct grant.
+          project_grants=0
+          if [ "$secret_grant" != "$runtime_member" ]; then
+            project_grants="$(
+              gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json \
+                | jq --arg member "$runtime_member" \
+                  '[.bindings[] | select(.role == "roles/secretmanager.secretAccessor" and .condition == null and (.members | index($member)))] | length'
+            )"
+          fi
           if [ "$secret_grant" != "$runtime_member" ] && [ "$project_grants" = "0" ]; then
             echo "$secret_name must be readable by the Cloud Run runtime identity (${CLOUD_RUN_SERVICE_ACCOUNT})." >&2
             exit 1

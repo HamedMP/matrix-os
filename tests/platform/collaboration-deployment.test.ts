@@ -10,6 +10,11 @@ const workflow = readFileSync(resolve(".github/workflows/platform-cloud-run.yml"
 const WEBHOOK_SECRET_FILTER =
   'test("\\\\Awhsec_[A-Za-z0-9+/=]{16,}\\\\z") and ((((ltrimstr("whsec_") | gsub("="; "") | length) * 3 / 4) | floor) >= 16)';
 
+// The workflow itself runs this filter with jq, which GitHub runners ship. Locally jq is not a
+// declared prerequisite, so the filter test is skipped there rather than failing with ENOENT --
+// but never in CI, where a missing jq must fail loudly.
+const jqAvailable = spawnSync("jq", ["--version"], { encoding: "utf8" }).status === 0;
+
 function webhookSecretAccepted(value: string): boolean {
   const result = spawnSync("jq", ["-Rse", WEBHOOK_SECRET_FILTER], { input: value, encoding: "utf8" });
   if (result.error) throw result.error;
@@ -56,7 +61,7 @@ describe("platform collaboration deployment contract", () => {
     expect(workflow).toContain('trap \'rm -f "$webhook_secret_tmpfile"\' EXIT');
   });
 
-  it("accepts only a whole value the platform can decode into a 16-byte key", () => {
+  it.skipIf(!jqAvailable && !process.env.CI)("accepts only a whole value the platform can decode into a 16-byte key", () => {
     const key = Buffer.alloc(24, 7).toString("base64");
     expect(webhookSecretAccepted(`whsec_${key}`)).toBe(true);
     // 16 base64 characters decode to only 12 bytes: the platform refuses it.
@@ -75,6 +80,8 @@ describe("platform collaboration deployment contract", () => {
     expect(workflow).toContain('gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json');
     expect(workflow).toContain('select(.role == "roles/secretmanager.secretAccessor" and .condition == null');
     expect(workflow).toContain("must be readable by the Cloud Run runtime identity");
+    // The project policy is read only when the secret has no direct grant.
+    expect(workflow).toContain('project_grants=0\n          if [ "$secret_grant" != "$runtime_member" ]; then');
   });
 
   it("verifies the direct ticket key secret and deployed revision contract", () => {
