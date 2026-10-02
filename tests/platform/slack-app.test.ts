@@ -95,7 +95,17 @@ describe("Slack app ingress", () => {
       return { appId: "A123", teamId: "T123", botUserId: "UBOT", botToken: "secret" };
     });
     expect((await app.request(callback)).status).toBe(409);
-    expect(await repo.getInstallation("A123", "T123")).toMatchObject({ state: "revoked", generation: 2 });
+    expect(await repo.getInstallation("A123", "T123")).toMatchObject({ state: "revoked", generation: 3 });
+  });
+  it("allows another workspace's callback when an administrator removes a revoked workspace during exchange", async () => {
+    await repo.revokeInstallation("A123", "T123");
+    const callback = await startOAuth();
+    api.exchangeCode.mockImplementationOnce(async () => {
+      expect((await mutation("/api/slack/workspaces/T123", "DELETE")).status).toBe(204);
+      return { appId: "A123", teamId: "T999", botUserId: "UBOT", botToken: "secret" };
+    });
+    expect((await app.request(callback)).status).toBe(200);
+    expect(await repo.getInstallation("A123", "T999")).toMatchObject({ state: "active" });
   });
   it("retains pending reinstall permits when a nonadministrator requests removal", async () => {
     await repo.revokeInstallation("A123", "T123");
@@ -246,7 +256,7 @@ describe("Slack app ingress", () => {
     });
     expect((await app.request(callback)).status).toBe(409);
     expect((await repo.getInstallation("A123","T123"))?.state).toBe("revoked");
-    expect(api.exchangeCode).toHaveBeenCalledTimes(phase==="pending"?0:1);
+    expect(api.exchangeCode).toHaveBeenCalledTimes(1); // target workspace is known only after exchange
     expect((await app.request(await begin())).status).toBe(200);
     expect((await repo.getInstallation("A123","T123"))?.state).toBe("active");
     expect((await app.request(callback)).status).toBe(409);
