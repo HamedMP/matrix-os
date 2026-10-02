@@ -95,11 +95,12 @@ export async function createNativeProviderWorkflowAdapters(options: {
     const packageName = harness.harness in packages ? packages[harness.harness as keyof typeof packages] : null;
     const canReuseCodex = harness.harness === 'hermes' && harness.installState === 'installed' && !!options.hermesCodexReuse;
     const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && ['codex', 'claude'].includes(harness.harness);
+    const canBrowserLogin = canLogin && harness.harness === 'claude' && !!options.claudeBrowserLogin;
     const system = harness.harness === 'hermes' || harness.harness === 'openclaw';
     const keyAdapter = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
     return {
       harnessInstanceId: harness.id, harness: harness.harness, displayName: harness.displayName, installState: harness.installState,
-      loginMethods: opencodeCapability.login ? ['device_code' as const] : canReuseCodex ? ['existing_codex' as const] : canLogin ? [harness.harness === 'codex' ? 'device_code' as const : 'terminal' as const] : [],
+      loginMethods: opencodeCapability.login ? ['device_code' as const] : canReuseCodex ? ['existing_codex' as const] : canBrowserLogin ? ['browser' as const, 'terminal' as const] : canLogin ? [harness.harness === 'codex' ? 'device_code' as const : 'terminal' as const] : [],
       apiKeyProviders: opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [],
       install: (!!packageName || system && hostControl.available) && harness.installState !== 'installed', uninstall: !!packageName && managed || system && hostControl.available,
       ...(opencodeCapability.apiKey && settingsConnection ? { verifyKey: settingsConnection.verifyKey } : keyAdapter ? { async verifyKey(key) {
@@ -134,7 +135,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
             const models = fresh.modelProviders.find(row => row.id === source?.providerId)?.models
               .filter(model => model.enabled && source?.eligibleModelIds.includes(model.id)) ?? [];
             const model = models.find(row => row.id === exact?.route.modelId) ?? models[0];
-            if (!exact || !source || !model || fresh.atomicConnectSupported !== true)
+            if (!exact || !source || !model || !fresh.supportedActions.includes('set_route')
+              || !fresh.supportedActions.includes('set_harness_enabled'))
               throw new ProviderWorkflowError('unavailable');
             await options.store.mutate({ type: 'set_route', harnessInstanceId: exact.id,
               route: { kind: 'configurable', providerId: source.providerId, modelId: model.id },

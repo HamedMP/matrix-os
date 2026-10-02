@@ -32,7 +32,7 @@ export function createOpenClawSettingsConnection(options: {
     try {
       const read = promisify(execFile);
       const version = await read(options.command, ["--version"], { cwd: options.cwd, env, signal: lifetime.signal, killSignal: "SIGKILL", timeout: 10_000, maxBuffer: 4096 });
-      if (version.stdout.trim() !== "2026.7.1") return { login: false, apiKey: false };
+      if (!/^(?:OpenClaw )?2026\.7\.1(?: \([a-f0-9]{7,40}\))?$/.test(version.stdout.trim())) return { login: false, apiKey: false };
       const help = await read(options.command, ["models", "auth", "paste-api-key", "--help"], { cwd: options.cwd, env, signal: lifetime.signal, killSignal: "SIGKILL", timeout: 10_000, maxBuffer: 8192 });
       return { login: false, apiKey: /paste-api-key/.test(help.stdout) && /--provider/.test(help.stdout) && /--profile-id/.test(help.stdout) };
     } catch (error) {

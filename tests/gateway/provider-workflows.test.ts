@@ -115,6 +115,16 @@ it('negotiates new inline login methods without breaking older strict clients or
   expect(start).not.toHaveBeenCalled();
 });
 
+it('advertises browser-only Claude login to new Settings while preserving legacy Terminal admission', async () => {
+  const start = vi.fn(async () => ({ cancel: async () => {} }));
+  const service = createProviderWorkflowService({ ownerId: 'owner', adapters: [{ harnessInstanceId: 'claude', harness: 'claude', displayName: 'Claude', installState: 'installed', loginMethods: ['browser', 'terminal'], apiKeyProviders: [], install: false, uninstall: false, start }] });
+  const app = createProviderWorkflowRoutes({ service, getPrincipal: () => ({ userId: 'owner' }) });
+  expect(await (await app.request('/provider-settings/workflows/capabilities')).json()).toMatchObject([{ loginMethods: ['terminal'] }]);
+  expect(await (await app.request('/provider-settings/workflows/capabilities?connectionVersion=2')).json()).toMatchObject([{ loginMethods: ['browser'] }]);
+  expect((await app.request('/provider-settings/workflows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ harnessInstanceId: 'claude', kind: 'login', method: 'terminal', idempotencyKey: 'legacy' }) })).status).toBe(200);
+  expect(start).toHaveBeenCalledOnce();
+});
+
 it('preserves a completed login if native completion wins while cancellation awaits cleanup', async () => {
   let publish!: Parameters<import('../../packages/gateway/src/ai-providers/provider-workflows.js').ProviderWorkflowAdapter['start']>[0]['publish'];
   const service = createProviderWorkflowService({ ownerId: 'owner', adapters: [{ harnessInstanceId: 'codex', harness: 'codex', displayName: 'Codex', installState: 'installed', loginMethods: ['device_code'], apiKeyProviders: [], install: false, uninstall: false,

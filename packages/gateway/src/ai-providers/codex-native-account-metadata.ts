@@ -107,7 +107,9 @@ export function createCodexNativeAccountMetadataReader(input: {
           let message: { id?: number; result?: unknown; error?: unknown; method?: unknown };
           try { message = JSON.parse(line); } catch (error) { if (error instanceof SyntaxError) { finish(); return; } throw error; }
           if (!message || typeof message !== "object" || Array.isArray(message)) { finish(); return; }
-          if (message.method === "account/updated") { finish(); return; }
+          // The native server announces its initial account before account/read.
+          // Only notifications after our identity baseline invalidate quota reads.
+          if (message.method === "account/updated" && accountObservedAt) { finish(); return; }
           if (message.id === 1) {
             if (message.error) { finish(); return; }
             child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");

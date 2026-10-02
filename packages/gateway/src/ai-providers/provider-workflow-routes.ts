@@ -51,7 +51,8 @@ export function createProviderWorkflowRoutes(options: {
     if (!version.success) return invalid(c);
     return handle(c, async owner => {
       const capabilities = await options.service.capabilities(owner, version.data !== '2');
-      return version.data === '2' ? capabilities : capabilities.map(row => ({ ...row,
+      return version.data === '2' ? capabilities.map(row => ({ ...row,
+        loginMethods: row.loginMethods.includes('browser') ? row.loginMethods.filter(method => method !== 'terminal') : row.loginMethods })) : capabilities.map(row => ({ ...row,
         loginMethods: row.loginMethods.filter(method => method === 'device_code' || method === 'terminal') }));
     });
   });

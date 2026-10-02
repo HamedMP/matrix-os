@@ -27,14 +27,18 @@ describe("native Codex account metadata", () => {
   it("rejects unsafe identity instead of echoing arbitrary native strings", () => {
     expect(normalizeCodexNativeAccountMetadata({ account: { type: "chatgpt", email: "/private/secret" } }, limits, now)).toBeNull();
   });
-  function fixture(changed = false, quotaFails = false, accountResult = account) {
+  function fixture(changed = false, quotaFails = false, accountResult = account, notification?: "initial" | "during_quota") {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => { queueMicrotask(() => child.emit("close")); return true; }) });
     const methods: unknown[] = [];
     child.stdin.on("data", chunk => {
       const request = JSON.parse(chunk.toString()); methods.push(request);
       if (!request.id) return;
       const result = request.id === 1 ? {} : request.id === 3 ? limits : changed && request.id === 4 ? { account: { type: "chatgpt", email: "other@example.test" } } : accountResult;
-      queueMicrotask(() => child.stdout.write(JSON.stringify(request.id === 3 && quotaFails ? { id: 3, error: { message: "private-token" } } : { id: request.id, result }) + "\n"));
+      queueMicrotask(() => {
+        if (notification === "initial" && request.id === 2 || notification === "during_quota" && request.id === 3)
+          child.stdout.write(JSON.stringify({ method: "account/updated", params: { authMode: "chatgpt", planType: "plus" } }) + "\n");
+        child.stdout.write(JSON.stringify(request.id === 3 && quotaFails ? { id: 3, error: { message: "private-token" } } : { id: request.id, result }) + "\n");
+      });
     });
     const spawnProcess = vi.fn(() => child as never);
     return { child, methods, spawnProcess };
@@ -47,6 +51,16 @@ describe("native Codex account metadata", () => {
     expect(f.spawnProcess.mock.calls[0]).not.toEqual(expect.arrayContaining([expect.objectContaining({ env: expect.objectContaining({ OPENAI_API_KEY: "operator-key-never-use" }) })]));
     expect(f.methods).toContainEqual({ id: 2, method: "account/read", params: { refreshToken: false } });
     expect(f.child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+  it("reads identity and quota after the real native initialization account notification", async () => {
+    const f = fixture(false, false, account, "initial");
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess });
+    expect(await reader()).toMatchObject({ accountLabel: "owner@example.test", usage: { usedBasisPoints: 2500 } });
+    expect(f.methods).toContainEqual({ id: 4, method: "account/read", params: { refreshToken: false } });
+  });
+  it("still discards quota when an account notification arrives after the identity baseline", async () => {
+    const f = fixture(false, false, account, "during_quota");
+    expect(await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess })()).toBeNull();
   });
   it("API-key metadata skips the subscription allowance request", async () => {
     const f = fixture(false, false, { account: { type: "apiKey" } } as never);

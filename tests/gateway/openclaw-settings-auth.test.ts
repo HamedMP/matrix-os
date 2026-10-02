@@ -21,6 +21,11 @@ it("gates direct API-key capability to the pinned supported CLI", async () => {
   expect(await (await fixture()).connection.capabilities()).toEqual({ login: false, apiKey: true });
   expect(await (await fixture("2026.9.1")).connection.capabilities()).toEqual({ login: false, apiKey: false });
 });
+it("accepts the pinned CLI's real version banner with its commit suffix", async () => {
+  expect(await (await fixture("OpenClaw 2026.7.1 (2d2ddc4)")).connection.capabilities()).toEqual({ login: false, apiKey: true });
+  expect(await (await fixture("2026.7.1 (2d2ddc4)")).connection.capabilities()).toEqual({ login: false, apiKey: true });
+  expect(await (await fixture("OpenClaw 2026.7.10 (2d2ddc4)")).connection.capabilities()).toEqual({ login: false, apiKey: false });
+});
 it("validates remotely then sends key only to native stdin and enables exact harness", async () => {
   const f = await fixture(); await f.connection.verifyKey({ harnessInstanceId: "harness_openclaw", providerId: "openai", apiKey: "fixture-key" });
   expect(f.enableConnected).toHaveBeenCalledWith("harness_openclaw", expect.stringMatching(/^openclaw-key-/));

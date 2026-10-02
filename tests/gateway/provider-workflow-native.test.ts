@@ -13,7 +13,7 @@ import { createNativeProviderWorkflowAdapters } from '../../packages/gateway/src
 import type { ProviderSettingsStoreWriter } from '../../packages/gateway/src/ai-providers/provider-settings-store.js';
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 const ref = { workspaceId: 'tws_11111111111111111111111111111111', tabId: 'tt_11111111111111111111111111111111' };
-function nativeFixture(kind: 'codex' | 'hermes' | 'openclaw' = 'codex') {
+function nativeFixture(kind: 'codex' | 'claude' | 'hermes' | 'openclaw' = 'codex') {
   const row = { id: `harness_${kind}`, harness: kind, displayName: kind, installState: kind === 'codex' ? 'installed' : 'missing', authState: 'unknown', loginMethods: ['terminal'], selectedAccountId: null };
   const snapshot = { revision: 0, access: { mode: 'writable' }, harnesses: [row], harnessCatalog: [] };
   const store = { getSnapshot: vi.fn(async () => snapshot), mutate: vi.fn(async () => ({ kind: 'login_attempt', attempt: { action: { kind: 'open_terminal', terminalSessionId: `${ref.workspaceId}:${ref.tabId}` } } })) } as unknown as ProviderSettingsStoreWriter;
@@ -130,7 +130,7 @@ it('Hermes uses the official owner-native Codex import with atomic exact route e
   const f = nativeFixture('hermes'); f.row.installState = 'installed';
   const original = await f.store.getSnapshot();
   Object.assign(f.row, { route: { kind: 'configurable', providerId: 'anthropic', modelId: 'previous' } });
-  Object.assign(original, { atomicConnectSupported: true, accessSources: [{ id: 'hermes-codex', kind: 'harness_profile', harness: 'hermes', providerId: 'openai-codex', localObservation: { state: 'present_unverified' }, eligibleModelIds: ['openai-codex:gpt-test'] }], modelProviders: [{ id: 'openai-codex', models: [{ id: 'openai-codex:gpt-test', enabled: true }] }] });
+  Object.assign(original, { supportedActions: ['set_route', 'set_harness_enabled'], accessSources: [{ id: 'hermes-codex', kind: 'harness_profile', harness: 'hermes', providerId: 'openai-codex', localObservation: { state: 'present_unverified' }, eligibleModelIds: ['openai-codex:gpt-test'] }], modelProviders: [{ id: 'openai-codex', models: [{ id: 'openai-codex:gpt-test', enabled: true }] }] });
   const reuse = vi.fn(); const publish = vi.fn();
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hermesCodexReuse: reuse, hostControl: { available: false, run: vi.fn() } });
   expect(adapter!.loginMethods).toEqual(['existing_codex']);
@@ -168,4 +168,14 @@ it('does not advertise OpenClaw key auth until installed, then uses supported Se
   f.row.installState = 'installed';
   const [installed] = await create(); expect(installed.apiKeyProviders).toEqual(['openai']); expect(installed.loginMethods).toEqual([]);
   expect(installed.verifyKey).toBe(connection.verifyKey);
+});
+
+it('advertises the wired Claude browser flow so Settings never falls back to Terminal', async () => {
+  const f = nativeFixture('claude'); f.row.installState = 'installed';
+  const claudeBrowserLogin = vi.fn(async () => ({ cancel: vi.fn() }));
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() }, claudeBrowserLogin });
+  expect(adapter!.loginMethods).toEqual(['browser', 'terminal']);
+  await adapter!.start({ request: { harnessInstanceId: 'harness_claude', kind: 'login', method: 'browser', idempotencyKey: 'settings-browser' }, publish: vi.fn() });
+  expect(claudeBrowserLogin).toHaveBeenCalledOnce();
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
 });
