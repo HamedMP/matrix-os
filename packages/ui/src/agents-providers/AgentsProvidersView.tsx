@@ -3,6 +3,7 @@ import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { useHarnessEnablement } from "./use-harness-enablement.js";
 import { useGatewaySelection } from "./use-gateway-selection.js";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
+import { hasConfiguredConnection } from "./harness-connection.js";
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
 import type { ProviderWorkflowCapability } from "@matrix-os/contracts";
 import { AccountsPanel } from "./AccountsPanel.js";
@@ -80,6 +81,7 @@ export function AgentsProvidersView({
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
 }: AgentsProvidersViewProps) {
+  const [connectRequests, setConnectRequests] = useState<Record<string, number>>({});
   const [operationIds, setOperationIds] = useState<Record<string, string>>({});
   const rememberOperation = (harnessId: string, id: string | null) =>
     setOperationIds((current) => {
@@ -89,9 +91,6 @@ export function AgentsProvidersView({
         next[harnessId] = id;
       return next;
     });
-  useEffect(() => {
-    setOperationIds({});
-  }, [workflowClient]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [workflowCapabilities, setWorkflowCapabilities] = useState<
     ProviderWorkflowCapability[]
@@ -101,10 +100,6 @@ export function AgentsProvidersView({
     id: string;
     status: string | null;
   } | null>(null);
-  useEffect(() => {
-    setWorkflowCapabilities([]);
-    setWorkflowPermission("unknown");
-  }, [workflowClient]);
   useEffect(() => {
     if (!workflowClient) return;
     const controller = new AbortController();
@@ -130,14 +125,34 @@ export function AgentsProvidersView({
   }, [workflowClient, snapshot.refreshedAt]);
   const [addOpen, setAddOpen] = useState(false);
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
-  useEffect(() => {
+  const [expandedRowKind, setExpandedRowKind] = useState<ProviderWorkflowCapability["harness"] | null>(null);
+  const [stateClient, setStateClient] = useState(workflowClient);
+  // Reset before rendering a different runtime transport. Effects would first
+  // expose the former client's attempts/capabilities and collapse a frame later.
+  if (stateClient !== workflowClient) {
+    setStateClient(workflowClient);
+    setOperationIds({});
+    setConnectRequests({});
+    setWorkflowCapabilities([]);
+    setWorkflowPermission("unknown");
     setExpandedRowId(null);
+    setExpandedRowKind(null);
     setWorkflowStatus(null);
-  }, [workflowClient]);
+  }
   const inventoryHarnesses = workflowCapabilities.filter(
     (item) =>
       !snapshot.harnesses.some((harness) => harness.harness === item.harness),
   );
+  // An install/refresh can replace a catalog row with a workflow or saved ID.
+  // Keep the user's disclosure open for that agent rather than collapsing the page.
+  const rowIdentities = [
+    ...snapshot.harnesses.map(item => ({ id: item.id, harness: item.harness })),
+    ...inventoryHarnesses.map(item => ({ id: item.harnessInstanceId, harness: item.harness })),
+    ...(snapshot.harnessCatalog ?? []).filter(item => !snapshot.harnesses.some(row => row.harness === item.harness) && !inventoryHarnesses.some(row => row.harness === item.harness)).map(item => ({ id: `catalog:${item.harness}`, harness: item.harness })),
+  ];
+  const resolvedExpandedId = expandedRowId === null ? null
+    : rowIdentities.some(item => item.id === expandedRowId) ? expandedRowId
+    : rowIdentities.find(item => item.harness === expandedRowKind)?.id ?? null;
   const harness = selectedHarness(snapshot, selectedHarnessId);
   const actions = supportedActions(snapshot);
   const supports = (action: SupportedAction) => actions.includes(action);
@@ -251,6 +266,7 @@ export function AgentsProvidersView({
           compatibleAgents={compatibleGatewayAgents}
           onChooseAgent={(id) => {
             setExpandedRowId(id);
+            setExpandedRowKind(snapshot.harnesses.find(item => item.id === id)?.harness ?? null);
             onSelectHarness(id);
           }}
           onUseGateway={useGateway}
@@ -298,7 +314,7 @@ export function AgentsProvidersView({
           }
           sources={snapshot.accessSources}
           statusOverride={workflowStatus}
-          selectedId={expandedRowId}
+          selectedId={resolvedExpandedId}
           disabled={mutationsDisabled}
           canEnable={(item) =>
             configurationHarnessKinds.includes(item.harness) &&
@@ -307,7 +323,8 @@ export function AgentsProvidersView({
           canRefreshEnable={onRefreshForConnection !== undefined}
           onEnable={(item) => { void enablement.enable(item); }}
           onSelect={(id) => {
-            setExpandedRowId((current) => (current === id ? null : id));
+            setExpandedRowId(resolvedExpandedId === id ? null : id);
+            setExpandedRowKind(resolvedExpandedId === id ? null : rowIdentities.find(item => item.id === id)?.harness ?? null);
             if (snapshot.harnesses.some((item) => item.id === id)) {
               onSelectHarness(id);
             }
@@ -317,13 +334,15 @@ export function AgentsProvidersView({
               (item) => item.harnessInstanceId === harness.id,
             );
             const guided = Boolean(workflowClient && capability);
+            const source = snapshot.accessSources.find(item => item.id === harness.accessSourceId);
+            const connected = hasConfiguredConnection(harness, source);
             const accountsPanel = (connectionAction?: ReactNode) =>
               !gatewaySelected ||
               (harness.harness !== "pi" && harness.harness !== "opencode") ||
               harness.accountIds.length > 0 ? (
                 <SavedAccounts
                   collapsed={
-                    harness.authState !== "authenticated" ||
+                    !connected ||
                     (gatewaySelected &&
                     (harness.harness === "pi" || harness.harness === "opencode"))
                   }
@@ -345,19 +364,19 @@ export function AgentsProvidersView({
                     allHarnesses={snapshot.harnesses}
                     gatewayPolicy={snapshot.gatewayPolicy}
                     attempt={
-                      connectionAttempt?.harnessInstanceId === harness.id
+                      connectionAttempt?.harnessInstanceId === harness.id && connectionAttempt.action.kind !== "open_terminal"
                         ? connectionAttempt
                         : null
                     }
                     disabled={mutationsDisabled}
-                    canLogin={supports("start_login")}
+                    canLogin={false}
                     canLogout={supports("logout_account")}
                     canRemove={supports("remove_account")}
                     canReassign={supports("reassign_account")}
                     onMutate={onMutate}
                     onOpenTerminal={onOpenTerminal}
                     onOpenBrowser={onOpenBrowser}
-                    onSetupHarness={onSetupHarness}
+                    onSetupHarness={workflowPermission === "forbidden" ? undefined : onSetupHarness}
                     onRefresh={refreshSettings}
                   />
                 </SavedAccounts>
@@ -374,11 +393,13 @@ export function AgentsProvidersView({
                   disabled={mutationsDisabled}
                   onMutate={onMutate}
                   onRefreshForConnection={onRefreshForConnection}
-                  onSetupHarness={
-                    onSetupHarness
-                      ? () => onSetupHarness(harness.harness)
-                      : undefined
-                  }
+                  onConnectSettings={capability && (capability.loginMethods.some(method => method !== "terminal") || capability.apiKeyProviders.length > 0)
+                    ? async () => {
+                        setConnectRequests(current => ({ [harness.id]: (current[harness.id] ?? 0) + 1 }));
+                        return true;
+                      }
+                    : undefined}
+
                 />
                 {!guided ? <><ConnectionFallback harness={harness} workflowPermission={workflowPermission} disabled={mutationsDisabled} onSetupHarness={onSetupHarness} />{accountsPanel()}</> : null}
                 {workflowClient &&
@@ -387,7 +408,9 @@ export function AgentsProvidersView({
                 ) ? (
                   <HarnessWorkflowPanel
                     key={harness.id}
-                    renderConnection={harness.authState === "authenticated" ? accountsPanel : undefined}
+                    connectRequest={connectRequests[harness.id] ?? 0}
+                    renderConnection={connected ? accountsPanel : undefined}
+                    source={source}
                     harness={harness}
                     capability={
                       workflowCapabilities.find(

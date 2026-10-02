@@ -1,5 +1,5 @@
+import { hasConfiguredConnection } from "./harness-connection.js";
 import type { ReactNode } from "react";
-import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type {
   ProviderAccessSource,
   ProviderHarnessInstance,
@@ -8,21 +8,12 @@ import type {
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import {
-  codingAgentArtworkSrc,
+  codingAgentArtworkSrc, CODING_AGENT_ARTWORK,
 } from "../coding-agent-artwork.js";
-import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
-import { providerEnablementBlockReason } from "./provider-enablement.js";
-import { canRefreshNativeEnable } from "./use-harness-enablement.js";
-import { useLocalObservationExpiry } from "../local-observation-expiry.js";
-
-/** Settings-specific Figma artwork and lettermarks; Terminal retains its own assets. */
+/** Settings retains the shipped upstream artwork, per the reviewed design override. */
 export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
-  const marks = { opencode: "OC", pi: "Pi", hermes: "H", openclaw: "Cl" };
-  if (harness !== "claude" && harness !== "codex") {
-    return <span className="matrix-ap-agent-logo matrix-ap-agent-lettermark" aria-hidden="true">{marks[harness]}</span>;
-  }
-  const src = harness === "claude" ? "/agents/settings/claude.svg" : "/agents/settings/openai.svg";
-  const size = harness === "claude" ? 22 : 20;
+  const src = harness === "claude" ? "/agents/settings/claude.svg" : harness === "codex" ? "/agents/settings/openai.svg" : CODING_AGENT_ARTWORK[harness].src;
+  const size = harness === "claude" ? 22 : harness === "codex" ? 20 : 24;
   return (
     <span
       className="matrix-ap-agent-logo"
@@ -31,7 +22,7 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
       <img
         src={codingAgentArtworkSrc(src)}
         alt=""
-        className={harness === "claude" ? "matrix-ap-claude-logo" : "matrix-ap-openai-logo"}
+        className={harness === "claude" ? "matrix-ap-claude-logo" : harness === "codex" ? "matrix-ap-openai-logo" : "matrix-ap-upstream-logo"}
         width={size}
         height={size}
         draggable={false}
@@ -41,72 +32,30 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
   );
 }
 
-function rowStatus(
-  harness: ProviderHarnessInstance,
-  source: ProviderAccessSource | undefined,
-): string {
+/** Connection means a configured account/credential, not a successful model call.
+ * Canonical auth/readiness remains untouched for Chat admission and account details. */
+export function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSource | undefined): string {
   if (harness.installState === "missing") return "Not installed";
   if (harness.installState === "installing") return "Installing";
-  if (harness.installState === "failed") return "Needs attention";
-  if (harness.installState !== "installed") return "Check connection";
-  if (!harness.enabled && harness.configuredEnabled === true) {
-    if (harness.authState === "unauthenticated") return "Not connected";
-    if (harness.authState === "failed" || source?.readiness.state === "invalid")
-      return "Needs attention";
-    if (harness.authState === "authenticating") return "Connecting";
-    if (harness.authState === "expired") return "Needs attention";
-    if (
-      source?.readiness.state === "auth_required" ||
-      source?.readiness.state === "expired"
-    )
-      return "Needs attention";
-    return "Check connection";
-  }
-  if (!harness.enabled)
-    return harness.authState === "authenticated"
-      ? "Off in Settings · Signed in"
-      : "Off in Settings";
-  if (harness.authState === "unauthenticated") return "Not connected";
-  if (harness.authState === "failed" || source?.readiness.state === "invalid")
-    return "Needs attention";
+  if (harness.installState !== "installed") return "Not connected";
   if (harness.authState === "authenticating") return "Connecting";
-  if (
-    harness.authState === "expired" ||
-    source?.readiness.state === "auth_required" ||
-    source?.readiness.state === "expired"
-  )
-    return "Needs attention";
-  if (harness.connectivity === "offline" || harness.connectivity === "degraded")
-    return "Check connection";
-  if (
-    harness.connectivity === "online" &&
-    harness.authState === "authenticated" &&
-    source?.readiness.state === "ready" &&
-    isSupportedGenericHarnessCredentialRoute(harness, source)
-  )
-    return "Connected";
-  if (harness.localObservation)
-    return codexLocalObservationLabel(harness.localObservation);
-  if (harness.harness === "codex" || source?.localObservation !== undefined)
-    return codexLocalObservationLabel(source?.localObservation);
-  if (harness.connectivity !== "online") return "Check connection";
-  if (harness.authState !== "authenticated") return "Check connection";
-  if (!source) return "Connect access";
-  if (!isSupportedGenericHarnessCredentialRoute(harness, source))
-    return "Check access";
-  if (source.readiness.state !== "ready") return "Check access";
-  return "Connected";
+  return hasConfiguredConnection(harness, source) ? "Connected" : "Not connected";
+}
+
+function RowChevron({ expanded }: { expanded: boolean }) {
+  // Same Hugeicons ChevronDown geometry used by Settings ChannelCard/SkillsSection.
+  return <span className="matrix-ap-chevron" data-expanded={expanded} aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M18 9.00005C18 9.00005 13.5811 15 12 15C10.4188 15 6 9 6 9" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+    </svg>
+  </span>;
 }
 
 export function HarnessRail({
   harnesses,
   sources,
   selectedId,
-  disabled,
-  canEnable,
-  canRefreshEnable = false,
   onSelect,
-  onEnable,
   renderDetails,
   statusOverride,
   inventory = [],
@@ -129,10 +78,6 @@ export function HarnessRail({
   onEnable: (harness: ProviderHarnessInstance) => void;
   renderDetails: (harness: ProviderHarnessInstance) => ReactNode;
 }) {
-  useLocalObservationExpiry([
-    ...sources.map((source) => source.localObservation?.staleAfter),
-    ...harnesses.map((harness) => harness.localObservation?.staleAfter),
-  ]);
   return (
     <section className="matrix-ap-agent-groups" aria-label="Installed agents">
       {(["Coding agents", "General agents"] as const).map((group) => {
@@ -182,7 +127,7 @@ export function HarnessRail({
                         ? "Installing"
                         : observed.installState === "failed"
                           ? "Needs attention"
-                          : "Check connection";
+                          : "Not connected";
                 const detailsId = `matrix-ap-details-${item.id}`;
                 return (
                   <div key={item.id} className="matrix-ap-agent-row">
@@ -209,9 +154,7 @@ export function HarnessRail({
                           <i aria-hidden="true" />
                           {status}
                         </span>
-                        <span className="matrix-ap-chevron" aria-hidden="true">
-                          {expanded ? "⌃" : "⌄"}
-                        </span>
+                        <RowChevron expanded={expanded} />
                       </button>
                     </div>
                     <div
@@ -228,19 +171,11 @@ export function HarnessRail({
               const source = sources.find(
                 (source) => source.id === harness.accessSourceId,
               );
-              const configuredEnabled =
-                harness.configuredEnabled ?? harness.enabled;
-              const blockReason = !configuredEnabled
-                ? providerEnablementBlockReason(harness, sources)
-                : null;
-              const refreshable = canRefreshEnable && canRefreshNativeEnable(harness, sources);
-              const toggleDisabled = disabled || (blockReason !== null && !refreshable);
               const status =
                 statusOverride?.id === harness.id && statusOverride.status
                   ? statusOverride.status
                   : rowStatus(harness, source);
               const detailsId = `matrix-ap-details-${harness.id}`;
-              const connectionHintId = `matrix-ap-connection-hint-${harness.id}`;
               return (
                 <div key={harness.id} className="matrix-ap-agent-row">
                   <div className="matrix-ap-agent-row-head">
@@ -271,9 +206,7 @@ export function HarnessRail({
                         {status}
                       </span>
 
-                      <span className="matrix-ap-chevron" aria-hidden="true">
-                        {expanded ? "⌃" : "⌄"}
-                      </span>
+                      <RowChevron expanded={expanded} />
                     </button>
                   </div>
                   <div
@@ -284,38 +217,6 @@ export function HarnessRail({
                     {expanded ? (
                       <>
                         {renderDetails(harness)}
-                        <div className="matrix-ap-enablement">
-                          {" "}
-                          {canEnable(harness) && expanded ? (
-                            <label className="matrix-ap-switch">
-                              <input
-                                type="checkbox"
-                                role="switch"
-                                aria-label={`Enable ${harness.harness === "claude" && harness.displayName === "Claude" ? "Claude Code" : harness.displayName}`}
-                                checked={configuredEnabled}
-                                aria-describedby={
-                                  blockReason !== null
-                                    ? connectionHintId
-                                    : undefined
-                                }
-                                disabled={toggleDisabled}
-                                onChange={() => {
-                                  if (!toggleDisabled) onEnable(harness);
-                                }}
-                              />
-                              <span aria-hidden="true" />
-                            </label>
-                          ) : null}
-                          <span>Enable this agent</span>
-                          {blockReason !== null ? (
-                            <span id={connectionHintId}>
-                              {blockReason}
-                            </span>
-                          ) : null}
-                          {harness.version ? (
-                            <span>Version {harness.version}</span>
-                          ) : null}
-                        </div>
                       </>
                     ) : null}
                   </div>

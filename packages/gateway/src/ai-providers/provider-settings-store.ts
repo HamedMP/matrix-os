@@ -1,3 +1,4 @@
+import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
 import { randomUUID } from "node:crypto";
@@ -72,6 +73,8 @@ export interface ProviderSettingsStoreWriter {
   mutate(mutation: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse>;
 }
 interface ProviderSettingsStoreOptions {
+  codexNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
+  hermesNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
   homePath: string;
   providerSnapshotReader: CanonicalProviderSnapshotReader;
   privateRootPath?: string;
@@ -90,6 +93,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly configurationPath: string;
   readonly secretsPath: string;
   readonly #reader: CanonicalProviderSnapshotReader;
+  readonly #nativeAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
+  readonly #hermesAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
   readonly #dependencies?: ProviderAccountDependencyCoordinator;
   readonly #lifecycle?: ProviderAccountLifecycleCoordinator;
   readonly #login?: ProviderLoginCoordinator;
@@ -114,6 +119,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     }
     this.secretsPath = join(privateRoot, "ai-provider-secrets.json");
     this.#reader = options.providerSnapshotReader;
+    this.#nativeAccountMetadata = options.codexNativeAccountMetadataReader;
+    this.#hermesAccountMetadata = options.hermesNativeAccountMetadataReader;
     this.#dependencies = options.dependencyCoordinator;
     this.#lifecycle = options.accountLifecycle;
     this.#login = options.loginCoordinator;
@@ -167,7 +174,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   }
 
   async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false,
-    enrichment?: ProviderSettingsEnrichment) {
+    enrichment?: ProviderSettingsEnrichment, codexNativeAccountMetadata?: CodexNativeAccountMetadata | null, hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null) {
     try {
       const { fundingSummary, fundedPolicy, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
         canonical, fundingSummary: this.#fundingSummary,
@@ -180,6 +187,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       return await projectProviderSettings({
         canonical,
         config,
+        codexNativeAccountMetadata,
+        hermesNativeAccountMetadata,
         now: this.#now(),
         dependencies: this.#dependencies,
         supportedActions: this.#supportedActions(config, canonical),
@@ -236,6 +245,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     return await this.#serialize(async () => {
       await this.#readRuntimeRecovery(options.refresh === true);
       const refresh = options.refresh === true;
+      const metadataRead = options.includeNativeAccountMetadata === true
+        ? Promise.all([this.#nativeAccountMetadata?.(), this.#hermesAccountMetadata?.()]) : Promise.resolve([]);
       const inventory = this.#canonical(refresh, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
       // Begin these bounded observations inside the serialized read, not behind
       // inventory. Never share results across mutations or authorize from them alone.
@@ -247,7 +258,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           catalogFailureHarnesses: ["pi", "opencode"],
         }),
       ]);
-      return await this.#project(canonical, await this.#configuration(canonical, enrichment), refresh, enrichment);
+      const [metadata, hermesMetadata] = await metadataRead;
+      return await this.#project(canonical, await this.#configuration(canonical, enrichment), refresh, enrichment, metadata, hermesMetadata);
     });
   }
 

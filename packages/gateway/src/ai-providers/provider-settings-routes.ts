@@ -34,6 +34,7 @@ const DeleteAccountBodySchema = z.object({
 
 export interface ProviderSettingsRouteOptions {
   store: ProviderSettingsStoreWriter;
+  canReadNativeAccountMetadata?: (context: Context) => boolean;
   getPrincipal: (context: Context) => unknown;
 }
 
@@ -153,7 +154,17 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
     if (!refresh.success || !capabilities.success || !modelCapabilities.success) return invalidRequest(context);
     try {
-      return context.json(withCapabilities(await options.store.getSnapshot({ refresh: refresh.data === "true" }), capabilities.data === "true", modelCapabilities.data === "true"));
+      const ownerMetadata = options.canReadNativeAccountMetadata?.(context) === true;
+      const snapshot = await options.store.getSnapshot({ refresh: refresh.data === "true", ...(ownerMetadata ? { includeNativeAccountMetadata: true } : {}) });
+      if (options.canReadNativeAccountMetadata && !ownerMetadata) {
+        snapshot.accessSources = snapshot.accessSources.map(source => source.id === "owner_openai_profile"
+          || source.kind === "harness_profile" && source.harness === "hermes"
+          ? { ...source, displayName: source.kind === "harness_profile" ? "Hermes account" : source.displayName,
+              usage: { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "account", reason: "read_only", asOf: null } } : source);
+        snapshot.accounts = snapshot.accounts.map(account => account.accessSourceId === "owner_openai_profile"
+          ? { ...account, displayName: account.authMethod === "api_key" ? "API key" : "Codex account" } : account);
+      }
+      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }

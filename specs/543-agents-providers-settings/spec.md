@@ -4,7 +4,7 @@ Status: implementation in progress. User approved the reviewed Trellis plan on O
 
 ## Product behavior
 
-Settings presents Matrix AI first, Coding agents (Claude Code, Codex, OpenCode, Pi) second, and General agents (Hermes, OpenClaw) third. Each agent has one truthful status and an accessible accordion. Additional configured instances remain visible. Existing explicit Off, unknown authentication, account dependencies, route selection, budgets and allowlists survive the redesign through advanced controls.
+Settings presents Matrix AI first, Coding agents (Claude Code, Codex, OpenCode, Pi) second, and General agents (Hermes, OpenClaw) third. Each agent has one truthful status and an accessible accordion. Additional configured instances remain visible. Account dependencies, route selection, budgets and allowlists survive through advanced controls. The 2026-10-02 human review removes the visible Enable switch and local-login/unverified row labels; explicit successful Connect enables the exact agent, while refresh retains owner configuration.
 
 The visual reference is [Settings canvas 1112:2178](https://www.figma.com/design/USFVlYYFZ3WKJBAzFZSceC/Desktop-app?node-id=1112-2178). Overview, connected account and method chooser were read through Figma design context; the remaining device login, key validation, install and disconnect frames were inspected through user-authorized computer use. Sample balances, models, account identifiers, percentages and countdowns are not product data.
 
@@ -34,7 +34,7 @@ Authorized workflow capabilities may expose an active operation ID for the exact
 
 Canonical model capabilities are returned only when the caller explicitly requests `includeModelCapabilities=true`, including action responses. Historical strict clients keep their previous model shape. Capability badges display supplied Tools, Vision, Reasoning, Long context or Audio metadata; discovered models with no authoritative capability metadata have no invented badge.
 
-Native guided device login is available for Codex; Claude uses its native Terminal login. Guided API-key validation/save is available for installed Codex with the OpenAI adapter. Other harnesses retain their supported Terminal/configuration flows. Capabilities determine the available controls; an unsupported native method is never advertised. A successful native login remains a local observation until remote readiness is established. Verified Codex key mode preserves the canonical account/source IDs while truthfully reporting API-key funding and authentication.
+Supported native login stays in Settings: Codex device authorization, Claude browser authorization with a transient paste-code callback, Hermes explicit reuse of its runtime’s Codex account, and capability-discovered OpenCode/Pi methods, and version-gated OpenClaw OpenAI API-key entry. OpenClaw OAuth is unavailable because its verified native command requires a TTY. Native helpers save credentials through their sanctioned runtime interfaces. Unsupported installed versions expose unavailable methods. A configured connection is presented separately from execution readiness. Only a successful explicit connection enables the exact scoped route; refresh never enables it.
 
 The native workflow has a ten-minute deadline. Hermes/OpenClaw install cancellation stops the fixed systemd cgroup, terminates the exact Terminal incarnation, then stops the cgroup again to cover startup races. The host installer has an independent upper-bound deadline. Failed cleanup keeps the operation retryable and cannot report successful cancellation. Root-owned uninstall opt-out markers prevent background sync from reinstalling an intentionally removed agent. Owner chats, projects and configuration remain intact.
 
@@ -45,6 +45,7 @@ The native workflow has a ten-minute deadline. Hermes/OpenClaw install cancellat
 | `GET /api/ai/provider-settings/workflows/capabilities` | At most 32 authoritative harness capabilities |
 | `POST /api/ai/provider-settings/workflows` | Strict harness ID, operation kind, supported login method and idempotency key; safe expiring receipt |
 | `GET /api/ai/provider-settings/workflows/:id` | Owner-scoped operation status |
+| `POST /api/ai/provider-settings/workflows/:id/code` | Owner/attempt-scoped transient Claude authorization code; bounded secret body, no receipt or diagnostic persistence |
 | `POST /api/ai/provider-settings/workflows/:id/cancel` | Strict empty body; actual cleanup before cancelled receipt |
 | `POST /api/ai/provider-settings/workflows/keys` | Strict bounded masked-input transport; returns only verified boolean |
 | `GET /api/ai/provider-settings/workflows/logs/:harnessInstanceId` | At most 64 semantic events, with no raw native output |
@@ -56,9 +57,10 @@ Workflow bodies are limited to 8 KiB, operations to 64 retained entries and four
 
 | Boundary | Authentication | Validation and limits |
 | --- | --- | --- |
-| Existing Settings reads/actions | Existing gateway owner/runtime auth | Existing revision/idempotency/body limits |
+| Existing Settings reads/actions | Existing gateway owner/runtime auth | Existing revision/idempotency/body limits; native private identity/quota enrichment requires owner, collaborators receive a redacted snapshot |
 | Workflow capabilities/status | Verified gateway principal matching the configured runtime owner | Fixed harness/operation IDs, bounded expiring operations, no public endpoints |
 | Login/install/cancel/uninstall | Owner writable capability | bodyLimit before buffering, fixed commands/managed prefix, deadline/reaping, operation identity |
+| Browser authorization code | Owner writable credential capability for the exact active attempt | Bounded transient secret input, native PKCE, single submission, no URL/receipt/log persistence |
 | Key validate/save | Owner writable credential capability | Separate bounded secret payload, provider allowlist, timeout, safe errors and atomic preservation |
 | Usage history | Existing platform Clerk owner auth | Resolve active owner computer from runtime slot; bounded cursor/page, Kysely owner+machine+slot predicate |
 | Logs | Owner runtime/exact operation | Bounded redacted projection; no filesystem paths, raw errors or credentials |
@@ -111,7 +113,9 @@ Exercise real auth middleware, request principal and workflow registration for s
 
 Wrong: `if (actor !== owner) throw new ProviderWorkflowError('unauthorized')` (HTTP401). Correct: distinguish authenticated `forbidden` (HTTP403) from a missing principal (HTTP401), retaining owner-only credential access.
 
-## Capability-unavailable and enablement repair
+## Earlier capability-unavailable and enablement repair
+
+Historical implementation record: the 2026-10-02 requirements below supersede its visible Enable control, lettermarks, and Terminal login handoff.
 
 ### 1. Scope / Trigger
 
@@ -222,7 +226,9 @@ Good: advertised `gpt-5.6-sol` initializes the correct native route. Base: a sav
 Wrong: prepend every selected model before native Codex projection. Correct: require membership in the advertised validated inventory before emitting the Codex selected model and native observation. Do not rewrite saved owner routes to conceal mismatches.
 
 
-## Explicit enable after a delayed native observation
+## Earlier explicit enable after a delayed native observation
+
+Historical implementation record: explicit refresh/enable guards remain internal compatibility behavior; the 2026-10-02 UI exposes Connect and no Enable switch.
 
 ### 1. Scope / Trigger
 
@@ -256,3 +262,17 @@ Delayed native responses remain explicitly recoverable. Scope, route, account, s
 ### 7. Wrong vs Correct
 
 Wrong: disable Enable solely because a matching native observation expired in transit. Correct: make explicit On obtain and validate fresh scoped evidence before mutation, preserving backend freshness checks and explicit user intent.
+
+## Superseding human review requirements — 2026-10-02
+
+The owner's seven review corrections supersede older row-status, Enable UI and primary Terminal-login requirements recorded above.
+
+1. Use shipped real OpenCode, Hermes, Pi and OpenClaw artwork; this explicitly overrides Figma lettermarks.
+2. Present Connected / Not connected for installed agents based on configured account/credential connection. Do not expose local-login/unverified prose as row status. Keep inference readiness checks independent; Connected does not fabricate a successful model call.
+3. Not installed uses the same yellow warning treatment as Not connected. Operation progress remains truthful.
+4. Use one project-sized chevron for both accordion directions, with a stable hit target and dimensions.
+5. Remove the Enable toggle. A deliberate successful Connect operation enables that exact agent with current scope/revision checks. Refresh, login discovery and capability changes never silently enable saved routes. Preserve accordion and scroll position across asynchronous updates.
+6. Perform normal supported sign-in and API-key setup in Settings. External provider consent may open the browser, while code, progress and completion remain in Settings. Terminal is optional advanced tooling, not the primary login fallback. Unsupported methods are explicit until a real adapter exists.
+7. Display actual scoped account identity and authoritative usage/reset when available. Missing/unsupported data must remain honest, never a fabricated zero. Hermes must project its supported existing Codex connection without returning credentials.
+
+Acceptance requires exact-head Preview VPS and Electron Desktop, current runtime/account provenance, visual proof and real connection/account/usage readback. Owner-only credential authority remains unchanged; collaborator access does not grant guided login authority. Human Review remains pending.

@@ -65,7 +65,7 @@ it("groups every instance and orders coding agents without losing general instan
   ).toHaveLength(2);
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
 });
-it("shows missing, attention and explicit Off as separate truthful states", () => {
+it("shows missing and disconnected accounts without Enable controls", () => {
   render(
     <HarnessRail
       harnesses={[
@@ -83,11 +83,8 @@ it("shows missing, attention and explicit Off as separate truthful states", () =
     />,
   );
   expect(screen.getByText("Not installed")).toBeInTheDocument();
-  expect(screen.getByText("Needs attention")).toBeInTheDocument();
-  expect(screen.getByText("Off in Settings")).toBeInTheDocument();
-  expect(
-    screen.getByRole("switch", { name: "Enable hermes" }),
-  ).not.toBeChecked();
+  expect(screen.getAllByText("Not connected")).toHaveLength(2);
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
 });
 it("shows absent catalog agents using authoritative workflow targets without route mutations", async () => {
   const { AgentsProvidersView } = await import(
@@ -230,9 +227,7 @@ it("starts with every agent collapsed and opens or closes the chosen accordion",
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   fireEvent.click(row);
   expect(row).toHaveAttribute("aria-expanded", "true");
-  expect(
-    screen.getByRole("switch", { name: "Enable codex" }),
-  ).toBeInTheDocument();
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   fireEvent.click(row);
   expect(row).toHaveAttribute("aria-expanded", "false");
 });

@@ -18,8 +18,9 @@ it("keeps the new Codex chooser when guided workflows are unavailable and preser
   expect(screen.getByText("Connect Codex with")).toBeInTheDocument();
   const account = screen.getByRole("button", { name: /ChatGPT account Recommended/ });
   expect(screen.getByRole("button", { name: /API key/ })).toBeDisabled();
+  expect(account).toBeDisabled();
   fireEvent.click(account);
-  await waitFor(() => expect(p.onSetupHarness).toHaveBeenCalledWith("codex"));
+  expect(p.onSetupHarness).not.toHaveBeenCalled();
   expect(screen.getByText("Advanced configuration").closest("details")).not.toHaveAttribute("open");
   expect(screen.getByRole("heading", { name: "Choose the model", hidden: true })).not.toBeVisible();
 });
@@ -44,19 +45,17 @@ it("retains a missing OpenClaw catalog row without fabricating a guided workflow
   await waitFor(() => expect(p.onSetupHarness).toHaveBeenCalledWith("openclaw"));
   expect(p.onMutate).not.toHaveBeenCalled();
 });
-it("blocks Hermes enable until a real connection is selected and explains the next action", () => {
+it("omits separate Hermes enable before connecting an account", () => {
   const p = props();
   Object.assign(p.snapshot.harnesses[0]!, { id: "hermes", harness: "hermes", displayName: "Hermes", enabled: false, configuredEnabled: false, route: { kind: "configurable", providerId: "anthropic", modelId: "test" } });
   p.snapshot.configurationHarnessKinds = ["hermes"];
   p.snapshot.supportedActions = ["set_harness_enabled"];
   render(<AgentsProvidersView {...p} />);
   fireEvent.click(screen.getByRole("button", { name: /^Hermes/ }));
-  const toggle = screen.getByRole("switch", { name: "Enable Hermes" });
-  expect(toggle).toBeDisabled();
-  expect(toggle).toHaveAccessibleDescription("Connect an account before enabling this agent.");
-  fireEvent.click(toggle);
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   expect(p.onMutate).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: "Connect Hermes in Terminal" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Connect Hermes in Terminal" })).not.toBeInTheDocument();
+  expect(screen.getByText(/Connection in Settings is unavailable/)).toBeInTheDocument();
 });
 it("explains typed owner-only workflow denial safely and clears it after capability recovery", async () => {
   const { ProviderWorkflowClientError } = await import("../../packages/ui/src/agents-providers/provider-workflow-client");
@@ -66,11 +65,11 @@ it("explains typed owner-only workflow denial safely and clears it after capabil
   const client = { capabilities: vi.fn().mockRejectedValue(denied), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
   const { rerender } = render(<AgentsProvidersView {...p} workflowClient={client} />);
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
-  expect(await screen.findByText("Only this computer’s owner can manage guided connections.")).toBeInTheDocument();
+  expect(await screen.findByText("Only this computer’s owner can manage connections.")).toBeInTheDocument();
   expect(screen.queryByText(/private upstream/)).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Agents & providers" })).toBeVisible();
   client.capabilities.mockResolvedValue([]);
   rerender(<AgentsProvidersView {...p} snapshot={{ ...p.snapshot, refreshedAt: "2026-10-02T00:00:00Z" }} workflowClient={client} />);
-  await waitFor(() => expect(screen.queryByText("Only this computer’s owner can manage guided connections.")).not.toBeInTheDocument());
-  expect(screen.getByText("Sign-in continues in Terminal. Guided connection is unavailable for this session.")).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText("Only this computer’s owner can manage connections.")).not.toBeInTheDocument());
+  expect(screen.getByText("Connection in Settings is unavailable on this computer. Refresh or update the computer to try again.")).toBeInTheDocument();
 });

@@ -38,7 +38,7 @@ intersection with a different account or funding source.
 
 This is the operational setup surface. It owns:
 
-- harness installation, health, enable/disable, and instances;
+- harness installation, connection, health, and instances;
 - model-provider accounts, authentication, account selection, and logout;
 - access-source and funding labels;
 - model routing, capability-compatible controls, and model allowlists;
@@ -47,8 +47,10 @@ This is the operational setup surface. It owns:
 The page presents **Matrix AI** first, followed by **Coding agents** (Claude
 Code, Codex, OpenCode, Pi) and **General agents** (Hermes, OpenClaw). Agent rows
 are accessible accordions with one derived status. Additional configured
-instances remain visible. Advanced controls retain instance creation,
-enablement, account dependencies, route selection, budgets, and allowlists.
+instances remain visible. Advanced controls retain instance creation, account
+dependencies, route selection, budgets, and allowlists. There is no Enable
+switch: a successful explicit Connect enables the exact agent route. Refresh
+and credential discovery preserve previously disabled configuration.
 Creating an instance does not create an inference vendor. Generic harnesses
 can select a model provider and model; model-specific harnesses expose only
 routes that the harness contract proves they support. The redesign and its
@@ -76,16 +78,21 @@ truth. Owner harness configuration is the bounded Provider Settings projection.
 is the sole executable Chat catalog. Legacy Settings and Chat shapes are
 compatibility projections; they are not independent stores.
 
-For Codex, V3 distinguishes a bounded local CLI observation from remote
-readiness. A source-matched, fresh ChatGPT `login status` result can say
-"Local login found; access not verified" in shared Settings and Chat copy;
-it cannot set the account/source/instance to ready. An API-key result does not
-authenticate the selected profile, and stale, mismatched, or failed checks
-say only "Access not verified". Chat may still offer the existing native
-route for a user-initiated attempt, while an explicit saved-off harness stays
-off. `authStatus: unknown` in the compatibility catalog must not be rendered
-as a remote authentication verdict; successful execution on the exact
-selected source remains a separate release validation step.
+V3 distinguishes native credential observation from remote execution readiness.
+Settings rows use the shared configured-connection derivation to display
+Connected / Not connected; Not installed is yellow. Settings must not expose
+local-login/unverified prose as its row status. A connection does not establish
+that a model call succeeds, and canonical Chat admission retains its readiness
+and saved-off guards. An explicit saved-off agent is Not connected until a
+successful deliberate Connect restores its scoped route.
+
+Normal supported sign-in stays in Settings: code, masked key, cancellation,
+progress and completion use owner-scoped native adapters. Provider consent may
+open the browser. An unsupported native method is unavailable rather than
+opening Terminal automatically. Codex and Hermes private native identity and
+allowance are enriched only for the runtime owner; Hermes reads its own current
+account, never an unrelated Codex account. Native helpers return bounded safe
+metadata, not credentials. Missing quota is unavailable, not zero.
 
 Web Canvas, Web Desktop, and Electron Desktop must expose the same:
 

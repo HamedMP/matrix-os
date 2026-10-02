@@ -12,9 +12,9 @@ import { AccountsPanel } from "../../packages/ui/src/agents-providers/AccountsPa
 afterEach(cleanup);
 it.each([
   ["ready", "Connected"],
-  ["unknown", "Access not verified"],
+  ["unknown", "Connected"],
 ] as const)(
-  "renders actual API-key readiness for a Codex native profile (%s)",
+  "renders configured API-key connection independently of readiness for a Codex native profile (%s)",
   (state, label) => {
     const account = {
       id: "account",
@@ -64,7 +64,7 @@ it.each([
       );
   },
 );
-it("keeps unverified status visible and saves owner account details behind a disclosure", () => {
+it("keeps disconnected status visible and saves owner account details behind a disclosure", () => {
   const account = {
     id: "account",
     displayName: "Saved owner",
@@ -108,7 +108,6 @@ it("keeps unverified status visible and saves owner account details behind a dis
   const details = screen.getByText("Saved account details").closest("details");
   expect(details).not.toHaveAttribute("open");
   expect(details).toContainElement(screen.getByTestId("account-account"));
-  expect(screen.getByText("Access not verified")).not.toBe(
-    details?.querySelector("span"),
-  );
+  expect(screen.getByTestId("account-account")).toHaveTextContent("Not connected");
+  expect(screen.queryByText("Access not verified")).not.toBeInTheDocument();
 });

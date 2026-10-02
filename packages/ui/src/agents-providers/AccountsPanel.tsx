@@ -10,8 +10,7 @@ import type {
 } from "@matrix-os/contracts";
 import { RemovalDialog } from "./RemovalDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
-import { authLabel, titleCase, usageLines } from "./utils.js";
-import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
+import { titleCase, usageLines } from "./utils.js";
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 
 function AttemptAction({
@@ -290,18 +289,28 @@ export function AccountsPanel({
       <div className="matrix-ap-account-list">
         {accounts.length === 0 ? (
           <>
-            <p className="matrix-ap-empty">
+            {selectedSource?.kind === "harness_profile" && selectedSource.localObservation?.state === "present_unverified" ? (
+              <article className="matrix-ap-account" data-testid={`native-account-${harness.id}`}>
+                <div className="matrix-ap-account-main"><span className="matrix-ap-avatar" aria-hidden="true">{selectedSource.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{selectedSource.displayName}</strong><span>Connected</span></div></div>
+                <div className="matrix-ap-account-usage">
+                  <strong>{usageLines(selectedSource.usage).primary}</strong>
+                  {selectedSource.usage.kind === "subscription_allowance" ? <progress aria-label={`${selectedSource.displayName} usage`} max={10000} value={selectedSource.usage.usedBasisPoints} /> : null}
+                  <span>{selectedSource.usage.kind === "unavailable" && selectedSource.usage.reason === "read_only"
+                    ? "Only this computer’s owner can view account usage." : usageLines(selectedSource.usage).secondary}</span>
+                </div>
+              </article>
+            ) : <p className="matrix-ap-empty">
               {matrixSupported
                 ? "Connected through Matrix AI."
                 : matrixSelected
                   ? "Choose a supported connection."
                   : selectedSource?.kind === "harness_profile"
-                    ? `${harness.displayName} manages authentication for this route in Terminal.`
+                    ? `${harness.displayName} manages this connection.`
                     : harness.harness === "hermes" ||
                         harness.harness === "openclaw"
-                      ? "Use your own provider account in Terminal."
+                      ? "Connect your provider account in Settings."
                       : "No account connected."}
-            </p>
+            </p>}
             {connectionAction}
           </>
         ) : (
@@ -314,21 +323,10 @@ export function AccountsPanel({
             const ownsConnectionAction =
               selected ||
               (!harness.selectedAccountId && accounts[0]?.id === account.id);
-            const status =
-              harness.harness === "codex" &&
-              source?.id === "owner_openai_profile"
-                ? account.authMethod === "api_key"
-                  ? account.authState === "authenticated" &&
-                    source.readiness.state === "ready"
-                    ? "Connected"
-                    : "Access not verified"
-                  : codexLocalObservationLabel(source.localObservation)
-                : authLabel(account.authState);
-            const collapsed =
-              guided &&
-              account.authState !== "expired" &&
-              (account.authState !== "authenticated" ||
-                status === "Access not verified");
+            const connected = account.authState === "authenticated" ||
+              source?.localObservation?.state === "present_unverified";
+            const status = connected ? "Connected" : "Not connected";
+            const collapsed = guided && !connected && account.authState !== "expired";
             const card = (
               <article
                 className="matrix-ap-account"
@@ -358,7 +356,7 @@ export function AccountsPanel({
                       value={source.usage.usedBasisPoints}
                     />
                   ) : null}
-                  {usage?.secondary ? <span>{usage.secondary}</span> : null}
+                  {usage?.secondary ? <span>{source?.usage.kind === "unavailable" && source.usage.reason === "read_only" ? "Only this computer’s owner can view account usage." : usage.secondary}</span> : null}
                   {usage?.stale ? <span>Stale</span> : null}
                 </div>
                 <div className="matrix-ap-account-actions">
@@ -441,14 +439,14 @@ export function AccountsPanel({
         )}
       </div>
 
-      {!guided && !supportsLogin && onSetupHarness ? (
+      {!guided && harness.installState === "missing" && onSetupHarness ? (
         <button
           type="button"
           className="matrix-ap-button"
           disabled={disabled || pending}
           onClick={() => void run(() => onSetupHarness(harness.harness))}
         >
-          Connect {harness.displayName}
+          Install {harness.displayName} in Terminal
         </button>
       ) : null}
       <details className="matrix-ap-account-details">
@@ -467,7 +465,7 @@ export function AccountsPanel({
             ))
           : null}
         <p className="matrix-ap-help">
-          Terminal sign-in changes this agent’s current login. Additional
+          Connecting changes this agent’s current login. Additional
           isolated accounts are not supported yet.
         </p>
       </details>

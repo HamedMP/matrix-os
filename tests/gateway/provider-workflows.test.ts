@@ -102,3 +102,55 @@ it('projects only exact harness active operation identity for reopening Settings
   await service.cancel('owner', operation.id);
   expect((await service.capabilities('owner'))[0]!.activeOperationId).toBeUndefined();
 });
+
+it('negotiates new inline login methods without breaking older strict clients or owner authority', async () => {
+  const start = vi.fn(async () => ({ cancel: async () => {} }));
+  const service = createProviderWorkflowService({ ownerId: 'owner', adapters: [{ harnessInstanceId: 'hermes', harness: 'hermes', displayName: 'Hermes', installState: 'installed', loginMethods: ['existing_codex'], apiKeyProviders: [], install: false, uninstall: false, start }] });
+  const app = createProviderWorkflowRoutes({ service, getPrincipal: () => ({ userId: 'owner' }) });
+  expect(await (await app.request('/provider-settings/workflows/capabilities')).json()).toMatchObject([{ loginMethods: [] }]);
+  expect(await (await app.request('/provider-settings/workflows/capabilities?connectionVersion=2')).json()).toMatchObject([{ loginMethods: ['existing_codex'] }]);
+  expect((await app.request('/provider-settings/workflows/capabilities?connectionVersion=3')).status).toBe(400);
+  const other = createProviderWorkflowRoutes({ service, getPrincipal: () => ({ userId: 'collaborator' }) });
+  expect((await other.request('/provider-settings/workflows', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({harnessInstanceId: 'hermes', kind: 'login', method: 'existing_codex', idempotencyKey: 'reuse'})})).status).toBe(403);
+  expect(start).not.toHaveBeenCalled();
+});
+
+it('preserves a completed login if native completion wins while cancellation awaits cleanup', async () => {
+  let publish!: Parameters<import('../../packages/gateway/src/ai-providers/provider-workflows.js').ProviderWorkflowAdapter['start']>[0]['publish'];
+  const service = createProviderWorkflowService({ ownerId: 'owner', adapters: [{ harnessInstanceId: 'codex', harness: 'codex', displayName: 'Codex', installState: 'installed', loginMethods: ['device_code'], apiKeyProviders: [], install: false, uninstall: false,
+    async start(input) { publish = input.publish; return { cancel: async () => { publish({state: 'succeeded'}); } }; }
+  }] });
+  const operation = await service.start('owner', request);
+  expect((await service.cancel('owner', operation.id)).state).toBe('succeeded');
+});
+it('submits browser sign-in codes only to the exact owner-scoped active attempt with safe bounded HTTP responses', async () => {
+  const submitCode = vi.fn(async () => {});
+  const service = createProviderWorkflowService({ ownerId: 'owner', adapters: [{ harnessInstanceId: 'claude', harness: 'claude', displayName: 'Claude Code', installState: 'installed', loginMethods: ['browser'], apiKeyProviders: [], install: false, uninstall: false, async start() { return { cancel: async () => {}, submitCode }; } }] });
+  const operation = await service.start('owner', { harnessInstanceId: 'claude', kind: 'login', method: 'browser', idempotencyKey: 'browser' });
+  const app = createProviderWorkflowRoutes({ service, getPrincipal: () => ({ userId: 'owner' }) });
+  const body = { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ code: 'fixture-code#fixture-state' }) };
+  const response = await app.request(`/provider-settings/workflows/${operation.id}/code`, body);
+  expect(response.status).toBe(200); expect(await response.json()).toEqual({accepted: true});
+  expect(submitCode).toHaveBeenCalledWith('fixture-code#fixture-state');
+  const logs = await service.logs('owner', 'claude'); expect(JSON.stringify(logs)).not.toContain('fixture-code');
+  const collaborator = createProviderWorkflowRoutes({ service, getPrincipal: () => ({userId: 'other'}) });
+  expect((await collaborator.request(`/provider-settings/workflows/${operation.id}/code`, body)).status).toBe(403);
+  expect((await app.request(`/provider-settings/workflows/${operation.id}/code`, {...body, body: JSON.stringify({code: 'secret\nunsafe'})})).status).toBe(400);
+  expect((await app.request(`/provider-settings/workflows/${operation.id}/code`, {...body, body: 'x'.repeat(9000)})).status).toBe(413);
+  await service.cancel('owner', operation.id);
+  expect((await app.request(`/provider-settings/workflows/${operation.id}/code`, body)).status).toBe(409);
+});
+
+it('preserves completion if expiry cleanup waits for a committing login', async () => {
+  let clock = new Date('2026-10-01T00:00:00Z');
+  const service = createProviderWorkflowService({ ownerId: 'owner', now: () => clock, adapters: [{
+    harnessInstanceId: 'codex', harness: 'codex', displayName: 'Codex', installState: 'installed',
+    loginMethods: ['device_code'], apiKeyProviders: [], install: false, uninstall: false,
+    async start({ publish }) { return { cancel: async () => { publish({ state: 'succeeded' }); } }; },
+  }] });
+  const operation = await service.start('owner', request);
+  clock = new Date('2026-10-01T00:10:01Z');
+  expect((await service.status('owner', operation.id)).state).toBe('succeeded');
+  expect((await service.logs('owner', 'codex')).entries.map(entry => entry.event)).not.toContain('expired');
+  await service.close();
+});

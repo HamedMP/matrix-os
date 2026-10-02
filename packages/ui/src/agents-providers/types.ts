@@ -78,6 +78,7 @@ export interface ProviderWorkflowClient {
   start(request: import("@matrix-os/contracts").ProviderWorkflowStart, signal: AbortSignal): Promise<import("@matrix-os/contracts").ProviderWorkflow>;
   get(id: string, signal: AbortSignal): Promise<import("@matrix-os/contracts").ProviderWorkflow>;
   cancel(id: string, signal: AbortSignal): Promise<import("@matrix-os/contracts").ProviderWorkflow>;
+  submitCode?(id: string, code: string, signal: AbortSignal): Promise<{ accepted: true }>;
   submitKey(request: import("@matrix-os/contracts").ProviderWorkflowKey, signal: AbortSignal): Promise<{ verified: true }>;
   logs(harnessInstanceId: string, signal: AbortSignal): Promise<{ entries: { at: string; event: "started" | "running" | "succeeded" | "failed" | "cancelled" | "expired" }[] }>;
 }

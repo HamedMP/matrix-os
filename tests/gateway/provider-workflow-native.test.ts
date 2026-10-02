@@ -13,7 +13,7 @@ import { createNativeProviderWorkflowAdapters } from '../../packages/gateway/src
 import type { ProviderSettingsStoreWriter } from '../../packages/gateway/src/ai-providers/provider-settings-store.js';
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 const ref = { workspaceId: 'tws_11111111111111111111111111111111', tabId: 'tt_11111111111111111111111111111111' };
-function nativeFixture(kind: 'codex' | 'hermes' = 'codex') {
+function nativeFixture(kind: 'codex' | 'hermes' | 'openclaw' = 'codex') {
   const row = { id: `harness_${kind}`, harness: kind, displayName: kind, installState: kind === 'codex' ? 'installed' : 'missing', authState: 'unknown', loginMethods: ['terminal'], selectedAccountId: null };
   const snapshot = { revision: 0, access: { mode: 'writable' }, harnesses: [row], harnessCatalog: [] };
   const store = { getSnapshot: vi.fn(async () => snapshot), mutate: vi.fn(async () => ({ kind: 'login_attempt', attempt: { action: { kind: 'open_terminal', terminalSessionId: `${ref.workspaceId}:${ref.tabId}` } } })) } as unknown as ProviderSettingsStoreWriter;
@@ -103,4 +103,69 @@ it('releases a profile on observed native exit and reaps an ambiguous launch bef
   });
   await expect(adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'install', idempotencyKey: 'lost-reply' }, publish: vi.fn() })).rejects.toThrow();
   expect(f.terminal.terminateTab).toHaveBeenCalledOnce(); expect(release).toHaveBeenCalledOnce();
+});
+
+it('deliberate successful login enables the exact saved harness before reporting success', async () => {
+  const f = nativeFixture();
+  Object.assign(f.row, { enabled: false, authState: 'authenticated' });
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
+  const publish = vi.fn();
+  await adapter!.start({ request: { harnessInstanceId: 'harness_codex', kind: 'login', method: 'device_code', idempotencyKey: 'connect-off' }, publish });
+  f.observer().onFrame({ type: 'exit', exitCode: 0, terminalRef: ref });
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }));
+  expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', harnessInstanceId: 'harness_codex', enabled: true, expectedRevision: 0 }));
+});
+it('a verified key deliberately enables an Off harness, while rejected keys leave it Off', async () => {
+  const f = nativeFixture(); Object.assign(f.row, { enabled: false });
+  const verify = vi.fn().mockRejectedValueOnce(new Error('rejected')).mockResolvedValueOnce(undefined);
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() }, verifyKeys: { codex: verify } });
+  const key = { harnessInstanceId: 'harness_codex', providerId: 'openai' as const, apiKey: 'synthetic-test' };
+  await expect(adapter!.verifyKey!(key)).rejects.toThrow();
+  expect(f.store.mutate).not.toHaveBeenCalled();
+  await adapter!.verifyKey!(key);
+  expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', enabled: true }));
+});
+
+it('Hermes uses the official owner-native Codex import with atomic exact route enablement', async () => {
+  const f = nativeFixture('hermes'); f.row.installState = 'installed';
+  const original = await f.store.getSnapshot();
+  Object.assign(f.row, { route: { kind: 'configurable', providerId: 'anthropic', modelId: 'previous' } });
+  Object.assign(original, { atomicConnectSupported: true, accessSources: [{ id: 'hermes-codex', kind: 'harness_profile', harness: 'hermes', providerId: 'openai-codex', localObservation: { state: 'present_unverified' }, eligibleModelIds: ['openai-codex:gpt-test'] }], modelProviders: [{ id: 'openai-codex', models: [{ id: 'openai-codex:gpt-test', enabled: true }] }] });
+  const reuse = vi.fn(); const publish = vi.fn();
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hermesCodexReuse: reuse, hostControl: { available: false, run: vi.fn() } });
+  expect(adapter!.loginMethods).toEqual(['existing_codex']);
+  await adapter!.start({ request: { harnessInstanceId: 'harness_hermes', kind: 'login', method: 'existing_codex', idempotencyKey: 'reuse' }, publish });
+  expect(reuse).toHaveBeenCalledOnce();
+  expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_route', harnessInstanceId: 'harness_hermes', accessSourceId: 'hermes-codex', enableHarness: true, expectedRevision: 0 }));
+  expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null });
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+});
+it('Hermes reuse fails safely without an eligible exact native route and does not enable', async () => {
+  const f = nativeFixture('hermes'); f.row.installState = 'installed';
+  Object.assign(await f.store.getSnapshot(), { accessSources: [], modelProviders: [] });
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hermesCodexReuse: vi.fn(), hostControl: { available: false, run: vi.fn() } });
+  await expect(adapter!.start({ request: { harnessInstanceId: 'harness_hermes', kind: 'login', method: 'existing_codex', idempotencyKey: 'missing' }, publish: vi.fn() })).rejects.toThrow('unavailable');
+  expect(f.store.mutate).not.toHaveBeenCalled();
+});
+
+it('advertises and delegates Pi Settings auth only after exact-runtime capability discovery', async () => {
+  const f = nativeFixture('pi'); f.row.installState = 'installed';
+  const piConnection = { capabilities: vi.fn().mockResolvedValue({ login: true, apiKey: true }), start: vi.fn().mockResolvedValue({ cancel: vi.fn() }), verifyKey: vi.fn(), close: vi.fn() };
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, piConnection, hostControl: { available: false, run: vi.fn() } });
+  expect(adapter!.loginMethods).toEqual(['device_code']); expect(adapter!.apiKeyProviders).toEqual(['openai']);
+  const input = { request: { harnessInstanceId: 'harness_pi', kind: 'login' as const, method: 'device_code' as const, idempotencyKey: 'pi-settings' }, publish: vi.fn() };
+  await adapter!.start(input); expect(piConnection.start).toHaveBeenCalledWith(input); expect(f.terminal.createTab).not.toHaveBeenCalled();
+  piConnection.capabilities.mockRejectedValueOnce(new Error('unsupported version'));
+  const [unsupported] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, piConnection, hostControl: { available: false, run: vi.fn() } });
+  expect(unsupported!.loginMethods).toEqual([]); expect(unsupported!.apiKeyProviders).toEqual([]);
+});
+
+it('does not advertise OpenClaw key auth until installed, then uses supported Settings capability', async () => {
+  const f = nativeFixture('openclaw');
+  const connection = { capabilities: vi.fn(async () => ({ login: false, apiKey: true })), verifyKey: vi.fn(async () => {}) };
+  const create = () => createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, openclawConnection: connection, hostControl: { available: true, run: vi.fn() } });
+  const [missing] = await create(); expect(missing.apiKeyProviders).toEqual([]); expect(missing.install).toBe(true); expect(connection.capabilities).not.toHaveBeenCalled();
+  f.row.installState = 'installed';
+  const [installed] = await create(); expect(installed.apiKeyProviders).toEqual(['openai']); expect(installed.loginMethods).toEqual([]);
+  expect(installed.verifyKey).toBe(connection.verifyKey);
 });

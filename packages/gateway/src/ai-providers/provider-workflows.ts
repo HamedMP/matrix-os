@@ -10,6 +10,7 @@ export interface ProviderWorkflowAdapter extends Omit<ProviderWorkflowCapability
   }): Promise<{
     cancel: () => Promise<void>;
     terminalSessionId?: string;
+    submitCode?: (code: string) => Promise<void>;
   }>;
   verifyKey?: (key: ProviderWorkflowKey) => Promise<void>;
 }
@@ -35,9 +36,12 @@ export function createProviderWorkflowService(options: {
   const entries = new Map<string, {
     operation: ProviderWorkflow;
     scope: ProviderWorkflowAdapter['harness'];
+    method?: ProviderWorkflowStart['method'];
     key: string;
     hash: string;
     cancel?: () => Promise<void>;
+    submitCode?: (code: string) => Promise<void>;
+    codeSubmitted: boolean;
     events: ProviderWorkflowLogs['entries'];
   }>();
   let closed = false;
@@ -83,8 +87,12 @@ export function createProviderWorkflowService(options: {
     for (const entry of entries.values())
       if (!terminal(entry.operation.state) && Date.parse(entry.operation.expiresAt) <= now().getTime()) {
         await entry.cancel?.();
-        entry.operation = { ...entry.operation, state: 'expired', deviceCode: null, authorizationUrl: null, safeFailure: 'expired' };
-        record(entry, 'expired');
+        // Native completion may have committed while cleanup was awaiting it.
+        // Preserve that terminal result, as the explicit cancellation path does.
+        if (!terminal(entry.operation.state)) {
+          entry.operation = { ...entry.operation, state: 'expired', deviceCode: null, authorizationUrl: null, safeFailure: 'expired' };
+          record(entry, 'expired');
+        }
       }
   }
   function get(id: string) {
@@ -94,10 +102,11 @@ export function createProviderWorkflowService(options: {
     return entry;
   }
   return {
-    async capabilities(owner: string): Promise<ProviderWorkflowCapability[]> {
+    async capabilities(owner: string, legacy = false): Promise<ProviderWorkflowCapability[]> {
       authorize(owner);
       return (await registered()).map(({ harnessInstanceId, harness, displayName, installState, loginMethods, apiKeyProviders, install, uninstall }) => {
-        const active = [...entries.values()].find(entry => entry.operation.harnessInstanceId === harnessInstanceId && !terminal(entry.operation.state));
+        const active = [...entries.values()].find(entry => entry.operation.harnessInstanceId === harnessInstanceId && !terminal(entry.operation.state)
+          && (!legacy || entry.operation.kind !== 'login' || entry.method === 'device_code' || entry.method === 'terminal'));
         return { harnessInstanceId, harness, displayName, installState, loginMethods, apiKeyProviders, install, uninstall, logs: true, ...(active ? { activeOperationId: active.operation.id } : {}) };
       });
     },
@@ -124,7 +133,7 @@ export function createProviderWorkflowService(options: {
           entries.delete(evict[0]);
         }
         const operation: ProviderWorkflow = { id: `workflow_${randomUUID()}`, harnessInstanceId: request.harnessInstanceId, kind: request.kind, state: 'pending', expiresAt: new Date(now().getTime() + 600000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null };
-        const entry = { operation, scope: adapter.harness, key: request.idempotencyKey, hash, events: [{ at: now().toISOString(), event: 'started' as const }], cancel: undefined as (() => Promise<void>) | undefined };
+        const entry = { operation, codeSubmitted: false, method: request.method, scope: adapter.harness, key: request.idempotencyKey, hash, events: [{ at: now().toISOString(), event: 'started' as const }], cancel: undefined as (() => Promise<void>) | undefined, submitCode: undefined as ((code: string) => Promise<void>) | undefined };
         entries.set(operation.id, entry);
         try {
           const running = await adapter.start({ request, publish(update) {
@@ -141,6 +150,7 @@ export function createProviderWorkflowService(options: {
               record(entry, entry.operation.state === 'pending' ? 'running' : entry.operation.state);
             } });
           entry.cancel = running.cancel;
+          entry.submitCode = running.submitCode;
           entry.operation.terminalSessionId = running.terminalSessionId ?? null;
           if (entry.operation.state === 'pending')
             entry.operation.state = 'running';
@@ -162,10 +172,26 @@ export function createProviderWorkflowService(options: {
           if (!entry.cancel)
             throw new ProviderWorkflowError('unavailable');
           await entry.cancel();
-          entry.operation = { ...entry.operation, state: 'cancelled', deviceCode: null, authorizationUrl: null };
-          record(entry, 'cancelled');
+          // Cleanup may await a completion already committing. Its terminal
+          // result wins; never report Cancelled after Connect actually succeeded.
+          if (!terminal(entry.operation.state)) {
+            entry.operation = { ...entry.operation, state: 'cancelled', deviceCode: null, authorizationUrl: null };
+            record(entry, 'cancelled');
+          }
         }
         return { ...entry.operation };
+      });
+    },
+    async submitCode(owner: string, id: string, code: string) {
+      authorize(owner);
+      return serialize(async () => {
+        await expire();
+        const entry = get(id);
+        if (entry.operation.kind !== 'login' || terminal(entry.operation.state) || !entry.submitCode || entry.codeSubmitted)
+          throw new ProviderWorkflowError('conflict');
+        entry.codeSubmitted = true;
+        await entry.submitCode(code);
+        return { accepted: true as const };
       });
     },
     async verifyKey(owner: string, key: ProviderWorkflowKey) {

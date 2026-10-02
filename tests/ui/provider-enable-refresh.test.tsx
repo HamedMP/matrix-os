@@ -4,7 +4,16 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
-import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
+import { useHarnessEnablement, canRefreshNativeEnable } from "../../packages/ui/src/agents-providers/use-harness-enablement";
+// Exercise the internal admission helper directly; Settings no longer renders Enable.
+function AgentsProvidersView(p: ReturnType<typeof props> & { onRefreshForConnection?: (() => Promise<ProviderSettingsSnapshot | null>) }) {
+  const state = useHarnessEnablement({ snapshot: p.snapshot, refresh: p.onRefreshForConnection, mutate: p.onMutate });
+  const agent = p.snapshot.harnesses[0]!;
+  const enabled = agent.configuredEnabled ?? agent.enabled;
+  return <><button>Hermes</button><input type="checkbox" role="switch" aria-label="Enable Hermes" checked={enabled}
+    disabled={state.pending || (!enabled && canRefreshNativeEnable(agent, p.snapshot.accessSources) && !p.onRefreshForConnection)}
+    onChange={() => { void state.enable(agent); }} />{state.error ? <p>{state.error}</p> : null}</>;
+}
 
 afterEach(cleanup);
 function fixture(): ProviderSettingsSnapshot {

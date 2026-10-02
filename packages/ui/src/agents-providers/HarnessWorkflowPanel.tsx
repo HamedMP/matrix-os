@@ -1,11 +1,13 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type {
   ProviderHarnessInstance,
+  ProviderAccessSource,
   ProviderWorkflow,
   ProviderWorkflowCapability,
 } from "@matrix-os/contracts";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { ConnectionMethodCard } from "./ConnectionMethodCard.js";
+import { hasConfiguredConnection } from "./harness-connection.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient } from "./types.js";
 
@@ -20,6 +22,7 @@ const providerNames = {
 /** Ephemeral foreground state is scoped to this exact harness and transport lifetime. */
 export function HarnessWorkflowPanel({
   harness,
+  source,
   capability,
   client,
   disabled,
@@ -28,15 +31,16 @@ export function HarnessWorkflowPanel({
   onOpenAuthorizationUrl,
   onDisconnect,
   onStateChange,
-  onSetupHarness,
   operationId = null,
   onOperationId,
   renderConnection,
+  connectRequest = 0,
 }: {
   harness: Pick<
     ProviderHarnessInstance,
     "id" | "harness" | "displayName" | "installState" | "authState"
-  >;
+  > & Partial<Pick<ProviderHarnessInstance, "enabled" | "configuredEnabled" | "localObservation">>;
+  source?: ProviderAccessSource;
   capability: ProviderWorkflowCapability;
   client: ProviderWorkflowClient;
   disabled: boolean;
@@ -51,12 +55,15 @@ export function HarnessWorkflowPanel({
   operationId?: string | null;
   onOperationId?: (id: string | null) => void;
   renderConnection?: (changeAccountAction: ReactNode) => ReactNode;
+  connectRequest?: number;
 }) {
   const [operation, setOperation] = useState<ProviderWorkflow | null>(null);
   const [method, setMethod] = useState<"key" | "account" | null>(null);
   const [providerId, setProviderId] = useState(
     capability.apiKeyProviders[0] ?? "openai",
   );
+  const [authorizationCode, setAuthorizationCode] = useState("");
+  const [codeSubmitted, setCodeSubmitted] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -67,10 +74,21 @@ export function HarnessWorkflowPanel({
   const [uninstall, setUninstall] = useState(false);
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [seenConnectRequest, setSeenConnectRequest] = useState(connectRequest);
+  const connectionPanel = useRef<HTMLElement | null>(null);
+  if (seenConnectRequest !== connectRequest) {
+    setSeenConnectRequest(connectRequest);
+    if (!active(operation) && !pending) setMethod("account");
+  }
+  useEffect(() => {
+    if (connectRequest > 0 && method === "account" && !active(operation) && !pending) {
+      connectionPanel.current?.querySelector<HTMLButtonElement>(".matrix-ap-method-card:not(:disabled)")?.focus({ preventScroll: true });
+    }
+  }, [connectRequest, method, operation, pending]);
   const scope = useRef<AbortController | null>(null);
   const pendingStart = useRef<{
     kind: "login" | "install" | "uninstall";
-    method?: "device_code" | "terminal";
+    method?: "device_code" | "terminal" | "existing_codex" | "browser";
     idempotencyKey: string;
   } | null>(null);
   const dialog = useRef<HTMLElement | null>(null);
@@ -82,6 +100,8 @@ export function HarnessWorkflowPanel({
     scope.current = controller;
     pendingStart.current = null;
     setApiKey("");
+    setAuthorizationCode("");
+    setCodeSubmitted(false);
     setMethod(null);
     setOperation(null);
     setPending(false);
@@ -124,6 +144,12 @@ export function HarnessWorkflowPanel({
       });
     return () => controller.abort();
   }, [operationId, client, harness.id]);
+  useEffect(() => {
+    if (operation?.state && !["pending", "running"].includes(operation.state)) {
+      setAuthorizationCode("");
+      setCodeSubmitted(false);
+    }
+  }, [operation?.state]);
   const live = (controller: AbortController) =>
     !controller.signal.aborted && scope.current === controller;
   const run = async (action: (signal: AbortSignal) => Promise<void>) => {
@@ -164,7 +190,11 @@ export function HarnessWorkflowPanel({
     run(async (signal) => {
       const loginMethod =
         kind === "login"
-          ? capability.loginMethods.includes("device_code")
+          ? capability.loginMethods.includes("browser")
+            ? "browser"
+            : capability.loginMethods.includes("existing_codex")
+            ? "existing_codex"
+            : capability.loginMethods.includes("device_code")
             ? "device_code"
             : "terminal"
           : undefined;
@@ -189,10 +219,14 @@ export function HarnessWorkflowPanel({
         pendingStart.current = null;
         setOperation(result);
         onOperationId?.(result.id);
-        if (kind === "login") setMethod("account");
+        if (kind === "login") setMethod(result.state === "succeeded" ? null : "account");
+        if (result.state === "succeeded") {
+          onOperationId?.(null);
+          onRefresh();
+        }
         if (
           result.terminalSessionId &&
-          (kind !== "login" || !result.deviceCode)
+          (kind !== "login")
         )
           onOpenTerminal(result.terminalSessionId);
       }
@@ -261,6 +295,10 @@ export function HarnessWorkflowPanel({
     ? Math.max(0, Math.ceil((Date.parse(operation.expiresAt) - now) / 1000))
     : 0;
   const connecting = active(operation);
+  const connected = hasConfiguredConnection(harness, source);
+  const reuseCodex = capability.loginMethods.includes("existing_codex");
+  const browserLogin = capability.loginMethods.includes("browser") && !!client.submitCode;
+  const inlineLogin = capability.loginMethods.includes("device_code") || reuseCodex || browserLogin;
   const hasSubscription =
     harness.harness === "codex" || harness.harness === "claude";
   const subscriptionName =
@@ -274,19 +312,21 @@ export function HarnessWorkflowPanel({
     onOperationId?.(null);
     setMethod(null);
     setApiKey("");
+    setAuthorizationCode("");
+    setCodeSubmitted(false);
     setFailure(null);
     setOperation(null);
   };
 
   const changeAccountAction =
-    harness.authState === "authenticated" &&
-    (capability.loginMethods.length || capability.apiKeyProviders.length) ? (
+    connected &&
+    (inlineLogin || capability.apiKeyProviders.length) ? (
       <button
         type="button"
         className="matrix-ap-button"
         disabled={disabled || pending}
         onClick={() =>
-          setMethod(capability.loginMethods.length ? "account" : "key")
+          setMethod(inlineLogin ? "account" : "key")
         }
       >
         Change account
@@ -295,11 +335,18 @@ export function HarnessWorkflowPanel({
 
   return (
     <section
+      ref={connectionPanel}
       className="matrix-ap-workflow"
       aria-label={`${harness.displayName} connection`}
       aria-busy={pending}
     >
-      {renderConnection?.(changeAccountAction)}
+      {connected ? renderConnection?.(changeAccountAction) : null}
+      {harness.installState === "installed" && !connected
+        && !inlineLogin && capability.apiKeyProviders.length === 0 ? (
+        <p className="matrix-ap-help" role="status">
+          Connection in Settings is unavailable for this agent on this computer.
+        </p>
+      ) : null}
       {failure ? (
         <p role="alert" className="matrix-ap-notice" data-tone="danger">
           {failure}
@@ -339,7 +386,7 @@ export function HarnessWorkflowPanel({
           {harness.authState === "expired" && !connecting ? (
             <div className="matrix-ap-notice" data-tone="warning">
               <span>Sign-in expired. Reconnect to continue.</span>
-              {capability.loginMethods.length ? (
+              {inlineLogin ? (
                 <button
                   type="button"
                   className="matrix-ap-button"
@@ -351,19 +398,19 @@ export function HarnessWorkflowPanel({
               ) : null}
             </div>
           ) : null}
-          {(capability.loginMethods.length > 0 ||
+          {(inlineLogin ||
             capability.apiKeyProviders.length > 0) &&
-          (harness.authState !== "authenticated" ||
+          (!connected ||
             method !== null ||
             failed) ? (
             <>
               <h3>Connect {harness.displayName} with</h3>
               <div className="matrix-ap-connection-options">
-                {capability.loginMethods.length ? (
+                {inlineLogin ? (
                   <ConnectionMethodCard
                     method="account"
-                    title={hasSubscription ? `${subscriptionName} account` : "Provider account"}
-                    description={hasSubscription ? `Use your ${subscriptionName} plan` : "Sign in through this agent’s Terminal"}
+                    title={reuseCodex ? "Use existing Codex account" : hasSubscription ? `${subscriptionName} account` : "Provider account"}
+                    description={reuseCodex ? "Use the ChatGPT account connected on this computer" : hasSubscription ? `Use your ${subscriptionName} plan` : "Connect your provider account"}
                     recommended={hasSubscription}
                     selected={method === "account"}
                     disabled={disabled || pending || connecting}
@@ -504,6 +551,28 @@ export function HarnessWorkflowPanel({
                   Open sign-in page
                 </button>
               ) : null}
+              {browserLogin && operation.authorizationUrl ? (
+                <form className="matrix-ap-key-form" onSubmit={event => {
+                  event.preventDefault();
+                  if (!authorizationCode.trim() || codeSubmitted) return;
+                  void run(async signal => {
+                    await client.submitCode!(operation.id, authorizationCode.trim(), signal);
+                    if (!signal.aborted) { setAuthorizationCode(""); setCodeSubmitted(true); }
+                  });
+                }}>
+                  <label className="matrix-ap-field">
+                    <span>Paste the sign-in code</span>
+                    <input type="password" autoComplete="off" spellCheck={false} maxLength={4096}
+                      value={authorizationCode} disabled={pending || codeSubmitted}
+                      onChange={event => setAuthorizationCode(event.target.value)} />
+                  </label>
+                  <p className="matrix-ap-help">If the sign-in page gives you a code, paste it here to finish connecting.</p>
+                  <button type="submit" className="matrix-ap-button matrix-ap-button-primary"
+                    disabled={disabled || pending || codeSubmitted || !authorizationCode.trim()}>
+                    {codeSubmitted ? "Finishing sign-in…" : "Finish connecting"}
+                  </button>
+                </form>
+              ) : null}
               <p role="status" className="matrix-ap-help">
                 Waiting for sign-in.{" "}
                 {seconds > 0
@@ -539,25 +608,6 @@ export function HarnessWorkflowPanel({
         </div>
       ) : null}
       <div className="matrix-ap-workflow-actions">
-        {harness.installState === "installed" &&
-        harness.authState !== "authenticated" &&
-        capability.loginMethods.length === 0 &&
-        capability.apiKeyProviders.length === 0 &&
-        onSetupHarness ? (
-          <button
-            type="button"
-            className="matrix-ap-button"
-            disabled={disabled || pending}
-            onClick={() =>
-              void run(async () => {
-                if ((await onSetupHarness(harness.harness)) === false)
-                  throw new Error("setup unavailable");
-              })
-            }
-          >
-            Connect {harness.displayName} in Terminal
-          </button>
-        ) : null}
         {failure && connecting ? (
           <button
             type="button"
@@ -608,7 +658,7 @@ export function HarnessWorkflowPanel({
             Cancel
           </button>
         ) : null}
-        {operation?.terminalSessionId ? (
+        {operation?.terminalSessionId && operation.kind !== "login" ? (
           <button
             type="button"
             className="matrix-ap-link-button"
@@ -636,7 +686,7 @@ export function HarnessWorkflowPanel({
             View logs
           </button>
         ) : null}
-        {onDisconnect && harness.authState === "authenticated" ? (
+        {onDisconnect && connected ? (
           <button
             type="button"
             className="matrix-ap-link-button"

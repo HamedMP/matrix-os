@@ -302,7 +302,7 @@ afterEach(() => {
 });
 
 describe("AgentsProvidersView", () => {
-  it("shows the same bounded Codex local status in the rail and account without claiming authentication", () => {
+  it("shows Codex credential connection without promoting canonical authentication", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-26T00:00:00.000Z"));
     const next = snapshot();
@@ -319,18 +319,18 @@ describe("AgentsProvidersView", () => {
       route: { kind: "fixed", providerId: "openai", modelId: "openai/gpt-5.6" },
     }];
     const { rerender, props } = setup({ snapshot: next, selectedHarnessId: "harness_codex" });
-    expect(screen.getByRole("button", { name: /Codex.*Local login found; access not verified/ })).toBeVisible();
-    expect(screen.getAllByText(/Local login found; access not verified/)).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /Codex.*Connected/ })).toBeVisible();
+    expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     expect(screen.queryByText("Authenticated · Oauth")).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5_001));
-    expect(screen.getAllByText(/Local login last found; access not verified/)).toHaveLength(2);
+    expect(screen.getAllByText("Connected").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Local login found; access not verified/)).not.toBeInTheDocument();
     next.harnesses[0]!.enabled = false;
     next.harnesses[0]!.configuredEnabled = false;
     rerender(<AgentsProvidersView {...props} snapshot={next} />);
-    expect(screen.getByRole("button", { name: /Codex.*Off in Settings/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Codex.*Not connected/ })).toBeVisible();
   });
-  it.each(["pi", "opencode"] as const)("shows %s local profile observation without claiming authenticated access", (harness) => {
+  it.each(["pi", "opencode"] as const)("shows %s connection with independent canonical authentication", (harness) => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-26T00:00:00Z"));
     const next = snapshot();
     const source = { ...next.accessSources[0]!, id: `harness_${harness}_anthropic`, kind: "harness_profile" as const,
@@ -342,11 +342,11 @@ describe("AgentsProvidersView", () => {
       enabled: true, configuredEnabled: true, authState: "unknown", connectivity: "unknown",
       selectedAccountId: null, accountIds: [], accessSourceId: source.id }];
     setup({ snapshot: next, selectedHarnessId: `harness_${harness}` });
-    expect(screen.getByRole("button", { name: new RegExp(`${harness}.*Local login found; access not verified`) })).toBeVisible();
-    expect(screen.getAllByText("Local login found; access not verified")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: new RegExp(`${harness}.*Connected`) })).toBeVisible();
+    expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5001));
     expect(screen.queryByText("Local login found; access not verified")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Local login last found; access not verified")).toHaveLength(2);
+    expect(screen.getAllByText("Connected").length).toBeGreaterThan(0);
   });
   it("shows saved enabled intent separately from unavailable access and permits disabling it", () => {
     const next = snapshot();
@@ -357,14 +357,10 @@ describe("AgentsProvidersView", () => {
       accessSourceId: null,
     });
     const { onMutate } = setup({ snapshot: next });
-    expect(screen.getByRole("button", { name: /Hermes.*Check connection/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: /Hermes.*Disabled/ })).not.toBeInTheDocument();
-    const toggle = screen.getByRole("switch", { name: "Enable Hermes" });
-    expect(toggle).toBeChecked();
-    fireEvent.click(toggle);
-    expect(onMutate).toHaveBeenCalledWith({
-      type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false,
-    });
+    expect(screen.queryByRole("switch", { name: "Enable Hermes" })).not.toBeInTheDocument();
+    expect(onMutate).not.toHaveBeenCalled();
   });
 
   it.each(["pi", "opencode"] as const)("shows Not connected for saved-on %s when authentication is required", (kind) => {
@@ -385,7 +381,7 @@ describe("AgentsProvidersView", () => {
       enabled: false, configuredEnabled: false, authState: "authenticated",
     });
     setup({ snapshot: next });
-    expect(screen.getByRole("button", { name: /Hermes.*Off in Settings.*Signed in/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
   });
 
   it("labels a disabled harness without claiming its CLI login was checked", () => {
@@ -394,25 +390,16 @@ describe("AgentsProvidersView", () => {
       enabled: false, configuredEnabled: false, authState: "unknown",
     });
     setup({ snapshot: next });
-    expect(screen.getByRole("button", { name: /Hermes.*Off in Settings/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: /Hermes.*Signed in/ })).not.toBeInTheDocument();
   });
 
-  it.each(["pi", "opencode"] as const)("requires a saved connection before directly enabling %s, but permits disabling", (kind) => {
+  it.each(["pi", "opencode"] as const)("uses connection actions rather than a separate Enable for %s", (kind) => {
     const next = snapshot();
-    const harness = next.harnesses[0]!;
-    Object.assign(harness, { harness: kind, displayName: kind, enabled: false, accessSourceId: null });
-    const { onMutate, rerender, props } = setup({ snapshot: next });
-    const toggle = screen.getByRole("switch", { name: `Enable ${kind}` });
-    expect(toggle).toBeDisabled();
-    expect(toggle).toHaveAccessibleDescription("Connect an account before enabling this agent.");
-    fireEvent.click(toggle);
+    Object.assign(next.harnesses[0]!, { harness: kind, displayName: kind, enabled: false, accessSourceId: null });
+    const { onMutate } = setup({ snapshot: next });
+    expect(screen.queryByRole("switch", { name: `Enable ${kind}` })).not.toBeInTheDocument();
     expect(onMutate).not.toHaveBeenCalled();
-    const enabled = structuredClone(next);
-    enabled.harnesses[0]!.enabled = true;
-    rerender(<AgentsProvidersView {...props} snapshot={enabled} />);
-    fireEvent.click(screen.getByRole("switch", { name: `Enable ${kind}` }));
-    expect(onMutate).toHaveBeenCalledWith({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false });
   });
 
   it("preserves the confirmed login handoff recovery message instead of claiming settings were lost", () => {
@@ -426,31 +413,30 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Changes were not saved. Refresh and try again.");
     expect(screen.getByRole("alert")).not.toHaveTextContent("/opt/private");
   });
-  it("uses the Figma lettermark slots while retaining shipped packaged artwork", () => {
+  it("uses real shipped upstream artwork alongside Claude and Codex design assets", () => {
     const next = snapshot();
     next.harnessCatalog = [];
     next.harnesses = (["claude", "codex", "opencode", "pi"] as const).map((harness) => ({ ...next.harnesses[0]!, id: harness, harness, displayName: harness }));
     const { container } = setup({ snapshot: next, selectedHarnessId: "claude" });
-    expect(Array.from(container.querySelectorAll(".matrix-ap-agent-lettermark")).map((item) => item.textContent)).toEqual(["OC", "Pi"]);
+    expect(container.querySelector(".matrix-ap-agent-lettermark")).toBeNull();
     for (const image of container.querySelectorAll<HTMLImageElement>(".matrix-ap-rail-item img")) {
       expect(existsSync(resolve("shell/public", image.getAttribute("src")!.slice(1)))).toBe(true);
-      const size = image.getAttribute("src")?.endsWith("claude.svg") ? "22" : "20";
+      const src = image.getAttribute("src")!;
+      const size = src.endsWith("claude.svg") ? "22" : src.endsWith("openai.svg") ? "20" : "24";
       expect(image).toHaveAttribute("width", size);
       expect(image).toHaveAttribute("height", size);
     }
     expect(readFileSync("desktop/electron.vite.config.ts", "utf8")).toContain('publicDir: resolve(__dirname, "../shell/public")');
   });
 
-  it("starts the recommended login directly without a method selection step", async () => {
+  it("does not start legacy Terminal login when Settings workflows are unavailable", async () => {
     const next = snapshot();
     next.harnesses[1]!.accountIds = [];
     next.harnesses[1]!.authState = "unauthenticated";
     const onMutate = vi.fn().mockResolvedValue(true);
     setup({ snapshot: next, selectedHarnessId: "harness_claude", onMutate });
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    await waitFor(() => expect(onMutate).toHaveBeenCalledWith({
-      type: "start_login", harnessInstanceId: "harness_claude", accountId: null, method: "terminal",
-    }));
+    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(onMutate).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Recommended · Terminal" })).not.toBeInTheDocument();
   });
 
@@ -467,7 +453,7 @@ describe("AgentsProvidersView", () => {
       route: { kind: "configurable", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
       accessSourceId: "matrix_included", accountId: null, enableHarness: true,
     });
-    expect(screen.getByRole("switch", { name: "Enable Pi" })).not.toBeChecked();
+    expect(screen.queryByRole("switch", { name: "Enable Pi" })).not.toBeInTheDocument();
     expect(within(connection).getByRole("button", { name: /Own account/ })).toBeVisible();
   });
 
@@ -637,7 +623,7 @@ describe("AgentsProvidersView", () => {
     setup({ snapshot: next, onMutate: vi.fn().mockRejectedValue(new Error("private provider details")) });
     fireEvent.click(within(screen.getByRole("group", { name: "Pi connection" })).getByRole("button", { name: /Use Matrix AI/ }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Settings could not be updated"));
-    expect(screen.getByRole("switch", { name: "Enable Pi" })).not.toBeChecked();
+    expect(screen.queryByRole("switch", { name: "Enable Pi" })).not.toBeInTheDocument();
     expect(screen.queryByText("private provider details")).not.toBeInTheDocument();
   });
 
@@ -672,7 +658,6 @@ describe("AgentsProvidersView", () => {
 
     expect(within(screen.getByLabelText("Model provider")).getByRole("option", { name: "OpenAI" })).toBeVisible();
     fireEvent.change(screen.getByLabelText("Model provider"), { target: { value: "openai" } });
-    fireEvent.click(screen.getByRole("switch", { name: "Enable Hermes" }));
 
     expect(onMutate).toHaveBeenCalledWith({
       type: "set_route",
@@ -681,7 +666,7 @@ describe("AgentsProvidersView", () => {
       accessSourceId: "owner_openai_profile",
       accountId: "account_openai",
     });
-    expect(onMutate).toHaveBeenCalledWith({ type: "set_harness_enabled", harnessInstanceId: "harness_hermes", enabled: false });
+    expect(onMutate).not.toHaveBeenCalledWith(expect.objectContaining({ type: "set_harness_enabled" }));
   });
 
   it("emits compatible access-source and account intents and never sends a blank account", () => {
@@ -860,14 +845,13 @@ describe("AgentsProvidersView", () => {
     expect(within(personal).getByText("25% used")).toBeVisible();
     expect(within(work).getByText("$0.13 observed")).toBeVisible();
     fireEvent.click(within(personal).getByRole("button", { name: "Log out Personal" }));
-    await waitFor(() => expect(within(work).getByRole("button", { name: "Log in Work" })).toBeEnabled());
-    fireEvent.click(within(work).getByRole("button", { name: "Log in Work" }));
+    expect(within(work).queryByRole("button", { name: "Log in Work" })).not.toBeInTheDocument();
     await waitFor(() => expect(within(work).getByRole("button", { name: "Remove Work" })).toBeEnabled());
     fireEvent.click(within(work).getByRole("button", { name: "Remove Work" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
 
     expect(onMutate).toHaveBeenCalledWith({ type: "logout_account", accountId: "account_personal" });
-    expect(onMutate).toHaveBeenCalledWith({ type: "start_login", harnessInstanceId: "harness_hermes", accountId: "account_work", method: "api_key" });
+    expect(onMutate).not.toHaveBeenCalledWith(expect.objectContaining({ type: "start_login" }));
     expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({
       type: "remove_account",
       accountId: "account_work",
@@ -926,8 +910,8 @@ describe("AgentsProvidersView", () => {
     const onOpenTerminal = vi.fn();
     const onOpenBrowser = vi.fn();
     const { rerender } = setup({ connectionAttempt: terminalAttempt, onOpenTerminal, onOpenBrowser });
-    fireEvent.click(screen.getByRole("button", { name: "Continue in Terminal" }));
-    expect(onOpenTerminal).toHaveBeenCalledWith("provider-login-123");
+    expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
+    expect(onOpenTerminal).not.toHaveBeenCalled();
 
     const browserAttempt: ProviderConnectionAttempt = {
       ...terminalAttempt,
@@ -1020,7 +1004,7 @@ describe("AgentsProvidersView", () => {
       activeChatCount: 0,
     });
     const { rerender } = setup({ snapshot: base, selectedHarnessId: "harness_pi" });
-    expect(screen.getByText("Connection not verified")).toBeVisible();
+    expect(screen.getByText("Connection unavailable")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Install Pi" })).not.toBeInTheDocument();
     expect(screen.getByText(/Install from this computer’s Terminal/)).toBeVisible();
 
@@ -1152,8 +1136,8 @@ describe("AgentsProvidersView", () => {
     const { onMutate } = setup({ snapshot: next });
     expect(within(screen.getByLabelText("Model provider")).getByRole("option", { name: "OpenAI Codex" })).toBeVisible();
     expect(screen.getByLabelText("Model")).toHaveValue("openai-codex:gpt-5.6-sol");
-    expect(screen.getByText("Hermes manages authentication for this route. Add or switch accounts from its visible Terminal flow.")).toBeInTheDocument();
-    expect(screen.getAllByText("Local login found; access not verified").length).toBeGreaterThan(0);
+    expect(screen.getByText("Hermes manages authentication for this route. Connect or switch accounts in Settings.")).toBeInTheDocument();
+    expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     expect(onMutate).not.toHaveBeenCalled();
   });
 

@@ -1,7 +1,11 @@
+import type { createPiSettingsConnection } from "./pi-settings-auth.js";
+import type { createOpenClawSettingsConnection } from "./openclaw-settings-auth.js";
+import type { createOpenCodeSettingsConnection } from "./opencode-settings-auth.js";
+import type { createClaudeSettingsLogin } from "./provider-workflow-browser.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3 } from '@matrix-os/contracts';
@@ -24,6 +28,11 @@ export async function createNativeProviderWorkflowAdapters(options: {
   store: ProviderSettingsStoreWriter;
   terminal: Pick<TerminalRuntimeSocketClient, 'ensureWorkspace' | 'createTab' | 'terminateTab' | 'attach' | 'listWorkspaces'>;
   runtimePrefix?: string;
+  hermesCodexReuse?: () => Promise<void>;
+  claudeBrowserLogin?: ReturnType<typeof createClaudeSettingsLogin>;
+  piConnection?: ReturnType<typeof createPiSettingsConnection>;
+  openclawConnection?: ReturnType<typeof createOpenClawSettingsConnection>;
+  opencodeConnection?: ReturnType<typeof createOpenCodeSettingsConnection>;
   profileGuard?: NativeProviderProfileGuard;
   inventory?: () => Promise<AiProviderSnapshotV3['drivers']>;
   hostControl?: {
@@ -47,6 +56,16 @@ export async function createNativeProviderWorkflowAdapters(options: {
         console.warn('[provider-workflow] Managed prefix unavailable:', error instanceof Error ? error.name : 'UnknownError');
     }
   }
+  // Only a foreground Connect completion records new enablement intent. Catalog
+  // reads and native credential observation never restore an owner's old Off.
+  const enableConnectedHarness = async (id: string, key: string) => {
+    const current = await options.store.getSnapshot({ refresh: true });
+    const exact = current.harnesses.find(row => row.id === id);
+    if (!exact || current.access.mode !== 'writable') throw new ProviderWorkflowError('unavailable');
+    if (exact.enabled) return;
+    await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: id,
+      enabled: true, expectedRevision: current.revision, idempotencyKey: key });
+  };
   const snapshot = await options.store.getSnapshot();
   const hostControl = options.hostControl ?? await nativeHostControl();
   if (snapshot.access.mode !== 'writable')
@@ -59,18 +78,74 @@ export async function createNativeProviderWorkflowAdapters(options: {
       continue;
     rows.push({ id: `harness_${driver.id}`, harness: kind as typeof rows[number]['harness'], displayName: driver.displayName, installState: driver.installState, loginMethods: [], selectedAccountId: null });
   }
-  return rows.map(harness => {
+  return Promise.all(rows.map(async harness => {
+    let opencodeCapability = { login: false, apiKey: false };
+    if (harness.harness === "opencode" && harness.installState === "installed" && options.opencodeConnection) {
+      try { opencodeCapability = await options.opencodeConnection.capabilities(); }
+      catch (error) { console.warn("[provider-workflow] OpenCode auth capabilities unavailable:", error instanceof Error ? error.name : "UnknownError"); }
+    }
+    if (harness.harness === "pi" && harness.installState === "installed" && options.piConnection) {
+      try { opencodeCapability = await options.piConnection.capabilities(); }
+      catch (error) { console.warn("[provider-workflow] Pi auth capabilities unavailable:", error instanceof Error ? error.name : "UnknownError"); }
+    }
+    if (harness.harness === "openclaw" && harness.installState === "installed" && options.openclawConnection) {
+      opencodeCapability = await options.openclawConnection.capabilities();
+    }
+    const settingsConnection = harness.harness === "openclaw" ? options.openclawConnection : harness.harness === "pi" ? options.piConnection : options.opencodeConnection;
     const packageName = harness.harness in packages ? packages[harness.harness as keyof typeof packages] : null;
+    const canReuseCodex = harness.harness === 'hermes' && harness.installState === 'installed' && !!options.hermesCodexReuse;
     const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && ['codex', 'claude'].includes(harness.harness);
     const system = harness.harness === 'hermes' || harness.harness === 'openclaw';
     const keyAdapter = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
     return {
       harnessInstanceId: harness.id, harness: harness.harness, displayName: harness.displayName, installState: harness.installState,
-      loginMethods: canLogin ? [harness.harness === 'codex' ? 'device_code' as const : 'terminal' as const] : [],
-      apiKeyProviders: keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [],
+      loginMethods: opencodeCapability.login ? ['device_code' as const] : canReuseCodex ? ['existing_codex' as const] : canLogin ? [harness.harness === 'codex' ? 'device_code' as const : 'terminal' as const] : [],
+      apiKeyProviders: opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [],
       install: (!!packageName || system && hostControl.available) && harness.installState !== 'installed', uninstall: !!packageName && managed || system && hostControl.available,
-      ...(keyAdapter ? { verifyKey: keyAdapter } : {}),
+      ...(opencodeCapability.apiKey && settingsConnection ? { verifyKey: settingsConnection.verifyKey } : keyAdapter ? { async verifyKey(key) {
+        await keyAdapter(key);
+        await enableConnectedHarness(harness.id, `key-connect-${randomUUID()}`);
+      } } : {}),
       async start({ request, publish }) {
+        if (request.kind === 'login' && ['pi', 'opencode'].includes(harness.harness)) {
+          const loginConnection = harness.harness === "pi" ? options.piConnection : options.opencodeConnection;
+          if (!opencodeCapability.login || !loginConnection) throw new ProviderWorkflowError('unavailable');
+          return loginConnection.start({ request, publish });
+        }
+        if (request.kind === 'login' && request.method === 'browser') {
+          if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowError('unavailable');
+          return options.claudeBrowserLogin({ publish, onSuccess: async () => {
+            const fresh = await options.store.getSnapshot({ refresh: true });
+            const exact = fresh.harnesses.find(row => row.id === harness.id);
+            if (!exact || !(exact.authState === 'authenticated' || exact.localObservation?.state === 'present_unverified'))
+              throw new ProviderWorkflowError('unavailable');
+            await enableConnectedHarness(harness.id, `connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}`);
+          } });
+        }
+        if (request.kind === 'login' && request.method === 'existing_codex') {
+          if (!canReuseCodex || !options.hermesCodexReuse) throw new ProviderWorkflowError('unavailable');
+          const reuse = async () => {
+            await options.hermesCodexReuse!();
+            const fresh = await options.store.getSnapshot({ refresh: true });
+            const exact = fresh.harnesses.find(row => row.id === harness.id);
+            const source = fresh.accessSources.find(row => row.kind === 'harness_profile'
+              && row.harness === 'hermes' && row.providerId === 'openai-codex'
+              && row.localObservation?.state === 'present_unverified');
+            const models = fresh.modelProviders.find(row => row.id === source?.providerId)?.models
+              .filter(model => model.enabled && source?.eligibleModelIds.includes(model.id)) ?? [];
+            const model = models.find(row => row.id === exact?.route.modelId) ?? models[0];
+            if (!exact || !source || !model || fresh.atomicConnectSupported !== true)
+              throw new ProviderWorkflowError('unavailable');
+            await options.store.mutate({ type: 'set_route', harnessInstanceId: exact.id,
+              route: { kind: 'configurable', providerId: source.providerId, modelId: model.id },
+              accessSourceId: source.id, accountId: null, enableHarness: true,
+              expectedRevision: fresh.revision, idempotencyKey: `reuse-${createHash("sha256").update(request.idempotencyKey).digest("hex")}` });
+          };
+          if (options.profileGuard) await options.profileGuard.run('codex', { kind: 'write' }, reuse);
+          else await reuse();
+          publish({ state: 'succeeded', safeFailure: null });
+          return { cancel: async () => {} };
+        }
         let releaseProfile: (() => void) | undefined;
         if (request.kind !== "login" && options.profileGuard && (harness.harness === "codex" || harness.harness === "claude")) releaseProfile = await options.profileGuard.acquire(harness.harness, { kind: "write" });
         let ref: TerminalRef;
@@ -129,6 +204,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
         }
         let buffer = '';
         let stopped = false;
+        let finishTask: Promise<void> | undefined;
         let cancelling = false;
         let timer: NodeJS.Timeout | undefined;
         let stream: ReturnType<TerminalRuntimeSocketClient['attach']> | undefined;
@@ -200,6 +276,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
             const exact = confirmed.harnesses.find(row => row.id === harness.id) ?? confirmed.harnesses.find(row => row.harness === harness.harness);
             const installed = exact?.installState ?? confirmed.harnessCatalog.find(row => row.harness === harness.harness)?.installState;
             const success = request.kind === 'login' ? exact?.authState === 'authenticated' || exact?.localObservation?.state === 'present_unverified' : request.kind === 'install' ? installed === 'installed' : installed === 'missing';
+            if (success && request.kind === 'login')
+              await enableConnectedHarness(harness.id, `connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}`);
             publish({ state: success ? 'succeeded' : 'failed', safeFailure: success ? null : 'unavailable' });
           }
           catch (error) {
@@ -220,8 +298,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
                     publish(code);
                 }
               }
-              if (frame.type === 'exit')
-                void finish(frame.exitCode);
+              if (frame.type === 'exit' && !finishTask)
+                finishTask = finish(frame.exitCode);
             },
             onClose() { void failStream(); },
             onError(error) { console.warn('[provider-workflow] Terminal stream failed:', error.name); void failStream(); },
@@ -254,6 +332,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           timer.unref();
         }
         return { terminalSessionId: `${ref.workspaceId}:${ref.tabId}`, async cancel() {
+            if (finishTask) { await finishTask; return; }
             cancelling = true;
             try {
               await terminate();
@@ -269,7 +348,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           } };
       },
     } satisfies ProviderWorkflowAdapter;
-  });
+  }));
 }
 async function nativeHostControl() {
   const path = '/opt/matrix/bin/matrix-agent-runtime-control';

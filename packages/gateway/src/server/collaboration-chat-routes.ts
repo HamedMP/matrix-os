@@ -111,6 +111,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }));
   app.route("/api/ai", createProviderSettingsRoutes({
     store: providerSettingsStore,
+    canReadNativeAccountMetadata: (c) => Boolean(options.runtimeOwnerId) && requireRequestPrincipal(c).userId === options.runtimeOwnerId,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   return localImports;

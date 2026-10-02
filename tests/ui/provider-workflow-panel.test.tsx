@@ -328,3 +328,53 @@ it("reuses a pending start receipt key after a lost response", async () => {
   const calls = vi.mocked(api.start).mock.calls;
   expect(calls[0][0].idempotencyKey).toBe(calls[1][0].idempotencyKey);
 });
+
+it("keeps device-code startup in Settings while waiting for the native code", async () => {
+  const api = client();
+  api.start = vi.fn().mockResolvedValue({ id: "wf", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null });
+  const openTerminal = vi.fn();
+  render(<HarnessWorkflowPanel harness={harness} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
+  fireEvent.click(screen.getByRole("button", { name: /ChatGPT account/ }));
+  await screen.findByText(/Waiting for sign-in/);
+  expect(openTerminal).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
+});
+
+it("reuses the connected Codex account in Settings and refreshes immediate completion", async () => {
+  const api = client();
+  api.start = vi.fn().mockResolvedValue({ id: "wf", harnessInstanceId: "hermes", kind: "login", state: "succeeded", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
+  const refresh = vi.fn(); const terminal = vi.fn();
+  render(<HarnessWorkflowPanel harness={{...harness, id: "hermes", harness: "hermes", displayName: "Hermes"}} capability={{...capability, harnessInstanceId: "hermes", harness: "hermes", displayName: "Hermes", loginMethods: ["existing_codex"], apiKeyProviders: []}} client={api} disabled={false} onRefresh={refresh} onOpenTerminal={terminal} />);
+  fireEvent.click(screen.getByRole("button", { name: /Use existing Codex account/ }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ harnessInstanceId: "hermes", method: "existing_codex" }), expect.any(AbortSignal));
+  expect(terminal).not.toHaveBeenCalled();
+});
+it("finishes Claude browser sign-in inside Settings without exposing or retaining the code", async () => {
+  const api = client(); api.submitCode = vi.fn().mockResolvedValue({accepted: true});
+  api.get = vi.fn().mockResolvedValue({ id: "browser", harnessInstanceId: "claude", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: "https://claude.com/cai/oauth/authorize?state=fixture", safeFailure: null });
+  const terminal = vi.fn();
+  render(<HarnessWorkflowPanel harness={{...harness, id: "claude", harness: "claude", displayName: "Claude Code"}} capability={{...capability, harnessInstanceId: "claude", harness: "claude", loginMethods: ["browser"], apiKeyProviders: []}} client={api} operationId="browser" disabled={false} onRefresh={vi.fn()} onOpenTerminal={terminal} onOpenAuthorizationUrl={vi.fn()} />);
+  const input = await screen.findByLabelText("Paste the sign-in code");
+  expect(input).toHaveAttribute("type", "password");
+  fireEvent.change(input, {target: {value: "fixture-code#fixture-state"}});
+  fireEvent.click(screen.getByRole("button", {name: "Finish connecting"}));
+  await waitFor(() => expect(api.submitCode).toHaveBeenCalledWith("browser", "fixture-code#fixture-state", expect.any(AbortSignal)));
+  await waitFor(() => expect(input).toHaveValue(""));
+  expect(document.body.textContent).not.toContain("fixture-code"); expect(terminal).not.toHaveBeenCalled();
+});
+it("offers explicit Connect for a saved Off account instead of silently restoring enablement on read", () => {
+  const api = client();
+  render(<HarnessWorkflowPanel harness={{...harness, authState: "authenticated", enabled: false}} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} />);
+  expect(screen.getByRole("button", {name: /ChatGPT account/})).toBeEnabled();
+  expect(api.start).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", {name: "Disconnect"})).not.toBeInTheDocument();
+});
+it("shows account actions for a configured native connection without claiming remote readiness", () => {
+  const api = client();
+  render(<HarnessWorkflowPanel harness={{...harness, authState: "unknown", enabled: true, localObservation: {state: "present_unverified", observedAt: "2026-10-02T00:00:00Z", staleAfter: "2026-10-02T00:10:00Z"}}} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} renderConnection={action => <article>Current account{action}</article>} />);
+  expect(screen.getByText("Current account")).toBeInTheDocument();
+  expect(screen.getByRole("button", {name: "Change account"})).toBeInTheDocument();
+  expect(screen.queryByText("Connect Codex with")).not.toBeInTheDocument();
+  expect(api.start).not.toHaveBeenCalled();
+});

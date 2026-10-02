@@ -83,7 +83,9 @@
 .matrix-ap-agent-row-head { align-items: center; display: flex; gap: 12px; padding-right: 4px; }
 .matrix-ap-agent-details { padding: 0 4px 16px 44px; }
 .matrix-ap-agent-details[hidden] { display: none; }
-.matrix-ap-chevron { color: var(--matrix-ap-muted); font-size: 20px; padding: 6px; }
+.matrix-ap-chevron { color: var(--matrix-ap-muted); display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 28px; }
+.matrix-ap-chevron svg { width: 16px; height: 16px; }
+.matrix-ap-chevron[data-expanded="true"] svg { transform: rotate(180deg); }
 .matrix-ap-add-button { background: var(--matrix-ap-surface); border-color: var(--matrix-ap-border); color: var(--matrix-ap-text); font-size: 20px; height: 27px; width: 27px; }
 .matrix-ap-rail-list { display: flex; flex-direction: column; gap: 3px; }
 .matrix-ap-rail-item {
@@ -424,8 +426,8 @@
 .matrix-ap-agent-logo, .matrix-ap-harness-mark:has(.matrix-ap-agent-logo) { height: 32px; width: 32px; }
 .matrix-ap-agent-logo { border: 1px solid var(--matrix-ap-border); background: var(--matrix-ap-sunken); border-radius: 8px; }
 .matrix-ap-agent-logo img { height: 20px; width: 20px; }
-.matrix-ap-status-chip[data-state="not-connected"] { color: var(--matrix-ap-warning); background: color-mix(in srgb, var(--matrix-ap-warning) 8%, transparent); }
-.matrix-ap-status-chip[data-state="not-connected"] i { background: var(--matrix-ap-warning); }
+.matrix-ap-status-chip[data-state="not-connected"], .matrix-ap-status-chip[data-state="not-installed"] { color: var(--matrix-ap-warning); background: color-mix(in srgb, var(--matrix-ap-warning) 8%, transparent); }
+.matrix-ap-status-chip[data-state="not-connected"] i, .matrix-ap-status-chip[data-state="not-installed"] i { background: var(--matrix-ap-warning); }
 .matrix-ap-gateway .matrix-ap-advanced { border: 0; padding-top: 0; }
 .matrix-ap-gateway .matrix-ap-panel-head > .matrix-ap-status-chip { display: none; }
 .matrix-ap-gateway .matrix-ap-credit-row { padding: 24px; min-height: 112px; }
@@ -447,3 +449,5 @@
 /* Keep the exact monochrome SVG readable on the shared dark presentation. */
 [data-theme="dark"] .matrix-ap-agent-logo img.matrix-ap-openai-logo,
 .dark .matrix-ap-agent-logo img.matrix-ap-openai-logo { filter: invert(1); }
+
+.matrix-ap-agent-logo img.matrix-ap-upstream-logo { width: 24px; height: 24px; }

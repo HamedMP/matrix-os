@@ -1,6 +1,6 @@
 import {
   ProviderWorkflowCapabilitiesSchema, ProviderWorkflowKeySchema, ProviderWorkflowLogsSchema,
-  ProviderWorkflowSchema, ProviderWorkflowStartSchema,
+  ProviderWorkflowSchema, ProviderWorkflowStartSchema, ProviderWorkflowCodeSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { ProviderWorkflowClient } from "./types.js";
@@ -13,6 +13,7 @@ export interface ProviderWorkflowRequest {
 }
 
 const reference = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+const accepted = z.object({ accepted: z.literal(true) }).strict();
 const verified = z.object({ verified: z.literal(true) }).strict();
 const root = "/api/ai/provider-settings/workflows";
 
@@ -55,10 +56,11 @@ export function createProviderWorkflowClient(
   }
   function path(id: string): string { return `${root}/${encodeURIComponent(parse(reference, id))}`; }
   return {
-    capabilities: signal => send({ path: `${root}/capabilities`, method: "GET", signal }, ProviderWorkflowCapabilitiesSchema),
+    capabilities: signal => send({ path: `${root}/capabilities?connectionVersion=2`, method: "GET", signal }, ProviderWorkflowCapabilitiesSchema),
     start: async (body, signal) => send({ path: root, method: "POST", body: parse(ProviderWorkflowStartSchema, body), signal }, ProviderWorkflowSchema),
     get: async (id, signal) => send({ path: path(id), method: "GET", signal }, ProviderWorkflowSchema),
     cancel: async (id, signal) => send({ path: `${path(id)}/cancel`, method: "POST", body: {}, signal }, ProviderWorkflowSchema),
+    submitCode: async (id, code, signal) => send({ path: `${path(id)}/code`, method: "POST", body: parse(ProviderWorkflowCodeSchema, { code }), signal }, accepted),
     submitKey: async (body, signal) => send({ path: `${root}/keys`, method: "POST", body: parse(ProviderWorkflowKeySchema, body), signal }, verified),
     logs: async (id, signal) => send({ path: `${root}/logs/${encodeURIComponent(parse(reference, id))}`, method: "GET", signal }, ProviderWorkflowLogsSchema),
   };

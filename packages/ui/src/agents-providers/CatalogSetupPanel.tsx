@@ -17,8 +17,8 @@ export function CatalogSetupPanel({ entry, disabled, onSetupHarness, onRefresh }
     finally { setPending(false); }
   };
   return <section className="matrix-ap-workflow" aria-label={`${entry.displayName} setup`}>
-    <p className="matrix-ap-help">{!entry.available ? "This agent is unavailable on this computer." : entry.installState === "missing" ? "Not on this computer yet. Install it to get started." : "Finish setup in Terminal to connect this agent."}</p>
-    {entry.available && entry.setupAction !== "none" ? <button type="button" className="matrix-ap-button matrix-ap-button-primary" disabled={disabled || pending || !onSetupHarness} onClick={() => void setup()}>{pending ? "Opening Terminal…" : entry.setupAction === "install" ? "Install in Terminal" : "Connect in Terminal"}</button> : null}
+    <p className="matrix-ap-help">{!entry.available ? "This agent is unavailable on this computer." : entry.installState === "missing" ? "Not on this computer yet. Install it to get started." : "Connection in Settings is unavailable for this agent on this computer. Refresh or update the computer to try again."}</p>
+    {entry.available && entry.installState === "missing" && entry.setupAction === "install" ? <button type="button" className="matrix-ap-button matrix-ap-button-primary" disabled={disabled || pending || !onSetupHarness} onClick={() => void setup()}>{pending ? "Opening Terminal…" : "Install in Terminal"}</button> : null}
     {opened ? <p className="matrix-ap-help" role="status">Terminal is open. Finish setup there, then check again.</p> : null}
     {failure ? <p className="matrix-ap-help" role="alert">Setup could not open. Try again.</p> : null}
     {opened ? <button type="button" className="matrix-ap-button" disabled={disabled || pending} onClick={onRefresh}>Check again</button> : null}
