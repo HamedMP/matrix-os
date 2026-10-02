@@ -192,15 +192,93 @@ and can **never** receive an update.
   EAS endpoint and `runtimeVersion.policy` to `appVersion`.
 - Every `eas.json` build profile declares a `channel`. A build with no channel
   can never receive an update.
-- Publish with `eas update --branch production --message "..."`.
+
+### Channels
+
+There are two release channels. `development` exists only for dev clients.
+
+| Channel | Builds on it | How updates arrive |
+| --- | --- | --- |
+| `preview` | Internal builds from `eas build --profile preview` | Automatically, on every push to `main` that touches the mobile app |
+| `production` | Store builds from `eas build --profile production` | Only by promoting a preview update by hand |
+
+Both profiles set `"environment": "production"`. A preview update is promoted to
+production unchanged, so it has to be bundled with the variables production
+uses. Keep every `EXPO_PUBLIC_*` value in the `production` EAS environment
+(`eas env:list --environment production`) with **Plain text** or **Sensitive**
+visibility. Two things are silently ignored when an update is bundled: a build
+profile's `env` block in `eas.json`, and any variable with **Secret** visibility.
+The consequence is that preview builds talk to the production Clerk instance and
+report to the production PostHog project.
+
+### What the user sees
+
+Release builds check for an update on launch and download it in the background.
+When the download finishes, the app shows a system alert, "Update ready", with
+**Update now** (restart into the update) and **Later** (keep going; the update
+applies on the next cold start). The app also re-checks when it returns to the
+foreground, at most once every 15 minutes, and prompts once per update per
+session. The logic lives in `apps/mobile/lib/use-ota-update-prompt.ts`.
+
+Development clients never prompt. To test, install a `preview` build, publish an
+update, then fully close and reopen the app and wait for the download.
+
+### Publishing, promoting, and rolling back
+
+`.github/workflows/mobile-ota-update.yml` owns all three. Do not publish from a
+laptop except for break-glass recovery.
+
+1. **Preview**: merge to `main`. The workflow runs the mobile tests, publishes to
+   `preview`, and writes the update group id to the run summary.
+2. **Promote**: once the preview build looks right, run the workflow manually
+   with `action: promote-production`. It republishes that exact update group to
+   `production`. Leave `group_id` empty to take the latest preview group for the
+   current app version, or paste a specific one. `rollout_percentage` below 100
+   releases to a share of users first; finish a partial rollout with
+   `eas update:edit <group-id> --rollout-percentage 100`.
+3. **Roll back**: run the workflow with `action: rollback`. It undoes the latest
+   production group by republishing the one before it, or by sending builds back
+   to their embedded bundle if there is none.
+
+The promote and rollback jobs run in the `mobile-ota-production` GitHub
+Environment, which requires a reviewer. The publish job runs in
+`mobile-ota-preview`. Each environment holds its own `EXPO_TOKEN` secret (an Expo
+robot-user access token); there is no repository-level token. The workflow
+refuses to promote a group that is not on `preview`, was built for a different
+app version, or was not published from a commit on `main`.
+
+### When an update cannot be used: native changes
 
 **The `appVersion` policy has a sharp edge**: the runtime version tracks
 `version` in `app.json`, so a release that changes native code (new native
 module, plugin, or SDK bump) **must** bump `version`. Otherwise the update is
 delivered to builds whose native code no longer matches the JS, which crashes at
-runtime. If that guarantee needs to be automatic, switch the policy to
-`fingerprint` — at the cost that any dependency change stops OTA from reaching
-existing builds.
+runtime. Because pushes to `main` publish automatically, bump `version` in the
+same PR as the native change, then ship new `preview` and store builds; installs
+on the old version stop receiving updates until they take the new build.
+
+CI enforces this. `scripts/ci/mobile-ota-native-guard.mjs` runs on mobile and
+lockfile pull requests and again before every publish. It finds the commit that
+introduced the current app version and compares the app's native inputs (Expo's
+fingerprint source list: autolinked native modules, config plugins, app config)
+against it. If they differ and the version did not change, the check fails,
+names the inputs that changed, and nothing is published. A PR that bumps
+`version` passes, because it starts a new runtime.
+
+The guard compares package-relative paths and file contents, not Expo's
+fingerprint hash. That hash also covers install paths, and pnpm names each
+package directory after its peer versions, so an unrelated dependency bump would
+change the hash while the native code is identical.
+
+What the guard cannot see is a build made from code that is not on `main`. Cut
+`preview` and store builds from a clean checkout of `main`: a build from an
+unmerged branch or a dirty tree shares the app version but may not share the
+native code, and it will still receive updates for that version. Closing that
+gap completely means switching `runtimeVersion` to the `fingerprint` policy.
+Do not do that without a spike: `eas build` computes the fingerprint on the
+machine that starts the build, and with pnpm's global virtual store the result
+depends on where the checkout sits on disk, so builds started from a laptop and
+updates published from CI would not agree on the runtime.
 
 ## iOS TestFlight Release
 

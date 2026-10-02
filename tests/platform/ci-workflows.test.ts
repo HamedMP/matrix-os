@@ -1141,4 +1141,83 @@ describe('CI workflows', () => {
     expect(targetedJob).toContain('::add-mask::$TARGET_HANDLE');
     expect(targetedJob).not.toContain('printf \'%s\\n\' "$FLEET_RESPONSE"');
   });
+
+  it('publishes mobile OTA updates to preview and reaches production only by a gated promote', () => {
+    const root = process.cwd();
+    const source = readFileSync(join(root, '.github/workflows/mobile-ota-update.yml'), 'utf8');
+    type Job = {
+      if?: string;
+      needs?: string | string[];
+      environment?: string;
+      concurrency?: { 'cancel-in-progress'?: boolean | string };
+      steps?: Array<{ run?: string; uses?: string; with?: Record<string, unknown> }>;
+    };
+    const workflow = parse(source) as {
+      on?: {
+        push?: { branches?: string[]; paths?: string[] };
+        pull_request?: { paths?: string[] };
+      };
+      permissions?: Record<string, string>;
+      env?: Record<string, string>;
+      jobs?: Record<string, Job>;
+    };
+    const jobs = workflow.jobs ?? {};
+    const runs = (job: Job | undefined) => (job?.steps ?? []).map((step) => step.run ?? '').join('\n');
+
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    expect(workflow.on?.push?.branches).toEqual(['main']);
+
+    // The PR job proves tests and bundling without any credential in reach.
+    expect(jobs.test?.environment).toBeUndefined();
+    expect(JSON.stringify(jobs.test)).not.toContain('secrets.');
+
+    // Native code must not change within one app version, because an update is
+    // delivered to every build of that version. The guard runs in the job every
+    // publish depends on, needs full history to find where the version began,
+    // and also runs for lockfile-only pull requests, which can change native
+    // code without touching the app. A lockfile-only push must not publish.
+    const guardStep = jobs.test?.steps?.findIndex((step) =>
+      step.run?.includes('node scripts/ci/mobile-ota-native-guard.mjs'),
+    );
+    expect(guardStep).toBeGreaterThan(-1);
+    const testCheckout = jobs.test?.steps?.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(testCheckout?.with?.['fetch-depth']).toBe(0);
+    expect(workflow.on?.pull_request?.paths).toContain('pnpm-lock.yaml');
+    expect(workflow.on?.push?.paths).not.toContain('pnpm-lock.yaml');
+
+    // A push can only ever publish to preview, bundled with the production EAS
+    // environment so the promoted bundle is identical to what was tested.
+    const publish = jobs['publish-preview'];
+    expect(publish?.needs).toBe('test');
+    expect(publish?.environment).toBe('mobile-ota-preview');
+    expect(publish?.if).toContain("github.ref == 'refs/heads/main'");
+    expect(publish?.concurrency?.['cancel-in-progress']).toBe(false);
+    expect(runs(publish)).toContain('--channel preview');
+    expect(runs(publish)).toContain('--environment production');
+    expect(source).not.toContain('--channel production');
+
+    // Production moves only through the manual, reviewer-gated promote job.
+    const production = jobs.production;
+    expect(production?.environment).toBe('mobile-ota-production');
+    expect(production?.if).toContain("github.event_name == 'workflow_dispatch'");
+    expect(production?.if).toContain("github.ref == 'refs/heads/main'");
+    expect(production?.if).not.toContain("'push'");
+    expect(production?.concurrency?.['cancel-in-progress']).toBe(false);
+    expect(runs(production)).toContain('--destination-channel production');
+    expect(source.split('--destination-channel production')).toHaveLength(2);
+
+    // The EAS CLI is an exact pin fetched through pnpm, and no expression is
+    // interpolated into a shell script.
+    expect(workflow.env?.EAS_CLI_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(source).not.toContain('eas-cli@latest');
+    expect(source).not.toMatch(/\bnpx\b|\bnpm (install|i|exec)\b/);
+    for (const job of Object.values(jobs)) {
+      expect(runs(job)).not.toContain('${{');
+    }
+
+    const workflowReadme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');
+    const releaseDocs = readFileSync(join(root, 'docs/dev/releases.md'), 'utf8');
+    expect(workflowReadme).toContain('`mobile-ota-update.yml`');
+    expect(releaseDocs).toContain('.github/workflows/mobile-ota-update.yml');
+  });
 });
