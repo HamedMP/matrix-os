@@ -251,7 +251,7 @@ export function SharedChatComposer({
     editorRef.current?.focus();
   }, [markdownPreview]);
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
-  const driveContextEnabled = instance?.supports.resources.includes("organization_drive") === true;
+  const driveContextEnabled = !automaticRouting && instance?.supports.resources.includes("organization_drive") === true;
   const selectedResources = referenceTokens.flatMap(token => token.type === "resource" ? [token.resource] : []);
   const blockedDriveContext = selectedResources.some(resource => resource.kind === "organization_drive") && !driveContextEnabled;
   const valueBeforeCursor = value.slice(0, cursor);
@@ -452,7 +452,7 @@ export function SharedChatComposer({
           />
         </SuggestionMenu>
       ) : null}
-      <CompanyDriveContextControl resources={selectedResources} enabled={driveContextEnabled} disabled={disabled} query={resourceMenuOpen ? resourceQuery : null} onSelect={insertResource}/>
+      <CompanyDriveContextControl botContext={automaticRouting} resources={selectedResources} enabled={driveContextEnabled} disabled={disabled} query={resourceMenuOpen ? resourceQuery : null} onSelect={insertResource}/>
       <PromptInput
         value={value}
         onChange={onChange}

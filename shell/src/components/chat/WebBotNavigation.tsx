@@ -1,15 +1,17 @@
-import { useState } from 'react';
-import { AgentAvatar, type BotConversationSummary } from '@matrix-os/ui';
+import { useAuth } from '@clerk/nextjs';
+import { getGatewayUrl } from '@/lib/gateway';
+import { AgentAvatar, useBotDraftRecovery, type ChatAgentClient, type BotConversationSummary } from '@matrix-os/ui';
 import type { ChatComposerDraft } from './useChatComposerDraft';
 
-export function useWebBotDraftNavigation(seed: ChatComposerDraft['seedChatDraft'], open: (chatId: string) => void) {
-  const [notice, setNotice] = useState('');
-  return { notice, clearNotice: () => setNotice(''), openBotMention: (chatId: string, text: string) => {
-    const seeded = seed(chatId, text);
-    open(chatId);
-    setNotice(seeded ? '' : 'This bot already has a draft. Your text is still in the original Chat.');
-    return seeded;
-  } };
+export function useWebBotDraftNavigation({client,scope,sourceChatId,newChatSequence,seed,open,restore}: {
+  client?:ChatAgentClient;scope:string;sourceChatId?:string;newChatSequence:number;
+  seed:ChatComposerDraft['seedChatDraft'];open(chatId:string):void;
+  restore(source:{chatId?:string;sequence:number}):void;
+}) {
+  const {userId,sessionId}=useAuth();
+  return useBotDraftRecovery({client,identityKey:`${userId ?? ''}:${sessionId ?? ''}:${getGatewayUrl()}`,scope,targetScope:id=>id,seed,open,
+    capture:()=>({chatId:sourceChatId,sequence:newChatSequence}),restore,
+  });
 }
 
 export function WebBotAttention({ conversations, onOpen, heading = true }: { conversations: BotConversationSummary[]; onOpen(chatId:string):void; heading?:boolean }) {

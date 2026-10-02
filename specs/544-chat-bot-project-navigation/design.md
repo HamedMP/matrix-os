@@ -40,6 +40,10 @@ Shared Electron/Web Bot summaries classify the host's loaded history through the
 
 Draft stores are scoped to the client and bounded to 100 records. Project center selection retains the mounted draft host; expanding the Project tree does not select it. Recipe creation keeps its idempotency key through both instantiate and host-open, then clears it only on complete success.
 
+Conflicting @Bot handoff offers an explicit Return to original draft action. It restores the captured source Chat or unsent draft scope without invoking New chat reset, submitting text, or replacing the target draft. The recovery notice is visible only for its target Chat and current actor/runtime; changing authority clears it. Intentional New chat remains a fresh-draft action.
+
+Local attachments are not retained across the current composer unmount. While a source draft has local attachments, @Bot navigation stays in the source and explains that the attachments must be removed or sent first. This protects draft resources without adding a new attachment persistence layer.
+
 ### Validation and error matrix
 
 | Evidence | Required client behavior |
@@ -64,3 +68,5 @@ Required behavioral tests cover identity failures/retry, history beyond the form
 Wrong: `if (!agentId) showOrdinaryComposer()` while binding is loading/error. Correct: render ordinary controls only for `status === "ordinary"`, Bot controls for `status === "bot"`, and a retry/loading surface for other states.
 
 During binding recovery, only new composer input and admission-dependent Steer/Edit actions are gated. Already-authenticated queue Cancel/Reorder and active Run Stop remain available through their existing revisioned controllers. Identity unavailability must not prevent stopping existing work. Route regression tests cover ordinary, failed, and pending binding using real cancellation request adapters.
+
+A named inline-size Project container inside the horizontal WorkTab flex host must explicitly fill the available width and participate in flex growth (`min-w-0 w-full flex-1`). Otherwise intrinsic-size containment collapses its width, clips the title/composer and prevents responsive card queries. Acceptance must inspect actual Electron pixels at windowed and maximized sizes; accessibility text and jsdom state alone do not establish geometry.

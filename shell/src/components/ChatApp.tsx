@@ -14,7 +14,7 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
-import { useDirectBotBinding, BotBindingStatus, useBotConversationSummaries, AgentAvatar, BotChatPanel, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
+import { useDirectBotBinding, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
@@ -218,7 +218,9 @@ function ChatAppContent({
   };
   const onSwitchConversation = (id: string) => { botDraftNavigation.clearNotice(); agentsNavigation?.close(); switchConversation(id); };
   const composer = useChatComposerDraft(composerScope, agentClient);
-  const botDraftNavigation = useWebBotDraftNavigation(composer.seedChatDraft, onSwitchConversation);
+  const botDraftNavigation = useWebBotDraftNavigation({client:agentClient,scope:composerScope,sourceChatId:sessionId,newChatSequence,seed:composer.seedChatDraft,open:onSwitchConversation,
+    restore:source=>{ agentsNavigation?.close(); if(source.chatId) switchConversation(source.chatId); else {setNewChatSequence(source.sequence);setAgentDraftRequest(null);createChat();} },
+  });
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const agentDraftSequence = useRef(0);
   const startAgentChat: StartAgentChat = (text, resources) => {
@@ -605,12 +607,12 @@ function ChatAppContent({
           <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat}
             onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
-        {botDraftNavigation.notice ? <p role="status" className="px-3 py-2 text-xs">{botDraftNavigation.notice}</p> : null}
+        {botDraftNavigation.recovery ? <BotDraftRecoveryPanel onReturn={botDraftNavigation.returnToOriginalDraft}/> : null}
         <ChatQueuedRequests key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} onCancel={onCancelQueuedTurn} />
         {/* Empty state or conversation */}
         {isEmpty ? (
           <EmptyState
-            composerProps={{ composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, permissionMode: directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, permissionMode: directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             suggestions={suggestions}
@@ -705,6 +707,7 @@ function ChatAppContent({
                 </div>
               )}
               <ChatInput
+                botContext={Boolean(directBotId)}
                 driveContextEnabled={!botIdentityUnknown && !directBotId && providerState.selected?.supportsCompanyDriveContext === true}
                 onOpenBotMention={botDraftNavigation.openBotMention}
                 key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} permissionMode={directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised"}
@@ -746,7 +749,7 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "onOpenBotMention">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "onOpenBotMention">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   suggestions: string[];

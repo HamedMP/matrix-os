@@ -8,7 +8,7 @@ import { useProjectActions } from "../work/work-rail/use-project-actions";
 export function ProjectLanding({ project, children, showMetadata = true }: { project: Project; children: ReactNode; showMetadata?: boolean }) {
   const actions = useProjectActions(project);
   const editButtonRef = useRef<HTMLButtonElement>(null);
-  return <div className="@container/project-landing flex h-full min-h-0 flex-col">
+  return <div className="@container/project-landing flex h-full min-h-0 min-w-0 w-full flex-1 flex-col">
     {showMetadata ? <header className="mx-auto w-full max-w-3xl shrink-0 px-6 pb-2 pt-8">
       <div className="mb-5 flex items-center gap-3">
         <FolderOpen size={22} aria-hidden style={{ color: "var(--text-tertiary)" }} />

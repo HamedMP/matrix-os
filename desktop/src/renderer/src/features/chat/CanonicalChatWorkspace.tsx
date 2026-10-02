@@ -1,3 +1,4 @@
+import { useBotDraftNavigation } from "./use-bot-draft-navigation";
 import { CanonicalChatIdentityGate } from "./CanonicalChatIdentityGate";
 import { CanonicalNewChatContent } from "./CanonicalNewChatContent";
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
@@ -9,7 +10,7 @@ import {
   CanonicalSharedChatPanel,
   BotChatPanel,
   useDirectBotBinding,
-  useBotMentionNavigation,
+  BotDraftRecoveryPanel,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
 } from "@matrix-os/ui";
@@ -655,6 +656,7 @@ export function CanonicalChatWorkspace({
     controller.startNewChat();
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
+    botMention.clearNotice();
     prepareNewChatDraft();
     setGlobalView("draft");
     setLocalComposerFocusRequestId((requestId) => requestId + 1);
@@ -671,11 +673,8 @@ export function CanonicalChatWorkspace({
     setGlobalView("conversation");
   };
 
-  const botMention = useBotMentionNavigation(client.agents, `${draftScope}:${draftRevision}`, (chatId, text) => {
-    const seeded = seedChatDraft(chatId, text);
-    selectChat(chatId);
-    if (!seeded) setSubmissionError("This bot already has a draft. Your text is still in the original Chat.");
-    return seeded;
+  const botMention = useBotDraftNavigation({ client: client.agents, scope: draftScope, revision: draftRevision, chatId: routedComposerChatId, projectId, sourceHasAttachments: attachments.items.length > 0, seed: seedChatDraft, open: selectChat,
+    restoreNewDraft: () => { controller.startNewChat(); reportedChatId.current = null; onActiveChatChanged?.(null); setGlobalView("draft"); },
   });
 
   const composer = (
@@ -907,6 +906,7 @@ export function CanonicalChatWorkspace({
             </div>
           )
         ) : <>
+        {botMention.recovery ? <BotDraftRecoveryPanel onReturn={botMention.returnToOriginalDraft}/> : null}
         {submissionError || controller.error ? (
           <div role="alert" className={cn("mx-auto mt-3 w-[calc(100%-2.5rem)] rounded-lg border px-3 py-2 text-sm", CHAT_CONTENT_WIDTH_CLASS)} style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
             {submissionError ?? controller.error}

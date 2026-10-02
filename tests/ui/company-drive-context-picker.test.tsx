@@ -51,3 +51,15 @@ it("keeps distinct folder and file references, caps drive context at three and m
     expect(canAddChatMention([one], { ...one, label: "Renamed" })).toBe(false);
     expect(canAddChatMention([one, two, three], reference("fourth"))).toBe(false);
 });
+it('shows a Bot capability reason and keeps discovery disabled even with retained ordinary capability',()=>{
+    const select=vi.fn();
+    const view=render(<CompanyDriveContextPicker api={api} resources={[]} onSelect={select} enabled botContext mentionQuery="auth"/>);
+    expect(screen.getByText("Company drive context is not available in Bot chats.")).toBeTruthy();
+    expect(screen.queryByText("Choose Claude Code to use company drive context.")).toBeNull();
+    const add=screen.getByRole("button",{name:"Add company drive context"});
+    expect((add as HTMLButtonElement).disabled).toBe(true);fireEvent.click(add);
+    expect(load).not.toHaveBeenCalled();expect(select).not.toHaveBeenCalled();
+    view.rerender(<CompanyDriveContextPicker api={api} resources={[]} onSelect={select} enabled={false}/>);
+    expect(screen.getByText("Choose Claude Code to use company drive context.")).toBeTruthy();
+    expect(screen.queryByText("Company drive context is not available in Bot chats.")).toBeNull();
+});

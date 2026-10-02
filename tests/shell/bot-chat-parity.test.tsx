@@ -134,6 +134,9 @@ it("sends a verified direct bot Chat without an ordinary harness selection", asy
   render(<ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
     onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit} agentClient={client} />);
   await screen.findByText("Persistent history");
+  expect(screen.getByText("Company drive context is not available in Bot chats.")).toBeTruthy();
+  expect(screen.queryByText("Choose Claude Code to use company drive context.")).toBeNull();
+  expect((screen.getByRole("button", { name: "Add company drive context" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.change(screen.getByRole("textbox", { name: /message/i }), { target: { value: "Check the pages" } });
   fireEvent.click(screen.getByRole("button", { name: /send/i }));
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Check the pages", undefined, expect.objectContaining({

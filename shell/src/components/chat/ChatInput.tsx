@@ -1,6 +1,7 @@
 "use client";
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
 import {
+  BOT_ATTACHMENT_HANDOFF_REASON,
   usePlatformSpeechDraft,
   SpeechInputWaveform,
   type ChatAgentDraftRequest,
@@ -41,6 +42,7 @@ export function ChatInput({
   unavailablePlaceholder,
   attachmentsEnabled,
   driveContextEnabled = false,
+  botContext = false,
   speechClient,
   speechCaptureAdapter,
 }: {
@@ -60,10 +62,10 @@ export function ChatInput({
   unavailablePlaceholder?: string;
   attachmentsEnabled: boolean;
   driveContextEnabled?: boolean;
+  botContext?: boolean;
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
 }) {
-  const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention);
   const { text: input, setText: setInput, setDraft, resources } = composer;
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +82,7 @@ export function ChatInput({
   const inputRef = useRef(input);
   const consumedDraftRequest = useRef<number | null>(null);
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
+  const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention, attachments.length ? BOT_ATTACHMENT_HANDOFF_REASON : undefined);
   const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
   const [defaultSpeechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());
   const speech = usePlatformSpeechDraft({
@@ -95,7 +98,8 @@ export function ChatInput({
     },
   });
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
-  const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !driveContextEnabled;
+  const contextEnabled = driveContextEnabled && !botContext;
+  const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
   const canSend = !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length, text: input, attachments: attachments.length });
 
   useEffect(() => {
@@ -147,7 +151,7 @@ export function ChatInput({
         const insert = () => { composer.setResources([...resources, resource]); setInput(text); textareaRef.current?.focus(); };
         if (!botMention.select(resource, text.trimEnd(), insert)) insert();
       }} />
-      <CompanyDriveContextControl identity={scope} resources={resources} enabled={driveContextEnabled} query={query} onSelect={resource => {
+      <CompanyDriveContextControl botContext={botContext} identity={scope} resources={resources} enabled={contextEnabled} query={query} onSelect={resource => {
         composer.setResources([...resources, resource]);
         if (query !== null) setInput(input.replace(/@[^\s@]*$/, ""));
         textareaRef.current?.focus();
