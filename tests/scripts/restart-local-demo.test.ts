@@ -7,12 +7,15 @@ function harness(fail?: (command: string, args: string[], input?: string) => voi
     return command === "docker" && args[0] === "inspect" ? "/checkout\n" : "";
   });
   const log = vi.fn();
-  return { run, log, invoke: () => restartLocalDemo({ root: "/checkout", run, log }) };
+  const recover = vi.fn(async () => {});
+  return { run, log, recover, invoke: () => restartLocalDemo({ root: "/checkout", run, log, recover }) };
 }
 
 describe("local demo recovery", () => {
-  it("validates ownership before stopping anything, then restarts existing containers and verifies speech", () => {
-    const h = harness(); h.invoke();
+  it("recovers the saved stack before checking ownership, restarting services and verifying speech", async () => {
+    const h = harness(); await h.invoke();
+    expect(h.recover).toHaveBeenCalledWith(expect.objectContaining({ root: "/checkout", run: h.run }));
+    expect(h.recover.mock.invocationCallOrder[0]).toBeLessThan(h.run.mock.invocationCallOrder[0]);
     const calls = h.run.mock.calls;
     const stop = calls.findIndex(([, , options]) => options?.input?.includes("systemctl stop"));
     expect(calls.slice(0, stop).filter(([command]) => command === "docker")).toHaveLength(4);
@@ -38,39 +41,46 @@ describe("local demo recovery", () => {
     expect(calls.filter(([command]) => command === "ssh").every(([, args]) => args.includes("StrictHostKeyChecking=yes"))).toBe(true);
   });
 
-  it("refuses containers owned by another checkout without stopping services", () => {
+  it("refuses containers owned by another checkout without stopping services", async () => {
     const h = harness(); h.run.mockReturnValue("/another-checkout\n");
-    expect(h.invoke).toThrow(/another checkout/);
+    await expect(h.invoke()).rejects.toThrow(/another checkout/);
     expect(h.run.mock.calls.some(([, , options]) => options?.input?.includes("systemctl stop"))).toBe(false);
   });
 
-  it("restores VM services and propagates a container restart failure", () => {
+  it("restores VM services and propagates a container restart failure", async () => {
     const h = harness((command, args) => { if (command === "docker" && args[0] === "restart") throw new Error("Docker failed"); });
-    expect(h.invoke).toThrow("Docker failed");
+    await expect(h.invoke()).rejects.toThrow("Docker failed");
     expect(h.run.mock.calls.at(-1)?.[2]?.input).toContain("systemctl start matrix-gateway matrix-shell");
   });
 
-  it("does not claim success when HTTP readiness times out", () => {
+  it("does not claim success when HTTP readiness times out", async () => {
     const h = harness((_command, _args, input) => { if (input?.includes("wait_http")) throw new Error("Not ready"); });
-    expect(h.invoke).toThrow("Not ready");
+    await expect(h.invoke()).rejects.toThrow("Not ready");
     expect(h.run.mock.calls.at(-1)?.[2]?.input).toContain("systemctl start matrix-gateway matrix-shell");
   });
 
-  it("propagates real speech verification failure without restarting healthy services again", () => {
+  it("propagates real speech verification failure without restarting healthy services again", async () => {
     const h = harness((_command, _args, input) => { if (input?.includes("client.synthesize")) throw new Error("Speech unavailable"); });
-    expect(h.invoke).toThrow("Speech unavailable");
+    await expect(h.invoke()).rejects.toThrow("Speech unavailable");
     expect(h.run.mock.calls.filter(([, , options]) => options?.input?.includes("systemctl stop"))).toHaveLength(1);
     expect(h.run.mock.calls.at(-1)?.[2]?.input).toContain("client.synthesize");
   });
 
-  it("does not report success or restart healthy services when the platform cannot reach the VM", () => {
+  it("does not report success or restart healthy services when the platform cannot reach the VM", async () => {
     const h = harness((command, args) => {
       if (command === "docker" && args[0] === "exec") throw new Error("VPS unreachable");
     });
-    expect(h.invoke).toThrow("VPS unreachable");
+    await expect(h.invoke()).rejects.toThrow("VPS unreachable");
     expect(h.log.mock.calls.some(([message]) => message.includes("Restart complete"))).toBe(false);
     expect(h.run.mock.calls.at(-1)?.[0]).toBe("docker");
     expect(h.run.mock.calls.filter(([, , options]) => options?.input?.includes("systemctl stop"))).toHaveLength(1);
+  });
+
+  it("does not stop anything or report success if saved-stack recovery fails", async () => {
+    const h = harness(); h.recover.mockRejectedValue(new Error("Disk missing"));
+    await expect(h.invoke()).rejects.toThrow("Disk missing");
+    expect(h.run).not.toHaveBeenCalled();
+    expect(h.log.mock.calls.some(([message]) => message.includes("Restart complete"))).toBe(false);
   });
 });
 

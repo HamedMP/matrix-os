@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// Restart the already-provisioned local parity demo, never rebuild/recreate it.
+// Recover or restart the provisioned local demo without replacing its data.
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { recoverLocalDemo } from "./local-demo-recovery.mjs";
+import { runLocalParityLauncherWithLock } from "./dev-production-parity.mjs";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const containers = ["matrix-os-parity-platform", "matrix-os-parity-speech-tls",
@@ -32,8 +34,8 @@ export async function waitForDemoRoute(fetch, sleep = (ms) => new Promise(resolv
   throw new Error(`Platform -> router -> VM is still unavailable (${reason}). VM services were left running; restart verification failed.`);
 }
 
-function execute(command, args, { input, timeout = 180_000 } = {}) {
-  const result = spawnSync(command, args, { input, timeout, encoding: "utf8",
+function execute(command, args, { input, timeout = 180_000, env = process.env, cwd = projectRoot } = {}) {
+  const result = spawnSync(command, args, { input, timeout, env, cwd, encoding: "utf8",
     maxBuffer: 1024 * 1024, stdio: ["pipe", "pipe", "inherit"] });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} failed (${result.status ?? result.signal}); recovery did not complete.`);
@@ -88,7 +90,7 @@ console.log('Speech synthesis + transcription round-trip passed (' + speech.dura
 NODE
 `;
 
-export function restartLocalDemo({ root = projectRoot, run = execute, log = console.log } = {}) {
+export async function restartLocalDemo({ root = projectRoot, run = execute, log = console.log, recover = recoverLocalDemo } = {}) {
   const runtime = resolve(root, ".amp/in/local-production-parity/runtime");
   const sshArgs = ["-i", resolve(runtime, "operator_ed25519"), "-p", "2222",
     "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=10",
@@ -100,7 +102,8 @@ export function restartLocalDemo({ root = projectRoot, run = execute, log = cons
     if (output.trim()) log(output.trim());
   };
   log("Close Matrix browser tabs first to stop retry traffic. This ends current voice sessions and interrupts runs.");
-  log("Checking the existing local demo. No rebuilds, container recreation, database restarts, or data deletion.");
+  log("Recovering the saved local demo. No VM reprovisioning, image rebuilds, credential rotation, or data deletion.");
+  await recover({ root, run, sshArgs, log });
   for (const name of containers) {
     const owner = run("docker", ["inspect", "--format", '{{index .Config.Labels "com.matrix-os.local-production-parity.root"}}', name]);
     if (owner.trim() !== root) throw new Error(`${name} belongs to another checkout or has no ownership label; refusing to restart it.`);
@@ -143,12 +146,15 @@ try {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.includes("--help")) {
-    console.log("Usage: node scripts/restart-local-demo.mjs\nClose Matrix tabs first. Restarts only this checkout's existing local demo; preserves data, volumes, credentials and container hotfixes. Verifies platform-to-VM routing and uses two real speech operations. Does not rebuild or restart the VM/database/editor.");
+    console.log("Usage: node scripts/restart-local-demo.mjs\nClose Matrix tabs first. Recovers stopped OrbStack, dependencies, QEMU, and missing demo containers using the saved disk, credentials, volumes and platform image. Missing platforms get the current two speech modules compiled (no full build). Existing containers retain installed fixes. Verifies platform-to-VM routing and two real speech operations. Refuses recovery if saved data is missing; never provisions a replacement VM. Use this instead of dev:full to resume an existing demo.");
   } else if (process.argv.length > 2) {
     console.error("Unknown argument. Use --help.");
     process.exitCode = 1;
   } else {
-    try { restartLocalDemo(); }
+    try {
+      if (process.env.MATRIX_PARITY_LAUNCHER_LOCKED === "1") await restartLocalDemo();
+      else await runLocalParityLauncherWithLock({ args: [fileURLToPath(import.meta.url)] });
+    }
     catch (error) {
       console.error(error instanceof Error ? error.message : "Local demo recovery failed");
       process.exitCode = 1;
