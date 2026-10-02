@@ -67,7 +67,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-platform-${{ github.event.pull_request.number || inputs.pr }}
+  group: preview-platform-${{ github.event.pull_request.number || inputs.pr }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-platform' && github.run_id || 'active' }}
   cancel-in-progress: true
 
 jobs:
