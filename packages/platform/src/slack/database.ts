@@ -3,7 +3,7 @@ import { runPlatformMigration } from "../migration-runner.js";
 
 export interface SlackDatabase {
   slack_installations: { app_id: string; team_id: string; organization_id: string; installed_by: string; bot_user_id: string; encrypted_bot_token: string; generation: number; state: "active" | "revoked"; updated_at: Date | string };
-  slack_oauth_states: { hash: string; app_id: string; actor_id: string; organization_id: string; expires_at: Date | string; consumed_at: Date | string | null };
+  slack_oauth_states: { hash: string; app_id: string; actor_id: string; organization_id: string; installation_generations: Record<string, number> | null; expires_at: Date | string; consumed_at: Date | string | null };
   slack_link_challenges: { hash: string; app_id: string; team_id: string; slack_user_id: string; expires_at: Date | string; consumed_at: Date | string | null };
   slack_employee_links: { app_id: string; team_id: string; slack_user_id: string; actor_id: string; organization_id: string; created_at: Date | string };
   slack_channel_bindings: { app_id: string; team_id: string; channel_id: string; organization_id: string; scope_id: string; approved_output: boolean; configured_by: string; updated_at: Date | string };
@@ -27,6 +27,8 @@ export async function bootstrapSlackDatabase(db: Kysely<SlackDatabase>): Promise
     )`.execute(trx);
     // Pre-fence states lack an app identity and cannot authorize a callback.
     await sql`ALTER TABLE slack_oauth_states ADD COLUMN IF NOT EXISTS app_id TEXT NOT NULL DEFAULT ''`.execute(trx);
+    // A legacy permit without a workspace-generation snapshot cannot authorize installation.
+    await sql`ALTER TABLE slack_oauth_states ADD COLUMN IF NOT EXISTS installation_generations JSONB`.execute(trx);
     await sql`CREATE TABLE IF NOT EXISTS slack_link_challenges (
       hash TEXT PRIMARY KEY, app_id TEXT NOT NULL, team_id TEXT NOT NULL, slack_user_id TEXT NOT NULL,
       expires_at TIMESTAMPTZ NOT NULL, consumed_at TIMESTAMPTZ,
