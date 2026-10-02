@@ -6,12 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapSlackDatabase, type SlackDatabase } from "../../packages/platform/src/slack/database.js";
 import { SlackRepository, SlackRepositoryError } from "../../packages/platform/src/slack/repository.js";
 import { createSlackAppRoutes, type SlackAppRouteOptions } from "../../packages/platform/src/slack/routes.js";
+import { createRealCollaborationTestDatabase } from "../gateway/collaboration-test-support.js";
 import { encryptSlackToken } from "../../packages/platform/src/slack/security.js";
 
 const clock = new Date("2026-09-30T10:00:00Z");
 const config = { appId: "A123", clientId: "123.456", clientSecret: "c".repeat(32), signingSecret: "s".repeat(32), tokenEncryptionKey: Buffer.alloc(32, 42).toString("base64"), publicBaseUrl: "https://app.matrix-os.com" };
 const org = "org_company";
 let db: Kysely<SlackDatabase>;
+let destroyFixture: () => Promise<void>;
 let repo: SlackRepository;
 let app: ReturnType<typeof createSlackAppRoutes>;
 let actor: string | null;
@@ -37,8 +39,13 @@ async function startOAuth(){const response=await mutation("/api/slack/install","
 async function linkEmployee(){await repo.createChallenge({hash:"f".repeat(64),appId:"A123",teamId:"T123",slackUserId:"U123"});await repo.completeLink({hash:"f".repeat(64),actorId:"user_employee",organizationId:org});}
 
 beforeEach(async () => {
-  const instance = await KyselyPGlite.create();
-  db = new Kysely<SlackDatabase>({ dialect: instance.dialect });
+  if (process.env.MATRIX_TEST_POSTGRES_URL) {
+    const fixture = await createRealCollaborationTestDatabase();
+    db = fixture.db as unknown as Kysely<SlackDatabase>; destroyFixture = fixture.destroy;
+  } else {
+    const instance = await KyselyPGlite.create();
+    db = new Kysely<SlackDatabase>({ dialect: instance.dialect }); destroyFixture = () => db.destroy();
+  }
   await bootstrapSlackDatabase(db);
   repo = new SlackRepository(db, { now: () => clock });
   actor = "user_employee"; member = true; admin = true;
@@ -57,7 +64,7 @@ beforeEach(async () => {
   await repo.saveInstallation({ appId: "A123", teamId: "T123", organizationId: org, installedBy: "user_admin", botUserId: "UBOT", encryptedBotToken: encryptSlackToken("xoxb-secret", config.tokenEncryptionKey, "A123:T123") });
   app = makeApp();
 });
-afterEach(async () => { await app.shutdownSlack(); await db.destroy(); });
+afterEach(async () => { await app.shutdownSlack(); await destroyFixture(); });
 
 describe("Slack app ingress", () => {
   it("rejects unsafe callback origins and authenticates events using the live default clock",async()=>{
@@ -79,6 +86,24 @@ describe("Slack app ingress", () => {
     expect((await configure()).status).toBe(403);admin=true;authorizeChannelBinding.mockResolvedValueOnce(false);expect((await configure()).status).toBe(403);
     expect((await mutation("/api/slack/workspaces/T999","DELETE")).status).toBe(403);
     await repo.revokeInstallation("A123","T123");expect((await configure()).status).toBe(403);
+  });
+  it("lets an administrator cancel a reinstall after webhook revocation, including a callback in flight", async () => {
+    await repo.revokeInstallation("A123", "T123");
+    const callback = await startOAuth();
+    api.exchangeCode.mockImplementationOnce(async () => {
+      expect((await mutation("/api/slack/workspaces/T123", "DELETE")).status).toBe(204);
+      return { appId: "A123", teamId: "T123", botUserId: "UBOT", botToken: "secret" };
+    });
+    expect((await app.request(callback)).status).toBe(409);
+    expect(await repo.getInstallation("A123", "T123")).toMatchObject({ state: "revoked", generation: 2 });
+  });
+  it("retains pending reinstall permits when a nonadministrator requests removal", async () => {
+    await repo.revokeInstallation("A123", "T123");
+    const callback = await startOAuth();
+    admin = false;
+    expect((await mutation("/api/slack/workspaces/T123", "DELETE")).status).toBe(403);
+    admin = true;
+    expect((await app.request(callback)).status).toBe(200);
   });
   it("removes only the authenticated employee link",async()=>{
     await linkEmployee();actor="user_other";expect((await mutation("/api/slack/workspaces/T123/link","DELETE")).status).toBe(204);
