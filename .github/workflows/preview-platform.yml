@@ -558,13 +558,14 @@ jobs:
   select-share-preview:
     if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     outputs:
       head_sha: ${{ steps.runtime.outputs.head_sha }}
     env:
       PR_NUMBER: ${{ inputs.pr }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v6
       - name: Select exact-head preview runtime artifact
         id: runtime
         run: |
@@ -589,9 +590,9 @@ jobs:
             fi
           done
           if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
-            echo "A successful exact-head Preview VPS run is required before connecting speech." >&2
-            exit 1
+            run_id="$(python3 scripts/select-manual-preview-runtime.py "$GITHUB_REPOSITORY" "$PR_NUMBER" "$expected_head_sha")"
           fi
+          [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
           echo "head_sha=$expected_head_sha" >> "$GITHUB_OUTPUT"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v8

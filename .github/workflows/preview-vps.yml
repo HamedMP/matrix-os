@@ -309,6 +309,7 @@ jobs:
       PREVIEW_INSTALL_TIMEOUT_SECONDS: 600
       HANDLE: ${{ needs.gate.outputs.handle }}
       VERSION: ${{ needs.gate.outputs.action == 'deploy_existing' && needs.gate.outputs.requested_version || needs.build.outputs.version }}
+      EXPECTED_HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
     steps:
       - name: Checkout preview source
         if: needs.gate.outputs.action == 'deploy'
@@ -703,9 +704,27 @@ jobs:
             sleep 15
           done
 
+          # Pinned deployments skip the build job. Prove the actual installed full
+          # commit and app marker before publishing a route for that deployment.
+          body="$(jq -cn --rawfile script scripts/preview-release-provenance.py \
+            --arg handle "$HANDLE" --arg version "$VERSION" --arg head "$EXPECTED_HEAD_SHA" \
+            '{command:["/usr/bin/python3","-c",$script,$handle,$version,$head],timeoutMs:10000}')"
+          response=/tmp/preview-installed-provenance.json
+          send_runtime_command "$body" "$response"
+          jq -cer '.stdout | fromjson' "$response" > preview-runtime-provenance.json
+          chmod 600 preview-runtime-provenance.json
+
           jq -cn --arg handle "$HANDLE" --arg address "$address" \
             '{handle:$handle,address:$address}' > preview-runtime-route.json
           chmod 600 preview-runtime-route.json
+
+      - name: Publish installed preview source provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-runtime-provenance-${{ needs.gate.outputs.pr }}
+          path: preview-runtime-provenance.json
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Publish exact-head preview runtime route
         uses: actions/upload-artifact@v4

@@ -153,6 +153,8 @@ describe("preview collaboration host scripts", () => {
     expect([after.uid, after.gid, after.mode & 0o7777]).toEqual([before.uid, before.gid, 0o640]);
     expect(envValue("PLATFORM_INTERNAL_URL")).toEqual([`PLATFORM_INTERNAL_URL=${BINDING.PLATFORM_INTERNAL_URL}`]);
     expect(envValue("UPGRADE_TOKEN")).toEqual([`UPGRADE_TOKEN=${BINDING.UPGRADE_TOKEN}`]);
+    expect(envValue("MATRIX_PREVIEW_RUNTIME")).toEqual(["MATRIX_PREVIEW_RUNTIME=true"]);
+    expect(envValue("MATRIX_PREVIEW_OWNER_CONTROL")).toEqual(["MATRIX_PREVIEW_OWNER_CONTROL=true"]);
     expect(envValue("MATRIX_COLLABORATION_CLIENT_ORIGINS")).toEqual([`MATRIX_COLLABORATION_CLIENT_ORIGINS=${BINDING.MATRIX_COLLABORATION_CLIENT_ORIGINS}`]);
     // Exact-head preview deploys keep reading release metadata from the platform that published it.
     expect(envValue("MATRIX_UPDATE_MANIFEST_BASE_URL")).toEqual([`MATRIX_UPDATE_MANIFEST_BASE_URL=${PRODUCTION_URL}`]);
@@ -239,6 +241,8 @@ describe("preview collaboration host scripts", () => {
     expect(JSON.parse(guard("commit", "102-1").stdout)).toBe("committed");
     expect(JSON.parse(guard("restore", "102-1").stdout)).toBe("unchanged");
     expect(envValue("UPGRADE_TOKEN")).toEqual([`UPGRADE_TOKEN=${BINDING.UPGRADE_TOKEN}`]);
+    expect(envValue("MATRIX_PREVIEW_RUNTIME")).toEqual(["MATRIX_PREVIEW_RUNTIME=true"]);
+    expect(envValue("MATRIX_PREVIEW_OWNER_CONTROL")).toEqual(["MATRIX_PREVIEW_OWNER_CONTROL=true"]);
     // A later connection that fails before committing returns the home to its original binding.
     expect(connect("103-1", { ...BINDING, UPGRADE_TOKEN: "d".repeat(64) }).status).toBe(0);
     expect(JSON.parse(guard("restore", "103-1").stdout)).toBe("restored");
@@ -268,6 +272,8 @@ describe("preview collaboration host scripts", () => {
     symlinkSync(join(root, "elsewhere"), join(root, ".host.env.preview-collaboration-rollback"));
     expect(guard("restore", "107-1").status).not.toBe(0);
     expect(envValue("UPGRADE_TOKEN")).toEqual([`UPGRADE_TOKEN=${BINDING.UPGRADE_TOKEN}`]);
+    expect(envValue("MATRIX_PREVIEW_RUNTIME")).toEqual(["MATRIX_PREVIEW_RUNTIME=true"]);
+    expect(envValue("MATRIX_PREVIEW_OWNER_CONTROL")).toEqual(["MATRIX_PREVIEW_OWNER_CONTROL=true"]);
   });
 
   it("accepts only run-attempt nonces on the command line", () => {
