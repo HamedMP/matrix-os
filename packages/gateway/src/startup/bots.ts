@@ -77,8 +77,8 @@ export async function runConnectionReconciliationPass(
     try {
       for (const continuation of await connections.pendingContinuations(ownerId)) {
         try {
-          await admit({ userId: ownerId, source: "configured-container" }, continuation);
-          await connections.ackContinuation(ownerId, continuation.clientRequestId);
+          const outcome = await admit({ userId: ownerId, source: "configured-container" }, continuation);
+          await connections.ackContinuation(ownerId, continuation.clientRequestId, outcome ?? undefined);
         } catch (error: unknown) {
           console.warn("[bots] connection continuation failed:", error instanceof Error ? error.name : "UnknownError");
           try {

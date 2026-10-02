@@ -196,11 +196,11 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
           response: ResolveBotInteractionResponseSchema.parse({ interaction: { interactionId: interaction.interactionId, status: interaction.status, revision: interaction.revision } }),
           ...(text ? { continuation: { chatId: interaction.chatId, clientRequestId: `req_answer_${interaction.interactionId}`, text } } : {}),
         });
-        const { continuation: storedText, continuationAdmittedAt, continuationRetryAt: _retryAt, ...stored } = current.resolution ?? {};
+        const { continuation: storedText, continuationAdmittedAt, continuationCancelledAt, continuationRetryAt: _retryAt, ...stored } = current.resolution ?? {};
         if (current.status === "resolved" && current.revision === input.baseRevision + 1 && isDeepStrictEqual(stored, requested)) {
           const replayText = typeof storedText === "string" ? storedText
             : current.kind === "question" ? renderAnswer(current.payload as QuestionPayload, requested as QuestionAnswer) : undefined;
-          return respond(current, continuationAdmittedAt ? undefined : replayText);
+          return respond(current, (continuationAdmittedAt || continuationCancelledAt) ? undefined : replayText);
         }
         if (current.status === "expired" || (current.status === "pending" && Date.parse(current.expiresAt) <= Date.parse(at))) {
           throw new BotInteractionError("expired");

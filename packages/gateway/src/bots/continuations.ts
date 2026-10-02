@@ -9,12 +9,13 @@ import type { CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 import { chatContextRequestHash } from "../chat/agent-context.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import { CanonicalChatOrchestrationError } from "../chat/orchestration-errors.js";
+import { ChatQueuedTurnCancelledError } from "../chat/errors.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { BotInteractionError, type BotContinuation } from "./interactions.js";
 import { MATRIX_BOT_SELECTION } from "./selection.js";
 
-export type BotContinuationAdmitter = (principal: RequestPrincipal, continuation: BotContinuation) => Promise<void>;
+export type BotContinuationAdmitter = (principal: RequestPrincipal, continuation: BotContinuation) => Promise<void | "cancelled">;
 
 export function createBotContinuationAdmitter(deps: {
   repository: Pick<ChatRepository, "get" | "findQueuedAdmission">;
@@ -35,7 +36,12 @@ export function createBotContinuationAdmitter(deps: {
       };
       // A previous process may have queued the answer before acknowledging it.
       // The canonical lookup verifies owner and exact request hash, including claimed entries.
-      if (await deps.repository.findQueuedAdmission(owner, continuation.chatId, input.clientRequestId, chatContextRequestHash(input))) return;
+      try {
+        if (await deps.repository.findQueuedAdmission(owner, continuation.chatId, input.clientRequestId, chatContextRequestHash(input))) return;
+      } catch (error: unknown) {
+        if (error instanceof ChatQueuedTurnCancelledError) return "cancelled";
+        throw error;
+      }
       try {
         await deps.orchestrator.admitTurn(principal, owner, continuation.chatId, input);
         return;

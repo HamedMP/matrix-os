@@ -47,8 +47,16 @@ describe("bot interaction and memory routes", () => {
     expect(await response.json()).toEqual(RESOLVED);
     expect(resolve).toHaveBeenCalledWith("user_owner_1", CHAT, INTERACTION, { kind: "question", baseRevision: 1, answer: "Casual" });
     expect(admitContinuation).toHaveBeenCalledWith(PRINCIPAL, CONTINUATION);
-    expect(ackContinuation).toHaveBeenCalledWith("user_owner_1", CONTINUATION.clientRequestId);
+    expect(ackContinuation).toHaveBeenCalledWith("user_owner_1", CONTINUATION.clientRequestId, undefined);
     expect(ackContinuation.mock.invocationCallOrder[0]).toBeGreaterThan(admitContinuation.mock.invocationCallOrder[0]!);
+  });
+
+  it("settles an owner-cancelled queued answer without reporting admission", async () => {
+    const ackContinuation = vi.fn(async () => undefined);
+    const server = app({ interactions: { resolve: vi.fn(async () => ({ response: RESOLVED, continuation: CONTINUATION })), listPending: vi.fn(), ackContinuation },
+      admitContinuation: async () => "cancelled" as const });
+    expect((await post(server, `/api/chats/${CHAT}/interactions/${INTERACTION}/resolve`, "{}")).status).toBe(200);
+    expect(ackContinuation).toHaveBeenCalledWith("user_owner_1", CONTINUATION.clientRequestId, "cancelled");
   });
 
   it("answers 503 when the continuation fails, so the same request can be retried", async () => {

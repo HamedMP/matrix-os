@@ -140,8 +140,8 @@ export function createBotRoutes(options: {
     if (continuation) {
       // The durable answer remains pending until canonical admission succeeds; the background pass retries failures.
       try {
-        await options.admitContinuation(principal, continuation);
-        await options.interactions.ackContinuation?.(principal.userId, continuation.clientRequestId);
+        const outcome = await options.admitContinuation(principal, continuation);
+        await options.interactions.ackContinuation?.(principal.userId, continuation.clientRequestId, outcome ?? undefined);
       } catch (error: unknown) {
         console.warn("[bots] answer continuation failed:", error instanceof Error ? error.name : "UnknownError");
         return errorResponse(context, "unavailable");

@@ -260,3 +260,5 @@ Bot 1─N bot_grants; Bot 1─N bot_memory_items; Bot 1─N bot_routines 1─N b
 Shared chat 1─N bot_participants; bot_tasks 1─N bot_handoffs (parent→child)
 Owner 1─N ai_funded_priority_claims (platform)
 ```
+
+Cancellation settlement: exact owner/request/hash canonical queue lookup distinguishes owner-cancelled answers from conflicts. Recovery records `continuationCancelledAt` and stops retries without re-enqueueing; mismatched content or ownership never settles the answer. Queue-admission extraction remains the planned decomposition of the large Chat repository; this change only adds the typed cancellation outcome to the existing lookup.

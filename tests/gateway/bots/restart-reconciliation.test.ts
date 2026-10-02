@@ -74,7 +74,7 @@ describe("bot services at gateway start", () => {
     expect(deferContinuation).toHaveBeenCalledWith("good", continuation.clientRequestId);
     fail = false;
     await runConnectionReconciliationPass(connections, admit);
-    expect(ackContinuation).toHaveBeenCalledWith("good", continuation.clientRequestId);
+    expect(ackContinuation).toHaveBeenCalledWith("good", continuation.clientRequestId, undefined);
   });
   it("recovers question answers without any configured integration, and stops retrying after close", async () => {
     await insertChat(db, "chat_restart_answer");

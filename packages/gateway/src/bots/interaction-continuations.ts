@@ -1,5 +1,5 @@
 /** Durable answer delivery, independent of integrations. Resolution stores the text in
- * the interaction transaction. Only successful canonical Chat admission acknowledges
+ * the interaction transaction. Successful admission or exact owner cancellation acknowledges
  * it; stable request IDs make a restart between admission and acknowledgment safe. */
 import { BotInteractionIdSchema } from "@matrix-os/contracts";
 import { sql } from "kysely";
@@ -19,7 +19,7 @@ export function createBotInteractionContinuations(deps: { transact: BotStateTran
         .select(["interaction_id", "chat_id", "resolution"])
         .where("owner_id", "=", ownerId).where("status", "=", "resolved")
         .where(sql<boolean>`resolution ? 'continuation'`)
-        .where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt')`)
+        .where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt' OR resolution ? 'continuationCancelledAt')`)
         .where(sql<boolean>`(resolution->>'continuationRetryAt' IS NULL OR resolution->>'continuationRetryAt' <= ${at})`)
         .orderBy("created_at", "asc").limit(MAX_CONTINUATIONS_PER_OWNER).execute());
       return rows.flatMap((row) => {
@@ -30,15 +30,16 @@ export function createBotInteractionContinuations(deps: { transact: BotStateTran
       });
     },
     /** Admission is idempotent under the interaction-derived request ID. */
-    async ackContinuation(ownerId: string, clientRequestId: string): Promise<void> {
+    async ackContinuation(ownerId: string, clientRequestId: string, outcome?: "cancelled"): Promise<void> {
       const id = BotInteractionIdSchema.safeParse(clientRequestId.replace(/^req_answer_/, ""));
       if (!id.success || clientRequestId !== `req_answer_${id.data}`) throw new BotInteractionError("invalid_request");
       const at = now().toISOString();
+      const field = outcome === "cancelled" ? "continuationCancelledAt" : "continuationAdmittedAt";
       await deps.transact(ownerId, (tx) => tx.db.updateTable("bot_interactions")
-        .set({ resolution: sql`jsonb_set(resolution, '{continuationAdmittedAt}', to_jsonb(${at}::text), true)` })
+        .set({ resolution: sql`jsonb_set(resolution, ARRAY[${field}]::text[], to_jsonb(${at}::text), true)` })
         .where("owner_id", "=", ownerId).where("interaction_id", "=", id.data)
         .where("status", "=", "resolved")
-        .where(sql<boolean>`resolution ? 'continuation'`).where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt')`)
+        .where(sql<boolean>`resolution ? 'continuation'`).where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt' OR resolution ? 'continuationCancelledAt')`)
         .execute());
     },
     /** Delay a failed admission so one owner cannot monopolize every bounded pass. */
@@ -50,7 +51,7 @@ export function createBotInteractionContinuations(deps: { transact: BotStateTran
         .set({ resolution: sql`jsonb_set(resolution, '{continuationRetryAt}', to_jsonb(${retryAt}::text), true)` })
         .where("owner_id", "=", ownerId).where("interaction_id", "=", id.data)
         .where("status", "=", "resolved")
-        .where(sql<boolean>`resolution ? 'continuation'`).where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt')`)
+        .where(sql<boolean>`resolution ? 'continuation'`).where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt' OR resolution ? 'continuationCancelledAt')`)
         .execute());
     },
 
@@ -60,7 +61,7 @@ export function createBotInteractionContinuations(deps: { transact: BotStateTran
         .select("owner_id").select((eb) => eb.fn.min("created_at").as("oldest"))
         .where("status", "=", "resolved")
         .where(sql<boolean>`resolution ? 'continuation'`)
-        .where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt')`)
+        .where(sql<boolean>`NOT (resolution ? 'continuationAdmittedAt' OR resolution ? 'continuationCancelledAt')`)
         .where(sql<boolean>`(resolution->>'continuationRetryAt' IS NULL OR resolution->>'continuationRetryAt' <= ${at})`)
         .groupBy("owner_id").orderBy("oldest", "asc").orderBy("owner_id", "asc")
         .limit(16).execute());

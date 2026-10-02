@@ -12,6 +12,14 @@ export class ChatConflictError extends Error {
   }
 }
 
+/** Exact owner/request/hash lookup found a queue entry deliberately cancelled by its owner. */
+export class ChatQueuedTurnCancelledError extends ChatConflictError {
+  constructor(chatId: string, latestRevision: number) {
+    super(chatId, latestRevision);
+    this.name = "ChatQueuedTurnCancelledError";
+  }
+}
+
 export class ChatBusyError extends Error {
   constructor(readonly chatId: string) {
     super("Chat is busy");

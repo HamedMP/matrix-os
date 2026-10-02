@@ -16,6 +16,7 @@ import { withBotProviderInstance } from "../../../packages/gateway/src/bots/prov
 import { ChatAgentContext } from "../../../packages/gateway/src/chat/agent-context.js";
 import { CanonicalChatOrchestrator } from "../../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalChatProviderAdapter } from "../../../packages/gateway/src/chat/provider-adapter.js";
+import { ChatConflictError, ChatNotFoundError, ChatQueuedTurnCancelledError } from "../../../packages/gateway/src/chat/errors.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_bot_turns" };
@@ -130,7 +131,7 @@ describe("turns in a bot's chat", () => {
     expect(getCatalog).not.toHaveBeenCalled();
   });
 
-  it("recovers a recorded nonblocking answer after a full canonical queue, including restart and duplicate admission", async () => {
+  it.each([false, true])("settles a recorded answer after full queue and restart (owner cancelled: %s)", async (cancelAnswer) => {
     blockedRun = new Promise<void>((resolve) => { finishBlockedRun = resolve; });
     const selection = { instanceId: "matrix_bot_default", model: "auto" };
     await orchestrator.admitTurn(principal, owner, BOT_CHAT, {
@@ -179,10 +180,31 @@ describe("turns in a bot's chat", () => {
     // Reconstruct service objects as after a process restart; no client retry is needed.
     const pending = (await recovery().pendingContinuations(owner.ownerId))[0]!;
     await admit(principal, pending); // admission succeeds, process dies before acknowledgment
+    if (cancelAnswer) {
+      const answerRow = await repository.kysely.selectFrom("chat_queued_turns").selectAll()
+        .where("client_request_id", "=", pending.clientRequestId).executeTakeFirstOrThrow();
+      const latest = await repository.get(owner, BOT_CHAT);
+      await repository.cancelQueuedTurn(owner, { chatId: BOT_CHAT, queuedTurnId: answerRow.id,
+        clientRequestId: "req_cancel_answer", baseRevision: latest!.chat.revision, cancelledAt: clock.toISOString() });
+      await expect(repository.findQueuedAdmission(owner, BOT_CHAT, pending.clientRequestId, "mismatched-content"))
+        .rejects.toMatchObject({ name: "ChatConflictError" });
+      await expect(repository.findQueuedAdmission({ type: "personal", ownerId: "other_owner" }, BOT_CHAT, pending.clientRequestId))
+        .rejects.toBeInstanceOf(ChatNotFoundError);
+      await expect(repository.findQueuedAdmission(owner, BOT_CHAT, pending.clientRequestId))
+        .rejects.toBeInstanceOf(ChatQueuedTurnCancelledError);
+      await expect(repository.findQueuedAdmission(owner, BOT_CHAT, pending.clientRequestId))
+        .rejects.toBeInstanceOf(ChatConflictError); // ordinary queue clients retain the conflict contract
+
+    }
     await runConnectionReconciliationPass(recovery(), admit);
     const rows = await repository.kysely.selectFrom("chat_queued_turns").selectAll()
       .where("client_request_id", "=", `req_answer_${interaction.interactionId}`).execute();
     expect(rows).toHaveLength(1);
+    const settled = await createBotInteractionsRepository(state).get({ ownerId: owner.ownerId, interactionId: interaction.interactionId });
+    expect(settled?.resolution?.[cancelAnswer ? "continuationCancelledAt" : "continuationAdmittedAt"]).toBeDefined();
+    expect(settled?.resolution?.[cancelAnswer ? "continuationAdmittedAt" : "continuationCancelledAt"]).toBeUndefined();
+    clock = new Date(clock.getTime() + 60_001);
+    expect(await recovery().ownersWithPending()).not.toContain(owner.ownerId);
     expect(await recovery().pendingContinuations(owner.ownerId)).toEqual([]);
     expect((await answer()).status).toBe(200); // identical answer still idempotent after delivery acknowledgment
     expect(await repository.kysely.selectFrom("chat_queued_turns").selectAll()
