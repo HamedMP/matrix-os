@@ -26,6 +26,24 @@ describe("platform collaboration deployment contract", () => {
     expect(workflow).toContain('if [ "$actual_max_instances" != "$PLATFORM_MAX_INSTANCES" ]; then');
   });
 
+  // Without this secret the Clerk organization webhook answers 503, the membership projection
+  // never fills, and no organization is ever verified -- every share is refused (S03 open gate).
+  // `--set-secrets` replaces the whole set on each deploy, so a binding added by hand would be
+  // dropped by the next one: the workflow must carry it.
+  it("passes the Clerk organization webhook signing secret to the platform", () => {
+    expect(workflow).toContain(
+      "CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET=clerk-organization-webhook-signing-secret:latest",
+    );
+  });
+
+  it("refuses to deploy without a usable Clerk organization webhook signing secret", () => {
+    expect(workflow).toContain("Verify Clerk organization webhook secret");
+    expect(workflow).toContain("secret_name=clerk-organization-webhook-signing-secret");
+    expect(workflow).toContain("^whsec_[A-Za-z0-9+/=]{16,}$");
+    // The value is checked from a private temp file and never echoed.
+    expect(workflow).toContain('trap \'rm -f "$webhook_secret_tmpfile"\' EXIT');
+  });
+
   it("verifies the direct ticket key secret and deployed revision contract", () => {
     expect(workflow).toContain("Verify collaboration ticket secret");
     expect(workflow).toContain("secret_name=collaboration-ticket-keys");
