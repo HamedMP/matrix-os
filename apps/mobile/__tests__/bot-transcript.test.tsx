@@ -335,7 +335,7 @@ it("resets same-ID settings when the owner, runtime or Chat scope changes during
 it("does not carry confirmed removals to another same-ID owner or Chat scope", async () => {
   const view = renderBot({ scopeKey: "owner-a:runtime-a:chat-a" });
   fireEvent.press(screen.getByRole("button", { name: "Bot settings" }));
-  fireEvent.press(screen.getByRole("button", { name: "Revoke Work" }));
+  await act(async () => { fireEvent.press(screen.getByRole("button", { name: "Revoke Work" })); });
   await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke Work" })).toBeNull());
   view.rerender(<BotChatControls scopeKey="owner-b:runtime-a:chat-b" snapshot={snapshot as never}
     onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
