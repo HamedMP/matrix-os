@@ -82,7 +82,7 @@ export async function readCollaborationEnrollment(client, input, since) {
       owner_id = $2 AND relay_handle = $3 AND last_seen_at >= $4::timestamptz
       AND last_control_at IS NOT NULL AND last_control_at >= $4::timestamptz AS enrolled
     FROM collaboration_runtime_endpoints WHERE runtime_id = $1`,
-  [`vps-${home.machineId}`, home.ownerId, home.handle, since.toISOString()]);
+  [`vps:${home.machineId}`, home.ownerId, home.handle, since.toISOString()]);
   return result.rows[0]?.enrolled === true;
 }
 

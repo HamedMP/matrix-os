@@ -1,5 +1,12 @@
 import { z } from "zod/v4";
 
+export const SLACK_OAUTH_COMPLETION_PATH = '/slack/oauth/complete';
+export const SlackOAuthCallbackQuerySchema = z.object({
+  state: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  code: z.string().min(1).max(2_048).regex(/^[A-Za-z0-9._-]+$/),
+}).strict();
+export type SlackOAuthCallbackQuery = z.infer<typeof SlackOAuthCallbackQuerySchema>;
+
 const Actor = z.string().regex(/^user_[A-Za-z0-9_-]{1,123}$/);
 const Organization = z.string().regex(/^org_[A-Za-z0-9_-]{1,124}$/);
 const Timestamp = z.string().regex(/^\d{1,16}\.\d{1,8}$/);

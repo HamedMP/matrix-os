@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { SLACK_OAUTH_COMPLETION_PATH, SlackOAuthCallbackQuerySchema } from '@matrix-os/contracts/slack-bridge';
 import { createSlackContextRoutes } from "./context-routes.js";
 import { createSlackLinkPage } from "./link-page.js";
 import { createSlackReplyRoutes } from "./reply-routes.js";
@@ -17,7 +18,7 @@ const EventSchema = z.object({ type: z.string().max(80), user: SlackUserIdSchema
   thread_ts: SlackTimestampSchema.optional(), is_ext_shared: z.boolean().optional(), user_team: SlackTeamIdSchema.optional(), bot_id: z.string().max(128).optional(), subtype: z.string().max(80).optional() }).passthrough();
 const EnvelopeSchema = z.object({ type: z.literal("event_callback"), api_app_id: SlackAppIdSchema, team_id: SlackTeamIdSchema,
   event_id: z.string().regex(/^Ev[A-Za-z0-9]{1,126}$/), is_ext_shared_channel: z.boolean().optional(), event: EventSchema }).passthrough();
-const CallbackQuerySchema = z.object({ state: SlackTokenSchema, code: z.string().min(1).max(2_048).regex(/^[A-Za-z0-9._-]+$/) }).strict();
+const CallbackQuerySchema = SlackOAuthCallbackQuerySchema;
 const ChallengeSchema = z.object({ type: z.literal("url_verification"), challenge: z.string().min(1).max(1_024), api_app_id: SlackAppIdSchema.optional() }).passthrough();
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -65,7 +66,16 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
   });
 
   app.get("/api/slack/oauth/callback", async (c) => {
-    const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
+    c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer');
+    const actorId = await actor(c);
+    if (!actorId) {
+      const query = CallbackQuerySchema.safeParse(c.req.query());
+      if (query.success && c.req.header('accept')?.includes('text/html') && !c.req.header('authorization')) {
+        // The browser refreshes its own Clerk session. State never supplies identity.
+        return c.redirect(SLACK_OAUTH_COMPLETION_PATH + '?' + new URLSearchParams(query.data).toString(), 303);
+      }
+      return fail(c, "Unauthorized", 401);
+    }
     const parsed = CallbackQuerySchema.safeParse(c.req.query()); if (!parsed.success) return fail(c, "Invalid request", 422);
     const hash = digest(parsed.data.state);
     const state = await options.repository.getOAuthState(hash);

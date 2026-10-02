@@ -37,7 +37,8 @@ The first release is an owner-hosted company context pilot: the host owner suppl
 | Endpoint / operation | Authentication | Authority |
 |---|---|---|
 | `POST /api/slack/install` | Matrix account session, same-origin cookies or bearer | Current org admin |
-| `GET /api/slack/oauth/callback` | Single-use hashed state + Slack code exchange | Recheck initiating actor/admin/workspace |
+| `GET /api/slack/oauth/callback` | Fresh initiating Matrix session + single-use hashed state + Slack code exchange | Recheck initiating actor/admin/workspace; unauthenticated browser navigation only hands off to sign-in without consuming state |
+| `GET /slack/oauth/complete` | Public brand auth shell; Clerk sign-in and fresh own-session token | No installation or runtime access until authenticated callback succeeds |
 | `POST /webhooks/slack/events` | Raw-body Slack HMAC + five-minute timestamp/app/workspace | Verified link, current Matrix membership and configured Project |
 | `GET /slack/link`, `POST /api/slack/link/complete` | Matrix account session + private-DM single-use challenge | One verified Slack sender; account-only employees supported |
 | Channel binding `PUT`, workspace/link `DELETE` under `/api/slack/workspaces/` | Matrix account session + CSRF origin check | Current org admin; exact owner Project management and explicit output approval |

@@ -9,6 +9,7 @@ import type { PlatformCollaborationComposition } from "./collaboration/wiring.js
 import { createSlackApp, loadSlackAppConfig } from "./slack/wiring.js";
 import type { SlackDatabase } from "./slack/database.js";
 import { createSlackHomeTransport, type SlackHome } from "./slack-home-transport.js";
+import { createSlackMachineResolver, isSlackMachineAvailable, loadSlackPreviewHandle } from "./slack/home-resolver.js";
 
 function unavailable() {
   const routes=new Hono();
@@ -19,7 +20,8 @@ function unavailable() {
 export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:PlatformDB;platformSecret:string;platformJwtSecret:string;
   clerkAuth?:ClerkAuth;collaboration?:PlatformCollaborationComposition;customerVpsProxyDispatcher?:Agent;fetchImpl?:typeof fetch;startCleanup?:boolean}) {
   let config:ReturnType<typeof loadSlackAppConfig>;
-  try {config=loadSlackAppConfig(options.env);}catch(error:unknown){console.warn("[slack] app configuration unavailable",error instanceof Error?error.name:"UnknownError");return unavailable();}
+  let previewHandle:string|undefined;
+  try {config=loadSlackAppConfig(options.env);previewHandle=loadSlackPreviewHandle(options.env);}catch(error:unknown){console.warn("[slack] app configuration unavailable",error instanceof Error?error.name:"UnknownError");return unavailable();}
   const collaboration=options.collaboration;
   if(!config || !collaboration || !("organizations" in collaboration) || !collaboration.organizations || !options.platformSecret) return unavailable();
   const organizations=collaboration.organizations;
@@ -28,16 +30,12 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   const fetchImpl:typeof fetch=options.fetchImpl??((input,init)=>fetch(input,{...init,signal:init?.signal??AbortSignal.timeout(10_000),
     ...(options.customerVpsProxyDispatcher?{dispatcher:options.customerVpsProxyDispatcher}:{})} as RequestInit));
   const rpc=createSlackHomeTransport({fetchImpl});
+  const resolveMachine=createSlackMachineResolver({previewHandle,
+    findDirectoryRoute:scopeId=>directory.getDirectoryRoute(scopeId),
+    findMachineById:id=>getUserMachine(options.db,id),
+    findPersonalMachine:(actorId,slot)=>getRunningUserMachineByClerkId(options.db,actorId,slot)});
   async function homeFor(actorId:string,scopeId?:string,organizationId?:string):Promise<SlackHome> {
-    let machine;
-    if(scopeId) {
-      const route=await directory.getDirectoryRoute(scopeId);
-      if(!route || route.kind!=="project" || route.organizationId!==organizationId) throw new Error("Slack home unavailable");
-      const id=/^vps:([0-9a-f-]{36})$/.exec(route.runtimeId)?.[1];
-      machine=id?await getUserMachine(options.db,id):undefined;
-      if(!machine || machine.clerkUserId!==route.ownerId) throw new Error("Slack home unavailable");
-    } else machine=await getRunningUserMachineByClerkId(options.db,actorId);
-    if(!machine || machine.status!=="running" || !machine.publicIPv4) throw new Error("Slack home unavailable");
+    const machine=await resolveMachine(actorId,scopeId,organizationId);
     return {ownerId:machine.clerkUserId,origin:`https://${machine.publicIPv4}`,token:buildPlatformVerificationToken(machine.handle,options.platformSecret)};
   }
   return createSlackApp({db:options.db.kysely as unknown as Kysely<SlackDatabase>,config,resolveActor,fetchImpl,startCleanup:options.startCleanup,
@@ -63,7 +61,7 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
       if(!handle || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(handle))return null;
       const machine=await getRunningUserMachineByHandle(options.db,handle);
       const bearer=c.req.header("authorization")?.replace(/^Bearer /,"");
-      return machine && timingSafeTokenEquals(bearer,buildPlatformVerificationToken(machine.handle,options.platformSecret))?{ownerId:machine.clerkUserId}:null;
+      return isSlackMachineAvailable(machine,previewHandle) && timingSafeTokenEquals(bearer,buildPlatformVerificationToken(machine.handle,options.platformSecret))?{ownerId:machine.clerkUserId}:null;
     },
     authorizeReply:async({destination,ownerId,publication})=>{
       if(destination.ownerId!==ownerId || !await organizations.projection.isCurrentMember({actorId:destination.actorId,organizationId:destination.organizationId}))return false;

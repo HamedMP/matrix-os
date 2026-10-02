@@ -47,6 +47,7 @@ export function isPublicShellPath(pathname: string, search = ""): boolean {
     pathname === "/og.png" ||
     pathname === "/favicon.ico" ||
     pathname === "/runtime" ||
+    pathname === "/slack/oauth/complete" ||
     pathname === "/onboarding/computer" ||
     (pathname === "/" && searchParams.get("billing") === "setup") ||
     pathname === "/sign-in" ||

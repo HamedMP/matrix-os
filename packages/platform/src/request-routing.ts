@@ -193,6 +193,7 @@ export function shouldProxyAuthShellForUnroutedUser(input: {
     (input.method === 'GET' || input.method === 'HEAD'
       // Clerk's Next cache invalidation is a POST Server Action on auth pages.
       || (input.method === 'POST' && (
+        input.path === '/slack/oauth/complete' ||
         input.path === '/sign-in' || input.path.startsWith('/sign-in/')
         || input.path === '/sign-up' || input.path.startsWith('/sign-up/')
       ))) &&

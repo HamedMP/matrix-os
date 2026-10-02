@@ -24,7 +24,9 @@
 # to walk a specific PR, route its tag to the host:
 #   gcloud run services update-traffic matrix-platform-preview \
 #     --region europe-west3 --to-tags pr-<N>=100
-# then reset when done. No Hetzner token is mounted, so previews still cannot
+# then reset when done. Add `preview-isolated` alongside `preview-platform`
+# to bake the exact tagged origin into sign-in instead, without moving shared traffic.
+# No Hetzner token is mounted, so previews still cannot
 # provision real VPSes (enabling the provisioned hand-off slice is a separate,
 # deliberate change -- a preview-scoped Hetzner token plus VPS reaping).
 # Config lives in the GitHub "Preview" environment; the jobs no-op with a
@@ -58,6 +60,11 @@ on:
         type: boolean
         default: false
 
+      connect_slack_pilot:
+        description: "Bind this PR's disposable VM to its isolated Slack pilot runtime (Preview approval)"
+        type: boolean
+        default: false
+
 permissions:
   actions: read
   contents: read
@@ -65,14 +72,14 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-platform-${{ github.event.pull_request.number || inputs.pr }}
+  group: preview-platform-${{ github.event.pull_request.number || inputs.pr }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-platform' && github.run_id || 'active' }}
   cancel-in-progress: true
 
 jobs:
   preview:
     name: Deploy preview revision
     if: >-
-      ((github.event_name == 'workflow_dispatch' && !inputs.connect_share_preview) ||
+      ((github.event_name == 'workflow_dispatch' && !inputs.connect_share_preview && !inputs.connect_slack_pilot) ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         github.event.action != 'closed' &&
         ((github.event.action == 'labeled' && github.event.label.name == 'preview-platform') ||
@@ -88,6 +95,11 @@ jobs:
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT }}
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
       PREVIEW_PUBLIC_URL: ${{ vars.PREVIEW_PUBLIC_URL || 'https://preview.matrix-os.com' }}
+      ISOLATED_PREVIEW_ORIGIN: ${{ contains(github.event.pull_request.labels.*.name, 'preview-isolated') && 'true' || 'false' }}
+      # One explicitly approved legacy pilot. Other PRs receive no Slack credentials.
+      SLACK_PILOT_PR_NUMBER: ${{ vars.SLACK_PILOT_PR_NUMBER }}
+      SLACK_PILOT_APP_ID: ${{ vars.SLACK_PILOT_APP_ID }}
+      SLACK_PILOT_CLIENT_ID: ${{ vars.SLACK_PILOT_CLIENT_ID }}
       MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}
       MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}
       CUSTOM_MCP_ENABLED: ${{ inputs.custom_mcp && 'true' || 'false' }}
@@ -99,6 +111,8 @@ jobs:
       # Preview-only name, so a production key id can never be inherited from a repository variable.
       MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ${{ vars.PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID || 'collaboration-preview-v1' }}
       CONNECT_COLLABORATION_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_collaboration_preview && 'true' || 'false' }}
+      CONNECT_SLACK_PILOT: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_slack_pilot && 'true' || 'false' }}
+      CONNECT_SHARE_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_share_preview && 'true' || 'false' }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
     steps:
       - name: Check preview configuration
@@ -107,6 +121,10 @@ jobs:
           set -euo pipefail
           if [ "${CONNECT_COLLABORATION_PREVIEW:-false}" = "true" ]; then
             echo "connect_collaboration_preview runs only together with connect_share_preview for the same PR." >&2
+            exit 1
+          fi
+          if [ "${CONNECT_SLACK_PILOT:-false}" = "true" ] && [ "${CONNECT_SHARE_PREVIEW:-false}" = "true" ]; then
+            echo "connect_slack_pilot is a separate operation; do not combine it with connect_share_preview." >&2
             exit 1
           fi
           if [ -z "${CLOUD_RUN_PREVIEW_SERVICE:-}" ]; then
@@ -178,10 +196,38 @@ jobs:
           esac
           echo "configured=true" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve preview source and isolation
+        id: source
+        if: steps.config.outputs.configured == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            echo "Invalid preview PR." >&2
+            exit 1
+          fi
+          head_sha="$EVENT_HEAD_SHA"
+          isolated="${ISOLATED_PREVIEW_ORIGIN:-false}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            head_sha="$(jq -er --arg repository "$GITHUB_REPOSITORY" \
+              'select(.head.repo.full_name == $repository) | .head.sha' <<< "$pr_json")"
+            isolated="$(jq -r 'any(.labels[]?; .name == "preview-isolated")' <<< "$pr_json")"
+          fi
+          if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid preview source." >&2
+            exit 1
+          fi
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "ISOLATED_PREVIEW_ORIGIN=$isolated" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v6
         if: steps.config.outputs.configured == 'true'
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.source.outputs.head_sha }}
 
       - name: Authenticate to Google Cloud
         if: steps.config.outputs.configured == 'true'
@@ -189,6 +235,74 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Resolve isolated preview browser origin
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          if [ -n "${SLACK_PILOT_PR_NUMBER:-}" ] &&
+             [ "$SLACK_PILOT_PR_NUMBER" = "$PR_NUMBER" ] &&
+             [ "${ISOLATED_PREVIEW_ORIGIN:-false}" != "true" ]; then
+            echo "The selected Slack pilot requires an isolated preview origin." >&2
+            exit 1
+          fi
+          case "${ISOLATED_PREVIEW_ORIGIN:-false}" in
+            false) exit 0 ;;
+            true) ;;
+            *) echo "Invalid isolated preview mode." >&2; exit 1 ;;
+          esac
+          if [ "$CLOUD_RUN_PREVIEW_SERVICE" != "matrix-platform-preview" ] ||
+             ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            echo "Isolated browser previews require the dedicated preview service and a valid PR." >&2
+            exit 1
+          fi
+          service_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format='value(status.url)')"
+          if ! [[ "$service_url" =~ ^https://matrix-platform-preview-[a-z0-9-]+\.a\.run\.app$ ]]; then
+            echo "Dedicated preview service origin is unavailable or invalid." >&2
+            exit 1
+          fi
+          # Next.js bakes this URL into sign-in. Runtime-only overrides cannot isolate it.
+          browser_origin="https://pr-${PR_NUMBER}---${service_url#https://}"
+          if [ -n "${SLACK_PILOT_PR_NUMBER:-}" ] && [ "$SLACK_PILOT_PR_NUMBER" = "$PR_NUMBER" ]; then
+            if ! [[ "${SLACK_PILOT_APP_ID:-}" =~ ^A[A-Z0-9]{2,63}$ ]] ||
+               ! [[ "${SLACK_PILOT_CLIENT_ID:-}" =~ ^[0-9]{1,32}\.[0-9]{1,32}$ ]]; then
+              echo "Selected Slack preview app configuration is invalid." >&2
+              exit 1
+            fi
+            # Production Clerk requires a Matrix host. The exact expiring pilot
+            # alias requires owner approval; this does not enable spec 530 routes.
+            browser_origin="https://pr-${PR_NUMBER}-preview.matrix-os.com"
+            echo "SLACK_PREVIEW_ENABLED=true" >> "$GITHUB_ENV"
+            echo "SLACK_PREVIEW_BROWSER_ORIGIN=${browser_origin}" >> "$GITHUB_ENV"
+            echo "SLACK_PREVIEW_DATABASE_SECRET_BINDING=slack-preview-pr${PR_NUMBER}-platform-database-url:1" >> "$GITHUB_ENV"
+            echo "SLACK_PREVIEW_ENV_BINDINGS=|SLACK_APP_ID=${SLACK_PILOT_APP_ID}|SLACK_CLIENT_ID=${SLACK_PILOT_CLIENT_ID}|SLACK_PUBLIC_BASE_URL=${browser_origin}|SLACK_PREVIEW_RUNTIME_HANDLE=pr-${PR_NUMBER}" >> "$GITHUB_ENV"
+            echo "SLACK_PREVIEW_SECRET_BINDINGS=,SLACK_CLIENT_SECRET=slack-preview-pr${PR_NUMBER}-client-secret:1,SLACK_SIGNING_SECRET=slack-preview-pr${PR_NUMBER}-signing-secret:1,SLACK_TOKEN_ENCRYPTION_KEY=slack-preview-pr${PR_NUMBER}-token-encryption-key:1" >> "$GITHUB_ENV"
+          fi
+          echo "PREVIEW_PUBLIC_URL=${browser_origin}" >> "$GITHUB_ENV"
+
+      - name: Verify selected Slack preview credentials
+        if: steps.config.outputs.configured == 'true' && env.SLACK_PREVIEW_ENABLED == 'true'
+        run: |
+          set -euo pipefail
+          for suffix in client-secret signing-secret token-encryption-key platform-database-url; do
+            secret_name="slack-preview-pr${PR_NUMBER}-${suffix}"
+            secret_state="$(gcloud secrets versions describe 1 --secret "$secret_name" \
+              --project "$GCP_PROJECT_ID" --format='value(state)')"
+            if [ "$secret_state" != "ENABLED" ]; then
+              echo "Selected Slack preview secret version is unavailable." >&2
+              exit 1
+            fi
+            accessor_member="$(gcloud secrets get-iam-policy "$secret_name" \
+              --project "$GCP_PROJECT_ID" --flatten='bindings[].members' \
+              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+              --format='value(bindings.members)' | head -1)"
+            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+              echo "Selected Slack preview secret access is misconfigured." >&2
+              exit 1
+            fi
+          done
 
       - name: Verify preview funded AI control-plane secrets
         if: steps.config.outputs.configured == 'true' && env.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED == 'true'
@@ -270,7 +384,7 @@ jobs:
             echo "Refusing to build a platform preview with the example Clerk key." >&2
             exit 1
           fi
-          head_sha="${{ github.event.pull_request.head.sha || github.sha }}"
+          head_sha="${{ steps.source.outputs.head_sha }}"
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${head_sha::12}"
           gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
@@ -349,7 +463,15 @@ jobs:
           PREVIEW_DOMAIN="${PREVIEW_DOMAIN%%/*}"
           # Browsers, tickets and the relay all use the preview host, never app.matrix-os.com.
           collaboration_origin="https://${PREVIEW_DOMAIN}"
-          collaboration_env_bindings="|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${collaboration_origin}|MATRIX_COLLABORATION_RELAY_ORIGIN=${collaboration_origin}"
+          collaboration_allowed_origins="$collaboration_origin"
+          if [ "${SLACK_PREVIEW_ENABLED:-false}" = "true" ]; then
+            if ! [[ "${SLACK_PREVIEW_BROWSER_ORIGIN:-}" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+              echo "The selected Slack pilot browser origin is invalid." >&2
+              exit 1
+            fi
+            collaboration_allowed_origins="${collaboration_allowed_origins},${SLACK_PREVIEW_BROWSER_ORIGIN}"
+          fi
+          collaboration_env_bindings="|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${collaboration_allowed_origins}|MATRIX_COLLABORATION_RELAY_ORIGIN=${collaboration_origin}"
           funded_ai_env_bindings="|MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED}|MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}"
           funded_ai_secret_bindings=""
           if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
@@ -366,6 +488,9 @@ jobs:
             if [ -n "${service_base_url:-}" ]; then
               app_domain_hosts="${app_domain_hosts},${service_base_url#https://}"
             fi
+            if [ "${SLACK_PREVIEW_ENABLED:-false}" = "true" ]; then
+              app_domain_hosts="${app_domain_hosts},${SLACK_PREVIEW_BROWSER_ORIGIN#https://}"
+            fi
             local custom_mcp_secret_bindings=""
             if [ "$CUSTOM_MCP_ENABLED" = "true" ]; then
               custom_mcp_secret_bindings=",MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1"
@@ -378,16 +503,16 @@ jobs:
               --tag "pr-${PR_NUMBER}" \
               --no-traffic \
               --allow-unauthenticated \
-              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_ORIGIN=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${collaboration_env_bindings}${funded_ai_env_bindings}" \
-              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}" \
+              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_ORIGIN=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${collaboration_env_bindings}${funded_ai_env_bindings}${SLACK_PREVIEW_ENV_BINDINGS:-}" \
+              --set-secrets "PLATFORM_DATABASE_URL=${SLACK_PREVIEW_DATABASE_SECRET_BINDING:-platform-database-url-staging:latest},PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${SLACK_PREVIEW_SECRET_BINDINGS:-}" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
           }
           verify_collaboration_revision() {
-            jq -e --arg origin "$collaboration_origin" --arg key_id "$MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID" '
+            jq -e --arg origin "$collaboration_origin" --arg origins "$collaboration_allowed_origins" --arg key_id "$MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID" '
               [.spec.containers[0].env[]?] as $env
               | ([$env[] | select(.name == "MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID") | .value] == [$key_id])
-              and ([$env[] | select(.name == "MATRIX_COLLABORATION_ALLOWED_ORIGINS") | .value] == [$origin])
+              and ([$env[] | select(.name == "MATRIX_COLLABORATION_ALLOWED_ORIGINS") | .value] == [$origins])
               and ([$env[] | select(.name == "MATRIX_COLLABORATION_RELAY_ORIGIN") | .value] == [$origin])
               and ([$env[] | select(.name == "MATRIX_COLLABORATION_TICKET_KEYS")
                     | "\(.valueFrom.secretKeyRef.name):\(.valueFrom.secretKeyRef.key)"]
@@ -478,7 +603,8 @@ jobs:
           set -euo pipefail
           body="**Platform preview revision deployed**
 
-          - Browser-reachable host: ${PREVIEW_PUBLIC_URL} (route this PR's tag to it: \`gcloud run services update-traffic ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION} --to-tags pr-${PR_NUMBER}=100\`, then reset when done)
+          - Browser-reachable host: ${PREVIEW_PUBLIC_URL}
+          - Shared-host mode only: route this PR's tag to it: \`gcloud run services update-traffic ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION} --to-tags pr-${PR_NUMBER}=100\`, then reset when done. Isolated previews need no traffic change.
           - Desktop control-plane origin: ${PREVIEW_API_ORIGIN}
           - Revision URL: ${PREVIEW_URL}
           - Service: \`${CLOUD_RUN_PREVIEW_SERVICE}\` (deployed zero-traffic, tag \`pr-${PR_NUMBER}\`)
@@ -556,7 +682,7 @@ jobs:
           done
 
   select-share-preview:
-    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
+    if: github.event_name == 'workflow_dispatch' && (inputs.connect_share_preview || inputs.connect_slack_pilot)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -1333,3 +1459,234 @@ jobs:
             echo "::warning::The guard timer could not be stopped; it finds the connection committed and leaves it in place."
           fi
           echo "Collaboration preview home ${handle} is enrolled with ${PREVIEW_TAG_URL}." >> "$GITHUB_STEP_SUMMARY"
+
+  # Slack personal DMs require the employee's own Matrix home. Keep the normal
+  # the disposable VM's normal API and Slack bridge both reach this PR backend.
+  # Provider credentials remain owner-configured on the preview VM.
+  connect-slack-pilot-preview:
+    name: Connect Slack pilot to the matching preview home
+    needs: select-share-preview
+    if: github.event_name == 'workflow_dispatch' && inputs.connect_slack_pilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: Preview
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
+      ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
+      PR_NUMBER: ${{ inputs.pr }}
+      SLACK_PILOT_PR_NUMBER: ${{ vars.SLACK_PILOT_PR_NUMBER }}
+      SLACK_PILOT_APP_ID: ${{ vars.SLACK_PILOT_APP_ID }}
+      PREVIEW_RUNTIME_OWNER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      PREVIEW_VPS_CONTROL_URL: https://app.matrix-os.com
+      EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Check PR, identity, and exact tagged preview
+        id: target
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          test "$PR_NUMBER" = "$SLACK_PILOT_PR_NUMBER"
+          test "$CLOUD_RUN_PREVIEW_SERVICE" = matrix-platform-preview
+          [[ "$PREVIEW_RUNTIME_OWNER_ID" =~ ^user_[A-Za-z0-9]+$ ]]
+          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          if ! jq -e --arg repository "$GITHUB_REPOSITORY" --arg head "$EXPECTED_HEAD_SHA" '
+            .state == "open" and .head.repo.full_name == $repository and .head.sha == $head
+            and any(.labels[]?; .name == "preview-vps")
+            and any(.labels[]?; .name == "preview-platform")
+            and any(.labels[]?; .name == "preview-isolated")
+          ' <<< "$pull_request" >/dev/null; then
+            echo "The Slack pilot requires an open exact-head PR with isolated platform and VPS previews." >&2
+            exit 1
+          fi
+          service="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json --quiet)"
+          revision="$(jq -er --arg tag "pr-$PR_NUMBER" '[.status.traffic[] | select(.tag == $tag)] | if length == 1 then .[0].revisionName else error("tag unavailable") end' <<< "$service")"
+          url="$(jq -er --arg tag "pr-$PR_NUMBER" '[.status.traffic[] | select(.tag == $tag)] | if length == 1 then .[0].url else error("tag unavailable") end' <<< "$service")"
+          revision_json="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json --quiet)"
+          image="$(jq -r '.spec.containers[0].image' <<< "$revision_json")"
+          expected_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA::12}"
+          expected_digest="$(gcloud artifacts docker images describe "$expected_image" --project "$GCP_PROJECT_ID" --format='value(image_summary.digest)' --quiet)"
+          if [ -z "$expected_digest" ] || { [ "$image" != "$expected_image" ] && [ "$image" != "${expected_image%:*}@${expected_digest}" ]; }; then
+            echo "The selected Slack platform tag does not match the exact PR head." >&2
+            exit 1
+          fi
+          jq -e --arg db "slack-preview-pr${PR_NUMBER}-platform-database-url" --arg handle "pr-${PR_NUMBER}" '
+            any(.spec.containers[0].env[]?; .name == "PLATFORM_PREVIEW" and .value == "true")
+            and any(.spec.containers[0].env[]?; .name == "SLACK_PREVIEW_RUNTIME_HANDLE" and .value == $handle)
+            and any(.spec.containers[0].env[]?; .name == "PLATFORM_SECRET" and .valueFrom.secretKeyRef.name == "platform-preview-secret")
+            and any(.spec.containers[0].env[]?; .name == "PLATFORM_DATABASE_URL" and .valueFrom.secretKeyRef.name == $db)
+          ' <<< "$revision_json" >/dev/null || { echo "The tagged revision is not isolated to this Slack pilot." >&2; exit 1; }
+          client_origins="$(jq -er --arg alias "https://pr-${PR_NUMBER}-preview.matrix-os.com" '
+            [.spec.containers[0].env[]?] as $env
+            | [$env[] | select(.name == "MATRIX_COLLABORATION_ALLOWED_ORIGINS") | .value] as $allowed
+            | [$env[] | select(.name == "MATRIX_COLLABORATION_RELAY_ORIGIN") | .value] as $relay
+            | [$env[] | select(.name == "MATRIX_COLLABORATION_TICKET_KEYS")
+                | "\(.valueFrom.secretKeyRef.name):\(.valueFrom.secretKeyRef.key)"] as $keys
+            | select(($allowed | length) == 1 and ($relay | length) == 1
+                and $keys == ["collaboration-ticket-keys-preview:latest"]
+                and ($allowed[0] | split(",") | length <= 16
+                    and all(.[]; test("^https://[A-Za-z0-9.-]+$"))
+                    and index($alias) != null and index($relay[0]) != null))
+            | $allowed[0]
+          ' <<< "$revision_json")" || { echo "The tagged preview has not enabled collaboration from the pilot's exact browser origin." >&2; exit 1; }
+          [[ "$url" =~ ^https://[A-Za-z0-9.-]+$ ]]
+          echo "platform_url=$url" >> "$GITHUB_OUTPUT"
+          echo "client_origins=$client_origins" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: preview-share-route
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile --filter . --ignore-scripts
+      - name: Prove the Slack link and preview home have the same owner
+        id: owner
+        env:
+          PREVIEW_RUNTIME_OWNER_ID: ${{ env.PREVIEW_RUNTIME_OWNER_ID }}
+        run: |
+          set -euo pipefail
+          handle="pr-${PR_NUMBER}"
+          jq -e --arg handle "$handle" 'type == "object" and keys == ["address", "handle"] and .handle == $handle and (.address | test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$"))' preview-share-route.json >/dev/null
+          preview_db="$(gcloud secrets versions access latest --secret "slack-preview-pr${PR_NUMBER}-platform-database-url" --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_db"
+          SLACK_PREVIEW_DATABASE_URL="$preview_db" node scripts/slack-preview-runtime.mjs verify
+          sessions="$(curl --fail --silent --show-error --max-time 30 \
+            "https://api.clerk.com/v1/sessions?user_id=${PREVIEW_RUNTIME_OWNER_ID}&status=active&limit=10" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10")"
+          session_id="$(jq -er 'sort_by(.last_active_at // 0) | reverse | .[0].id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' <<< "$sessions")"
+          session_response="$(curl --fail --silent --show-error --max-time 30 \
+            -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10" \
+            -H 'content-type: application/json' \
+            --data-binary '{"expires_in_seconds":300}')"
+          preview_session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' <<< "$session_response")"
+          echo "::add-mask::$preview_session_token"
+          route="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          loader='import sys; n = int(sys.argv[1]); source = "".join(sys.argv[2:2 + n]); sys.argv = ["-c", *sys.argv[2 + n:]]; exec(compile(source, "preview-slack-identity", "exec"), {"__name__": "__main__"})'
+          body="$(jq -cn --rawfile source scripts/preview-collaboration-probe.py \
+            --arg loader "$loader" --arg handle "$handle" --arg owner "$PREVIEW_RUNTIME_OWNER_ID" '
+            ($source | [range(0; length; 4000) as $at | .[$at:$at + 4000]]) as $chunks
+            | {command:["/usr/bin/python3", "-I", "-c", $loader, ($chunks | length | tostring)] + $chunks + ["identity", $handle, $owner], timeoutMs:10000}')"
+          curl --fail --silent --show-error --max-time 45 --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
+            -o "$response" -X POST "$route" \
+            -H "authorization: Bearer ${preview_session_token}" \
+            -H 'content-type: application/json' --data-binary "$body"
+          jq -e 'select(.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null)' "$response" >/dev/null
+          machine_id="$(jq -er '.stdout | fromjson | .machineId | select(test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))' "$response")"
+          echo "machine_id=$machine_id" >> "$GITHUB_OUTPUT"
+          echo "address=$(jq -r '.address' preview-share-route.json)" >> "$GITHUB_OUTPUT"
+      - name: Connect the preview VM to the isolated Slack backend under a rollback guard
+        env:
+          PREVIEW_RUNTIME_OWNER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          PREVIEW_TAG_URL: ${{ steps.target.outputs.platform_url }}
+          PREVIEW_CLIENT_ORIGINS: ${{ steps.target.outputs.client_origins }}
+          PREVIEW_MACHINE_ID: ${{ steps.owner.outputs.machine_id }}
+          PREVIEW_ADDRESS: ${{ steps.owner.outputs.address }}
+        run: |
+          set -euo pipefail
+          handle="pr-${PR_NUMBER}"
+          route="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          sessions="$(curl --fail --silent --show-error --max-time 30 "https://api.clerk.com/v1/sessions?user_id=${PREVIEW_RUNTIME_OWNER_ID}&status=active&limit=10" -H "authorization: Bearer ${CLERK_SECRET_KEY}" -H "Clerk-API-Version: 2025-11-10")"
+          session_id="$(jq -er 'sort_by(.last_active_at // 0) | reverse | .[0].id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' <<< "$sessions")" || { echo "Sign in to Matrix with the Slack-linked account, then retry." >&2; exit 1; }
+          session_response="$(curl --fail --silent --show-error --max-time 30 -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" -H "authorization: Bearer ${CLERK_SECRET_KEY}" -H "Clerk-API-Version: 2025-11-10" -H 'content-type: application/json' --data-binary '{"expires_in_seconds":300}')"
+          PREVIEW_SESSION_TOKEN="$(jq -er '.jwt | select(type == "string" and length <= 8192)' <<< "$session_response")"
+          echo "::add-mask::$PREVIEW_SESSION_TOKEN"
+          loader='import sys; n = int(sys.argv[1]); source = "".join(sys.argv[2:2 + n]); sys.argv = ["-c", *sys.argv[2 + n:]]; exec(compile(source, "preview-slack", "exec"), {"__name__": "__main__", "LOADED_SOURCE": source})'
+          script_command() {
+            local privilege="$1" script="$2" timeout="$3"
+            shift 3
+            jq -cn --rawfile source "$script" --arg loader "$loader" --arg privilege "$privilege" --argjson timeout "$timeout" '
+              ($source | [range(0; length; 4000) as $at | .[$at:$at + 4000]]) as $chunks
+              | {command: ((if $privilege == "root" then ["/usr/bin/sudo"] else [] end)
+                  + ["/usr/bin/python3", "-I", "-c", $loader, ($chunks | length | tostring)] + $chunks + $ARGS.positional), timeoutMs:$timeout}' --args "$@"
+          }
+          send() {
+            curl --fail --silent --show-error --max-time 45 --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
+              -o "$response" -X POST "$route" -H "authorization: Bearer ${PREVIEW_SESSION_TOKEN}" \
+              -H 'content-type: application/json' --data-binary "$1" \
+              && jq -e 'select(.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null)' "$response" >/dev/null
+          }
+          send_once() {
+            curl --fail --silent --show-error --max-time 45 \
+              -o "$response" -X POST "$route" -H "authorization: Bearer ${PREVIEW_SESSION_TOKEN}" \
+              -H 'content-type: application/json' --data-binary "$1" \
+              && jq -e 'select(.exitCode == 0 and .timedOut == false and .truncated == false and .signal == null)' "$response" >/dev/null
+          }
+          fail_and_restore() {
+            echo "$1" >&2
+            if [ "${guard_armed:-false}" = true ]; then
+              body="$(jq -cn --arg unit "matrix-preview-collaboration-guard-${nonce}.service" '{command:["/usr/bin/sudo","/usr/bin/systemctl","start","--no-block",$unit],timeoutMs:10000}')"
+              send "$body" || echo "The armed guard will restore the original environment." >&2
+            fi
+            exit 1
+          }
+          identity="$(script_command user scripts/preview-collaboration-probe.py 10000 identity "$handle" "$PREVIEW_RUNTIME_OWNER_ID")"
+          send "$identity" || { echo "The target VM could not prove its owner; no runtime was changed." >&2; exit 1; }
+          observed_machine="$(jq -er '.stdout | fromjson | .machineId' "$response")"
+          test "$observed_machine" = "$PREVIEW_MACHINE_ID"
+          preview_db="$(gcloud secrets versions access latest --secret "slack-preview-pr${PR_NUMBER}-platform-database-url" --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_db"
+          SLACK_PREVIEW_DATABASE_URL="$preview_db" node scripts/slack-preview-runtime.mjs register
+          preview_secret="$(gcloud secrets versions access latest --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_secret"
+          preview_token="$(PREVIEW_SIGNING_SECRET="$preview_secret" node --input-type=module -e 'import {createHmac} from "node:crypto"; process.stdout.write(createHmac("sha256",process.env.PREVIEW_SIGNING_SECRET).update(process.argv[1]).digest("hex"))' "$handle")"
+          echo "::add-mask::$preview_token"
+          unset preview_secret
+          nonce="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          guard_unit="matrix-preview-collaboration-guard-${nonce}"
+          guard_path=/opt/matrix/env/.preview-collaboration-guard.py
+          prepare="$(script_command root scripts/preview-collaboration-guard.py 10000 prepare "$nonce")"
+          send "$prepare" || { echo "Could not install the rollback guard; host configuration is unchanged." >&2; exit 1; }
+          arm="$(jq -cn --arg unit "--unit=${guard_unit}" --arg guard "$guard_path" --arg nonce "$nonce" '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=300s","--collect","/usr/bin/python3","-I",$guard,"restore",$nonce,"--restart"],timeoutMs:10000}')"
+          send_once "$arm" || { echo "Could not arm the rollback guard; host configuration is unchanged." >&2; exit 1; }
+          armed_at=$SECONDS
+          claim="$(script_command root scripts/preview-collaboration-guard.py 10000 claim "$nonce")"
+          send "$claim" || { echo "Could not claim the rollback guard; host configuration is unchanged." >&2; exit 1; }
+          guard_armed=true
+          binding="$(jq -cn --arg url "$PREVIEW_TAG_URL" --arg token "$preview_token" --arg origins "$PREVIEW_CLIENT_ORIGINS" '{PLATFORM_INTERNAL_URL:$url,UPGRADE_TOKEN:$token,MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins}')"
+          apply="$(script_command root scripts/preview-collaboration-home.py 15000 apply "$nonce" "$handle" "$PREVIEW_RUNTIME_OWNER_ID" "$PREVIEW_MACHINE_ID" "$binding")"
+          send "$apply" || fail_and_restore "Could not bind the preview VM to the isolated PR backend."
+          health="$(script_command user scripts/preview-collaboration-probe.py 30000 health)"
+          send "$health" || fail_and_restore "The Matrix gateway health check failed."
+          previous_pid="$(jq -er '.stdout | fromjson | .pid | select(type == "number")' "$response")"
+          enrollment_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          restart="$(jq -cn --arg unit "--unit=matrix-preview-slack-restart-${nonce}" '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=2s","--collect","/usr/bin/systemctl","restart","matrix-gateway.service"],timeoutMs:10000}')"
+          send_once "$restart" || fail_and_restore "Could not schedule a safe gateway restart."
+          sleep 5
+          healthy=false
+          for _attempt in {1..12}; do
+            if send "$health" && jq -e --argjson previous "$previous_pid" '.stdout | fromjson | .healthy == true and .collaboration == true and .pid > 0 and .pid != $previous' "$response" >/dev/null 2>&1; then healthy=true; break; fi
+            sleep 5
+          done
+          [ "$healthy" = true ] || fail_and_restore "The gateway did not restart healthy; restoring its previous configuration."
+          remaining=$((270 - (SECONDS - armed_at)))
+          [ "$remaining" -gt 0 ] || fail_and_restore "The preview connection ran out of rollback-guard time before enrollment."
+          enrollment_deadline="$(date -u -d "+${remaining} seconds" +%Y-%m-%dT%H:%M:%SZ)"
+          PREVIEW_DATABASE_URL="$preview_db" PREVIEW_HANDLE="$handle" PREVIEW_MACHINE_ID="$PREVIEW_MACHINE_ID" \
+            PREVIEW_COLLABORATION_OWNER_USER_ID="$PREVIEW_RUNTIME_OWNER_ID" PREVIEW_ADDRESS="$PREVIEW_ADDRESS" \
+            PREVIEW_ENROLLMENT_SINCE="$enrollment_since" PREVIEW_ENROLLMENT_DEADLINE="$enrollment_deadline" \
+            node scripts/preview-collaboration-staging.mjs enrollment \
+            || fail_and_restore "The home did not enroll with the isolated preview platform."
+          commit="$(jq -cn --arg guard "$guard_path" --arg nonce "$nonce" '{command:["/usr/bin/sudo","/usr/bin/python3","-I",$guard,"commit",$nonce],timeoutMs:10000}')"
+          send "$commit" || fail_and_restore "Could not commit the verified Slack preview connection."
+          guard_armed=false
+          disarm="$(jq -cn --arg unit "${guard_unit}.timer" '{command:["/usr/bin/sudo","/usr/bin/systemctl","stop",$unit],timeoutMs:10000}')"
+          send_once "$disarm" || echo "::warning::The guard timer remains armed but will preserve the committed connection."
+          echo "The Slack pilot is connected to the isolated PR backend and matching Matrix preview home." >> "$GITHUB_STEP_SUMMARY"
