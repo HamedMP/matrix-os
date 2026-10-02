@@ -15,6 +15,8 @@ import {
   HarnessIcon,
   deriveCanonicalProviderChoices,
   type CanonicalProviderChoice,
+  canonicalChatProviderCatalogPath,
+  canonicalProviderUnavailableSelectionLabel,
 } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
@@ -124,7 +126,7 @@ export function useChatProviderState(
         const forceRefresh = forcePending;
         forcePending = false;
         try {
-          const response = await fetch(`${getGatewayUrl()}${forceRefresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true" : "/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true"}`, {
+          const response = await fetch(`${getGatewayUrl()}${canonicalChatProviderCatalogPath(forceRefresh)}`, {
             signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
           });
           if (!response.ok) throw new Error("ProviderCatalogUnavailable");
@@ -237,7 +239,13 @@ export function useChatProviderState(
     });
   };
 
-  const activeInstance = catalog?.instances.find((instance) => instance.id === selected?.instanceId) ?? null;
+  const displaySelection = selected ? { instanceId: selected.instanceId, modelId: selected.modelId }
+    : currentSelection ? { instanceId: currentSelection.instanceId, modelId: currentSelection.model } : null;
+  const activeInstance = catalog?.instances.find((instance) => instance.id === displaySelection?.instanceId) ?? null;
+  const displayModelLabel = selected?.modelLabel
+    ?? activeInstance?.models.find(model => model.id === displaySelection?.modelId)?.displayName
+    ?? currentSelection?.model;
+  const selectionStatus = currentSelection && !selected ? canonicalProviderUnavailableSelectionLabel(activeInstance, currentSelection.model) : null;
   return {
     catalog,
     choices,
@@ -249,6 +257,9 @@ export function useChatProviderState(
     loading,
     unavailable,
     activeInstance,
+    displaySelection,
+    displayModelLabel,
+    selectionStatus,
   };
 }
 
@@ -260,6 +271,7 @@ export function ChatProviderSetupPanel({
   catalog,
   choices,
   selected,
+  displaySelection,
   onSelect,
   onInteractionModeChange,
   onPermissionModeChange,
@@ -274,6 +286,7 @@ export function ChatProviderSetupPanel({
   catalog: CanonicalProviderCatalog | null;
   choices: CanonicalProviderChoice[];
   selected: CanonicalProviderChoice | null;
+  displaySelection?: Pick<CanonicalProviderChoice, "instanceId" | "modelId"> | null;
   onSelect: (choice: CanonicalProviderChoice) => void;
   onInteractionModeChange: (mode: string) => void;
   onPermissionModeChange: (mode: string) => void;
@@ -309,7 +322,7 @@ export function ChatProviderSetupPanel({
       style={{ maxHeight: "min(520px, calc(100% - 72px))" }}>
       <div className="grid min-w-0 gap-3">
         <div>
-          <CompactChatProviderChoices catalog={catalog ?? undefined} choices={choices} selected={selected} lockedInstanceId={lockedInstanceId}
+          <CompactChatProviderChoices catalog={catalog ?? undefined} choices={choices} selected={displaySelection ?? selected} lockedInstanceId={lockedInstanceId}
             renderDriverIcon={(kind) => kind === "kernel" || kind === "matrix_bot" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
               dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("matrix-chat-rabbit-mark") }} /> : (
               <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">

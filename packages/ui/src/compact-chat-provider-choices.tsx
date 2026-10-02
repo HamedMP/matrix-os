@@ -1,4 +1,5 @@
 import React, { useId, useRef, useState, type ReactNode } from "react";
+import { canonicalProviderFundingState } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -8,7 +9,7 @@ import type {
 import type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 import { canonicalProviderAvailabilityLabel } from "./canonical-provider-choice.js";
 import { useLocalObservationExpiry } from "./local-observation-expiry.js";
-import { deriveChatPickerEntries, chatPickerEntryForSelection } from "./chat-picker-entries.js";
+import { deriveChatPickerEntries, chatPickerEntryForSelection, chatPickerEntryInstance, deriveChatPickerModelRows, chatPickerModelAvailabilityLabel } from "./chat-picker-entries.js";
 import "./compact-chat-provider-choices.css";
 
 function modelProviderLabel(modelId: string): string | null {
@@ -104,9 +105,9 @@ function TwoPaneChatProviderChoices({
   const list = useRef<HTMLDivElement>(null);
   const activeEntry = entries.find(entry => entry.id === activeEntryId)
     ?? entries.find(entry => entry.id === chatPickerEntryForSelection(entries, selected?.instanceId));
-  const activeInstance = activeEntry?.instances.find(instance => instance.availability === "available") ?? activeEntry?.instances[0];
+  const activeInstance = chatPickerEntryInstance(activeEntry);
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const activeChoices = choices.filter((choice) => activeEntry?.instances.some(instance => instance.id === choice.instanceId)
+  const activeRows = deriveChatPickerModelRows(catalog, choices).filter((choice) => activeEntry?.instances.some(instance => instance.id === choice.instanceId)
     && (normalizedQuery.length === 0
       || `${choice.modelLabel} ${choice.harnessLabel} ${choice.connectionLabel ?? ""} ${choice.modelId}`
         .toLocaleLowerCase().includes(normalizedQuery)));
@@ -125,7 +126,7 @@ function TwoPaneChatProviderChoices({
           className="matrix-chat-provider-group">
           <span aria-hidden="true" className="matrix-chat-provider-group-label">{group.shortLabel}</span>
           {groupEntries.map((entry) => {
-            const instance = entry.instances.find(candidate => candidate.availability === "available") ?? entry.instances[0];
+            const instance = chatPickerEntryInstance(entry);
             const unavailable = instance?.availability !== "available";
             const locked = lockedInstanceId !== undefined && !entry.instances.some(candidate => candidate.id === lockedInstanceId);
             const setupBrowsable = unavailable && Boolean(onSetupAction && instance?.setupActions.length);
@@ -166,15 +167,15 @@ function TwoPaneChatProviderChoices({
         {onNewChat ? <button type="button" onClick={onNewChat}>New chat</button> : null}
       </div>}
       <div id={listId} ref={list} role="listbox" aria-label="Models and connections" className="matrix-chat-model-list">
-        {activeChoices.map((choice) => {
+        {activeRows.map((choice) => {
           const active = choice.instanceId === selected?.instanceId && choice.modelId === selected.modelId;
           const locked = lockedInstanceId !== undefined && choice.instanceId !== lockedInstanceId;
           const choiceInstance = catalog.instances.find((instance) => instance.id === choice.instanceId);
           return <button key={`${choice.instanceId}:${choice.modelId}`} type="button" role="option"
             aria-label={`${choice.modelLabel} via ${choice.harnessLabel}${choice.connectionLabel && choice.connectionLabel !== choice.harnessLabel ? ` · ${choice.connectionLabel}` : ""}`}
-            aria-selected={active} disabled={locked}
+            aria-selected={active} disabled={locked || !choice.choice}
             className="matrix-chat-model-option flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm disabled:opacity-40"
-            onClick={() => onSelect(choice)}
+            onClick={() => { if (choice.choice && !locked) onSelect(choice.choice); }}
             onKeyDown={(event) => {
               if (event.key === "Enter") { event.preventDefault(); event.currentTarget.click(); }
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -182,18 +183,18 @@ function TwoPaneChatProviderChoices({
               }
             }}>
             <span data-slot="model-provider-glyph" className="flex size-4 shrink-0 items-center justify-center">
-              {renderIcon?.(choice) ?? renderDriverIcon?.(choice.driverKind) ?? <span aria-hidden="true">●</span>}
+              {(choice.choice ? renderIcon?.(choice.choice) : null) ?? renderDriverIcon?.(choice.driverKind) ?? <span aria-hidden="true">●</span>}
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">{choice.modelLabel}</span>
               <span className="matrix-chat-model-secondary block truncate text-xs">
-                {modelProviderLabel(choice.modelId) ? `${modelProviderLabel(choice.modelId)} · ` : ""}{choice.harnessLabel}{choice.connectionLabel && choice.connectionLabel !== choice.harnessLabel ? ` · ${choice.connectionLabel}` : ""} · {choiceInstance ? canonicalProviderAvailabilityLabel(choiceInstance) : "Access not verified"}
+                {modelProviderLabel(choice.modelId) ? `${modelProviderLabel(choice.modelId)} · ` : ""}{choice.harnessLabel}{choice.connectionLabel && choice.connectionLabel !== choice.harnessLabel ? ` · ${choice.connectionLabel}` : ""} · {chatPickerModelAvailabilityLabel(choice, choiceInstance)}
               </span>
             </span>
             {active && <span aria-hidden="true">✓</span>}
           </button>;
         })}
-        {activeChoices.length === 0 && activeInstance?.availability === "available"
+        {activeRows.length === 0 && (normalizedQuery || activeInstance?.availability === "available")
           ? <p role="status" className="matrix-chat-model-secondary px-2 py-6 text-center text-xs">{normalizedQuery ? "No matching models." : "No models found."}</p>
           : null}
         {!activeInstance ? <p role="status" className="matrix-chat-model-secondary px-2 py-6 text-center text-xs">
@@ -202,6 +203,8 @@ function TwoPaneChatProviderChoices({
       </div>
       {activeInstance && activeInstance.availability !== "available" ? <div className="matrix-chat-provider-setup">
         <p>{canonicalProviderAvailabilityLabel(activeInstance)}</p>
+        {canonicalProviderFundingState(activeInstance) === "credit_reserved"
+          ? <p>Your credit is reserved while usage is confirmed.</p> : null}
         {onSetupAction ? activeInstance.setupActions.map((action) => <button key={action.id} type="button"
           onClick={() => onSetupAction(activeInstance, action)}>{action.label}</button>) : null}
       </div> : null}

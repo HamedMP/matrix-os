@@ -129,7 +129,7 @@ it("offers an exact managed recipe model through the legacy catalog client witho
     bots: { ...legacyClient.bots!, recipes: vi.fn(async () => [recipe]), instantiate } };
   render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()} onOpenBotChat={vi.fn()} />);
   const option = await screen.findByRole("option", { name: "Claude Sonnet 5 · Matrix AI · Pi" });
-  expect(request).toHaveBeenCalledWith("/api/chat-providers", "GET");
+  expect(request).toHaveBeenCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", "GET");
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: (option as HTMLOptionElement).value } });
   fireEvent.click(await screen.findByRole("button", { name: "Use Writing Bot" }));
   await waitFor(() => expect(instantiate).toHaveBeenCalledWith(expect.objectContaining({

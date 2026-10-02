@@ -1,6 +1,6 @@
 import { MatrixBotModelField } from "./bots/MatrixBotModelField.js";
 import { useId } from "react";
-import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { AgentRecipeEditor } from "./AgentRecipeEditor.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
@@ -45,9 +45,10 @@ function AgentEditorActions({ editing, pending, saveDisabled, onArchive, onBack 
   </div>;
 }
 
-export function AgentEditor({ draft, editing, pending, models, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
+export function AgentEditor({ draft, editing, pending, models, catalog, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
   change, onSave, onArchive, onBack, onSetup, onRetryRecipe }: {
   draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
+  catalog?: CanonicalProviderCatalog | null;
   recipeCatalog: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[];
   recipeLoading: boolean; recipeError: string; connectionError: string;
   change(value: Partial<AgentDraft>): void; onSave(): Promise<void>; onArchive(): Promise<void>; onBack(): void;
@@ -64,7 +65,7 @@ export function AgentEditor({ draft, editing, pending, models, recipeCatalog, co
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-description`}>Description <span className="text-xs" style={muted}>Optional</span><input id={`${ids}-description`} className={input} value={draft.description} maxLength={400} disabled={pending} onChange={(event) => change({ description: event.target.value })} /></label>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-instructions`}>Instructions<textarea id={`${ids}-instructions`} className={`${input} min-h-32 resize-y`} value={draft.instructions} maxLength={8000} required disabled={pending} placeholder="What should this Agent do? How should it work?" onChange={(event) => change({ instructions: event.target.value })} /></label>
       {recipeBot ? <div className="grid gap-3 text-sm"><p>Runtime <strong>Pi</strong></p>
-        <MatrixBotModelField id={`${ids}-model`} selection={draft.selection} models={models} pending={pending} onChange={(selection) => change({ selection })} />
+        <MatrixBotModelField id={`${ids}-model`} selection={draft.selection} models={models} catalog={catalog} pending={pending} onChange={(selection) => change({ selection })} />
         <p className="text-xs" style={muted}>This bot runs in its own Chat. Its model and tool access are managed by this computer.</p>
       </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />}
       {!recipeBot ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={recipeCatalog}

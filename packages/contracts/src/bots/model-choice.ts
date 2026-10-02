@@ -23,7 +23,8 @@ export function botModelRoutingLabel(selection: CanonicalChatModelSelection | nu
   const instance = catalog?.instances.find((candidate) => candidate.id === selection.instanceId);
   const model = instance?.models.find((candidate) => candidate.id === selection.model);
   const unavailable = catalog && (instance?.availability !== "available" || model?.availability !== "available");
-  return `Matrix AI · ${model?.displayName ?? selection.model}${unavailable ? " · unavailable" : ""}`;
+  const status = instance && model && canonicalProviderFundingState(instance) === "credit_reserved" ? "credit reserved" : "unavailable";
+  return `Matrix AI · ${model?.displayName ?? selection.model}${unavailable ? ` · ${status}` : ""}`;
 }
 
 const UNAVAILABLE_LABELS: Record<
@@ -40,13 +41,21 @@ const UNAVAILABLE_LABELS: Record<
   multiple_profiles_unsupported: "Choose one enabled account",
 };
 
+/** Settings disablement keeps presentation priority over any funding observation. */
+export function canonicalProviderFundingState(
+  instance: CanonicalProviderInstanceDescriptor,
+): CanonicalProviderInstanceDescriptor["connectionState"] {
+  return instance.unavailabilityReason === "disabled_in_settings" || instance.unavailabilityReason === "settings_unavailable"
+    ? undefined : instance.connectionState;
+}
+
 export function canonicalProviderAvailabilityReasonLabel(
   instance: CanonicalProviderInstanceDescriptor,
 ): string {
-  if (instance.unavailabilityReason !== "disabled_in_settings" && instance.unavailabilityReason !== "settings_unavailable") {
-    if (instance.connectionState === "credit_required") return "Matrix AI credit required";
-    if (instance.connectionState === "unavailable") return "Matrix AI unavailable";
-  }
+  const fundingState = canonicalProviderFundingState(instance);
+  if (fundingState === "credit_required") return "Matrix AI credit required";
+  if (fundingState === "credit_reserved") return "Matrix AI credit reserved";
+  if (fundingState === "unavailable") return "Matrix AI unavailable";
   if (instance.availability === "available") return "Available";
   if (instance.unavailabilityReason) return UNAVAILABLE_LABELS[instance.unavailabilityReason];
   if (instance.availability === "setup_required") return "Setup required";

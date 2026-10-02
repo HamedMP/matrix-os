@@ -5,6 +5,7 @@ import type { AiProviderSnapshotReader } from "./service.js";
 const ProviderQuerySchema = z.object({
   includeNativeProfiles: z.enum(["true", "false"]).optional(),
   refresh: z.enum(["true", "false"]).optional(),
+  includeFundingState: z.enum(["true", "false"]).optional(),
 }).strict();
 
 export function createAiProviderRoutes(options: {
@@ -20,9 +21,17 @@ export function createAiProviderRoutes(options: {
     const query = ProviderQuerySchema.safeParse(context.req.query());
     if (!query.success) return context.json({ error: "Invalid provider status query" }, 400);
     try {
-      const snapshot = await options.service.getSnapshot({
+      const internalSnapshot = await options.service.getSnapshot({
         refresh: query.data.refresh === "true",
       });
+      const legacyReadiness = <T extends { safeReason: string | null }>(readiness: T): T =>
+        readiness.safeReason === "credit_reserved" ? { ...readiness, safeReason: "credit_required" } : readiness;
+      const snapshot = query.data.includeFundingState === "true" ? internalSnapshot : {
+        ...internalSnapshot,
+        accessSources: internalSnapshot.accessSources.map(legacyReadiness),
+        accounts: internalSnapshot.accounts.map(legacyReadiness),
+        instances: internalSnapshot.instances.map(instance => ({ ...instance, readiness: legacyReadiness(instance.readiness) })),
+      };
       if (query.data.includeNativeProfiles === "true") return context.json(snapshot);
       const { nativeHarnessCatalog: _nativeHarnessCatalog, ...legacySnapshot } = snapshot;
       return context.json({ ...legacySnapshot,

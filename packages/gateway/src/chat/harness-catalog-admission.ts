@@ -259,6 +259,7 @@ export function applyHarnessSettings(input: {
     const fresh = source.readiness.staleAfter === null
       || Date.parse(source.readiness.staleAfter) > input.now.getTime();
     return { ...instance, connectionLabel: "Matrix AI", connectionState: instance.availability === "available"
-      ? "ready" as const : fresh && source.readiness.safeReason === "credit_required" ? "credit_required" as const : "unavailable" as const };
+      ? "ready" as const : fresh && source.readiness.safeReason === "credit_reserved" ? "credit_reserved" as const
+        : fresh && source.readiness.safeReason === "credit_required" ? "credit_required" as const : "unavailable" as const };
   });
 }

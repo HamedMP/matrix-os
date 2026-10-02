@@ -52,11 +52,11 @@ function partialSnapshot(): ProviderSettingsSnapshot {
   };
 }
 
-function setup(snapshot: ProviderSettingsSnapshot) {
+function setup(snapshot: ProviderSettingsSnapshot, initialHarnessId = "harness_hermes") {
   const onRefresh = vi.fn();
   const onMutate = vi.fn();
   function ControlledView() {
-    const [selectedHarnessId, onSelectHarness] = useState("harness_hermes");
+    const [selectedHarnessId, onSelectHarness] = useState(initialHarnessId);
     return <AgentsProvidersView snapshot={snapshot} selectedHarnessId={selectedHarnessId}
       onSelectHarness={onSelectHarness} onRefresh={onRefresh} onMutate={onMutate}
       onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()}
@@ -64,6 +64,20 @@ function setup(snapshot: ProviderSettingsSnapshot) {
   }
   render(<ControlledView />);
   return { onRefresh, onMutate };
+}
+
+function heldSnapshot(): ProviderSettingsSnapshot {
+  const next = partialSnapshot();
+  const source = next.accessSources[1]!;
+  source.readiness = { state: "unavailable", checkedAt: now, staleAfter: null, action: "retry", safeReason: "credit_reserved" };
+  source.usage = { kind: "managed_credit", authority: "matrix_ledger", state: "current", scope: "owner_entitlement", currency: "USD",
+    usedMicrousd: 297_893, remainingMicrousd: 0, limitMicrousd: 5_100_000,
+    periodStartedAt: "2026-10-01T00:00:00.000Z", resetsAt: null, asOf: now,
+    credit: { promotionalBalanceMicrousd: 4_802_107, addonBalanceMicrousd: 0, creditBalanceMicrousd: 4_802_107,
+      reservedMicrousd: 4_802_107, remainingBalanceMicrousd: 0 },
+    budget: { monthlyBudgetMicrousd: 5_100_000, settledThisMonthMicrousd: 297_893,
+      reservedThisMonthMicrousd: 4_802_107, remainingBudgetMicrousd: 0 } };
+  return next;
 }
 
 describe("Matrix source fallback for native Pi setup", () => {
@@ -149,4 +163,88 @@ describe("Matrix source fallback for native Pi setup", () => {
       expect(within(gateway).queryByRole("button", { name: "Choose Pi" })).not.toBeInTheDocument();
     },
   );
+  it.each(["credit_reserved", "credit_required"] as const)("shows authorized Sonnet discovery for an unbound Pi with %s before the empty policy anchor", (reason) => {
+    const next = heldSnapshot();
+    const source = next.accessSources[1]!;
+    source.readiness.safeReason = reason;
+    if (reason === "credit_required" && source.usage.kind === "managed_credit") {
+      source.usage.credit = { promotionalBalanceMicrousd: 0, addonBalanceMicrousd: 0, creditBalanceMicrousd: 0, reservedMicrousd: 0, remainingBalanceMicrousd: 0 };
+      source.usage.usedMicrousd = source.usage.limitMicrousd;
+      source.usage.budget.settledThisMonthMicrousd = source.usage.limitMicrousd;
+      source.usage.budget.reservedThisMonthMicrousd = 0;
+    }
+    const originalPi = structuredClone(next.harnesses[1]);
+    const { onMutate, onRefresh } = setup(next, "harness_pi");
+    const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText(reason === "credit_reserved" ? "Credit reserved" : "Credit needed")).toBeVisible();
+    fireEvent.click(within(gateway).getByText("Usage & available models"));
+    expect(within(gateway).getByText("Claude Sonnet 5")).toBeVisible();
+    expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();
+    expect(within(gateway).queryByRole("button", { name: /Choose|Use Matrix AI/ })).not.toBeInTheDocument();
+    expect(next.harnesses[1]).toEqual(originalPi);
+    expect(onMutate).not.toHaveBeenCalled();
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("preserves an explicit empty Cloudflare source even when Sonnet discovery has a current credit hold", () => {
+    const next = heldSnapshot();
+    next.harnesses[1]!.accessSourceId = "matrix_cloudflare";
+    setup(next, "harness_pi");
+    const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText("Unavailable")).toBeVisible();
+    fireEvent.click(within(gateway).getByText("Usage & available models"));
+    expect(within(gateway).queryByText("Claude Sonnet 5")).not.toBeInTheDocument();
+    expect(within(gateway).queryByText("Credit reserved")).not.toBeInTheDocument();
+  });
+
+  it("prefers current funding discovery over a different authorized connection failure", () => {
+    const next = heldSnapshot();
+    next.accessSources[0]!.eligibleModelIds = [glm];
+    next.accessSources[0]!.usage = structuredClone(next.accessSources[1]!.usage);
+    next.gatewayPolicy!.allowedModelIds.push(glm);
+    setup(next, "harness_pi");
+    const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText("Credit reserved")).toBeVisible();
+  });
+
+  it.each(["empty", "denied", "disabled", "stale_usage", "stale_readiness", "unobserved"] as const)(
+    "does not use %s discovery to replace an empty policy anchor", (failure) => {
+      const next = heldSnapshot();
+      const source = next.accessSources[1]!;
+      if (failure === "empty") source.eligibleModelIds = [];
+      if (failure === "denied") next.gatewayPolicy!.allowedModelIds = [];
+      if (failure === "disabled") next.modelProviders[0]!.models[0]!.enabled = false;
+      if (failure === "stale_usage" && source.usage.kind === "managed_credit") source.usage.state = "stale";
+      if (failure === "stale_readiness") source.readiness.state = "stale";
+      if (failure === "unobserved") source.readiness.checkedAt = null;
+      setup(next, "harness_pi");
+      const gateway = screen.getByRole("region", { name: "Matrix AI" });
+      expect(within(gateway).getByText("Unavailable")).toBeVisible();
+      expect(within(gateway).queryByText("Credit reserved")).not.toBeInTheDocument();
+    },
+  );
+
+  it("still prefers a ready allowed Cloudflare route before a current Sonnet hold", () => {
+    const next = heldSnapshot();
+    next.accessSources[0]!.readiness = { ...partialSnapshot().accessSources[1]!.readiness };
+    next.accessSources[0]!.eligibleModelIds = [glm];
+    next.gatewayPolicy!.allowedModelIds.push(glm);
+    setup(next, "harness_pi");
+    const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText("Ready")).toBeVisible();
+    expect(within(gateway).getByText("Pi · GLM")).toBeVisible();
+  });
+
+  it("shows fresh authorized discovery for a connection failure before an empty policy anchor", () => {
+    const next = heldSnapshot();
+    next.accessSources[1]!.readiness.safeReason = "provider_unavailable";
+    setup(next, "harness_pi");
+    const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText("Unavailable")).toBeVisible();
+    fireEvent.click(within(gateway).getByText("Usage & available models"));
+    expect(within(gateway).getByText("Claude Sonnet 5")).toBeVisible();
+    expect(within(gateway).queryByText("Credit reserved")).not.toBeInTheDocument();
+    expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();
+  });
+
 });

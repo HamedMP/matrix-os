@@ -10,7 +10,7 @@ import {
   type ProviderSettingsSnapshot,
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
-import { openProviderAgentSetup, ProviderSettingsTransportError } from "@matrix-os/ui";
+import { openProviderAgentSetup, ProviderSettingsTransportError, canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath } from "@matrix-os/ui";
 import { terminalRefKey } from "../components/terminal/terminal-session-id";
 import { getGatewayUrl } from "./gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "./canonical-provider-setup";
@@ -109,7 +109,7 @@ export function createProviderSettingsTransport(
   const fetcher = options.fetcher ?? fetch;
   return {
     async getSnapshot(signal, options = {}) {
-      const value = await fetchJson(fetcher, `/api/ai/provider-settings?includeCapabilities=true${options.refresh ? "&refresh=true" : ""}`, {
+      const value = await fetchJson(fetcher, providerSettingsSnapshotPath(options.refresh), {
         cache: "no-store",
         headers: { Accept: "application/json" },
         signal: requestSignal(signal, FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
@@ -125,7 +125,7 @@ export function createProviderSettingsTransport(
       if (new TextEncoder().encode(body).byteLength > MAX_MUTATION_BYTES) {
         throw new ProviderSettingsTransportError("invalid_request");
       }
-      const value = await fetchJson(fetcher, "/api/ai/provider-settings/actions?includeCapabilities=true", {
+      const value = await fetchJson(fetcher, providerSettingsActionsPath, {
         method: "POST",
         cache: "no-store",
         headers: { Accept: "application/json", "Content-Type": "application/json" },
@@ -149,7 +149,7 @@ export async function openWebProviderAgentSetup(
   const runtimeUrl = getGatewayUrl();
   return openProviderAgentSetup({
     harness,
-    getCatalog: () => fetchJson(fetch, "/api/chat-providers?refresh=true&includeConnectionLabels=true", {
+    getCatalog: () => fetchJson(fetch, canonicalChatProviderCatalogPath(true), {
       signal: requestSignal(undefined, FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs), cache: "no-store",
     }),
     openCommand: async (cmd) => {

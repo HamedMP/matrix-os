@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { botModelRoutingLabel, isManagedPiBotRoute, managedPiBotModelChoices } from "@matrix-os/contracts";
+import { botModelRoutingLabel, canonicalProviderFundingState, isManagedPiBotRoute, managedPiBotModelChoices } from "@matrix-os/contracts";
 import { createCanonicalProviderCatalogFixture } from "../fixtures/canonical-chat.js";
 
 it("shares exact model choices and unavailable saved-route copy across shells", () => {
@@ -36,4 +36,24 @@ it("projects only currently available advertised models when labels are not nego
     label: "Claude Sonnet 5 · Matrix AI · Pi" }]);
   catalog.instances[0]!.availability = "auth_required";
   expect(managedPiBotModelChoices(catalog)).toEqual([]);
+});
+
+it("explains reserved credit for saved Bot choices without creating an executable choice", () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  const base = catalog.instances[0]!;
+  const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+  catalog.instances = [{ ...base, id: selection.instanceId, driverKind: "matrix_pi", availability: "unavailable", connectionState: "credit_reserved",
+    defaultSelection: undefined, models: [{ ...base.models[0]!, id: selection.model, displayName: "Claude Sonnet 5", availability: "unavailable" }] }];
+  expect(botModelRoutingLabel(selection, catalog)).toBe("Matrix AI · Claude Sonnet 5 · credit reserved");
+  expect(managedPiBotModelChoices(catalog)).toEqual([]);
+  for (const reason of ["disabled_in_settings", "settings_unavailable"] as const) {
+    catalog.instances[0]!.unavailabilityReason = reason;
+    expect(canonicalProviderFundingState(catalog.instances[0]!)).toBeUndefined();
+    expect(botModelRoutingLabel(selection, catalog)).toBe("Matrix AI · Claude Sonnet 5 · unavailable");
+  }
+  expect(botModelRoutingLabel(selection)).toBe("Matrix AI · claude-sonnet-5");
+  delete catalog.instances[0]!.unavailabilityReason;
+  expect(botModelRoutingLabel({ ...selection, model: "revoked-model" }, catalog)).toBe("Matrix AI · revoked-model · unavailable");
+  catalog.instances = [];
+  expect(botModelRoutingLabel(selection, catalog)).toBe("Matrix AI · claude-sonnet-5 · unavailable");
 });

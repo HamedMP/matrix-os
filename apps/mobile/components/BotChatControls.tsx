@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { blockedNativeBotModelRows } from "@/lib/bot-model-discovery";
 import {
   managedPiBotModelChoices, MATRIX_BOT_SELECTION, botModelRoutingLabel, botInteractionCard, botTaskStatusCopy, groupBotAuthority,
   type CanonicalChatModelSelection, type CanonicalProviderCatalog, type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest,
@@ -195,7 +196,7 @@ export function BotChatControls({ snapshot, catalog, onSelectionChange, actionsA
   const authority = snapshot.authority;
   return <View style={styles.panel}>
     <View style={styles.header}>
-      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text><Text style={styles.muted}>Your bot's Chat</Text><Text style={styles.muted}>Runtime: Pi · {botModelRoutingLabel(snapshot.selection, catalog)}</Text></View>
+      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text><Text style={styles.muted}>Your bot&apos;s Chat</Text><Text style={styles.muted}>Runtime: Pi · {botModelRoutingLabel(snapshot.selection, catalog)}</Text></View>
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: showAuthority }} style={styles.button}
         onPress={() => setShowAuthority((value) => !value)}><Text style={styles.text}>Access &amp; memory</Text></Pressable>
     </View>
@@ -209,6 +210,8 @@ export function BotChatControls({ snapshot, catalog, onSelectionChange, actionsA
           disabled={!!pending || !actionsAvailable} style={styles.button}
           onPress={() => void change("model", () => onSelectionChange(choice.selection))}>
           <Text style={styles.text}>{choice.label}</Text></Pressable>)}
+        {blockedNativeBotModelRows(catalog).map(row => <Text key={`${row.instanceId}:${row.modelId}`}
+          accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.muted}>{row.label}</Text>)}
       </View> : null}
       {snapshot.interactions.map((interaction) => <BotInteractionControl key={interaction.interactionId}
         interaction={interaction} actionsAvailable={actionsAvailable}

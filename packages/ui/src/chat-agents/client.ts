@@ -10,6 +10,7 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { createBotClient, type BotClient } from "./bots/client.js";
+import { canonicalChatProviderCatalogPath } from "../provider-projection-paths.js";
 
 export type ChatAgentDraftRequest = { id: number; text: string; resources?: CanonicalChatResourceReference[] };
 export type StartAgentChat = (text: string, resources?: CanonicalChatResourceReference[]) => void;
@@ -46,7 +47,7 @@ export function createChatAgentClient(request: (
     driveProjects: createChatDriveProjectClient(request),
     bots: createBotClient(request),
     list: async () => ChatAgentListResponseSchema.parse(await request("/api/chat-agents", "GET")),
-    catalog: async () => CanonicalProviderCatalogSchema.parse(await request("/api/chat-providers", "GET")),
+    catalog: async () => CanonicalProviderCatalogSchema.parse(await request(canonicalChatProviderCatalogPath(), "GET")),
     recipeCatalog: async () => ChatAgentRecipeCatalogSchema.parse(await request("/api/chat-agents/recipe-catalog", "GET")),
     integrations: async () => IntegrationConnectionListSchema.parse(await request("/api/integrations", "GET")),
     create: async (input) => ChatAgentSchema.parse(await request("/api/chat-agents", "POST", CreateChatAgentRequestSchema.parse(input))),

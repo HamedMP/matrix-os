@@ -1,4 +1,4 @@
-import { canonicalProviderAvailabilityReasonLabel, canonicalProviderModelRouteLabel, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderModelRouteLabel, canonicalProviderFundingState, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { Host, Picker } from "@expo/ui";
 import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -32,16 +32,21 @@ export function ModelPicker({
 }) {
   const { theme } = useUnistyles();
   const availableInstances = catalog?.instances.filter((instance) => instance.availability === "available") ?? [];
+  const reservedModels = catalog?.instances.filter((instance) => canonicalProviderFundingState(instance) === "credit_reserved")
+    .flatMap((instance) => instance.models.map((model) => ({ instance, model }))) ?? [];
+  const unavailableModels = availableInstances.flatMap((instance) => instance.models
+    .filter((model) => model.availability !== "available").map((model) => ({ instance, model })));
 
   const selectedInstance = selection
     ? catalog?.instances.find((instance) => instance.id === selection.instanceId)
     : undefined;
   const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
   const selectionAvailable = selectedInstance?.availability === "available" && selectedModel?.availability === "available";
+  const selectedCreditReserved = selectedModel && selectedInstance && canonicalProviderFundingState(selectedInstance) === "credit_reserved";
   const savedLabel = canonicalProviderModelRouteLabel(selectedInstance, selectedModel?.displayName ?? selection?.model ?? "Models unavailable");
   const modelValue = selection ? modelKey(selection.instanceId, selection.model) : "";
   const recoveryReason = !catalog ? "Checking model availability"
-    : selectedInstance?.availability !== "available" && selectedInstance ? canonicalProviderAvailabilityReasonLabel(selectedInstance)
+    : selectedInstance?.availability !== "available" && selectedInstance && selectedModel ? canonicalProviderAvailabilityReasonLabel(selectedInstance)
       : "Saved model unavailable";
 
   function handleModelChange(value: string) {
@@ -80,7 +85,7 @@ export function ModelPicker({
           enabled={availableInstances.some((instance) => instance.models.some((model) => model.availability === "available"))}
           testID="model-picker"
         >
-          {selection && !selectionAvailable ? <Picker.Item label={`${savedLabel} · ${catalog ? "unavailable" : "checking"}`} value={modelValue} /> : null}
+          {selection && !selectionAvailable && !selectedCreditReserved ? <Picker.Item label={`${savedLabel} · ${catalog ? "unavailable" : "checking"}`} value={modelValue} /> : null}
           {!selection ? <Picker.Item label="Choose a model" value="" /> : null}
           {availableInstances.flatMap((instance) => (
             instance.models
@@ -95,6 +100,15 @@ export function ModelPicker({
           ))}
         </Picker>
       </Host>
+      {reservedModels.map(({ instance, model }) => <Text key={modelKey(instance.id, model.id)}
+        accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.recovery}>
+        {canonicalProviderModelRouteLabel(instance, model.displayName)} · Credit reserved
+      </Text>)}
+      {reservedModels.length > 0 ? <Text style={styles.recovery}>Your credit is reserved while usage is confirmed.</Text> : null}
+      {unavailableModels.map(({ instance, model }) => <Text key={modelKey(instance.id, model.id)}
+        accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.recovery}>
+        {canonicalProviderModelRouteLabel(instance, model.displayName)} · Model unavailable
+      </Text>)}
       {selection && !selectionAvailable ? <Text accessibilityRole="alert" style={styles.recovery}>
         {recoveryReason}. Choose another model or check Agents &amp; providers.
       </Text> : null}

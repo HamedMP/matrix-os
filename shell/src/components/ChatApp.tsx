@@ -552,7 +552,7 @@ function ChatAppContent({
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
                   {collaborationView
                     ? activeSharedMetadata ? `Shared · ${activeSharedMetadata.role}` : "Shared session"
-                    : directBotId ? "Bot model" : providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
+                    : directBotId ? "Bot model" : providerState.displayModelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
                 </p>
               </div>
             </div>
@@ -570,6 +570,7 @@ function ChatAppContent({
             onClick={() => setSetupOpen((value) => !value)}
           >
             <span className="truncate">{providerState.selected ? `${providerState.selected.harnessLabel}${providerState.selected.connectionLabel && providerState.selected.connectionLabel !== providerState.selected.harnessLabel ? ` · ${providerState.selected.connectionLabel}` : ""} · Model` : "Model"}</span>
+            {providerState.selectionStatus ? <span className="shrink-0">{providerState.selectionStatus}</span> : null}
             <ChevronDownIcon className="size-3.5" aria-hidden="true" />
           </Button> : null}
           {!collaborationView ? <Button
@@ -598,6 +599,7 @@ function ChatAppContent({
             catalog={providerState.catalog}
             choices={providerState.choices}
             selected={providerState.selected}
+            displaySelection={providerState.displaySelection}
             onSelect={providerState.select}
             onInteractionModeChange={providerState.selectInteractionMode}
             onPermissionModeChange={providerState.selectPermissionMode}

@@ -4,6 +4,7 @@ import {
   type CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { canonicalChatProviderCatalogPath } from "@matrix-os/ui";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
@@ -26,7 +27,7 @@ export async function fetchCanonicalProviderCatalog(
   refresh = false,
 ): Promise<CanonicalProviderCatalog> {
   return CanonicalProviderCatalogSchema.parse(await api.get<unknown>(
-    refresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true" : "/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true",
+    canonicalChatProviderCatalogPath(refresh),
     { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs },
   ));
 }

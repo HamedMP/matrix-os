@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { isRunnableGenericHarnessCredentialRoute, isSupportedGenericHarnessCredentialRoute, type ProviderHarnessInstance, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
-import { GatewayPanel, isMatrixGatewaySourceReady } from "./GatewayPanel.js";
+import { GatewayPanel, isMatrixGatewaySourceReady, isMatrixGatewaySourceDiscoverable, matrixGatewayEligibleModels } from "./GatewayPanel.js";
 import { HarnessEditor } from "./HarnessEditor.js";
 import { HarnessRail } from "./HarnessRail.js";
 import { ConnectionChoices } from "./ConnectionChoices.js";
@@ -58,17 +58,21 @@ export function AgentsProvidersView({
   const readyGatewaySource = (source: ProviderSettingsSnapshot["accessSources"][number]) =>
     isMatrixGatewaySourceReady(source, snapshot.gatewayPolicy,
       snapshot.modelProviders.find((provider) => provider.id === source.providerId) ?? null);
+  const discoveredGatewaySources = snapshot.accessSources.filter((source) =>
+    isMatrixGatewaySourceDiscoverable(source, snapshot.gatewayPolicy,
+      snapshot.modelProviders.find((provider) => provider.id === source.providerId) ?? null));
   const gatewaySource = snapshot.accessSources.find((source) => source.kind === "matrix_gateway" && source.id === harness?.accessSourceId)
     ?? snapshot.accessSources.find((source) => source.id === "matrix_cloudflare" && readyGatewaySource(source))
     ?? snapshot.accessSources.find(readyGatewaySource)
+    ?? discoveredGatewaySources.find((source) => source.readiness.safeReason === "credit_reserved"
+      || source.readiness.safeReason === "credit_required")
+    ?? discoveredGatewaySources[0]
     ?? snapshot.accessSources.find((source) => source.id === snapshot.gatewayPolicy?.accessSourceId)
     ?? snapshot.accessSources.find((source) => source.kind === "matrix_gateway") ?? null;
   const gatewayProvider = gatewaySource === null
     ? null
     : snapshot.modelProviders.find((provider) => provider.id === gatewaySource.providerId) ?? null;
-  const eligibleGatewayModels = gatewayProvider?.models.filter((model) => model.enabled
-    && gatewaySource?.eligibleModelIds.includes(model.id)
-    && snapshot.gatewayPolicy?.allowedModelIds.includes(model.id)) ?? [];
+  const eligibleGatewayModels = matrixGatewayEligibleModels(gatewaySource, snapshot.gatewayPolicy, gatewayProvider);
   const gatewayReady = isMatrixGatewaySourceReady(gatewaySource, snapshot.gatewayPolicy, gatewayProvider);
   const gatewayModelsFor = (item: ProviderHarnessInstance) => eligibleGatewayModels.filter((model) => gatewaySource !== null
     && isRunnableGenericHarnessCredentialRoute({ ...item, route: { kind: "configurable", providerId: gatewaySource.providerId, modelId: model.id }, accessSourceId: gatewaySource.id }, gatewaySource));

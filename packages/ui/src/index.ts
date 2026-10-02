@@ -40,9 +40,11 @@ export {
 
 export {
   canonicalProviderAvailabilityLabel,
+  canonicalProviderUnavailableSelectionLabel,
   deriveCanonicalProviderChoices,
   orderCanonicalProviderInstancesForDefault,
 } from "./canonical-provider-choice.js";
+export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath } from "./provider-projection-paths.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 export {
   ChatEventFrameTooLarge,

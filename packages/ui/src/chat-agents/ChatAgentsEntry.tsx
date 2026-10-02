@@ -49,7 +49,7 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
 }) {
   if (state.loading) return <p role="status" className="mt-5 text-sm">Loading Agents…</p>;
   if (!state.enabled) return <p className="mt-5 text-sm">Agents are disabled for this computer.</p>;
-  if (state.draft && state.editing) return <AgentEditor draft={state.draft} editing={state.editing} pending={state.pending} models={models}
+  if (state.draft && state.editing) return <AgentEditor draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog}
     recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
     connectionError={state.connectionError}
     change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRetryRecipe={retryRecipes} />;
@@ -300,7 +300,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     </header>
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
-      matrixModels={matrixBotModelChoices(models)} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? (chatId) => { onClose(); onOpenBotChat(chatId); } : undefined}
+      matrixModels={matrixBotModelChoices(models)} catalog={state.catalog} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? (chatId) => { onClose(); onOpenBotChat(chatId); } : undefined}
       onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection) =>
         (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}) })).chatId : undefined}
       onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}

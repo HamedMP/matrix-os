@@ -153,8 +153,9 @@ Native Pi, kernel and other instance identities remain excluded from this select
    signal }): Promise<FundedFinalization>` after its authenticated reservation
    starts and the fixed generation target returns a non-OK response.
 3. **Contracts:** preserve an explicitly saved Matrix source first. Otherwise
-   choose fully ready allowed Cloudflare, another fully ready Matrix source, then
-   the policy anchor/first source. Full readiness requires an enabled eligible
+   choose fully ready allowed Cloudflare, another fully ready Matrix source,
+   a fresh policy-authorized source with discovered models, then the policy
+   anchor/first source. Full readiness requires an enabled eligible
    model allowed by current policy. This display fallback neither changes saved
    credentials nor grants model access. Rejection classification is exact zero
    only for the validated `anthropic/claude-sonnet-5` `/v1/messages` route,
@@ -183,3 +184,49 @@ Native Pi, kernel and other instance identities remain excluded from this select
    response body from its status. Classify only complete validated evidence, then
    settle through existing authenticated accounting. Never grant new credit or
    patch the database to conceal an unresolved hold.
+## Funding-blocked model discovery
+
+1. **Scope / trigger:** a fresh authenticated owner policy can permit models while
+   reservations exhaust spendable credit or budget. Discovery, connection
+   verification and execution authority are separate facts.
+2. **Signatures:** `FundedAiReadinessReader.read()` returns readiness,
+   executable `allowedModelIds`, and internal `discoverableModelIds`.
+   `fundedAiFundingBarrier(validatedCurrentSummary)` returns a bounded reason and
+   action. Provider V3 GET, Settings GET/POST/DELETE, and Chat provider GET negotiate
+   new enums through `includeFundingState=true`; Chat retains its independent
+   `includeConnectionState` and `includeConnectionLabels` flags.
+3. **Contracts:** discovery comes only from schema-valid, fresh, enabled owner
+   policy and current ledger, intersected with each actual supported source/model
+   mapping. Failed, absent, stalled, mismatched or empty receipts cannot produce
+   executable IDs or Ready. Valid funding-blocked discovery can return promptly
+   and abort its sibling route observation. Both source schemas support
+   `credit_reserved`; negotiated canonical connection state supports it too.
+   Legacy wire projections downgrade it to `credit_required` without mutating
+   internal snapshots. Display-only unavailable picker rows are limited to exact
+   managed Matrix Pi and kernel identities; other harnesses retain existing
+   executable-only rows. Unavailable models have no executable default or choice.
+4. **Validation / error matrix:** positive holds must explain every exhausted
+   dimension before `credit_reserved` applies. Genuine credit exhaustion remains
+   `credit_required`, independently of purchase capability; settled budget
+   exhaustion remains policy/contact-owner. Invalid/stale/disabled policy or
+   invalid ledger produces no discovery. Receipt failure leaves discovered models
+   unavailable. Invalid negotiation flags fail before reads or mutations.
+   Revoked saved models never inherit another model's funding reason.
+5. **Good / base / bad cases:** a permitted Sonnet model remains visible and
+   disabled during a credit hold; Ready routes retain existing receipt-backed
+   admission. A ready instance with an unavailable sibling model labels that
+   model unavailable. Invalid authority cannot be replaced by static models,
+   another owner, or a renderer-generated executable choice.
+6. **Required tests:** funding arithmetic, mixed exhaustion, policy/ledger
+   freshness, source mapping and receipt isolation; negotiated and legacy schemas
+   and premutation validation; unavailable descriptors/no default and unchanged
+   admission; disabled picker/Bot rows, search, bound identity and revoked models;
+   precise selected-model status and Settings reservation amounts. Native Picker
+   discovery is noninteractive where item disablement is unsupported.
+   Exact-head Preview plus Electron must show retained disabled models, reserved
+   credit and blocked Send. Paid Stop/new Bot acceptance is a separate gate.
+7. **Wrong / correct:** do not turn a funding hold into a connection failure,
+   erase authorized discovery, or call a discovered model Ready. Preserve
+   unavailable descriptors with a coarse funding explanation and keep admission
+   closed. Aggregate reservations do not prove failed or unknown usage, settlement,
+   refund or release timing; presentation changes never reconcile the ledger.

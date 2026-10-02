@@ -1,4 +1,4 @@
-import { canonicalProviderAvailabilityReasonLabel } from "@matrix-os/contracts";
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -74,6 +74,12 @@ export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderIn
   const label = canonicalProviderAvailabilityReasonLabel(instance);
   return label === "Available" && (instance.driverKind === "codex" || instance.localObservation !== undefined)
     ? codexLocalObservationLabel(instance.localObservation) : label;
+}
+
+/** Preserve a bound route while reporting why it cannot execute. */
+export function canonicalProviderUnavailableSelectionLabel(instance?: CanonicalProviderInstanceDescriptor | null, modelId?: string): string {
+  return instance && instance.models.some(model => model.id === modelId) && canonicalProviderFundingState(instance) === "credit_reserved"
+    ? "Credit reserved" : "Unavailable";
 }
 
 export function codexLocalObservationLabel(observation?: AiProviderLocalObservation): string {

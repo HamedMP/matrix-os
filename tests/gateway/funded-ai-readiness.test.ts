@@ -153,23 +153,23 @@ describe("funded AI readiness", () => {
     if (reason === "stale_ledger") state.funding.asOf = "2026-09-05T11:54:00.000Z";
     expect((await reader.read()).readiness.state).toBe("unavailable");
   });
-  it("distinguishes a healthy zero-credit route from a broken relay", async () => {
+  it("keeps zero-credit funding separate from route observations and purchase capability", async () => {
     const { reader, state, getRouteReadiness } = setup();
     state.funding.promotionalBalanceMicrousd = 0;
     state.funding.creditBalanceMicrousd = 0;
     state.funding.remainingBalanceMicrousd = 0;
     expect(await reader.read()).toMatchObject({
       readiness: { state: "unavailable", safeReason: "credit_required" },
-      allowedModelIds: ["claude-sonnet-5"],
+      allowedModelIds: [], discoverableModelIds: ["claude-sonnet-5"],
     });
     state.funding.topUpEnabled = false;
-    expect((await reader.read()).readiness.safeReason).toBe("provider_unavailable");
+    expect((await reader.read()).readiness.safeReason).toBe("credit_required");
     state.funding.topUpEnabled = true;
     getRouteReadiness.mockResolvedValue({ contractVersion: 1, globalRevision: 1, runtimeRevision: 1,
       checkedAt: now.toISOString(), staleAfter: "2026-09-05T12:00:30.000Z", readyModelIds: [] });
     expect(await reader.read()).toMatchObject({
-      readiness: { state: "unavailable", safeReason: "provider_unavailable" },
-      allowedModelIds: [],
+      readiness: { state: "unavailable", safeReason: "credit_required" },
+      allowedModelIds: [], discoverableModelIds: ["claude-sonnet-5"],
     });
   });
   it("keeps GLM and Sonnet independent when only one model has a current receipt", async () => {

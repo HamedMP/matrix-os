@@ -4,7 +4,7 @@ import type {
 import * as Popover from "@radix-ui/react-popover";
 import { ChevronDown, Cpu, Settings2Icon } from "@renderer/lib/hugeicons";
 import { useState } from "react";
-import { CompactChatProviderChoices, deriveCanonicalProviderChoices } from "@matrix-os/ui";
+import { CompactChatProviderChoices, deriveCanonicalProviderChoices, canonicalProviderUnavailableSelectionLabel } from "@matrix-os/ui";
 import { changeCanonicalComposerInstance, createCanonicalComposerSelection, type CanonicalComposerSelection } from "./canonical-composer-state";
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
 import { openProviderSettings } from "../settings/open-provider-settings";
@@ -29,7 +29,8 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
   const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
   const unavailable = Boolean(selection && (selectedInstance?.availability !== "available" || selectedModel?.availability !== "available"));
   const routeLabel = `${selectedModel?.displayName ?? selection?.model ?? unavailableProviderLabel ?? "Choose model"}${selectedInstance ? ` · ${selectedInstance.displayName}` : ""}${selectedInstance?.connectionLabel && selectedInstance.connectionLabel !== selectedInstance.displayName ? ` · ${selectedInstance.connectionLabel}` : ""}`;
-  const selectionLabel = `${routeLabel}${unavailable ? " · Unavailable" : ""}`;
+  const unavailableLabel = canonicalProviderUnavailableSelectionLabel(selectedInstance, selection?.model);
+  const selectionLabel = `${routeLabel}${unavailable ? ` · ${unavailableLabel}` : ""}`;
   return <><Popover.Root open={open && !disabled} onOpenChange={(nextOpen) => {
     setOpen(nextOpen);
     if (nextOpen) onOpen?.();
@@ -43,7 +44,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
         style={{ color: "var(--text-secondary)" }}>
         {selectedInstance ? <ProviderDriverGlyph kind={selectedInstance.driverKind} /> : <Cpu size={15} />}
         <span data-slot="provider-model-label" className="truncate @max-[42rem]/chat-composer:hidden">{routeLabel}</span>
-        {unavailable ? <span className="shrink-0 @max-[42rem]/chat-composer:hidden">Unavailable</span> : null}
+        {unavailable ? <span className="shrink-0 @max-[42rem]/chat-composer:hidden">{unavailableLabel}</span> : null}
         <ChevronDown size={13} aria-hidden className="shrink-0 @max-[42rem]/chat-composer:hidden" />
         {unavailable ? <span aria-hidden data-slot="provider-model-unavailable-indicator"
           className="absolute right-1 top-1 hidden size-1.5 rounded-full @max-[42rem]/chat-composer:block"

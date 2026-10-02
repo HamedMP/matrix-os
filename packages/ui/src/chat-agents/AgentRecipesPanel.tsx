@@ -1,4 +1,5 @@
 import { MatrixBotModelField, matrixBotModelChoices } from "./bots/MatrixBotModelField.js";
+import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { CanonicalProviderChoice } from "../canonical-provider-choice.js";
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { buildAgentRecipePrompt, isLaunchBotRecipeId, LAUNCH_BOT_RECIPE_IDS } from "./recipe-handoff.js";
@@ -24,10 +25,11 @@ export const BOT_RECIPE_COUNT = agentInspirations.filter((recipe) => !isLaunchBo
 const EMPTY_BOT_RECIPES: BotRecipeSummary[] = [];
 
 export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
-  botRecipes = EMPTY_BOT_RECIPES, matrixModels = [], onInstantiateBot, onOpenBotChat }: {
+  botRecipes = EMPTY_BOT_RECIPES, matrixModels = [], catalog, onInstantiateBot, onOpenBotChat }: {
   onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
   connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
   botRecipes?: BotRecipeSummary[]; matrixModels?: readonly CanonicalProviderChoice[];
+  catalog?: CanonicalProviderCatalog | null;
   onInstantiateBot?: (recipe: BotRecipeRef, clientRequestId: string, selection?: CanonicalChatModelSelection) => Promise<string>;
   onOpenBotChat?: (chatId: string) => void;
 }) {
@@ -91,7 +93,7 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
       <span className="sr-only">Search recipes</span>
       <input className={chatAgentInputClass} type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search roles, skills, or integrations" aria-label="Search recipes" />
     </label>
-    {botMode ? <MatrixBotModelField label="Bot model" selection={botSelection} models={matrixModels} pending={!!botPending}
+    {botMode ? <MatrixBotModelField label="Bot model" selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending}
       onChange={(selection) => { setBotSelection(selection.instanceId === "matrix_bot_default" ? null : selection); setBotError(""); }} /> : null}
     {botError ? <p role="alert" className="text-xs">{botError}</p> : null}
     {showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">

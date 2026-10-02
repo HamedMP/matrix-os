@@ -369,8 +369,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
       now,
     );
     const fundedSourceReadiness = (modelId: string): AiProviderReadiness =>
-      (matrixReadiness.state === "ready" || matrixReadiness.safeReason === "credit_required")
-        && !funded?.allowedModelIds.includes(modelId)
+      funded !== undefined && (matrixReadiness.state === "ready" ? !funded.allowedModelIds.includes(modelId)
+        : !funded.discoverableModelIds?.includes(modelId) && !funded.allowedModelIds.includes(modelId))
         ? { state: "unavailable", checkedAt: matrixReadiness.checkedAt, staleAfter: null,
           action: "retry", safeReason: "provider_unavailable" }
         : matrixReadiness;
@@ -381,7 +381,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
         vendor: "cloudflare", accountLabel: "Included",
         eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
-          .filter((model) => funded?.allowedModelIds.includes(model.id)).map((model) => model.id),
+          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id)).map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSourceReadiness("@cf/zai-org/glm-5.3-flash")),
       sourceFromReadiness({
@@ -391,7 +391,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         vendor: "anthropic",
         accountLabel: "Included",
         eligibleModelIds: eligibleModelsForSource("matrix_included", catalog)
-          .filter((model) => funded?.allowedModelIds.includes(model.id))
+          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id))
           .map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSourceReadiness("claude-sonnet-5")),
