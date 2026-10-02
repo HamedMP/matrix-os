@@ -70,7 +70,7 @@ export default function ChatScreen() {
     ?? defaultCatalogSelection(catalog);
   const turnModes = defaultTurnModes(catalog, selection);
 
-  const { draft, setDraft, send, isSending, optimisticMessage } = useChatComposer({
+  const { draft, setDraft, send, isSending, optimisticMessages } = useChatComposer({
     activeChatId,
     detail,
     selection,
@@ -80,9 +80,10 @@ export default function ChatScreen() {
 
   const messages = useMemo(() => {
     const transcript = buildTranscript(detail);
+    if (optimisticMessages.length === 0) return transcript;
     // Newest-first, matching the inverted transcript FlatList.
-    return optimisticMessage ? [optimisticTranscriptMessage(optimisticMessage), ...transcript] : transcript;
-  }, [detail, optimisticMessage]);
+    return [...optimisticMessages.map(optimisticTranscriptMessage).reverse(), ...transcript];
+  }, [detail, optimisticMessages]);
   const busy = isSending || (detail?.runs.some(
     (run) => !["completed", "failed", "aborted"].includes(run.status),
   ) ?? false);

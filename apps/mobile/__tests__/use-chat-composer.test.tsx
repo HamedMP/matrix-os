@@ -104,7 +104,7 @@ describe("chat composer send lifecycle", () => {
 
     sendText(composer, "Ship it");
     expect(composer.result.current.draft).toBe("");
-    expect(composer.result.current.optimisticMessage).toMatchObject({ text: "Ship it", chatId: null });
+    expect(composer.result.current.optimisticMessages).toMatchObject([{ text: "Ship it", chatId: null }]);
 
     // The chat is created, but the draft is not bound to it until the turn is admitted.
     await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
@@ -130,7 +130,7 @@ describe("chat composer send lifecycle", () => {
 
     // The session now shows the new chat; its detail has not loaded yet.
     composer.rerender({ activeChatId: "chat_new", detail: null, selection, turnModes, projectId: null });
-    expect(composer.result.current.optimisticMessage).toMatchObject({ text: "Ship it", chatId: "chat_new" });
+    expect(composer.result.current.optimisticMessages).toMatchObject([{ text: "Ship it", chatId: "chat_new" }]);
 
     // The detail arrives with the admitted turn and its message.
     composer.rerender({
@@ -140,7 +140,7 @@ describe("chat composer send lifecycle", () => {
       turnModes,
       projectId: null,
     });
-    expect(composer.result.current.optimisticMessage).toBeNull();
+    expect(composer.result.current.optimisticMessages).toEqual([]);
     expect(composer.result.current.draft).toBe("");
   });
 
@@ -156,7 +156,7 @@ describe("chat composer send lifecycle", () => {
     expect(mockBindDraftChatId).not.toHaveBeenCalled();
     expect(mockAdmitChatTurn.mock.calls[0][2]).toBe("chat_existing");
     expect(mockAdmitChatTurn.mock.calls[0][3]).toMatchObject({ baseRevision: 7 });
-    expect(composer.result.current.optimisticMessage).toMatchObject({ text: "Ship it" });
+    expect(composer.result.current.optimisticMessages).toMatchObject([{ text: "Ship it" }]);
 
     composer.rerender({
       activeChatId: "chat_existing",
@@ -165,7 +165,7 @@ describe("chat composer send lifecycle", () => {
       turnModes,
       projectId: null,
     });
-    expect(composer.result.current.optimisticMessage).toBeNull();
+    expect(composer.result.current.optimisticMessages).toEqual([]);
   });
 
   it("returns the text when admission fails, leaves the draft unbound, and retries with the same keys", async () => {
@@ -174,7 +174,7 @@ describe("chat composer send lifecycle", () => {
 
     sendText(composer, "Ship it");
     await waitFor(() => expect(composer.result.current.draft).toBe("Ship it"));
-    expect(composer.result.current.optimisticMessage).toBeNull();
+    expect(composer.result.current.optimisticMessages).toEqual([]);
     expect(composer.result.current.isSending).toBe(false);
     expect(mockBindDraftChatId).not.toHaveBeenCalled();
 
@@ -184,6 +184,71 @@ describe("chat composer send lifecycle", () => {
 
     expect(mockCreateChat.mock.calls.map((call) => call[2].clientRequestId)).toEqual(["req_1", "req_1"]);
     expect(mockAdmitChatTurn.mock.calls.map((call) => call[3].clientRequestId)).toEqual(["req_2", "req_2"]);
+  });
+
+  it("keeps a chat's pending message when another chat sends before it is delivered", async () => {
+    mockAdmitChatTurn.mockResolvedValueOnce(admissionFor("chat_a", "msg_a"));
+    const inA = { activeChatId: "chat_a", detail: detailFor("chat_a", []), selection, turnModes, projectId: null };
+    const inB = { activeChatId: "chat_b", detail: detailFor("chat_b", []), selection, turnModes, projectId: null };
+    const composer = renderComposer(inA);
+
+    sendText(composer, "For A");
+    await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+
+    // Admitted, but chat A's detail has not caught up when the user moves on.
+    mockAdmitChatTurn.mockResolvedValueOnce(admissionFor("chat_b", "msg_b"));
+    composer.rerender(inB);
+    expect(composer.result.current.optimisticMessages).toEqual([]);
+    sendText(composer, "For B");
+    await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+    expect(composer.result.current.optimisticMessages).toMatchObject([{ text: "For B" }]);
+
+    composer.rerender(inA);
+    expect(composer.result.current.optimisticMessages).toMatchObject([{ text: "For A" }]);
+
+    composer.rerender({ ...inA, detail: detailFor("chat_a", ["msg_a"]) });
+    expect(composer.result.current.optimisticMessages).toEqual([]);
+  });
+
+  it("moves text typed during a new chat's first send into the chat created for it", async () => {
+    let admit: (admission: unknown) => void = () => {};
+    mockAdmitChatTurn.mockReturnValue(new Promise((resolve) => { admit = resolve; }));
+    const composer = renderComposer();
+
+    sendText(composer, "Ship it");
+    act(() => { composer.result.current.setDraft("and tag it"); });
+    await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+    await act(async () => { admit(admissionFor("chat_new", "msg_new")); });
+    await waitFor(() => expect(mockBindDraftChatId).toHaveBeenCalledWith("chat_new"));
+
+    composer.rerender({ activeChatId: "chat_new", detail: null, selection, turnModes, projectId: null });
+    expect(composer.result.current.draft).toBe("and tag it");
+
+    // The next new chat starts with an empty composer.
+    composer.rerender({ activeChatId: null, detail: null, selection, turnModes, projectId: null });
+    expect(composer.result.current.draft).toBe("");
+  });
+
+  it("does not reuse a failed new chat's keys once a different project is selected", async () => {
+    mockAdmitChatTurn.mockRejectedValueOnce(new Error("Turn rejected"));
+    const composer = renderComposer({ projectId: "proj_old" });
+
+    sendText(composer, "Ship it");
+    await waitFor(() => expect(composer.result.current.draft).toBe("Ship it"));
+
+    // Reusing the creation key would bring back the chat made in the old project.
+    mockCreateChat.mockResolvedValue({ chat: { id: "chat_in_new_project", revision: 1 } });
+    mockAdmitChatTurn.mockResolvedValue(admissionFor("chat_in_new_project", "msg_new"));
+    composer.rerender({ activeChatId: null, detail: null, selection, turnModes, projectId: "proj_new" });
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(mockBindDraftChatId).toHaveBeenCalledWith("chat_in_new_project"));
+
+    const [first, second] = mockCreateChat.mock.calls.map((call) => call[2]);
+    expect(first).toMatchObject({ projectId: "proj_old" });
+    expect(second).toMatchObject({ projectId: "proj_new" });
+    expect(second.clientRequestId).not.toBe(first.clientRequestId);
+    const [firstTurn, secondTurn] = mockAdmitChatTurn.mock.calls.map((call) => call[3].clientRequestId);
+    expect(secondTurn).not.toBe(firstTurn);
   });
 
   it("treats repeated text as a new message once another send in the chat has succeeded", async () => {

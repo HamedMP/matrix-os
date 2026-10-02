@@ -259,6 +259,31 @@ describe("drawer home screen", () => {
       expect(screen.queryByText("Ship it")).toBeNull();
     });
 
+    it("keeps a failed send's text apart from a draft typed in another chat", () => {
+      mockActiveChatId = "chat_a";
+      mockDetail = detailFor("chat_a", []);
+      const view = render(<ChatScreen />);
+      sendDraft("Ship it");
+
+      // While the send is in flight, the user starts a message in another chat.
+      mockActiveChatId = "chat_b";
+      mockDetail = detailFor("chat_b", []);
+      view.rerender(<ChatScreen />);
+      fireEvent.changeText(screen.getByLabelText("Message Matrix"), "note for B");
+      act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("note for B");
+
+      mockActiveChatId = "chat_a";
+      mockDetail = detailFor("chat_a", []);
+      view.rerender(<ChatScreen />);
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
+
+      mockActiveChatId = "chat_b";
+      mockDetail = detailFor("chat_b", []);
+      view.rerender(<ChatScreen />);
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("note for B");
+    });
+
     it("does not show the pending message in a different chat", () => {
       mockActiveChatId = "chat_existing";
       mockDetail = detailFor("chat_existing", []);
