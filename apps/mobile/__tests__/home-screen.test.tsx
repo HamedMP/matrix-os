@@ -4,6 +4,7 @@ const mockSendMessage = jest.fn();
 let mockActiveChatId: string | null = null;
 let mockDetail: unknown;
 let mockCatalog: unknown;
+let mockComputer: unknown;
 let mockSendPending = false;
 
 jest.mock("@clerk/clerk-expo", () => ({
@@ -30,7 +31,7 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
 }));
 
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
-  useCanonicalChatDetail: () => ({ detail: mockDetail }),
+  useCanonicalChatDetail: () => ({ detail: mockDetail, computer: mockComputer }),
 }));
 
 jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
@@ -83,6 +84,7 @@ describe("drawer home screen", () => {
     mockActiveChatId = null;
     mockDetail = undefined;
     mockCatalog = undefined;
+    mockComputer = undefined;
     mockSendPending = false;
     mockSendMessage.mockReset();
     jest.restoreAllMocks();
@@ -282,6 +284,22 @@ describe("drawer home screen", () => {
       mockDetail = detailFor("chat_b", []);
       view.rerender(<ChatScreen />);
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("note for B");
+    });
+
+    it("starts with an empty composer and transcript on another computer", () => {
+      mockComputer = { handle: "amin", runtimeSlot: "primary", gatewayPath: "/vm/amin" };
+      const view = render(<ChatScreen />);
+      sendDraft("Ship it");
+      fireEvent.changeText(screen.getByLabelText("Message Matrix"), "and tag it");
+
+      mockComputer = { handle: "amin", runtimeSlot: "secondary", gatewayPath: "/vm/amin?runtime=secondary" };
+      view.rerender(<ChatScreen />);
+      expect(screen.queryByText("Ship it")).toBeNull();
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
+
+      // The send made on the previous computer fails: its text stays out of this one.
+      act(() => { mockSendMessage.mock.calls[0][1].onError(new Error("offline")); });
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
     });
 
     it("does not show the pending message in a different chat", () => {

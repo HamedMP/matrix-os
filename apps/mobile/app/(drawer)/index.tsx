@@ -46,7 +46,7 @@ import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
 export default function ChatScreen() {
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, userId } = useAuth();
   const { user } = useUser();
   const { theme } = useUnistyles();
   const {
@@ -71,6 +71,7 @@ export default function ChatScreen() {
   const turnModes = defaultTurnModes(catalog, selection);
 
   const { draft, setDraft, send, isSending, optimisticMessages } = useChatComposer({
+    scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
     activeChatId,
     detail,
     selection,
