@@ -1196,6 +1196,35 @@ describe('CI workflows', () => {
     expect(runs(publish)).toContain('--environment production');
     expect(source).not.toContain('--channel production');
 
+    // Preview only moves forward. Manual publishes share the push queue, and a
+    // run whose commit is older than what preview already carries (a re-run of
+    // an old job, say) is refused before anything is published.
+    expect(source).toContain(
+      "(github.event_name == 'push' || inputs.action == 'publish-preview') && 'preview-publish'",
+    );
+    const publishCheckout = publish?.steps?.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(publishCheckout?.with?.['fetch-depth']).toBe(0);
+    const publishScript = runs(publish);
+    const publishCommand = publishScript.indexOf('--channel preview');
+    const orderCheck = publishScript.indexOf('git merge-base --is-ancestor "$GITHUB_SHA" "$LAST_COMMIT"');
+    expect(orderCheck).toBeGreaterThan(-1);
+    expect(orderCheck).toBeLessThan(publishCommand);
+
+    // An update bundled without the Clerk key renders only the "missing
+    // configuration" screen, so the key must be readable before publishing.
+    const configCheck = publishScript.indexOf('EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY');
+    expect(configCheck).toBeGreaterThan(-1);
+    expect(configCheck).toBeLessThan(publishCommand);
+
+    // Jobs that hold EXPO_TOKEN must not run action code a tag can repoint.
+    const actionRefs = Object.values(jobs).flatMap((job) =>
+      (job.steps ?? []).flatMap((step) => (step.uses ? [step.uses] : [])),
+    );
+    expect(actionRefs.length).toBeGreaterThan(0);
+    for (const ref of actionRefs) {
+      expect(ref).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+    }
+
     // Production moves only through the manual, reviewer-gated promote job.
     const production = jobs.production;
     expect(production?.environment).toBe('mobile-ota-production');

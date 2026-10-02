@@ -55,10 +55,11 @@ on:
 permissions:
   contents: read
 
-# Pushes to main queue behind each other so preview always ends on the newest
-# commit. Only superseded pull request runs are cancelled.
+# Everything that can publish to preview (pushes to main and manual publishes)
+# shares one queue, so runs publish in the order they started. Only superseded
+# pull request runs are cancelled.
 concurrency:
-  group: mobile-ota-${{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && 'main-push' || inputs.action }}
+  group: mobile-ota-${{ github.event_name == 'pull_request' && github.ref || (github.event_name == 'push' || inputs.action == 'publish-preview') && 'preview-publish' || inputs.action }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -74,13 +75,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # The native guard walks history to the commit that introduced the
           # current app version.
           fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: pnpm
@@ -115,9 +116,13 @@ jobs:
       group: mobile-ota-preview
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # The ordering check compares this commit with the one preview
+          # already carries.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: pnpm
@@ -134,6 +139,46 @@ jobs:
             exit 1
           fi
 
+          eas() { pnpm dlx "eas-cli@${EAS_CLI_VERSION}" "$@"; }
+          EXPECTED_RUNTIME="$(node -p "require('./app.json').expo.version")"
+
+          # The update is bundled with the production EAS environment. Without
+          # the Clerk key it would publish fine and then render only the
+          # "missing configuration" screen, so check that the key is readable
+          # by an update (Plain text or Sensitive visibility) first.
+          eas env:pull --environment production --path "$RUNNER_TEMP/eas-production.env" --non-interactive
+          CLERK_KEY_SET=false
+          if grep -Eq '^EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=.+' "$RUNNER_TEMP/eas-production.env"; then
+            CLERK_KEY_SET=true
+          fi
+          rm -f "$RUNNER_TEMP/eas-production.env"
+          if [ "$CLERK_KEY_SET" != "true" ]; then
+            echo "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY is not readable from the production EAS environment. Set it there with Plain text or Sensitive visibility." >&2
+            exit 1
+          fi
+
+          # Preview only moves forward. Refuse to publish a commit that is older
+          # than the one preview already carries for this app version, which is
+          # what a re-run of an old job would do. A missing branch means this is
+          # the first publish.
+          if LIST="$(eas update:list --branch preview --runtime-version "$EXPECTED_RUNTIME" --limit 1 --json --non-interactive 2>"$RUNNER_TEMP/update-list.err")"; then
+            LAST_GROUP="$(jq -r '.currentPage[0].group // ""' <<<"$LIST")"
+          elif grep -q 'Could not find branch' "$RUNNER_TEMP/update-list.err"; then
+            LAST_GROUP=""
+          else
+            cat "$RUNNER_TEMP/update-list.err" >&2
+            exit 1
+          fi
+          if [ -n "$LAST_GROUP" ]; then
+            LAST_COMMIT="$(eas update:view "$LAST_GROUP" --json | jq -r '.[0].gitCommitHash // ""')"
+            if [ -n "$LAST_COMMIT" ] && [ "$LAST_COMMIT" != "$GITHUB_SHA" ] \
+              && git cat-file -e "${LAST_COMMIT}^{commit}" 2>/dev/null \
+              && git merge-base --is-ancestor "$GITHUB_SHA" "$LAST_COMMIT"; then
+              echo "Preview already carries a newer commit (${LAST_COMMIT:0:9}); refusing to publish ${GITHUB_SHA:0:9} over it. Run the workflow from the current main instead." >&2
+              exit 1
+            fi
+          fi
+
           MESSAGE="$INPUT_MESSAGE"
           if [ -z "$MESSAGE" ]; then
             MESSAGE="$(git log -1 --pretty=%s | cut -c1-200) (${GITHUB_SHA:0:7})"
@@ -143,11 +188,10 @@ jobs:
           # this exact bundle, so it must already carry production variables.
           # The flag is not enforced in CI; without it the bundle would ship
           # with no EXPO_PUBLIC_* values at all.
-          pnpm dlx "eas-cli@${EAS_CLI_VERSION}" update \
+          eas update \
             --channel preview --environment production --platform all \
             --message "$MESSAGE" --non-interactive --json > "$RUNNER_TEMP/update.json"
 
-          EXPECTED_RUNTIME="$(node -p "require('./app.json').expo.version")"
           GROUP="$(jq -r '[.[].group] | unique | if length == 1 then .[0] else "" end' "$RUNNER_TEMP/update.json")"
           RUNTIME="$(jq -r '[.[].runtimeVersion] | unique | join(",")' "$RUNNER_TEMP/update.json")"
           BRANCH="$(jq -r '[.[].branch] | unique | join(",")' "$RUNNER_TEMP/update.json")"
@@ -177,11 +221,11 @@ jobs:
       group: mobile-ota-production
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: pnpm
