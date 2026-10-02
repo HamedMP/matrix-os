@@ -220,6 +220,10 @@ applies on the next cold start). The app also re-checks when it returns to the
 foreground, at most once every 15 minutes, and prompts once per update per
 session. The logic lives in `apps/mobile/lib/use-ota-update-prompt.ts`.
 
+The prompt is the operating system's default alert on purpose, for now. A
+custom in-app surface is planned; until then, do not treat the plain alert as a
+gap in brand styling.
+
 Development clients never prompt. To test, install a `preview` build, publish an
 update, then fully close and reopen the app and wait for the download.
 

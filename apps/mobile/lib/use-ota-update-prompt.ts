@@ -59,6 +59,8 @@ function restartIntoUpdate(updateType: Updates.UpdateInfoType): void {
     });
 }
 
+// The system alert is a deliberate interim choice: it needs no design work and
+// behaves correctly on both platforms. A custom in-app surface is planned.
 function promptToRestart(updateType: Updates.UpdateInfoType): void {
   capture("mobile_ota_update_prompt_shown", { update_type: updateType });
   Alert.alert(
