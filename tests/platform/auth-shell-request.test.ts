@@ -20,11 +20,11 @@ function app() {
 }
 
 describe("platform forwarding to the local auth shell", () => {
-  it.each(["/api/projects", "/files/example.txt", "/sign-in-untrusted"])("does not route unrelated POST %s to the auth shell", (path) => {
+  it.each(["/api/projects", "/files/example.txt", "/sign-in-untrusted", "/slack/oauth/complete/extra"])("does not route unrelated POST %s to the auth shell", (path) => {
     expect(shouldProxyAuthShellForUnroutedUser({ isAppDomain: true, method: "POST", path })).toBe(false);
   });
 
-  it.each(["/sign-in", "/sign-up/verify-email-address"])("forwards a Next Server Action body from %s intact", async (path) => {
+  it.each(["/sign-in", "/sign-up/verify-email-address", "/slack/oauth/complete"])("forwards a Next Server Action body from %s intact", async (path) => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("action-result"));
     const response = await app().request("https://app.matrix-os.com" + path, {
       method: "POST", headers: { host: "app.matrix-os.com", "next-action": "fixture-action", "content-type": "text/plain" },
