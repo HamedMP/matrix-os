@@ -10,6 +10,7 @@ afterEach(cleanup);
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
+  useAuth: () => ({ getToken: async () => null, orgId: null }),
 }));
 
 it("shows bot identity, questions, and memory in Web Mobile Chat", async () => {

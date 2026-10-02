@@ -4,7 +4,7 @@ import {
   ChevronRight,
   CircleAlert,
 } from "@renderer/lib/hugeicons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -400,12 +400,7 @@ function ConversationTurn({
   initialFinalIds: ReadonlySet<string>;
 }) {
   const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
-  const rootKind = turn.executionRoot?.kind;
-  const rootProjectId = turn.executionRoot?.projectId;
-  const rootWorktreeId = turn.executionRoot?.kind === "worktree" ? turn.executionRoot.worktreeId : undefined;
-  const appRoot = useMemo(() => rootKind && rootProjectId
-    ? rootKind === "worktree" ? { kind: rootKind, projectId: rootProjectId, worktreeId: rootWorktreeId! } : { kind: rootKind, projectId: rootProjectId }
-    : undefined, [rootKind, rootProjectId, rootWorktreeId]);
+  const appRoot = turn.executionRoot;
   const resolveRunApp = useCallback((path: string) => callbacks.resolveApp?.(path, appRoot) ?? null, [callbacks.resolveApp, appRoot]);
   const openRunApp = useCallback((path: string) => callbacks.openApp?.(path, appRoot) ?? false, [callbacks.openApp, appRoot]);
   const fileCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile
