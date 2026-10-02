@@ -1,7 +1,7 @@
 # Electron Desktop native window evidence
 
 Captured on 2026-10-02 against source head
-`cb37cebb902c7a8e793539c3d531351a330c7b68`, using the actual built Electron
+`1ca816da7eba3e37cdc4a22b226c122bcf88cbb5`, using the actual built Electron
 main, preload, renderer and installed-app `WebContentsView`. The isolated
 gateway serves a fictional **Color Lab** app; its 4px gold border belongs to
 the fixture, not Matrix window chrome. No customer runtime, owner app or
@@ -60,7 +60,7 @@ external authentication browser. New evidence is written under
 `output/playwright/native-window-edge-evidence/`, or the explicit
 `MATRIX_NATIVE_EVIDENCE_DIR` supplied for a scratch output directory.
 Review and remove scratch output after use. The retained run passed **1/1**
-native tests in 2.63s; focused production tests are recorded in the PR.
+native tests after rebasing onto the merged native app-launch change; focused production tests are recorded in the PR.
 The recipe propagates test failures after scratch cleanup. The probe registers
 acquired resources immediately and attempts every cleanup, including when
 startup or a prior close fails; cleanup errors remain test failures.
