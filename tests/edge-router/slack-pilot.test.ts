@@ -31,7 +31,7 @@ describe('bounded legacy Slack pilot sign-in route', () => {
     expect(sent.redirect).toBe('manual');
     expect(fetch.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
   });
-  it.each(['/sign-in', '/sign-up/verify-email-address'])('forwards the bounded same-origin auth action for %s', async (path) => {
+  it.each(['/sign-in', '/sign-up/verify-email-address', '/slack/oauth/complete'])('forwards the bounded same-origin auth action for %s', async (path) => {
     clock(); const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
     const action = 'a'.repeat(40);
     const response = await handleSlackPilotRequest(request(path, { method: 'POST',
@@ -52,7 +52,7 @@ describe('bounded legacy Slack pilot sign-in route', () => {
     expect((fetch.mock.calls[0]![0] as Request).headers.has('next-action')).toBe(false);
   });
   it.each(['/vm/pr-2079/api/files', '/api/integrations', '/api/terminal/run', '/api/slack/context',
-    '/_next/data/secret', '/api/slack/install/extra', '/sign-injected', '/slack/link/extra'])('denies unrelated path %s', async (path) => {
+    '/_next/data/secret', '/api/slack/install/extra', '/sign-injected', '/slack/link/extra', '/slack/oauth/complete/extra'])('denies unrelated path %s', async (path) => {
     clock(); const fetch = vi.spyOn(globalThis, 'fetch');
     expect((await handleSlackPilotRequest(request(path), env)).status).toBe(404);
     expect(fetch).not.toHaveBeenCalled();
