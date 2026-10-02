@@ -1,3 +1,4 @@
+import { CanonicalChatIdentityGate } from "./CanonicalChatIdentityGate";
 import { CanonicalNewChatContent } from "./CanonicalNewChatContent";
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
@@ -7,7 +8,7 @@ import {
   chatReadAction,
   CanonicalSharedChatPanel,
   BotChatPanel,
-  useDirectBotBinding, BotBindingStatus,
+  useDirectBotBinding,
   useBotMentionNavigation,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
@@ -623,7 +624,7 @@ export function CanonicalChatWorkspace({
   };
 
   const steerQueuedTurn = async (queuedTurnId: string) => {
-    if (queuePendingAction || editingQueuedTurn || !canSteerActiveRun || !activeRun) return;
+    if (botIdentityUnknown || queuePendingAction || editingQueuedTurn || !canSteerActiveRun || !activeRun) return;
     const queuedTurn = serverQueuedTurns.find((turn) => turn.id === queuedTurnId);
     if (!queuedTurn) return;
     setQueuePendingAction({ queuedTurnId, action: "steer" });
@@ -635,7 +636,7 @@ export function CanonicalChatWorkspace({
   };
 
   const editQueuedTurn = (queuedTurnId: string) => {
-    if (queuePendingAction || composerAction || uploadingAttachments || composerHasInput) return;
+    if (botIdentityUnknown || queuePendingAction || composerAction || uploadingAttachments || composerHasInput) return;
     const queuedTurn = queuedTurns.find((turn) => turn.id === queuedTurnId);
     if (!queuedTurn) return;
     const text = queuedTurn.parts
@@ -677,8 +678,20 @@ export function CanonicalChatWorkspace({
     return seeded;
   });
 
-  const composer = botIdentityUnknown ? <BotBindingStatus loading={botBinding.loading} retry={botBinding.retry}/> : (
+  const composer = (
     <>
+      <QueuedTurnsPanel
+        turns={queuedTurns}
+        disabled={Boolean(editingQueuedTurn) || composerAction !== null || uploadingAttachments}
+        canSteer={!botIdentityUnknown && canSteerActiveRun} canEdit={!botIdentityUnknown}
+        pendingAction={queuePendingAction}
+        editingQueuedTurnId={editingQueuedTurn?.id ?? null}
+        onSteer={(queuedTurnId) => void steerQueuedTurn(queuedTurnId)}
+        onEdit={editQueuedTurn}
+        onReorder={(queuedTurnIds, movedQueuedTurnId) => void reorderQueuedTurns(queuedTurnIds, movedQueuedTurnId)}
+        onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
+      />
+      <CanonicalChatIdentityGate unknown={botIdentityUnknown} loading={botBinding.loading} retry={botBinding.retry} onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}><>
       <input
         ref={fileInputRef}
         type="file"
@@ -690,17 +703,7 @@ export function CanonicalChatWorkspace({
           event.currentTarget.value = "";
         }}
       />
-      <QueuedTurnsPanel
-        turns={queuedTurns}
-        disabled={Boolean(editingQueuedTurn) || composerAction !== null || uploadingAttachments}
-        canSteer={canSteerActiveRun}
-        pendingAction={queuePendingAction}
-        editingQueuedTurnId={editingQueuedTurn?.id ?? null}
-        onSteer={(queuedTurnId) => void steerQueuedTurn(queuedTurnId)}
-        onEdit={editQueuedTurn}
-        onReorder={(queuedTurnIds, movedQueuedTurnId) => void reorderQueuedTurns(queuedTurnIds, movedQueuedTurnId)}
-        onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
-      />
+
       <SharedChatComposer
         value={draft}
         onChange={setDraft}
@@ -780,6 +783,7 @@ export function CanonicalChatWorkspace({
       {botMention.error ? <p role="alert" className="px-3 text-xs">{botMention.error}</p> : null}
       <ChatMentionControls client={client.agents} resources={mentionResources} permissionMode={selection?.permissionMode ?? "supervised"}
         confirmed={mentionPermission.confirmed} onConfirm={mentionPermission.confirm} />
+      </></CanonicalChatIdentityGate>
     </>
   );
 
