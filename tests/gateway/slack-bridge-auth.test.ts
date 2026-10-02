@@ -27,6 +27,24 @@ describe("owner Slack bridge", () => {
     expect((await app.request("/api/internal/slack/authorize",await request("/api/internal/slack/authorize",payload))).status).toBe(200);
     expect((await app.request("/api/internal/slack/authorize",{method:"POST",body:JSON.stringify(payload)})).status).toBe(401);
   });
+  it("keeps public readiness and authenticated non-Slack routes outside the bridge signature/body limits", async () => {
+    vi.stubEnv("MATRIX_USER_ID", ownerId);
+    vi.stubEnv("MATRIX_HANDLE", "pr-2079");
+    try {
+      const { app: bridge } = setup();
+      const app = new Hono();
+      app.use("*", authMiddleware("owner-session-secret"));
+      app.route("/", bridge); // production registers health and several owner APIs afterward
+      app.get("/health", c => c.json({ status: "ok" }));
+      app.get("/api/owner/settings", c => c.json({ available: true }));
+      app.post("/api/owner/content", async c => c.json({ length: (await c.req.text()).length }));
+      expect((await app.request("/health")).status).toBe(200);
+      expect((await app.request("/api/owner/settings")).status).toBe(401);
+      expect((await app.request("/api/owner/settings", { headers: { authorization: "Bearer owner-session-secret" } })).status).toBe(200);
+      expect((await app.request("/api/owner/content", { method: "POST", headers: { authorization: "Bearer owner-session-secret" }, body: "x".repeat(300_000) })).status).toBe(200);
+      expect((await app.request("/api/internal/slack/events")).status).toBe(401);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it("requires a fresh signature over the exact path and body before dispatch", async () => {
     const {app,receive}=setup();
     const envelope={ownerId,organizationId:"org_company",actorId:"user_employee",channelScopeId:scopeId,
