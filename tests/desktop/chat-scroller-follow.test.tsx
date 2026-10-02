@@ -171,6 +171,38 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     expect(screen.queryByRole("button", { name: "Scroll to latest" })).toBeNull();
   });
 
+  it("does not let a deferred repin override a reader who scrolls away", () => {
+    const metrics = { scrollHeight: 1200, clientHeight: 300 };
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    render(
+      <Conversation>
+        <ConversationContent>
+          <ConversationItem messageId="m1">row</ConversationItem>
+        </ConversationContent>
+      </Conversation>,
+    );
+    const el = viewport();
+    mockMetrics(el, metrics);
+
+    fireContentResize();
+    expect(el.scrollTop).toBe(900);
+    expect(frames.length).toBeGreaterThan(0);
+
+    el.scrollTop = 100;
+    fireEvent.scroll(el);
+    act(() => {
+      for (const frame of frames.splice(0)) frame(0);
+    });
+
+    expect(el.scrollTop).toBe(100);
+    expect(screen.getByRole("button", { name: "Scroll to latest" })).toBeTruthy();
+  });
+
   it("keeps the reader's place when older rows are prepended above", async () => {
     const metrics = { scrollHeight: 600, clientHeight: 200 };
     const view = render(

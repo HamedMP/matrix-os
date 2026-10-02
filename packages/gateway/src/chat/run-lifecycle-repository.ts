@@ -75,8 +75,10 @@ function isRetentionProtectedActivity(
   activity: CanonicalChatRunActivity,
   resolvedApprovalIds: readonly string[],
   resolvedInputIds: readonly string[],
+  protectResolution = false,
 ): boolean {
   return isTerminalActivity(activity)
+    || (protectResolution && (activity.type === "approval.resolved" || activity.type === "input.resolved"))
     || (activity.type === "approval.requested" && !resolvedApprovalIds.includes(activity.approvalId))
     || ((activity.type === "input.requested" || activity.type === "input.submitted")
       && !resolvedInputIds.includes(activity.requestId));
@@ -444,9 +446,11 @@ export class ChatRunLifecycleRepository {
         let remainingOverflow = overflow - evictedIds.length;
         if (remainingOverflow > 0) {
           const existingIds = new Set(existing.map((row) => row.id));
+          // Historical resolution rows are expendable, but a resolution in
+          // this batch must win capacity so its pending rail can clear.
           const expendableIncomingIds = [...new Map(activities
             .filter((activity) => !existingIds.has(activity.id)
-              && !isRetentionProtectedActivity(activity, resolvedApprovalIds, resolvedInputIds))
+              && !isRetentionProtectedActivity(activity, resolvedApprovalIds, resolvedInputIds, true))
             .map((activity) => [activity.id, activity])).keys()];
           for (const id of expendableIncomingIds.slice(0, remainingOverflow)) skippedIncomingIds.add(id);
           remainingOverflow -= skippedIncomingIds.size;

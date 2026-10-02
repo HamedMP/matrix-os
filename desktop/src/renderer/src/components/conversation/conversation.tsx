@@ -127,7 +127,10 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
         // ResizeObserver can run before Chromium finishes a nested Markdown or
         // flex reflow. Re-assert the exact clamped edge on the next frame so a
         // terminal work collapse cannot leave stale space below the transcript.
-        settleFrame = window.requestAnimationFrame(pinToLiveEdge);
+        settleFrame = window.requestAnimationFrame(() => {
+          settleFrame = undefined;
+          if (atBottomRef.current) pinToLiveEdge();
+        });
         return;
       }
       const maximum = maximumScrollTop(viewport);

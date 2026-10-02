@@ -151,6 +151,14 @@ function publishCompletion(): void {
 }
 
 async function expectValidGeometry(): Promise<void> {
+  await page.waitForFunction(() => {
+    const viewport = document.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
+    const content = viewport?.firstElementChild as HTMLElement | null;
+    if (!viewport || !content) return false;
+    const maximum = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    return Math.abs(maximum - viewport.scrollTop) <= 1
+      && content.getBoundingClientRect().bottom >= viewport.getBoundingClientRect().bottom - 1;
+  });
   const metrics = await page.locator('[data-slot="message-scroller-viewport"]').evaluate((element) => {
     const viewport = element as HTMLElement;
     const content = viewport.firstElementChild as HTMLElement | null;
@@ -163,6 +171,7 @@ async function expectValidGeometry(): Promise<void> {
   });
   expect(metrics.scrollTop).toBeGreaterThanOrEqual(0);
   expect(metrics.scrollTop).toBeLessThanOrEqual(metrics.maximum + 1);
+  expect(Math.abs(metrics.maximum - metrics.scrollTop)).toBeLessThanOrEqual(1);
   expect(metrics.contentBottom).toBeGreaterThanOrEqual(metrics.viewportBottom - 1);
 }
 
@@ -222,10 +231,15 @@ suite("large canonical Chat viewport recovery", () => {
 
     publishCompletion();
     await page.getByText(finalText, { exact: true }).waitFor();
+    await worked.click();
+    await expect.poll(() => worked.getAttribute("aria-expanded")).toBe("false");
     await expectValidGeometry();
 
     const requestsBeforeReload = detailRequests;
-    await page.reload();
+    await Promise.all([
+      page.waitForEvent("load"),
+      page.keyboard.press(process.platform === "darwin" ? "Meta+R" : "Control+R"),
+    ]);
     await page.getByRole("button", { name: "Chat", exact: true }).first().dblclick();
     await page.getByRole("button", { name: "Large transcript recovery", exact: true }).click();
     await page.getByText(finalText, { exact: true }).waitFor();

@@ -2355,6 +2355,84 @@ describe("ChatRepository", () => {
     })).resolves.toMatchObject({ request: { id: request.id }, resolved: false });
   });
 
+  it("retains an input resolution when the same overflowing batch drops expendable status", async () => {
+    const created = await repository.create(owner, {
+      id: "chat_nonterminal_input_resolution",
+      clientRequestId: "req_create_nonterminal_input_resolution",
+      title: "Non-terminal input resolution",
+    });
+    const input = message(created.chat.id);
+    const acceptedTurn = turn(created.chat.id, input);
+    const acceptedRun = run(created.chat.id, acceptedTurn);
+    await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: input,
+      turn: acceptedTurn,
+      run: acceptedRun,
+    });
+    await repository.kysely.updateTable("chat_runs").set({
+      status: "waiting_for_input",
+      started_at: now,
+      updated_at: now,
+    }).where("id", "=", acceptedRun.id).execute();
+    const requests: CanonicalChatRunActivity[] = Array.from({ length: 500 }, (_, index) => ({
+      id: `activity_protected_input_${index + 1}`,
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      sequence: index + 1,
+      occurredAt: now,
+      type: "input.requested",
+      requestId: `input_protected_${index + 1}`,
+      title: `Question ${index + 1}`,
+    }));
+    await repository.kysely.insertInto("chat_run_events").values(requests.map((event) => ({
+      id: event.id,
+      chat_id: created.chat.id,
+      run_id: acceptedRun.id,
+      run_seq: event.sequence,
+      event: sql`${JSON.stringify(event)}::jsonb`,
+      occurred_at: now,
+    }))).execute();
+
+    const resolution: CanonicalChatRunActivity = {
+      id: "activity_protected_input_resolution",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: "2026-08-25T00:00:01.000Z",
+      type: "input.resolved",
+      requestId: "input_protected_1",
+      reason: "answered",
+    };
+    const expendableStatus: CanonicalChatRunActivity = {
+      id: "activity_expendable_after_resolution",
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      occurredAt: "2026-08-25T00:00:02.000Z",
+      type: "run.status",
+      status: "running",
+    };
+
+    await expect(repository.appendRunActivities(owner, created.chat.id, acceptedRun.id, [
+      resolution,
+      expendableStatus,
+    ])).resolves.toBe(1);
+
+    const events = await repository.kysely.selectFrom("chat_run_events")
+      .select("id")
+      .where("run_id", "=", acceptedRun.id)
+      .execute();
+    expect(events).toHaveLength(500);
+    expect(events.map((event) => event.id)).toContain(resolution.id);
+    expect(events.map((event) => event.id)).not.toContain(requests[0]!.id);
+    expect(events.map((event) => event.id)).not.toContain(expendableStatus.id);
+    await expect(repository.getInputState(owner, {
+      chatId: created.chat.id,
+      runId: acceptedRun.id,
+      requestId: resolution.requestId,
+    })).resolves.toMatchObject({ resolved: true });
+  });
+
   it("evicts resolved approval activities so terminal events cannot exhaust retention", async () => {
     const created = await repository.create(owner, {
       id: "chat_approval_retention",
