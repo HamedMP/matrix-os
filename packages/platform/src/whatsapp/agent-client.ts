@@ -152,7 +152,7 @@ export function createWhatsAppAgentClient(
       return parse(schema, value);
     } catch (error) {
       if (error instanceof WhatsAppAgentClientError) throw error;
-      throw new WhatsAppAgentClientError("request_failed");
+      throw new WhatsAppAgentClientError("request_failed", { cause: error });
     }
   }
   async function detail(target: WhatsAppAgentTarget, owner: string, chatId: string, cursor?: string) {

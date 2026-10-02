@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWhatsAppService } from '../../packages/platform/src/whatsapp/service.js';
 import { readWhatsAppConfig } from '../../packages/platform/src/whatsapp/config.js';
 import { WhatsAppSendError } from '../../packages/platform/src/whatsapp/cloud-api.js';
+import { createWhatsAppAgentClient } from '../../packages/platform/src/whatsapp/agent-client.js';
 import type { WhatsAppConnection, WhatsAppJob } from '../../packages/platform/src/whatsapp/repository-types.js';
 import { createWhatsAppRepository } from '../../packages/platform/src/whatsapp/repository.js';
 import { decryptWhatsAppPayload } from '../../packages/platform/src/whatsapp/crypto.js';
@@ -139,6 +140,23 @@ describe('WhatsApp delivery boundaries', () => {
 });
 
 describe('WhatsApp agent checkpoint and retry lifecycle', () => {
+  it.each(['fetch', 'stream'])('logs the real client %s failure cause while sending only safe recovery text', async (failure) => {
+    const diagnostic = new Error('private-token at /private/runtime connection failure');
+    const fetcher = vi.fn(async () => {
+      if (failure === 'fetch') throw diagnostic;
+      return new Response(new ReadableStream({ start(controller) { controller.error(diagnostic); } }));
+    });
+    const client = createWhatsAppAgentClient(async () => ({ machineId: checkpoint.machineId,
+      gatewayUrl: 'https://runtime.example', token: 'runtime-owner-token' }), fetcher);
+    compose({ agent: client });
+    await process(run(4));
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'request_failed', message: 'Matrix is temporarily unavailable.', cause: diagnostic,
+    }));
+    expect(send).toHaveBeenCalledWith(sender, expect.stringContaining('temporarily unavailable'));
+    expect(send.mock.calls[0]![1]).not.toContain(diagnostic.message);
+    expect(send.mock.calls[0]![1]).not.toContain('private-token');
+  });
   it.each(['run release', 'pending poll release', 'reply admission', 'uncertain run checkpoint', 'uncertain reply checkpoint'])(
     'keeps persisted progress through %s failure without restarting the agent', async (failure) => {
       const { db } = await createTestPlatformDb();

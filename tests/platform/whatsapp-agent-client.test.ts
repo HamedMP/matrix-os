@@ -23,6 +23,17 @@ function fixture(options: { catalog?: unknown; owner?: string; status?: string; 
 }
 
 describe("WhatsApp general Matrix agent client", () => {
+  it.each(["fetch", "stream"])("preserves a private %s failure cause behind the generic client error", async (failure) => {
+    const diagnostic = new Error("private-token at /private/runtime connection failure");
+    const fetcher = vi.fn(async () => {
+      if (failure === "fetch") throw diagnostic;
+      return new Response(new ReadableStream({ start(controller) { controller.error(diagnostic); } }));
+    });
+    const client = createWhatsAppAgentClient(async () => target, fetcher);
+    await expect(client.start(input)).rejects.toMatchObject({
+      code: "request_failed", message: "Matrix is temporarily unavailable.", cause: diagnostic,
+    });
+  });
   it("retains native parsing diagnostics behind the generic client errors", async () => {
     const malformed = createWhatsAppAgentClient(async () => target, vi.fn(async () => new Response("malformed JSON")));
     await expect(malformed.start(input)).rejects.toMatchObject({ code: "invalid_response", cause: expect.any(SyntaxError) });
