@@ -348,6 +348,9 @@
 }
 .matrix-aoede__settings::-webkit-scrollbar { display: none; }
 
+/* Leave room to read a complete settings group; microphone status stays visible. */
+.matrix-aoede:has(.matrix-aoede__settings) .matrix-aoede__orb { display: none; }
+
 .matrix-aoede-settings { display: grid; gap: 0.875rem; }
 .matrix-aoede-settings__group {
   display: grid; gap: 0.5rem;

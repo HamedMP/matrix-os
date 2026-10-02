@@ -129,7 +129,7 @@ export NODE_ENV=development
 export PLATFORM_SPEECH_ENABLED=true
 export PLATFORM_SPEECH_PROVIDER=openai
 export PLATFORM_SPEECH_OPENAI_API_KEY='<platform-only-key>'
-export PLATFORM_SPEECH_MODEL='<verified-transcription-model>'
+export PLATFORM_SPEECH_MODEL='gpt-transcribe'
 export PLATFORM_SPEECH_SYNTHESIS_MODEL='gpt-4o-mini-tts'
 export PLATFORM_SPEECH_SYNTHESIS_VOICE='alloy'
 export PLATFORM_SPEECH_POLICY_REVISION='<reviewed-policy-revision>'
@@ -161,6 +161,20 @@ bun run dev:speech
 ```
 
 Generate `MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN` with the speech-domain runtime identity and local platform secret. Do not reuse a funded-AI token, copy a customer token or key, or put the OpenAI key in a runtime home, host bundle, gateway env file, renderer, or browser storage. `PLATFORM_SPEECH_FUNDING_SOURCES` may be `addon`, `promotional`, or `promotional,addon`; choose deliberately so a text-only campaign is not spent accidentally.
+
+### Recognition language and model upgrades
+
+Aoede Settings → **Spoken language** persists the expected input language on this browser/device. It defaults to English; **Automatic** omits the hint and lets each turn be detected independently. Changing the language ends live capture; press Start again. This setting is a recognition hint, not translation or a guarantee that ambiguous/noisy audio cannot be misidentified. The speech model and credentials remain platform-owned, separate from the conversational model selector.
+
+`gpt-transcribe` is OpenAI's current recommendation for completed audio, which matches this pipeline's bounded, committed turns. The adapter sends repeated multipart `languages[]` fields; older GPT-4o transcription models and Whisper use the singular `language` field. It never sends both. Unknown model contracts do not advertise language hints. When changing a funded deployment's model, verify account access, price and usage units, and bump `PLATFORM_SPEECH_POLICY_REVISION` with the new operator price. Do not reuse a mini-model price silently. Local preview no-charge mode retains its existing funding policy.
+
+References: [file transcription](https://developers.openai.com/api/docs/guides/speech-to-text), [migration and evaluation guidance](https://developers.openai.com/cookbook/examples/migrating_from_whisper_to_gpt_transcribe), and [Pipecat's language-parameter compatibility correction](https://github.com/pipecat-ai/pipecat/issues/2013). Public release follow-through includes documenting the setting in the separate `FinnaAI/matrix-os-site` documentation PR.
+
+### Why text can arrive before speech
+
+The gateway displays canonical text immediately, but collects up to 240 characters or a punctuation boundary before requesting speech. It then persists the delivery manifest and requests streaming PCM. The media adapter frames PCM into 24 KiB chunks (512 ms of 24 kHz mono PCM16), retaining the final chunk until a successor arrives or the stream ends. Provider time-to-first-byte, framing, transport and browser scheduling all follow the initial text. This is not a speech-to-speech Realtime model.
+
+Measure those stages separately before blaming the VM. Three local provider-only probes with a synthetic English sentence observed first PCM at 0.93–1.51 seconds, plus 0.30–0.40 seconds before enough bytes existed for the gateway's first frame. These are individual samples, not a latency benchmark or end-to-end measurement. See [OpenAI streaming TTS guidance](https://developers.openai.com/api/docs/guides/text-to-speech) and [LiveKit's discussion of hidden phrase-buffering latency](https://github.com/livekit/agents/issues/3798). Shorter initial frames can reduce startup latency but trade away jitter protection; changing the transcription model alone does not remove output-speech delay.
 
 Production `existing_wallet` rollout automatically reconciles a speech-only monthly allowance for each running, authorized customer computer. `PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD` caps speech usage; `PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD` creates one idempotent UTC-month promotional grant per computer. The shared monetary ledger remains authoritative, while `ai_funded_runtime_policies` and their text-model monthly counters remain untouched. `MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED` and the text relay's `MATRIX_FUNDED_AI_RUNTIME_ENABLED` are separate rollout flags. Never seed preview no-charge grants in production.
 

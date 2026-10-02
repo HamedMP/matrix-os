@@ -3,6 +3,7 @@ import type { PlatformDB } from "../db.js";
 import {
   createOpenAiFileTranscriptionAdapter,
   createOpenAiSpeechSynthesisAdapter,
+  openAiTranscriptionLanguageField,
   type FileTranscriptionAdapter,
   type SpeechSynthesisAdapter,
 } from "./adapters/openai.js";
@@ -36,7 +37,7 @@ function policy(config: Exclude<PlatformSpeechConfig, { enabled: false }>): Plat
     enabled: true as const,
     ...config.limits,
     supportedMediaTypes: ["audio/wav"] as const,
-    languageHints: false,
+    languageHints: config.provider === "fixture" || openAiTranscriptionLanguageField(config.model) !== null,
   };
   return {
     enabled: true,

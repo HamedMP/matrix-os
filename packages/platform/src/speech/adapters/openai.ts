@@ -11,6 +11,14 @@ const DEFAULT_TIMEOUT_MS = 55_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024;
 const ModelSchema = z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const ResponseSchema = z.object({ text: z.string().max(SPEECH_MAX_TRANSCRIPT_CHARS) }).passthrough();
+const LanguageHintsSchema = z.array(z.string().max(35).regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/)).max(8);
+
+/** Shared by admission and dispatch so capability never promises an unsupported field. */
+export function openAiTranscriptionLanguageField(model: string): "languages[]" | "language" | null {
+  if (model === "gpt-transcribe") return "languages[]";
+  if (model === "whisper-1" || /^gpt-4o-(?:mini-)?transcribe(?:-\d{4}-\d{2}-\d{2})?$/.test(model)) return "language";
+  return null;
+}
 
 export type SpeechAdapterErrorCode =
   | "misconfigured"
@@ -203,16 +211,19 @@ export function createOpenAiFileTranscriptionAdapter(options: {
     throw new SpeechAdapterError("misconfigured", "Speech adapter limits are invalid");
   }
   const fetchImpl = options.fetchImpl ?? fetch;
+  const languageField = openAiTranscriptionLanguageField(options.model);
   return {
     id: "openai-file",
     async transcribe(input) {
       if (input.signal.aborted) {
         throw new SpeechAdapterError("cancelled", "Transcription was cancelled");
       }
-      if (input.languageHints && input.languageHints.length > 0) {
+      const hints = LanguageHintsSchema.safeParse(input.languageHints ?? []);
+      if (!hints.success || (hints.data.length > 0 && !languageField)
+        || (languageField === "language" && hints.data.length > 1)) {
         throw new SpeechAdapterError(
           "unsupported_options",
-          "Language hints require a validated adapter contract",
+          "Language hints are unsupported",
         );
       }
       const deadlineSignal = AbortSignal.timeout(timeoutMs);
@@ -232,6 +243,11 @@ export function createOpenAiFileTranscriptionAdapter(options: {
         const form = new FormData();
         form.set("model", options.model);
         form.set("file", new Blob([Uint8Array.from(input.audio)], { type: input.mediaType }), "recording.wav");
+        if (languageField) {
+          // Voice-session locales can include a region; use the base input
+          // language accepted by both API generations, never both fields.
+          for (const hint of hints.data) form.append(languageField, hint.split("-")[0]!.toLowerCase());
+        }
         let response: Response;
         try {
           response = await fetchImpl(TRANSCRIPTIONS_ENDPOINT, {

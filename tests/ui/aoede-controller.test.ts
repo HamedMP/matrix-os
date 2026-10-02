@@ -269,7 +269,7 @@ describe("Aoede shell owner", () => {
     expect(h.media.end).toHaveBeenCalled(); expect(h.controller.getSnapshot().microphoneActive).toBe(false); expect(h.controller.getSnapshot().status).toBe("ended");
   });
   it("captures ordinary supervised bootstrap selection, not any external Chat selection", async () => {
-    const h = harness(); await h.controller.open(); expect(h.factory.mock.calls[0][0].request).toEqual({ turnMode: "hands_free", selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary" }); h.controller.dispose();
+    const h = harness(); await h.controller.open(); expect(h.factory.mock.calls[0][0].request).toEqual({ turnMode: "hands_free", locale: "en", selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary" }); h.controller.dispose();
   });
   it("bootstraps New on first open, then reuses that conversation on later opens", async () => {
     const h = harness(); await h.controller.open();
@@ -445,6 +445,21 @@ describe("Aoede shell owner", () => {
     pending.resolve({ operation: { ...operationView, cancellationRequested: true }, cancellation: "requested" });
     expect(await first).toBe("requested");
     expect(h.controller.getSnapshot().lastActionCancelOutcome).toBe("requested"); h.controller.dispose();
+  });
+  it("defaults to English and rebuilds media with the selected language or no hint for Automatic", async () => {
+    const h = harness(); await h.controller.open();
+    expect(h.controller.getSnapshot().preferredLanguage).toBe("en");
+    expect(h.factory.mock.calls[0][0].request.locale).toBe("en");
+    await h.controller.setPreferredLanguage("ur");
+    expect(h.media.end).toHaveBeenCalledTimes(1);
+    expect(h.controller.getSnapshot().preferredLanguage).toBe("ur");
+    expect(h.factory.mock.calls[1][0].request.locale).toBe("ur");
+    expect(h.media.startVoice).not.toHaveBeenCalled();
+    await h.controller.setPreferredLanguage("auto");
+    expect(h.factory.mock.calls[2][0].request).not.toHaveProperty("locale");
+    await h.controller.setPreferredLanguage("injected");
+    expect(h.factory).toHaveBeenCalledTimes(3);
+    h.controller.dispose();
   });
   it("persists turn mode/device choices and rebuilds the media owner with the new request", async () => {
     const h = harness(); await h.controller.open();

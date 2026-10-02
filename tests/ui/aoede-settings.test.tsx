@@ -31,12 +31,13 @@ function makeController() {
     listProviders: vi.fn(async () => catalog), listDevices: vi.fn(async () => devices),
     setTurnMode: vi.fn(async () => {}), setInputDevice: vi.fn(async () => true),
     setOutputDevice: vi.fn(async () => "applied" as const), setSelection: vi.fn(async () => true),
+    setPreferredLanguage: vi.fn(async () => {}),
   } as unknown as AoedeController;
 }
 function makeSnapshot(overrides: Partial<AoedeSnapshot> = {}): AoedeSnapshot {
   return {
     visible: true, focusRevision: 0, status: "idle", microphoneActive: false,
-    turnMode: "hands_free", inputDeviceId: null, outputDeviceId: null, devicesRevision: 0,
+    turnMode: "hands_free", preferredLanguage: "en", inputDeviceId: null, outputDeviceId: null, devicesRevision: 0,
     binding: { chatId: "chat_aoede", scope: { kind: "workspace", id: "main", label: "Workspace" },
       selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, capability },
     boundProviderInstanceId: null, lastActionCancelOutcome: null,
@@ -45,6 +46,13 @@ function makeSnapshot(overrides: Partial<AoedeSnapshot> = {}): AoedeSnapshot {
 }
 
 describe("Aoede settings", () => {
+  it("shows the spoken language and routes Automatic through the controller", async () => {
+    const controller = makeController();
+    render(<AoedeSettings controller={controller} snapshot={makeSnapshot({ preferredLanguage: "ur" })} />);
+    expect(screen.getByLabelText("Spoken language")).toHaveValue("ur");
+    fireEvent.change(screen.getByLabelText("Spoken language"), { target: { value: "auto" } });
+    await waitFor(() => expect(controller.setPreferredLanguage).toHaveBeenCalledWith("auto"));
+  });
   it("renders the persisted turn mode and routes changes through the controller", async () => {
     const controller = makeController();
     render(<AoedeSettings controller={controller} snapshot={makeSnapshot()} />);

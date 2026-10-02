@@ -5,6 +5,7 @@ import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { VoiceSessionDevice } from "../voice-session/client-types.js";
 import type { AoedeController, AoedeSnapshot } from "./controller.js";
 import { boundedAoedeText } from "./presentation.js";
+import { AOEDE_SPEECH_LANGUAGES } from "./preferences.js";
 
 export interface AoedeSettingsProps {
   controller: AoedeController;
@@ -12,7 +13,7 @@ export interface AoedeSettingsProps {
 }
 
 /**
- * Aoede settings: turn mode, provider/model selection and voice input/output
+ * Aoede settings: turn mode, spoken language, model and voice input/output
  * devices. All mutations route through the controller — canonical revision
  * fencing, media rebuilding and persistence live there, never in the view.
  */
@@ -59,6 +60,18 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
         <span>{mode === "push_to_talk" ? "Push to talk" : "Hands free"}</span>
       </label>)}
       <p className="matrix-aoede-settings__hint">Changing the mode ends any live voice session so the next Start applies it.</p>
+    </fieldset>
+
+    <fieldset className="matrix-aoede-settings__group" disabled={busy === "language"}>
+      <legend className="matrix-aoede-settings__legend">Recognition</legend>
+      <label className="matrix-aoede-settings__field">
+        <span>Spoken language</span>
+        <select value={snapshot.preferredLanguage} aria-describedby={`${id}-language-hint`}
+          onChange={(event) => run("language", controller.setPreferredLanguage(event.target.value))}>
+          {AOEDE_SPEECH_LANGUAGES.map(language => <option key={language.code} value={language.code}>{language.label}</option>)}
+        </select>
+      </label>
+      <p id={`${id}-language-hint`} className="matrix-aoede-settings__hint">Choose the language you speak to reduce detection mistakes. Automatic detects each turn. Changing it ends the live voice session.</p>
     </fieldset>
 
     <fieldset className="matrix-aoede-settings__group" disabled={busy === "selection"}>

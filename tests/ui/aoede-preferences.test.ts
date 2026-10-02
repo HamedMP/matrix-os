@@ -32,6 +32,15 @@ describe("aoede preferences", () => {
     expect(loadAoedePreferences()).toEqual({ turnMode: "hands_free", inputDeviceId: null });
   });
 
+  it("persists an explicit language or Automatic without losing existing preferences", () => {
+    saveAoedePreferences({ turnMode: "push_to_talk", preferredLanguage: "ur" });
+    expect(loadAoedePreferences()).toEqual({ turnMode: "push_to_talk", preferredLanguage: "ur" });
+    saveAoedePreferences({ preferredLanguage: "auto" });
+    expect(loadAoedePreferences()).toEqual({ preferredLanguage: "auto" });
+    window.localStorage.setItem(AOEDE_PREFERENCES_STORAGE_KEY, JSON.stringify({ preferredLanguage: "injected" }));
+    expect(loadAoedePreferences()).toEqual({});
+  });
+
   it("drops malformed, oversized, and strict-shape-violating values without throwing", () => {
     window.localStorage.setItem(AOEDE_PREFERENCES_STORAGE_KEY, "not json {");
     expect(loadAoedePreferences()).toEqual({});

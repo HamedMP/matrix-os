@@ -9,7 +9,7 @@ import { applyCanonicalChatContent } from "../canonical-chat-content.js";
 import { createAoedeApi, AoedeRequestError, type AoedeApi } from "./client.js";
 import { isCancellableOperation, projectAoedeCanonical, safeAoedeArtifactPath, type AoedeCanonicalProjection } from "./projection.js";
 import { boundedAoedeText, type AoedeStatus } from "./presentation.js";
-import { loadAoedePreferences, saveAoedePreferences, type AoedePreferences } from "./preferences.js";
+import { AoedeSpeechLanguageSchema, loadAoedePreferences, saveAoedePreferences, type AoedePreferences, type AoedeSpeechLanguage } from "./preferences.js";
 
 /** Installed apps live under `apps/<slug>`; canonical navigation may only target that space. */
 const SAFE_NAV_APP = /^[a-z0-9][a-z0-9_-]{0,79}$/;
@@ -49,6 +49,7 @@ export interface AoedeSnapshot {
   status: AoedeStatus;
   microphoneActive: boolean;
   turnMode: "hands_free" | "push_to_talk";
+  preferredLanguage: AoedeSpeechLanguage;
   /** Persisted capture device; null = system default. */
   inputDeviceId: string | null;
   /** Persisted playback device; null = system default. */
@@ -71,6 +72,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   let snapshot: AoedeSnapshot = {
     visible: false, focusRevision: 0, status: "idle", microphoneActive: false,
     turnMode: prefs.turnMode ?? "hands_free",
+    preferredLanguage: prefs.preferredLanguage ?? "en",
     inputDeviceId: prefs.inputDeviceId ?? null,
     outputDeviceId: prefs.outputDeviceId ?? null,
     devicesRevision: 0,
@@ -180,6 +182,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     if (!reuseMedia || !media) {
       const created = voiceFactory({ baseUrl: options.baseUrl, fetcher: options.fetcher, webSocketFactory: options.webSocketFactory,
         request: { turnMode: snapshot.turnMode, selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary",
+          ...(snapshot.preferredLanguage === "auto" ? {} : { locale: snapshot.preferredLanguage }),
           ...(snapshot.inputDeviceId ? { inputDeviceId: snapshot.inputDeviceId } : {}),
           ...(snapshot.outputDeviceId ? { outputDeviceId: snapshot.outputDeviceId } : {}) } });
       media = created;
@@ -526,6 +529,15 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       patch({ turnMode: mode });
       if (!media || !snapshot.binding) return;
       await rebuildMediaOwner(generation);
+    },
+    /** Never change recognition language halfway through a captured turn. */
+    async setPreferredLanguage(language: string) {
+      if (disposed || suspended) return;
+      const parsed = AoedeSpeechLanguageSchema.safeParse(language);
+      if (!parsed.success || parsed.data === snapshot.preferredLanguage) return;
+      persistPrefs({ preferredLanguage: parsed.data });
+      patch({ preferredLanguage: parsed.data });
+      if (media && snapshot.binding) await rebuildMediaOwner(generation);
     },
     listDevices(): Promise<VoiceSessionDevice[] | null> {
       if (disposed) return Promise.resolve(null);
