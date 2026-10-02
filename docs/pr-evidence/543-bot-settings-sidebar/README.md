@@ -1,5 +1,16 @@
 # Bot settings sidebar evidence
 
+## October 2 local main refresh
+
+The draft is locally refreshed onto the Pi foundation containing main
+`cd75ec0c4`. All 36 focused Web/shared/Electron tests across six suites and the
+Electron source check pass. Two timing-dependent assertions now wait for loaded
+settings controls instead of treating toolbar availability as data readiness.
+The foundation also passes 17 Native Mobile streaming/bot/transcript tests;
+these retain main's streaming cache path while keeping bot controls fresh.
+These checks do not replace fresh renderer captures or physical-device testing.
+Keep this PR a draft until the previously recorded device gate is satisfied.
+
 Captured 2026-09-30 through Cua from real Web Desktop, Web Canvas, and built Electron Desktop on the feature working tree based on Pi PR #2048 (`bab5658e`). All data is synthetic. No live Slack, Pi, OAuth, or integration qualification is implied.
 
 ## Initial captures (before Greptile fixes)
