@@ -42,12 +42,15 @@ candidate, then copy [probe.ts](probe.ts) to the fresh scratch path below
 normal E2E configuration discovers tests under `tests/e2e/`.
 
 ```sh
+(
+set -eu
 bun run build:desktop
 evidence_probe=tests/e2e/desktop/native-window-evidence-pr2113.e2e.test.ts
 if test -e "$evidence_probe" || test -L "$evidence_probe"; then exit 1; fi
 cp specs/544-windowed-app-content/evidence/probe.ts "$evidence_probe"
+trap 'evidence_status=$?; rm -f "$evidence_probe"; exit "$evidence_status"' 0
 MATRIX_DESKTOP_E2E_REQUIRED=1 bun run test:e2e -- "$evidence_probe" --maxWorkers=1
-rm "$evidence_probe"
+)
 ```
 
 On Linux, run the test command under `xvfb-run --auto-servernum`. The probe
@@ -58,3 +61,6 @@ external authentication browser. New evidence is written under
 `MATRIX_NATIVE_EVIDENCE_DIR` supplied for a scratch output directory.
 Review and remove scratch output after use. The retained run passed **1/1**
 native tests in 2.63s; focused production tests are recorded in the PR.
+The recipe propagates test failures after scratch cleanup. The probe registers
+acquired resources immediately and attempts every cleanup, including when
+startup or a prior close fails; cleanup errors remain test failures.
