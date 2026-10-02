@@ -241,6 +241,11 @@ Native Pi, kernel and other instance identities remain excluded from this select
 1. **Scope / trigger:** Matrix AI uses the owned Pi execution path exclusively.
    Model choices present the model and Matrix AI connection without exposing the
    execution harness. Owner-connected Claude and Pi coding agents remain distinct.
+   Owned Bot headers use `Model: <routing label>` and recipe-backed management
+   cards use `Own Chat`, without a Pi runtime prefix. Shared and Native Mobile
+   preserve the model, loading/funding reason, history and authority controls.
+   Recipe Bot editors omit the redundant Runtime Pi paragraph while retaining
+   the existing model selector and save semantics; ordinary coding choices stay.
 2. **Signatures:** the canonical catalog publishes `matrix_pi_default` with
    `matrix_pi`, omitting `kernel_matrix_included`. Shared contract presentation
    helpers identify the exact retired Matrix SDK descriptor and derive Matrix

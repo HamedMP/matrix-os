@@ -114,7 +114,7 @@ it("admits a direct bot turn when the ordinary provider catalog is empty", async
   render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation"
     active catalog={{ ...providerCatalog, instances: [] }} />);
   await screen.findByText("Your bot's Chat");
-  expect(screen.getByText("Runtime: Pi · Checking bot model…")).toBeTruthy();
+  expect(screen.getByText("Model: Checking bot model…")).toBeTruthy();
   const composer = screen.getByRole("textbox", { name: "Reply to chat" });
   await setSharedComposerText(composer, "Check the pages");
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
