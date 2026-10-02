@@ -105,7 +105,7 @@
   text-align: left;
   width: 100%;
 }
-.matrix-ap-rail-item:hover { background: color-mix(in srgb, var(--matrix-ap-surface) 68%, transparent); }
+.matrix-ap-rail-item:hover:not(:disabled) { background: color-mix(in srgb, var(--matrix-ap-surface) 68%, transparent); }
 .matrix-ap-harness-mark,
 .matrix-ap-avatar {
   align-items: center;
@@ -250,8 +250,8 @@
   min-height: 30px;
   padding: 6px 10px;
 }
-.matrix-ap-button:hover:not(:disabled) { background: var(--matrix-ap-sunken); }
-.matrix-ap-button-primary { background: var(--matrix-ap-accent); border-color: var(--matrix-ap-accent); color: var(--ap-on-accent, var(--matrix-ap-surface)); }
+.matrix-ap-button:hover:not(:disabled) { background: var(--matrix-ap-sunken); color: var(--matrix-ap-text); }
+.matrix-ap-button-primary { background: var(--matrix-ap-accent); border-color: var(--matrix-ap-accent); color: var(--ap-on-accent, var(--text-on-accent, var(--primary-foreground, var(--matrix-ap-surface)))); }
 .matrix-ap-button-danger { background: var(--matrix-ap-danger); border-color: var(--matrix-ap-danger); color: var(--ap-on-danger, var(--matrix-ap-surface)); }
 .matrix-ap-button:disabled,
 .matrix-ap-link-button:disabled,
@@ -451,6 +451,34 @@
 .matrix-ap-method-card { flex-direction: row; align-items: flex-start; justify-content: flex-start; gap: 12px; }
 .matrix-ap-method-copy { display: flex; flex-direction: column; gap: 4px; }
 .matrix-ap-method-copy > span { font-size: 12px; color: var(--matrix-ap-muted); }
+
+/* Keep each filled action's foreground/background paired. A neutral hover must
+   never repaint sign-in, install, save, or destructive actions behind their
+   inverse label. The same palette remains visible on keyboard focus. */
+.matrix-ap-button-primary:hover:not(:disabled),
+.matrix-ap-button-primary:active:not(:disabled) {
+  background: var(--matrix-ap-accent);
+  color: var(--ap-on-accent, var(--text-on-accent, var(--primary-foreground, var(--matrix-ap-surface))));
+}
+.matrix-ap-button-danger:hover:not(:disabled),
+.matrix-ap-button-danger:active:not(:disabled) {
+  background: var(--matrix-ap-danger);
+  color: var(--ap-on-danger, var(--matrix-ap-surface));
+}
+.matrix-ap-gateway .matrix-ap-button-primary:hover:not(:disabled),
+.matrix-ap-gateway .matrix-ap-button-primary:active:not(:disabled) {
+  background: var(--matrix-ap-text);
+  color: var(--matrix-ap-overlay);
+}
+.matrix-ap-gateway .matrix-ap-button-danger {
+  background: var(--matrix-ap-danger);
+  color: var(--ap-on-danger, var(--matrix-ap-surface));
+}
+.matrix-agents-providers .matrix-ap-button :where(span, strong, svg),
+.matrix-agents-providers .matrix-ap-link-button :where(span, strong, svg) { color: inherit; }
+.matrix-ap-link-button:hover:not(:disabled):not(.matrix-ap-danger-text) { color: var(--matrix-ap-text); }
+.matrix-ap-link-button:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+.matrix-ap-connection-choice:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--matrix-ap-sunken); }
 .matrix-ap-method-icon { flex: 0 0 auto; display: flex; align-items: center; padding-top: 1px; }
 
 /* Keep the exact monochrome SVG readable on the shared dark presentation. */
