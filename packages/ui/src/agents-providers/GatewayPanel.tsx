@@ -4,6 +4,7 @@ import type {
   ProviderAccessSource,
   ProviderGatewayPolicy,
   ProviderModelProvider,
+  ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayCreditLines, money, shortDate, titleCase } from "./utils.js";
@@ -42,6 +43,7 @@ export function GatewayPanel({
   provider,
   disabled,
   canSetBudget,
+  modelInventory,
   canSetAllowlist,
   canAddCredit,
   onMutate,
@@ -60,6 +62,7 @@ export function GatewayPanel({
   source: ProviderAccessSource | null;
   policy: ProviderGatewayPolicy | null;
   provider: ProviderModelProvider | null;
+  modelInventory?: ProviderSettingsSnapshot["matrixModelInventory"];
   disabled: boolean;
   canSetBudget: boolean;
   canSetAllowlist: boolean;
@@ -81,6 +84,12 @@ export function GatewayPanel({
   onChooseAgent?: (id: string) => void;
   onUsageHistory?: () => void;
 }) {
+  // Older runtimes retain their readiness-based inventory. New runtimes provide
+  // an explicit policy inventory that does not imply a runnable route.
+  const offeredModels = modelInventory?.filter((model, index, inventory) => model.enabled
+    && inventory.findIndex(candidate => candidate.providerId === model.providerId && candidate.id === model.id) === index)
+    ?? provider?.models.filter(model => model.enabled
+    && source?.eligibleModelIds.includes(model.id) && policy?.allowedModelIds.includes(model.id)) ?? [];
   const budget = policy?.monthlyBudgetMicrousd ?? null;
   const [budgetUsd, setBudgetUsd] = useState(
     budget === null ? "" : String(budget / 1_000_000),
@@ -274,15 +283,9 @@ export function GatewayPanel({
         <div className="matrix-ap-model-inventory">
           <h3>Available models</h3>
           <ul>
-            {provider?.models
-              .filter(
-                (model) =>
-                  model.enabled &&
-                  source.eligibleModelIds.includes(model.id) &&
-                  policy.allowedModelIds.includes(model.id),
-              )
+            {offeredModels
               .map((model) => (
-                <li key={model.id}>
+                <li key={"accessSourceId" in model ? `${model.accessSourceId}:${model.id}` : model.id}>
                   <span>{model.displayName}</span>
                   {model.capabilities?.map((capability) => (
                     <span
@@ -295,12 +298,7 @@ export function GatewayPanel({
                 </li>
               ))}
           </ul>
-          {!provider?.models.some(
-            (model) =>
-              model.enabled &&
-              source.eligibleModelIds.includes(model.id) &&
-              policy.allowedModelIds.includes(model.id),
-          ) ? (
+          {offeredModels.length === 0 ? (
             <p className="matrix-ap-help">
               No models are enabled for this computer.
             </p>

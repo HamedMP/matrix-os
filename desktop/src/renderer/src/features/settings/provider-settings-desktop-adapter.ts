@@ -58,7 +58,7 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
   return {
     async getSnapshot(signal, options = {}) {
       try {
-        const value = await api.get<unknown>(`${PROVIDER_SETTINGS_PATH}?includeCapabilities=true&includeModelCapabilities=true${options.refresh ? "&refresh=true" : ""}`, {
+        const value = await api.get<unknown>(`${PROVIDER_SETTINGS_PATH}?includeCapabilities=true&includeModelCapabilities=true&includeMatrixModelInventory=true${options.refresh ? "&refresh=true" : ""}`, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
           timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs,
@@ -78,7 +78,7 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
         throw new DesktopProviderSettingsTransportError("invalid_request");
       }
       try {
-        const value = await api.post<unknown>(`${PROVIDER_SETTINGS_ACTIONS_PATH}?includeCapabilities=true&includeModelCapabilities=true`, mutation.data, {
+        const value = await api.post<unknown>(`${PROVIDER_SETTINGS_ACTIONS_PATH}?includeCapabilities=true&includeModelCapabilities=true&includeMatrixModelInventory=true`, mutation.data, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
         });

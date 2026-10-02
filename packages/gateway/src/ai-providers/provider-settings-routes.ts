@@ -15,8 +15,9 @@ import {
 const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
-function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeModels = false): ProviderSettingsSnapshot {
-  const publicSnapshot = { ...snapshot, modelProviders: snapshot.modelProviders.map(provider => ({ ...provider, models: provider.models.map(({ capabilities, ...model }) => includeModels ? { ...model, ...(capabilities ? { capabilities } : {}) } : model) })), harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness) };
+function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeModels = false, includeInventory = false): ProviderSettingsSnapshot {
+  const { matrixModelInventory, ...baseSnapshot } = snapshot;
+  const publicSnapshot = { ...baseSnapshot, ...(includeInventory && matrixModelInventory ? { matrixModelInventory } : {}), modelProviders: snapshot.modelProviders.map(provider => ({ ...provider, models: provider.models.map(({ capabilities, ...model }) => includeModels ? { ...model, ...(capabilities ? { capabilities } : {}) } : model) })), harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness) };
   if (include) return { ...publicSnapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
     && snapshot.supportedActions.includes("set_harness_enabled") };
   return {
@@ -152,7 +153,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const refresh = RefreshQuerySchema.safeParse(context.req.query("refresh"));
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
     const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
-    if (!refresh.success || !capabilities.success || !modelCapabilities.success) return invalidRequest(context);
+    const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
+    if (!refresh.success || !capabilities.success || !modelCapabilities.success || !inventory.success) return invalidRequest(context);
     try {
       const ownerMetadata = options.canReadNativeAccountMetadata?.(context) === true;
       const snapshot = await options.store.getSnapshot({ refresh: refresh.data === "true", ...(ownerMetadata ? { includeNativeAccountMetadata: true } : {}) });
@@ -164,7 +166,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
         snapshot.accounts = snapshot.accounts.map(account => account.accessSourceId === "owner_openai_profile"
           ? { ...account, displayName: account.authMethod === "api_key" ? "API key" : "Codex account" } : account);
       }
-      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true"));
+      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -175,12 +177,13 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
     const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
-    if (!capabilities.success || !modelCapabilities.success) return invalidRequest(context);
+    const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
+    if (!capabilities.success || !modelCapabilities.success || !inventory.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse(await readJson(context));
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -191,7 +194,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
     const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
-    if (!capabilities.success || !modelCapabilities.success) return invalidRequest(context);
+    const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
+    if (!capabilities.success || !modelCapabilities.success || !inventory.success) return invalidRequest(context);
     const body = DeleteAccountBodySchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse({
@@ -205,7 +209,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }

@@ -242,6 +242,7 @@ export function AgentsProvidersView({
           source={gatewaySource}
           policy={snapshot.gatewayPolicy}
           provider={gatewayProvider}
+          modelInventory={snapshot.matrixModelInventory}
           disabled={mutationsDisabled}
           canSetBudget={supports("set_gateway_budget")}
           canSetAllowlist={supports("set_gateway_allowlist")}

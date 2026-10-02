@@ -100,7 +100,7 @@ describe("provider settings shell transport", () => {
 
     await expect(transport.getSnapshot()).resolves.toEqual(snapshot);
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeModelCapabilities=true`,
+      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeModelCapabilities=true&includeMatrixModelInventory=true`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
     expect(timeout).toHaveBeenCalledWith(15_000);
@@ -129,7 +129,7 @@ describe("provider settings shell transport", () => {
     const fetcher = vi.fn(async () => Response.json(snapshot));
     await createProviderSettingsTransport({ fetcher }).getSnapshot(undefined, { refresh: true });
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeModelCapabilities=true&refresh=true`, expect.any(Object),
+      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeModelCapabilities=true&includeMatrixModelInventory=true&refresh=true`, expect.any(Object),
     );
   });
 

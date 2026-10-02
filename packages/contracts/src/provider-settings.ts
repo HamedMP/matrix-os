@@ -396,6 +396,10 @@ export const ProviderSettingsSnapshotSchema = z.object({
   accessSources: z.array(ProviderAccessSourceSchema).max(64),
   accounts: z.array(ProviderAccountSchema).max(128),
   harnesses: z.array(ProviderHarnessInstanceSchema).max(128),
+  /** Policy-authorized offered inventory; never execution permission. Negotiated model metadata only. */
+  matrixModelInventory: z.array(ProviderModelViewSchema.extend({
+    providerId: ProviderIdSchema, accessSourceId: ReferenceIdSchema,
+  })).max(256).optional(),
   gatewayPolicy: ProviderGatewayPolicySchema.nullable(),
 }).strict().superRefine((snapshot, ctx) => {
   const collections = [
@@ -446,6 +450,14 @@ export const ProviderSettingsSnapshotSchema = z.object({
     provider.models.map((model) => [model.id, { ...model, providerId: provider.id }] as const)));
   const sources = new Map(snapshot.accessSources.map((value) => [value.id, value]));
   const accounts = new Map(snapshot.accounts.map((value) => [value.id, value]));
+  snapshot.matrixModelInventory?.forEach((model, index) => {
+    const source = sources.get(model.accessSourceId);
+    const catalogModel = models.get(model.id);
+    if (source?.kind !== "matrix_gateway" || source.providerId !== model.providerId
+      || catalogModel?.providerId !== model.providerId || !catalogModel.enabled) {
+      ctx.addIssue({ code: "custom", path: ["matrixModelInventory", index], message: "Offered model requires its Matrix gateway source and enabled provider catalog model" });
+    }
+  });
   if (models.size !== snapshot.modelProviders.reduce((count, provider) => count + provider.models.length, 0)) {
     ctx.addIssue({ code: "custom", path: ["modelProviders"], message: "Model ids must be globally unique" });
   }

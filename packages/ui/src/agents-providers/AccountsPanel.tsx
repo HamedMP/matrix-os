@@ -11,6 +11,7 @@ import type {
 import { RemovalDialog } from "./RemovalDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { titleCase, usageLines } from "./utils.js";
+import { AllowanceMeter } from "./AllowanceMeter.js";
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 
 function AttemptAction({
@@ -294,7 +295,7 @@ export function AccountsPanel({
                 <div className="matrix-ap-account-main"><span className="matrix-ap-avatar" aria-hidden="true">{selectedSource.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{selectedSource.displayName}</strong><span>Connected</span></div></div>
                 <div className="matrix-ap-account-usage">
                   <strong>{usageLines(selectedSource.usage).primary}</strong>
-                  {selectedSource.usage.kind === "subscription_allowance" ? <progress aria-label={`${selectedSource.displayName} usage`} max={10000} value={selectedSource.usage.usedBasisPoints} /> : null}
+                  <AllowanceMeter label={selectedSource.displayName} usage={selectedSource.usage} />
                   <span>{selectedSource.usage.kind === "unavailable" && selectedSource.usage.reason === "read_only"
                     ? "Only this computer’s owner can view account usage." : usageLines(selectedSource.usage).secondary}</span>
                 </div>
@@ -349,13 +350,7 @@ export function AccountsPanel({
                 </div>
                 <div className="matrix-ap-account-usage">
                   <strong>{usage?.primary ?? "Usage unavailable"}</strong>
-                  {source?.usage.kind === "subscription_allowance" ? (
-                    <progress
-                      aria-label={`${account.displayName} usage`}
-                      max={10000}
-                      value={source.usage.usedBasisPoints}
-                    />
-                  ) : null}
+                  {source ? <AllowanceMeter label={account.displayName} usage={source.usage} /> : null}
                   {usage?.secondary ? <span>{source?.usage.kind === "unavailable" && source.usage.reason === "read_only" ? "Only this computer’s owner can view account usage." : usage.secondary}</span> : null}
                   {usage?.stale ? <span>Stale</span> : null}
                 </div>

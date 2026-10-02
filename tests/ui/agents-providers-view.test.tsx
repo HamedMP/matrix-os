@@ -843,6 +843,7 @@ describe("AgentsProvidersView", () => {
     const work = screen.getByTestId("account-account_work");
 
     expect(within(personal).getByText("25% used")).toBeVisible();
+    expect(within(personal).getByRole("progressbar", { name: "Personal remaining allowance" })).toHaveAttribute("value", "7500");
     expect(within(work).getByText("$0.13 observed")).toBeVisible();
     fireEvent.click(within(personal).getByRole("button", { name: "Log out Personal" }));
     expect(within(work).queryByRole("button", { name: "Log in Work" })).not.toBeInTheDocument();

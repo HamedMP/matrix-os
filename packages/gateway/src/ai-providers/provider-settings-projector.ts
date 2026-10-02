@@ -1,3 +1,4 @@
+import { projectMatrixModelInventory } from "./provider-matrix-model-inventory.js";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import { projectHermesNativeRouteObservation } from "./hermes-native-route-observation.js";
 import { projectMissingCredentialAuth } from "./provider-missing-credential-auth.js";
@@ -567,6 +568,7 @@ export async function projectProviderSettings(input: {
     configurationHarnessKinds: input.configurationHarnessKinds ?? [],
     harnessCatalog,
     modelProviders,
+    matrixModelInventory: projectMatrixModelInventory(input.canonical, fundedPolicyAuthoritative ? input.fundedPolicy : undefined),
     accessSources: sources,
     accounts,
     harnesses,

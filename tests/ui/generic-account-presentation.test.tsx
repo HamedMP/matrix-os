@@ -8,6 +8,20 @@ import { nativeAccountPresentationFixture, ACCOUNT_PRESENTATION_NOW } from "../g
 
 afterEach(() => vi.useRealTimers());
 describe("harness-owned account presentation", () => {
+  it.each([[0, 10000], [2500, 7500], [10000, 0]])("shows remaining native allowance with %i basis points used", async (usedBasisPoints, remainingBasisPoints) => {
+    vi.useFakeTimers(); vi.setSystemTime(ACCOUNT_PRESENTATION_NOW);
+    const snapshot = await nativeAccountPresentationFixture("pi");
+    const selected = { ...snapshot.harnesses[0]!, accountIds: [] };
+    const source = snapshot.accessSources.find((candidate) => candidate.id === selected.accessSourceId)!;
+    source.usage = { kind: "subscription_allowance", authority: "provider_allowance", state: "current",
+      scope: "account", usedBasisPoints, resetsAt: null, asOf: ACCOUNT_PRESENTATION_NOW };
+    render(<AccountsPanel harness={selected} accounts={[]} sources={snapshot.accessSources} allHarnesses={snapshot.harnesses}
+      gatewayPolicy={null} attempt={null} disabled={false} canLogin={false} canLogout={false} canRemove={false} canReassign={false}
+      onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
+    const card = within(screen.getByTestId(`native-account-${selected.id}`));
+    expect(card.getByText(`${usedBasisPoints / 100}% used`)).toBeVisible();
+    expect(card.getByRole("progressbar", { name: "pi account remaining allowance" })).toHaveAttribute("value", String(remainingBasisPoints));
+  });
   it.each(["pi", "opencode"] as const)("describes %s native authentication without inventing a connected Matrix account", async (harness) => {
     vi.useFakeTimers(); vi.setSystemTime(ACCOUNT_PRESENTATION_NOW);
     const snapshot = await nativeAccountPresentationFixture(harness);
