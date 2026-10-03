@@ -50,7 +50,7 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
   afterEach(async ({ task }) => {
     if (task.result?.state === "fail" && page && !page.isClosed()) {
       mkdirSync(evidence, { recursive: true });
-      await page.screenshot({ path: join(evidence, "failure.png") });
+      await page.screenshot({ animations: "disabled", path: join(evidence, "failure.png") });
     }
   });
 
@@ -63,59 +63,44 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     }
   }, 20_000);
 
-  it("embeds the actual source and prompts only after the running cloud source differs", async () => {
+  it("accepts independently released sources without interrupting the workspace", async () => {
     const installed = await page.evaluate(() => (window as unknown as {
       operator: { invoke: (channel: string, payload: object) => Promise<unknown> };
     }).operator.invoke("app:get-version", {}));
     expect(installed).toMatchObject({ source });
-    expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
-
     gateway.setBuildCommit(source.ancestors[0] ?? "a".repeat(40));
     await recheck();
-    await page.getByRole("dialog", { name: "Update Matrix OS" }).waitFor();
-    await page.getByRole("rowheader", { name: /^Cloud computer/ }).waitFor();
-    await page.getByRole("button", { name: "Check again", exact: true }).waitFor();
+    expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
     mkdirSync(evidence, { recursive: true });
-    await page.screenshot({ path: join(evidence, "source-mismatch.png") });
-    await page.getByRole("button", { name: "Later", exact: true }).click();
-    await page.getByRole("button", { name: "Chat", exact: true }).waitFor();
-    await page.screenshot({ path: join(evidence, "dismissed-workspace.png") });
-
-    await recheck();
-    expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
-    gateway.setBuildCommit(source.ancestors[1] ?? "d".repeat(40));
-    await recheck();
-    await page.getByRole("dialog", { name: "Update Matrix OS" }).waitFor();
-    await page.getByRole("button", { name: "Later", exact: true }).click();
-    gateway.setBuildCommit(source.commit);
-    await recheck();
-    expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
+    await page.screenshot({ animations: "disabled", path: join(evidence, "compatible-different-source.png") });
   });
 
-  it("shows the host-bundle replay and preserves a draft after dismissal", async () => {
+  it("prompts only for an unsupported protocol and preserves an unsent draft", async () => {
     const dialog = page.getByRole("dialog", { name: "Update Matrix OS" });
     await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     const composer = page.getByRole("textbox", { name: "Start a chat" });
-    await composer.fill("Unsent release alignment regression draft");
-    let response = structuredClone(hostInfo);
-    gateway.setSystemInfo(response);
+    await composer.fill("Unsent compatibility regression draft");
+    gateway.setSystemInfo({ ...hostInfo, runtimeCompatibility: {
+      schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2,
+    } });
     await recheck();
     await dialog.waitFor();
-    await page.screenshot({ path: join(evidence, "host-bundle-mismatch.png") });
+    await page.getByText(/desktop app must be updated/).waitFor();
+    await page.screenshot({ animations: "disabled", path: join(evidence, "desktop-update-required.png") });
     await dialog.getByRole("button", { name: "Later", exact: true }).click();
-    await expect.poll(() => composer.textContent()).toBe("Unsent release alignment regression draft");
+    await expect.poll(() => composer.textContent()).toBe("Unsent compatibility regression draft");
+    await page.screenshot({ animations: "disabled", path: join(evidence, "dismissed-draft-preserved.png") });
     await recheck();
     expect(await dialog.count()).toBe(0);
 
-    // A different installed release is not proof that the running process changed.
-    response = { ...hostInfo, version: "v2026.09.10-1209",
-      release: { ...hostInfo.release, version: "v2026.09.10-1209", gitCommit: source.commit } };
-    gateway.setSystemInfo(response);
+    // Changing source alone must not repeat a dismissed protocol warning.
+    gateway.setSystemInfo({ ...hostInfo, build: { sha: "d".repeat(40) }, runtimeCompatibility: {
+      schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2,
+    } });
     await recheck();
     expect(await dialog.count()).toBe(0);
-    response.runningVersion = response.version;
-    gateway.setSystemInfo(response);
+    gateway.setSystemInfo(hostInfo);
     await recheck();
     expect(await dialog.count()).toBe(0);
     await composer.fill("");

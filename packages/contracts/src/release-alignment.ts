@@ -51,12 +51,10 @@ export function evaluateReleaseAlignment(info: unknown, desktopSource: unknown):
   return "different-releases";
 }
 
-/** Supported protocols do not prove alignment; unsupported ones retain recovery. */
+/** Source identity is diagnostic only; independent releases negotiate their API contract. */
 export function evaluateDesktopReleaseState(info: unknown, desktopSource: unknown,
   desktopProtocol = DESKTOP_PROTOCOL_VERSION) {
   const alignment = evaluateReleaseAlignment(info, desktopSource);
   const protocol = evaluateRuntimeCompatibility(info, desktopProtocol);
-  const status = protocol === "desktop-update-required" || protocol === "runtime-update-required"
-    ? protocol : alignment;
-  return { alignment, protocol, status };
+  return { alignment, protocol, status: protocol };
 }

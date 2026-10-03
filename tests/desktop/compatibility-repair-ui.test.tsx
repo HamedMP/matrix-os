@@ -2,7 +2,8 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import RuntimeCompatibilityGate from "@renderer/features/updates/RuntimeCompatibilityGate";
+import CompatibilityUpdatePanel from "@renderer/features/updates/CompatibilityUpdatePanel";
+import { useCompatibilityRepair } from "@renderer/lib/use-compatibility-repair";
 import { useConnection } from "@renderer/stores/connection";
 import type { ApiClient } from "@renderer/lib/api";
 
@@ -24,7 +25,7 @@ it.each([
   const api = {
     forRuntime() { return this; }, post,
     get: vi.fn(async (path: string) => path === "/api/system/info"
-      ? { version: cloudVersion, runningVersion: cloudVersion, build: { sha: cloudCommit } }
+      ? { version: cloudVersion, runningVersion: cloudVersion, build: { sha: cloudCommit }, runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1 } }
       : { channel: "canary", latest: { version: cloudNext }, updateAvailable: cloudVersion !== cloudNext }),
   } as unknown as ApiClient;
   useConnection.setState({ api, runtimeSlot: "primary" });
@@ -35,8 +36,11 @@ it.each([
     return { ok: true };
   });
   vi.stubGlobal("operator", { invoke });
-  render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
-  await screen.findByRole("dialog", { name: "Update Matrix OS" });
+  function Panel() {
+    const repair = useCompatibilityRepair(api, "primary", true);
+    return <CompatibilityUpdatePanel repair={repair} close={() => undefined} />;
+  }
+  render(<Panel />);
   await screen.findAllByText("0.1.0", { selector: "span" });
   expect(screen.getByText("Desktop app")).toBeTruthy();
   expect(screen.getByText("Cloud computer")).toBeTruthy();
