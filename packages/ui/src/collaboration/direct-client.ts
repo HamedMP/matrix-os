@@ -53,13 +53,16 @@ const RELAY_RUNTIME_HEADER = "x-matrix-collaboration-runtime";
 /** Set only by the platform relay on its own 401; the relay never forwards it from a home. */
 const PLATFORM_CHALLENGE_HEADER = "www-authenticate";
 
+/** The ticket schemas share the same endpoint URL validation contract. */
+export const CollaborationEndpointOriginSchema = z.url();
+
 const IssuedTicketSchema = z.object({
   signedTicket: CollaborationSignedConnectionTicketSchema,
-  endpoint: z.object({ origin: z.string().url(), protocolVersion: z.number().int() }).strict(),
+  endpoint: z.object({ origin: CollaborationEndpointOriginSchema, protocolVersion: z.number().int() }).strict(),
 }).strict();
 const IssuedOwnerRuntimeTicketSchema = z.object({
   signedTicket: CollaborationSignedOwnerRuntimeTicketSchema,
-  endpoint: z.object({ origin: z.string().url(), protocolVersion: z.number().int() }).strict(),
+  endpoint: z.object({ origin: CollaborationEndpointOriginSchema, protocolVersion: z.number().int() }).strict(),
 }).strict();
 
 /** `unauthenticated`: the platform no longer recognizes the actor (sign in again); `denied`: the home ended or refused access. */
