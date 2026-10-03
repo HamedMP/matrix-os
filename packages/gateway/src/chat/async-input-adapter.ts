@@ -13,21 +13,25 @@ type Question = Extract<CanonicalProviderRunEvent, { type: "input.requested" }>;
 type Answer = { request: Question; input: CanonicalSubmitChatInputRequest };
 type Steer = Parameters<NonNullable<CanonicalChatProviderAdapter["steer"]>>[0];
 type Receipt = { resolve(): void; reject(error: Error): void };
-type Continuation = { kind: "answer"; answer: Answer } | { kind: "steer"; input: Steer; receipt: Receipt };
+type Continuation = { kind: "answer"; answer: Answer; live?: boolean } | { kind: "steer"; input: Steer; receipt: Receipt };
 type Run = {
   input: CanonicalProviderRunInput;
-  pending: Map<string, { request: Question; timer: ReturnType<typeof setTimeout> }>;
+  pending: Map<string, { request: Question; timer: ReturnType<typeof setTimeout>; released: Promise<boolean> }>;
   deferred: Set<string>;
   nativeOnly: Set<string>;
   continuations: Continuation[];
+  deliveries: Set<Promise<void>>;
+  deliveryTail?: Promise<void>;
   nativeActive: boolean;
   resumable: boolean;
   expired: CanonicalProviderRunEvent[];
+  releaseDeferred?: (released: boolean) => void;
   wake?: () => void;
 };
 
 /** A native phase can finish while questions remain open. The canonical Run stays alive.
- * Late answers enter the same native conversation at its next safe turn boundary.
+ * Answers enter an active phase through its validated native control when supported;
+ * late answers enter the same native conversation at its next safe turn boundary.
  * Registries are capped; each question expires and every Run drains on cancellation.
  */
 export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options: { questionTimeoutMs?: number } = {}): CanonicalChatProviderAdapter {
@@ -38,7 +42,7 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
 
   async function* execute(input: CanonicalProviderRunInput): AsyncIterable<CanonicalProviderRunEvent> {
     if (runs.has(input.runId) || runs.size >= 128) throw new Error("Async question Run unavailable");
-    const run: Run = { input, pending: new Map(), deferred: new Set(), nativeOnly: new Set(), continuations: [], nativeActive: true, resumable: false, expired: [] };
+    const run: Run = { input, pending: new Map(), deferred: new Set(), nativeOnly: new Set(), continuations: [], deliveries: new Set(), nativeActive: true, resumable: false, expired: [] };
     runs.set(input.runId, run);
     const wake = () => { run.wake?.(); run.wake = undefined; };
     input.signal.addEventListener("abort", wake);
@@ -88,18 +92,31 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
               wake();
             }, timeout);
             timer.unref?.();
-            run.pending.set(request.requestId, { request, timer }); run.deferred.add(request.requestId);
+            let release!: (value: boolean) => void;
+            const released = new Promise<boolean>(resolve => { release = resolve; });
+            run.releaseDeferred = release;
+            run.pending.set(request.requestId, { request, timer, released }); run.deferred.add(request.requestId);
             // The consumer persists the visible question before the native tool is released.
             yield request;
-            await native.deferInput!({ owner: input.owner, chatId: input.chatId, runId: input.runId, requestId: request.requestId });
+            try {
+              await native.deferInput!({ owner: input.owner, chatId: input.chatId, runId: input.runId, requestId: request.requestId });
+              release(true);
+            } catch (error: unknown) { release(false); throw error; }
+            finally { run.releaseDeferred = undefined; }
             continue;
           }
-          // Native tool acknowledgement is not a user answer. Only the later answer phase resolves it.
+          // Native tool acknowledgement is not a user answer. Only validated
+          // live delivery or the later answer phase resolves it.
           if (event.type === "input.resolved" && run.deferred.has(event.requestId)) continue;
           if (event.type === "input.resolved") run.nativeOnly.delete(event.requestId);
           if (event.type === "run.completed") { terminal = event; continue; }
           yield event.type === "assistant.delta" && phase ? { ...event, messageId: `async_${digest(`${phase}:${event.messageId ?? "answer"}`)}` } : event;
         }
+        run.nativeActive = false;
+        // Native completion can race its control acknowledgement. Keep the Run
+        // alive until delivery is known, without admitting a duplicate phase.
+        await Promise.allSettled(run.deliveries);
+        while (run.expired.length) yield run.expired.shift()!;
         if (input.signal.aborted) break;
         if (!terminal) throw new Error("Native phase ended without completion");
         if (terminal.tokenUsage) {
@@ -128,6 +145,7 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
       for (const requestId of run.pending.keys()) yield { type: "input.resolved", requestId, reason: "cancelled" };
       yield input.signal.aborted ? { type: "run.completed", outcome: "aborted", ...(tokenUsage ? { tokenUsage } : {}) } : lastTerminal;
     } finally {
+      run.releaseDeferred?.(false);
       const undelivered = new ChatSteerNotDeliveredError();
       if (continuation?.kind === "steer") continuation.receipt.reject(new Error("Steering delivery was not confirmed"));
       for (const queued of run.continuations) if (queued.kind === "steer") queued.receipt.reject(undelivered);
@@ -173,9 +191,51 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
         if (error instanceof ChatInputAnswerValidationError) throw new ChatInputNotDeliveredError();
         throw error;
       }
-      if (run.continuations.length >= 16) throw new ChatInputNotDeliveredError();
+      if (run.continuations.length >= 16 || run.deliveries.size >= 16) throw new ChatInputNotDeliveredError();
       clearTimeout(pending.timer); run.pending.delete(input.requestId);
-      run.continuations.push({ kind: "answer", answer: { request: pending.request, input } }); run.wake?.(); run.wake = undefined;
+      const queued: Continuation = { kind: "answer", answer: { request: pending.request, input } };
+      const deliverLive = run.nativeActive && run.continuations.every(item => item.kind === "answer" && item.live) && native.submitDeferredInput;
+      if (deliverLive) queued.live = true;
+      run.continuations.push(queued);
+      if (deliverLive) {
+        const prompt = `[Matrix: answer to your earlier asynchronous question]\n${JSON.stringify({ requestId: pending.request.requestId, questions: pending.request.questions?.map(question => ({ questionId: question.questionId, question: question.question })), answers: input.structuredAnswers ?? input.answer })}\nApply this user answer to the pending work. Do not ask the same question again.`;
+        const remove = () => { const index = run.continuations.indexOf(queued); if (index >= 0) run.continuations.splice(index, 1); };
+        // Native controls are ordered. A second pending answer must enter this
+        // same phase after the prior receipt, rather than wait for phase completion.
+        const delivery = (run.deliveryTail ?? Promise.resolve()).catch(() => undefined).then(() => pending.released).then(released => {
+          if (run.input.signal.aborted || runs.get(input.runId) !== run) throw new ChatInputNotDeliveredError();
+          if (!released) throw new ChatSteerNotDeliveredError();
+          return deliverLive({
+            owner: input.owner, chatId: input.chatId, runId: input.runId, turnId: run.input.turnId,
+            clientRequestId: input.clientRequestId, prompt, parts: [{ type: "text", text: prompt }],
+          });
+        }).then(() => {
+          remove();
+          run.expired.push({ type: "input.resolved", requestId: input.requestId, reason: "answered" });
+        }, (error: unknown) => {
+          // Released native registry: queued continuation is safe. An RPC may
+          // have delivered the answer even if its response was lost: never replay.
+          if (error instanceof ChatSteerNotDeliveredError) { queued.live = false; return; }
+          remove();
+          if (error instanceof ChatInputNotDeliveredError && !run.input.signal.aborted && runs.get(input.runId) === run) {
+            // Keep a rejected live control retryable, with the original question
+            // deadline. An unavailable socket is not a safe phase boundary.
+            const remaining = Math.max(0, Math.min(timeout, Date.parse(pending.request.expiresAt!) - Date.now()));
+            pending.timer = setTimeout(() => {
+              if (run.pending.delete(input.requestId)) run.expired.push({ type: "input.resolved", requestId: input.requestId, reason: "expired" });
+              run.wake?.(); run.wake = undefined;
+            }, remaining);
+            pending.timer.unref?.(); run.pending.set(input.requestId, pending);
+          }
+          throw error;
+        });
+        run.deliveryTail = delivery;
+        run.deliveries.add(delivery);
+        const release = () => { run.deliveries.delete(delivery); run.wake?.(); run.wake = undefined; };
+        delivery.then(release, release);
+        await delivery;
+      }
+      run.wake?.(); run.wake = undefined;
       return "queued";
     },
   };

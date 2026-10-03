@@ -173,6 +173,11 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     parts: CanonicalChatMessagePart[];
     state?: State;
   }): Promise<void>;
+  /** Deliver a deferred, validated answer into a still-active native phase.
+   * Released phase uses ChatSteerNotDeliveredError; other definite non-delivery
+   * uses ChatInputNotDeliveredError. Uncertain delivery must not replay.
+   */
+  submitDeferredInput?: CanonicalChatProviderAdapter<State>["steer"];
   submitInput?(input: CanonicalSubmitChatInputRequest & { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string; state?: State }): Promise<void | "queued">;
   /** Internal acknowledgement only: the user has NOT answered or authorized anything. */
   deferInput?(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string }): Promise<void>;
