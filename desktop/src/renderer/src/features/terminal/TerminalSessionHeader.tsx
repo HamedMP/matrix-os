@@ -1,6 +1,6 @@
 import "./terminal-session-header.css";
 import { SquareTerminal } from "@renderer/lib/hugeicons";
-import type { ComponentProps, ReactNode, Ref } from "react";
+import type { ComponentProps, Ref } from "react";
 import { DesktopNewSessionControl } from "./DesktopNewSessionControl";
 import { DesktopTerminalThemePicker } from "./DesktopTerminalThemePicker";
 
@@ -93,13 +93,11 @@ export function TerminalSessionDetails({
   subtitle,
   status,
   controlsRef,
-  actions,
 }: {
   name?: string;
   subtitle?: string;
   status?: string;
   controlsRef: Ref<HTMLDivElement>;
-  actions?: ReactNode;
 }) {
   return (
     <div className="flex min-w-0 flex-1 items-center justify-between gap-3 px-4">
@@ -141,7 +139,6 @@ export function TerminalSessionDetails({
             {status}
           </span>
         )}
-        {actions}
         <div
           ref={controlsRef}
           data-terminal-controls-host

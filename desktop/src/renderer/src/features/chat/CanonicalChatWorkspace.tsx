@@ -96,6 +96,7 @@ function projectContext(
   };
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing workspace coordinates the canonical Chat controller, composer, credential disclosure and shared routes; this change only removes live-share callbacks. Splitting it belongs in a focused refactor.
 export function CanonicalChatWorkspace({
   api,
   client,
@@ -919,15 +920,7 @@ export function CanonicalChatWorkspace({
         {controller.detail && globalView === "conversation" ? (
           <>
             {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id}
-              copyText={copyText} onLiveShareStart={() => flushSync(() => setCredentialSuspendedChatId(controller.detail!.record.chat.id))}
-              onLiveShareFailed={() => {
-                const chatId = controller.detail?.record.chat.id;
-                if (!chatId) return;
-                void client.getDetail(chatId, { limit: 1 }).then((fresh) => {
-                  if (fresh.record.chat.collaboration || fresh.record.chat.lifecycle !== "active") return;
-                  setCredentialSuspendedChatId((current) => current === chatId ? null : current);
-                }).catch(() => { /* Keep disclosure suspended until owner authority can be checked. */ });
-              }} /> : null}
+              copyText={copyText} /> : null}
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{

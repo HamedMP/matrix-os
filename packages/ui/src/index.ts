@@ -111,7 +111,6 @@ export {
 } from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
-export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
 export {
@@ -119,7 +118,6 @@ export {
   useProjectSharing,
   type ProjectSharingController,
 } from "./collaboration/useProjectSharing.js";
-export { ResourceSharingButton } from "./collaboration/ResourceSharingButton.js";
 export { ReadinessSummary } from "./collaboration/ReadinessSummary.js";
 export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
 export {

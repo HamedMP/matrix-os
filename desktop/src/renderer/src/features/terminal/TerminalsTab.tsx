@@ -18,7 +18,6 @@ import {
 import TerminalView from "./TerminalView";
 import { TerminalSessionHeader, TerminalSessionDetails } from "./TerminalSessionHeader";
 import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
-import { DesktopTerminalSharing } from "./DesktopTerminalSharing";
 import { TerminalSidebarLayout } from "./TerminalSidebarLayout";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import {
@@ -79,12 +78,7 @@ function normalizeBusyNames(names: string[]): string[] {
   return names.filter((name, index) => name.length > 0 && names.indexOf(name) === index);
 }
 
-function SelectedTerminalSharing({ session }: { session: ShellSessionSummary | null | undefined }) {
-  if (!session || session.status === "exited") return null;
-  return <DesktopTerminalSharing terminalId={session.name} />;
-}
-
-// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing session orchestration coordinates retained xterm panes, rename/delete recovery, and external open requests. This change only delegates a selected session to a leaf sharing control; splitting the existing lifecycle state belongs in a focused refactor with its own regression coverage.
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing session orchestration coordinates retained xterm panes, rename/delete recovery, and external open requests. Splitting the existing lifecycle state belongs in a focused refactor with its own regression coverage.
 export default function TerminalsTab({
   active = true,
   visible = active,
@@ -366,8 +360,7 @@ export default function TerminalsTab({
         onCreateAgent={(option, action) => void createAgentSession(option, action)} />
       <TerminalSessionDetails name={headerSession ? displayName(headerSession) : undefined}
         subtitle={headerSession ? `Started at ${sessionStart(headerSession.createdAt)} · ${runtimeSlot === "primary" ? "main computer" : runtimeSlot}` : undefined}
-        status={headerSession ? shellStatusLabel(headerSession) : undefined} controlsRef={setControlsHost}
-        actions={<SelectedTerminalSharing session={headerSession} />} />
+        status={headerSession ? shellStatusLabel(headerSession) : undefined} controlsRef={setControlsHost} />
     </>)} sidebar={(controls) => (
       <TerminalSessionSidebar
         showHeader={false}
