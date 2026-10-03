@@ -88,7 +88,7 @@ describe("shared Agents entry", () => {
     fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
     expect((screen.getByRole("textbox", { name: "Instructions" }) as HTMLTextAreaElement).value).toBe(saved.instructions);
   });
-  it("shows recipe bots with their own Chat and server routing and saves without a coding selection", async () => {
+  it("preserves a legacy recipe bot route without presenting it as Automatic or resaving it", async () => {
     const client = clientFixture({ matrix: true });
     const bot = { ...saved, recipeRef: { recipeId: "writing-bot", version: "1" },
       recipe: { skills: ["matrix-integrations"], integrations: [], output: "Legacy Agent recipe" } };
@@ -103,7 +103,7 @@ describe("shared Agents entry", () => {
     expect(screen.queryByText("Pi")).toBeNull();
     expect(screen.queryByText(/^Runtime/)).toBeNull();
     expect(screen.getByText("Automatic · managed by this computer")).toBeTruthy();
-    expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value).toBe("");
+    expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value).toBe(JSON.stringify([bot.selection.instanceId, bot.selection.model]));
     expect(screen.queryByText(/Set up Codex or Hermes/)).toBeNull();
     expect(screen.queryByText(/Agent requests use Full access/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Add recipe" })).toBeNull();

@@ -46,3 +46,13 @@ it('discards old owner replies and labels when client changes',async()=>{
  expect(screen.queryByText('Writer Rabbit')).toBeNull();
  expect(screen.getByRole('button',{name:'Choose bot agent and model'}).textContent).not.toContain('Sonnet');
 });
+
+it('keeps an unsupported saved Bot route distinct from Automatic',async()=>{
+ const client=makeClient();client.list.mockResolvedValue({enabled:true,agents:[{...bot,selection:{instanceId:'codex_default',model:'gpt-old'}}]});
+ render(<BotComposerControls agentId={bot.id} client={client as never} catalog={catalog}/>);
+ const trigger=await screen.findByRole('button',{name:'Choose bot agent and model'});
+ await waitFor(()=>expect(trigger.textContent).toContain('Writer Rabbit'));
+ expect(trigger.textContent).toContain('gpt-old · unavailable');
+ expect(trigger.textContent).not.toContain('Automatic');
+ expect(client.update).not.toHaveBeenCalled();
+});

@@ -4,7 +4,7 @@ import { botModelRoutingLabel, type CanonicalChatModelSelection, type CanonicalP
 import type { ChatAgentClient } from "../client.js";
 import { AgentAvatar } from "../AgentAvatar.js";
 import { deriveCanonicalProviderChoices } from "../../canonical-provider-choice.js";
-import { MatrixBotModelField } from "./MatrixBotModelField.js";
+import { isAutomaticBotSelection, MatrixBotModelField } from "./MatrixBotModelField.js";
 import { chatAgentMutedStyle } from "../theme.js";
 
 /** The bound Bot's saved model is independent of an ordinary Chat's provider selection. */
@@ -58,7 +58,7 @@ export function BotComposerControls({ agentId, client, catalog, catalogLoading =
     } finally { if (owner.current === identity && sequence === identity.sequence) setPending(false); }
   };
   // Automatic's concrete funding/provider is not projected by this endpoint. Never guess it.
-  const routing = agent ? agent.selection?.instanceId === "matrix_bot_default" || !agent.selection
+  const routing = agent ? isAutomaticBotSelection(agent.selection)
     ? "Automatic" : botModelRoutingLabel(agent.selection, catalog) : error ? "Bot settings unavailable" : "Checking bot model…";
   return <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
     <Popover.Trigger asChild><button type="button" aria-label="Choose bot agent and model" aria-busy={!agent && !error || pending || catalogLoading}

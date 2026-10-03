@@ -1,5 +1,5 @@
 import { BotRecipeSetup } from "./bots/BotRecipeSetup.js";
-import { matrixBotModelChoices } from "./bots/MatrixBotModelField.js";
+import { isAutomaticBotSelection, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { CanonicalProviderChoice } from "../canonical-provider-choice.js";
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
@@ -40,14 +40,20 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
   const [query, setQuery] = useState("");
   const [selectedGmail, setSelectedGmail] = useState("");
   const [labeling, setLabeling] = useState(false);
-  const [botSelection, setBotSelection] = useState<CanonicalChatModelSelection | null>(null);
+  const [chosenBotSelection, setBotSelection] = useState<CanonicalChatModelSelection | undefined>(undefined);
   const [botPending, setBotPending] = useState<string | null>(null);
   const [botError, setBotError] = useState("");
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const botAttempt = useRef<{ key: string; requestId: string } | null>(null);
-  const botModelAvailable = !botSelection || matrixBotModelChoices(matrixModels).some((choice) =>
-    choice.instanceId === botSelection.instanceId && choice.modelId === botSelection.model);
+  const selectableModels = matrixBotSelectableModelChoices(matrixModels, catalog);
+  // Initialize the unsaved form once when its catalog arrives; later refreshes preserve intent.
+  if (setupRecipe && chosenBotSelection === undefined && !catalogLoading && selectableModels[0]) {
+    setBotSelection(matrixBotModelSelection(selectableModels[0]));
+  }
+  const botSelection = chosenBotSelection ?? null;
+  const botModelAvailable = !botSelection || isAutomaticBotSelection(botSelection) || selectableModels.some((choice) =>
+    choice.instanceId === botSelection?.instanceId && choice.modelId === botSelection.model);
   const createBot = async (recipe: BotRecipeSummary, name = recipe.name) => {
     if (!onInstantiateBot || !onOpenBotChat || botPending || !botModelAvailable || catalogLoading) return;
     const key = `${recipe.recipeId}@${recipe.version}:${JSON.stringify(botSelection)}:${name}`;
@@ -106,7 +112,7 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
       <input className={chatAgentInputClass} type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search templates" aria-label="Search recipes" />
     </label>
     <div className="flex flex-wrap gap-2" role="group" aria-label="Template categories">{categories.map(value => <button type="button" key={value} aria-pressed={category === value} className="matrix-chat-agent-category rounded-full border px-3 py-1 text-xs" onClick={() => setCategory(value)}>{value}</button>)}</div>
-    {setupRecipe ? <BotRecipeSetup key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} error={botError} onSelectionChange={selection => { setBotSelection(selection.instanceId === "matrix_bot_default" ? null : selection); setBotError(""); }} onCreate={name => { void createBot(setupRecipe, name); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
+    {setupRecipe ? <BotRecipeSetup key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} error={botError} onSelectionChange={selection => { setBotSelection(selection); setBotError(""); }} onCreate={name => { void createBot(setupRecipe, name); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
     {botError && !setupRecipe ? <p role="alert" className="text-xs">{botError}</p> : null}
     {showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
       {shownBots.map((recipe) => <article key={`${recipe.recipeId}@${recipe.version}`} data-matrix-recipe={recipe.recipeId}
@@ -116,7 +122,7 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
             <p className="matrix-template-description mt-1 text-xs leading-5" style={chatAgentMutedStyle}>{recipe.description}</p></div></div>
         <p className="matrix-template-output text-xs" style={chatAgentMutedStyle} title={recipe.output}>{recipe.output}</p>
         <button type="button" aria-label={`Use ${recipe.name}`} disabled={!onInstantiateBot || !onOpenBotChat || !!botPending}
-          className={`${chatAgentButtonClass} matrix-template-action self-start`} onClick={() => { setSetupRecipe(recipe); setBotError(""); }}>
+          className={`${chatAgentButtonClass} matrix-template-action self-start`} onClick={() => { setBotSelection(undefined); setSetupRecipe(recipe); setBotError(""); }}>
           {botPending?.startsWith(`${recipe.recipeId}@${recipe.version}:`) ? "Creating…" : "Set up bot"}</button>
       </article>)}
       {showJev ? <article data-matrix-recipe={jevRecipe.id} className="matrix-chat-agent-card matrix-chat-agent-recipe-card flex min-w-0 flex-col gap-3 rounded-xl border p-3">

@@ -1,6 +1,6 @@
 import { Dialog } from "../Dialog.js";
 import { BotEditorApps } from "./bots/BotEditorApps.js";
-import { matrixBotModelChoices } from "./bots/MatrixBotModelField.js";
+import { matrixBotModelChoices, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
 import { isChatAgentDriver } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -81,7 +81,7 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
         <div className="min-w-0 flex-1"><h3 className="text-base font-semibold">{state.editing === "new" ? "New agent" : "Edit agent"}</h3><p className="truncate text-xs" style={muted}>{state.draft.name}</p></div>
         <button type="button" className={button} aria-label="Close agent settings" disabled={state.pending} onClick={back}>×</button>
       </header>
-      <AgentEditor draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog}
+      <AgentEditor draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog} catalogLoading={state.loading}
         recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
         connectionError={state.connectionError} change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRetryRecipe={retryRecipes} cancelLabel="Cancel" apps={state.editing !== "new" && state.editing.recipeRef ? <BotEditorApps key={state.editing.id} agentId={state.editing.id} client={client}/> : undefined} />
       {state.error ? <p role="alert" className="mt-3 text-xs">{state.error}</p> : null}
@@ -203,9 +203,8 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       });
   };
   const edit = (agent: ChatAgent | "new" | "daily-brief") => {
-    const choice = matrixBotModelChoices(models)[0];
-    const selection: CanonicalChatModelSelection | null = choice ? { instanceId: choice.instanceId, model: choice.modelId,
-      ...(choice.selectedOptions.length ? { options: choice.selectedOptions } : {}) } : null;
+    const choice = matrixBotSelectableModelChoices(models, state.catalog)[0];
+    const selection: CanonicalChatModelSelection | null = choice ? matrixBotModelSelection(choice) : null;
     if (agent === "daily-brief") {
       patch({ editing: "new", notice: "", error: "", draft: {
         name: "Personal Daily Brief",
