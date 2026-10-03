@@ -361,3 +361,21 @@ or reusing unverified identity from a previous native profile. Canonical
 connection/readiness remains authoritative. Safe profile-aware caching is not
 delivered here; repeated owner GET/usage presentation still requires Electron
 Desktop acceptance before claiming complete UX validation.
+
+### Owner foreground workflow boundary
+
+Settings foreground workflows mount behind the existing request principal and
+resolved runtime owner. Anonymous requests return 401, other owners 403, and
+missing runtime dependencies 503. Start, code submission, key verification, and
+cancellation validate bounded strict payloads before execution. Receipts retain
+only safe bounded state, expire, and use owner-scoped idempotency; native profile
+writes require serialized admission and confirmed child cleanup. Secrets never
+enter public receipts or logs. Fixed-origin key probes enforce deadlines and
+redirect rejection before the injected native saver may replace credentials.
+
+This engine layer registers an empty adapter registry: owner capabilities are
+empty and attempts to start undelivered adapters are unavailable. It advertises
+no login, install, or uninstall support until native adapters are delivered.
+Gateway shutdown drains the registered engine. Registration, profile guard,
+receipt lifecycle, route authorization, and key-child cleanup tests exercise
+the delivered boundaries independently from later runtime adapters.
