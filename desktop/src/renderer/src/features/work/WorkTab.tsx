@@ -787,7 +787,7 @@ function WorkTabContent({
     <div ref={setSharedHeaderContainer} data-slot="desktop-shared-chat-controls"
       className="no-drag pointer-events-auto flex items-center gap-1" />
   ) : sharingControl, [sharedScopeId, sharingControl]);
-  const chromeSpec = useMemo(() => ({
+  const chromeSpec = useMemo(() => ({ showTitle: agentsOpen,
     title: agentsOpen ? agentsNavigation?.opened?.title ?? "Your AI team" : headerAgentId
       ? <div ref={setBotHeaderContainer} data-slot="desktop-bot-header" className="no-drag pointer-events-auto h-12 min-w-0 w-full" />
       : chromeTitle,

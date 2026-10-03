@@ -4,6 +4,8 @@ import type { useDirectBotBinding } from "@matrix-os/ui";
 export interface SurfaceChromeSpec {
   title?: ReactNode;
   hideTitle?: boolean;
+  /** A content view may opt into the shared toolbar even when its app owns sidebar chrome. */
+  showTitle?: boolean;
   leftActions?: ReactNode;
   rightActions?: ReactNode;
   leftPaneWidth?: number;

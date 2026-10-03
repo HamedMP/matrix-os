@@ -254,7 +254,7 @@ export default function DesktopSurfaceFrame({
       topBarReservesSafeArea={isWindow || !isWorkSurface}
       topBar={showsSurfaceTopBar ? (
         <TopBar
-          title={surfaceChrome?.hideTitle ? undefined : workChatTitle ?? (sidebarHidesTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title)}
+          title={surfaceChrome?.hideTitle ? undefined : workChatTitle ?? (sidebarHidesTitle && !surfaceChrome?.showTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title)}
           leftActions={surfaceChrome?.leftActions}
           rightActions={surfaceChrome?.rightActions}
           leftPaneWidth={surfaceChrome?.leftPaneWidth ?? (isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined)}
