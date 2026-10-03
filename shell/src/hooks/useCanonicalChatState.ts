@@ -54,10 +54,11 @@ function conversationMeta(record: CanonicalChatRecord) {
 
 function collaborationViewFromPathname(pathname: string): ChatCollaborationView | null {
   if (pathname === "/shared" || pathname === "/shared/") return { kind: "home" };
-  const match = /^\/shared\/chat\/([^/]+)\/?$/.exec(pathname);
+  const match = /^\/shared\/(chat|project)\/([^/]+)\/?$/.exec(pathname);
   if (!match) return null;
-  const scopeId = CollaborationIdSchema.safeParse(match[1]);
-  return scopeId.success ? { kind: "chat", scopeId: scopeId.data } : null;
+  const scopeId = CollaborationIdSchema.safeParse(match[2]);
+  if (!scopeId.success) return null;
+  return match[1] === "project" ? { kind: "project", scopeId: scopeId.data } : { kind: "chat", scopeId: scopeId.data };
 }
 
 function pushShellChatPath(pathname: string): void {
@@ -500,6 +501,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     pushShellChatPath(`/shared/chat/${encodeURIComponent(scopeId)}`);
   }, []);
 
+  const openSharedProject = useCallback((scopeId: string) => {
+    autoRestoreChatRef.current = false;
+    activeChatIdRef.current = undefined;
+    detailRef.current = null;
+    detailRequestGeneration.current += 1;
+    setActiveChatId(undefined);
+    setDetail(null);
+    setSafeError(null);
+    setSelectedCollaborationView({ kind: "project", scopeId });
+    pushShellChatPath(`/shared/project/${encodeURIComponent(scopeId)}`);
+  }, []);
+
   const openSharedHome = useCallback(() => {
     autoRestoreChatRef.current = false;
     activeChatIdRef.current = undefined;
@@ -650,6 +663,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   return {
     collaborationView,
     openSharedChat,
+    openSharedProject,
     openSharedHome,
     unreadOnly, setUnreadOnly,
     readState: detail?.record.chat.id === activeChatId ? detail?.record.readState : undefined,

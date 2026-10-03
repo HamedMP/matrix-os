@@ -268,6 +268,21 @@ describe("collaboration direct client", () => {
     expect(world.home.requests.at(-1)!.url).toBe(`${RELAY}/api/collaboration/invitations/20000000-0000-4000-8000-000000000001`);
   });
 
+  it("hydrates a shared project with its name and Chats, and tolerates an owner home without an overview", async () => {
+    world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "project", authorityGeneration: 3, status: "accepted" }];
+    world.home.projectOverview = { projectId: "proj-1", scopeId, name: "Launch", status: "active", chats: [] };
+    const api = createCollaborationDirectApi({ platformBaseUrl: PLATFORM, fetchImpl: world.fetchImpl, webSocketFactory: world.webSocketFactory, clientOrigin: CLIENT_ORIGIN, now: world.now });
+    const shared = await api.get("/api/collaboration/shared") as { items: Json[] };
+    expect(shared.items[0]).toMatchObject({ scopeId, status: "accepted", resource: { project: { id: "proj-1" }, overview: { name: "Launch" } } });
+    expect(shared.items[0]).not.toHaveProperty("home");
+
+    delete world.home.projectOverview;
+    const older = await api.get("/api/collaboration/shared") as { items: Json[] };
+    expect(older.items[0]).toMatchObject({ scopeId, status: "accepted", resource: { project: { id: "proj-1" } } });
+    expect(older.items[0]!.resource).not.toHaveProperty("overview");
+    expect(older.items[0]).not.toHaveProperty("home");
+  });
+
   it("marks a discovered item for sign-in, not ended access, when the platform no longer recognizes the actor", async () => {
     world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "accepted" }];
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => new URL(String(input)).pathname === "/api/collaboration/connections"

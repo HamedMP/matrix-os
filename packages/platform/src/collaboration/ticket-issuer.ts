@@ -248,11 +248,19 @@ export class CollaborationTicketIssuer {
       this.options.resolveOrganization(scopeId),
     ]);
     // Existence is never disclosed: every denial is the same not-found.
-    if (!directory || !organizationId || status === "revoked") throw denied();
-    const pendingGrantId = !status && directory.audience === "organization"
+    if (!directory || !organizationId) throw denied();
+    // A shared project's Chat has no members of its own: only someone who accepted the project
+    // may open it, never an invitee or an organization member who has not accepted yet.
+    if (directory.parentScopeId
+      && await this.options.repository.getScopeActorStatus(directory.parentScopeId, input.actorId) !== "accepted") {
+      throw denied();
+    }
+    const effectiveStatus = directory.parentScopeId ? "accepted" : status;
+    if (effectiveStatus === "revoked") throw denied();
+    const pendingGrantId = !effectiveStatus && directory.audience === "organization"
       ? directory.organizationGrantId : null;
-    if (!status && (!pendingGrantId || purpose !== "direct_session")) throw denied();
-    if (status === "invited" && purpose !== "direct_session") throw denied();
+    if (!effectiveStatus && (!pendingGrantId || purpose !== "direct_session")) throw denied();
+    if (effectiveStatus === "invited" && purpose !== "direct_session") throw denied();
     if (purpose === "terminal" && directory.kind !== "terminal") throw denied();
     if (this.options.cutoverAdmission) {
       let admitted = false;
