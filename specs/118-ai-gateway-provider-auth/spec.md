@@ -459,3 +459,19 @@ the primitive alone exposes no endpoint or new credential-writing capability.
 Direct primitive tests cover exclusive cross-instance acquisition, independent
 profiles, absence from synced owner paths, symlinked admission ancestors/markers,
 and replacement-marker identity retention, in addition to release races/retries.
+
+Private admission directories must belong to the gateway UID and have mode 0700;
+existing directory permissions are never changed. Both lexical and resolved ancestors must
+belong to that UID or root and reject group/other write access, except root-owned
+sticky shared anchors. Creation initialization failures close the descriptor and
+attempt removal of the never-admitted marker; cleanup failures remain fenced.
+The original initialization error is preserved.
+
+Only the owning admission closure may release a live marker. There is no
+cross-process recovery-delete API, TTL expiry, or PID-death unlock. Cooperating
+processes cannot admit a replacement until that owned unlink finishes. Operators
+must stop all gateway admission holders and confirm every native writer has
+stopped before any out-of-band recovery.
+POSIX path stat/unlink is not atomic against noncooperating same-UID or root
+actors deleting/replacing a live marker; those actors and filesystem ACLs are
+within the trusted runtime boundary. The primitive does not claim to contain them.
