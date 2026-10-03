@@ -4,6 +4,21 @@ import { createWebProviderWorkflowClient, loadWebAiCreditHistory, openWebProvide
 vi.mock("../../shell/src/lib/gateway.js", () => ({ getGatewayUrl: () => "/vm/review" }));
 const page = { entries: [], nextCursor: null };
 describe("web provider workflow transport", () => {
+  it("invokes default browser fetch with the global receiver for workflows and history", async () => {
+    const browserFetch = vi.fn(function(this: unknown, path: RequestInfo | URL, init?: RequestInit) {
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return Promise.resolve(Response.json(String(path).startsWith("/billing/") ? page : []));
+    });
+    vi.stubGlobal("fetch", browserFetch);
+    try {
+      await expect(createWebProviderWorkflowClient().capabilities(new AbortController().signal)).resolves.toEqual([]);
+      await expect(loadWebAiCreditHistory({runtimeSlot: "primary", cursor: null, signal: new AbortController().signal})).resolves.toEqual(page);
+      await expect(createWebProviderWorkflowClient({fetcher: browserFetch}).capabilities(new AbortController().signal)).resolves.toEqual([]);
+      expect(browserFetch).toHaveBeenCalledTimes(3);
+      expect(browserFetch.mock.calls[0][1]).toMatchObject({credentials: "include", cache: "no-store"});
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("distinguishes a confirmed key rejection from an uncertain transport failure", async () => {
     const input = { harnessInstanceId: "codex", providerId: "openai" as const, apiKey: "synthetic-key" };
     const rejected = createWebProviderWorkflowClient({ fetcher: vi.fn().mockResolvedValue(
