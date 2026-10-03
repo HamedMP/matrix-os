@@ -176,9 +176,20 @@ export class CollaborationDirectoryOutbox {
         .where("outbox.delivered_at", "is", null)
         .where("outbox.retry_after", "<=", now.toISOString())
         .where("outbox.attempts", "<", MAX_ATTEMPTS)
+        // The platform applies a scope's events by revision and drops an older one that arrives
+        // late, so each scope delivers strictly in order: an event is claimable only once every
+        // earlier event of its scope is delivered (or quarantined), across retries and workers.
+        .where(({ not, exists, selectFrom }) => not(exists(
+          selectFrom("collaboration_directory_outbox as earlier")
+            .innerJoin("collaboration_events as earlier_event", "earlier_event.event_id", "earlier.event_id")
+            .select("earlier.event_id")
+            .whereRef("earlier.scope_id", "=", "outbox.scope_id")
+            .whereRef("earlier.authority_runtime_id", "=", "outbox.authority_runtime_id")
+            .where("earlier.delivered_at", "is", null)
+            .where("earlier.attempts", "<", MAX_ATTEMPTS)
+            .whereRef("earlier_event.scope_seq", "<", "event.scope_seq"),
+        )))
         .orderBy("outbox.created_at", "asc")
-        // Events committed together share a timestamp; the platform applies them by revision.
-        .orderBy("event.revision", "asc")
         .orderBy("event.scope_seq", "asc")
         .limit(BATCH_SIZE)
         .forUpdate("outbox")
