@@ -99,7 +99,7 @@ describe("Chat collaboration sharing", () => {
       : { items: [] }), post: vi.fn(), delete: vi.fn() };
     const openChat = vi.fn();
     render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" openChat={openChat} />);
-    expect(await screen.findByText("Shared with your organization")).toBeVisible();
+    expect(await screen.findByText("Shared with you")).toBeVisible();
     expect(screen.getByText(/opens when you join/i)).toBeVisible();
     // A pending directory pointer is not authority to open content, so the card offers
     // acceptance and nothing navigates until the member asks for it.

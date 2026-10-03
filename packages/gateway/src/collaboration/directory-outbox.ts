@@ -16,7 +16,7 @@ interface ClaimedDirectoryEvent {
   kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   authorityGeneration: number;
   metadataRevision: number;
-  recipientEntries: Array<{ actorId: string; invitationId?: string }>;
+  recipientEntries: Array<{ actorId: string; invitationId?: string; grantId?: string }>;
   discoveryState: "invited" | "accepted" | "revoked" | "deleted";
   /** S05: read inside the claim transaction so a lookup failure leaves the event unclaimed and retryable. */
   organizationId: string | null;
@@ -185,7 +185,7 @@ export class CollaborationDirectoryOutbox {
           .returning("event_id")
           .executeTakeFirst();
         if (!updated) continue;
-        let recipientEntries: Array<{ actorId: string; invitationId?: string }>;
+        let recipientEntries: Array<{ actorId: string; invitationId?: string; grantId?: string }>;
         try {
           recipientEntries = parseRecipientEntries(row.recipient_actor_ids);
         } catch (error: unknown) {
@@ -222,13 +222,15 @@ export class CollaborationDirectoryOutbox {
 
 }
 
-function parseRecipientEntries(value: unknown): Array<{ actorId: string; invitationId?: string }> {
+function parseRecipientEntries(value: unknown): Array<{ actorId: string; invitationId?: string; grantId?: string }> {
   const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
   return CollaborationDirectoryEventSchema.shape.recipients
     .parse((Array.isArray(parsed) ? parsed : []).map((entry) => (
       typeof entry === "string" ? { actorId: entry, status: "accepted" } : { ...entry, status: "accepted" }
     )))
-    .map(({ actorId, invitationId }) => ({ actorId, ...(invitationId ? { invitationId } : {}) }));
+    .map(({ actorId, invitationId, grantId }) => ({
+      actorId, ...(invitationId ? { invitationId } : {}), ...(grantId ? { grantId } : {}),
+    }));
 }
 
 function backoffMs(attempt: number): number {

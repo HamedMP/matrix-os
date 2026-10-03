@@ -148,6 +148,30 @@ describe("PlatformCollaborationRepository", () => {
       .toBeNull();
   });
 
+  it("keeps a member grant pointer only while the grant is pending for that member", async () => {
+    // Adding the column to an index created before grant pointers existed is part of the bootstrap.
+    await sql`ALTER TABLE collaboration_user_index DROP COLUMN grant_id`.execute(fixture.collaborationDb);
+    await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
+    const actorId = platformCollaborationActors.recipientWithoutComputer;
+    const grantId = "70000000-0000-4000-8000-000000000401";
+    const event = {
+      eventId: "20000000-0000-4000-8000-000000000401", scopeId,
+      runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner,
+      kind: "project" as const, organizationId: "org_matrix_team",
+      authorityGeneration: 1, metadataRevision: 2,
+      recipients: [{ actorId, status: "invited" as const, grantId }],
+    };
+    await repository.applyDirectoryEvent(event);
+    expect((await repository.listForActorPage(actorId, "invited", { limit: 10 })).items)
+      .toMatchObject([{ scopeId, status: "invited", grantId, organizationId: "org_matrix_team" }]);
+    expect(await repository.getScopeActorEntry(scopeId, actorId)).toEqual({ status: "invited", grantId });
+    // A pointer is never kept on a decided row, even if a home sends one along.
+    await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000402", metadataRevision: 3,
+      recipients: [{ actorId, status: "accepted" as const, grantId }] });
+    expect(await repository.getScopeActorEntry(scopeId, actorId)).toEqual({ status: "accepted", grantId: null });
+    expect((await repository.listForActorPage(actorId, "accepted", { limit: 10 })).items[0]).not.toHaveProperty("grantId");
+  });
+
   it("removes revoked discovery projections through a bounded retention cleanup", async () => {
     await repository.applyDirectoryEvent({
       eventId: "20000000-0000-4000-8000-000000000020",

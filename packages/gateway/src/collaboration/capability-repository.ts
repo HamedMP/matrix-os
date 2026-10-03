@@ -176,7 +176,8 @@ export class CollaborationCapabilityRepository {
         scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
         actorId: input.actorId,
         action: "grant.created",
-        recipients: input.audience.kind === "member" ? [{ actorId: input.audience.actorId }] : [],
+        // A member grant names its grant so the platform can list it and sign an accept-only ticket for it.
+        recipients: input.audience.kind === "member" ? [{ actorId: input.audience.actorId, grantId }] : [],
         discoveryState: "invited",
         now,
         reasonCode: `${input.audience.kind}:${input.preset}`,
@@ -250,15 +251,18 @@ export class CollaborationCapabilityRepository {
         grantId: grant.id, scopeId: input.scopeId, state: applied.state, scopeRevision: nextRevision, grantRevision: applied.grantRevision,
       };
       await writeOperation(trx, input, operationKind, scope, result, now, operationExpiresAt);
+      // A member grant the member has not accepted yet stays an invitation in discovery: a preset
+      // change must not tell the platform it was accepted, or the member could never open it.
+      const pendingMember = grant.audience_kind === "member" && applied.state === "pending";
       const recipients = grant.audience_kind === "member" && grant.audience_actor_id
-        ? [{ actorId: grant.audience_actor_id }]
+        ? [{ actorId: grant.audience_actor_id, ...(pendingMember ? { grantId: grant.id } : {}) }]
         : (await this.activeActors(trx, grant.id)).map((actorId) => ({ actorId }));
       await appendMutationRecords(trx, {
         scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
         actorId: input.actorId,
         action: auditAction,
         recipients,
-        discoveryState: applied.state === "revoked" ? "revoked" : "accepted",
+        discoveryState: applied.state === "revoked" ? "revoked" : pendingMember ? "invited" : "accepted",
         now,
         ...(applied.reasonCode ? { reasonCode: applied.reasonCode } : {}),
       });

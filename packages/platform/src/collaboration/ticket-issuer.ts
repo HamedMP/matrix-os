@@ -182,7 +182,7 @@ export class CollaborationTicketIssuer {
 
   constructor(private readonly options: {
     keyring: TicketSigningKeyring;
-    repository: Pick<PlatformCollaborationRepository, "getDirectoryRoute" | "getScopeActorStatus">;
+    repository: Pick<PlatformCollaborationRepository, "getDirectoryRoute" | "getScopeActorEntry">;
     endpoints: Pick<CollaborationRuntimeEndpointRegistry, "resolveEnrolled">;
     /** Resolves the owning organization of a shared scope; null denies. */
     resolveOrganization(scopeId: string): Promise<string | null>;
@@ -242,15 +242,19 @@ export class CollaborationTicketIssuer {
     const request = CollaborationConnectionRequestSchema.safeParse(input.request);
     if (!request.success) throw new CollaborationTicketIssuerError("invalid_request", "Connection request is invalid");
     const { scopeId, purpose, proofPublicKey } = request.data;
-    const [directory, status, organizationId] = await Promise.all([
+    const [directory, entry, organizationId] = await Promise.all([
       this.options.repository.getDirectoryRoute(scopeId),
-      this.options.repository.getScopeActorStatus(scopeId, input.actorId),
+      this.options.repository.getScopeActorEntry(scopeId, input.actorId),
       this.options.resolveOrganization(scopeId),
     ]);
+    const status = entry?.status ?? null;
     // Existence is never disclosed: every denial is the same not-found.
     if (!directory || !organizationId || status === "revoked") throw denied();
-    const pendingGrantId = !status && directory.audience === "organization"
-      ? directory.organizationGrantId : null;
+    // An accept-only pointer: the actor's own pending member grant, or else the organization-wide
+    // grant of a share the actor has never opened. The home re-checks the grant either way.
+    const pendingGrantId = status === "invited" && entry?.grantId
+      ? entry.grantId
+      : !status && directory.audience === "organization" ? directory.organizationGrantId : null;
     if (!status && (!pendingGrantId || purpose !== "direct_session")) throw denied();
     if (status === "invited" && purpose !== "direct_session") throw denied();
     if (purpose === "terminal" && directory.kind !== "terminal") throw denied();
