@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import React, { useState } from "react";
+import React, { useLayoutEffect, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
@@ -229,8 +229,7 @@ describe("CanonicalChatWorkspace", () => {
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 20));
     });
-    if (projectId === null) expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
-    else expect(screen.queryByRole("button", { name: "Explore and understand code" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
     expect(onActiveChatChanged).not.toHaveBeenCalled();
   });
@@ -967,8 +966,10 @@ describe("CanonicalChatWorkspace", () => {
 
     function Harness() {
       const [chatId, setChatId] = useState(record.chat.id);
-      navigate = setChatId;
-      routedChatId = chatId;
+      useLayoutEffect(() => {
+        navigate = setChatId;
+        routedChatId = chatId;
+      }, [chatId]);
       return (
         <CanonicalChatWorkspace
           client={routeClient}
@@ -1042,7 +1043,7 @@ describe("CanonicalChatWorkspace", () => {
     });
 
     expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Explore and understand code" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     expect(reportedIds).toEqual([]);
   });
 

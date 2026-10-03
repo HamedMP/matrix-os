@@ -36,7 +36,7 @@ it.each([[undefined,null],['chat_original',null],[undefined,'project_alpha']] as
  await waitFor(()=>expect(screen.getByRole('textbox',{name:'Reply to chat'}).textContent).toContain('Protected target draft'));
  fireEvent.click(screen.getByRole('button',{name:'Return to original draft'}));editor=await screen.findByRole('textbox',{name:sourceId?'Reply to chat':'Start a chat'});
  await waitFor(()=>expect(editor.textContent).toContain('Recover this original draft @Mee'));expect(client.admitTurn).not.toHaveBeenCalled();expect(client.create).not.toHaveBeenCalled();expect(screen.getByTestId('composer-reference-token-chat-chat_notes')).toBeTruthy();
- if(projectId) {expect(document.querySelector('[data-slot=chat-project-draft-scroll]')).toBeTruthy();expect(screen.queryByText('What should we build today?')).toBeNull();}
+ if(projectId) {expect(document.querySelector('[data-slot=chat-project-draft-scroll]')).toBeTruthy();expect(screen.getByRole('heading',{name:'What should we build today?'})).toBeTruthy();}
  fireEvent.click(screen.getByRole('button',{name:'New chat'}));editor=await screen.findByRole('textbox',{name:'Start a chat'});await waitFor(()=>expect(editor.textContent).toBe(''));expect(screen.queryByRole('button',{name:'Return to original draft'})).toBeNull();
 });
 it('keeps Electron source local files and draft in place instead of navigating to a Bot',async()=>{

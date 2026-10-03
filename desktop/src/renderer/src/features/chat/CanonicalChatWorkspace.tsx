@@ -1023,7 +1023,7 @@ export function CanonicalChatWorkspace({
             Loading chat…
           </div>
         ) : (
-          <CanonicalNewChatContent projectId={projectId} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
+          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
         )}
         </>}
       </SharedChatSurface>
