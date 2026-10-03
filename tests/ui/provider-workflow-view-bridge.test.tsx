@@ -46,10 +46,13 @@ it.each(['pi', 'opencode'] as const)('preserves %s saved model and access contro
   api.capabilities = vi.fn().mockResolvedValue([{ ...capability, harnessInstanceId: kind, harness: kind, displayName: kind, activeOperationId: undefined }]);
   const mutate = vi.fn();
   render(<AgentsProvidersView snapshot={next} selectedHarnessId={kind} onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} workflowClient={api} onAddCredit={vi.fn()} />);
-  const summary = await screen.findByText('Advanced configuration');
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${kind}`, 'i') }));
+  await waitFor(() => expect(within(screen.getByText('Advanced configuration').closest('details')!).getByText('Use Matrix AI')).toBeInTheDocument());
+  const summary = screen.getByText('Advanced configuration');
   const advanced = summary.closest('details')!;
   expect(advanced).not.toHaveAttribute('open');
   expect(within(advanced).getByText('Use Matrix AI').closest('button')).toBeInTheDocument();
+  expect(screen.getAllByRole('group', { name: `${kind} connection`, hidden: true })).toHaveLength(1);
   expect(within(advanced).getByLabelText('Model')).toHaveValue('test');
   expect(within(advanced).getByLabelText('Paid through')).toBeInTheDocument();
   expect(screen.queryByText('Enable this agent')).not.toBeInTheDocument();

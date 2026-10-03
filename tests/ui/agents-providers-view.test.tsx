@@ -434,13 +434,13 @@ describe("AgentsProvidersView", () => {
     expect(readFileSync("desktop/electron.vite.config.ts", "utf8")).toContain('publicDir: resolve(__dirname, "../shell/public")');
   });
 
-  it("does not start legacy Terminal login when Settings workflows are unavailable", async () => {
+  it("keeps advertised legacy Terminal login collapsed and never starts it automatically", async () => {
     const next = snapshot();
     next.harnesses[1]!.accountIds = [];
     next.harnesses[1]!.authState = "unauthenticated";
     const onMutate = vi.fn().mockResolvedValue(true);
     setup({ snapshot: next, selectedHarnessId: "harness_claude", onMutate });
-    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).not.toBeVisible();
     expect(onMutate).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Recommended · Terminal" })).not.toBeInTheDocument();
   });
@@ -844,7 +844,7 @@ describe("AgentsProvidersView", () => {
     expect(within(personal).getByRole("progressbar", { name: "Personal remaining allowance" })).toHaveAttribute("value", "7500");
     expect(within(work).getByText("$0.13 observed")).toBeVisible();
     fireEvent.click(within(personal).getByRole("button", { name: "Log out Personal" }));
-    expect(within(work).queryByRole("button", { name: "Log in Work" })).not.toBeInTheDocument();
+    expect(within(work).getByRole("button", { name: "Log in Work" })).toBeDisabled();
     await waitFor(() => expect(within(work).getByRole("button", { name: "Remove Work" })).toBeEnabled());
     fireEvent.click(within(work).getByRole("button", { name: "Remove Work" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
@@ -909,7 +909,7 @@ describe("AgentsProvidersView", () => {
     const onOpenTerminal = vi.fn();
     const onOpenBrowser = vi.fn();
     const { rerender } = setup({ connectionAttempt: terminalAttempt, onOpenTerminal, onOpenBrowser });
-    expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue in Terminal" })).not.toBeVisible();
     expect(onOpenTerminal).not.toHaveBeenCalled();
 
     const browserAttempt: ProviderConnectionAttempt = {
@@ -981,10 +981,10 @@ describe("AgentsProvidersView", () => {
       action: "retry", safeReason: "provider_unavailable",
     };
     rerender(<AgentsProvidersView {...props} snapshot={unavailable} />);
-    expect(screen.getByText("This funding source is unavailable for credit purchases. Contact support if the problem continues.")).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Add Matrix AI credit" })).toBeVisible();
     expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
+    expect(screen.getByText("This funding source is unavailable for credit purchases. Contact support if the problem continues.")).toBeVisible();
     expect(props.onAddCredit).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", {name: "Cancel"}));
     rerender(<AgentsProvidersView {...props} snapshot={current} />);
     expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeEnabled();
   });

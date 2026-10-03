@@ -255,7 +255,7 @@ export function AgentsProvidersView({
                   <AccountsPanel harness={harness} accounts={snapshot.accounts.filter(item => harness.accountIds.includes(item.id))}
                     sources={snapshot.accessSources} allHarnesses={snapshot.harnesses} gatewayPolicy={snapshot.gatewayPolicy}
                     attempt={connectionAttempt?.harnessInstanceId === harness.id ? connectionAttempt : null}
-                    disabled={mutationsDisabled} canLogin={supports("start_login")} canLogout={supports("logout_account")} canRemove={supports("remove_account")} canReassign={supports("reassign_account")}
+                    disabled={mutationsDisabled} canLogin={workflowPermission !== "forbidden" && supports("start_login")} canLogout={supports("logout_account")} canRemove={supports("remove_account")} canReassign={supports("reassign_account")}
                     onMutate={onMutate} onOpenTerminal={onOpenTerminal} onOpenBrowser={onOpenBrowser} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} />
                 </details> : null}
                 {workflowClient &&
@@ -268,7 +268,12 @@ export function AgentsProvidersView({
                     advancedConfiguration={genericConfiguration ? <>
                       <ConnectionChoices snapshot={snapshot} harness={harness} gatewaySource={gatewaySource}
                         gatewaySelected={gatewaySelected} onUseGateway={useGateway} canSetRoute={supports("set_route")}
-                        disabled={mutationsDisabled} onMutate={onMutate} onRefreshForConnection={onRefreshForConnection} />
+                        disabled={mutationsDisabled} onMutate={onMutate} onRefreshForConnection={onRefreshForConnection}
+                        onConnectSettings={capability && (capability.loginMethods.some(method => method !== "terminal") || capability.apiKeyProviders.length > 0)
+                          ? async () => {
+                            setConnectRequests(current => harness.id in current || Object.keys(current).length < 32 ? { ...current, [harness.id]: (current[harness.id] ?? 0) + 1 } : current);
+                            return true;
+                          } : undefined} />
                       <HarnessEditor snapshot={snapshot} harness={harness} disabled={mutationsDisabled}
                         canUpdate={supports("update_harness")} canSetRoute={supports("set_route")}
                         canSelectSource={supports("select_access_source")} canSelectAccount={supports("select_account")}

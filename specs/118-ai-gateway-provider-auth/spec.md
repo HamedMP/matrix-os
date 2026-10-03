@@ -595,3 +595,10 @@ Coding agents and general agents share mounted, inert-on-collapse disclosure sta
 Saved row status consumes the reviewed configured-connection resolver: installation truth and active Connecting take precedence; historical failure cannot negate a current connected observation. Exact selected account/source supplies actual email/plan and usage, with unavailable/stale observations remaining honest. Subscription meters render remaining allowance with rounded track/fill, empty at 100% used. No reading/refresh restores saved Off; successful deliberate connection uses current server capability/revision and atomic enable behavior.
 
 Normal guided login, replacement and disconnect remain in Settings using the unchanged workflow panel and its active-operation guards. Unsupported-driver account/model/route controls remain only inside collapsed Advanced configuration; they do not create a second normal account card, offer a manual Enable toggle or revive Terminal login as the normal connection flow. The fallback retains owner-only mutations and never fabricates guided capability. Existing billing loader/callback fences, private history and dark system modal tokens remain unchanged. Actual combined Electron Desktop/Preview acceptance and Human Review are separate gates.
+
+Grouped composition preserves negotiated generic-agent Matrix/model/access-source
+controls through the workflow panel's collapsed Advanced configuration slot.
+Unsupported drivers retain only server-advertised legacy login methods there;
+owner denial never enables a fallback, and no login starts during rendering or
+refresh. Supported opaque Terminal/browser continuations stay explicit inside
+that disclosure. The grouped normal connection card remains singular.

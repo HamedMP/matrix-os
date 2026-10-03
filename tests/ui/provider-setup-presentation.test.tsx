@@ -71,7 +71,7 @@ describe("provider setup presentation", () => {
     expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
     fireEvent.click(within(gateway).getByRole("button", {name: "Buy credit"}));
     const dialog = screen.getByRole("dialog", {name: "Add Matrix AI credit"});
-    expect(within(dialog).getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+    expect(within(dialog).getByText("Purchase availability has not been confirmed for this computer. Refresh to check again.")).toBeVisible();
     expect(within(dialog).queryByRole("button", {name: "Continue to checkout"})).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", {name: "Check again"}));
     expect(onRefresh).toHaveBeenCalledOnce();

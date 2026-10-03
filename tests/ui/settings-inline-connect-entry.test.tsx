@@ -13,6 +13,7 @@ it("opens the current agent's Settings chooser when Own account has no bound nat
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId="opencode" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={onMutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()} onSetupHarness={onSetupHarness} workflowClient={client as never} />);
   await waitFor(() => expect(client.capabilities).toHaveBeenCalled());
   fireEvent.click(screen.getByRole("button", { name: /^OpenCode/ }));
+  fireEvent.click(screen.getByText("Advanced configuration"));
   fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
   const choice = await screen.findByRole("button", { name: /Provider account/ });
   expect(choice).toHaveFocus();
@@ -41,16 +42,36 @@ it("preserves a visited agent's method and draft when another agent opens Connec
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId="opencode" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()} workflowClient={client as never} />);
   await waitFor(() => expect(client.capabilities).toHaveBeenCalled());
   fireEvent.click(screen.getByRole("button", {name: /^OpenCode/}));
+  fireEvent.click(screen.getAllByText("Advanced configuration").find(item => !item.closest("[inert]"))!);
   fireEvent.click(screen.getByRole("button", {name: /Own account/}));
   await waitFor(() => expect(screen.getByRole("button", {name: /Own account/})).toBeEnabled());
   fireEvent.click(await screen.findByRole("button", {name: /^API key/}));
   const input = screen.getByLabelText("Paste your OpenAI API key");
   fireEvent.change(input, {target: {value: "fixture-draft"}});
   fireEvent.click(screen.getByRole("button", {name: /^Pi/}));
+  fireEvent.click(screen.getAllByText("Advanced configuration").find(item => !item.closest("[inert]"))!);
   fireEvent.click(screen.getByRole("button", {name: /Own account/}));
   await waitFor(() => expect(screen.getByRole("button", {name: /Own account/})).toBeEnabled());
   fireEvent.click(screen.getByRole("button", {name: /^OpenCode/}));
   expect(screen.getByLabelText("Paste your OpenAI API key")).toBe(input);
   expect(input).toHaveValue("fixture-draft");
   expect(client.submitKey).not.toHaveBeenCalled();
+});
+
+it.each([true, false])("retains only advertised unsupported login inside Advanced (advertised=%s)", async advertised => {
+  const snapshot = { harnesses: [{ id: "hermes", harness: "hermes", displayName: "Hermes", installState: "installed", authState: "unauthenticated", connectivity: "online", enabled: false, accountIds: [], selectedAccountId: null, accessSourceId: null, loginMethods: ["terminal"], recommendedLoginMethod: "terminal", route: { kind: "configurable", providerId: "anthropic", modelId: "test" } }], accounts: [], accessSources: [], modelProviders: [], gatewayPolicy: null, configurationHarnessKinds: ["hermes"], supportedActions: advertised ? ["start_login"] : [], access: { mode: "writable" }, refreshedAt: "2026-10-04T00:00:00Z" } as unknown as ProviderSettingsSnapshot;
+  const mutate = vi.fn();
+  render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId="hermes" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: /^Hermes/ }));
+  const summary = screen.getByText("Advanced configuration");
+  expect(summary.closest("details")).not.toHaveAttribute("open");
+  expect(summary.closest("details")).not.toHaveAttribute("open");
+  fireEvent.click(summary);
+  if (advertised) {
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ type: "start_login", harnessInstanceId: "hermes", accountId: null, method: "terminal" }));
+  } else {
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    expect(mutate).not.toHaveBeenCalled();
+  }
 });
