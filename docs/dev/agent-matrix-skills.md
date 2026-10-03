@@ -17,6 +17,7 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `matrix-landing-design` | Build product landing pages matching their apps, while keeping public Matrix OS marketing on the shared brand. |
 | `matrix-chat-import` | Import owner-selected Codex/Claude transcripts as private Matrix Chats. |
 | `matrix-personal-daily-brief` | Prepare a personal briefing from connected services. |
+| `matrix-personal-brain` | Maintain a private, source-linked Markdown notebook with bounded integration imports and project-scoped GitHub synchronization hooks. |
 | `matrix-jev-email-triage` | Triage email through the scoped Matrix workflow. |
 | `emil-design-eng` | Refine hierarchy, components, UI details, and interaction polish. |
 | `apple-design` | Build fluid direct manipulation, gestures, and spatial continuity. |
@@ -31,6 +32,29 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 Every skill supplies top-level discovery triggers. Matrix companion names also appear
 in top-level `related_skills` and harness metadata; discovery presents names while
 full bodies and resources load on demand. Avoid eagerly injecting the entire pack.
+
+### Personal Brain pilot
+
+Initialize an empty dedicated notebook with the personal-brain skill's
+`scripts/brain.mjs init /absolute/path/to/personal-brain`. This owner-selected
+file notebook is a small pilot, not a new Matrix app persistence layer.
+The initializer supplies an ontology, coverage index, evidence capture/search
+helpers, shared agent instructions, and Claude Code project hooks.
+
+Use the skill to refresh selected account sources or remember owner statements.
+People, projects, ideas, events, decisions, and tasks link back to immutable
+source revisions. Literal search and linked pages handle retrieval without
+embeddings. Apple Notes requires a selected export; integration failures are
+recorded as coverage gaps rather than empty results.
+
+After establishing a baseline on `main` in a dedicated private GitHub repository,
+run `brain-sync.mjs configure ROOT OWNER/REPOSITORY`. Claude Code hooks pull at
+SessionStart and push saved Markdown at Stop/PreCompact. Other harnesses use
+explicit pull/push commands. These hooks do not import accounts continuously,
+store transcripts, or run in unrelated Matrix Chats. Conflicting histories and
+dirty pulls preserve owner edits and require review; pushes never force history.
+Ordinary note deletion retains Git history. Company access control and shared
+ontology management are deferred.
 
 Saved Chat Agent recipes pin the admitted skill instructions and retain the actual
 server-selected skill file location separately. Resolve relative guide/resource links
