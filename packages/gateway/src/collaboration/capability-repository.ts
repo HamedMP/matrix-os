@@ -34,6 +34,13 @@ import {
   writeOperation,
 } from "./repository-shared.js";
 
+/**
+ * A project the owner has not shared yet (or whose share is still being published) is not in the
+ * platform directory. Grants chosen then are recorded and audited but not published: activation
+ * publishes the ones still live, so nobody learns of a project before it is shared.
+ */
+const UNPUBLISHED_LIFECYCLES: ReadonlySet<ScopeRow["lifecycle"]> = new Set(["private", "preparing", "recovering"]);
+
 /** Contract limit: grants 100 per scope. */
 export const MAX_GRANTS_PER_SCOPE = 100;
 /** Bound on any in-memory participant/activation enumeration; larger audiences page through listActivations. */
@@ -179,6 +186,7 @@ export class CollaborationCapabilityRepository {
         // A member grant names its grant so the platform can list it and sign an accept-only ticket for it.
         recipients: input.audience.kind === "member" ? [{ actorId: input.audience.actorId, grantId }] : [],
         discoveryState: "invited",
+        publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle),
         now,
         reasonCode: `${input.audience.kind}:${input.preset}`,
       });
@@ -263,6 +271,7 @@ export class CollaborationCapabilityRepository {
         action: auditAction,
         recipients,
         discoveryState: applied.state === "revoked" ? "revoked" : pendingMember ? "invited" : "accepted",
+        publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle),
         now,
         ...(applied.reasonCode ? { reasonCode: applied.reasonCode } : {}),
       });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
@@ -7,6 +8,7 @@ import {
   createProjectTransitionJournal,
 } from "../../packages/gateway/src/collaboration/project-transition.js";
 import { CollaborationDirectoryOutbox } from "../../packages/gateway/src/collaboration/directory-outbox.js";
+import { CollaborationCapabilityRepository } from "../../packages/gateway/src/collaboration/capability-repository.js";
 import {
   createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
@@ -69,14 +71,14 @@ describe("project collaboration transition journal", () => {
     });
   }
 
-  async function prepare() {
+  async function prepare(expectedScopeRevision = 4) {
     return journal().prepare({
       scopeId: SCOPE_ID,
       ownerId: OWNER_ID,
       requestedBy: OWNER_ID,
       clientRequestId: CLIENT_REQUEST_ID,
       payloadHash: PAYLOAD_HASH,
-      expectedScopeRevision: 4,
+      expectedScopeRevision,
       inventoryRevision: 7,
       inventoryHash: INVENTORY_HASH,
       membershipHash: MEMBERSHIP_HASH,
@@ -497,6 +499,72 @@ describe("project collaboration transition journal", () => {
 
     expect(await fixture.db.selectFrom("collaboration_grants").select(["id", "preset"])
       .where("scope_id", "=", SCOPE_ID).execute()).toEqual([{ id: existingGrantId, preset: "viewer" }]);
+  });
+
+  it("shares with exactly the members the owner chose before sharing, published at activation", async () => {
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: SCOPE_ID, actor_id: OWNER_ID, role: "owner", status: "accepted", organization_id: "org_matrix_team",
+      invitation_id: null, invited_by: OWNER_ID, accepted_at: NOW, expires_at: null, revision: 1,
+      joined_at: NOW, updated_at: NOW,
+    } as never).execute();
+    // Nine people: more than one directory event carries, so publication must split them.
+    const chosen = Array.from({ length: 9 }, (_, index) => `user_chosen_member_${index}`);
+    const grants = new CollaborationCapabilityRepository(fixture.db, { now: () => NOW, createId: randomUUID });
+    let revision = 4;
+    const grantIds = new Map<string, string>();
+    for (const actorId of chosen) {
+      const created = await grants.createGrant({
+        scopeId: SCOPE_ID, actorId: OWNER_ID, clientRequestId: randomUUID(), expectedRevision: revision,
+        payloadHash: "d".repeat(64), audience: { kind: "member", actorId }, preset: "viewer", policyVersion: "v1",
+      });
+      grantIds.set(actorId, created.grantId);
+      revision = created.scopeRevision;
+    }
+    // A choice the owner withdrew before sharing is never published.
+    const withdrawn = await grants.createGrant({
+      scopeId: SCOPE_ID, actorId: OWNER_ID, clientRequestId: randomUUID(), expectedRevision: revision,
+      payloadHash: "e".repeat(64), audience: { kind: "member", actorId: "user_withdrawn_member" }, preset: "viewer", policyVersion: "v1",
+    });
+    revision = (await grants.revokeGrant({
+      scopeId: SCOPE_ID, actorId: OWNER_ID, clientRequestId: randomUUID(), expectedRevision: withdrawn.scopeRevision,
+      payloadHash: "f".repeat(64), grantId: withdrawn.grantId, expectedGrantRevision: 1,
+    })).scopeRevision;
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox").select("event_id").execute()).toEqual([]);
+
+    const transitions = journal();
+    await prepare(revision);
+    await transitions.beginStaging(TRANSITION_ID);
+    await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
+    await transitions.markFenced({
+      transitionId: TRANSITION_ID, sourceFenceEpoch: 8, currentInventoryRevision: 7,
+      currentInventoryHash: INVENTORY_HASH, currentMembershipHash: MEMBERSHIP_HASH,
+    });
+    await transitions.beginCommit(TRANSITION_ID);
+    await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
+    await transitions.activate(TRANSITION_ID);
+
+    // The owner chose people, so no organization-wide default is added.
+    expect(await fixture.db.selectFrom("collaboration_grants").select("id").where("scope_id", "=", SCOPE_ID)
+      .where("audience_kind", "=", "organization").execute()).toEqual([]);
+    const sent: Array<{ audience?: string; recipients: Array<{ actorId: string; status: string; grantId?: string }> }> = [];
+    const outbox = new CollaborationDirectoryOutbox({
+      db: fixture.db, platformBaseUrl: "https://platform.internal", runtimeId: DESTINATION_RUNTIME,
+      serviceToken: "s".repeat(32), now: () => NOW, startTimer: false,
+      fetchImpl: (async (_url: string, init: RequestInit) => {
+        sent.push(JSON.parse(String(init.body)) as (typeof sent)[number]);
+        return new Response(null, { status: 204 });
+      }) as typeof fetch,
+    });
+    try {
+      await outbox.runOnce();
+    } finally {
+      await outbox.shutdown();
+    }
+    expect(sent.every((event) => event.audience === undefined)).toBe(true);
+    const invited = sent.flatMap((event) => event.recipients.filter((recipient) => recipient.status === "invited"));
+    expect(invited.sort((left, right) => left.actorId.localeCompare(right.actorId)))
+      .toEqual(chosen.map((actorId) => ({ actorId, status: "invited", grantId: grantIds.get(actorId) })));
+    expect(sent.filter((event) => event.recipients.some((recipient) => recipient.status === "invited"))).toHaveLength(2);
   });
 
   it("replaces an expired organization grant that is still marked active", async () => {

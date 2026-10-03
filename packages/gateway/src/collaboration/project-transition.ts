@@ -10,9 +10,12 @@ import {
   reconcileProjectMembershipAtPublication,
 } from "./project-membership-transition.js";
 import { jsonb, OPERATION_RETENTION_MS, parseJson, PRESET_POLICY_VERSION } from "./repository-shared.js";
+import { MAX_GRANTS_PER_SCOPE } from "./capability-repository.js";
 import type { ChatOutboxEvent } from "../chat/records.js";
 
 const MAX_RECOVERY_BATCH = 100;
+/** `CollaborationDirectoryEventSchema` carries at most eight recipients per event. */
+const DIRECTORY_EVENT_RECIPIENT_LIMIT = 8;
 const DEFAULT_RECOVERY_TIMEOUT_MS = 30_000;
 const MAX_RECOVERY_TIMEOUT_MS = 60_000;
 const TransitionIdSchema = z.uuid();
@@ -70,7 +73,9 @@ type CollaborationTransaction = Transaction<OwnerCollaborationDatabase>;
 /**
  * The share default: everyone in the project's organization may contribute. Runs inside the
  * activation transaction, which already moves the scope revision and auth epoch, so it adds no
- * revision of its own. An organization grant the owner already made is kept as it is.
+ * revision of its own. An audience the owner chose before sharing wins: an organization grant
+ * they made is kept as it is, and if they chose specific members only, the project is shared
+ * with exactly those members and no organization default is added.
  */
 async function ensureDefaultOrganizationGrant(trx: CollaborationTransaction, input: {
   scopeId: string;
@@ -91,6 +96,13 @@ async function ensureDefaultOrganizationGrant(trx: CollaborationTransaction, inp
     .where("expires_at", "is not", null)
     .where("expires_at", "<=", now)
     .execute();
+  const chosenMember = await trx.selectFrom("collaboration_grants").select("id")
+    .where("scope_id", "=", input.scopeId)
+    .where("audience_kind", "=", "member")
+    .where("state", "in", ["pending", "active"])
+    .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", now)]))
+    .limit(1).executeTakeFirst();
+  if (chosenMember) return;
   // One live organization grant per scope (idx_collaboration_grants_one_organization): an
   // owner's existing grant wins, and the default is only inserted when there is none.
   const inserted = await trx.insertInto("collaboration_grants").values({
@@ -667,6 +679,51 @@ export function createProjectTransitionJournal(options: {
               actorId: member.actor_id,
               invitationId: member.invitation_id,
             }))),
+            authority_runtime_id: row.destination_authority_runtime_id,
+            authority_generation: Number(row.destination_authority_generation),
+            resource_kind: "project",
+            discovery_state: "invited",
+            retry_after: now(),
+            attempts: 0,
+            delivered_at: null,
+            created_at: now(),
+          }).execute();
+        }
+        // Member grants the owner chose before sharing were recorded unpublished. Each member now
+        // sees theirs pending, with the grant pointer they open it by.
+        const memberGrants = await trx.selectFrom("collaboration_grants")
+          .select(["id", "audience_actor_id"])
+          .where("scope_id", "=", scope.id)
+          .where("audience_kind", "=", "member")
+          .where("state", "=", "pending")
+          .where((expression) => expression.or([
+            expression("expires_at", "is", null),
+            expression("expires_at", ">", now()),
+          ]))
+          .orderBy("created_at", "asc").orderBy("id", "asc")
+          .limit(MAX_GRANTS_PER_SCOPE)
+          .execute();
+        let grantSequence = scopeSequence + (pendingMembers.length > 0 ? 2 : 1);
+        for (let offset = 0; offset < memberGrants.length; offset += DIRECTORY_EVENT_RECIPIENT_LIMIT) {
+          const batch = memberGrants.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT);
+          const grantEventId = z.uuid().parse(createEventId());
+          await trx.insertInto("collaboration_events").values({
+            scope_id: scope.id,
+            scope_seq: grantSequence,
+            event_id: grantEventId,
+            resource_kind: "project",
+            resource_id: scope.resource_id,
+            revision: nextRevision,
+            authority_generation: Number(updatedScope.authority_generation),
+            event_type: "project.transition.granted",
+            payload: {},
+            created_at: now(),
+          }).execute();
+          grantSequence += 1;
+          await trx.insertInto("collaboration_directory_outbox").values({
+            event_id: grantEventId,
+            scope_id: scope.id,
+            recipient_actor_ids: jsonb(batch.map((grant) => ({ actorId: grant.audience_actor_id!, grantId: grant.id }))),
             authority_runtime_id: row.destination_authority_runtime_id,
             authority_generation: Number(row.destination_authority_generation),
             resource_kind: "project",
