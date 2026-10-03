@@ -9,6 +9,9 @@ import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 
+// Display reuse only; every send still goes through current server admission.
+const LIFECYCLE_CATALOG_REUSE_MS = 60_000;
+
 export function failClosedProviderCatalog(
   catalog: CanonicalProviderCatalog,
 ): CanonicalProviderCatalog {
@@ -62,7 +65,7 @@ export function useChatProviderCatalog(
     api: typeof api;
   }>(() => ({ catalog: fallback, status: api && active ? "loading" : "fallback", identityKey, generation: catalogGeneration, api }));
 
-  const trustedCatalogRef = useRef<{ api: Pick<ApiClient, "get">; catalog: CanonicalProviderCatalog; identityKey: string; generation: number } | null>(null);
+  const trustedCatalogRef = useRef<{ api: Pick<ApiClient, "get">; catalog: CanonicalProviderCatalog; identityKey: string; generation: number; fetchedAt: number | null } | null>(null);
   const refreshRef = useRef<() => void>(() => undefined);
   const refresh = useCallback(() => refreshRef.current(), []);
 
@@ -76,6 +79,7 @@ export function useChatProviderCatalog(
       && trustedCatalogRef.current.identityKey === identityKey
       && trustedCatalogRef.current.generation === catalogGeneration
       ? trustedCatalogRef.current.catalog : null;
+    let lastTrustedAt = lastTrustedCatalog ? trustedCatalogRef.current!.fetchedAt : null;
     if (!active || !api || typeof api.get !== "function") {
       trustedCatalogRef.current = null;
       refreshRef.current = () => undefined;
@@ -98,8 +102,11 @@ export function useChatProviderCatalog(
     };
     const update = (lifecycleOnly = false) => {
       // Restoring a window often emits both focus and visibility. Join its
-      // current read; explicit post-change refresh still starts a fresh one.
+      // current read or reuse recent successful discovery in this exact scope.
+      // Explicit post-change refresh always starts a fresh read.
       if (lifecycleOnly && inFlight > 0) return;
+      const age = lastTrustedAt === null ? Infinity : Date.now() - lastTrustedAt;
+      if (lifecycleOnly && lastTrustedCatalog && age >= 0 && age < LIFECYCLE_CATALOG_REUSE_MS) return;
       inFlight += 1;
       const request = ++requestSequence;
       setState({ catalog: lastTrustedCatalog ?? presentationRef.current.unavailableCatalog,
@@ -107,7 +114,8 @@ export function useChatProviderCatalog(
       void fetchCanonicalProviderCatalog(api, true).then((catalog) => {
         if (!cancelled && request === requestSequence && isCurrentScope()) {
           lastTrustedCatalog = catalog;
-          trustedCatalogRef.current = { api, catalog, identityKey, generation: catalogGeneration };
+          lastTrustedAt = Date.now();
+          trustedCatalogRef.current = { api, catalog, identityKey, generation: catalogGeneration, fetchedAt: lastTrustedAt };
           setState({ catalog, status: "ready", identityKey, generation: catalogGeneration, api });
         }
       }).catch((error: unknown) => {
@@ -115,11 +123,14 @@ export function useChatProviderCatalog(
           "[chat] Provider catalog unavailable:",
           error instanceof Error ? error.name : "UnknownError",
         );
-        if (!cancelled && request === requestSequence && isCurrentScope()) setState({
-          catalog: lastTrustedCatalog ?? presentationRef.current.unavailableCatalog,
-          identityKey, generation: catalogGeneration, api,
-          status: "error",
-        });
+        if (!cancelled && request === requestSequence && isCurrentScope()) {
+          // Preserve scoped presentation, but failed validation must retry on
+          // the next foreground event rather than reusing the success window.
+          lastTrustedAt = null;
+          if (trustedCatalogRef.current) trustedCatalogRef.current = { ...trustedCatalogRef.current, fetchedAt: null };
+          setState({ catalog: lastTrustedCatalog ?? presentationRef.current.unavailableCatalog,
+            identityKey, generation: catalogGeneration, api, status: "error" });
+        }
       }).finally(() => { inFlight -= 1; });
     };
     refreshRef.current = update;

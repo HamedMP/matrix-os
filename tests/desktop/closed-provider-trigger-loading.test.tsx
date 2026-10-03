@@ -44,7 +44,7 @@ beforeEach(() => {
   resetProviderPreferences({ hydrated: true });
   clearDraftChats();
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); clearDraftChats(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); clearDraftChats(); });
 
 it.each(["project draft", "canonical project draft", "existing agent conversation"] as const)("reuses the loaded %s picker while initial and lifecycle loading still blocks sending", async (surface) => {
   const catalog = createLegacyProjectProviderCatalog(summary);
@@ -84,6 +84,7 @@ it.each(["project draft", "canonical project draft", "existing agent conversatio
   expect(get).toHaveBeenCalledTimes(1);
   fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
   await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
   act(() => window.dispatchEvent(new Event("focus")));
   await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   expect(screen.queryByRole("listbox")).toBeNull();
