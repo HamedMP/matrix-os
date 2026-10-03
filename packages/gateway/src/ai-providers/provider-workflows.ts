@@ -3,9 +3,15 @@ import { ProviderWorkflowSchema, ProviderWorkflowCapabilitySchema, type Provider
 export class ProviderWorkflowError extends Error {
   constructor(readonly code: 'unavailable' | 'not_found' | 'conflict' | 'rejected' | 'forbidden') { super(code); }
 }
+/** Adapter proves no bytes were submitted; all other failures remain ambiguous. */
+export class ProviderWorkflowCodeNotAcceptedError extends ProviderWorkflowError {
+  constructor(code: 'conflict' | 'unavailable' = 'conflict') { super(code); }
+}
 export interface ProviderWorkflowAdapter extends Omit<ProviderWorkflowCapability, 'logs'> {
   start(input: {
     request: ProviderWorkflowStart;
+    /** Register before native side effects so uncertain starts can be reaped. */
+    registerCleanup: (cancel: () => Promise<void>) => void;
     publish: (update: Partial<Pick<ProviderWorkflow, 'state' | 'deviceCode' | 'authorizationUrl' | 'safeFailure'>>) => void;
   }): Promise<{
     cancel: () => Promise<void>;
@@ -42,6 +48,7 @@ export function createProviderWorkflowService(options: {
     cancel?: () => Promise<void>;
     submitCode?: (code: string) => Promise<void>;
     codeSubmitted: boolean;
+    cleanupRequired: boolean;
     events: ProviderWorkflowLogs['entries'];
   }>();
   let closed = false;
@@ -83,17 +90,30 @@ export function createProviderWorkflowService(options: {
     if (entry.events.length > 64)
       entry.events.shift();
   }
-  async function expire() {
-    for (const entry of entries.values())
-      if (!terminal(entry.operation.state) && Date.parse(entry.operation.expiresAt) <= now().getTime()) {
-        await entry.cancel?.();
-        // Native completion may have committed while cleanup was awaiting it.
-        // Preserve that terminal result, as the explicit cancellation path does.
+  const protectedEntry = (entry: (typeof entries extends Map<string, infer T> ? T : never)) =>
+    entry.cleanupRequired || !terminal(entry.operation.state);
+  async function expire(scope: ProviderWorkflowAdapter['harness']) {
+    for (const entry of entries.values()) {
+      if (entry.scope !== scope || terminal(entry.operation.state)
+        || Date.parse(entry.operation.expiresAt) > now().getTime()) continue;
+      entry.cleanupRequired = true;
+      try {
+        if (!entry.cancel) throw new ProviderWorkflowError('unavailable');
+        await entry.cancel();
+        entry.cleanupRequired = false;
+        // Native completion may commit while cleanup awaits it.
         if (!terminal(entry.operation.state)) {
           entry.operation = { ...entry.operation, state: 'expired', deviceCode: null, authorizationUrl: null, safeFailure: 'expired' };
           record(entry, 'expired');
         }
+      } catch (error) {
+        console.warn('[provider-workflow] Expiry cleanup unavailable:', error instanceof Error ? error.name : 'UnknownError');
+        if (!terminal(entry.operation.state)) {
+          entry.operation = { ...entry.operation, state: 'expired', deviceCode: null, authorizationUrl: null, safeFailure: 'unavailable' };
+          record(entry, 'expired');
+        }
       }
+    }
   }
   function get(id: string) {
     const entry = entries.get(id);
@@ -105,7 +125,7 @@ export function createProviderWorkflowService(options: {
     async capabilities(owner: string, legacy = false): Promise<ProviderWorkflowCapability[]> {
       authorize(owner);
       return (await registered()).map(({ harnessInstanceId, harness, displayName, installState, loginMethods, apiKeyProviders, install, uninstall }) => {
-        const active = [...entries.values()].find(entry => entry.operation.harnessInstanceId === harnessInstanceId && !terminal(entry.operation.state)
+        const active = [...entries.values()].find(entry => entry.operation.harnessInstanceId === harnessInstanceId && protectedEntry(entry)
           && (!legacy || entry.operation.kind !== 'login' || entry.method === 'device_code' || entry.method === 'terminal'));
         return { harnessInstanceId, harness, displayName, installState, loginMethods, apiKeyProviders, install, uninstall, logs: true, ...(active ? { activeOperationId: active.operation.id } : {}) };
       });
@@ -113,8 +133,8 @@ export function createProviderWorkflowService(options: {
     async start(owner: string, request: ProviderWorkflowStart): Promise<ProviderWorkflow> {
       authorize(owner);
       return serialize(async () => {
-        await expire();
         const adapter = await adapterFor(request.harnessInstanceId);
+        await expire(adapter.harness);
         const hash = createHash('sha256').update(JSON.stringify(request)).digest('hex');
         const replay = [...entries.values()].find(e => e.key === request.idempotencyKey);
         if (replay) {
@@ -124,20 +144,20 @@ export function createProviderWorkflowService(options: {
         }
         if (request.kind === 'login' ? !request.method || !adapter.loginMethods.includes(request.method) : !adapter[request.kind])
           throw new ProviderWorkflowError('unavailable');
-        if ([...entries.values()].some(e => e.scope === adapter.harness && !terminal(e.operation.state)))
+        if ([...entries.values()].some(e => e.scope === adapter.harness && protectedEntry(e)))
           throw new ProviderWorkflowError('conflict');
         if (entries.size >= 64) {
-          const evict = [...entries].find(([, e]) => terminal(e.operation.state));
+          const evict = [...entries].find(([, e]) => !protectedEntry(e));
           if (!evict)
             throw new ProviderWorkflowError('unavailable');
           entries.delete(evict[0]);
         }
         const operation: ProviderWorkflow = { id: `workflow_${randomUUID()}`, harnessInstanceId: request.harnessInstanceId, kind: request.kind, state: 'pending', expiresAt: new Date(now().getTime() + 600000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null };
-        const entry = { operation, codeSubmitted: false, method: request.method, scope: adapter.harness, key: request.idempotencyKey, hash, events: [{ at: now().toISOString(), event: 'started' as const }], cancel: undefined as (() => Promise<void>) | undefined, submitCode: undefined as ((code: string) => Promise<void>) | undefined };
+        const entry = { operation, codeSubmitted: false, cleanupRequired: false, method: request.method, scope: adapter.harness, key: request.idempotencyKey, hash, events: [{ at: now().toISOString(), event: 'started' as const }], cancel: undefined as (() => Promise<void>) | undefined, submitCode: undefined as ((code: string) => Promise<void>) | undefined };
         entries.set(operation.id, entry);
         try {
-          const running = await adapter.start({ request, publish(update) {
-              if (closed || terminal(entry.operation.state))
+          const running = await adapter.start({ request, registerCleanup(cancel) { entry.cancel = cancel; }, publish(update) {
+              if (closed || terminal(entry.operation.state) && (!entry.cleanupRequired || update.state !== 'succeeded'))
                 return;
               const next = ProviderWorkflowSchema.safeParse({ ...entry.operation, ...update });
               if (!next.success)
@@ -157,21 +177,30 @@ export function createProviderWorkflowService(options: {
         }
         catch (error) {
           console.warn('[provider-workflow] Start failed:', error instanceof Error ? error.name : 'UnknownError');
-          entry.operation = { ...entry.operation, state: 'failed', safeFailure: 'unavailable', deviceCode: null, authorizationUrl: null };
-          record(entry, 'failed');
+          entry.cleanupRequired = true;
+          if (!terminal(entry.operation.state)) {
+            entry.operation = { ...entry.operation, state: 'failed', safeFailure: 'unavailable', deviceCode: null, authorizationUrl: null };
+            record(entry, 'failed');
+          }
+          if (entry.cancel) {
+            try { await entry.cancel(); entry.cleanupRequired = false; }
+            catch (cleanupError) { console.warn('[provider-workflow] Start cleanup unavailable:', cleanupError instanceof Error ? cleanupError.name : 'UnknownError'); }
+          }
         }
         return { ...entry.operation };
       });
     },
-    async status(owner: string, id: string) { authorize(owner); return serialize(async () => { await expire(); return { ...get(id).operation }; }); },
+    async status(owner: string, id: string) { authorize(owner); return serialize(async () => { const entry = get(id); await expire(entry.scope); return { ...entry.operation }; }); },
     async cancel(owner: string, id: string) {
       authorize(owner);
       return serialize(async () => {
         const entry = get(id);
-        if (!terminal(entry.operation.state)) {
+        if (protectedEntry(entry)) {
           if (!entry.cancel)
             throw new ProviderWorkflowError('unavailable');
+          entry.cleanupRequired = true;
           await entry.cancel();
+          entry.cleanupRequired = false;
           // Cleanup may await a completion already committing. Its terminal
           // result wins; never report Cancelled after Connect actually succeeded.
           if (!terminal(entry.operation.state)) {
@@ -185,12 +214,16 @@ export function createProviderWorkflowService(options: {
     async submitCode(owner: string, id: string, code: string) {
       authorize(owner);
       return serialize(async () => {
-        await expire();
         const entry = get(id);
+        await expire(entry.scope);
         if (entry.operation.kind !== 'login' || terminal(entry.operation.state) || !entry.submitCode || entry.codeSubmitted)
           throw new ProviderWorkflowError('conflict');
         entry.codeSubmitted = true;
-        await entry.submitCode(code);
+        try { await entry.submitCode(code); }
+        catch (error) {
+          if (error instanceof ProviderWorkflowCodeNotAcceptedError) entry.codeSubmitted = false;
+          throw error;
+        }
         return { accepted: true as const };
       });
     },
@@ -210,8 +243,8 @@ export function createProviderWorkflowService(options: {
         const adapter = await adapterFor(key.harnessInstanceId);
         if (!adapter.verifyKey || !adapter.apiKeyProviders.includes(key.providerId))
           throw new ProviderWorkflowError('unavailable');
-        await expire();
-        if ([...entries.values()].some(entry => entry.scope === adapter.harness && !terminal(entry.operation.state)))
+        await expire(adapter.harness);
+        if ([...entries.values()].some(entry => entry.scope === adapter.harness && protectedEntry(entry)))
           throw new ProviderWorkflowError('conflict');
         await adapter.verifyKey(key);
         return { verified: true as const };
@@ -222,7 +255,7 @@ export function createProviderWorkflowService(options: {
       // Reject new callers while an already queued operation drains.
       closed = true;
       await serialize(async () => {
-        const results = await Promise.allSettled([...entries.values()].filter(e => !terminal(e.operation.state)).map(e => e.cancel?.()));
+        const results = await Promise.allSettled([...entries.values()].filter(protectedEntry).map(async e => { if (!e.cancel) throw new ProviderWorkflowError('unavailable'); await e.cancel(); }));
         for (const result of results)
           if (result.status === 'rejected')
             console.warn('[provider-workflow] Shutdown failed');
