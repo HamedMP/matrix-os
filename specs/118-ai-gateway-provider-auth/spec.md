@@ -263,6 +263,9 @@ Validated runtime slot, page size (1–50), and opaque cursor are applied to the
 active authorized computer resolved server-side. Ledger reads and settled-model
 metadata joins remain scoped to that owner, machine, and runtime. Cross-scope
 cursors are rejected; created-at/entry keyset ordering keeps pagination stable.
+Core migrations add a scope-prefixed expression index for opaque cursor anchors
+and a scope-prefixed ordering index for bounded history pages. These indexes
+change no cursor format, ledger values, or authorization predicates.
 Responses are private/no-store and include only timestamp, exact signed microUSD
 amount, activity kind, and nullable model ID. No credential, payment, ledger,
 reservation, request, or source-reference identifier is returned. Database
