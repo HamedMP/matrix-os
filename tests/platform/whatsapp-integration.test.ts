@@ -26,17 +26,18 @@ let repo: ReturnType<typeof createWhatsAppRepository>;
 let service: ReturnType<typeof createWhatsAppService>;
 let routes: ReturnType<typeof createWhatsAppRoutes>;
 let sends: { to: string; text: string }[];
+let reactions: { to: string; messageId: string; emoji: string }[];
 let api: ReturnType<typeof createWhatsAppAgentApiFixture>;
 let agent: ReturnType<typeof createWhatsAppAgentClient>;
 beforeEach(async () => {
   db = (await createTestPlatformDb()).db;
   now = Date.UTC(2026, 9, 2, 12);
   repo = createWhatsAppRepository(db, config.encryptionKey, () => now);
-  sends = []; vi.clearAllMocks();
+  sends = []; reactions = []; vi.clearAllMocks();
   api = createWhatsAppAgentApiFixture(owner);
   agent = createWhatsAppAgentClient(api.resolveTarget, api.fetchImpl);
   vi.spyOn(agent, 'start');
-  service = createWhatsAppService({ config, repository: repo, agent, now: () => now,
+  service = createWhatsAppService({ react: async (to, messageId, emoji) => { reactions.push({ to, messageId, emoji }); }, config, repository: repo, agent, now: () => now,
     send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; },
   });
   routes = createWhatsAppRoutes({ config, repository: repo, service,
@@ -81,7 +82,7 @@ describe('WhatsApp account linking and delivery', () => {
       if (!interrupted && payload.preparedAdmission) { interrupted = true; throw new Error('Commit response lost'); }
       return committed;
     });
-    service = createWhatsAppService({ config, repository: repo, agent, now: () => now,
+    service = createWhatsAppService({ react: vi.fn(async () => {}), config, repository: repo, agent, now: () => now,
       send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; }, logError: () => {},
     });
     try {
@@ -121,7 +122,7 @@ describe('WhatsApp account linking and delivery', () => {
       if (!lost && String(input).endsWith('/turns')) { lost = true; throw new Error('Response lost after admission'); }
       return response;
     });
-    service = createWhatsAppService({ config, repository: repo, agent, now: () => now,
+    service = createWhatsAppService({ react: vi.fn(async () => {}), config, repository: repo, agent, now: () => now,
       send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; }, logError: () => {},
     });
     await service.ingest([{ id: 'wamid.recovery', sender, timestamp: now / 1000, type: 'text', text: 'Hello' }]);
@@ -154,7 +155,7 @@ describe('WhatsApp account linking and delivery', () => {
       if (String(input).includes('/api/chat-providers')) { catalogReached(); await release; }
       return api.fetchImpl(input, init);
     });
-    service = createWhatsAppService({ config, repository: repo, agent, now: () => now,
+    service = createWhatsAppService({ react: vi.fn(async () => {}), config, repository: repo, agent, now: () => now,
       send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; }, logError: () => {},
     });
     routes = createWhatsAppRoutes({ config, repository: repo, service,
@@ -180,7 +181,7 @@ describe('WhatsApp account linking and delivery', () => {
     expect(sends.at(-1)?.text).toContain('connected to WhatsApp');
     sends = [];
     vi.mocked(agent.start).mockRejectedValue(new Error('private provider diagnostic'));
-    service = createWhatsAppService({ config, repository: repo, agent, now: () => now,
+    service = createWhatsAppService({ react: vi.fn(async () => {}), config, repository: repo, agent, now: () => now,
       send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; }, logError: () => {},
     });
     routes = createWhatsAppRoutes({ config, repository: repo, service,
@@ -209,8 +210,11 @@ describe('WhatsApp account linking and delivery', () => {
     await service.tick();
     expect(sends[2]).toEqual({ to: sender, text: expect.stringContaining('connected to WhatsApp') });
     expect(agent.start).not.toHaveBeenCalled();
+    expect(reactions).toEqual([]);
     expect((await webhook('wamid.question', 'Who are you?')).status).toBe(200);
-    await service.tick(); await service.tick();
+    await service.tick();
+    expect(reactions).toEqual([{ to: sender, messageId: 'wamid.question', emoji: '👀' }]);
+    await service.tick();
     expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({ owner, sender, text: 'Who are you?', allowFullAccess: true }), expect.any(Function), expect.any(Function));
     expect(sends.at(-1)?.text).toBe('Your Matrix agent is here.');
     const count = sends.length;
@@ -218,6 +222,10 @@ describe('WhatsApp account linking and delivery', () => {
     expect(sends).toHaveLength(count);
     expect(agent.start).toHaveBeenCalledOnce();
     expect(api.admissionCount).toBe(1);
+    expect(reactions).toEqual([
+      { to: sender, messageId: 'wamid.question', emoji: '👀' },
+      { to: sender, messageId: 'wamid.question', emoji: '✅' },
+    ]);
   });
   it('rejects forged events, unauthenticated owners, foreign origins and oversized bodies', async () => {
     expect((await routes.request('/whatsapp/webhook', { method: 'POST', body: event('wamid.bad', 'hi') })).status).toBe(401);

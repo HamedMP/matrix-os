@@ -97,7 +97,7 @@ describe('WhatsApp connection confirmation', () => {
     const send = vi.fn(async () => 'wamid.confirmed');
     const agent = { start: vi.fn(), poll: vi.fn() };
     // The request process commits; a separately composed worker drains its outbox.
-    service = createWhatsAppService({ config, repository: createWhatsAppRepository(db, key, () => now), agent, send, now: () => now });
+    service = createWhatsAppService({ react: vi.fn(async () => {}), config, repository: createWhatsAppRepository(db, key, () => now), agent, send, now: () => now });
     await service.tick(); await service.tick();
     expect(send).toHaveBeenCalledExactlyOnceWith(phone, expect.stringContaining('connected to WhatsApp'));
     expect(agent.start).not.toHaveBeenCalled(); expect(agent.poll).not.toHaveBeenCalled();
@@ -111,7 +111,7 @@ describe('WhatsApp connection confirmation', () => {
     expect(next.id).not.toBe(old.payload.connectionId);
     const send = vi.fn(async () => 'wamid.confirmed');
     const lease = vi.spyOn(repo, 'lease').mockResolvedValueOnce(old);
-    service = createWhatsAppService({ config, repository: repo, agent: { start: vi.fn(), poll: vi.fn() }, send, now: () => now });
+    service = createWhatsAppService({ react: vi.fn(async () => {}), config, repository: repo, agent: { start: vi.fn(), poll: vi.fn() }, send, now: () => now });
     await service.tick(); expect(send).not.toHaveBeenCalled(); lease.mockRestore();
     await service.tick(); expect(send).toHaveBeenCalledOnce();
   });
