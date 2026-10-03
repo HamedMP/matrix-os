@@ -217,3 +217,5 @@ export { BotModelRecoveryProvider, BotModelFailureNotice, useBotModelRecovery } 
 export { DEFAULT_RAIL_ORDER, moveRailItem, orderRailItems, parseRailOrderPreference } from "./chat/rail-order.js";
 export type { RailOrderPreference, RailSortMode } from "./chat/rail-order.js";
 export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js";
+export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
+export type { ProviderWorkflowClient } from "./agents-providers/types.js";

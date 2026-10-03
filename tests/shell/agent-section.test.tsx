@@ -15,7 +15,8 @@ const providerControllerState = vi.hoisted(() => ({
   addCredit: null as null | ((source: string, packageId: "usd_5", requestId: string) => Promise<void>),
 }));
 
-vi.mock("@matrix-os/ui", () => ({
+vi.mock("@matrix-os/ui", async () => ({
+  ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   AgentsProvidersView: ({
     onOpenTerminal,
     onOpenBrowser,

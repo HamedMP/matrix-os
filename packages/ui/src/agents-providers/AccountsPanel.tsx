@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type {
   ProviderAccount,
@@ -10,8 +10,8 @@ import type {
 } from "@matrix-os/contracts";
 import { RemovalDialog } from "./RemovalDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
-import { authLabel, titleCase, usageLines } from "./utils.js";
-import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
+import { titleCase, usageLines } from "./utils.js";
+import { AllowanceMeter } from "./AllowanceMeter.js";
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 
 function AttemptAction({
@@ -25,19 +25,48 @@ function AttemptAction({
 }) {
   const action = attempt.action;
   if (action.kind === "open_terminal") {
-    return <button type="button" className="matrix-ap-button matrix-ap-button-primary" onClick={() => onOpenTerminal(action.terminalSessionId)}>Continue in Terminal</button>;
+    return (
+      <button
+        type="button"
+        className="matrix-ap-button matrix-ap-button-primary"
+        onClick={() => onOpenTerminal(action.terminalSessionId)}
+      >
+        Continue in Terminal
+      </button>
+    );
   }
   if (action.kind === "open_browser") {
-    return <button type="button" className="matrix-ap-button matrix-ap-button-primary" onClick={() => onOpenBrowser(action.authorizationPath)}>Continue in browser</button>;
+    return (
+      <button
+        type="button"
+        className="matrix-ap-button matrix-ap-button-primary"
+        onClick={() => onOpenBrowser(action.authorizationPath)}
+      >
+        Continue in browser
+      </button>
+    );
   }
-  if (action.kind === "enter_api_key") return <span className="matrix-ap-help">Continue in the secure credential prompt.</span>;
-  if (action.kind === "wait") return <span className="matrix-ap-help">Waiting for authentication…</span>;
-  if (action.kind === "retry") return <span className="matrix-ap-help">Authentication needs to be retried.</span>;
+  if (action.kind === "enter_api_key")
+    return (
+      <span className="matrix-ap-help">
+        Continue in the secure credential prompt.
+      </span>
+    );
+  if (action.kind === "wait")
+    return <span className="matrix-ap-help">Waiting for authentication…</span>;
+  if (action.kind === "retry")
+    return (
+      <span className="matrix-ap-help">
+        Authentication needs to be retried.
+      </span>
+    );
   return null;
 }
 
 export function AccountsPanel({
   harness,
+  guided = false,
+  connectionAction,
   accounts,
   sources,
   allHarnesses,
@@ -55,6 +84,8 @@ export function AccountsPanel({
   onRefresh,
 }: {
   harness: ProviderHarnessInstance;
+  guided?: boolean;
+  connectionAction?: ReactNode;
   accounts: ProviderAccount[];
   sources: ProviderAccessSource[];
   allHarnesses: ProviderHarnessInstance[];
@@ -71,53 +102,115 @@ export function AccountsPanel({
   onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;
   onRefresh?: () => void;
 }) {
-  useLocalObservationExpiry(sources.map((source) => source.localObservation?.staleAfter));
+  useLocalObservationExpiry(
+    sources.map((source) => source.localObservation?.staleAfter),
+  );
   const [removeAccountId, setRemoveAccountId] = useState<string | null>(null);
-  const removeAccount = accounts.find((account) => account.id === removeAccountId);
+  const removeAccount = accounts.find(
+    (account) => account.id === removeAccountId,
+  );
   const [showLoginMethods, setShowLoginMethods] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const supportsLogin = canLogin && harness.loginMethods.length > 0;
-  const recommendedMethod = harness.recommendedLoginMethod && harness.loginMethods.includes(harness.recommendedLoginMethod)
-    ? harness.recommendedLoginMethod : harness.loginMethods[0];
-  const needsGenericLogin = accounts.length === 0 || accounts.some((account) =>
-    account.authState !== "authenticated" && !harness.loginMethods.includes(account.authMethod));
-  const attemptMethodSupported = attempt !== null && harness.loginMethods.includes(attempt.method);
-  const retryMethod = attemptMethodSupported ? attempt.method : harness.loginMethods.find((method) => method === "terminal");
-  const selectedSource = sources.find((source) => source.id === harness.accessSourceId)
-    ?? sources.find((source) => source.id === harness.configuredAccessSourceId
-      && source.kind === "harness_profile" && source.harness === harness.harness);
+  const supportsLogin = !guided && canLogin && harness.loginMethods.length > 0;
+  const recommendedMethod =
+    harness.recommendedLoginMethod &&
+    harness.loginMethods.includes(harness.recommendedLoginMethod)
+      ? harness.recommendedLoginMethod
+      : harness.loginMethods[0];
+  const needsGenericLogin =
+    accounts.length === 0 ||
+    accounts.some(
+      (account) =>
+        account.authState !== "authenticated" &&
+        !harness.loginMethods.includes(account.authMethod),
+    );
+  const attemptMethodSupported =
+    attempt !== null && harness.loginMethods.includes(attempt.method);
+  const retryMethod = attemptMethodSupported
+    ? attempt.method
+    : harness.loginMethods.find((method) => method === "terminal");
+  const selectedSource =
+    sources.find((source) => source.id === harness.accessSourceId) ??
+    sources.find(
+      (source) =>
+        source.id === harness.configuredAccessSourceId &&
+        source.kind === "harness_profile" &&
+        source.harness === harness.harness,
+    );
   const matrixSelected = selectedSource?.kind === "matrix_gateway";
-  const matrixSupported = matrixSelected && isSupportedGenericHarnessCredentialRoute(harness, selectedSource);
+  const matrixSupported =
+    matrixSelected &&
+    isSupportedGenericHarnessCredentialRoute(harness, selectedSource);
   const run = async (action: () => Promise<boolean | void> | void) => {
     setPending(true);
     setActionError(null);
     try {
-      if (await action() === false) setActionError("The connection could not be updated. Try again.");
+      if ((await action()) === false)
+        setActionError("The connection could not be updated. Try again.");
     } catch (caught) {
-      console.warn("[provider-settings] Account action failed:", caught instanceof Error ? caught.name : typeof caught);
+      console.warn(
+        "[provider-settings] Account action failed:",
+        caught instanceof Error ? caught.name : typeof caught,
+      );
       setActionError("The connection could not be updated. Try again.");
-    } finally { setPending(false); }
+    } finally {
+      setPending(false);
+    }
   };
 
   return (
-    <section className="matrix-ap-panel" aria-labelledby="matrix-ap-accounts-title">
+    <section
+      className="matrix-ap-panel"
+      aria-labelledby="matrix-ap-accounts-title"
+    >
       <div className="matrix-ap-panel-head">
         <div>
-          <h3 id="matrix-ap-accounts-title">{harness.harness === "claude" || harness.harness === "codex" ? "Your subscription or account" : "Your account"}</h3>
+          <h3 id="matrix-ap-accounts-title">
+            {guided
+              ? "Connection"
+              : harness.harness === "claude" || harness.harness === "codex"
+                ? "Your subscription or account"
+                : "Your account"}
+          </h3>
         </div>
-        {supportsLogin && needsGenericLogin ? <button
-          type="button"
-          className="matrix-ap-button"
-          disabled={disabled || pending}
-          onClick={() => { if (recommendedMethod) void run(() => onMutate({ type: "start_login", harnessInstanceId: harness.id, accountId: null, method: recommendedMethod })); }}
-        >
-          Sign in
-        </button> : null}
+        {supportsLogin && needsGenericLogin ? (
+          <button
+            type="button"
+            className="matrix-ap-button"
+            disabled={disabled || pending}
+            onClick={() => {
+              if (recommendedMethod)
+                void run(() =>
+                  onMutate({
+                    type: "start_login",
+                    harnessInstanceId: harness.id,
+                    accountId: null,
+                    method: recommendedMethod,
+                  }),
+                );
+            }}
+          >
+            Sign in
+          </button>
+        ) : null}
       </div>
-      {actionError ? <p className="matrix-ap-notice" role="alert">{actionError}</p> : null}
+      {actionError ? (
+        <p className="matrix-ap-notice" role="alert">
+          {actionError}
+        </p>
+      ) : null}
 
-      {supportsLogin && harness.loginMethods.length > 1 ? <button type="button" className="matrix-ap-link-button" onClick={() => setShowLoginMethods((open) => !open)} disabled={disabled || pending}>Other sign-in methods</button> : null}
+      {supportsLogin && harness.loginMethods.length > 1 ? (
+        <button
+          type="button"
+          className="matrix-ap-link-button"
+          onClick={() => setShowLoginMethods((open) => !open)}
+          disabled={disabled || pending}
+        >
+          Other sign-in methods
+        </button>
+      ) : null}
       {showLoginMethods ? (
         <div className="matrix-ap-login-methods" aria-label="Login methods">
           {harness.loginMethods.map((method) => (
@@ -128,7 +221,12 @@ export function AccountsPanel({
               disabled={disabled || pending}
               onClick={() => {
                 void run(async () => {
-                  const saved = await onMutate({ type: "start_login", harnessInstanceId: harness.id, accountId: null, method });
+                  const saved = await onMutate({
+                    type: "start_login",
+                    harnessInstanceId: harness.id,
+                    accountId: null,
+                    method,
+                  });
                   if (saved === true) setShowLoginMethods(false);
                   return saved;
                 });
@@ -142,89 +240,239 @@ export function AccountsPanel({
 
       {attempt ? (
         <div className="matrix-ap-attempt" role="status">
-          <span>{attempt.state === "pending" ? "Finish signing in" : `Sign-in ${titleCase(attempt.state).toLowerCase()}`}</span>
-          <AttemptAction attempt={attempt} onOpenTerminal={onOpenTerminal} onOpenBrowser={onOpenBrowser} />
-          {supportsLogin && retryMethod && (attempt.action.kind === "retry" || ["failed", "expired", "denied"].includes(attempt.state)) ? <button type="button" className="matrix-ap-button" disabled={disabled || pending}
-            onClick={() => void run(() => onMutate({ type: "start_login", harnessInstanceId: harness.id, accountId: attemptMethodSupported ? attempt.accountId : null, method: retryMethod }))}>Retry sign in</button> : null}
-          {onRefresh ? <button type="button" className="matrix-ap-button" disabled={disabled || pending} onClick={onRefresh}>Check connection</button> : null}
+          <span>
+            {attempt.state === "pending"
+              ? "Finish signing in"
+              : `Sign-in ${titleCase(attempt.state).toLowerCase()}`}
+          </span>
+          <AttemptAction
+            attempt={attempt}
+            onOpenTerminal={onOpenTerminal}
+            onOpenBrowser={onOpenBrowser}
+          />
+          {supportsLogin &&
+          retryMethod &&
+          (attempt.action.kind === "retry" ||
+            ["failed", "expired", "denied"].includes(attempt.state)) ? (
+            <button
+              type="button"
+              className="matrix-ap-button"
+              disabled={disabled || pending}
+              onClick={() =>
+                void run(() =>
+                  onMutate({
+                    type: "start_login",
+                    harnessInstanceId: harness.id,
+                    accountId: attemptMethodSupported
+                      ? attempt.accountId
+                      : null,
+                    method: retryMethod,
+                  }),
+                )
+              }
+            >
+              Retry sign in
+            </button>
+          ) : null}
+          {onRefresh ? (
+            <button
+              type="button"
+              className="matrix-ap-button"
+              disabled={disabled || pending}
+              onClick={onRefresh}
+            >
+              Check connection
+            </button>
+          ) : null}
         </div>
       ) : null}
 
       <div className="matrix-ap-account-list">
         {accounts.length === 0 ? (
-          <p className="matrix-ap-empty">{matrixSupported
-            ? "Connected through Matrix AI."
-            : matrixSelected ? "Choose a supported connection."
-              : selectedSource?.kind === "harness_profile"
-                ? `${harness.displayName} manages authentication for this route in Terminal.`
-              : harness.harness === "hermes" || harness.harness === "openclaw"
-                ? "Use your own provider account in Terminal."
-                : "No account connected."}</p>
-        ) : accounts.map((account) => {
-          const source = sources.find((candidate) => candidate.id === account.accessSourceId);
-          const usage = source ? usageLines(source.usage) : null;
-          const selected = harness.selectedAccountId === account.id;
-          return (
-            <article className="matrix-ap-account" key={account.id} data-testid={`account-${account.id}`}>
-              <div className="matrix-ap-account-main">
-                <span className="matrix-ap-avatar" aria-hidden="true">{account.displayName.slice(0, 1).toUpperCase()}</span>
-                <div>
-                  <strong>{account.displayName}</strong>
-                  <span>{harness.harness === "codex" && source?.id === "owner_openai_profile"
-                    ? codexLocalObservationLabel(source.localObservation)
-                    : authLabel(account.authState)} · {titleCase(account.authMethod)}</span>
+          <>
+            {selectedSource?.kind === "harness_profile" && selectedSource.localObservation?.state === "present_unverified" ? (
+              <article className="matrix-ap-account" data-testid={`native-account-${harness.id}`}>
+                <div className="matrix-ap-account-main"><span className="matrix-ap-avatar" aria-hidden="true">{selectedSource.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{selectedSource.displayName}</strong><span>Connected</span></div></div>
+                <div className="matrix-ap-account-usage">
+                  <strong>{usageLines(selectedSource.usage).primary}</strong>
+                  <AllowanceMeter label={selectedSource.displayName} usage={selectedSource.usage} />
+                  <span>{selectedSource.usage.kind === "unavailable" && selectedSource.usage.reason === "read_only"
+                    ? "Only this computer’s owner can view account usage." : usageLines(selectedSource.usage).secondary}</span>
                 </div>
-                {selected ? <span className="matrix-ap-selected-tag">Selected</span> : null}
+              </article>
+            ) : <p className="matrix-ap-empty">
+              {matrixSupported
+                ? "Connected through Matrix AI."
+                : matrixSelected
+                  ? "Choose a supported connection."
+                  : selectedSource?.kind === "harness_profile"
+                    ? `${harness.displayName} manages this connection.`
+                    : harness.harness === "hermes" ||
+                        harness.harness === "openclaw"
+                      ? "Connect your provider account in Settings."
+                      : "No account connected."}
+            </p>}
+            {connectionAction}
+          </>
+        ) : (
+          accounts.map((account) => {
+            const source = sources.find(
+              (candidate) => candidate.id === account.accessSourceId,
+            );
+            const usage = source ? usageLines(source.usage) : null;
+            const selected = harness.selectedAccountId === account.id;
+            const ownsConnectionAction =
+              selected ||
+              (!harness.selectedAccountId && accounts[0]?.id === account.id);
+            const connected = account.authState === "authenticated" ||
+              source?.localObservation?.state === "present_unverified";
+            const status = connected ? "Connected" : "Not connected";
+            const collapsed = guided && !connected && account.authState !== "expired";
+            const card = (
+              <article
+                className="matrix-ap-account"
+                key={account.id}
+                data-testid={`account-${account.id}`}
+              >
+                <div className="matrix-ap-account-main">
+                  <span className="matrix-ap-avatar" aria-hidden="true">
+                    {account.displayName.slice(0, 1).toUpperCase()}
+                  </span>
+                  <div>
+                    <strong>{account.displayName}</strong>
+                    <span>
+                      {status} · {titleCase(account.authMethod)}
+                    </span>
+                  </div>
+                  {selected ? (
+                    <span className="matrix-ap-selected-tag">Selected</span>
+                  ) : null}
+                </div>
+                <div className="matrix-ap-account-usage">
+                  <strong>{usage?.primary ?? "Usage unavailable"}</strong>
+                  {source ? <AllowanceMeter label={account.displayName} usage={source.usage} /> : null}
+                  {usage?.secondary ? <span>{source?.usage.kind === "unavailable" && source.usage.reason === "read_only" ? "Only this computer’s owner can view account usage." : usage.secondary}</span> : null}
+                  {usage?.stale ? <span>Stale</span> : null}
+                </div>
+                <div className="matrix-ap-account-actions">
+                  {ownsConnectionAction && !collapsed ? connectionAction : null}
+                  {account.authState === "authenticated" &&
+                  canLogout &&
+                  !guided ? (
+                    <button
+                      type="button"
+                      className="matrix-ap-link-button"
+                      disabled={disabled || pending}
+                      onClick={() =>
+                        void run(() =>
+                          onMutate({
+                            type: "logout_account",
+                            accountId: account.id,
+                          }),
+                        )
+                      }
+                      aria-label={`Log out ${account.displayName}`}
+                      title={canLogout ? undefined : "Logout is not available"}
+                    >
+                      Log out
+                    </button>
+                  ) : account.authState !== "authenticated" &&
+                    supportsLogin &&
+                    harness.loginMethods.includes(account.authMethod) ? (
+                    <button
+                      type="button"
+                      className="matrix-ap-link-button"
+                      disabled={disabled || pending}
+                      onClick={() =>
+                        void run(() =>
+                          onMutate({
+                            type: "start_login",
+                            harnessInstanceId: harness.id,
+                            accountId: account.id,
+                            method: account.authMethod,
+                          }),
+                        )
+                      }
+                      aria-label={`Log in ${account.displayName}`}
+                      title={canLogin ? undefined : "Login is not available"}
+                    >
+                      Log in
+                    </button>
+                  ) : null}
+                  {!guided && (canRemove || canReassign) ? (
+                    <button
+                      type="button"
+                      className="matrix-ap-link-button matrix-ap-danger-text"
+                      disabled={disabled || pending}
+                      onClick={() => setRemoveAccountId(account.id)}
+                      aria-label={`Remove ${account.displayName}`}
+                      title={
+                        canRemove || canReassign
+                          ? undefined
+                          : "Account removal is not available"
+                      }
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              </article>
+            );
+            return collapsed ? (
+              <div key={account.id}>
+                <p className="matrix-ap-help">{status}</p>
+                {ownsConnectionAction ? connectionAction : null}
+                <details className="matrix-ap-advanced">
+                  <summary>Saved account details</summary>
+                  {card}
+                </details>
               </div>
-              <div className="matrix-ap-account-usage">
-                <strong>{usage?.primary ?? "Usage unavailable"}</strong>
-                {usage?.secondary ? <span>{usage.secondary}</span> : null}
-                {usage?.stale ? <span>Stale</span> : null}
-              </div>
-              <div className="matrix-ap-account-actions">
-                {account.authState === "authenticated" && canLogout ? (
-                  <button
-                    type="button"
-                    className="matrix-ap-link-button"
-                    disabled={disabled || pending}
-                    onClick={() => void run(() => onMutate({ type: "logout_account", accountId: account.id }))}
-                    aria-label={`Log out ${account.displayName}`}
-                    title={canLogout ? undefined : "Logout is not available"}
-                  >Log out</button>
-                ) : account.authState !== "authenticated" && supportsLogin && harness.loginMethods.includes(account.authMethod) ? (
-                  <button
-                    type="button"
-                    className="matrix-ap-link-button"
-                    disabled={disabled || pending}
-                    onClick={() => void run(() => onMutate({ type: "start_login", harnessInstanceId: harness.id, accountId: account.id, method: account.authMethod }))}
-                    aria-label={`Log in ${account.displayName}`}
-                    title={canLogin ? undefined : "Login is not available"}
-                  >Log in</button>
-                ) : null}
-                {canRemove || canReassign ? <button
-                  type="button"
-                  className="matrix-ap-link-button matrix-ap-danger-text"
-                  disabled={disabled || pending}
-                  onClick={() => setRemoveAccountId(account.id)}
-                  aria-label={`Remove ${account.displayName}`}
-                  title={canRemove || canReassign ? undefined : "Account removal is not available"}
-                >Remove</button> : null}
-              </div>
-            </article>
-          );
-        })}
+            ) : (
+              card
+            );
+          })
+        )}
       </div>
 
-      {!supportsLogin && onSetupHarness ? <button type="button" className="matrix-ap-button" disabled={disabled || pending}
-        onClick={() => void run(() => onSetupHarness(harness.harness))}>Connect {harness.displayName}</button> : null}
-      <details className="matrix-ap-account-details"><summary>Account details</summary><p className="matrix-ap-help">Terminal sign-in changes this agent’s current login. Additional isolated accounts are not supported yet.</p></details>
+      {!guided && harness.installState === "missing" && onSetupHarness ? (
+        <button
+          type="button"
+          className="matrix-ap-button"
+          disabled={disabled || pending}
+          onClick={() => void run(() => onSetupHarness(harness.harness))}
+        >
+          Install {harness.displayName} in Terminal
+        </button>
+      ) : null}
+      <details className="matrix-ap-account-details">
+        <summary>Account details</summary>
+        {guided && (canRemove || canReassign)
+          ? accounts.map((account) => (
+              <button
+                key={account.id}
+                type="button"
+                className="matrix-ap-link-button matrix-ap-danger-text"
+                disabled={disabled || pending}
+                onClick={() => setRemoveAccountId(account.id)}
+              >
+                Remove {account.displayName}
+              </button>
+            ))
+          : null}
+        <p className="matrix-ap-help">
+          Connecting changes this agent’s current login. Additional
+          isolated accounts are not supported yet.
+        </p>
+      </details>
 
       {removeAccount ? (
         <RemovalDialog
           key={removeAccount.id}
           account={removeAccount}
           accounts={accounts}
-          sources={sources.filter((source) => source.providerId === removeAccount.providerId)}
+          sources={sources.filter(
+            (source) => source.providerId === removeAccount.providerId,
+          )}
           harnesses={allHarnesses}
           gatewayPolicy={gatewayPolicy}
           disabled={disabled}

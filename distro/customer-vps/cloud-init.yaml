@@ -198,6 +198,7 @@ write_files:
       After=network-online.target
       Wants=network-online.target
       ConditionPathExists=/opt/matrix/bin/matrix-install-hermes
+      ConditionPathExists=!/var/lib/matrix-agent-runtime/disabled-hermes
 
       [Service]
       Type=oneshot
@@ -220,6 +221,7 @@ write_files:
       After=matrix-hermes.service network-online.target
       Wants=network-online.target
       ConditionPathExists=/opt/matrix/bin/matrix-hermes-dashboard
+      ConditionPathExists=!/var/lib/matrix-agent-runtime/disabled-hermes
 
       [Service]
       User=matrix

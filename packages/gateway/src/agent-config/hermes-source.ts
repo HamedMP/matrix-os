@@ -65,7 +65,7 @@ function authAction(authKind: AgentAuthKind) {
   return "contact_owner" as const;
 }
 
-function parseModelIds(rawModels: unknown[] | undefined, currentModel: string | null) {
+function parseModelIds(rawModels: unknown[] | undefined, currentModel: string | null, requireListedSelection = false) {
   const models: string[] = [];
   const seen = new Set<string>();
   for (const candidate of rawModels ?? []) {
@@ -80,6 +80,13 @@ function parseModelIds(rawModels: unknown[] | undefined, currentModel: string | 
   models.sort((left, right) => left.localeCompare(right));
   if (currentModel === null || currentModel.endsWith("-pro")) return models;
   const selectedIndex = models.indexOf(currentModel);
+  // Native provider switches can expose the new provider before updating its
+  // model. Do not turn the previous provider's selection into Codex inventory
+  // or persist it as a generated native default.
+  if (requireListedSelection && selectedIndex === -1 && !(rawModels ?? []).some(candidate => {
+    const parsed = ModelIdSchema.safeParse(candidate);
+    return parsed.success && parsed.data === currentModel;
+  })) return models;
   if (selectedIndex !== -1) models.splice(selectedIndex, 1);
   return [currentModel, ...models].slice(0, MAX_MODELS_PER_PROVIDER);
 }
@@ -102,6 +109,7 @@ function normalizeProvider(
   const models = parseModelIds(
     parsed.data.models,
     id.data === currentProvider ? currentModel : null,
+    id.data === "openai-codex",
   ).map((model) => ({
     id: model,
     displayName: model,
