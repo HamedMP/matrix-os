@@ -297,6 +297,10 @@ export async function createGatewayCollaboration(options: {
     void cleanupExpiredArtifacts(options.db, new Date()).catch((error: unknown) => {
       console.warn("[collaboration] artifact cleanup failed", error instanceof Error ? error.name : "UnknownError");
     });
+    // Lapsed grants are withdrawn from discovery here; access already ends at the expiry time.
+    void capabilities.expireGrants().catch((error: unknown) => {
+      console.warn("[collaboration] grant expiry sweep failed", error instanceof Error ? error.name : "UnknownError");
+    });
   }, ARTIFACT_CLEANUP_INTERVAL_MS);
   cleanupTimer?.unref?.();
   let registered = false;

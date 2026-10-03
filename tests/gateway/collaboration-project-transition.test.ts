@@ -9,6 +9,9 @@ import {
 } from "../../packages/gateway/src/collaboration/project-transition.js";
 import { CollaborationDirectoryOutbox } from "../../packages/gateway/src/collaboration/directory-outbox.js";
 import { CollaborationCapabilityRepository } from "../../packages/gateway/src/collaboration/capability-repository.js";
+import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
+import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
+import { createPlatformCollaborationTestDatabase, destroyPlatformCollaborationTestDatabase } from "../platform/collaboration-test-support.js";
 import {
   createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
@@ -546,25 +549,41 @@ describe("project collaboration transition journal", () => {
     // The owner chose people, so no organization-wide default is added.
     expect(await fixture.db.selectFrom("collaboration_grants").select("id").where("scope_id", "=", SCOPE_ID)
       .where("audience_kind", "=", "organization").execute()).toEqual([]);
+    // Delivered into the real platform repository: every event must land, not only the first at a revision.
+    const platform = await createPlatformCollaborationTestDatabase();
     const sent: Array<{ audience?: string; recipients: Array<{ actorId: string; status: string; grantId?: string }> }> = [];
-    const outbox = new CollaborationDirectoryOutbox({
-      db: fixture.db, platformBaseUrl: "https://platform.internal", runtimeId: DESTINATION_RUNTIME,
-      serviceToken: "s".repeat(32), now: () => NOW, startTimer: false,
-      fetchImpl: (async (_url: string, init: RequestInit) => {
-        sent.push(JSON.parse(String(init.body)) as (typeof sent)[number]);
-        return new Response(null, { status: 204 });
-      }) as typeof fetch,
-    });
     try {
-      await outbox.runOnce();
+      await bootstrapPlatformCollaborationDatabase(platform.collaborationDb);
+      const directory = new PlatformCollaborationRepository(platform.collaborationDb, { now: () => NOW });
+      const outbox = new CollaborationDirectoryOutbox({
+        db: fixture.db, platformBaseUrl: "https://platform.internal", runtimeId: DESTINATION_RUNTIME,
+        serviceToken: "s".repeat(32), now: () => NOW, startTimer: false,
+        fetchImpl: (async (_url: string, init: RequestInit) => {
+          const event = JSON.parse(String(init.body)) as Parameters<PlatformCollaborationRepository["applyDirectoryEvent"]>[0];
+          sent.push(event as unknown as (typeof sent)[number]);
+          await directory.applyDirectoryEvent(event);
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+      });
+      try {
+        expect(await outbox.runOnce()).toBe(3);
+      } finally {
+        await outbox.shutdown();
+      }
+      expect(sent.every((event) => event.audience === undefined)).toBe(true);
+      expect(sent.filter((event) => event.recipients.some((recipient) => recipient.status === "invited"))).toHaveLength(2);
+      for (const actorId of chosen) {
+        expect(await directory.getScopeActorEntry(SCOPE_ID, actorId)).toEqual({ status: "invited", invitationId: null, grantId: grantIds.get(actorId) });
+      }
+      expect(await directory.getScopeActorEntry(SCOPE_ID, OWNER_ID)).toEqual({ status: "accepted", invitationId: null, grantId: null });
+      expect(await directory.getScopeActorEntry(SCOPE_ID, "user_withdrawn_member")).toBeNull();
+      // The scope revision is the last published one, so the next change publishes after all of them.
+      const scope = await fixture.db.selectFrom("collaboration_scopes").select("revision").where("id", "=", SCOPE_ID).executeTakeFirstOrThrow();
+      expect((await directory.getDirectoryRoute(SCOPE_ID))).not.toBeNull();
+      expect(Number(scope.revision)).toBe(revision + 3);
     } finally {
-      await outbox.shutdown();
+      await destroyPlatformCollaborationTestDatabase(platform);
     }
-    expect(sent.every((event) => event.audience === undefined)).toBe(true);
-    const invited = sent.flatMap((event) => event.recipients.filter((recipient) => recipient.status === "invited"));
-    expect(invited.sort((left, right) => left.actorId.localeCompare(right.actorId)))
-      .toEqual(chosen.map((actorId) => ({ actorId, status: "invited", grantId: grantIds.get(actorId) })));
-    expect(sent.filter((event) => event.recipients.some((recipient) => recipient.status === "invited"))).toHaveLength(2);
   });
 
   it("replaces an expired organization grant that is still marked active", async () => {
