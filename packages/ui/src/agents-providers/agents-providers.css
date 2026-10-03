@@ -409,10 +409,10 @@
 .matrix-ap-device-code { display: flex; align-items: center; gap: 12px; padding: 12px; margin: 12px 0; background: var(--matrix-ap-sunken); border: 1px solid var(--matrix-ap-border); border-radius: 10px; }
 .matrix-ap-device-code code { font-size: 20px; letter-spacing: .08em; }
 .matrix-ap-install progress, .matrix-ap-account-usage progress { width: 100%; accent-color: var(--matrix-ap-accent); height: 6px; }
-.matrix-ap-account-usage progress { appearance: none; background: var(--matrix-ap-sunken); border: 0; border-radius: 999px; overflow: hidden; }
-.matrix-ap-account-usage progress::-webkit-progress-bar { background: var(--matrix-ap-sunken); border-radius: 999px; }
-.matrix-ap-account-usage progress::-webkit-progress-value { background: var(--matrix-ap-accent); border-radius: 999px; }
-.matrix-ap-account-usage progress::-moz-progress-bar { background: var(--matrix-ap-accent); border-radius: 999px; }
+.matrix-ap-account-usage progress { appearance: none; background: color-mix(in srgb, var(--matrix-ap-muted) 45%, transparent); border: 0; border-radius: 999px; overflow: hidden; }
+.matrix-ap-account-usage progress::-webkit-progress-bar { background: color-mix(in srgb, var(--matrix-ap-muted) 45%, transparent); border-radius: 999px; }
+.matrix-ap-account-usage progress::-webkit-progress-value { background: var(--matrix-ap-success); border-radius: 999px; }
+.matrix-ap-account-usage progress::-moz-progress-bar { background: var(--matrix-ap-success); border-radius: 999px; }
 .matrix-ap-operation-logs { background: var(--matrix-ap-sunken); border-radius: 10px; padding: 12px; margin-top: 12px; font-size: 12px; }
 .matrix-ap-operation-logs ol { padding-left: 18px; }
 .matrix-ap-uninstall-choice { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; margin-top: 18px; font-size: 13px; }
