@@ -37,20 +37,56 @@ it("joins initial native discovery for a concurrent focus/visibility pair withou
   expect(api.get).toHaveBeenCalledOnce();
 });
 
-it("coalesces concurrent native lifecycle revalidation but permits the next completed foreground transition", async () => {
+it("reuses freshly trusted native discovery when opening a picker also activates its window", async () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  const api = { get: vi.fn().mockResolvedValue(catalog) };
+  const { result } = renderHook(() => useChatProviderCatalog(catalog, { api }));
+  await waitFor(() => expect(result.current.status).toBe("ready"));
+  for (let index = 0; index < 3; index++) act(foregroundEvents);
+  expect(api.get).toHaveBeenCalledOnce();
+  expect(result.current.status).toBe("ready");
+  expect(result.current.hasTrustedCatalog).toBe(true);
+});
+
+it("coalesces stale native lifecycle revalidation and reuses its completed discovery for another minute", async () => {
+  let now = 1_000_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
   const catalog = createCanonicalProviderCatalogFixture();
   const pending = deferred<typeof catalog>();
   const api = { get: vi.fn().mockResolvedValueOnce(catalog).mockReturnValueOnce(pending.promise).mockResolvedValue(catalog) };
   const { result } = renderHook(() => useChatProviderCatalog(catalog, { api }));
   await waitFor(() => expect(result.current.status).toBe("ready"));
+  now += 59_999;
+  act(foregroundEvents);
+  expect(api.get).toHaveBeenCalledOnce();
+  expect(result.current.status).toBe("ready");
+  now += 1;
   act(foregroundEvents);
   expect(api.get).toHaveBeenCalledTimes(2);
   expect(result.current.status).toBe("loading");
   await act(async () => pending.resolve(catalog));
   expect(result.current.status).toBe("ready");
   act(() => window.dispatchEvent(new Event("focus")));
+  expect(api.get).toHaveBeenCalledTimes(2);
+  now += 60_000;
+  act(foregroundEvents);
   await waitFor(() => expect(result.current.status).toBe("ready"));
   expect(api.get).toHaveBeenCalledTimes(3);
+});
+
+it("bypasses fresh lifecycle reuse for explicit refresh and immediately retries its failure", async () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  const get = vi.fn().mockResolvedValueOnce(catalog).mockRejectedValueOnce(new Error("refresh_failed"))
+    .mockResolvedValue(catalog);
+  const api = { get };
+  const { result } = renderHook(() => useChatProviderCatalog(catalog, { api }));
+  await waitFor(() => expect(result.current.status).toBe("ready"));
+  act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.status).toBe("error"));
+  expect(get).toHaveBeenCalledTimes(2);
+  act(foregroundEvents);
+  await waitFor(() => expect(result.current.status).toBe("ready"));
+  expect(get).toHaveBeenCalledTimes(3);
 });
 
 it.each(["pending", "ready"] as const)("does not restart %s same-scope discovery when a fallback presentation is rebuilt", async status => {

@@ -150,6 +150,7 @@ export interface AiFundedPriorityClaimsTable {
 }
 
 export interface AiFundedUsageReservationsTable {
+  execution_admission_release: Generated<string | null>;
   reservation_id: string;
   request_id: string;
   payload_hash: string;

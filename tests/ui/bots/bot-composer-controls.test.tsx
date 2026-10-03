@@ -10,6 +10,23 @@ catalog.instances=[{...base,id:'matrix_pi_default',driverKind:'matrix_pi',displa
 const bot={id:'bot_writer01',revision:3,name:'Writer Rabbit',selection:{instanceId:'matrix_pi_default',model:'sonnet'}};
 const makeClient=()=>({list:vi.fn(async()=>({enabled:true,agents:[bot]})),update:vi.fn(async(_id:string,input:unknown)=>({...bot,revision:4,selection:(input as {selection:unknown}).selection}))});
 afterEach(cleanup);
+it('opens the upward model menu from the keyboard and returns focus on Escape',async()=>{
+ const client=makeClient();
+ render(<BotComposerControls agentId={bot.id} client={client as never} catalog={catalog}/>);
+ const trigger=screen.getByRole('button',{name:'Choose bot agent and model'});
+ await waitFor(()=>expect(trigger.textContent).toContain('Writer Rabbit'));
+ trigger.focus();
+ fireEvent.keyDown(trigger,{key:'ArrowUp'});
+ const menu=await screen.findByRole('dialog',{name:'Bot agent and model'});
+ expect(menu.getAttribute('data-side')).toBe('top');
+ expect(menu.getAttribute('data-align')).toBe('end');
+ const selector=within(menu).getByRole('combobox',{name:'Bot model'});
+ await waitFor(()=>expect(document.activeElement).toBe(selector));
+ fireEvent.keyDown(selector,{key:'Escape'});
+ await waitFor(()=>expect(screen.queryByRole('dialog',{name:'Bot agent and model'})).toBeNull());
+ expect(document.activeElement).toBe(trigger);
+ expect(client.update).not.toHaveBeenCalled();
+});
 it('shows authenticated agent and model/source and edits only supported models with saved revision',async()=>{
  const client=makeClient(), changed=vi.fn();
  render(<BotComposerControls agentId={bot.id} client={client as never} catalog={catalog} onChanged={changed}/>);

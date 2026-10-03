@@ -58,6 +58,7 @@ describe("native catalog consumer wiring", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-model")).toBe("gpt-5.6-sol"));
     await setSharedComposerText(screen.getByRole("textbox", { name: "Message new chat" }), "Keep this draft");
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
     fireEvent(window, new Event("focus"));
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true));
     view.rerender(draft({ ...summary, projects: { ...summary.projects, items: [{ id: "new-project", label: "New project", status: "available", taskCount: 0, threadCount: 0, attentionCount: 0 }] } }));

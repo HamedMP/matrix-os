@@ -111,10 +111,11 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       if (!reset) throw new AiFundedPolicyError("access_disabled");
 
       const existing = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select(["payload_hash", "authorization_response"])
+        .select(["payload_hash", "authorization_response", "execution_admission_release"])
         .where("token_id", "=", credential.token_id).where("request_id", "=", request.requestId)
         .executeTakeFirst();
       if (existing) {
+        if (existing.execution_admission_release !== null) throw new AiFundedPolicyError("reservation_closed");
         if (existing.payload_hash !== payloadHash) throw new AiFundedPolicyError("idempotency_conflict");
         return { kind: "authorized", response: FundedAiAuthorizationResponseSchema.parse(JSON.parse(existing.authorization_response)) };
       }

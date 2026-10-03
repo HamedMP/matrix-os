@@ -381,8 +381,9 @@ describe("WorkRail", () => {
     expect(projectsHeading.className).toContain("uppercase");
     for (const heading of [pinnedHeading, recentsHeading]) {
       expect(heading.className).toContain("pl-2.5");
-      expect(heading.className).toContain("pt-2");
-      expect(heading.className).toContain("pb-1");
+      expect(heading.className).toContain("h-7");
+      expect(heading.className).toContain("py-0");
+      expect(heading.className).toContain("items-center");
       expect(heading.className).toContain("text-xs");
       expect(heading.className).toContain("font-semibold");
       expect(heading.className).toContain("tracking-wide");

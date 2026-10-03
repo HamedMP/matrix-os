@@ -16,6 +16,7 @@ import { sql } from "kysely";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { createAiFundedMeteringRepository } from "./ai-funded-metering-repository.js";
+import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -382,6 +383,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     // probe service; this must not consume the VPS persistent issuance cooldown.
     issueJevProbeCredential: (identity: FundedAiIdentity) => issueCredential(identity, true),
     revokeRuntimeCredential,
+    releaseExecutionAdmission: createFundedExecutionRecovery({ db: options.db, now }),
     ...metering,
   };
 }

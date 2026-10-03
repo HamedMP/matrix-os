@@ -18,6 +18,18 @@ function ChatAgentsEntry({ client, scopeKey = "chat_one" }: { client: ChatAgentC
     </ChatAgentsContent></main>
   </ChatAgentsWorkspace>;
 }
+async function openCustomBriefDraft() {
+  fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Personal Daily Brief" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Description Optional" }), { target: { value: "Prepare email and calendar" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Prepare a daily brief" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Add recipe" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Personal Daily Brief" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Matrix integrations" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Add integration" }), { target: { value: "gmail" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Add integration" }), { target: { value: "google_calendar" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Expected output" }), { target: { value: "An English daily brief with today's schedule, actionable follow-ups, top priorities, source links or IDs, and data gaps." } });
+}
 function stampJevCreate(client: ReturnType<typeof clientFixture>, expectedEmail: string) {
   client.create.mockImplementation(async (input) => ({ ...saved, name: input.name, description: input.description,
     instructions: input.instructions, selection: input.selection,
@@ -461,7 +473,7 @@ describe("shared Agents entry", () => {
     const client = clientFixture({ matrix: true });
     render(<ChatAgentsEntry client={client} />);
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+    await openCustomBriefDraft();
     fireEvent.change(screen.getByRole("combobox", { name: "Add integration" }), { target: { value: "gmail" } });
     expect(screen.getAllByRole("combobox", { name: "Gmail account" })).toHaveLength(2);
     expect(screen.getAllByText("Choose a different account or remove this duplicate integration.").length).toBeGreaterThan(0);
@@ -494,11 +506,11 @@ describe("shared Agents entry", () => {
     expect(screen.getByRole("textbox", { name: "Existing draft" })).toBe(editor);
     expect((editor as HTMLTextAreaElement).value).toBe("Keep this original draft");
   });
-  it("prefills and saves the Personal Daily Brief recipe with deliberate account selection", async () => {
+  it("saves a custom daily brief skill recipe with deliberate account selection", async () => {
     const client = clientFixture({ matrix: true });
     render(<ChatAgentsEntry client={client} />);
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+    await openCustomBriefDraft();
 
     expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe("Personal Daily Brief");
     expect((screen.getByRole("textbox", { name: "Description Optional" }) as HTMLInputElement).value)
@@ -588,7 +600,7 @@ describe("shared Agents entry", () => {
     expect(screen.getByRole("option", { name: "Work · status unavailable" })).toBeTruthy();
     expect(screen.getByText("Account status could not be verified. Your saved choice is preserved.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+    await openCustomBriefDraft();
 
     expect(screen.getByText("Connection status is unavailable. Saved account choices are preserved.")).toBeTruthy();
     expect(screen.queryByText(/No connected account/)).toBeNull();

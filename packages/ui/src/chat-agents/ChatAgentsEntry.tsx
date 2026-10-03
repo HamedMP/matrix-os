@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type BotRecipeSummary, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
-import { accountForNewIntegration } from "./recipe-integrations.js";
+import { isLegacyDailyBriefEntry, resolveDailyBriefChat } from "./bots/daily-brief-navigation.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
 import { activeConnections } from "./recipe-integrations.js";
 import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe, jevAgentSelection } from "./jev-agent-template.js";
@@ -44,9 +44,9 @@ async function loadRecipeResources(client: ChatAgentClient) {
   };
 }
 
-function AgentLibraryBody({ state, client, models, edit, change, save, archive, back, retryRecipes, setup }: {
+function AgentLibraryBody({ state, client, models, edit, change, save, archive, back, retryRecipes, setup, openDailyBrief }: {
   state: Library; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
-  edit(agent: ChatAgent | "new" | "daily-brief"): void; change(value: Partial<Draft>): void;
+  edit(agent: ChatAgent | "new"): void; openDailyBrief?: () => void; change(value: Partial<Draft>): void;
   save(): Promise<void>; archive(): Promise<void>; back(): void; retryRecipes(): void; setup?: () => void;
 }) {
   if (state.loading) return <p role="status" className="mt-5 text-sm">Loading Agents…</p>;
@@ -55,20 +55,20 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
     <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)} className="grid gap-5">
     <header className="flex flex-wrap items-center justify-between gap-3">
       <h3 className="sr-only">Saved agents</h3>
-      {state.recipeCatalog?.enabled ? <button type="button" aria-label="Personal Daily Brief" className={button}
-        disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("daily-brief")}>Personal Daily Brief</button> : null}
-      <button type="button" aria-label="New Agent" className={`${button} ml-auto`} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>+ New agent</button>
+      {client.bots ? <button type="button" aria-label="Personal Daily Brief" className={button}
+        disabled={state.pending || !openDailyBrief} onClick={openDailyBrief}>Personal Daily Brief</button> : null}
+      <button type="button" aria-label="New Agent" className={`${button} ml-auto`} disabled={state.pending || !state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>+ New agent</button>
     </header>
     {!state.agents.length && !state.error ? <p className="py-6 text-sm" style={muted}>No agents yet. Add an agent to get started.</p> : null}
     <div className="grid gap-2" aria-label="Saved agents">
-      {state.agents.map(agent => <button key={agent.id} type="button" aria-label={`Edit ${agent.name}`} data-agent-card="saved"
-        className={`${button} matrix-chat-agent-list-row flex min-w-0 items-center gap-3 p-3 text-left`} onClick={() => edit(agent)}>
+      {state.agents.map(agent => <div key={agent.id} className="flex min-w-0 items-center gap-2"><button type="button" aria-label={isLegacyDailyBriefEntry(agent) ? `Open ${agent.name} bot` : `Edit ${agent.name}`} data-agent-card="saved" disabled={state.pending || (isLegacyDailyBriefEntry(agent) && !openDailyBrief)}
+        className={`${button} matrix-chat-agent-list-row flex flex-1 min-w-0 items-center gap-3 p-3 text-left`} onClick={() => isLegacyDailyBriefEntry(agent) ? openDailyBrief?.() : edit(agent)}>
         <AgentAvatar id={agent.id} name={agent.name} size="small" />
         <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium" title={agent.name}>{agent.name}</span>
           <span className="mt-1 block truncate text-xs" title={agent.description} style={muted}>{agent.description || "Saved specialist"}</span></span>
-        <span className="shrink-0 text-xs" style={muted}>{agent.recipeRef ? "Own Chat" : `@${agent.name}`}</span>
+        <span className="shrink-0 text-xs" style={muted}>{agent.recipeRef || isLegacyDailyBriefEntry(agent) ? "Own Chat" : `@${agent.name}`}</span>
         <span aria-hidden="true" style={muted}>›</span>
-      </button>)}
+      </button>{isLegacyDailyBriefEntry(agent) ? <button type="button" className={button} disabled={state.pending} aria-label={`Edit ${agent.name}`} onClick={() => edit(agent)}>Settings</button> : null}</div>)}
     </div>
     {state.recipeLoading ? <p role="status" className="text-xs" style={muted}>Loading recipe templates…</p> : null}
     {state.recipeError || state.connectionError ? <div className="flex flex-wrap items-center gap-2"><p className="text-xs">{state.recipeError
@@ -95,6 +95,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
   onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const dailyAttempt = useRef(0);
+  const dailyOpening = useRef(false);
+  useEffect(() => () => { dailyAttempt.current += 1; dailyOpening.current = false; }, [client]);
   const jevCreateAttempt = useRef<{ accountLabel: string; selectionKey: string; requestId: string } | null>(null);
   const [state, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
@@ -127,6 +130,24 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     });
     return () => { current = false; };
   }, [client]);
+  const openDailyBrief = async () => {
+    if (!client.bots || !onOpenBotChat || dailyOpening.current) return;
+    dailyOpening.current = true;
+    const attempt = ++dailyAttempt.current;
+    const current = () => attempt === dailyAttempt.current;
+    patch({ pending: true, error: "" });
+    try {
+      const chatId = await resolveDailyBriefChat(client, current);
+      if (!current() || !chatId) return;
+      await onOpenBotChat(chatId);
+      if (current()) onClose();
+    } catch (failure: unknown) {
+      console.warn("[chat-agents] Daily Brief unavailable:", failure instanceof Error ? failure.name : "UnknownError");
+      if (current()) patch({ error: "Could not open Daily Brief’s Chat. Try again." });
+    } finally {
+      if (current()) { dailyOpening.current = false; patch({ pending: false }); }
+    }
+  };
   const models = useMemo(() => state.catalog ? deriveCanonicalProviderChoices(state.catalog).filter((choice) =>
     isChatAgentDriver(choice.driverKind) && choice.interactionModes.includes("default") && choice.permissionModes.includes("full_access")) : [], [state.catalog]);
   const [jevPending, setJevPending] = useState(false);
@@ -202,26 +223,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
         patch({ recipeLoading: false, recipeError: "Recipe options are unavailable." });
       });
   };
-  const edit = (agent: ChatAgent | "new" | "daily-brief") => {
+  const edit = (agent: ChatAgent | "new") => {
     const choice = matrixBotSelectableModelChoices(models, state.catalog)[0];
     const selection: CanonicalChatModelSelection | null = choice ? matrixBotModelSelection(choice) : null;
-    if (agent === "daily-brief") {
-      patch({ editing: "new", notice: "", error: "", draft: {
-        name: "Personal Daily Brief",
-        description: "Prepare today's priorities from email and calendar.",
-        instructions: "Prepare today's daily brief from connected email and calendar sources.",
-        requestId: requestId(), selection,
-        recipe: {
-          skills: ["matrix-personal-daily-brief", "matrix-integrations"],
-          integrations: ["gmail", "google_calendar"].map((service) => {
-            const accountLabel = state.connectionError ? undefined : accountForNewIntegration(service, state.connections);
-            return { service, ...(accountLabel ? { accountLabel } : {}) };
-          }),
-          output: "An English daily brief with today's schedule, actionable follow-ups, top priorities, source links or IDs, and data gaps.",
-        },
-      } });
-      return;
-    }
     patch({ editing: agent, notice: "", error: "", draft: agent === "new" ? {
       name: "", description: "", instructions: "", requestId: requestId(),
       selection,
@@ -291,6 +295,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
     <AgentLibraryBody state={state} client={client} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
       ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model) : models}
+      openDailyBrief={client.bots && onOpenBotChat ? () => { void openDailyBrief(); } : undefined}
       edit={edit} change={change} save={save} archive={archive}
       back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes}
       setup={onSetup ? () => { onClose(); onSetup(); } : undefined} />

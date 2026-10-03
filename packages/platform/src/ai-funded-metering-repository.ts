@@ -456,6 +456,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirst();
       if (!reservation) throw new AiFundedPolicyError("unauthorized");
+      if (reservation.execution_admission_release !== null) throw new AiFundedPolicyError("reservation_closed");
       if (reservation.status === "in_flight") {
         if (reservation.start_response === null) throw new Error("In-flight reservation is missing its response");
         return FundedAiStartResponseSchema.parse(JSON.parse(reservation.start_response));

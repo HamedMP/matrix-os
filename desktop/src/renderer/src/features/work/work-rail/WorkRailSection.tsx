@@ -25,7 +25,7 @@ export function WorkRailSection({
           type="button"
           aria-label={label}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center rounded-md pl-2.5 pr-0 pb-1 pt-2 text-left text-xs font-semibold uppercase tracking-wide outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="flex h-7 min-w-0 flex-1 items-center rounded-md pl-2.5 pr-0 py-0 text-left text-xs leading-none font-semibold uppercase tracking-wide outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           style={{ color: "var(--text-tertiary)" }}
           onClick={onToggle}
         >

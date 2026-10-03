@@ -11,7 +11,8 @@ async function requestJson(input: {
   fetcher: typeof fetch; isIdentityCurrent: () => boolean;
 }): Promise<unknown> {
   if (input.signal.aborted || !input.isIdentityCurrent()) throw unavailable();
-  const response = await input.fetcher(input.path, {
+  // Native browser fetch requires its global receiver, not the request object.
+  const response = await input.fetcher.call(globalThis, input.path, {
     method: input.method, cache: "no-store", credentials: "include",
     headers: { Accept: "application/json", ...(input.body === undefined ? {} : { "Content-Type": "application/json" }) },
     ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),

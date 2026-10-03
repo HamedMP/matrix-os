@@ -15,7 +15,7 @@ import { PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-p
 
 vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("@clerk/nextjs", async (original) => ({ ...(await original<typeof import("@clerk/nextjs")>()), useOrganization: () => ({ organization: null }), useAuth: () => ({ userId: null, sessionId: null }) }));
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); useConnection.setState(useConnection.getInitialState(), true); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); useConnection.setState(useConnection.getInitialState(), true); });
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((yes) => { resolve = yes; });
@@ -91,7 +91,7 @@ it("shows shared Web loading in the trigger and open picker for initial and expl
   expect(submit).not.toHaveBeenCalled();
 });
 
-it("wires loading through the production Electron workspace for initial and forced reads", async () => {
+it("wires loading through the production Electron workspace for initial and stale foreground reads", async () => {
   const catalog = createCanonicalProviderCatalogFixture();
   const initial = deferred<typeof catalog>();
   const refreshed = deferred<typeof catalog>();
@@ -108,6 +108,7 @@ it("wires loading through the production Electron workspace for initial and forc
   expect(trigger).toHaveAttribute("data-provider-instance", "codex_fixture");
   fireEvent.click(trigger);
   expect(reads).toBe(1);
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
   act(() => window.dispatchEvent(new Event("focus")));
   await waitFor(() => expect(reads).toBe(2));
   expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
@@ -149,7 +150,7 @@ it("preserves held credit identity and reason during loading while keeping Stop 
   expect(cancel).toHaveBeenCalledOnce();
 });
 
-it.each(["credit_reserved", "credit_required"] as const)("keeps the confirmed %s reason on the actual bound workspace model row during forced refresh", async (creditState) => {
+it.each(["credit_reserved", "credit_required"] as const)("keeps the confirmed %s reason on the actual bound workspace model row during stale foreground refresh", async (creditState) => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const { canonicalChatRecord, snapshot } = await import("../desktop/canonical-chat-workspace-test-utils");
   const catalog = createCanonicalProviderCatalogFixture();
@@ -179,6 +180,7 @@ it.each(["credit_reserved", "credit_required"] as const)("keeps the confirmed %s
   await waitFor(() => expect(within(trigger).queryByRole("status")).toBeNull());
   fireEvent.click(trigger);
   expect(reads).toBe(1);
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
   act(() => window.dispatchEvent(new Event("focus")));
   await waitFor(() => expect(reads).toBe(2));
   const option = within(screen.getByRole("listbox")).getByRole("option");
