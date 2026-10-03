@@ -196,6 +196,20 @@ channel and with the PR number and author, and comments the version on the PR.
 It rebuilds on every push while the label is on, and provisions nothing.
 Bundles built for the `preview-vps` label also qualify.
 
+If a dependency conflict prevents pull-request workflows from running, a
+maintainer can publish the current same-repository PR head without provisioning:
+
+```bash
+gh workflow run preview-vps.yml --ref <reviewed-workflow-ref> -f pr=<number> -f bundle_only=true
+```
+
+The reviewed workflow ref must include the bundle-only input. This resolves the
+PR head through GitHub, builds that exact source, and registers PR provenance
+using release scripts from main with `--channel none`. It does not deploy,
+create or reconcile computers, change access lists, or promote a channel.
+Combining it with a version, inventory verification or teardown is rejected.
+Deploy the registered version separately to the explicitly reviewed computer.
+
 ```bash
 matrix preview start 1907    # shows the PR's newest bundle, commit, and author; asks to confirm
 matrix preview list          # handle, status, confirmed version, expiry, URL

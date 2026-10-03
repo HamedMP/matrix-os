@@ -13,6 +13,7 @@ interface Step { name?: string; if?: string; run?: string; uses?: string; with?:
 interface Job { if?: string; needs?: string[]; steps: Step[]; env?: Record<string, string> }
 
 const workflow = YAML.parse(readFileSync(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8')) as {
+  on: { workflow_dispatch: { inputs: Record<string, { type: string; default?: boolean }> } };
   jobs: Record<string, Job>;
 };
 const step = (job: string, name: string): Step => {
@@ -41,7 +42,7 @@ async function decide(overrides: Record<string, string>): Promise<{ status: numb
   await writeFile(join(directory, 'gh'), `#!/usr/bin/env bash
 case "$*" in
   */comments*) printf '%s' "\${FAKE_BUNDLE_COMMENT_IDS:-}" ;;
-  *) printf '%s' '{"head":{"sha":"${headSha}","ref":"feature","repo":{"full_name":"HamedMP/matrix-os"}},"user":{"login":"octo-dev"}}' ;;
+  *) printf '%s' "$FAKE_PR_JSON" ;;
 esac
 `);
   await chmod(join(directory, 'gh'), 0o755);
@@ -66,6 +67,8 @@ esac
       REQUESTED_VERSION: '',
       VERIFY_INVENTORY: 'false',
       TEARDOWN_PREVIEW: 'false',
+      BUNDLE_ONLY: 'false',
+      FAKE_PR_JSON: JSON.stringify({ head: { sha: headSha, ref: 'feature', repo: { full_name: 'HamedMP/matrix-os' } }, user: { login: 'octo-dev' } }),
       ...overrides,
     },
   });
@@ -87,6 +90,43 @@ describe('Private Preview bundles in the Preview workflow', () => {
     const { status, outputs } = await decide(overrides);
     expect(status).toBe(0);
     expect(outputs.action).toBe(action);
+  });
+
+  it('exposes an opt-in manual bundle action using live PR head and author without deployment', async () => {
+    expect(workflow.on.workflow_dispatch.inputs.bundle_only).toMatchObject({ type: 'boolean', default: false });
+    const liveSha = 'a'.repeat(40);
+    const { status, outputs } = await decide({
+      EVENT_NAME: 'workflow_dispatch', BUNDLE_ONLY: 'true',
+      FAKE_PR_JSON: JSON.stringify({ head: { sha: liveSha, ref: 'fresh-feature', repo: { full_name: 'HamedMP/matrix-os' } }, user: { login: 'fresh-author' } }),
+    });
+    expect(status).toBe(0);
+    expect(outputs).toMatchObject({ action: 'bundle', head_sha: liveSha, head_ref: 'fresh-feature', author: 'fresh-author', requested_version: '', teardown_private: 'false' });
+    expect(workflow.jobs.build!.steps.find((candidate) => candidate.uses === 'actions/checkout@v6')?.with?.ref).toBe('${{ needs.gate.outputs.head_sha }}');
+    for (const job of ['deploy', 'verify_inventory', 'teardown']) {
+      expect(workflow.jobs[job]!.if).not.toContain("== 'bundle'");
+    }
+    expect((await decide({ EVENT_NAME: 'workflow_dispatch' })).outputs.action).toBe('deploy');
+  });
+
+  it.each([
+    { REQUESTED_VERSION: 'v2026.10.03-pr1907-1-1-0123456' },
+    { VERIFY_INVENTORY: 'true' },
+    { TEARDOWN_PREVIEW: 'true' },
+  ])('rejects bundle-only dispatch combined with another action: %j', async (otherAction) => {
+    const result = await decide({ EVENT_NAME: 'workflow_dispatch', BUNDLE_ONLY: 'true', ...otherAction });
+    expect(result.status).toBe(1);
+    expect(result.outputs).toEqual({});
+  });
+
+  it('does not publish a fork or invalid SHA through manual bundle-only dispatch', async () => {
+    for (const head of [
+      { sha: headSha, ref: 'feature', repo: { full_name: 'someone/matrix-os' } },
+      { sha: 'invalid', ref: 'feature', repo: { full_name: 'HamedMP/matrix-os' } },
+    ]) {
+      const result = await decide({ EVENT_NAME: 'workflow_dispatch', BUNDLE_ONLY: 'true', FAKE_PR_JSON: JSON.stringify({ head, user: { login: 'octo-dev' } }) });
+      if (head.sha === 'invalid') expect(result.status).toBe(1);
+      else expect(result.outputs.action).toBe('skip');
+    }
   });
 
   it('passes the PR author as provenance, and drops a login the platform would reject', async () => {
