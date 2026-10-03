@@ -355,6 +355,39 @@ describe("member-addressed grants end to end", () => {
     expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project" });
   });
 
+  it("keeps a member's open invitation listed when their member grant expires", async () => {
+    await platformRepository.applyDirectoryEvent({
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
+    });
+    const owner = await openSession(ownerId);
+    expect((await owner.request("POST", `/api/collaboration/scopes/${scopeId}/grants`, {
+      clientRequestId: randomUUID(), expectedRevision: "1", audience: { kind: "member", actorId: memberId }, preset: "viewer",
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    })).status).toBe(201);
+    expect(await outbox.runOnce()).toBe(1);
+    const invitationId = randomUUID();
+    await home.db.insertInto("collaboration_members").values({
+      scope_id: scopeId, actor_id: memberId, role: "viewer", status: "pending", organization_id: organizationId,
+      invitation_id: invitationId, invited_by: ownerId, accepted_at: null, expires_at: new Date(now.getTime() + 86_400_000),
+      revision: 1, joined_at: null, updated_at: now, dispositioned_at: null,
+    }).execute();
+    const hourLater = () => new Date(now.getTime() + 3_600_000);
+    expect(await new CollaborationCapabilityRepository(home.db, { now: hourLater, createId: randomUUID }).expireGrants()).toBe(1);
+    const laterOutbox = new CollaborationDirectoryOutbox({
+      db: home.db, runtimeId, platformBaseUrl: "https://platform.internal", serviceToken, startTimer: false, now: hourLater,
+      fetchImpl: async (url, init) => platformApp.request(new URL(String(url)).pathname, init),
+    });
+    try {
+      expect(await laterOutbox.runOnce()).toBe(1);
+    } finally {
+      await laterOutbox.shutdown();
+    }
+    // The invitation they still have to answer stays listed and openable.
+    expect(await discovery(memberId, "inbox")).toEqual([expect.objectContaining({ scopeId, status: "invited", invitationId })]);
+    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project" });
+  });
+
   it("admits an accept-only session for a member grant only to its addressee", async () => {
     await platformRepository.applyDirectoryEvent({
       eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
