@@ -6,13 +6,84 @@ import { normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBridgeModel, BROKER_PLACEHOLDER_KEY } from "../../packages/bot-runtime/src/providers.js";
 import { createBotBridgeFetch } from "../../packages/bot-runtime/src/bridge-fetch.js";
-import { MAX_BRIDGE_REQUEST_BYTES, MAX_BRIDGE_RESPONSE_BYTES, startInferenceBridge } from "../../packages/scope-runtime/src/inference-bridge.js";
+import { MAX_BRIDGE_REQUEST_BYTES, MAX_BRIDGE_RESPONSE_BYTES, inferenceActionForPath, startInferenceBridge } from "../../packages/scope-runtime/src/inference-bridge.js";
 import { createScopeRuntimeBrokerServer } from "../../packages/gateway/src/collaboration/scope-runtime-broker.js";
+import { ScopeRuntimeBotInferenceRequestSchema } from "@matrix-os/scope-runtime/broker-protocol";
+import { FUNDED_GLM_FLASH } from "../../packages/proxy/src/funded-relay-model.js";
+import { serializeFundedOpenAiRequest } from "../../packages/proxy/src/funded-relay-openai-request.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 
 describe("Pi inference without TCP access", () => {
+  it.each(["text", "tool"] as const)("completes installed GLM %s SSE through Unix bridge, EOF broker and funded serializer", async (mode) => {
+    const dir = await mkdtemp(join(tmpdir(), "glm-unix-"));
+    const brokerSocket = join(dir, "broker.sock");
+    const socketPath = join(dir, "inference.sock");
+    const frames: unknown[] = [];
+    const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null) => ({
+      id: "chatcmpl_unix_qa", object: "chat.completion.chunk", created: 1, model: FUNDED_GLM_FLASH,
+      choices: [{ index: 0, delta, finish_reason }],
+    });
+    const events = mode === "text"
+      ? [chunk({ role: "assistant" }), chunk({ content: "GLM_UNIX_PASS" }), chunk({}, "stop")]
+      : [chunk({ role: "assistant" }), chunk({ tool_calls: [{ index: 0, id: "call_read_qa", type: "function",
+        function: { name: "read_artifact", arguments: '{"path":' } }] }),
+        chunk({ tool_calls: [{ index: 0, function: { arguments: '"proof.txt"}' } }] }), chunk({}, "tool_calls")];
+    const sse = [...events, { id: "chatcmpl_unix_qa", object: "chat.completion.chunk", created: 1,
+      model: FUNDED_GLM_FLASH, choices: [], usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 } }]
+      .map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n";
+    const broker = createScopeRuntimeBrokerServer({ socketPath: brokerSocket,
+      broker: { handle: async () => { throw new Error("GLM must use the registered bot inference route"); }, close: async () => undefined },
+      routeFrame: async (raw) => {
+        const frame = ScopeRuntimeBotInferenceRequestSchema.parse(raw);
+        frames.push(frame);
+        expect(frame).toMatchObject({ action: "inference.chat_completions", method: "POST",
+          path: "/v1/chat/completions", runtimeHandle: `runtime_${"b".repeat(32)}`, executionGeneration: "3" });
+        expect(frame.headers).toEqual({});
+        expect(Buffer.byteLength(frame.body)).toBeLessThanOrEqual(MAX_BRIDGE_REQUEST_BYTES);
+        const body = JSON.parse(frame.body);
+        expect(body).toMatchObject({ model: FUNDED_GLM_FLASH, stream: true,
+          max_completion_tokens: 8192, store: false, stream_options: { include_usage: true } });
+        const serialized = serializeFundedOpenAiRequest(body);
+        const upstream = JSON.parse(serialized.body);
+        expect(upstream).toMatchObject({ model: FUNDED_GLM_FLASH, stream: true,
+          max_tokens: 8192, store: false, stream_options: { include_usage: true },
+          messages: expect.arrayContaining([{ role: "user", content: "GLM_UNIX_QA" }]) });
+        expect(upstream).not.toHaveProperty("max_completion_tokens");
+        if (mode === "tool") {
+          expect(upstream.tools).toEqual(body.tools);
+          expect(upstream.tools).toMatchObject([{
+            type: "function", function: { name: "read_artifact", description: "Read an authorized QA artifact",
+              parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+          }]);
+        }
+        expect(Buffer.byteLength(sse)).toBeLessThan(MAX_BRIDGE_RESPONSE_BYTES);
+        return { version: 1, requestId: frame.requestId, ok: true, status: 200,
+          headers: { "content-type": "text/event-stream" }, body: sse };
+      },
+    });
+    cleanup.push(async () => { await broker.close(); await rm(dir, { recursive: true, force: true }); });
+    await broker.start();
+    const bridge = await startInferenceBridge({ brokerSocket, socketPath, runtimeHandle: `runtime_${"b".repeat(32)}`,
+      executionGeneration: "3", actionFor: (req) => inferenceActionForPath(req.url) });
+    cleanup.unshift(() => bridge.close());
+    expect(bridge.port).toBe(0);
+    expect(bridge.server.address()).toBe(socketPath);
+    const route = createBridgeModel({ api: "openai-completions", modelId: FUNDED_GLM_FLASH,
+      input: ["text"], contextWindow: 128_000, maxOutputTokens: 8192 }, "http://127.0.0.1:1", socketPath);
+    const result = await route.provider.streamSimple(route.model, normalizeContext({ systemPrompt: "Unix QA",
+      messages: [{ role: "user", content: "GLM_UNIX_QA", timestamp: 1 }],
+      ...(mode === "tool" ? { tools: [{ name: "read_artifact", description: "Read an authorized QA artifact",
+        parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }] } : {}),
+    }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: 8192, maxRetries: 0, signal: AbortSignal.timeout(5000) }).result();
+    expect(frames).toHaveLength(1);
+    expect(result.usage).toMatchObject({ input: 7, output: 3 });
+    expect(result.stopReason).toBe(mode === "text" ? "stop" : "toolUse");
+    expect(result.content).toContainEqual(mode === "text" ? { type: "text", text: "GLM_UNIX_PASS" }
+      : expect.objectContaining({ type: "toolCall", id: "call_read_qa", name: "read_artifact", arguments: { path: "proof.txt" } }));
+  });
+
   it("routes the installed SDK through its private Unix HTTP socket", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-unix-"));
     const socketPath = join(dir, "inference.sock");
