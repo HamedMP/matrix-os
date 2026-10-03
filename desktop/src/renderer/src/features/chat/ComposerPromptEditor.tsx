@@ -423,9 +423,13 @@ function ComposerPromptEditorInner({
   useEffect(() => {
     if (autoFocus) focusEditor();
   }, [autoFocus, focusEditor]);
+  const consumedFocusRequest = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (focusRequestId && focusRequestId > 0) focusEditor();
-  }, [focusEditor, focusRequestId]);
+    if (disabled || !focusRequestId || focusRequestId <= 0 || consumedFocusRequest.current === focusRequestId) return;
+    if (!editor.getRootElement()) return;
+    focusEditor();
+    consumedFocusRequest.current = focusRequestId;
+  }, [disabled, editor, focusEditor, focusRequestId]);
 
   useLayoutEffect(() => {
     const signature = tokenSignature(tokens);

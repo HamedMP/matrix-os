@@ -77,7 +77,7 @@ import { useCanonicalChatRouteController } from "./use-canonical-chat-route-cont
 import { useCanonicalComposerSelection } from "./use-canonical-composer-selection";
 import { useProviderSetup } from "./use-provider-setup";
 import { useCreateAppRequest } from "../../stores/create-app-request";
-import { useChatComposerDrafts } from "./use-chat-composer-drafts";
+import { desktopComposerDraftIdentity, useChatComposerDrafts } from "./use-chat-composer-drafts";
 import { useChatAgentDraftRequest } from "./use-chat-agent-draft-request";
 import { QueuedTurnEditContext } from "./QueuedTurnEditContext";
 import { useImportedChatAssets } from "./use-imported-chat-assets";
@@ -211,6 +211,8 @@ export function CanonicalChatWorkspace({
   const routedComposerChatId = externalNavigation
     ? initialChatId ?? controller.activeChatId
     : controller.activeChatId ?? initialChatId;
+  const draftRetentionIdentity = useConnection(state => state.status === "signed-in" && state.userId
+    ? desktopComposerDraftIdentity(state) : undefined);
   const {
     text: draft,
     revision: draftRevision,
@@ -226,6 +228,7 @@ export function CanonicalChatWorkspace({
     seedChatDraft,
   } = useChatComposerDrafts({
     clientIdentity: client,
+    retentionIdentity: draftRetentionIdentity,
     chatId: routedComposerChatId,
     projectId,
     conversation: globalView === "conversation",

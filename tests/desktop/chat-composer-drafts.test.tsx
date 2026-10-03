@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
 import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { MAX_COMPOSER_DRAFTS, useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { desktopProviderIdentityKey } from "@desktop/renderer/src/lib/provider-settings-identity";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
 
 describe("Chat-bound composer drafts", () => {
@@ -190,5 +193,82 @@ describe("Chat-bound composer drafts", () => {
         ? [replacement, second] : change === "token order" ? [second, first] : [first, second]);
     },
   );
+
+});
+
+describe("Retained owner/runtime composer drafts", () => {
+  beforeEach(() => useConnection.setState({ status: "signed-in", handle: "draft-owner", userId: "owner_a", runtimeSlot: "preview", authGeneration: useConnection.getState().authGeneration + 1 }));
+  const identity = () => `${desktopProviderIdentityKey(useConnection.getState())}|${useConnection.getState().userId ?? "none"}`;
+  it("retains Bot text/references and detached Project context across client and workspace remounts", () => {
+    const retentionIdentity = identity();
+    const bot = renderHook(() => useChatComposerDrafts({ clientIdentity: "mount-client", retentionIdentity, chatId: "bot_chat", projectId: null, conversation: true }));
+    const tokens = [{ type: "resource" as const, resource: { kind: "file" as const, id: "notes", label: "notes.md" } }];
+    act(() => { bot.result.current.setText("Unsent Bot draft"); bot.result.current.setReferenceTokens(tokens); });
+    const revision = bot.result.current.revision;
+    bot.unmount();
+    const project = renderHook(() => useChatComposerDrafts({ clientIdentity: "mount-client", retentionIdentity, chatId: null, projectId: "project_a", conversation: false }));
+    act(() => { project.result.current.setText("Project plan"); project.result.current.setDraftProjectId(null); });
+    project.unmount();
+    const reopened = renderHook(() => useChatComposerDrafts({ clientIdentity: "reopened-client", retentionIdentity, chatId: "bot_chat", projectId: null, conversation: true }));
+    expect(reopened.result.current.text).toBe("Unsent Bot draft");
+    expect(reopened.result.current.referenceTokens).toEqual(tokens);
+    expect(reopened.result.current.revision).toBe(revision);
+    expect(reopened.result.current.seedChatDraft("bot_chat", "Incoming mention")).toBe(false);
+    reopened.unmount();
+    const reopenedProject = renderHook(() => useChatComposerDrafts({ clientIdentity: "mount-client", retentionIdentity, chatId: null, projectId: "project_a", conversation: false }));
+    expect(reopenedProject.result.current.text).toBe("Project plan");
+    expect(reopenedProject.result.current.draftProjectId).toBeNull();
+  });
+  it.each(["account", "runtime", "auth"])("fences reads and retained callbacks on %s replacement", changed => {
+    const retentionIdentity = identity();
+    const old = renderHook(() => useChatComposerDrafts({ clientIdentity: "mount-client", retentionIdentity, chatId: "same_chat", projectId: null, conversation: true }));
+    act(() => old.result.current.setText("Private owner A"));
+    const staleWrite = old.result.current.setText;
+    act(() => useConnection.setState(changed === "account" ? { userId: "owner_b" } : changed === "runtime" ? { runtimeSlot: "another-preview" } : { authGeneration: useConnection.getState().authGeneration + 1 }));
+    expect(old.result.current.text).toBe("");
+    const next = renderHook(() => useChatComposerDrafts({ clientIdentity: "mount-client", retentionIdentity: identity(), chatId: "same_chat", projectId: null, conversation: true }));
+    expect(next.result.current.text).toBe("");
+    act(() => staleWrite("Late private callback"));
+    expect(next.result.current.text).toBe("");
+  });
+  it("does not let a pre-unmount admission acknowledgement overwrite reopened edits", () => {
+    const retentionIdentity = identity();
+    const old = renderHook(() => useChatComposerDrafts({ clientIdentity: "first", retentionIdentity, chatId: "bot_chat", projectId: null, conversation: true }));
+    act(() => old.result.current.setText("Submitted draft"));
+    const revision = old.result.current.revision;
+    const acknowledge = old.result.current.updateIfUnchanged;
+    const seed = old.result.current.seedChatDraft;
+    old.unmount();
+    const reopened = renderHook(() => useChatComposerDrafts({ clientIdentity: "second", retentionIdentity, chatId: "bot_chat", projectId: null, conversation: true }));
+    act(() => reopened.result.current.setText("Typed after navigation"));
+    act(() => acknowledge(revision, {text:"",referenceTokens:[]}));
+    expect(reopened.result.current.text).toBe("Typed after navigation");
+    expect(seed("bot_chat", "Late incoming mention")).toBe(false);
+  });
+  it("evicts the oldest draft after the bounded retention cache is full", () => {
+    const retentionIdentity = identity();
+    const view = renderHook(({chatId}) => useChatComposerDrafts({ clientIdentity:"cache-client", retentionIdentity, chatId, projectId:null, conversation:true }), {initialProps:{chatId:"chat_0"}});
+    for (let index=0; index<=MAX_COMPOSER_DRAFTS; index++) {
+      view.rerender({chatId:`chat_${index}`});
+      act(() => view.result.current.setText(`Draft ${index}`));
+    }
+    expect(Object.keys(useRetainedComposerDrafts.getState().drafts)).toHaveLength(MAX_COMPOSER_DRAFTS);
+    view.rerender({chatId:"chat_0"}); expect(view.result.current.text).toBe("");
+    view.rerender({chatId:`chat_${MAX_COMPOSER_DRAFTS}`}); expect(view.result.current.text).toBe(`Draft ${MAX_COMPOSER_DRAFTS}`);
+  });
+
+  it("does not acknowledge an evicted and recreated draft with an old revision", () => {
+    const retentionIdentity = identity();
+    const view = renderHook(({chatId}) => useChatComposerDrafts({clientIdentity:"aba-client",retentionIdentity,chatId,projectId:null,conversation:true}),{initialProps:{chatId:"recreated"}});
+    act(() => view.result.current.setText("Old request"));
+    const oldRevision=view.result.current.revision; const acknowledge=view.result.current.updateIfUnchanged;
+    for(let index=0;index<MAX_COMPOSER_DRAFTS;index++) {
+      view.rerender({chatId:`evict_${index}`}); act(() => view.result.current.setText(`Draft ${index}`));
+    }
+    view.rerender({chatId:"recreated"}); act(() => view.result.current.setText("New request"));
+    expect(view.result.current.revision).toBeGreaterThan(oldRevision);
+    act(() => acknowledge(oldRevision,{text:"",referenceTokens:[]}));
+    expect(view.result.current.text).toBe("New request");
+  });
 
 });

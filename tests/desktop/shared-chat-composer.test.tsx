@@ -964,3 +964,19 @@ it("keeps drive drafts unsent on unsupported routes and submits typed context on
  fireEvent.click(screen.getByRole("button",{name:"Send"}));expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({text:draft.text,resources:[ref]}));
  cleanup();
 });
+
+it("fulfills a draft focus request once the composer becomes editable, without refocusing a consumed request", async () => {
+ const catalog = catalogFixture();
+ const props = {value:"", onChange:vi.fn(), onSubmit:vi.fn(), busy:false, catalog,
+  selection:createCanonicalComposerSelection(catalog,"claude_personal"), onSelectionChange:vi.fn(), instanceLocked:false, focusRequestId:42};
+ const view = render(<><button>Other focus</button><SharedChatComposer {...props} disabled /></>);
+ const other = screen.getByRole('button',{name:'Other focus'});
+ fireEvent.click(other); other.focus();
+ view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled={false}/></>);
+ const editor = screen.getByRole('textbox');
+ await waitFor(() => expect(document.activeElement).toBe(editor));
+ other.focus();
+ view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled/></>);
+ view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled={false}/></>);
+ expect(document.activeElement).toBe(other);
+});
