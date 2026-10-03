@@ -34,7 +34,11 @@ export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = tr
   const [retryToken, setRetryToken] = useState(0);
   const base = `/api/collaboration/scopes/${encodeURIComponent(scope.id)}`;
   const orgId = scope.organizationId;
-  const audienceLabel = (actorId: string) => memberLabel(members.find((member) => member.actorId === actorId), actorId);
+  // A grantee on a member page not loaded yet keeps the full id: a short id may not tell two apart.
+  const audienceLabel = (actorId: string) => {
+    const member = members.find((candidate) => candidate.actorId === actorId);
+    return member ? memberLabel(member, actorId) : actorId;
+  };
   // Chosen on a private project, access is recorded now and starts when the owner shares it.
   const beforeShare = scope.kind === "project" && scope.lifecycle === "private";
   useEffect(() => {

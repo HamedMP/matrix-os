@@ -168,7 +168,8 @@ describe("organization ready-to-work presentation", () => {
       preset: "viewer" as const, state: "active" as const, policyVersion: "v1", revision: "2",
       createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
     let currentScope = scope;
-    let currentGrants = [grant];
+    const unloaded = { ...grant, id: "20000000-0000-4000-8000-000000000402", audience: { kind: "member" as const, actorId: "user_2xFullClerkIdentifier00" } };
+    let currentGrants = [grant, unloaded];
     const api = { baseUrl: "http://localhost",
       get: vi.fn(async (path: string) => path.startsWith("/api/organizations/")
         ? { members: [{ actorId: "user_ada", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z",
@@ -177,22 +178,24 @@ describe("organization ready-to-work presentation", () => {
       post: vi.fn(),
       patch: vi.fn(async () => {
         currentScope = { ...scope, revision: "5" };
-        currentGrants = [{ ...grant, preset: "contributor", revision: "3" }];
+        currentGrants = [{ ...grant, preset: "contributor", revision: "3" }, unloaded];
         return currentGrants[0];
       }),
       delete: vi.fn(async () => {
         currentScope = { ...scope, revision: "6" };
-        currentGrants = [];
+        currentGrants = [unloaded];
       }),
     };
     render(<AudienceGrantPicker api={api} scope={scope} />);
     // The grant row names the person, not their Clerk id.
     expect(await screen.findByText("Ada Lovelace · ada@example.com")).toBeVisible();
-    expect(screen.getByText("Active")).toBeVisible();
+    // Someone on a member page not loaded yet keeps their full id: a short id may not tell grants apart.
+    expect(screen.getByText("user_2xFullClerkIdentifier00")).toBeVisible();
+    expect(screen.getAllByText("Active")).toHaveLength(2);
     fireEvent.change(await screen.findByLabelText("Preset for Ada Lovelace · ada@example.com"), { target: { value: "contributor" } });
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants/${grant.id}`,
       expect.objectContaining({ expectedRevision: "4", expectedGrantRevision: "2", preset: "contributor" })));
-    fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Revoke" }))[0]!);
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants/${grant.id}`,
       expect.objectContaining({ expectedRevision: "5", expectedMemberRevision: "3" })));
   });

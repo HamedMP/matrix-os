@@ -66,8 +66,8 @@ describe("Clerk organization upstream pagination boundary", () => {
     const clerk = fakeClerk(2);
     const client = new ClerkOrganizationUpstreamClient({ secretKey: "sk_test_x", fetchImpl: clerk.fetchImpl });
     expect((await client.listMembers(org)).members.map((entry) => entry.profile)).toEqual([
-      { displayName: "Member 0", email: "member0@example.com", imageUrl: "https://img.clerk.com/member.png" },
-      { displayName: "Member 1", email: "member1@example.com", imageUrl: "https://img.clerk.com/member.png" },
+      { displayName: "Member 0", email: "member0@example.com", imageUrl: "https://img.clerk.com/member.png", observedAt: expect.any(Date) },
+      { displayName: "Member 1", email: "member1@example.com", imageUrl: "https://img.clerk.com/member.png", observedAt: expect.any(Date) },
     ]);
   });
 

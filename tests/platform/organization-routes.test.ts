@@ -32,9 +32,10 @@ function signed(id: string, body: string, at: Date) {
 }
 
 function clerkMembershipEvent(type: string, actorId: string, role: string, updatedAt: number, aiSubmission?: string,
-  publicUserData: Record<string, unknown> = { identifier: "x@example.com" }) {
+  publicUserData: Record<string, unknown> = { identifier: "x@example.com" }, occurredAt?: number) {
   return JSON.stringify({
     type,
+    ...(occurredAt === undefined ? {} : { timestamp: occurredAt }),
     data: {
       id: `orgmem_${actorId}`,
       role,
@@ -309,6 +310,37 @@ describe("platform organization routes (T018)", () => {
     });
     await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_4", stale, clock), body: stale });
     expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King" });
+  });
+
+  it("keeps the newest member profile whichever of the webhook and the reconcile arrives last", async () => {
+    await projection.reconcile(org);
+    // Clerk renamed the member at t=9s; a reconcile read the new name at t=12s (the clock).
+    const fresh = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "King", identifier: "ada@example.com",
+    }, clock.getTime());
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_1", fresh, clock), body: fresh })).status).toBe(200);
+    // A delayed webhook about the same membership, emitted before the rename, arrives afterwards.
+    const delayed = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "Lovelace", identifier: "ada@example.com",
+    }, clock.getTime() - 60_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_2", delayed, clock), body: delayed })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King" });
+    // A payload that does not report the name or email leaves the stored ones alone.
+    const sparse = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {}, clock.getTime() + 1_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_3", sparse, clock), body: sparse })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King", email: "ada@example.com" });
+  });
+
+  it("drops an image whose normalized address is too long instead of failing the membership change", async () => {
+    await projection.reconcile(org);
+    // `URL` percent-encodes spaces, so this fits the input bound but not the stored one.
+    const image = `https://img.clerk.com/${" ".repeat(700)}avatar.png`;
+    const removed = clerkMembershipEvent("organizationMembership.deleted", member, "org:member", 5_000, "members", {
+      first_name: "Ada", image_url: image,
+    });
+    const response = await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_long_image", removed, clock), body: removed });
+    expect(response.status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ state: "removed", imageUrl: null });
   });
 
   it("verifies, deduplicates and applies Clerk organization webhooks with the correct status codes", async () => {

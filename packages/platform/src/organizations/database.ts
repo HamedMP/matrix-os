@@ -45,6 +45,8 @@ export interface OrganizationMembershipsTable {
   display_name: ColumnType<string | null, string | null | undefined, string | null>;
   email: ColumnType<string | null, string | null | undefined, string | null>;
   image_url: ColumnType<string | null, string | null | undefined, string | null>;
+  /** When the source observed the stored profile; an older report never replaces it. */
+  profile_observed_at: ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
 }
 
 export interface OrganizationWebhookInboxTable {
@@ -146,6 +148,7 @@ async function createOrganizationTables(db: Transaction<OrganizationPlatformData
     CHECK (email IS NULL OR char_length(email) BETWEEN 3 AND 254)`.execute(db);
   await sql`ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS image_url TEXT
     CHECK (image_url IS NULL OR char_length(image_url) BETWEEN 1 AND 2048)`.execute(db);
+  await sql`ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS profile_observed_at TIMESTAMPTZ`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_organization_memberships_actor_active
       ON organization_memberships(actor_id, organization_id) WHERE state = 'active'

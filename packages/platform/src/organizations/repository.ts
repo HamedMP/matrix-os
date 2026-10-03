@@ -39,6 +39,7 @@ export interface MembershipRecord {
   displayName: string | null;
   email: string | null;
   imageUrl: string | null;
+  profileObservedAt: Date | null;
 }
 
 export interface EndedMembership {
@@ -174,15 +175,16 @@ export class PlatformOrganizationRepository {
         && existing.state === input.state && existing.role === input.role && existing.membershipId === input.membershipId) {
         // A renamed person keeps the same membership: refresh the display profile only, never the
         // epoch, which would end every activation the member holds.
-        if (input.profile && !sameProfile(existing, input.profile)) {
-          await repo.db.updateTable("organization_memberships").set({
-            display_name: input.profile.displayName, email: input.profile.email, image_url: input.profile.imageUrl,
-          }).where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId).execute();
+        const profile = newerProfile(existing, input.profile);
+        if (profile && !sameProfile(existing, profile)) {
+          await repo.db.updateTable("organization_memberships").set(profileColumns(profile))
+            .where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId).execute();
         }
         return { outcome: "unchanged", membershipEpoch: existing.membershipEpoch, ended: false };
       }
       const epoch = await repo.bumpEpoch(input.organizationId, org.membershipEpoch);
       const now = repo.now();
+      const profile = newerProfile(existing, input.profile);
       await repo.db.insertInto("organization_memberships").values({
         organization_id: input.organizationId,
         actor_id: input.actorId,
@@ -192,7 +194,7 @@ export class PlatformOrganizationRepository {
         membership_epoch: epoch,
         source_updated_at: input.sourceUpdatedAt,
         updated_at: now,
-        ...profileColumns(input.profile),
+        ...profileColumns(profile),
       }).onConflict((oc) => oc.columns(["organization_id", "actor_id"]).doUpdateSet({
         membership_id: input.membershipId,
         role: input.role,
@@ -200,8 +202,8 @@ export class PlatformOrganizationRepository {
         membership_epoch: epoch,
         source_updated_at: input.sourceUpdatedAt,
         updated_at: now,
-        // A change that reports no profile (a removal, or an older event shape) keeps the stored one.
-        ...profileColumns(input.profile),
+        // A change that reports no profile, or an older one, keeps the stored profile.
+        ...profileColumns(profile),
       })).execute();
       const ended = input.state === "removed" && existing?.state === "active";
       if (ended) {
@@ -564,7 +566,7 @@ function toOrganization(row: {
 function toMembership(row: {
   organization_id: string; actor_id: string; membership_id: string; role: string; state: OrganizationMembershipState;
   membership_epoch: number | string; source_updated_at: Date | string;
-  display_name?: string | null; email?: string | null; image_url?: string | null;
+  display_name?: string | null; email?: string | null; image_url?: string | null; profile_observed_at?: Date | string | null;
 }): MembershipRecord {
   return {
     organizationId: row.organization_id,
@@ -577,15 +579,32 @@ function toMembership(row: {
     displayName: row.display_name ?? null,
     email: row.email ?? null,
     imageUrl: row.image_url ?? null,
+    profileObservedAt: asDate(row.profile_observed_at),
   };
 }
 
+/** The reported profile unless the stored one was observed later (webhooks and reconciles race). */
+function newerProfile(existing: MembershipRecord | null, profile: MemberProfile | undefined): MemberProfile | undefined {
+  if (!profile) return undefined;
+  if (existing?.profileObservedAt && existing.profileObservedAt.getTime() > profile.observedAt.getTime()) return undefined;
+  return profile;
+}
+
+/** Only the fields the source reported; the observation time moves with them. */
 function profileColumns(profile: MemberProfile | undefined) {
-  return profile ? { display_name: profile.displayName, email: profile.email, image_url: profile.imageUrl } : {};
+  if (!profile) return {};
+  return {
+    ...(profile.displayName !== undefined ? { display_name: profile.displayName } : {}),
+    ...(profile.email !== undefined ? { email: profile.email } : {}),
+    ...(profile.imageUrl !== undefined ? { image_url: profile.imageUrl } : {}),
+    profile_observed_at: profile.observedAt,
+  };
 }
 
 function sameProfile(record: MembershipRecord, profile: MemberProfile): boolean {
-  return record.displayName === profile.displayName && record.email === profile.email && record.imageUrl === profile.imageUrl;
+  return (profile.displayName === undefined || record.displayName === profile.displayName)
+    && (profile.email === undefined || record.email === profile.email)
+    && (profile.imageUrl === undefined || record.imageUrl === profile.imageUrl);
 }
 
 function toDenial(row: {
