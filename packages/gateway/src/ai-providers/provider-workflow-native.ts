@@ -177,7 +177,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           return { cancel: async () => {} };
         }
         let releaseProfile: (() => void | Promise<void>) | undefined;
-        if (request.kind !== "login" && options.profileGuard && (harness.harness === "codex" || harness.harness === "claude")) releaseProfile = await options.profileGuard.acquire(harness.harness, { kind: "write" });
+        if (request.kind !== "login" && options.profileGuard && (harness.harness === "codex" || harness.harness === "claude")) releaseProfile = await options.profileGuard.acquire(harness.harness, { kind: "write", durable: true });
         let ref: TerminalRef | undefined;
         let uncertainName: string | undefined;
         let launchMayExist = false;
@@ -221,7 +221,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
             if (!(packageName || system && hostControl.available) || request.kind === 'uninstall' && !(managed || system && hostControl.available))
               throw new ProviderWorkflowError('unavailable');
             const workspace = await options.terminal.ensureWorkspace();
-            const versioned = harness.harness === 'codex' ? CODEX_VERIFIED_NPM_PACKAGE : `${packageName}@latest`;
+            const versioned = harness.harness === 'codex' ? CODEX_VERIFIED_NPM_PACKAGE : harness.harness === 'pi' ? `${packageName}@1.0.0` : `${packageName}@latest`;
             const command = system ? `sudo -n /opt/matrix/bin/matrix-agent-runtime-control ${request.kind} ${harness.harness}` : `${quote(`${prefix}/bin/npm`)} ${request.kind === 'install' ? 'install' : 'uninstall'} -g --prefix ${quote(prefix)} ${request.kind === 'uninstall' || harness.harness === 'pi' ? '--ignore-scripts ' : ''}${quote(request.kind === 'install' ? versioned : packageName!)}`;
             launchRequested = true; launchMayExist = true;
             const tab = await options.terminal.createTab(workspace.id, { name: tabName, cwd: '', ...(harness.harness === 'codex' || harness.harness === 'claude' ? { agent: { providerId: harness.harness } } : {}), command: ['sh', '-lc', command] });

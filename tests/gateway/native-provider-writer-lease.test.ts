@@ -1,7 +1,7 @@
 import { mkdtemp, rm, readFile, symlink, writeFile, mkdir, access, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createNativeProviderProfileGuard } from '../../packages/gateway/src/ai-providers/native-provider-profile-guard.js';
 const homes: string[] = [];
 const privateRoot = (home: string) => join(dirname(home), '.matrix-private', basename(home));
@@ -53,4 +53,19 @@ it('isolates runtime admissions from another owner home and synced owner files',
   const secondRelease = await createNativeProviderProfileGuard({ homePath: second, registry }).acquire('codex', { kind: 'write', durable: true });
   expect(privateRoot(first)).not.toBe(privateRoot(second));
   await secondRelease(); await release();
+});
+
+
+it('releases admission when the real Codex saver proves CODEX_HOME preflight started no writer', async () => {
+  const homePath = await mkdtemp(join(tmpdir(), 'writer-lease-')); homes.push(homePath);
+  const { createProviderKeyVerifier, createCodexKeySaver } = await import('../../packages/gateway/src/ai-providers/provider-workflow-key.js');
+  const guard = createNativeProviderProfileGuard({ homePath, registry });
+  vi.stubEnv('CODEX_HOME', join(homePath, 'different-profile'));
+  try {
+    const verify = createProviderKeyVerifier({ providerId: 'openai', profileGuard: guard, profile: 'codex', fetchFn: async () => new Response('', { status: 200 }), save: createCodexKeySaver({ homePath }) });
+    await expect(verify({ harnessInstanceId: 'codex', providerId: 'openai', apiKey: 'fixture-only' })).rejects.toThrow('unavailable');
+    await expect(access(join(homePath, '.codex'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const release = await guard.acquire('codex', { kind: 'write' }); await release();
+    const restartedRelease = await createNativeProviderProfileGuard({ homePath, registry }).acquire('codex', { kind: 'write' }); await restartedRelease();
+  } finally { vi.unstubAllEnvs(); }
 });

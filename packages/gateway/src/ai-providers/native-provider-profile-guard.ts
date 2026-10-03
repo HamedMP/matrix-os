@@ -1,3 +1,4 @@
+import { ProviderWorkflowError } from "./provider-workflows.js";
 import { createNativeProviderWriterLease } from "./native-provider-writer-lease.js";
 import { join } from 'node:path';
 import { z } from 'zod/v4';
@@ -6,6 +7,8 @@ import { readBoundedJsonFileWithIdentity } from '../bounded-json-file.js';
 import { readSavedProviderSettingsConfiguration } from './provider-settings-persistence.js';
 import { ProviderSettingsStoreError } from './provider-settings-errors.js';
 
+/** Saver proves rejection preceded any native writer or profile mutation. */
+export class NativeProviderWriteNotStartedError extends ProviderWorkflowError { constructor() { super('unavailable'); } }
 export type NativeProviderProfile = 'codex' | 'claude';
 type Admission = { kind: 'write'; durable?: boolean } | { kind: 'login'; recoveryKey: string; matchesLegacyReceipt?: (key: string, payloadHash: string) => boolean };
 export interface NativeProviderProfileGuard {
@@ -91,7 +94,7 @@ export function createNativeProviderProfileGuard(options: {
       catch (error) {
         // Direct writer failure is not evidence of drain. Preserve its durable
         // admission; terminal-backed login still uses registry liveness.
-        if (admission.kind !== 'write') await release();
+        if (admission.kind !== 'write' || error instanceof NativeProviderWriteNotStartedError) await release();
         throw error;
       }
     },

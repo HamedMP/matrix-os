@@ -98,7 +98,7 @@ it('retains the native profile lease until observed exit or successful reaping, 
     const profileGuard = { acquire, run: vi.fn() };
     const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, profileGuard, hostControl: { available: false, run: vi.fn() } });
     await adapter!.start({ registerCleanup: () => {},  request: { harnessInstanceId: 'harness_codex', kind: 'install', idempotencyKey: 'lease' }, publish: vi.fn() });
-    expect(acquire).toHaveBeenCalledWith('codex', { kind: 'write' }); expect(release).not.toHaveBeenCalled();
+    expect(acquire).toHaveBeenCalledWith('codex', { kind: 'write', durable: true }); expect(release).not.toHaveBeenCalled();
     vi.mocked(f.terminal.terminateTab).mockRejectedValueOnce(new Error('synthetic reap failure'));
     await vi.advanceTimersByTimeAsync(600000); expect(release).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(30000); expect(release).toHaveBeenCalledOnce();
@@ -282,4 +282,51 @@ it('starts independent coordinator drains before a pending engine drain settles'
   ]);
   try { await vi.waitFor(() => expect(started).toEqual(['engine', 'opencode', 'pi', 'openclaw'])); }
   finally { release(); await closing; }
+});
+
+
+it.each(['codex', 'claude'] as const)('fences %s installers across processes before launch and after an ambiguous launch', async kind => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join, dirname, basename } = await import('node:path');
+  const { createNativeProviderProfileGuard } = await import('../../packages/gateway/src/ai-providers/native-provider-profile-guard.js');
+  const homePath = await mkdtemp(join(tmpdir(), 'installer-admission-'));
+  const registry = { get: async () => { throw Object.assign(new Error('missing'), { code: 'session_not_found' }); }, observeAgentLiveness: async () => 'stopped' as const };
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const f = nativeFixture(kind); f.row.installState = 'missing';
+  vi.mocked(f.terminal.ensureWorkspace).mockImplementation(async () => { await gate; return { id: ref.workspaceId, scope: 'main', status: 'running', revision: 0,
+    canonicalSize: { cols: 80, rows: 24 }, tabs: [], createdAt: '2026-10-04T00:00:00Z', updatedAt: '2026-10-04T00:00:00Z' }; });
+  vi.mocked(f.terminal.createTab).mockRejectedValue(new Error('ambiguous launch'));
+  vi.mocked(f.terminal.listWorkspaces).mockResolvedValue([]);
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+    profileGuard: createNativeProviderProfileGuard({ homePath, registry }), hostControl: { available: false, run: vi.fn() } });
+  let cleanup!: () => Promise<void>;
+  const starting = adapter!.start({ registerCleanup: value => { cleanup = value; }, request: { harnessInstanceId: f.row.id, kind: 'install', idempotencyKey: 'installer-restart' }, publish: vi.fn() });
+  const failed = expect(starting).rejects.toThrow('ambiguous launch');
+  try {
+    await vi.waitFor(() => expect(f.terminal.ensureWorkspace).toHaveBeenCalledOnce());
+    expect(f.terminal.createTab).not.toHaveBeenCalled();
+    const writer = vi.fn(async () => {});
+    for (const action of ['key', 'logout']) {
+      const restarted = createNativeProviderProfileGuard({ homePath, registry });
+      await expect(restarted.run(kind, { kind: 'write' }, writer), action).rejects.toThrow('lifecycle_unavailable');
+    }
+    expect(writer).not.toHaveBeenCalled();
+    release(); await failed;
+    await expect(cleanup()).rejects.toThrow('unavailable');
+    await expect(createNativeProviderProfileGuard({ homePath, registry }).acquire(kind, { kind: 'write' })).rejects.toThrow('lifecycle_unavailable');
+  } finally {
+    release(); await failed;
+    await rm(homePath, { recursive: true, force: true });
+    await rm(join(dirname(homePath), '.matrix-private', basename(homePath)), { recursive: true, force: true });
+  }
+});
+
+it('installs the verified Pi Settings version rather than an unverified latest release', async () => {
+  const f = nativeFixture('pi');
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
+  const running = await adapter!.start({ registerCleanup: () => {}, request: { harnessInstanceId: f.row.id, kind: 'install', idempotencyKey: 'verified-pi' }, publish: vi.fn() });
+  expect(vi.mocked(f.terminal.createTab).mock.calls[0]![1].command).toEqual(['sh', '-lc', expect.stringContaining("'@earendil-works/pi-coding-agent@1.0.0'")]);
+  await running.cancel();
 });

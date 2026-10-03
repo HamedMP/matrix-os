@@ -523,3 +523,12 @@ Independent workflow-engine and native coordinator shutdown drains start
 concurrently, so a delayed writer cannot prevent the other coordinators from
 rejecting new work and reaping their own children. Each drain retains its native
 bounded cleanup contract; failure never clears unresolved writer admission.
+
+Codex/Claude installers acquire durable admission before any Terminal launch.
+Only an explicit saver proof of zero native writes (such as CODEX_HOME preflight)
+releases failed write admission; ambiguous failures remain fenced. Pi Settings
+foreground installs pin the verified native adapter version 1.0.0.
+
+Concurrent release calls share one ownership check and unlink. A failed unlink
+preserves admission and permits release retry; an already completed admission
+cannot remove a newer writer marker.

@@ -1,4 +1,4 @@
-import type { NativeProviderProfileGuard, NativeProviderProfile } from "./native-provider-profile-guard.js";
+import { NativeProviderWriteNotStartedError, type NativeProviderProfileGuard, type NativeProviderProfile } from "./native-provider-profile-guard.js";
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { mkdtemp, mkdir, lstat, readFile, rename, rm, chmod } from 'node:fs/promises';
@@ -53,7 +53,7 @@ export function createCodexKeySaver(options: {
   return async (key: string): Promise<void> => {
     const destination = join(homePath, '.codex');
     if (process.env.CODEX_HOME && resolve(process.env.CODEX_HOME) !== destination)
-      throw new ProviderWorkflowError('unavailable');
+      throw new NativeProviderWriteNotStartedError();
     await mkdir(destination, { recursive: true, mode: 0o700 });
     const metadata = await lstat(destination);
     if (!metadata.isDirectory() || metadata.isSymbolicLink())
