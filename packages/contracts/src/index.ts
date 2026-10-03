@@ -1452,3 +1452,5 @@ export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type
 
 export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type ImportedChatAssetRef } from "#canonical-chat-import-parts";
 export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryEntry, type AiCreditHistoryResponse } from "#ai-credit-history";
+
+export * from "#provider-workflows";
