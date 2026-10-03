@@ -281,3 +281,18 @@ unknown model metadata, empty results, private-field redaction, safe failures,
 and billing registration. Renderer history presentation and real runtime/Electron
 acceptance follow in later Settings layers; public guidance remains tracked in
 the separate matrix-os-site documentation PR.
+
+### Managed agent lifecycle safeguards
+
+Managed Hermes/OpenClaw uninstall writes the durable opt-out before stopping
+installers and reasserts it after acquiring the shared runtime lock. Concurrent
+installation cannot erase this choice. Host control accepts fixed runtime/action
+arguments, verifies managed installation paths, and preserves all owner home
+files, credentials, sessions, projects, and conversations. Install and sync paths
+respect the opt-out; provisioning installs only OS-owned service control.
+Systemd wrappers preserve non-root runtime execution and current service scope.
+
+Host lifecycle tests exercise install/uninstall races, fixed command boundaries,
+service wiring, opt-out persistence, and owner-data preservation. Native Settings
+adapter support is delivered separately; this host layer advertises no new
+foreground workflow capability.
