@@ -58,7 +58,7 @@ export class ClerkOrganizationUpstreamClient implements ClerkOrganizationUpstrea
           actorId: entry.public_user_data.user_id,
           role: normalizeClerkRole(entry.role),
           sourceUpdatedAt: entry.updated_at !== undefined ? new Date(entry.updated_at) : now,
-          profile: projectMemberProfile(entry.public_user_data),
+          profile: projectMemberProfile(entry.public_user_data, now),
         });
       }
       if (members.length > MAX_MEMBERS || (page.total_count !== undefined && page.total_count > MAX_MEMBERS)) {

@@ -37,10 +37,15 @@ export interface MembershipSnapshot {
   profile?: MemberProfile;
 }
 
+/**
+ * The profile fields an event reported (an absent field leaves the stored value alone), and when
+ * the source observed them, so an older report never replaces a newer one.
+ */
 export interface MemberProfile {
-  displayName: string | null;
-  email: string | null;
-  imageUrl: string | null;
+  displayName?: string | null;
+  email?: string | null;
+  imageUrl?: string | null;
+  observedAt: Date;
 }
 
 const MAX_DISPLAY_NAME = 120;
@@ -59,20 +64,30 @@ function label(value: unknown, max: number): string | null {
  * Clerk's `public_user_data` as a bounded display profile: first and last name, the identifier
  * only when it is an email address (it may be a phone number or username), and an https image.
  * Anything else is dropped rather than rejected, so a profile never blocks a membership change.
+ * Only the fields the payload carries are reported; none at all means no profile.
  */
-export function projectMemberProfile(data: Readonly<Record<string, unknown>>): MemberProfile {
-  const displayName = label([label(data.first_name, MAX_DISPLAY_NAME), label(data.last_name, MAX_DISPLAY_NAME)]
-    .filter((part): part is string => part !== null).join(" "), MAX_DISPLAY_NAME);
-  const identifier = label(data.identifier, MAX_EMAIL + 1);
-  const email = identifier && identifier.length <= MAX_EMAIL && EMAIL_PATTERN.test(identifier) ? identifier : null;
-  return { displayName, email, imageUrl: httpsImage(data.image_url) ?? httpsImage(data.profile_image_url) };
+export function projectMemberProfile(data: Readonly<Record<string, unknown>>, observedAt: Date): MemberProfile | undefined {
+  const profile: MemberProfile = { observedAt };
+  if ("first_name" in data || "last_name" in data) {
+    profile.displayName = label([label(data.first_name, MAX_DISPLAY_NAME), label(data.last_name, MAX_DISPLAY_NAME)]
+      .filter((part): part is string => part !== null).join(" "), MAX_DISPLAY_NAME);
+  }
+  if ("identifier" in data) {
+    const identifier = label(data.identifier, MAX_EMAIL + 1);
+    profile.email = identifier && identifier.length <= MAX_EMAIL && EMAIL_PATTERN.test(identifier) ? identifier : null;
+  }
+  if ("image_url" in data || "profile_image_url" in data) {
+    profile.imageUrl = httpsImage(data.image_url) ?? httpsImage(data.profile_image_url);
+  }
+  return Object.keys(profile).length > 1 ? profile : undefined;
 }
 
 function httpsImage(value: unknown): string | null {
   if (typeof value !== "string" || value.length > MAX_IMAGE_URL) return null;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password ? url.href : null;
+    // Normalization can lengthen the address (percent-encoding); the stored value is what is bounded.
+    return url.protocol === "https:" && !url.username && !url.password && url.href.length <= MAX_IMAGE_URL ? url.href : null;
   } catch (error: unknown) {
     if (!(error instanceof TypeError)) console.warn("[organizations] profile image rejected", error instanceof Error ? error.name : "UnknownError");
     return null;
@@ -186,7 +201,7 @@ export function parseClerkOrganizationWebhook(eventId: string, body: unknown): P
           actorId: data.data.public_user_data.user_id,
           role: normalizeClerkRole(data.data.role),
           sourceUpdatedAt,
-          profile: projectMemberProfile(data.data.public_user_data),
+          profile: projectMemberProfile(data.data.public_user_data, occurredAt),
         },
       },
     };
