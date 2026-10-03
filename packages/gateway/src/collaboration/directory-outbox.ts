@@ -208,6 +208,11 @@ export class CollaborationDirectoryOutbox {
             .execute();
           continue;
         }
+        // Only the route event names the parent: older events of a Chat that later joined a
+        // project keep describing its direct share. A project Chat is reached through its project's
+        // members only, so a grant left from its direct share never travels with its route.
+        const parentScopeId = row.event_type === PROJECT_CHAT_ROUTE_EVENT && row.membership_mode === "inherited"
+          ? row.parent_scope_id : null;
         claimed.push({
           eventId: row.event_id,
           scopeId: row.scope_id,
@@ -218,12 +223,9 @@ export class CollaborationDirectoryOutbox {
           recipientEntries,
           discoveryState: row.discovery_state,
           organizationId: row.organization_id ?? null,
-          audience: row.organization_grant_id ? "organization" : null,
-          organizationGrantId: row.organization_grant_id ?? null,
-          // Only the route event names the parent: older events of a Chat that later joined a
-          // project keep describing its direct share.
-          parentScopeId: row.event_type === PROJECT_CHAT_ROUTE_EVENT && row.membership_mode === "inherited"
-            ? row.parent_scope_id : null,
+          audience: row.organization_grant_id && !parentScopeId ? "organization" : null,
+          organizationGrantId: parentScopeId ? null : row.organization_grant_id ?? null,
+          parentScopeId,
           attempt,
         });
       }

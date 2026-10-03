@@ -856,9 +856,6 @@ function createDefaultMembershipSource(config: GatewayCollaborationConfig): Orga
 
 export type GatewayCollaborationRuntime = Awaited<ReturnType<typeof createGatewayCollaboration>>;
 
-/** Most backfill passes per start; each publishes a bounded batch of Chat routes. */
-const MAX_PROJECT_CHAT_ROUTE_PASSES = 10;
-
 /**
  * Projects shared before their Chats had routes are published at start, so members can open
  * those Chats without the owner sharing again. A failure is logged and retried at the next start;
@@ -866,9 +863,7 @@ const MAX_PROJECT_CHAT_ROUTE_PASSES = 10;
  */
 async function backfillProjectChatRoutes(db: Parameters<typeof publishMissingProjectChatRoutes>[0]): Promise<void> {
   try {
-    for (let pass = 0; pass < MAX_PROJECT_CHAT_ROUTE_PASSES; pass += 1) {
-      if (await publishMissingProjectChatRoutes(db) === 0) return;
-    }
+    await publishMissingProjectChatRoutes(db);
   } catch (error: unknown) {
     console.warn("[collaboration-project] Chat route backfill failed", error instanceof Error ? error.name : "UnknownError");
   }

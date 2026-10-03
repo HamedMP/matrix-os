@@ -13,6 +13,7 @@ import { createProjectInheritanceResolver } from "../../packages/gateway/src/col
 import {
   PROJECT_CHAT_ROUTE_EVENT,
   publishMissingProjectChatRoutes,
+  publishProjectChatRoutes,
   readProjectOverview,
 } from "../../packages/gateway/src/collaboration/project-chat-routes.js";
 import { createProjectTransitionJournal } from "../../packages/gateway/src/collaboration/project-transition.js";
@@ -154,6 +155,37 @@ describe("shared project Chats on the owner's home", () => {
     expect(sent.some((event) => event.scopeId === TERMINAL_SCOPE)).toBe(false);
     expect(await fixture.db.selectFrom("collaboration_events").select("scope_id")
       .where("event_type", "=", PROJECT_CHAT_ROUTE_EVENT).execute()).toHaveLength(chats.length);
+  });
+
+  it("routes a Chat that was shared with the organization before its project, without its old grant", async () => {
+    await shareProject();
+    await deliver(fixture);
+    // The Chat's own organization grant from its earlier direct share is still active.
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: "50000000-0000-4000-8000-000000000c01", scope_id: chats[0]!.scope, organization_id: ORGANIZATION_ID,
+      audience_kind: "organization", audience_actor_id: null, preset: "viewer", state: "active", policy_version: "v1",
+      source_id: null, legacy_ceiling: null, expires_at: null, revision: 1, created_by: OWNER_ID,
+      created_at: NOW, updated_at: NOW, revoked_at: null,
+    } as never).execute();
+    await fixture.db.deleteFrom("collaboration_events").where("event_type", "=", PROJECT_CHAT_ROUTE_EVENT).execute();
+    expect(await publishMissingProjectChatRoutes(fixture.db, { now: () => LATER })).toBe(chats.length);
+    const sent = await deliver(fixture, LATER);
+    const route = routes(sent).find((event) => event.scopeId === chats[0]!.scope);
+    expect(route).toMatchObject({ parentScopeId: PROJECT_SCOPE, recipients: [] });
+    expect(route).not.toHaveProperty("audience");
+    expect(route).not.toHaveProperty("organizationGrantId");
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox").select("event_id")
+      .where("delivered_at", "is", null).execute()).toEqual([]);
+  });
+
+  it("publishes every Chat of a project however many batches it takes", async () => {
+    await shareProject();
+    await fixture.db.deleteFrom("collaboration_events").where("event_type", "=", PROJECT_CHAT_ROUTE_EVENT).execute();
+    const published = await fixture.db.transaction().execute((trx) => publishProjectChatRoutes(trx, {
+      projectScopeId: PROJECT_SCOPE, now: LATER, limit: 1,
+    }));
+    expect(published).toBe(chats.length);
+    expect(await publishMissingProjectChatRoutes(fixture.db, { now: () => LATER })).toBe(0);
   });
 
   it("publishes a route for a Chat added to a project that is already shared", async () => {

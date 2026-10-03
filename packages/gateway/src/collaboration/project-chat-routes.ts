@@ -36,13 +36,28 @@ export class ProjectOverviewError extends Error {
 
 /**
  * Publishes the route of every Chat of a shared project that has none at its current authority
- * generation. Runs inside the caller's transaction, so a route exists exactly when the Chat is
- * shared. Without `projectScopeId` it covers every shared project (the startup backfill).
+ * generation, in bounded batches until none is left. Runs inside the caller's transaction, so a
+ * route exists exactly when the Chat is shared.
  */
 export async function publishProjectChatRoutes(
   trx: CollaborationTransaction,
-  input: { projectScopeId?: string; now: Date; limit?: number },
+  input: { projectScopeId: string; now: Date; limit?: number },
 ): Promise<number> {
+  const limit = input.limit ?? MAX_ROUTES_PER_PASS;
+  let published = 0;
+  for (;;) {
+    const batch = await publishRouteBatch(trx, { ...input, limit });
+    published += batch.published;
+    // Each batch only selects Chats without a route, so a full batch means more may remain.
+    if (batch.selected < limit) return published;
+  }
+}
+
+/** One bounded batch; without `projectScopeId` it covers every shared project (the startup backfill). */
+async function publishRouteBatch(
+  trx: CollaborationTransaction,
+  input: { projectScopeId?: string; now: Date; limit: number },
+): Promise<{ selected: number; published: number }> {
   let query = trx.selectFrom("collaboration_scopes as child")
     .innerJoin("collaboration_scopes as project", "project.id", "child.parent_scope_id")
     .selectAll("child")
@@ -65,14 +80,14 @@ export async function publishProjectChatRoutes(
     )));
   if (input.projectScopeId) query = query.where("child.parent_scope_id", "=", ScopeIdSchema.parse(input.projectScopeId));
   const children = await query.orderBy("child.id", "asc")
-    .limit(input.limit ?? MAX_ROUTES_PER_PASS)
+    .limit(input.limit)
     .forUpdate("child")
     .execute();
   let published = 0;
   for (const child of children) {
     if (await publishRoute(trx, child, input.now)) published += 1;
   }
-  return published;
+  return { selected: children.length, published };
 }
 
 /**
@@ -124,13 +139,21 @@ async function publishRoute(trx: CollaborationTransaction, child: ScopeRow, now:
   return true;
 }
 
-/** Startup backfill for projects shared before Chat routes existed; bounded per pass. */
+/**
+ * Startup backfill for projects shared before Chat routes existed. Each batch commits on its own,
+ * so a large backlog never holds one long transaction; it runs until nothing is left.
+ */
 export async function publishMissingProjectChatRoutes(
   db: Kysely<OwnerCollaborationDatabase>,
   options: { now?: () => Date } = {},
 ): Promise<number> {
   const now = options.now ?? (() => new Date());
-  return db.transaction().execute((trx) => publishProjectChatRoutes(trx, { now: now() }));
+  let published = 0;
+  for (;;) {
+    const batch = await db.transaction().execute((trx) => publishRouteBatch(trx, { now: now(), limit: MAX_ROUTES_PER_PASS }));
+    published += batch.published;
+    if (batch.selected < MAX_ROUTES_PER_PASS) return published;
+  }
 }
 
 /** A shared project as members see it: its name and the Chats they can open, newest first. */
