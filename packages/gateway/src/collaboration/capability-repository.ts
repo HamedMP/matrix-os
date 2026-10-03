@@ -491,15 +491,22 @@ export class CollaborationCapabilityRepository {
           .execute();
         const members = rows.flatMap((row) => row.audience_kind === "member" && row.audience_actor_id ? [row.audience_actor_id] : []);
         if (members.length > 0) {
-          let current = await advanceScopeAccessRevision(trx, scope, now);
-          // The directory contract carries eight recipients per event.
-          for (let offset = 0; offset < members.length; offset += DIRECTORY_EVENT_RECIPIENT_LIMIT) {
-            if (offset > 0) current = await advanceScopeAccessRevision(trx, current, now);
-            await appendMutationRecords(trx, {
-              scope: current, actorId: scope.owner_id, action: "grant.expired",
-              recipients: members.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT).map((actorId) => ({ actorId })),
-              discoveryState: "revoked", publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle), now,
-            });
+          // One discovery row per member and scope: a member who still has other access keeps it listed.
+          const retaining = await actorsWithOtherAccess(trx, scopeId, members, now);
+          let current = scope;
+          for (const [state, actors] of [
+            ["revoked", members.filter((actorId) => !retaining.has(actorId))],
+            ["accepted", members.filter((actorId) => retaining.has(actorId))],
+          ] as const) {
+            // The directory contract carries eight recipients per event, and each event needs its own revision.
+            for (let offset = 0; offset < actors.length; offset += DIRECTORY_EVENT_RECIPIENT_LIMIT) {
+              current = await advanceScopeAccessRevision(trx, current, now);
+              await appendMutationRecords(trx, {
+                scope: current, actorId: scope.owner_id, action: "grant.expired",
+                recipients: actors.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT).map((actorId) => ({ actorId })),
+                discoveryState: state, publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle), now,
+              });
+            }
           }
         }
         return rows.length;
@@ -607,6 +614,29 @@ export class CollaborationCapabilityRepository {
       .where("grant_id", "=", grantId).where("state", "=", "active").limit(MAX_LISTED_PARTICIPANTS).execute();
     return rows.map((row) => row.actor_id);
   }
+}
+
+/**
+ * Members who keep access to the scope another way: an active activation of a live organization
+ * grant, or an accepted legacy membership. The home still re-checks membership evidence on every
+ * request; this only decides what discovery lists.
+ */
+async function actorsWithOtherAccess(
+  trx: Transaction<OwnerCollaborationDatabase>, scopeId: string, actorIds: readonly string[], now: string,
+): Promise<Set<string>> {
+  const viaOrganization = await trx.selectFrom("collaboration_grant_activations as a")
+    .innerJoin("collaboration_grants as g", "g.id", "a.grant_id")
+    .select("a.actor_id")
+    .where("g.scope_id", "=", scopeId).where("g.audience_kind", "=", "organization").where("g.state", "=", "active")
+    .where((eb) => eb.or([eb("g.expires_at", "is", null), eb("g.expires_at", ">", now)]))
+    .where("a.state", "=", "active").where("a.actor_id", "in", actorIds)
+    .execute();
+  const viaMembership = await trx.selectFrom("collaboration_members").select("actor_id")
+    .where("scope_id", "=", scopeId).where("status", "=", "accepted").where("dispositioned_at", "is", null)
+    .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", now)]))
+    .where("actor_id", "in", actorIds)
+    .execute();
+  return new Set([...viaOrganization, ...viaMembership].map((row) => row.actor_id));
 }
 
 /** A changed access decision advances discovery and authorization under the scope lock. */

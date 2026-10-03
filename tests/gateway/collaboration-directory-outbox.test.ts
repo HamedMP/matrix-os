@@ -180,7 +180,7 @@ describe("CollaborationDirectoryOutbox", () => {
     await worker.shutdown();
   });
 
-  it("quarantines malformed rows without blocking valid rows in the same batch", async () => {
+  it("quarantines a malformed row without blocking the valid rows after it", async () => {
     await fixture.db.updateTable("collaboration_directory_outbox")
       .set({ recipient_actor_ids: JSON.stringify([""]) })
       .where("event_id", "=", "60000000-0000-4000-8000-000000000001")
@@ -220,6 +220,9 @@ describe("CollaborationDirectoryOutbox", () => {
       startTimer: false,
     });
 
+    // A scope delivers in order, so the valid later row waits for the cycle after the earlier
+    // malformed row is quarantined; it is never blocked behind it.
+    expect(await worker.runOnce()).toBe(0);
     expect(await worker.runOnce()).toBe(1);
     expect(fetchImpl).toHaveBeenCalledOnce();
     const rows = await fixture.db.selectFrom("collaboration_directory_outbox")

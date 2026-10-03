@@ -169,9 +169,20 @@ export class CollaborationDirectoryOutbox {
         .where("outbox.delivered_at", "is", null)
         .where("outbox.retry_after", "<=", now.toISOString())
         .where("outbox.attempts", "<", MAX_ATTEMPTS)
+        // The platform applies a scope's events by revision and drops an older one that arrives
+        // late, so each scope delivers strictly in order: an event is claimable only once every
+        // earlier event of its scope is delivered (or quarantined), across retries and workers.
+        .where(({ not, exists, selectFrom }) => not(exists(
+          selectFrom("collaboration_directory_outbox as earlier")
+            .innerJoin("collaboration_events as earlier_event", "earlier_event.event_id", "earlier.event_id")
+            .select("earlier.event_id")
+            .whereRef("earlier.scope_id", "=", "outbox.scope_id")
+            .whereRef("earlier.authority_runtime_id", "=", "outbox.authority_runtime_id")
+            .where("earlier.delivered_at", "is", null)
+            .where("earlier.attempts", "<", MAX_ATTEMPTS)
+            .whereRef("earlier_event.scope_seq", "<", "event.scope_seq"),
+        )))
         .orderBy("outbox.created_at", "asc")
-        // Events committed together share a timestamp; the platform applies them by revision.
-        .orderBy("event.revision", "asc")
         .orderBy("event.scope_seq", "asc")
         .limit(BATCH_SIZE)
         .forUpdate("outbox")
@@ -206,7 +217,7 @@ export class CollaborationDirectoryOutbox {
           continue;
         }
         if (row.discovery_state === "invited" || row.discovery_state === "accepted") {
-          recipientEntries = await withPendingMemberGrants(trx, row.scope_id, recipientEntries, now);
+          recipientEntries = await withPendingMemberGrants(trx, row.scope_id, recipientEntries, row.discovery_state, now);
         }
         claimed.push({
           eventId: row.event_id,
@@ -252,6 +263,7 @@ async function withPendingMemberGrants(
   trx: Transaction<OwnerCollaborationDatabase>,
   scopeId: string,
   entries: ClaimedDirectoryEvent["recipientEntries"],
+  discoveryState: "invited" | "accepted",
   now: Date,
 ): Promise<ClaimedDirectoryEvent["recipientEntries"]> {
   const candidates = entries.filter((entry) => !entry.grantId).map((entry) => entry.actorId);
@@ -269,7 +281,10 @@ async function withPendingMemberGrants(
   const byActor = new Map(pending.map((grant) => [grant.audience_actor_id!, grant.id]));
   return entries.map((entry) => {
     const grantId = entry.grantId ? undefined : byActor.get(entry.actorId);
-    return grantId ? { ...entry, grantId, status: "invited" as const } : entry;
+    if (!grantId) return entry;
+    // An accepted event has settled the invitation it names: only the grant is left to open.
+    const { invitationId, ...rest } = entry;
+    return { ...(discoveryState === "invited" && invitationId ? { invitationId } : {}), ...rest, grantId, status: "invited" as const };
   });
 }
 
