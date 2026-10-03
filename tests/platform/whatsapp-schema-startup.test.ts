@@ -1,7 +1,8 @@
-import { sql } from 'kysely';
+import { Kysely, sql } from 'kysely';
 import { KyselyPGlite } from 'kysely-pglite';
 import { describe, expect, it } from 'vitest';
 import { createPlatformDb } from '../../packages/platform/src/db.js';
+import type { PlatformDatabase } from '../../packages/platform/src/db.js';
 import { PLATFORM_SCHEMA_REVISION } from '../../packages/platform/src/database/migration-revision.js';
 import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
 import { WHATSAPP_SCHEMA_REVISION } from '../../packages/platform/src/database/whatsapp-migration-revision.js';
@@ -9,6 +10,29 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 describe('WhatsApp schema startup', () => {
+  it('executes channel DDL only once on a fresh database and skips it on restart', async () => {
+    const instance = await KyselyPGlite.create();
+    let channelCreates = 0;
+    const db = new Kysely<PlatformDatabase>({
+      dialect: instance.dialect,
+      log: (event) => {
+        if (event.level === 'query' && event.query.sql.includes('CREATE TABLE IF NOT EXISTS whatsapp_connections')) channelCreates++;
+      },
+    });
+    try {
+      await runPlatformStartupMigrations(db);
+      expect(channelCreates).toBe(1);
+      const revisions = await sql<{ scope: string; generation: number; fingerprint: string }>`
+        SELECT scope, generation, fingerprint FROM platform_schema_revisions ORDER BY scope
+      `.execute(db);
+      expect(revisions.rows).toEqual([
+        { scope: 'core', ...PLATFORM_SCHEMA_REVISION },
+        { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },
+      ]);
+      await runPlatformStartupMigrations(db);
+      expect(channelCreates).toBe(1);
+    } finally { await db.destroy(); }
+  });
   it('creates required channel tables even when a newer core revision already exists', async () => {
     const instance = await KyselyPGlite.create();
     await instance.client.exec(`CREATE TABLE platform_schema_revisions (
