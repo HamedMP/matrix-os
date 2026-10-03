@@ -234,3 +234,24 @@ describe('Codex native completion with independent execution readiness', () => {
     },
   );
 });
+
+it.each(['authenticated', 'native-profile', 'missing-profile'] as const)('reconciles simulated successful Claude CLI consent with exact refreshed credential observation: %s', async mode => {
+  const f = nativeFixture('claude');
+  Object.assign(f.row, { installState: 'installed', enabled: false,
+    authState: mode === 'authenticated' ? 'authenticated' : 'unknown',
+    ...(mode === 'native-profile' ? { localObservation: { state: 'present_unverified' } } : {}),
+  });
+  const login = vi.fn(async ({ onSuccess }) => { await onSuccess(); return { cancel: vi.fn() }; });
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, claudeBrowserLogin: login, hostControl: { available: false, run: vi.fn() } });
+  const pending = adapter!.start({ request: { harnessInstanceId: 'harness_claude', kind: 'login', method: 'browser', idempotencyKey: 'synthetic-claude-connect' }, publish: vi.fn() });
+  if (mode === 'missing-profile') {
+    await expect(pending).rejects.toThrow('unavailable');
+    expect(f.store.mutate).not.toHaveBeenCalled();
+  } else {
+    await expect(pending).resolves.toMatchObject({ cancel: expect.any(Function) });
+    expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', harnessInstanceId: 'harness_claude', enabled: true, expectedRevision: 0 }));
+    expect(f.store.getSnapshot).toHaveBeenCalledWith({ refresh: true });
+    expect(f.row.authState).toBe(mode === 'authenticated' ? 'authenticated' : 'unknown');
+  }
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+});

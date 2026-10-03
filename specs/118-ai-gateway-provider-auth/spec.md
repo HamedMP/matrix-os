@@ -285,3 +285,28 @@ availability, labels, guarded transitions, and resulting V3 refreshes.
    consent, or erase every failed receipt when any account exists. Use the scoped
    authenticated account contract and reconcile only the confirmed connection
    transition across Web Canvas, Web Desktop and Electron Desktop.
+
+
+## Claude Settings simulation boundary
+
+Deterministic tests exercise `createClaudeSettingsLogin`, native completion
+reconciliation, and the shared `ConnectedAccountCard`; they do not call Claude
+OAuth endpoints or modify a user's native profile. The synthetic child process
+must emit an allowlisted authorization URL and exit successfully before the
+completion callback can run. Nonzero exit, an untrusted URL, failed credential
+reconciliation, cancellation and expiry must never publish successful completion.
+Cancellation/expiry reap the child and release its profile lease. Submitted codes
+are single-use and transient; multiline inputs are rejected and code/raw CLI
+output must not enter published workflow state.
+
+Claude connection data is separate from subscription entitlement and model
+execution. A schema-valid supplied account/allowance fixture renders its identity, reset
+and remaining fraction (42% used means 58% remaining). Current native plan-name
+enrichment supports ChatGPT plans only; the Claude fixture must not claim Claude
+Max/Pro plan enrichment or bypass the schema through a type cast. Authentication alone must
+not invent a plan, email, quota, reset or zero usage: absent usage renders
+`Usage unavailable` with no meter. These assertions live in
+`provider-workflow-browser.test.ts`, `provider-workflow-native.test.ts` and
+`claude-connection-simulation.test.tsx`. Passing them proves simulated workflow
+and component behavior only; real OAuth consent, live provider metadata and
+model calls require a separately authorized real account acceptance run.
