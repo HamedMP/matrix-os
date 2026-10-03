@@ -18,9 +18,9 @@ import {
   authorize, deleteConditions, digest, digestDeleteConditions, handle, notifyScope, readJson, requireScope, verifyHttp,
   type CollaborationRouteOptions,
 } from "./route-support.js";
+import { PRESET_POLICY_VERSION } from "./repository-shared.js";
 
 const GRANTS_PATH = "/api/collaboration/scopes/:scopeId/grants";
-const PRESET_POLICY_VERSION = "v1";
 
 type CapabilityRouteOptions = Pick<
   CollaborationRouteOptions,
