@@ -175,10 +175,11 @@ async function listDiscovery(
     : null;
   if (pageRequest.data.cursor && !cursor) return safeJson(c, "Invalid request", 422);
   try {
-    // One entry the contract cannot represent (a member-audience grant is indexed as `invited`
-    // with no invitation id) must not take down the actor's whole inbox: it is dropped and counted
-    // for operators, never sent half-formed. A page that drops to nothing but has more behind it
-    // would read as "nothing shared", so the next pages are scanned -- a bounded number of them.
+    // One entry the contract cannot represent (an `invited` row with neither an invitation nor a
+    // grant pointer, such as a member grant indexed before grant pointers existed) must not take
+    // down the actor's whole inbox: it is dropped and counted for operators, never sent half-formed.
+    // A page that drops to nothing but has more behind it would read as "nothing shared", so the
+    // next pages are scanned -- a bounded number of them.
     const valid: unknown[] = [];
     let dropped = 0;
     let current = cursor;
@@ -226,16 +227,29 @@ async function readDiscoveryPage(
     })
     : { items: [] as Awaited<ReturnType<PlatformCollaborationRepository["listForActorPage"]>>["items"], nextCursor: undefined };
   // Metadata only: the client hydrates every item from the resource's home.
-  const items: unknown[] = page.items.map((entry) => ({
-    scopeId: entry.scopeId,
-    runtimeId: entry.runtimeId,
-    ownerId: entry.ownerId,
-    kind: entry.kind,
-    authorityGeneration: entry.authorityGeneration,
-    status: entry.status,
-    ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
-    ...(entry.organizationId ? { organizationId: entry.organizationId } : {}),
-  }));
+  const items: unknown[] = page.items.map((entry) => (
+    // A pending grant addressed to this actor alone opens exactly like an organization-wide
+    // one (accept the grant on the home), so it uses the same entry and every client --
+    // including released ones, which parse the whole page strictly -- already handles it.
+    entry.status === "invited" && entry.grantId && !entry.invitationId ? {
+      scopeId: entry.scopeId,
+      runtimeId: entry.runtimeId,
+      ownerId: entry.ownerId,
+      kind: entry.kind,
+      authorityGeneration: entry.authorityGeneration,
+      status: "organization_pending",
+      organizationId: entry.organizationId,
+      grantId: entry.grantId,
+    } : {
+      scopeId: entry.scopeId,
+      runtimeId: entry.runtimeId,
+      ownerId: entry.ownerId,
+      kind: entry.kind,
+      authorityGeneration: entry.authorityGeneration,
+      status: entry.status,
+      ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
+      ...(entry.organizationId ? { organizationId: entry.organizationId } : {}),
+    }));
   let nextCursor = page.nextCursor ? encodeDiscoveryCursor(actorId, status, "indexed", page.nextCursor) : undefined;
   if (status === "invited" && !page.nextCursor && options.listOrganizationIds) {
     const organizationIds = await options.listOrganizationIds(actorId);

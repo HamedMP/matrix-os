@@ -77,7 +77,7 @@ describe("organization ready-to-work presentation", () => {
     render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_member" openProject={openProject} />);
     fireEvent.click(await screen.findByRole("button", { name: "Open" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Share could not be opened. Try again.");
-    expect(screen.getByText("Shared with your organization")).toBeVisible();
+    expect(screen.getByText("Shared with you")).toBeVisible();
     expect(screen.queryByText("private membership detail")).toBeNull();
     expect(openProject).not.toHaveBeenCalled();
   });

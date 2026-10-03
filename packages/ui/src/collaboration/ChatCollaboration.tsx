@@ -219,7 +219,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       {items.map((item) => item.status === "organization_pending"
         ? <article key={`org:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
-            <p className="font-medium">Shared with your organization</p>
+            <p className="font-medium">Shared with you</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · opens when you join</p>
             {organizationError === item.scopeId ? <p role="alert" className="mt-1 text-sm">Share could not be opened. Try again.</p> : null}
           </div>

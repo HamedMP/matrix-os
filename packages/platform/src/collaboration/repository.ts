@@ -37,6 +37,7 @@ export interface DirectoryEventInput {
     actorId: string;
     status: "invited" | "accepted" | "revoked";
     invitationId?: string;
+    grantId?: string;
   }>;
 }
 
@@ -48,6 +49,8 @@ export interface CollaborationDirectoryEntry {
   authorityGeneration: number;
   status: "invited" | "accepted" | "revoked";
   invitationId?: string;
+  /** A pending grant addressed to this actor alone (only while `status` is `invited`). */
+  grantId?: string;
   organizationId?: string;
 }
 
@@ -134,17 +137,21 @@ export class PlatformCollaborationRepository {
       if (!applied) return;
 
       for (const recipient of input.recipients) {
+        // The grant pointer only means something while the grant is pending for this actor.
+        const grantId = recipient.status === "invited" ? recipient.grantId ?? null : null;
         await trx.insertInto("collaboration_user_index").values({
           actor_id: recipient.actorId,
           scope_id: input.scopeId,
           status: recipient.status,
           invitation_id: recipient.invitationId ?? null,
+          grant_id: grantId,
           locator_generation: input.authorityGeneration,
           last_event_id: input.eventId,
           updated_at: now,
         }).onConflict((conflict) => conflict.columns(["actor_id", "scope_id"]).doUpdateSet({
           status: recipient.status,
           invitation_id: recipient.invitationId ?? null,
+          grant_id: grantId,
           locator_generation: input.authorityGeneration,
           last_event_id: input.eventId,
           updated_at: now,
@@ -221,12 +228,21 @@ export class PlatformCollaborationRepository {
   }
 
   async getScopeActorStatus(scopeId: string, actorId: string): Promise<"invited" | "accepted" | "revoked" | null> {
+    return (await this.getScopeActorEntry(scopeId, actorId))?.status ?? null;
+  }
+
+  /** The actor's index row for one scope, with the pending member-grant pointer when there is one. */
+  async getScopeActorEntry(scopeId: string, actorId: string): Promise<{
+    status: "invited" | "accepted" | "revoked";
+    invitationId: string | null;
+    grantId: string | null;
+  } | null> {
     const row = await this.db.selectFrom("collaboration_user_index")
-      .select("status")
+      .select(["status", "invitation_id", "grant_id"])
       .where("scope_id", "=", scopeId)
       .where("actor_id", "=", actorId)
       .executeTakeFirst();
-    return row?.status ?? null;
+    return row ? { status: row.status, invitationId: row.invitation_id, grantId: row.grant_id } : null;
   }
 
   async listForActor(actorId: string): Promise<CollaborationDirectoryEntry[]> {
@@ -330,6 +346,7 @@ export class PlatformCollaborationRepository {
         "directory.authority_generation",
         "user_index.status",
         "user_index.invitation_id",
+        "user_index.grant_id",
         "user_index.updated_at",
       ])
       .where("user_index.actor_id", "=", actorId)
@@ -356,6 +373,7 @@ export class PlatformCollaborationRepository {
         authorityGeneration: Number(row.authority_generation),
         status: row.status,
         ...(row.invitation_id === null ? {} : { invitationId: row.invitation_id }),
+        ...(row.grant_id === null ? {} : { grantId: row.grant_id }),
         ...(row.organization_id === null ? {} : { organizationId: row.organization_id }),
       })),
       ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),

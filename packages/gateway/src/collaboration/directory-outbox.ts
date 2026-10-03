@@ -1,5 +1,5 @@
 import { CollaborationDirectoryEventSchema } from "@matrix-os/contracts";
-import type { Kysely } from "kysely";
+import type { Kysely, Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
 
@@ -16,7 +16,8 @@ interface ClaimedDirectoryEvent {
   kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   authorityGeneration: number;
   metadataRevision: number;
-  recipientEntries: Array<{ actorId: string; invitationId?: string }>;
+  /** `status` overrides the event's discovery state for one recipient (a pending member grant). */
+  recipientEntries: Array<{ actorId: string; invitationId?: string; grantId?: string; status?: "invited" }>;
   discoveryState: "invited" | "accepted" | "revoked" | "deleted";
   /** S05: read inside the claim transaction so a lookup failure leaves the event unclaimed and retryable. */
   organizationId: string | null;
@@ -100,7 +101,7 @@ export class CollaborationDirectoryOutbox {
         metadataRevision: event.metadataRevision,
         recipients: event.recipientEntries.map((recipient) => ({
           ...recipient,
-          status: event.discoveryState === "deleted" ? "revoked" : event.discoveryState,
+          status: recipient.status ?? (event.discoveryState === "deleted" ? "revoked" : event.discoveryState),
         })),
       });
       try {
@@ -185,7 +186,7 @@ export class CollaborationDirectoryOutbox {
           .returning("event_id")
           .executeTakeFirst();
         if (!updated) continue;
-        let recipientEntries: Array<{ actorId: string; invitationId?: string }>;
+        let recipientEntries: ClaimedDirectoryEvent["recipientEntries"];
         try {
           recipientEntries = parseRecipientEntries(row.recipient_actor_ids);
         } catch (error: unknown) {
@@ -200,6 +201,9 @@ export class CollaborationDirectoryOutbox {
             .where("delivered_at", "is", null)
             .execute();
           continue;
+        }
+        if (row.discovery_state === "invited" || row.discovery_state === "accepted") {
+          recipientEntries = await withPendingMemberGrants(trx, row.scope_id, recipientEntries, row.discovery_state, now);
         }
         claimed.push({
           eventId: row.event_id,
@@ -222,13 +226,52 @@ export class CollaborationDirectoryOutbox {
 
 }
 
-function parseRecipientEntries(value: unknown): Array<{ actorId: string; invitationId?: string }> {
+function parseRecipientEntries(value: unknown): Array<{ actorId: string; invitationId?: string; grantId?: string }> {
   const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
   return CollaborationDirectoryEventSchema.shape.recipients
     .parse((Array.isArray(parsed) ? parsed : []).map((entry) => (
       typeof entry === "string" ? { actorId: entry, status: "accepted" } : { ...entry, status: "accepted" }
     )))
-    .map(({ actorId, invitationId }) => ({ actorId, ...(invitationId ? { invitationId } : {}) }));
+    .map(({ actorId, invitationId, grantId }) => ({
+      actorId, ...(invitationId ? { invitationId } : {}), ...(grantId ? { grantId } : {}),
+    }));
+}
+
+/**
+ * The platform keeps one discovery row per actor and scope, so any event about an actor replaces
+ * what it last said about them. A member grant the actor has not accepted yet must survive that
+ * (an invitation, or its acceptance, for the same project): an actor who still holds a live
+ * pending member grant is published as invited with that grant's pointer, exactly as when the
+ * grant was created, and opening the share accepts it. Read inside the claim transaction, so the
+ * pointer is current at delivery.
+ */
+async function withPendingMemberGrants(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  scopeId: string,
+  entries: ClaimedDirectoryEvent["recipientEntries"],
+  discoveryState: "invited" | "accepted",
+  now: Date,
+): Promise<ClaimedDirectoryEvent["recipientEntries"]> {
+  const candidates = entries.filter((entry) => !entry.grantId).map((entry) => entry.actorId);
+  if (candidates.length === 0) return entries;
+  const nowIso = now.toISOString();
+  const pending = await trx.selectFrom("collaboration_grants as grant")
+    .select(["grant.id", "grant.audience_actor_id"])
+    .where("grant.scope_id", "=", scopeId)
+    .where("grant.audience_kind", "=", "member")
+    .where("grant.state", "=", "pending")
+    .where("grant.audience_actor_id", "in", candidates)
+    .where((eb) => eb.or([eb("grant.expires_at", "is", null), eb("grant.expires_at", ">", nowIso)]))
+    .execute();
+  if (pending.length === 0) return entries;
+  const byActor = new Map(pending.map((grant) => [grant.audience_actor_id!, grant.id]));
+  return entries.map((entry) => {
+    const grantId = entry.grantId ? undefined : byActor.get(entry.actorId);
+    if (!grantId) return entry;
+    // An accepted event has settled the invitation it names: only the grant is left to open.
+    const { invitationId, ...rest } = entry;
+    return { ...(discoveryState === "invited" && invitationId ? { invitationId } : {}), ...rest, grantId, status: "invited" as const };
+  });
 }
 
 function backoffMs(attempt: number): number {

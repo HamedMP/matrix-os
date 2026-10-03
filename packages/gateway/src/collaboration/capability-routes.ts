@@ -62,11 +62,11 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
     const scope = await requireScope(options.repository, scopeId);
     const { grants, evaluator } = requireCapabilities(options);
     const grant = await grants.getGrant(grantId);
-    if (!scope.organizationId || !grant || grant.scopeId !== scopeId
-      || grant.organizationId !== scope.organizationId || grant.audience.kind !== "organization") {
+    if (!scope.organizationId || !grant || grant.scopeId !== scopeId || grant.organizationId !== scope.organizationId) {
       throw new CollaborationAuthorizationError("not_found", "Grant not found");
     }
-    // A pending organization recipient has no ordinary scope access yet. The platform
+    // A pending recipient (any organization member for an organization-wide grant, or the
+    // one addressee of a member grant) has no ordinary scope access yet. The platform
     // signs the directory's exact grant pointer into an accept-only direct session;
     // no other capability route may authorize through that session.
     const credentials = readDirectCredentials(c);
