@@ -72,7 +72,7 @@ describe('platform schema registration (S01 foundation)', () => {
     await destroyTestPlatformDb(fixture.db);
   });
 
-  it('registers the migration steps in the original db.ts order', () => {
+  it('registers core migration steps in their original order with the channel independently tracked', () => {
     expect(PLATFORM_MIGRATION_STEPS.map((step) => step.name)).toEqual([
       'identity',
       'user-machines',
@@ -86,7 +86,6 @@ describe('platform schema registration (S01 foundation)', () => {
       'golden-snapshots',
       'provider-deletion',
       'directory-and-social',
-      'whatsapp',
     ]);
     expect(PLATFORM_MIGRATION_STEPS.every((step) => typeof step.run === 'function')).toBe(true);
   });

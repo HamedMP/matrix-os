@@ -13,7 +13,7 @@ function fixture() {
       return { rows: storedRevision ? [storedRevision] : [] };
     }
     if (query.sql.includes("INSERT INTO platform_schema_revisions")) {
-      const incoming = { generation: Number(query.parameters[0]), fingerprint: String(query.parameters[1]) };
+      const incoming = { generation: Number(query.parameters[1]), fingerprint: String(query.parameters[2]) };
       if (!storedRevision || incoming.generation > storedRevision.generation) storedRevision = incoming;
     }
     return { rows: [] };
