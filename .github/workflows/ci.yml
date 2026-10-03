@@ -151,7 +151,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping typecheck."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -160,7 +160,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -183,7 +183,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping shell production build."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -192,7 +192,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -224,7 +224,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping pattern scan."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           fetch-depth: 0
@@ -279,12 +279,12 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping React audit."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -347,13 +347,13 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping sync-client checks."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 20
@@ -385,13 +385,13 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping Agent SDK compatibility."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -430,7 +430,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping unit shard."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -439,7 +439,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -481,10 +481,10 @@ jobs:
       # Disposable service only; never use owner or production database secrets.
       MATRIX_TEST_POSTGRES_URL: postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@v2
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
@@ -505,13 +505,13 @@ jobs:
         if: needs.changes.outputs.docs_contract_tests != 'true'
         run: echo "No docs-only changes detected; skipping docs contract tests."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.docs_contract_tests == 'true'
 
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.docs_contract_tests == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.docs_contract_tests == 'true'
         with:
           node-version: 24
@@ -534,13 +534,13 @@ jobs:
         if: needs.changes.outputs.os_view_parity_tests != 'true'
         run: echo "No shared OS-view surface changes detected; skipping parity tests."
 
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.os_view_parity_tests == 'true'
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         if: needs.changes.outputs.os_view_parity_tests == 'true'
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: needs.changes.outputs.os_view_parity_tests == 'true'
         with:
           node-version: 24
@@ -574,7 +574,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping e2e tests."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -583,7 +583,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
