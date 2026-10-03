@@ -191,6 +191,29 @@ describe("platform collaboration routes", () => {
     }
   });
 
+  it("reads past a page whose entries all had to be dropped instead of reporting nothing shared", async () => {
+    // Same timestamp, so the index orders by scope id: the unrepresentable member grant fills page one.
+    await repository.applyDirectoryEvent({ ...directoryEvent("invited"), organizationId: "org_1" });
+    await repository.applyDirectoryEvent({
+      ...directoryEvent("invited"), eventId: "20000000-0000-4000-8000-0000000000a2",
+      scopeId: "00000000-0000-4000-8000-0000000000a2", kind: "project" as never, organizationId: "org_1",
+      recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "invited" as const }],
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const inbox = await app.request("/api/collaboration/inbox?limit=1", {
+        headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+      });
+      expect(inbox.status).toBe(200);
+      const page = await inbox.json() as { items: Array<Record<string, unknown>>; nextCursor?: string };
+      expect(page.items).toEqual([expect.objectContaining({ scopeId, status: "invited", invitationId: inviteId })]);
+      expect(page).not.toHaveProperty("nextCursor");
+      expect(warn).toHaveBeenCalledWith("[platform-collaboration] discovery items dropped", 1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("paginates organization-pending shares after ordinary invitations without losing any", async () => {
     await repository.applyDirectoryEvent(directoryEvent("invited"));
     // Each organization share needs organizationGrantId below: pending discovery selects only rows
