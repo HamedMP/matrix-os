@@ -28,6 +28,7 @@ import { WorkRailChatRow } from "./work-rail/WorkRailChatRow";
 import { WorkRailHeader } from "./work-rail/WorkRailHeader";
 import { WorkRailProjectGroup } from "./work-rail/WorkRailProjectGroup";
 import { WorkRailSection } from "./work-rail/WorkRailSection";
+import { SharedWorkRailProjects } from "./work-rail/SharedWorkRailProjects";
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 import { createDesktopCollaborationApi } from "../../lib/collaboration";
@@ -510,6 +511,7 @@ export function WorkRail({
           )}
         >
           {model.projects.map(renderProjectGroup)}
+          <SharedWorkRailProjects />
         </WorkRailSection>
 
         <WorkRailSection
