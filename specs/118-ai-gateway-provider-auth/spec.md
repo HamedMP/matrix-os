@@ -254,3 +254,34 @@ availability, labels, guarded transitions, and resulting V3 refreshes.
 - **SC-013**: The same V3 fixture produces identical harness, account, access-source, model, and lifecycle availability in Canvas, Web Desktop, and Electron contract/component tests, with current visual evidence for all three surfaces.
 - **SC-014**: Logout, removal, disable, and active-Chat reassignment failure paths preserve prior visible state and Chat history in 100% of lifecycle integration tests.
 - **SC-015**: Matrix AI is never projected ready when either policy eligibility or fresh relay health is absent in the funded-readiness test matrix.
+
+
+## Settings native login completion contract
+
+1. **Scope / trigger:** successful native Codex consent may coexist with unknown
+   harness execution readiness. Login completion and permission to execute are
+   separate facts; a retained failed receipt must not mask a newly confirmed login.
+2. **Signatures:** the owner-only completion callback calls
+   `getSnapshot({ refresh: true, includeNativeAccountMetadata: true })`. Enabling
+   uses `set_harness_enabled` with this same snapshot's revision and the existing
+   hashed workflow idempotency key.
+3. **Contracts:** confirm the exact harness and writable owner scope. An
+   authenticated selected account must match the harness access-source and route
+   provider; that source must point back to the same account/provider. Local
+   credential presence alone is insufficient. No new API fields or env keys.
+4. **Validation / errors:** unknown, failed, unrelated or mismatched selected
+   accounts cannot complete login. Revision conflicts retain safe failure. Account
+   confirmation does not upgrade execution readiness or bypass funding checks.
+5. **Good / base / bad:** matching authenticated account with unknown readiness
+   completes login; already authenticated harness retains its existing behavior;
+   unrelated authenticated account or merely present credentials remain rejected.
+6. **Required tests:** native successful completion opts into owner metadata;
+   selected-account/source/provider mismatch is rejected; enablement uses the
+   validated revision. Shared UI clears a terminal failed/expired login receipt
+   only after a disconnected-to-authoritatively-connected transition. Active login,
+   unknown auth and failed replacement of an already connected account retain
+   their error/pending state.
+7. **Wrong / correct:** do not equate `harness.authState === unknown` with failed
+   consent, or erase every failed receipt when any account exists. Use the scoped
+   authenticated account contract and reconcile only the confirmed connection
+   transition across Web Canvas, Web Desktop and Electron Desktop.

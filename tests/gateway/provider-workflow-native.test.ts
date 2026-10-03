@@ -203,3 +203,34 @@ it('does not advertise or fall back from Settings device login when native Codex
   expect(f.store.mutate).not.toHaveBeenCalled();
   expect(f.terminal.createTab).not.toHaveBeenCalled();
 });
+
+describe('Codex native completion with independent execution readiness', () => {
+  it.each(['selected', 'unrelated', 'unknown', 'failed', 'wrong-source', 'wrong-source-account'] as const)(
+    'accepts only the exact authenticated selected account: %s', async mode => {
+      const f = nativeFixture();
+      Object.assign(f.row, {enabled: false, selectedAccountId: 'owner_codex', accessSourceId: 'owner_openai_profile', route: {kind: 'fixed', providerId: 'openai', modelId: 'gpt-test'}});
+      const current = await f.store.getSnapshot();
+      Object.assign(current, {
+        accounts: [{id: mode === 'unrelated' ? 'other_account' : 'owner_codex', providerId: 'openai', authState: mode === 'unknown' ? 'unknown' : mode === 'failed' ? 'failed' : 'authenticated', accessSourceId: mode === 'wrong-source' ? 'other_source' : 'owner_openai_profile'}],
+        accessSources: [{id: 'owner_openai_profile', providerId: 'openai', accountId: mode === 'wrong-source-account' ? 'other_account' : 'owner_codex', readiness: {state: 'unknown'}}],
+      });
+      vi.mocked(f.store.getSnapshot).mockImplementation(async options => ({...current,
+        accounts: current.accounts.map(account => ({...account,
+          authState: options?.includeNativeAccountMetadata ? account.authState : 'unknown',
+        })),
+      }));
+      const login = vi.fn(async ({onSuccess}) => { await onSuccess(); return {cancel: vi.fn()}; });
+      const [adapter] = await createNativeProviderWorkflowAdapters({store: f.store, terminal: f.terminal, codexSettingsLogin: login, hostControl: {available: false, run: vi.fn()}});
+      const result = adapter!.start({request: {harnessInstanceId: 'harness_codex', kind: 'login', method: 'device_code', idempotencyKey: 'exact-account-connect'}, publish: vi.fn()});
+      if (mode === 'selected') {
+        await expect(result).resolves.toMatchObject({cancel: expect.any(Function)});
+        expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({type: 'set_harness_enabled', harnessInstanceId: 'harness_codex', enabled: true, expectedRevision: current.revision}));
+        expect(f.row.authState).toBe('unknown');
+        expect(f.store.getSnapshot).toHaveBeenCalledWith({refresh: true, includeNativeAccountMetadata: true});
+      } else {
+        await expect(result).rejects.toMatchObject({message: 'unavailable'});
+        expect(f.store.mutate).not.toHaveBeenCalled();
+      }
+    },
+  );
+});

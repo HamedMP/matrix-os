@@ -113,10 +113,27 @@ export async function createNativeProviderWorkflowAdapters(options: {
         if (request.kind === 'login' && request.method === 'device_code' && harness.harness === 'codex') {
           if (!canLogin || !options.codexSettingsLogin) throw new ProviderWorkflowError('unavailable');
           return options.codexSettingsLogin({ publish, onSuccess: async () => {
-            const fresh = await options.store.getSnapshot({ refresh: true });
+            const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true });
             const exact = fresh.harnesses.find(row => row.id === harness.id);
-            if (!exact || exact.authState !== 'authenticated') throw new ProviderWorkflowError('unavailable');
-            await enableConnectedHarness(harness.id, `connect-${createHash('sha256').update(request.idempotencyKey).digest('hex')}`);
+            // Native consent and account identity are separate from the
+            // harness's execution readiness. Accept only this route's exact
+            // authenticated account; local credential presence is insufficient.
+            const account = fresh.accounts?.find(row => row.id === exact?.selectedAccountId);
+            const source = fresh.accessSources?.find(row => row.id === exact?.accessSourceId);
+            const authenticatedAccount = !!account && account.authState === 'authenticated'
+              && account.accessSourceId === exact?.accessSourceId
+              && account.providerId === exact?.route.providerId
+              && source?.accountId === account.id && source.providerId === account.providerId;
+            if (!exact || exact.harness !== harness.harness || fresh.access.mode !== 'writable'
+              || !(exact.authState === 'authenticated' || authenticatedAccount))
+              throw new ProviderWorkflowError('unavailable');
+            if (!exact.enabled) {
+              // Use the same validated snapshot revision so an account/route
+              // change cannot be enabled by a second, unvalidated read.
+              await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: exact.id,
+                enabled: true, expectedRevision: fresh.revision,
+                idempotencyKey: `connect-${createHash('sha256').update(request.idempotencyKey).digest('hex')}` });
+            }
           } });
         }
         if (request.kind === 'login' && ['pi', 'opencode'].includes(harness.harness)) {

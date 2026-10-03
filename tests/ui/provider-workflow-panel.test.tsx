@@ -405,3 +405,29 @@ it("shows login after a retained install receipt completes and refreshed invento
   expect(screen.queryByText(/Not on this computer yet/)).not.toBeInTheDocument();
   expect(api.start).not.toHaveBeenCalled();
 });
+
+
+it.each([false, true])("reconciles confirmed initial login but preserves replacement failure (initial connected=%s)", async initialConnected => {
+  const api = client();
+  const operation = { id: "late-login", harnessInstanceId: "codex", kind: "login", state: "failed", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: "unavailable" };
+  api.get = vi.fn().mockResolvedValue(operation);
+  const onStateChange = vi.fn();
+  const onOperationId = vi.fn();
+  const props = { capability, client: api, operationId: "late-login", disabled: false, onRefresh: vi.fn(), onOpenTerminal: vi.fn(), onStateChange, onOperationId };
+  const { rerender } = render(<HarnessWorkflowPanel {...props} harness={{...harness, authState: initialConnected ? "authenticated" : "unauthenticated"}} />);
+  await waitFor(() => expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect"));
+  if (!initialConnected) {
+    rerender(<HarnessWorkflowPanel {...props} harness={{...harness, authState: "unknown"}} />);
+    expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect");
+    expect(onOperationId).not.toHaveBeenCalled();
+  }
+  rerender(<HarnessWorkflowPanel {...props} harness={{...harness, authState: "authenticated"}} />);
+  if (initialConnected) {
+    expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect");
+    expect(onOperationId).not.toHaveBeenCalled();
+  } else {
+    await waitFor(() => expect(onStateChange).toHaveBeenLastCalledWith(null));
+    expect(onOperationId).toHaveBeenCalledWith(null);
+    expect(screen.queryByRole("button", {name: /ChatGPT account/})).not.toBeInTheDocument();
+  }
+});

@@ -67,6 +67,8 @@ export function HarnessWorkflowPanel({
   const [apiKey, setApiKey] = useState("");
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const connected = hasConfiguredConnection(harness, source);
+  const previousConnection = useRef(connected);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [uninstall, setUninstall] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -106,6 +108,7 @@ export function HarnessWorkflowPanel({
     setOperation(null);
     setPending(false);
     setFailure(null);
+    previousConnection.current = connected;
     setDisconnectOpen(false);
     setUninstall(false);
     setCopied(false);
@@ -231,6 +234,20 @@ export function HarnessWorkflowPanel({
       }
     });
   useEffect(() => {
+    // A failed receipt can outlive a successfully completed native login. Only
+    // reconcile a newly confirmed connection; a failed replacement of an
+    // already connected account must remain visible.
+    if (pending || active(operation)) return;
+    if (connected && !previousConnection.current && operation?.kind === "login"
+      && (operation.state === "failed" || operation.state === "expired")) {
+      setOperation(null);
+      setFailure(null);
+      setMethod(null);
+      onOperationId?.(null);
+    }
+    previousConnection.current = connected;
+  }, [connected, pending, operation, onOperationId]);
+  useEffect(() => {
     onStateChange?.(
       disconnectOpen ? null : pending || active(operation)
         ? operation?.kind === "install"
@@ -294,7 +311,6 @@ export function HarnessWorkflowPanel({
     ? Math.max(0, Math.ceil((Date.parse(operation.expiresAt) - now) / 1000))
     : 0;
   const connecting = active(operation);
-  const connected = hasConfiguredConnection(harness, source);
   const reuseCodex = capability.loginMethods.includes("existing_codex");
   const browserLogin = capability.loginMethods.includes("browser") && !!client.submitCode;
   const inlineLogin = capability.loginMethods.includes("device_code") || reuseCodex || browserLogin;
