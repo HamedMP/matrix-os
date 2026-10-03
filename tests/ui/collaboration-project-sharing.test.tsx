@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { CollaborationProjectInventory, CollaborationScope } from "@matrix-os/contracts";
@@ -244,6 +244,85 @@ describe("whole-project sharing confirmation", () => {
       expect(screen.queryByText(/Share the whole project to manage access/i)).toBeNull();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("never reopens collaborators when a read finishes after the owner closed the dialog", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const shared: CollaborationScope = { ...scope, lifecycle: "shared", revision: "5" };
+      const api = apiFixture();
+      let scopeReads = 0;
+      let finishRead: (value: CollaborationScope) => void = () => undefined;
+      api.post.mockImplementation(async (path: string) => {
+        if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) };
+        if (path.endsWith("/scopes")) return scope;
+        if (path.endsWith("/policy/preflight")) return undefined;
+        return { id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id, status: "prepared", inventoryRevision: "7",
+          createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z" };
+      });
+      api.get.mockImplementation(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [] };
+        if (path.endsWith("/project/inventory")) return completeInventory();
+        scopeReads += 1;
+        if (scopeReads === 1) return scope;
+        // The publication read is still in flight when the owner closes the dialog.
+        return new Promise<CollaborationScope>((resolve) => { finishRead = resolve; });
+      });
+      render(<ProjectSharingButton api={api} runtimeId="vps:runtime" organizationId="org_matrix_team" projectId="proj_launch" projectName="Launch" />);
+      fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Share whole project" }));
+      expect(await screen.findByText(/Preparing the shared project/i)).toBeVisible();
+      await vi.advanceTimersByTimeAsync(1_200);
+      expect(scopeReads).toBe(2);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await act(async () => { finishRead(shared); });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.queryByRole("dialog", { name: "Invite collaborators" })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows when publication is taking longer, and checks again on request", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const shared: CollaborationScope = { ...scope, lifecycle: "shared", revision: "5" };
+      const api = apiFixture();
+      let published = false;
+      let scopeReads = 0;
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      api.post.mockImplementation(async (path: string) => {
+        if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) };
+        if (path.endsWith("/scopes")) return scope;
+        if (path.endsWith("/policy/preflight")) return undefined;
+        return { id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id, status: "prepared", inventoryRevision: "7",
+          createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z" };
+      });
+      api.get.mockImplementation(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [] };
+        if (path.endsWith("/project/inventory")) return completeInventory();
+        if (path.endsWith("/grants")) return { grants: [] };
+        if (path.startsWith("/api/organizations/")) return { members: [] };
+        scopeReads += 1;
+        if (scopeReads === 1) return scope;
+        if (!published) throw new Error("CollaborationUnavailable");
+        return shared;
+      });
+      render(<ProjectSharingButton api={api} runtimeId="vps:runtime" organizationId="org_matrix_team" projectId="proj_launch" projectName="Launch" />);
+      fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Share whole project" }));
+      await vi.advanceTimersByTimeAsync(61_000);
+
+      expect(await screen.findByText(/Sharing is taking longer than expected/i)).toBeVisible();
+      published = true;
+      fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(await screen.findByRole("dialog", { name: "Invite collaborators" })).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
     }
   });
 

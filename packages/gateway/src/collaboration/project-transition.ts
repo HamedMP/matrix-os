@@ -81,14 +81,19 @@ async function ensureDefaultOrganizationGrant(trx: CollaborationTransaction, inp
   now: Date;
 }): Promise<void> {
   if (!input.organizationId) return;
-  const existing = await trx.selectFrom("collaboration_grants").select("id")
+  const now = input.now.toISOString();
+  // Expiry is applied lazily and the directory outbox ignores expired grants, so a lapsed one
+  // still marked live would leave the project shared with no organization audience.
+  await trx.updateTable("collaboration_grants").set({ state: "expired", updated_at: now })
     .where("scope_id", "=", input.scopeId)
     .where("audience_kind", "=", "organization")
     .where("state", "in", ["pending", "active"])
-    .limit(1).executeTakeFirst();
-  if (existing) return;
-  const now = input.now.toISOString();
-  await trx.insertInto("collaboration_grants").values({
+    .where("expires_at", "is not", null)
+    .where("expires_at", "<=", now)
+    .execute();
+  // One live organization grant per scope (idx_collaboration_grants_one_organization): an
+  // owner's existing grant wins, and the default is only inserted when there is none.
+  const inserted = await trx.insertInto("collaboration_grants").values({
     id: input.grantId,
     scope_id: input.scopeId,
     organization_id: input.organizationId,
@@ -105,7 +110,12 @@ async function ensureDefaultOrganizationGrant(trx: CollaborationTransaction, inp
     created_at: now,
     updated_at: now,
     revoked_at: null,
-  }).execute();
+  }).onConflict((conflict) => conflict.column("scope_id")
+    .where("audience_kind", "=", "organization")
+    .where("state", "in", ["pending", "active"])
+    .doNothing())
+    .returning("id").executeTakeFirst();
+  if (!inserted) return;
   await trx.insertInto("collaboration_audit").values({
     scope_id: input.scopeId,
     actor_id: input.ownerId,

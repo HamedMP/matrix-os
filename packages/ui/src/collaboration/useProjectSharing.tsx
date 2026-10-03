@@ -50,13 +50,15 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
   const starting = useRef(false);
   /** The scope whose publication is being awaited; cleared by close so the wait ends with the dialog. */
   const publishingScope = useRef<string | null>(null);
+  const [publication, setPublication] = useState<"idle" | "waiting" | "delayed">("idle");
 
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
 
-  const refreshScope = async (scopeId: string) => {
+  /** Reads the scope and its members without touching state, so a caller can still discard them. */
+  const readScopeState = async (scopeId: string) => {
     const [scopeValue, membersValue] = await Promise.all([
       api.get(`/api/collaboration/scopes/${scopeId}`),
       api.get(`/api/collaboration/scopes/${scopeId}/members`),
@@ -65,12 +67,16 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
     if (nextScope.kind !== "project" || nextScope.resourceId !== projectId) {
       throw new Error("Project scope mismatch");
     }
-    const nextMembers = MembersSchema.parse(membersValue).members;
+    return { scope: nextScope, members: MembersSchema.parse(membersValue).members };
+  };
+
+  const refreshScope = async (scopeId: string) => {
+    const next = await readScopeState(scopeId);
     if (alive.current) {
-      setScope(nextScope);
-      setMembers(nextMembers);
+      setScope(next.scope);
+      setMembers(next.members);
     }
-    return { scope: nextScope, members: nextMembers };
+    return next;
   };
 
   const refreshInventory = async (scopeId: string) => {
@@ -144,16 +150,23 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
   const awaitPublication = async (scopeId: string) => {
     if (publishingScope.current === scopeId) return;
     publishingScope.current = scopeId;
+    setPublication("waiting");
+    const current = () => alive.current && publishingScope.current === scopeId;
     const deadline = Date.now() + PUBLICATION_WAIT_MS;
     let lastFailure = "none";
-    while (alive.current && publishingScope.current === scopeId && Date.now() < deadline) {
+    while (current() && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, PUBLICATION_POLL_MS));
-      if (!alive.current || publishingScope.current !== scopeId) return;
+      if (!current()) return;
       try {
-        const refreshed = await refreshScope(scopeId);
-        if (refreshed.scope.lifecycle === "shared") {
+        const next = await readScopeState(scopeId);
+        // The owner may have closed the dialog while the read was in flight.
+        if (!current()) return;
+        if (next.scope.lifecycle === "shared") {
           publishingScope.current = null;
-          if (alive.current) setSurface("members");
+          setPublication("idle");
+          setScope(next.scope);
+          setMembers(next.members);
+          setSurface("members");
           return;
         }
       } catch (failure: unknown) {
@@ -161,8 +174,9 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
         lastFailure = failure instanceof Error ? failure.name : "UnknownError";
       }
     }
-    if (publishingScope.current === scopeId) {
+    if (current()) {
       publishingScope.current = null;
+      setPublication("delayed");
       console.warn("[project-collaboration] publication still pending", lastFailure);
     }
   };
@@ -170,6 +184,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
   const close = () => {
     if (pending) return;
     publishingScope.current = null;
+    setPublication("idle");
     setSurface(null);
     setInventory(null);
     setScope(null);
@@ -186,6 +201,8 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
       refreshInventory={() => refreshInventory(scope.id)}
       onManageMembers={() => setSurface("members")}
       onConfirmed={() => { void awaitPublication(scope.id); }}
+      publicationDelayed={publication === "delayed"}
+      onCheckPublication={() => { void awaitPublication(scope.id); }}
       onClose={close}
     /> : null}
     {surface === "members" && scope ? <ChatCollaboratorsDialog

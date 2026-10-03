@@ -499,6 +499,42 @@ describe("project collaboration transition journal", () => {
       .where("scope_id", "=", SCOPE_ID).execute()).toEqual([{ id: existingGrantId, preset: "viewer" }]);
   });
 
+  it("replaces an expired organization grant that is still marked active", async () => {
+    // Grant expiry is applied lazily, and the outbox ignores expired grants: keeping this one
+    // would publish the project with no organization audience at all.
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: SCOPE_ID, actor_id: OWNER_ID, role: "owner", status: "accepted", organization_id: "org_matrix_team",
+      invitation_id: null, invited_by: OWNER_ID, accepted_at: NOW, expires_at: null, revision: 1,
+      joined_at: NOW, updated_at: NOW,
+    } as never).execute();
+    const lapsedGrantId = "60000000-0000-4000-8000-000000000052";
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: lapsedGrantId, scope_id: SCOPE_ID, organization_id: "org_matrix_team", audience_kind: "organization",
+      audience_actor_id: null, preset: "viewer", state: "active", policy_version: "v1", source_id: null,
+      legacy_ceiling: null, expires_at: new Date(NOW.getTime() - 1_000), revision: 1, created_by: OWNER_ID,
+      created_at: NOW, updated_at: NOW, revoked_at: null,
+    } as never).execute();
+    const transitions = journal();
+    await prepare();
+    await transitions.beginStaging(TRANSITION_ID);
+    await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
+    await transitions.markFenced({
+      transitionId: TRANSITION_ID, sourceFenceEpoch: 8, currentInventoryRevision: 7,
+      currentInventoryHash: INVENTORY_HASH, currentMembershipHash: MEMBERSHIP_HASH,
+    });
+    await transitions.beginCommit(TRANSITION_ID);
+    await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
+    await transitions.activate(TRANSITION_ID);
+
+    const grants = await fixture.db.selectFrom("collaboration_grants").select(["id", "preset", "state"])
+      .where("scope_id", "=", SCOPE_ID).orderBy("created_at").orderBy("id").execute();
+    expect(grants).toEqual(expect.arrayContaining([
+      { id: lapsedGrantId, preset: "viewer", state: "expired" },
+      { id: expect.any(String), preset: "contributor", state: "active" },
+    ]));
+    expect(grants).toHaveLength(2);
+  });
+
   it("invalidates stale confirmation under the fence and preserves the source authority", async () => {
     const transitions = journal();
     await prepare();
