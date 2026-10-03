@@ -33,6 +33,11 @@ export function installAppMenu(
     adjustZoom,
     checkForUpdates,
     quitApp: () => app.quit(),
+    reloadWindow: () => {
+      const win = getWindow();
+      if (!win || win.isDestroyed()) return;
+      win.webContents.reload();
+    },
   });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

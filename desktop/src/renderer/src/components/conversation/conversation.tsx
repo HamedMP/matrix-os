@@ -40,6 +40,10 @@ export interface ConversationHandle {
   scrollToMessage(messageId: string, options?: { behavior?: ScrollBehavior }): boolean;
 }
 
+function maximumScrollTop(viewport: Pick<HTMLElement, "scrollHeight" | "clientHeight">): number {
+  return Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+}
+
 export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref<ConversationHandle> }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -54,7 +58,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
   const onScroll = useCallback(() => {
     const el = viewportRef.current;
     if (!el) return;
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    const bottom = maximumScrollTop(el) - el.scrollTop < 48;
     atBottomRef.current = bottom;
     setAtBottom(bottom);
     contentHeightRef.current = el.scrollHeight;
@@ -68,7 +72,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
     // finally lands at the live edge.
     atBottomRef.current = true;
     setAtBottom(true);
-    el.scrollTo({ top: el.scrollHeight, behavior: options?.behavior ?? "smooth" });
+    el.scrollTo({ top: maximumScrollTop(el), behavior: options?.behavior ?? "smooth" });
   }, []);
 
   const scrollToStart = useCallback((options?: { behavior?: ScrollBehavior }) => {
@@ -101,11 +105,37 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
   useEffect(() => {
     const viewport = viewportRef.current;
     let observedContent: Element | null = null;
+    let settleFrame: number | undefined;
+
+    const updateBottomState = (bottom: boolean) => {
+      atBottomRef.current = bottom;
+      setAtBottom(bottom);
+    };
+
+    const pinToLiveEdge = () => {
+      if (!viewport) return;
+      viewport.scrollTop = maximumScrollTop(viewport);
+      updateBottomState(true);
+    };
 
     const scrollIfPinned = () => {
       if (!viewport) return;
       contentHeightRef.current = viewport.scrollHeight;
-      if (atBottomRef.current) viewport.scrollTop = viewport.scrollHeight;
+      if (atBottomRef.current) {
+        pinToLiveEdge();
+        if (settleFrame !== undefined) window.cancelAnimationFrame(settleFrame);
+        // ResizeObserver can run before Chromium finishes a nested Markdown or
+        // flex reflow. Re-assert the exact clamped edge on the next frame so a
+        // terminal work collapse cannot leave stale space below the transcript.
+        settleFrame = window.requestAnimationFrame(() => {
+          settleFrame = undefined;
+          if (atBottomRef.current) pinToLiveEdge();
+        });
+        return;
+      }
+      const maximum = maximumScrollTop(viewport);
+      if (viewport.scrollTop > maximum) viewport.scrollTop = maximum;
+      updateBottomState(maximum - viewport.scrollTop < 48);
     };
 
     const preserveOnPrepend = () => {
@@ -152,6 +182,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
       mutationObserver.disconnect();
       resizeObserver.disconnect();
       prependObserver.disconnect();
+      if (settleFrame !== undefined) window.cancelAnimationFrame(settleFrame);
     };
   }, []);
 
@@ -164,6 +195,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
         aria-label="Messages"
         tabIndex={0}
         className="scroll-fade h-full overflow-y-auto"
+        style={{ overflowAnchor: "none" }}
         data-slot="message-scroller-viewport"
       >
         {children}

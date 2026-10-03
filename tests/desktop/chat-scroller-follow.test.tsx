@@ -82,7 +82,7 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
 
     // Content growth while pinned pins scrollTop to the new height.
     fireContentResize();
-    expect(el.scrollTop).toBe(500);
+    expect(el.scrollTop).toBe(300);
 
     // The user scrolls up to read history: follow releases.
     el.scrollTop = 100;
@@ -114,7 +114,7 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     const pill = screen.getByRole("button", { name: "Scroll to latest" });
 
     fireEvent.click(pill);
-    expect(scrollTo).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: "smooth" });
 
     // Landing at the live edge hides the pill and re-engages follow.
     el.scrollTop = 800;
@@ -122,7 +122,7 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     expect(screen.queryByRole("button", { name: "Scroll to latest" })).toBeNull();
     metrics.scrollHeight = 1200;
     fireContentResize();
-    expect(el.scrollTop).toBe(1200);
+    expect(el.scrollTop).toBe(1000);
   });
 
   it("re-engages live-edge follow as soon as scroll-to-latest is requested", () => {
@@ -146,7 +146,61 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     // final scroll event. The requested jump must already have restored follow.
     metrics.scrollHeight = 1200;
     fireContentResize();
-    expect(el.scrollTop).toBe(1200);
+    expect(el.scrollTop).toBe(1000);
+  });
+
+  it("clamps a pinned viewport to the exact live edge when content shrinks", () => {
+    const metrics = { scrollHeight: 1200, clientHeight: 300 };
+    render(
+      <Conversation>
+        <ConversationContent>
+          <ConversationItem messageId="m1">row</ConversationItem>
+        </ConversationContent>
+      </Conversation>,
+    );
+    const el = viewport();
+    mockMetrics(el, metrics);
+
+    fireContentResize();
+    expect(el.scrollTop).toBe(900);
+
+    metrics.scrollHeight = 500;
+    fireContentResize();
+
+    expect(el.scrollTop).toBe(200);
+    expect(screen.queryByRole("button", { name: "Scroll to latest" })).toBeNull();
+  });
+
+  it("does not let a deferred repin override a reader who scrolls away", () => {
+    const metrics = { scrollHeight: 1200, clientHeight: 300 };
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    render(
+      <Conversation>
+        <ConversationContent>
+          <ConversationItem messageId="m1">row</ConversationItem>
+        </ConversationContent>
+      </Conversation>,
+    );
+    const el = viewport();
+    mockMetrics(el, metrics);
+
+    fireContentResize();
+    expect(el.scrollTop).toBe(900);
+    expect(frames.length).toBeGreaterThan(0);
+
+    el.scrollTop = 100;
+    fireEvent.scroll(el);
+    act(() => {
+      for (const frame of frames.splice(0)) frame(0);
+    });
+
+    expect(el.scrollTop).toBe(100);
+    expect(screen.getByRole("button", { name: "Scroll to latest" })).toBeTruthy();
   });
 
   it("keeps the reader's place when older rows are prepended above", async () => {
@@ -242,7 +296,7 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     expect(ref.current?.scrollToMessage("missing-row")).toBe(false);
 
     ref.current?.scrollToEnd({ behavior: "auto" });
-    expect(scrollTo).toHaveBeenCalledWith({ top: 700, behavior: "auto" });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 500, behavior: "auto" });
 
     ref.current?.scrollToStart();
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
