@@ -1,16 +1,23 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { startTestGateway, type TestGateway } from "../fixtures/gateway.js";
 
+const OWNER_API_KEY = "synthetic-e2e-owner-key";
+
 describe("E2E: Channel status + Message API", () => {
   let gw: TestGateway;
 
   beforeAll(async () => {
     gw = await startTestGateway({
+      // Only this injected SDK fixture opts into synthetic owner credentials.
       mockOwnerCredentials: true,
-      spawnFn: async function* () {
+      spawnFn: async function* (_message, config) {
+        expect(config.env?.ANTHROPIC_API_KEY).toBe(OWNER_API_KEY);
+        expect(config.env?.ANTHROPIC_BASE_URL).toBeUndefined();
+        expect(config.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+        expect(config.env?.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
         yield {
           type: "result",
-          data: { sessionId: "test-session", cost: 0, tokensIn: 0, tokensOut: 0 },
+          data: { sessionId: "test-session", cost: 0, turns: 1, tokensIn: 0, tokensOut: 0 },
         };
       },
     });
@@ -59,6 +66,27 @@ describe("E2E: Channel status + Message API", () => {
       body: JSON.stringify({ text: "hello" }),
     });
     expect(res.status).toBe(200);
+  });
+
+  it("rejects SDK dispatch without owner credentials before the mocked generator runs", async () => {
+    let dispatched = false;
+    const noCredentials = await startTestGateway({
+      spawnFn: async function* () {
+        dispatched = true;
+        yield { type: "result", data: { sessionId: "unexpected", cost: 0, turns: 1, tokensIn: 0, tokensOut: 0 } };
+      },
+    });
+    try {
+      const response = await noCredentials.request("/api/message", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "no owner credentials" }),
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Message dispatch failed" });
+      expect(dispatched).toBe(false);
+    } finally {
+      await noCredentials.close();
+    }
   });
 
   it("POST /api/message rejects malformed JSON before dispatch", async () => {

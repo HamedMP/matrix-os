@@ -5,6 +5,8 @@ import type { KernelConfig, KernelEvent } from "@matrix-os/kernel";
 import { startTestGateway, type TestGateway } from "../fixtures/gateway.js";
 import { connectWs } from "../fixtures/ws-client.js";
 
+const OWNER_API_KEY = "synthetic-e2e-owner-key";
+
 describe("E2E: Conversation Management", () => {
   let gw: TestGateway;
 
@@ -117,8 +119,13 @@ describe("E2E: Conversation project context dispatch", () => {
 
   beforeAll(async () => {
     gw = await startTestGateway({
+      // The injected SDK fixture explicitly opts into synthetic owner credentials.
       mockOwnerCredentials: true,
       spawnFn: async function* (_message, config) {
+        expect(config.env?.ANTHROPIC_API_KEY).toBe(OWNER_API_KEY);
+        expect(config.env?.ANTHROPIC_BASE_URL).toBeUndefined();
+        expect(config.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+        expect(config.env?.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
         observedConfigs.push(config);
         const sessionId = config.sessionId ?? `new-context-session-${observedConfigs.length}`;
         yield { type: "init", sessionId } as KernelEvent;
