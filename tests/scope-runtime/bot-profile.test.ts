@@ -30,7 +30,7 @@ describe("scope-runtime-bot-v1 profile", () => {
   });
 
   it("pins its own digest and leaves the shared-chat digest unchanged", () => {
-    expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("1dbeca2618e45b0731d5c4b69af74c7df9ce80630fda2c5f32d5b62d4045593d");
+    expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("884f3410867236443e79580ae16425c23909bc15fb79daec11db6c3dc81eebd4");
     expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("9f4e3e2ad9e63cb300854dfca7bc31370d4cbae6d15fab902841b2b50a6443c0");
   });
 
@@ -40,6 +40,24 @@ describe("scope-runtime-bot-v1 profile", () => {
     };
     expect(manifest.dependencies["@earendil-works/pi-agent-core"]).toBe(SCOPE_RUNTIME_BOT_HARNESS_VERSION);
     expect(manifest.dependencies["@earendil-works/pi-ai"]).toBe(SCOPE_RUNTIME_BOT_HARNESS_VERSION);
+  });
+
+  it("ships Pi SDK 1.0 with exact release exceptions and matching transitive pins", async () => {
+    const root = JSON.parse(await readFile("package.json", "utf8")) as {
+      packageManager: string; pnpm: { overrides: Record<string, string> };
+    };
+    const workspace = await readFile("pnpm-workspace.yaml", "utf8");
+    expect(SCOPE_RUNTIME_BOT_HARNESS_VERSION).toBe("1.0.0");
+    expect(root.packageManager).toBe("pnpm@10.33.4");
+    expect(workspace).toMatch(/^minimumReleaseAge: 10080$/m);
+    for (const name of ["pi-agent-core", "pi-ai", "pi-telemetry"]) {
+      expect(workspace).toContain(`- "@earendil-works/${name}@1.0.0"`);
+    }
+    const piExceptions = workspace.split("\n").filter((line) => /^\s*- .*@earendil-works\//.test(line));
+    expect(piExceptions.every((line) => /@1\.0\.0"$/.test(line))).toBe(true);
+    for (const name of ["pi-ai", "chord", "pi-telemetry"]) {
+      expect(root.pnpm.overrides[`@earendil-works/${name}`]).toBe("1.0.0");
+    }
   });
 
   it("materializes host paths into the bot-runtime mount and the fixed sockets", () => {

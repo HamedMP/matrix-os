@@ -10,6 +10,7 @@ import {
   ChatAgentRecipeResolverError,
   type ChatAgentRecipeResolver,
 } from "./agent-recipe.js";
+import { recipeSkillPrompt } from "./recipe-skill-context.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_SELECTION } from "../bots/selection.js";
@@ -249,7 +250,7 @@ export function contextPrompt(prompt: string, context?: ChatRunContext, options?
       ...(options?.deferIntegrationGuidance ? [
         "Ordinary Matrix integration steps in the pinned skills are unavailable on this route; do not execute them. Other skill instructions remain applicable. Follow the actual run tool guidance for any available Custom MCP workflow.",
       ] : []),
-      recipe.skills.map((skill) => `Recipe skill ${JSON.stringify(skill.name)} (${skill.id}):\n${skill.instructions}`).join("\n\n"),
+      recipe.skills.map(recipeSkillPrompt).join("\n\n"),
       `Selected integration dependencies:\n${recipe.integrations.map(({ service, accountLabel }) =>
         `- ${service} (${accountLabel ? `account ${JSON.stringify(accountLabel)}` : "account not specified"})`).join("\n") || "- none"}`,
       ...(options?.deferIntegrationGuidance ? [] : [

@@ -85,5 +85,17 @@ it("binds read-only authority and rejects workspace inode changes before any art
   expect(await admission.workspace(binding)).toBe(root.path);
   await rename(root.path, `${root.path}.old`); await mkdir(root.path);
   await expect(admission.workspace(binding)).rejects.toEqual(new BotAdmissionError("root_changed"));
+  await expect(admission.toolAuthority(binding)).rejects.toEqual(new BotAdmissionError("root_changed"));
   await admission.release(binding.runtimeHandle); expect(registry.size).toBe(0);
+});
+it("allows only the already bound owner run to resolve pending approval; new admission remains denied", async () => {
+  const { admission, input, db } = await setup();
+  const binding = await admission.admit(input);
+  await db.updateTable("chat_runs").set({ status: "waiting_for_approval" }).where("id", "=", input.runId).execute();
+  await expect(admission.toolAuthority(binding)).resolves.toEqual({ permissionMode: "full_access" });
+  await expect(admission.admit(input)).rejects.toEqual(new BotAdmissionError("not_found"));
+  await expect(admission.toolAuthority({ ...binding, executionGeneration: "3" })).rejects.toEqual(new BotAdmissionError("not_found"));
+  await db.updateTable("chat_runs").set({ permission_mode: "supervised" }).where("id", "=", input.runId).execute();
+  await expect(admission.toolAuthority(binding)).resolves.toEqual({ permissionMode: "supervised" });
+  await admission.release(binding.runtimeHandle);
 });

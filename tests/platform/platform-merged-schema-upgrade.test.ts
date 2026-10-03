@@ -57,7 +57,7 @@ describe("merged platform schema upgrade", () => {
       await expect(runPlatformMigration(db, migratePlatformSchema, {
         revision: PLATFORM_SCHEMA_REVISION,
       })).resolves.toBeUndefined();
-      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(8);
+      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(9);
       const marker = await sql<{ generation: number; fingerprint: string }>`
         SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'core'
       `.execute(db);
@@ -91,7 +91,7 @@ describe("merged platform schema upgrade", () => {
       await runPlatformMigration(db, skipped, { revision: PLATFORM_SCHEMA_REVISION });
       await runPlatformMigration(db, skipped, { revision: previous });
       await expect(runPlatformMigration(db, skipped, {
-        revision: { generation: 8, fingerprint: "conflicting-branch" },
+        revision: { generation: 9, fingerprint: "conflicting-branch" },
       })).rejects.toThrow("Conflicting platform schema fingerprints");
       expect(skipped).not.toHaveBeenCalled();
       expect((await sql`SELECT generation, fingerprint FROM platform_schema_revisions`.execute(db)).rows)

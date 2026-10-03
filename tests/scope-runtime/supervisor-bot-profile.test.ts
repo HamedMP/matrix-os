@@ -10,7 +10,7 @@ import type { ScopeRuntimeSandboxManifest } from "../../packages/scope-runtime/s
 const REQUEST_ID = "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1";
 const SCOPE_HANDLE = "scope_11111111111111111111111111111111";
 const RUNTIME_HANDLE = "runtime_22222222222222222222222222222222";
-const BOT_ADAPTER = { adapterId: "matrix-bot", harnessVersion: "0.86.1", workloads: ["bot_agent" as const] };
+const BOT_ADAPTER = { adapterId: "matrix-bot", harnessVersion: "1.0.0", workloads: ["bot_agent" as const] };
 const manifest: ScopeRuntimeSandboxManifest = {
   version: 1,
   scopeHandle: SCOPE_HANDLE,
@@ -41,7 +41,7 @@ const createBot = {
   profileId: "scope-runtime-bot-v1",
   workload: "bot_agent" as const,
   adapterId: "matrix-bot",
-  harnessVersion: "0.86.1",
+  harnessVersion: "1.0.0",
   sandbox: manifest,
 };
 

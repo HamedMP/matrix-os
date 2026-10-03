@@ -11,24 +11,27 @@ import { managedPiWorkspace } from "./managed-pi-workspace.js";
 
 export function createManagedPiAdmission(deps: {
   db: BotExecutor; homePath: string; host: ScopeRuntimeHost; registry: BotRuntimeRegistry;
+  toolCapabilities?: readonly BotToolCapability[];
   roots: Pick<ChatExecutionRootResolver, "resolve">;
 }) {
-  async function authority(input: { ownerId: string; chatId: string; runId: string }) {
+  async function authority(input: { ownerId: string; chatId: string; runId: string }, allowPending = false) {
     const row = await deps.db.selectFrom("chat_runs as run").innerJoin("chats as chat", "chat.id", "run.chat_id")
       .select(["run.selection", "run.execution_root", "run.execution_root_fingerprint", "run.permission_mode", "chat.project_id"])
       .where("run.id", "=", input.runId).where("chat.id", "=", input.chatId)
       .where("chat.owner_id", "=", input.ownerId).where("chat.owner_type", "=", "personal")
       .where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active")
       .where("run.driver_kind", "=", "matrix_pi").where("run.instance_id", "=", "matrix_pi_default")
-      .where("run.status", "in", ["accepted", "running"])
+      .where("run.status", "in", allowPending ? ["accepted", "running", "waiting_for_approval"] : ["accepted", "running"])
       .where((eb) => eb.not(eb.exists(eb.selectFrom("bot_chat_bindings as binding").select("binding.chat_id")
         .whereRef("binding.chat_id", "=", "chat.id").where("binding.removed_at", "is", null))))
       .executeTakeFirst();
     if (!row) throw new BotAdmissionError("not_found");
     return row;
   }
-  async function workspace(binding: Pick<ManagedPiRuntimeBinding, "ownerId" | "chatId" | "runId" | "workspace" | "rootFingerprint">): Promise<string> {
-    await authority(binding);
+  async function workspace(binding: Pick<ManagedPiRuntimeBinding, "ownerId" | "chatId" | "runId" | "workspace" | "rootFingerprint" | "runtimeHandle" | "executionGeneration">): Promise<string> {
+    const owned = deps.registry.lookupRun(binding);
+    if (!owned || owned.ownerId !== binding.ownerId || owned.chatId !== binding.chatId) throw new BotAdmissionError("not_found");
+    await authority(binding, true);
     const root = "kind" in binding.workspace
       ? await managedPiWorkspace(deps.homePath, binding.ownerId, binding.chatId)
       : await deps.roots.resolve({ type: "personal", ownerId: binding.ownerId }, binding.workspace.ref)
@@ -38,6 +41,13 @@ export function createManagedPiAdmission(deps: {
   }
   return {
     workspace,
+    async toolAuthority(binding: ManagedPiRuntimeBinding) {
+      const owned = deps.registry.lookupRun(binding);
+      if (!owned || owned.ownerId !== binding.ownerId || owned.chatId !== binding.chatId) throw new BotAdmissionError("not_found");
+      const row = await authority(binding, true);
+      await workspace(binding);
+      return { permissionMode: row.permission_mode };
+    },
     async admit(input: { ownerId: string; chatId: string; runId: string; resolved: ResolvedBotRoute }): Promise<ManagedPiRuntimeBinding> {
       if (!deps.host.available) throw new BotAdmissionError("unavailable");
       const row = await authority(input);
@@ -57,6 +67,7 @@ export function createManagedPiAdmission(deps: {
         workspaceRef = { kind: "chat_workspace" };
       }
       const capabilities: BotToolCapability[] = row.permission_mode === "full_access" ? ["artifact.read", "artifact.write"] : row.permission_mode === "supervised" ? ["artifact.read"] : [];
+      if (capabilities.length) capabilities.push(...(deps.toolCapabilities ?? []).filter(capability => row.permission_mode === "full_access" || capability !== "mcp.call"));
       if (!capabilities.length) throw new BotAdmissionError("not_found");
       const scopeHandle = `scope_${createHash("sha256").update(`managed-chat:${input.ownerId}:${input.chatId}`).digest("hex").slice(0, 32)}`;
       const runtime = await deps.host.client.createRuntime({ scopeHandle, profileId: SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID, workload: "bot_agent",

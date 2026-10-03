@@ -56,6 +56,7 @@ export interface BotEventSink {
 
 /** Concrete tools (artifacts, memory, interactions, integrations) plug in here (L8-L9). */
 export interface BotToolDispatcher {
+  prepare?(binding: PiRuntimeBinding, request: BotToolRequest, signal: AbortSignal): Promise<void>;
   effectClass(request: BotToolRequest): BotEffectClass;
   dispatch(binding: PiRuntimeBinding, request: BotToolRequest, signal: AbortSignal): Promise<{ result: BotToolResult; outcomeRef?: string }>;
 }
@@ -167,6 +168,17 @@ export function createBotBrokerActions(deps: {
 
   async function runTool(binding: PiRuntimeBinding, request: BotToolRequest): Promise<BotToolResult> {
     if (!binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("denied");
+    const runSignal = deps.registry.inferenceSignal(binding);
+    if (!runSignal || runSignal.aborted) throw new BotBrokerActionError("stale_generation");
+    // Human approval is preflight, before any external-effect checkpoint is dispatched.
+    if (deps.tools.prepare) {
+      const preflightSignal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(10 * 60_000)]);
+      try { await untilAborted(deps.tools.prepare(binding, request, preflightSignal), preflightSignal); }
+      catch (error: unknown) {
+        if (preflightSignal.aborted) throw new BotBrokerActionError(runSignal.aborted ? "stale_generation" : "timeout");
+        throw error;
+      }
+    }
     const effectClass = deps.tools.effectClass(request);
     const argsHash = createHash("sha256").update(canonicalJson(request.args)).digest("hex");
     // Prepared and dispatched commit together; the tool call itself runs outside the transaction.
@@ -189,7 +201,7 @@ export function createBotBrokerActions(deps: {
       await checkpoints.markObserved({ ...id, now: now().toISOString() });
       throw new BotBrokerActionError("stale_generation");
     }
-    const signal = AbortSignal.any([deps.inference.lifetime, AbortSignal.timeout(toolTimeoutMs)]);
+    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(toolTimeoutMs)]);
     try {
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
       await checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });

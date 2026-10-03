@@ -1,3 +1,4 @@
+import { createManagedPiOwnerTools } from "../chat/managed-pi-owner-tools.js";
 import { createManagedPiAdmission } from "../chat/managed-pi-admission.js";
 import { createManagedPiRuntime } from "../chat/managed-pi-runtime.js";
 import { createManagedPiSessionsRepository } from "../chat/managed-pi-sessions.js";
@@ -129,6 +130,7 @@ export async function startBots(options: {
   host?: ScopeRuntimeHost;
   /** How the gateway reaches the owner's integrations; without it bots have no integration tools. */
   integrations?: BotIntegrationTransport;
+  managedMcp?: { client: import("../chat/managed-pi-mcp-client.js").ManagedPiMcpClient; approvals: import("../chat/custom-mcp-approval-client.js").CustomMcpApprovalClient };
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   now?: () => Date;
@@ -283,7 +285,14 @@ export async function startBots(options: {
   const resolveCodexIdentity = createCodexOwnerIdentityResolver({ homePath: options.homePath });
   const registry = new BotRuntimeRegistry();
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry });
-  const managedAdmission = createManagedPiAdmission({ db, homePath: options.homePath, host, registry, roots: options.executionRoots });
+  const managedCapabilities: import("@matrix-os/contracts").BotToolCapability[] = [
+    ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
+    ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
+  ];
+  const managedAdmission = createManagedPiAdmission({ db, homePath: options.homePath, host, registry, roots: options.executionRoots, toolCapabilities: managedCapabilities });
+  const ownerTools = createManagedPiOwnerTools({ authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
+    ...(integrationClient ? { integrations: integrationClient } : {}),
+    ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });
   let forgetRun: (runId: string) => void = () => undefined;
   const orchestrator = createBotTaskOrchestrator({
     bindings,
@@ -303,7 +312,7 @@ export async function startBots(options: {
     client: host.client,
     onRunFinished: (runId) => forgetRun(runId),
   });
-  const managed = createManagedPiRuntime({ admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const actions = createBotBrokerActions({
     db,
@@ -318,7 +327,7 @@ export async function startBots(options: {
     },
     events: { publish: (binding, event) => isManagedPiBinding(binding) ? managed.events.publish(binding, event) : orchestrator.eventSink.publish(binding, event) },
     tools: createBotToolDispatcher({
-      homePath: options.homePath, managedWorkspace: managedAdmission.workspace, interactions, memory, ...(integrationTools ? { integrations: integrationTools } : {}),
+      homePath: options.homePath, managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory, ...(integrationTools ? { integrations: integrationTools } : {}),
     }),
     inference: {
       homePath: options.homePath,

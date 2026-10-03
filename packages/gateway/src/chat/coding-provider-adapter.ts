@@ -24,6 +24,7 @@ import {
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { projectCodingActivity } from "./coding-activity-projection.js";
 import { createAssistantTextStreamProjector, sanitizeAssistantText } from "./safe-activity-projection.js";
+import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 import { CodingChatStateSchema, recoveryState, recoverCodingRun, type CodingChatState } from "./coding-run-recovery.js";
 import {
   CanonicalProviderRunEventSchema,
@@ -359,35 +360,35 @@ async function* normalizedEvents(
 async function* projectAssistantText(
   events: AsyncIterable<CanonicalProviderRunEvent>,
   options: { homePath: string; executionRoot?: string; showPrivatePaths: boolean },
+  context: { ownerType: "personal" | "organization"; ownerId: string; chatId: string; runId: string; key?: Buffer; sharedScopeId?: string },
 ): AsyncGenerator<CanonicalProviderRunEvent> {
   let messageId: string | undefined;
   let projector = createAssistantTextStreamProjector(options);
+  const emitter = createAssistantCredentialEmitter(context);
   const flush = () => {
-    const delta = projector.flush();
-    return delta && messageId ? CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", messageId, delta }) : undefined;
+    const projected = projector.flushCaptured();
+    return projected.text && messageId ? emitter.emit(projected, messageId) : [];
   };
   for await (const event of events) {
     if (event.type === "assistant.delta") {
       if (messageId && messageId !== event.messageId) {
-        const tail = flush();
-        if (tail) yield tail;
+        for (const tail of flush()) yield tail;
         projector = createAssistantTextStreamProjector(options);
       }
       messageId = event.messageId;
-      const delta = projector.push(event.delta);
-      if (delta) yield { ...event, delta };
+      const projected = projector.pushCaptured(event.delta);
+      if (projected.text) for (const delta of emitter.emit(projected, messageId)) yield delta;
       continue;
     }
     if (event.type === "run.completed") {
-      const tail = flush();
-      if (tail) yield tail;
+      for (const tail of flush()) yield tail;
       projector = createAssistantTextStreamProjector(options);
       messageId = undefined;
     } else if (messageId) {
       // Preserve the native activity order when an ordinary word is complete.
       // Path and credential candidates remain buffered across activity events.
       const delta = projector.flushBoundary(" ");
-      if (delta) yield { type: "assistant.delta", messageId, delta };
+      if (delta) for (const projected of emitter.emit({ text: delta, captures: [] }, messageId)) yield projected;
     }
     yield event;
   }
@@ -538,6 +539,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         for await (const event of projectAssistantText(
           normalizedEvents(created.snapshot.events.items, inbox, options.providerId, options.toolOutputKey),
           { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
+          { ownerType: input.owner.type, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, key: options.toolOutputKey, sharedScopeId: input.sharedScopeId },
         )) {
           if (event.type === "run.completed") terminalObserved = true;
           yield event;
@@ -593,6 +595,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         for await (const event of projectAssistantText(
           normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId, options.toolOutputKey),
           { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
+          { ownerType: input.owner.type, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, key: options.toolOutputKey, sharedScopeId: input.sharedScopeId },
         )) {
           if (event.type === "run.completed") terminalObserved = true;
           yield event;

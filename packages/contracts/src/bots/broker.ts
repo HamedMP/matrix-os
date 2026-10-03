@@ -20,6 +20,10 @@ const textEncoder = new TextEncoder();
 export const BotToolCapabilitySchema = z.enum([
   "integration.inventory",
   "integration.call",
+  "integration.describe",
+  "mcp.inventory",
+  "mcp.describe",
+  "mcp.call",
   "memory.propose",
   "memory.search",
   "interaction.create",
@@ -35,6 +39,13 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),
+  capability("integration.describe", z.object({ service: BotIntegrationServiceSchema }).strict()),
+  capability("mcp.inventory", z.object({}).strict()),
+  capability("mcp.describe", z.object({ serverId: z.uuid() }).strict()),
+  capability("mcp.call", z.object({ serverId: z.uuid(), tool: canonicalBoundedText(128, 512),
+    arguments: z.record(z.string().min(1).max(128), z.unknown())
+      .refine((params) => canonicalEncodedByteLength(params) <= MAX_INTEGRATION_PARAMS_BYTES, { message: "Parameters are too large" }),
+  }).strict()),
   capability("integration.call", z.object({
     service: BotIntegrationServiceSchema,
     action: canonicalReferenceId(128),

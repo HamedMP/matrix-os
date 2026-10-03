@@ -1,4 +1,5 @@
-import { estimateContextTokens, type AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { BOT_SESSION_MAX_BYTES } from "@matrix-os/contracts";
 
 export const SESSION_MAX_BYTES = BOT_SESSION_MAX_BYTES;

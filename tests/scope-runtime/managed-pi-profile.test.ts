@@ -46,7 +46,7 @@ async function setup() {
 
 const create = (hostPath: string, profileId = MANAGED_PROFILE, mode = "rw" as "rw" | "ro") => ({
   version: 1 as const, type: "runtime.create" as const, requestId: REQUEST, scopeHandle: SCOPE,
-  profileId, workload: "bot_agent" as const, adapterId: "matrix-bot", harnessVersion: "0.86.1",
+  profileId, workload: "bot_agent" as const, adapterId: "matrix-bot", harnessVersion: "1.0.0",
   sandbox: { version: 1 as const, scopeHandle: SCOPE, actorId: "owner_one", network: "broker_only" as const,
     worktree: { hostPath, mode, fingerprint: "a".repeat(64) } },
 });
@@ -61,7 +61,7 @@ describe("managed Pi supervisor and actual launcher boundary", () => {
     expect(response).toMatchObject({ ok: true, profiles: [
       { profileId: "scope-runtime-chat-v1" },
       { profileId: "scope-runtime-bot-v1" },
-      { profileId: MANAGED_PROFILE, adapters: [{ adapterId: "matrix-bot", harnessVersion: "0.86.1", workloads: ["bot_agent"] }] },
+      { profileId: MANAGED_PROFILE, adapters: [{ adapterId: "matrix-bot", harnessVersion: "1.0.0", workloads: ["bot_agent"] }] },
     ] });
     await expect(launcher.supportedAdapters?.("scope-runtime-forged-v1")).resolves.toEqual([]);
 

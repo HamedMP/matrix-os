@@ -1,4 +1,5 @@
 import { CanonicalChatEventCursorSchema, ChatEventWireVersionSchema, projectChatEventFrame } from "@matrix-os/contracts";
+import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import type { Context, Hono } from "hono";
 import type { UpgradeWebSocket, WSContext } from "hono/ws";
 import { z } from "zod/v4";
@@ -39,7 +40,7 @@ export function registerCanonicalChatEventWebSocketRoute(options: {
               if (closed || frame.type === "chat.content") return false;
               const raw = ws.raw as { bufferedAmount?: number } | undefined;
               if ((raw?.bufferedAmount ?? 0) > 256 * 1024) return false;
-              ws.send(JSON.stringify(projectChatEventFrame(frame, eventVersion)));
+              ws.send(JSON.stringify(projectChatRecipeSources(projectChatEventFrame(frame, eventVersion))));
               return true;
             },
             close: () => close(ws),

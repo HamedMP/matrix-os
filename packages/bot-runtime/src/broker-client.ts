@@ -107,7 +107,10 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
       ...action,
     });
     if (!frame.success) throw new BotBrokerError("invalid_arguments");
-    const raw = await exchange(options, frame.data);
+    const tool = frame.data.action === "bot.tool" ? frame.data.tool : undefined;
+    const waitsForApproval = tool?.capability === "integration.call" || tool?.capability === "mcp.call";
+    const raw = await exchange(waitsForApproval && options.timeoutMs === undefined
+      ? { ...options, timeoutMs: 10 * 60_000 + 35_000 } : options, frame.data);
     const reply = BotBrokerResponseSchema.safeParse(raw);
     if (!reply.success || reply.data.requestId !== requestId) throw new BotBrokerError("unavailable");
     if (!reply.data.ok) throw new BotBrokerError(reply.data.code);

@@ -14,6 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import type {
   CanonicalChatClient,
   CanonicalChatEventConsumer,
+  CanonicalChatInvalidation,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { createCanonicalChatRefresh, applyCanonicalChatContent } from "@matrix-os/ui";
@@ -63,6 +64,7 @@ export function useCanonicalChatRouteController({
   initialChatId = null,
   autoSelectFirst = true,
   eventSource,
+  onInvalidation,
 }: {
   client: CanonicalChatClient;
   projectId: string | null;
@@ -70,6 +72,7 @@ export function useCanonicalChatRouteController({
   initialChatId?: string | null;
   autoSelectFirst?: boolean;
   eventSource?: CanonicalChatEventConsumer;
+  onInvalidation?: (event: CanonicalChatInvalidation) => void;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -78,6 +81,8 @@ export function useCanonicalChatRouteController({
   const [error, setError] = useState<string | null>(null);
   const activeChatIdRef = useRef<string | null>(initialChatId);
   const detailRef = useRef<CanonicalChatDetailResponse | null>(null);
+  const onInvalidationRef = useRef(onInvalidation);
+  onInvalidationRef.current = onInvalidation;
   const streamedMessagesRef = useRef<{ chatId: string | null; ids: string[] }>({
     chatId: initialChatId,
     ids: [],
@@ -215,6 +220,9 @@ export function useCanonicalChatRouteController({
       listRefreshInFlight = false;
     };
     const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === activeChatIdRef.current) {
+        onInvalidationRef.current?.(event);
+      }
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setItems((current) => current.map((item) => item.chat.id === record.chat.id

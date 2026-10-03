@@ -61,3 +61,23 @@ it("shows compact verified batch counters during tool activity",()=>{
  expect(formatJevInboxActivitySummary(value)).toBe("Inbox batch: 3 examined, 2 confirmed, 0 no change, 1 Review, 0 unconfirmed (ready)");
  expect(formatJevInboxActivitySummary({...value,processed:999})).toBeNull();
 });
+
+it("identifies confirmed Review labels as added for inspection, not a skipped write", () => {
+  const { archiveProposal: _archive, ...base } = proposal;
+  const text = formatJevInboxPresentation({ ...base, kind: "labeled", readonly: false,
+    labels: [EMAIL_TRIAGE_LABELS.newsletter, EMAIL_TRIAGE_LABELS.review] });
+  expect(text).toContain("Confirmed in Gmail");
+  expect(text).toContain("The Review label was added for your inspection.");
+  expect(text).not.toContain("No labels were added");
+});
+
+it("describes historical completed Review skips without claiming their evidence was unverified", () => {
+  const text = formatJevInboxPresentation({ kind: "batch", revision: 1,
+    jobId: "jev_batch_" + "a".repeat(32), status: "completed", processed: 2,
+    labeled: 0, review: 1, preview: 1, unconfirmed: 0, messagesLabeled: 0,
+    remainingQueued: 0, hasMore: false, maxThreads: 2,
+    last: { threadId: "thread_fixture", status: "review" } });
+  expect(text).toContain("no-write Review and preview results were not labeled");
+  expect(text).not.toContain("unverified Review");
+  expect(text).toContain("Review: 1; Preview: 1");
+});

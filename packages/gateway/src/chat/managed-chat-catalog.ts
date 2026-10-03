@@ -100,7 +100,7 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
     options: [], skills: [], commands: [],
     setupActions: available ? [] : [{ id: "matrix_ai_settings", kind: "open_settings" as const, label: "Agents & providers" }],
     supports: { rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: [], tools: [],
-      approvals: false, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
+      approvals: true, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
       permissionModes: ["supervised", "full_access"] },
     ...(available ? { defaultSelection: { instanceId: MANAGED_PI_INSTANCE_ID, model: eligible[0]!.id } } : {}),
   }];

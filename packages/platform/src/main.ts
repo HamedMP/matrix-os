@@ -260,6 +260,7 @@ export function createApp(deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  whatsappRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
@@ -456,6 +457,7 @@ export function createApp(deps: {
     );
   }
 
+  if (deps.whatsappRoutes) app.route('/', deps.whatsappRoutes);
   app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
   app.route('/', createComputerRoutes({
     db,

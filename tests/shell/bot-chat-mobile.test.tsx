@@ -7,10 +7,12 @@ import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client.j
 
 afterEach(cleanup);
 
+const clerkFixture = vi.hoisted(() => ({ auth: { orgId: null, getToken: async () => null } }));
+
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
-  useAuth: () => ({ userId: null, sessionId: null }),
+  useAuth: () => clerkFixture.auth,
 }));
 
 it("shows bot identity, questions, and memory in Web Mobile Chat", async () => {

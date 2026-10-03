@@ -205,12 +205,10 @@ export function createJevInboxBroker(options: {
           alive(ownerId, scope, current, preparationSignal);
           const scores = JevEmailTriageScoresSchema.parse(Object.fromEntries(result.answers.map((answer) => [answer.id, answer.probability])));
           const policy = evaluateEmailTriagePolicy({ scores, verified: true, ageDays: evidence.ageDays });
-          const labelingSkipped: "preview_only" | "review_required" = scope.account.labelingEnabled === true
-            && policy.labels.includes(EMAIL_TRIAGE_LABELS.review) ? "review_required" : "preview_only";
           const proposal = { kind: "proposal" as const, verified: true as const, readonly: true as const, threadId: selected.threadId,
             messageCount: evidence.messageCount, labels: policy.labels, archiveProposal: policy.archive, observedAt, requestId: result.requestId,
-            labelingSkipped };
-          if (scope.account.labelingEnabled === true && !policy.labels.includes(EMAIL_TRIAGE_LABELS.review)) {
+            labelingSkipped: "preview_only" as const };
+          if (scope.account.labelingEnabled === true) {
             // Re-read content, not model claims, immediately before the authorized write.
             await profile(ownerId, scope, current, preparationSignal);
             const fresh = threadIdentity(await options.read(ownerId, scope, "get_thread_ids", { threadId: selected.threadId }, preparationSignal), selected.threadId);

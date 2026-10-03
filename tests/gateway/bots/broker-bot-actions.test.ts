@@ -358,3 +358,15 @@ it("rechecks canonical managed run authority after a funded queue wait before se
   expect(response).toMatchObject({ ok: false, error: "action_denied" });
   expect(fetchImpl).not.toHaveBeenCalled();
 });
+
+it("waits for preflight without recording a dispatched effect and stops noncooperative approval work", async () => {
+  const prepare = vi.fn(async () => new Promise<void>(() => {}));
+  const { actions, registry, tools } = setup({ tools: { prepare } });
+  const work = actions.handleFrame(tool());
+  await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  expect(await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: "run_broker1" })).toEqual([]);
+  registry.cancelInference(binding);
+  await expect(work).resolves.toMatchObject({ ok: false, code: "stale_generation" });
+  expect(tools.dispatch).not.toHaveBeenCalled();
+  expect(await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: "run_broker1" })).toEqual([]);
+});

@@ -276,7 +276,10 @@ export function createCanonicalChatEventSource(options: {
     } else if (frame.type === "chat.event" || frame.type === "chat.content") {
       advanceCursor(frame.event.cursor);
       if (!rememberCursor(frame.event.cursor)) return;
-      if (!replay.complete && frame.type === "chat.event") replay.sawEvent = true;
+      if (!replay.complete && frame.type === "chat.event") {
+        replay.sawEvent = true;
+        return;
+      }
       invalidationConsumers.notify((consumer) => consumer({
         type: "chat.changed",
         chatId: frame.event.chatId,

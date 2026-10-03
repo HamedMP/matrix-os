@@ -25,6 +25,8 @@ import { createCanonicalChatRoutes } from "../chat/routes.js";
 import { createCanonicalChatService, createUnavailableCanonicalChatService } from "../chat/service.js";
 import { ChatSharing } from "../chat/sharing.js";
 import { createChatSharingRoutes } from "../chat/sharing-routes.js";
+import { ChatCredentialRepository } from "../chat/credential-repository.js";
+import { createChatCredentialRoutes } from "../chat/credential-routes.js";
 import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import type { OwnerToolOutputProjection } from "../chat/owner-tool-output.js";
 import type { ChatRepository } from "../chat/repository.js";
@@ -51,6 +53,8 @@ export interface CollaborationChatRouteOptions {
   syncR2?: R2Client | null;
   runtimeOwnerId?: string;
   runtimeSlot?: string;
+  credentialKey?: Buffer;
+  runtimeOwnerIds: readonly string[];
   listGmailAccounts?: (ownerId: string) => Promise<readonly GmailAccountRow[]>;
   botServices?: BotServices;
 }
@@ -75,6 +79,11 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     });
   }
   app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
+  app.route("/", createChatCredentialRoutes({
+    repository: chatRepository ? new ChatCredentialRepository(chatRepository.kysely,
+      options.credentialKey, options.runtimeOwnerIds) : null,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
   registerOwnerCollaborationRoutes({ app, upgradeWebSocket, gatewayCollaboration, collaborationFailClosedReason });
   app.route("/", createCodexChatImportRoutes({
     importer: chatRepository ? new CodexChatImporter(chatRepository) : null,

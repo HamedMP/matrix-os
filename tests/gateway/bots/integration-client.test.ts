@@ -1,5 +1,8 @@
 import { createHmac } from "node:crypto";
 import { Hono } from "hono";
+import { createIntegrationRoutes } from "../../../packages/gateway/src/integrations/routes.js";
+import type { PlatformDb } from "../../../packages/gateway/src/platform-db.js";
+import type { PipedreamConnectClient } from "../../../packages/gateway/src/integrations/pipedream.js";
 import { describe, expect, it, vi } from "vitest";
 import {
   BotIntegrationError,
@@ -12,6 +15,41 @@ const OWNER = "user_owner_1";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 describe("bot integration client", () => {
+  it("parses the actual owner catalog route DTO and preserves its scoped-read action boundary", async () => {
+    const pipedream = { getAppInfo: async () => null } as unknown as PipedreamConnectClient;
+    const resolveUserId = vi.fn(async (context) => context.req.header("x-platform-user-id") ?? null);
+    const routes = createIntegrationRoutes({ db: {} as PlatformDb, pipedream, webhookSecret: "fixture", resolveUserId });
+    const client = createBotIntegrationClient(createLocalIntegrationTransport(routes));
+    const read = await client.describe(OWNER, { service: "gmail", readOnly: true });
+    const full = await client.describe(OWNER, { service: "gmail", readOnly: false });
+    expect(read.length).toBeGreaterThan(0);
+    expect(read.every(action => action.risk === "read")).toBe(true);
+    expect(read.map(action => action.id)).toContain("get_profile");
+    expect(full.find(action => action.id === "send_email")?.risk).toBe("write");
+    expect(read.some(action => Object.hasOwn(action, "directApi") || Object.hasOwn(action, "paramsSchema"))).toBe(false);
+    expect(resolveUserId).toHaveBeenCalledTimes(2);
+  });
+  it("reads owner-authoritative action metadata with read-only narrowing and no credential/API fields", async () => {
+    const transport = vi.fn(async () => json([{ id: "github", name: "GitHub", directSecret: "must-not-project", actions: {
+      list_issues: { description: "List", risk: "read", params: { repo: { type: "string", required: true } }, directApi: { url: "https://private.example" } },
+      create_issue: { description: "Create", risk: "write", params: { title: { type: "string" } } },
+    } }]));
+    const client = createBotIntegrationClient(transport);
+    const actions = await client.describe(OWNER, { service: "github", readOnly: true }, new AbortController().signal);
+    expect(actions).toEqual([{ id: "list_issues", description: "List", risk: "read", params: { repo: { type: "string", required: true } } }]);
+    expect(transport).toHaveBeenCalledWith(OWNER, expect.objectContaining({ method: "GET", path: "/agent-catalog", readScope: true }));
+  });
+  it("aborts a stalled body and cancels its reader without waiting for the external action timeout", async () => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const cancel = vi.fn(); const abort = new AbortController();
+    const transport = vi.fn(async () => new Response(new ReadableStream({ start(controller) { stream = controller; }, cancel })));
+    const work = createBotIntegrationClient(transport).inventory(OWNER, abort.signal);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
+    await Promise.resolve(); abort.abort();
+    const result = await Promise.race([work.then(() => null, error => error), new Promise(resolve => setTimeout(() => resolve("unsettled"), 50))]);
+    try { expect(result).toBeInstanceOf(BotIntegrationError); expect(cancel).toHaveBeenCalledTimes(1); }
+    finally { if (!cancel.mock.calls.length) stream.close(); await work.catch(() => undefined); }
+  });
   it("calls the platform as the owner with the machine token and a signed delegation", async () => {
     const fetchImpl = vi.fn(async () => json([
       { id: "conn_1", service: "gmail", account_label: "Work", account_email: "me@example.com", status: "active" },

@@ -17,6 +17,7 @@ const LIST_TIMEOUT_MS = 10_000;
 const CALL_TIMEOUT_MS = 25_000;
 const MAX_LIST_BYTES = 128 * 1024;
 const MAX_CALL_BYTES = 256 * 1024;
+const MAX_CATALOG_BYTES = 1024 * 1024;
 const MAX_CONNECTIONS = 256;
 
 export type BotIntegrationErrorCode = "unavailable" | "ambiguous" | "missing" | "invalid" | "denied";
@@ -52,19 +53,32 @@ const InventorySchema = z.array(z.object({
 
 const CallResultSchema = z.object({ data: z.unknown(), summary: z.string().max(2_000).optional() }).passthrough();
 const ConnectResultSchema = z.object({ url: z.url({ protocol: /^https$/ }).max(4_096) }).passthrough();
+const ActionParamSchema = z.object({
+  type: z.enum(["string", "number", "boolean", "object", "array"]),
+  required: z.boolean().optional(), description: z.string().max(4_096).optional(),
+});
+const CatalogActionSchema = z.object({ description: z.string().max(8_192), risk: z.enum(["read", "write", "destructive"]),
+  params: z.record(z.string().min(1).max(128), ActionParamSchema).refine(params => Object.keys(params).length <= 128) });
+const CatalogSchema = z.array(z.object({ id: z.string().regex(/^[a-z][a-z0-9_]{1,63}$/),
+  actions: z.record(z.string().min(1).max(128), CatalogActionSchema).refine(actions => Object.keys(actions).length <= 128) })).max(256);
+export type BotIntegrationAction = z.infer<typeof CatalogActionSchema> & { id: string };
 
-async function boundedText(response: Response, maxBytes: number): Promise<string> {
+async function boundedText(response: Response, maxBytes: number, signal: AbortSignal): Promise<string> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
     await response.body?.cancel();
     throw new BotIntegrationError("unavailable");
   }
+  if (signal.aborted) { await response.body?.cancel(); throw new BotIntegrationError("unavailable"); }
   if (!response.body) return "";
   const reader = response.body.getReader();
+  const abort = () => { void reader.cancel().catch((error: unknown) => console.warn("[bots] integration body cancellation failed:", error instanceof Error ? error.name : "UnknownError")); };
+  signal.addEventListener("abort", abort, { once: true });
   const chunks: Uint8Array[] = [];
   let size = 0;
-  for (;;) {
+  try { for (;;) {
     const { done, value } = await reader.read();
+    if (signal.aborted) throw new BotIntegrationError("unavailable");
     if (done) break;
     size += value.byteLength;
     if (size > maxBytes) {
@@ -72,7 +86,7 @@ async function boundedText(response: Response, maxBytes: number): Promise<string
       throw new BotIntegrationError("unavailable");
     }
     chunks.push(value);
-  }
+  } } finally { signal.removeEventListener("abort", abort); reader.releaseLock(); }
   return Buffer.concat(chunks, size).toString("utf8");
 }
 
@@ -83,13 +97,13 @@ function failureFor(status: number): BotIntegrationErrorCode {
   return "unavailable";
 }
 
-async function readJson(response: Response, maxBytes: number): Promise<unknown> {
+async function readJson(response: Response, maxBytes: number, signal: AbortSignal): Promise<unknown> {
   if (!response.ok) {
     await response.body?.cancel();
     throw new BotIntegrationError(failureFor(response.status));
   }
   try {
-    return JSON.parse(await boundedText(response, maxBytes));
+    return JSON.parse(await boundedText(response, maxBytes, signal));
   } catch (error: unknown) {
     if (error instanceof BotIntegrationError) throw error;
     throw new BotIntegrationError("unavailable");
@@ -97,7 +111,7 @@ async function readJson(response: Response, maxBytes: number): Promise<unknown> 
 }
 
 export function createBotIntegrationClient(transport: BotIntegrationTransport) {
-  async function send<T>(ownerId: string, request: Omit<Parameters<BotIntegrationTransport>[1], "signal">, timeoutMs: number, parse: (response: Response) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  async function send<T>(ownerId: string, request: Omit<Parameters<BotIntegrationTransport>[1], "signal">, timeoutMs: number, parse: (response: Response, signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
     const bounded = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]);
     let response: Response;
     try {
@@ -106,31 +120,42 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
       console.warn("[bots] integration request failed:", error instanceof Error ? error.name : "UnknownError");
       throw new BotIntegrationError("unavailable");
     }
-    return parse(response);
+    return parse(response, bounded);
   }
 
   return {
     /** The owner's active connected accounts. */
     async inventory(ownerId: string, signal?: AbortSignal): Promise<BotIntegrationConnection[]> {
-      return send(ownerId, { method: "GET", path: "/" }, LIST_TIMEOUT_MS, async (response) => {
-        const rows = InventorySchema.safeParse(await readJson(response, MAX_LIST_BYTES));
+      return send(ownerId, { method: "GET", path: "/" }, LIST_TIMEOUT_MS, async (response, bounded) => {
+        const rows = InventorySchema.safeParse(await readJson(response, MAX_LIST_BYTES, bounded));
         if (!rows.success) throw new BotIntegrationError("unavailable");
         return rows.data.filter((row) => row.status === "active")
           .map((row) => ({ connectionId: row.id, service: row.service, label: row.account_label }));
       }, signal);
     },
+    /** Owner-authenticated catalog, narrowed by the current server projection. */
+    async describe(ownerId: string, input: { service: string; readOnly: boolean }, signal?: AbortSignal): Promise<BotIntegrationAction[]> {
+      return send(ownerId, { method: "GET", path: "/agent-catalog", ...(input.readOnly ? { readScope: true } : {}) }, LIST_TIMEOUT_MS, async (response, bounded) => {
+        const parsed = CatalogSchema.safeParse(await readJson(response, MAX_CATALOG_BYTES, bounded));
+        if (!parsed.success) throw new BotIntegrationError("unavailable");
+        const services = parsed.data.filter(service => service.id === input.service);
+        if (services.length !== 1) return [];
+        return Object.entries(services[0]!.actions).filter(([, action]) => !input.readOnly || action.risk === "read")
+          .map(([id, action]) => ({ id, ...action }));
+      }, signal);
+    },
     /** A provider-hosted consent URL for connecting a new account of `service`. */
     async connect(ownerId: string, service: string, signal?: AbortSignal): Promise<string> {
-      return send(ownerId, { method: "POST", path: "/connect", body: { service } }, LIST_TIMEOUT_MS, async (response) => {
-        const result = ConnectResultSchema.safeParse(await readJson(response, MAX_LIST_BYTES));
+      return send(ownerId, { method: "POST", path: "/connect", body: { service } }, LIST_TIMEOUT_MS, async (response, bounded) => {
+        const result = ConnectResultSchema.safeParse(await readJson(response, MAX_LIST_BYTES, bounded));
         if (!result.success) throw new BotIntegrationError("unavailable");
         return result.data.url;
       }, signal);
     },
     /** Asks integrations to pick up accounts connected since the last sync. */
     async sync(ownerId: string, signal?: AbortSignal): Promise<void> {
-      await send(ownerId, { method: "POST", path: "/sync" }, CALL_TIMEOUT_MS, async (response) => {
-        await readJson(response, MAX_CALL_BYTES);
+      await send(ownerId, { method: "POST", path: "/sync" }, CALL_TIMEOUT_MS, async (response, bounded) => {
+        await readJson(response, MAX_CALL_BYTES, bounded);
       }, signal);
     },
     /** Runs one action on the account with `label`. Reads use the read-only route, which never syncs. */
@@ -140,8 +165,8 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
         path: input.read ? "/read-call" : "/call",
         body: { service: input.service, action: input.action, label: input.label, params: input.params },
         readScope: input.read,
-      }, CALL_TIMEOUT_MS, async (response) => {
-        const result = CallResultSchema.safeParse(await readJson(response, MAX_CALL_BYTES));
+      }, CALL_TIMEOUT_MS, async (response, bounded) => {
+        const result = CallResultSchema.safeParse(await readJson(response, MAX_CALL_BYTES, bounded));
         if (!result.success) throw new BotIntegrationError("unavailable");
         return { data: result.data.data, ...(result.data.summary !== undefined ? { summary: result.data.summary } : {}) };
       }, signal);

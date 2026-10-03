@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { sql } from "kysely";
 import {
   ProjectTransitionError,
   createProjectTransitionJournal,
@@ -237,6 +238,92 @@ describe("project collaboration transition journal", () => {
       .where("scope_id", "=", SCOPE_ID)
       .where("event_type", "=", "project.transition.active")
       .executeTakeFirstOrThrow()).toEqual({ count: 1 });
+  });
+
+  it("atomically revokes inherited Chat reveals and notifies the owner at project publication", async () => {
+    const published = vi.fn();
+    const transitions = createProjectTransitionJournal({
+      db: fixture.db, now: () => NOW, createTransitionId: () => TRANSITION_ID,
+      onChatShared: published,
+    });
+    await prepare();
+    const chatId = "chat_project_credentials";
+    const childScopeId = "10000000-0000-4000-8000-000000000053";
+    await fixture.db.insertInto("chats").values({
+      id: chatId, owner_type: "personal", owner_id: OWNER_ID, create_request_id: "req_project_credentials",
+      project_id: "proj_alpha", title: "Private Chat", lifecycle: "active", attention: "none", revision: 2,
+      message_count: 2, collaboration: null, user_state: null, shell_state: null, fork_provenance: null,
+      last_message_preview: "[redacted credential]", current_selection: null,
+      bound_driver_kind: null, bound_instance_id: null, bound_at_turn_id: null, created_at: NOW, updated_at: NOW,
+    }).execute();
+    await fixture.db.insertInto("chat_messages").values({ id: "msg_project_input", chat_id: chatId,
+      seq: 1, role: "user", state: "committed", purpose: "ai_request", turn_id: null, run_id: null,
+      actor_id: OWNER_ID, parts: JSON.stringify([{ type: "text", text: "test" }]), byte_count: 4,
+      search_text: "test", created_at: NOW }).execute();
+    await fixture.db.insertInto("chat_turns").values({ id: "turn_project_credentials", chat_id: chatId,
+      client_request_id: "req_project_turn", base_message_seq: 0, input_message_id: "msg_project_input",
+      status: "completed", created_at: NOW, updated_at: NOW }).execute();
+    await fixture.db.insertInto("chat_runs").values({ id: "run_project_credentials", chat_id: chatId,
+      turn_id: "turn_project_credentials", client_request_id: "req_project_turn", attempt: 1,
+      driver_kind: "claude", instance_id: "instance_project", selection: JSON.stringify({}),
+      interaction_mode: "default", permission_mode: "default", execution_root: null,
+      execution_root_fingerprint: null, status: "completed", outcome: "completed", started_at: NOW,
+      completed_at: NOW, history_boundary_seq: 0, capability_snapshot: JSON.stringify({}),
+      created_at: NOW, updated_at: NOW }).execute();
+    await fixture.db.insertInto("chat_messages").values({ id: "msg_project_secret", chat_id: chatId,
+      seq: 2, role: "assistant", state: "committed", purpose: "assistant",
+      turn_id: "turn_project_credentials", run_id: "run_project_credentials", actor_id: null,
+      parts: JSON.stringify([{ type: "text", text: "[redacted credential]" }]), byte_count: 21,
+      search_text: "[redacted credential]", created_at: NOW }).execute();
+    await fixture.db.insertInto("chat_credentials").values({ id: "cred_0123456789abcdef0123456789abcdef",
+      chat_id: chatId, message_id: "msg_project_secret", run_id: "run_project_credentials", owner_id: OWNER_ID,
+      safe_offset: 0, placeholder_length: 21, envelope: JSON.stringify({ version: 1 }), revealed: true,
+      created_at: NOW }).execute();
+    await fixture.db.insertInto("collaboration_scopes").values({ id: childScopeId,
+      owner_type: "personal", owner_id: OWNER_ID, kind: "chat", organization_id: "org_matrix_team",
+      resource_id: chatId, parent_scope_id: SCOPE_ID, membership_mode: "inherited", lifecycle: "preparing",
+      revision: 2, auth_epoch: 0, authority_runtime_id: DESTINATION_RUNTIME, authority_generation: 1,
+      execution_generation: null, execution_eligibility: null, created_at: NOW, updated_at: NOW, deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_resource_bindings").values({
+      id: "30000000-0000-4000-8000-000000000053", project_scope_id: SCOPE_ID, resource_scope_id: childScopeId,
+      resource_kind: "chat", resource_id: chatId, authority_runtime_id: DESTINATION_RUNTIME,
+      authority_generation: 1, revision: 2, readiness: "ready", blocker: null, incarnation: null,
+      created_at: NOW, updated_at: NOW,
+    }).execute();
+    await transitions.beginStaging(TRANSITION_ID);
+    await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
+    await transitions.markFenced({ transitionId: TRANSITION_ID, sourceFenceEpoch: 8,
+      currentInventoryRevision: 7, currentInventoryHash: INVENTORY_HASH,
+      currentMembershipHash: MEMBERSHIP_HASH });
+    await transitions.beginCommit(TRANSITION_ID);
+    await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
+    await sql`CREATE FUNCTION reject_project_activation() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.event_type = 'project.transition.active' THEN RAISE EXCEPTION 'forced activation rollback'; END IF;
+      RETURN NEW; END;
+    $$`.execute(fixture.db);
+    await sql`CREATE TRIGGER reject_project_activation_event BEFORE INSERT ON collaboration_events
+      FOR EACH ROW EXECUTE FUNCTION reject_project_activation()`.execute(fixture.db);
+    await expect(transitions.activate(TRANSITION_ID)).rejects.toThrow();
+    expect(await fixture.db.selectFrom("chat_credentials").select("revealed")
+      .where("chat_id", "=", chatId).executeTakeFirstOrThrow()).toEqual({ revealed: true });
+    expect(await fixture.db.selectFrom("chat_outbox").select("event_type")
+      .where("chat_id", "=", chatId).execute()).toEqual([]);
+    expect(published).not.toHaveBeenCalled();
+    await sql`DROP TRIGGER reject_project_activation_event ON collaboration_events`.execute(fixture.db);
+    await sql`DROP FUNCTION reject_project_activation()`.execute(fixture.db);
+    await transitions.activate(TRANSITION_ID);
+    expect(await fixture.db.selectFrom("chat_credentials").select("revealed")
+      .where("chat_id", "=", chatId).executeTakeFirstOrThrow()).toEqual({ revealed: false });
+    expect(await fixture.db.selectFrom("chats").select(["collaboration", "revision"])
+      .where("id", "=", chatId).executeTakeFirstOrThrow()).toEqual({ collaboration: null, revision: 3 });
+    expect(await fixture.db.selectFrom("chat_outbox").select(["event_type", "revision"])
+      .where("chat_id", "=", chatId).execute()).toEqual([{ event_type: "chat.updated", revision: 3 }]);
+    expect(published).toHaveBeenCalledWith(OWNER_ID, expect.objectContaining({
+      chatId, eventType: "chat.updated", revision: 3,
+    }));
+    await transitions.activate(TRANSITION_ID);
+    expect(published).toHaveBeenCalledTimes(1);
   });
 
   it("publishes accepted and pending members only after activation at the destination authority", async () => {

@@ -1,3 +1,5 @@
+import { ChatAgentContextError } from "./agent-context.js";
+import { mapChatAgentContextError } from "./orchestration-errors.js";
 import { createHermesSubagentActivity } from "./hermes-subagent-activity.js";
 import { restrictedHermesPythonArguments } from "./jev-hermes-python.js";
 import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
@@ -39,7 +41,10 @@ import {
   safePublishedText,
   safeToolPreview,
   sanitizeAssistantText,
+  projectAssistantTextWithCaptures,
+  type CapturedAssistantText,
 } from "./safe-activity-projection.js";
+import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 
 const SafeSessionIdSchema = z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/);
 const HermesChatStateSchema = z.object({ sessionId: SafeSessionIdSchema }).strict();
@@ -130,15 +135,6 @@ function selection(value: string): { provider: string; model: string } {
 function isRawProviderFailureText(text: string): boolean {
   return /^\s*(?:(?:provider\s+)?error:\s*)?(?:HTTP(?:\/\d(?:\.\d)?)?\s+[45]\d{2}\b|\{\s*"(?:detail|error)"\s*:)/i
     .test(text);
-}
-
-function outputChunks(text: string): string[] {
-  const chunks: string[] = [];
-  for (let index = 0; index < text.length; index += 4_000) {
-    const chunk = text.slice(index, index + 4_000);
-    if (chunk) chunks.push(chunk);
-  }
-  return chunks;
 }
 
 function remainingHermesInterimText(streamed: string, interim: string): string | undefined {
@@ -359,6 +355,12 @@ export function createHermesChatProviderAdapter(options: {
       executionRoot: input.executionRoot,
       showPrivatePaths: !input.sharedScopeId,
     };
+    const credentialEmitter = createAssistantCredentialEmitter({
+      ownerType: input.owner.type,
+      ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
+      key: options.toolOutputKey, sharedScopeId: input.sharedScopeId,
+    });
+    let pendingVisibleCaptures: CapturedAssistantText["captures"] = [];
     const projectSubagent = createHermesSubagentActivity(input.runId);
     let releaseInputRun: (() => void) | undefined;
     let releaseApprovalRun: (() => void) | undefined;
@@ -394,9 +396,11 @@ export function createHermesChatProviderAdapter(options: {
         deltaFlushTimer = undefined;
       }
       const text = pendingVisibleText;
+      const captures = pendingVisibleCaptures;
       pendingVisibleText = "";
-      for (const delta of outputChunks(text)) {
-        queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
+      pendingVisibleCaptures = [];
+      for (const delta of credentialEmitter.emit({ text, captures })) {
+        queue.push(delta);
         emittedDeltaEvents += 1;
       }
     };
@@ -410,13 +414,17 @@ export function createHermesChatProviderAdapter(options: {
       deltaFlushTimer.unref?.();
     };
 
-    const emitVisibleText = (text: string) => {
+    const emitVisibleText = (value: string | CapturedAssistantText) => {
+      const { text, captures } = typeof value === "string" ? { text: value, captures: [] } : value;
       if (!text) return;
       const separator = separatorPending && emittedOutputBytes > 0 ? "\n\n" : "";
       const addedBytes = Buffer.byteLength(separator + text, "utf8");
       if (emittedOutputBytes + addedBytes > MAX_OUTPUT_BYTES) {
         throw new HermesRunFailure("run", "Hermes output exceeded limit");
       }
+      pendingVisibleCaptures.push(...captures.slice(0, Math.max(0, 16 - pendingVisibleCaptures.length)).map((capture) => ({
+        ...capture, offset: pendingVisibleText.length + separator.length + capture.offset,
+      })));
       pendingVisibleText += separator + text;
       emittedOutputBytes += addedBytes;
       separatorPending = false;
@@ -431,14 +439,20 @@ export function createHermesChatProviderAdapter(options: {
     };
 
     const emitStreamText = (text: string) => {
-      const projected = pendingStreamBoundaryText + sanitizeAssistantText(text, pathProjection);
+      const projectedCapture = projectAssistantTextWithCaptures(text, pathProjection);
+      const projected = pendingStreamBoundaryText + projectedCapture.text;
       if (emittedOutputBytes + Buffer.byteLength(projected, "utf8") > MAX_OUTPUT_BYTES) {
         throw new HermesRunFailure("run", "Hermes output exceeded limit");
       }
       const trailingWhitespace = projected.match(/\s+$/)?.[0] ?? "";
       const boundary = trailingWhitespace;
       pendingStreamBoundaryText = boundary;
-      emitVisibleText(projected.slice(0, projected.length - boundary.length));
+      emitVisibleText({
+        text: projected.slice(0, projected.length - boundary.length),
+        captures: projectedCapture.captures.map((capture) => ({
+          ...capture, offset: capture.offset + projected.length - projectedCapture.text.length,
+        })),
+      });
     };
 
     const flushStreamBoundary = () => {
@@ -501,12 +515,12 @@ export function createHermesChatProviderAdapter(options: {
           const remainingText = remainingHermesInterimText(publishedSegment, interim.text);
           if (remainingText === undefined) throw new Error("Hermes interim response did not match published output");
           if (remainingText && !currentSegmentSuppressed && !deferAssistantAfterToolFailure) {
-            emitVisibleText(sanitizeAssistantText(remainingText, pathProjection));
+            emitVisibleText(projectAssistantTextWithCaptures(remainingText, pathProjection));
           }
         } else if (!deferAssistantAfterToolFailure) {
           flushStreamBoundary();
           if (currentSegment) separatorPending = true;
-          emitVisibleText(sanitizeAssistantText(interim.text, pathProjection));
+          emitVisibleText(projectAssistantTextWithCaptures(interim.text, pathProjection));
         } else {
           pendingStreamBoundaryText = "";
         }
@@ -854,7 +868,7 @@ export function createHermesChatProviderAdapter(options: {
           const finalTail = deferAssistantAfterToolFailure
             ? redactFailedToolOutput(final.text.slice(deferredSegmentPrefixLength), unsafeToolFragments)
             : final.text.slice(publishedSegmentLength);
-          emitVisibleText(sanitizeAssistantText(finalTail, pathProjection));
+          emitVisibleText(projectAssistantTextWithCaptures(finalTail, pathProjection));
         }
         flushVisibleText(true);
         if (final.status === "error") throw new HermesRunFailure("run", "Hermes Run failed");
@@ -876,9 +890,12 @@ export function createHermesChatProviderAdapter(options: {
           "[chat/hermes] Provider Run failed:",
           error instanceof HermesGatewayProtocolError
             ? `${error.name}:${error.reason}${error.eventType ? `:${error.eventType}` : ""}`
+            : error instanceof ChatAgentContextError ? `${error.name}:${error.code}`
             : error instanceof Error ? error.name : "UnknownError",
         );
-        const safeFailure = error instanceof HermesGatewayProtocolError && error.reason === "frame_too_large"
+        const safeFailure = error instanceof ChatAgentContextError
+          ? mapChatAgentContextError(error).safeError
+          : error instanceof HermesGatewayProtocolError && error.reason === "frame_too_large"
           ? {
               code: "run_failed" as const,
               safeMessage: "The agent returned a response that was too large to process.",
@@ -899,9 +916,9 @@ export function createHermesChatProviderAdapter(options: {
           outcome: input.signal.aborted ? "aborted" : "failed",
           ...(input.signal.aborted ? {} : {
             error: {
-              ...safeFailure,
               retryable: true,
               recoveryActions: ["retry"],
+              ...safeFailure,
             },
           }),
         };

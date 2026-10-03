@@ -17,8 +17,12 @@ export const FUNDED_AI_READINESS_TIMEOUTS = Object.freeze({
   gatewayRequestMs: 13_000,
   gatewayObservationMs: 14_000,
   rendererRequestMs: 15_000,
-  jevProbeMs: 5_000,
-  jevRouteMs: 6_000,
+  // Jev readiness is owner-funded: cold-start + inference + exact settlement
+  // and policy reread must finish before the temporary credential is revoked.
+  jevProbeMs: 20_000,
+  jevRouteMs: 24_000,
+  jevGatewayRequestMs: 25_000,
+  jevObservationMs: 26_000,
 });
 
 // Checkout clients have a total cutoff distinct from readiness. Stripe keeps
@@ -335,6 +339,15 @@ export const FundedAiFinalizationRequestSchema = z.discriminatedUnion("mode", [
     reservationId: canonicalReferenceId(160),
     tokenId: TokenIdSchema,
     mode: z.literal("conservative"),
+  }).strict(),
+  // Trusted relay attestation only: no upstream call occurred after start.
+  // There is no caller-supplied amount or invented provider provenance.
+  z.object({
+    reservationId: canonicalReferenceId(160),
+    tokenId: TokenIdSchema,
+    mode: z.literal("not_dispatched"),
+    expectedRequestId: canonicalReferenceId(160),
+    jevPricingVersion: JevProvenanceSchema.shape.pricingVersion,
   }).strict(),
 ]);
 

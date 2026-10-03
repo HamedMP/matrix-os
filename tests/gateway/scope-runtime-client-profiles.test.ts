@@ -63,7 +63,7 @@ describe("scope runtime client profiles", () => {
       available: true,
       profileId: "scope-runtime-bot-v1",
       executionGeneration: "5",
-      supportedAdapters: [{ adapterId: "matrix-bot", harnessVersion: "0.86.1", workloads: ["bot_agent"] }],
+      supportedAdapters: [{ adapterId: "matrix-bot", harnessVersion: "1.0.0", workloads: ["bot_agent"] }],
       sandbox: { workloads: ["bot_agent"] },
     });
     expect(client.profileCapability("scope-runtime-chat-v1")).toMatchObject({ available: true });
