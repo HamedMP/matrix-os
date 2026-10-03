@@ -37,6 +37,15 @@ describe("Chat funding eligibility", () => {
 
   afterEach(async () => destroyTestPlatformDb(db));
 
+  const financialState = async () => ({
+    balances: await db.executor.selectFrom("ai_funded_runtime_balances").selectAll().execute(),
+    grants: await db.executor.selectFrom("ai_funded_promotional_grant_balances").selectAll().execute(),
+    reservations: await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute(),
+    allocations: await db.executor.selectFrom("ai_funded_reservation_promotional_allocations").selectAll().execute(),
+    ledger: await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute(),
+    priorityClaims: await db.executor.selectFrom("ai_funded_priority_claims").selectAll().execute(),
+  });
+
   it("shows no Chat credit in runtime and checkout summaries when only speech has credit", async () => {
     const expected = { creditBalanceMicrousd: 0, promotionalBalanceMicrousd: 0, remainingBalanceMicrousd: 0 };
     expect(await repo.getFundingSummary(identity)).toMatchObject(expected);
@@ -65,10 +74,15 @@ describe("Chat funding eligibility", () => {
     });
   });
 
-  it("keeps missing general grant attribution an invariant error", async () => {
+  it.each([false, true])("refuses missing general source attribution before reservation (usage=%s)", async (usage) => {
     await db.executor.deleteFrom("ai_funded_promotional_grant_balances").execute();
-    await expect(repo.authorize({ credential, requestId: "broken_attribution", modelId, maxCostMicrousd: 10 }))
-      .rejects.toThrow("allocation invariant violated");
+    const before = await financialState();
+    // An aggregate balance is not spendable source evidence. The eligible
+    // ceiling rejects before priority or allocation rather than attempting a hold.
+    await expect(repo.authorize({ credential, requestId: "broken_attribution", modelId, maxCostMicrousd: 10,
+      ...(usage ? { billingMode: "usage" as const } : {}) }))
+      .rejects.toMatchObject({ code: "insufficient_credit" });
+    expect(await financialState()).toEqual(before);
   });
 
   it("maps a source allocation shortfall explained by speech-only credit to insufficient_credit", async () => {
@@ -77,13 +91,16 @@ describe("Chat funding eligibility", () => {
       .rejects.toMatchObject({ code: "insufficient_credit" });
   });
 
-  it("does not mask missing general attribution when speech credit also remains", async () => {
+  it.each([false, true])("cannot borrow speech credit when general attribution is missing (usage=%s)", async (usage) => {
     await repo.grantCredit({ entryId: "missing_chat_grant", identity, kind: "promotional_grant",
       amountMicrousd: 20, sourceReference: "chat_campaign" });
     await db.executor.deleteFrom("ai_funded_promotional_grant_balances")
       .where("grant_entry_id", "=", "missing_chat_grant").execute();
-    await expect(repo.authorize({ credential, requestId: "mixed_broken_attribution", modelId, maxCostMicrousd: 10 }))
-      .rejects.toThrow("allocation invariant violated");
+    const before = await financialState();
+    await expect(repo.authorize({ credential, requestId: "mixed_broken_attribution", modelId, maxCostMicrousd: 10,
+      ...(usage ? { billingMode: "usage" as const } : {}) }))
+      .rejects.toMatchObject({ code: "insufficient_credit" });
+    expect(await financialState()).toEqual(before);
   });
 
   it("checkout excludes expired unprotected promotion without changing persisted grants", async () => {
