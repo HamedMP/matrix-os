@@ -254,3 +254,23 @@ availability, labels, guarded transitions, and resulting V3 refreshes.
 - **SC-013**: The same V3 fixture produces identical harness, account, access-source, model, and lifecycle availability in Canvas, Web Desktop, and Electron contract/component tests, with current visual evidence for all three surfaces.
 - **SC-014**: Logout, removal, disable, and active-Chat reassignment failure paths preserve prior visible state and Chat history in 100% of lifecycle integration tests.
 - **SC-015**: Matrix AI is never projected ready when either policy eligibility or fresh relay health is absent in the funded-readiness test matrix.
+
+
+### Owner-scoped credit history contract
+
+`GET /billing/ai-credit/history` uses the existing billing Clerk identity resolver.
+Validated runtime slot, page size (1–50), and opaque cursor are applied to the
+active authorized computer resolved server-side. Ledger reads and settled-model
+metadata joins remain scoped to that owner, machine, and runtime. Cross-scope
+cursors are rejected; created-at/entry keyset ordering keeps pagination stable.
+Responses are private/no-store and include only timestamp, exact signed microUSD
+amount, activity kind, and nullable model ID. No credential, payment, ledger,
+reservation, request, or source-reference identifier is returned. Database
+failures return safe unavailable feedback. This read-only endpoint changes no
+credit balance, budget, policy, or access.
+
+Contract and platform tests cover query bounds, scope isolation, pagination,
+unknown model metadata, empty results, private-field redaction, safe failures,
+and billing registration. Renderer history presentation and real runtime/Electron
+acceptance follow in later Settings layers; public guidance remains tracked in
+the separate matrix-os-site documentation PR.
