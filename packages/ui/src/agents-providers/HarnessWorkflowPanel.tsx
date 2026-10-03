@@ -348,6 +348,13 @@ export function HarnessWorkflowPanel({
             <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting}
               onClick={() => void start("login", true)}>Sign in in Terminal</button>
           ) : null}
+          {harness.installState === "installed" && capability.loginMethods.includes("terminal") && !inlineLogin
+            && connecting && !failure && operation?.kind === "login" && operation.terminalSessionId ? (
+            <button type="button" className="matrix-ap-button" disabled={disabled || pending}
+              onClick={() => void run(async () => { onOpenTerminal(operation.terminalSessionId!); })}>
+              Continue in Terminal
+            </button>
+          ) : null}
           {advancedConfiguration}
         </details>
       ) : null}

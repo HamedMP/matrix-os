@@ -565,3 +565,8 @@ Web authorization opens a same-origin blank handle, immediately severs its opene
 and sets a no-referrer document policy before trusted navigation. A blocked or
 unisolatable popup returns failure. `noopener`-requested opens cannot be detected
 by their null return alone (WHATWG Window.open / MDN Window.open).
+
+A restored active terminal-only login can reopen its exact server receipt session
+inside Advanced configuration without creating another login. This continuation
+requires advertised Terminal support and no inline adapter; settled, cancelled,
+expired, denied and unadvertised login receipts never expose that fallback.
