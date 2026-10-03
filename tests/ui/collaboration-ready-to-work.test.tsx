@@ -189,9 +189,9 @@ describe("organization ready-to-work presentation", () => {
     };
     render(<AudienceGrantPicker api={api} scope={scope} />);
     // The grant row names the person, not their Clerk id.
-    expect(await screen.findByText("Ada Lovelace · ada@example.com · active")).toBeVisible();
+    expect(await screen.findByRole("combobox", { name: "Preset for Ada Lovelace · ada@example.com" })).toBeVisible();
     // Someone on a member page not loaded yet keeps their full id: a short id may not tell grants apart.
-    expect(screen.getByText("user_2xFullClerkIdentifier00 · active")).toBeVisible();
+    expect(screen.getByText("user_2xFullClerkIdentifier00")).toBeVisible();
     fireEvent.change(await screen.findByLabelText("Preset for Ada Lovelace · ada@example.com"), { target: { value: "contributor" } });
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants/${grant.id}`,
       expect.objectContaining({ expectedRevision: "4", expectedGrantRevision: "2", preset: "contributor" })));

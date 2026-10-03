@@ -147,8 +147,10 @@ describe("whole-project sharing confirmation", () => {
     expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
       expectedRevision: "4", audience: { kind: "member", actorId: "user_ada" }, preset: "viewer",
     }));
-    expect(await screen.findByText("user_ada · starts when shared")).toBeVisible();
-    expect(screen.getByText("Everyone in the organization · starts when shared")).toBeVisible();
+    expect(await screen.findByRole("combobox", { name: "Preset for user_ada" })).toBeVisible();
+    // Every grant, including an organization grant stored active, reads as starting at share time.
+    expect(screen.getAllByText("Starts when shared")).toHaveLength(2);
+    expect(screen.queryByText("Active")).toBeNull();
     expect(screen.queryByText(/Share the whole project to manage access/i)).toBeNull();
     // A private project has no readiness to load yet.
     expect(api.post).not.toHaveBeenCalledWith(expect.stringContaining("/policy/preflight"), expect.anything());
