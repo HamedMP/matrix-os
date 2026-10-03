@@ -327,16 +327,33 @@ mismatch, schema compatibility, safe errors, bounded readers, and catalog
 policy. Real deployed metadata and Electron presentation remain later combined
 acceptance gates; this layer adds no guided sign-in capability.
 
-Optional native metadata is read outside Settings mutation admission, only for
-installed native harnesses. The owner snapshot revalidates mutation generation,
-configuration revision, and canonical profile/source identity after the read;
-intervening account or route changes discard that observation and project fresh
-canonical/configuration state. Native Codex metadata uses the same selected
-`CODEX_HOME` as credential observation and requires a final equal account read;
-timeout before that check yields no identity. Exact native API-key observations
-may correct projected account/source presentation without changing canonical
-routing, readiness, enablement, budgets, or policy; they never inherit ChatGPT
-identity, plan, or subscription allowance.
+Optional native metadata is read only for installed native harnesses. Native
+inventory, funding/catalog enrichment and profile verification all run outside
+Settings mutation admission. A fresh canonical revalidation is paired with a
+fresh funding/catalog observation, never the policy captured before metadata.
+Native principal verification follows that complete fresh epoch. These bounded
+reads establish point-in-time observations, not an atomic transaction across
+external native profiles and platform policy.
+Null/cooldown metadata does not cause a second canonical pipeline. Configuration
+reconciliation and a final persisted-revision/mutation-generation fence serialize
+with writes; a raced read retries once without optional metadata, then fails
+closed if it cannot publish a coherent snapshot.
+
+Canonical presentation labels are not principal proof. Each optional observation
+has a private, observation-lifetime verification callback in a WeakMap. Codex
+uses the same selected `CODEX_HOME` and official read-only app-server protocol;
+its final verification reads account identity only, with `refreshToken: false`
+and no quota request. Exact ChatGPT type, native ID, email and plan must still
+match. Missing ChatGPT native ID drops optional identity. API-key observations verify
+only the current API-key authentication class and contain no principal claim,
+email, plan or allowance; they never inherit ChatGPT metadata. Hermes verifies
+its own pinned singleton/pool selection through a bounded native helper without
+an HTTP quota request, credential import, refresh or login. A changed token
+discards the observation conservatively, including normal token rotation.
+Private binding evidence and callbacks never enter snapshots, contracts,
+persistence, or logs. Reader subprocess deadlines/output bounds remain enforced;
+verification also has an eight-second outer bound. These observations do not
+change canonical routing/readiness, enablement, budgets or policy.
 
 Readers coalesce their bounded in-flight observation. During cooldown they
 return no optional metadata rather than sleeping inside a foreground request

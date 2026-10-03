@@ -1,3 +1,4 @@
+import { verifyNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
@@ -23,6 +24,7 @@ import {
   ProviderSettingsConfigurationSchema,
   readProviderSecrets,
   readProviderSettingsConfiguration,
+  readSavedProviderSettingsConfiguration,
   writeProviderJsonAtomic,
   type ProviderSettingsConfiguration,
 } from "./provider-settings-persistence.js";
@@ -244,58 +246,53 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
 
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<ProviderSettingsSnapshot> {
     const refresh = options.refresh === true;
-    const captured = await this.#serialize(async () => {
-      await this.#readRuntimeRecovery(refresh);
-      const inventory = this.#canonical(refresh, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
-      const [canonical, enrichment] = await Promise.all([
-        inventory,
-        readProviderSettingsEnrichment({
+    await this.#serialize(() => this.#readRuntimeRecovery(refresh));
+    // All inventory, funding, catalog and native probes run outside mutation
+    // admission. Only configuration reconciliation and the final cheap fence
+    // serialize with writes. A raced read retries once without optional metadata.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const generation = this.#mutationGeneration;
+      const read = async () => {
+        const inventory = this.#canonical(refresh && attempt === 0, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
+        const [canonical, enrichment] = await Promise.all([inventory, readProviderSettingsEnrichment({
           canonical: inventory, fundingSummary: options.suppressFundedProbes === true ? undefined : this.#fundingSummary,
-          genericModelCatalog: this.#genericModelCatalog, refresh,
-          catalogFailureHarnesses: ["pi", "opencode"],
-        }),
-      ]);
-      const config = await this.#configuration(canonical, enrichment);
-      return { canonical, enrichment, config, generation: this.#mutationGeneration };
-    });
-    if (!options.includeNativeAccountMetadata) {
-      return this.#serialize(async () => {
-        if (captured.generation !== this.#mutationGeneration) {
-          const canonical = await this.#canonical(false, options.suppressFundedProbes === true);
-          return this.#project(canonical, await this.#configuration(canonical), false);
+          genericModelCatalog: this.#genericModelCatalog, refresh: refresh && attempt === 0, catalogFailureHarnesses: ["pi", "opencode"],
+        })]);
+        return { canonical, enrichment };
+      };
+      let captured = await read();
+      let config = await this.#serialize(async () => generation === this.#mutationGeneration
+        ? this.#configuration(captured.canonical, captured.enrichment) : null);
+      if (!config) continue;
+      let metadata: CodexNativeAccountMetadata | null = null;
+      let hermesMetadata: CodexNativeAccountMetadata | null = null;
+      if (options.includeNativeAccountMetadata && attempt === 0) {
+        const installed = (id: string) => captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
+        const [codex, hermes] = await Promise.all([
+          installed("codex") ? this.#nativeAccountMetadata?.() : undefined,
+          installed("hermes") ? this.#hermesAccountMetadata?.() : undefined,
+        ]);
+        // Null/cooldown is already unavailable; do not run another full probe.
+        if (codex || hermes) {
+          captured = await read();
+          [metadata, hermesMetadata] = await Promise.all([
+            verifyNativeAccountMetadata(codex), verifyNativeAccountMetadata(hermes),
+          ]);
+          config = await this.#serialize(async () => generation === this.#mutationGeneration
+            ? this.#configuration(captured.canonical, captured.enrichment) : null);
+          if (!config) continue;
         }
-        return this.#project(captured.canonical, captured.config, refresh, captured.enrichment);
-      });
-    }
-    // Optional subprocess/network reads never hold mutation admission. Missing
-    // installations have no native profile to observe and must not spawn helpers.
-    const installed = (id: string) => captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
-    const [metadata, hermesMetadata] = await Promise.all([
-      installed("codex") ? this.#nativeAccountMetadata?.() : undefined,
-      installed("hermes") ? this.#hermesAccountMetadata?.() : undefined,
-    ]);
-    return this.#serialize(async () => {
+      }
       options.signal?.throwIfAborted();
-      if (captured.generation !== this.#mutationGeneration) {
-        const canonical = await this.#canonical(false, options.suppressFundedProbes === true);
-        return this.#project(canonical, await this.#configuration(canonical), false);
-      }
-      const canonical = await this.#canonical(false, options.suppressFundedProbes === true);
-      const config = await this.#configuration(canonical, captured.enrichment);
-      // Canonical refresh timestamps are not identity. Compare profile/source
-      // semantics as well as revisions to detect out-of-band account changes.
-      const identity = (value: AiProviderSnapshotV3) => JSON.stringify({
-        revision: value.revision,
-        instances: value.instances.map(({ id, driverId, accountId, accessSourceId }) => ({ id, driverId, accountId, accessSourceId })),
-        accounts: value.accounts.map(({ id, vendor, authMethod, accountLabel, state }) => ({ id, vendor, authMethod, accountLabel, state })),
-        sources: value.accessSources.map(({ id, fundingKind, vendor, state, localObservation }) => ({ id, fundingKind, vendor, state, observation: localObservation?.state })),
-        drivers: value.drivers.map(({ id, installState, nativeRouteObservation }) => ({ id, installState, provider: nativeRouteObservation?.providerId, credential: nativeRouteObservation?.credentialKind })),
+      const snapshot = await this.#project(captured.canonical, config, refresh, captured.enrichment, metadata, hermesMetadata);
+      const accepted = await this.#serialize(async () => {
+        options.signal?.throwIfAborted();
+        const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
+        return generation === this.#mutationGeneration && saved?.revision === config.revision;
       });
-      if (config.revision !== captured.config.revision || identity(canonical) !== identity(captured.canonical)) {
-        return this.#project(canonical, await this.#configuration(canonical), false);
-      }
-      return this.#project(canonical, config, refresh, captured.enrichment, metadata, hermesMetadata);
-    });
+      if (accepted) return snapshot;
+    }
+    throw new ProviderSettingsStoreError("projection_unavailable", 503);
   }
 
   async setAccountSecret(accountId: string, value: string): Promise<void> {
