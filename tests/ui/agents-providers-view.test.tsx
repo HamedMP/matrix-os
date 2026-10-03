@@ -495,6 +495,7 @@ describe("AgentsProvidersView", () => {
     const { rerender, props } = setup({ snapshot: next, selectedHarnessId: harness.id });
     let gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Ready")).toBeVisible();
+    fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
     expect(within(gateway).getByText("Selected for Pi")).toBeVisible();
 
     const unauthorized = structuredClone(next);
@@ -503,7 +504,7 @@ describe("AgentsProvidersView", () => {
     gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();
     expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
-    expect(within(gateway).getByRole("button", { name: "Check again" })).toBeVisible();
+    expect(within(gateway).getByRole("button", { name: "Check again", hidden: true })).toBeInTheDocument();
   });
 
   it("keeps Matrix AI upstream providers private in an agent route", () => {
@@ -800,7 +801,8 @@ describe("AgentsProvidersView", () => {
   it("shows exact, stale, and unavailable gateway credit without inventing balances", () => {
     const current = snapshot();
     const { rerender } = setup({ snapshot: current });
-    expect(screen.getByText("$0.75 remaining")).toBeVisible();
+    expect(screen.getByText("$0.75")).toBeVisible();
+    fireEvent.click(screen.getByText("Advanced Matrix AI settings"));
     expect(screen.getByText("$0.20 used of $1.00")).toBeVisible();
 
     const stale = structuredClone(current);
@@ -833,13 +835,15 @@ describe("AgentsProvidersView", () => {
     const { rerender } = setup({ snapshot: current });
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Credit needed")).toBeVisible();
-    expect(within(gateway).getByRole("button", { name: "Add credit" })).toBeEnabled();
+    expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeEnabled();
     expect(within(gateway).getByText(/Add credit to use Matrix AI/)).toBeVisible();
 
     const broken = structuredClone(current);
     broken.accessSources[0]!.readiness.safeReason = "provider_unavailable";
     rerender(<AgentsProvidersView {...setupProps(broken)} />);
-    expect(within(gateway).queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
+    fireEvent.click(within(gateway).getByRole("button", {name: "Buy credit"}));
+    expect(screen.queryByRole("button", {name: "Continue to checkout"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Cancel"}));
 
     const ledgerMissing = structuredClone(current);
     ledgerMissing.accessSources[0]!.usage = {
@@ -847,7 +851,9 @@ describe("AgentsProvidersView", () => {
       scope: "owner_entitlement", reason: "ledger_not_available", asOf: null,
     };
     rerender(<AgentsProvidersView {...setupProps(ledgerMissing)} />);
-    expect(within(gateway).queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
+    fireEvent.click(within(gateway).getByRole("button", {name: "Buy credit"}));
+    expect(screen.queryByRole("button", {name: "Continue to checkout"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Cancel"}));
   });
 
   it("shows per-account usage and keeps login, logout, and remove distinct", async () => {
@@ -945,12 +951,13 @@ describe("AgentsProvidersView", () => {
     const { onMutate } = setup({ onRefresh, onAddCredit });
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh provider status" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add credit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Buy credit" }));
     expect(screen.getByRole("dialog", { name: "Add Matrix AI credit" })).toBeVisible();
     expect(screen.getByRole("radio", { name: "$5 credit" })).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: "$10 credit" }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to checkout" }));
     expect(screen.getByRole("button", { name: "Opening checkout…" })).toBeDisabled();
+    fireEvent.click(screen.getByText("Advanced Matrix AI settings"));
     fireEvent.change(screen.getByLabelText("Monthly budget in USD"), { target: { value: "2.5" } });
     fireEvent.click(screen.getByRole("button", { name: "Save budget" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Allow Claude Sonnet 5" }));
@@ -973,7 +980,7 @@ describe("AgentsProvidersView", () => {
   it("keeps checkout failures safe and retryable inside the shared dialog", async () => {
     const onAddCredit = vi.fn().mockRejectedValue(new Error("postgresql://secret@db.internal"));
     setup({ onAddCredit });
-    fireEvent.click(screen.getByRole("button", { name: "Add credit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Buy credit" }));
     fireEvent.click(screen.getByRole("button", { name: "Continue to checkout" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Checkout could not be opened. Try again.");
@@ -985,10 +992,10 @@ describe("AgentsProvidersView", () => {
     expect(onAddCredit.mock.calls[1]?.[2]).toBe(firstRequestId);
   });
 
-  it("closes a credit dialog when refreshed route eligibility is lost", async () => {
+  it("keeps the credit dialog truthful when refreshed route eligibility is lost", async () => {
     const current = snapshot();
     const { rerender, props } = setup({ snapshot: current });
-    fireEvent.click(screen.getByRole("button", { name: "Add credit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Buy credit" }));
     expect(screen.getByRole("dialog", { name: "Add Matrix AI credit" })).toBeVisible();
     const unavailable = structuredClone(current);
     unavailable.accessSources[0]!.readiness = {
@@ -996,7 +1003,9 @@ describe("AgentsProvidersView", () => {
       action: "retry", safeReason: "provider_unavailable",
     };
     rerender(<AgentsProvidersView {...props} snapshot={unavailable} />);
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull());
+    expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+    expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
+    fireEvent.click(screen.getByRole("button", {name: "Cancel"}));
     rerender(<AgentsProvidersView {...props} snapshot={current} />);
     expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull();
   });
@@ -1055,7 +1064,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.getByText("Saved model catalog unavailable")).toBeVisible();
   });
 
-  it("hides unsupported future account and credit actions without inventing capabilities", () => {
+  it("hides unsupported account actions and explains unavailable credit without inventing capabilities", () => {
     const limited = snapshot();
     Object.assign(limited, {
       supportedActions: [
@@ -1068,7 +1077,9 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByRole("button", { name: "+ Add account" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Log out Personal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove Personal" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Buy credit"}));
+    expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+    expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
   });
 
   it("renders platform-authoritative gateway policy as read-only", () => {
@@ -1081,7 +1092,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByRole("button", { name: "Save budget" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Allow Claude Sonnet 5" })).not.toBeInTheDocument();
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
-    fireEvent.click(within(gateway).getByText("Usage & available models"));
+    fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
     expect(within(gateway).getByText("Managed by your workspace")).toBeVisible();
     expect(within(gateway).getByText("$1.00")).toBeVisible();
     expect(within(gateway).getByText("Claude Opus 5")).toBeVisible();
