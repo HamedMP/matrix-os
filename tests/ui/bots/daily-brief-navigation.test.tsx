@@ -31,22 +31,29 @@ function fixture(agents: ChatAgent[] = [legacy]) {
   };
   return { ...client, bots: bots as unknown as BotClient, calls: bots };
 }
-it("opens the built-in Daily Brief as a persistent Bot without creating a custom Agent or sending", async () => {
-  const client = fixture(), open = vi.fn(), close = vi.fn(), start = vi.fn();
-  render(<ChatAgentsPanel client={client} onClose={close} onOpenBotChat={open} onStartChat={start} />);
+it("opens Daily Brief setup without creating, sending or opening a Chat before explicit confirmation", async () => {
+  const client = fixture(), open = vi.fn(), start = vi.fn();
+  render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} onStartChat={start} />);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
-  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_dailybrief"));
-  expect(client.calls.instantiate).toHaveBeenCalledWith({ recipe: { recipeId: recipe.recipeId, version: recipe.version }, clientRequestId: expect.stringMatching(/^req_dailybrief_[a-f0-9]{64}$/) });
-  expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+  await screen.findByRole("dialog", { name: "Set up Personal Daily Brief" });
+  expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe("Personal Daily Brief");
+  expect(screen.getByRole("combobox", { name: "Bot model" }).textContent).toContain("Matrix AI");
+  expect(screen.queryByRole("option", { name: /Codex/ })).toBeNull();
+  expect(client.calls.instantiate).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(client.calls.instantiate).not.toHaveBeenCalled(); expect(client.create).not.toHaveBeenCalled();
 });
-it("reuses the authenticated canonical recipe Bot independently of its editable name and catalog version", async () => {
+it("creates a deliberate new Daily Brief even when an existing recipe Bot is saved", async () => {
   const bot = { ...legacy, id: "bot_canonicalbrief", name: "My private briefing", recipeRef: { recipeId: recipe.recipeId, version: "older" } };
   const client = fixture([legacy, bot]), open = vi.fn();
-  client.calls.directChat.mockResolvedValue("chat_preserved");
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} />);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
-  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_preserved"));
-  expect(client.calls.instantiate).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled();
+  await screen.findByRole("dialog", { name: "Set up Personal Daily Brief" });
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Another briefing" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_dailybrief"));
+  expect(client.calls.instantiate).toHaveBeenCalledWith({ recipe: { recipeId: recipe.recipeId, version: recipe.version }, clientRequestId: expect.stringMatching(/^req_[a-f0-9]{32}$/), name: "Another briefing", selection: { instanceId: "matrix_pi_default", model: "sonnet" } });
+  expect(client.calls.directChat).not.toHaveBeenCalled(); expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled();
 });
 it("redirects the legacy built-in skill entry from the sidebar while preserving its owner definition", async () => {
   const client = fixture(), open = vi.fn(), start = vi.fn();
@@ -109,15 +116,20 @@ it("preserves attachments without creating a Bot for a blocked legacy mention", 
   await waitFor(() => expect(result.current.error).toBe("Keep attached files"));
   expect(client.calls.instantiate).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled(); expect(insert).not.toHaveBeenCalled();
 });
-it("keeps the legacy owner settings accessible while its main library entry opens the recipe Bot", async () => {
-  const client = fixture(), open = vi.fn();
+it("renders legacy and ordinary saved cards with the same full-width settings interaction", async () => {
+  const client = fixture([legacy, { ...saved, id: "bot_othercustom" }]), open = vi.fn();
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} />);
-  fireEvent.click(await screen.findByRole("button", { name: `Edit ${legacy.name}` }));
+  const legacyRow = await screen.findByRole("button", { name: `Edit ${legacy.name}` });
+  const ordinaryRow = screen.getByRole("button", { name: `Edit ${saved.name}` });
+  expect(legacyRow.className).toBe(ordinaryRow.className);
+  expect(legacyRow.textContent).toContain("Own Chat");
+  expect(ordinaryRow.textContent).toContain(`@${saved.name}`);
+  expect(legacyRow.parentElement).toBe(ordinaryRow.parentElement);
+  expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+  expect(screen.queryByRole("button", { name: `Open ${legacy.name} bot` })).toBeNull();
+  fireEvent.click(legacyRow);
   expect((screen.getByRole("textbox", { name: "Instructions" }) as HTMLTextAreaElement).value).toBe(legacy.instructions);
-  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  fireEvent.click(screen.getByRole("button", { name: `Open ${legacy.name} bot` }));
-  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_dailybrief"));
-  expect(client.update).not.toHaveBeenCalled();
+  expect(client.calls.instantiate).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled();
 });
 
 it("keeps a deliberately customized two-skill specialist inline instead of replacing its instructions", async () => {
@@ -163,4 +175,46 @@ it("preserves the source text when a legacy Daily Brief target has its own draft
   await waitFor(() => expect(result.current.notice).toMatch(/text is still in the original Chat/));
   expect(open).toHaveBeenCalledWith("chat_dailybrief", "Draft remains");
   expect(insert).not.toHaveBeenCalled();
+});
+
+it("retries a failed explicit Daily Brief creation with the same operation and payload", async () => {
+  const client = fixture(), open = vi.fn(); client.calls.instantiate.mockRejectedValueOnce(new Error("unavailable"));
+  render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+  await screen.findByRole("dialog", { name: "Set up Personal Daily Brief" });
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await screen.findByText("Bot could not be created. Try again.");
+  expect(open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_dailybrief"));
+  expect(client.calls.instantiate.mock.calls[0]).toEqual(client.calls.instantiate.mock.calls[1]);
+});
+
+it("uses a fresh operation for a separately confirmed Daily Brief creation intent", async () => {
+  const client = fixture(), open = vi.fn();
+  client.calls.instantiate.mockRejectedValue(new Error("unavailable"));
+  render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await screen.findByText("Bot could not be created. Try again.");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  fireEvent.click(screen.getByRole("button", { name: "Personal Daily Brief" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await waitFor(() => expect(client.calls.instantiate).toHaveBeenCalledTimes(2));
+  expect(client.calls.instantiate.mock.calls[0]![0].clientRequestId).not.toBe(client.calls.instantiate.mock.calls[1]![0].clientRequestId);
+  expect(open).not.toHaveBeenCalled();
+});
+it("clears an old-owner Daily Brief setup and suppresses its pending completion on client change", async () => {
+  const client = fixture(), next = fixture(), open = vi.fn();
+  let finish!: (value: Awaited<ReturnType<typeof client.calls.instantiate>>) => void;
+  client.calls.instantiate.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const { rerender } = render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await waitFor(() => expect(client.calls.instantiate).toHaveBeenCalledOnce());
+  rerender(<ChatAgentsPanel client={next} onClose={vi.fn()} onOpenBotChat={open} />);
+  expect(screen.queryByRole("dialog", { name: "Set up Personal Daily Brief" })).toBeNull();
+  await act(async () => { finish({ chatId: "chat_old_owner", agent: { ...saved, recipeRef: { recipeId: recipe.recipeId, version: recipe.version } } }); });
+  expect(open).not.toHaveBeenCalled();
+  expect(next.calls.instantiate).not.toHaveBeenCalled();
 });
