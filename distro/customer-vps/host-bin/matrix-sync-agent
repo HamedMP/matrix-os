@@ -211,6 +211,11 @@ mark_hermes_reconciliation_pending() {
 }
 
 reconcile_hermes_release() {
+  if [ -e /var/lib/matrix-agent-runtime/disabled-hermes ] || [ -L /var/lib/matrix-agent-runtime/disabled-hermes ]; then
+    sudo rm -f -- "$HERMES_RECONCILE_MARKER" || return 1
+    log "Hermes reconciliation skipped: owner disabled installation"
+    return 0
+  fi
   if [ -f "/etc/systemd/system/matrix-hermes.service" ]; then
     if ! sudo systemctl enable matrix-hermes.service; then
       log "WARN: failed to enable matrix-hermes.service; reconciliation remains retryable"
