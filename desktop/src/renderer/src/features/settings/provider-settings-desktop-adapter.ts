@@ -146,7 +146,7 @@ export async function openDesktopProviderAgentSetup(
 ): Promise<boolean> {
   return openProviderAgentSetup({
     harness,
-    getCatalog: () => api.get(canonicalChatProviderCatalogPath(true), {
+    getCatalog: () => api.get(canonicalChatProviderCatalogPath(true, true), {
       maxBytes: MAX_RESPONSE_BYTES, timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs,
       signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
     }),

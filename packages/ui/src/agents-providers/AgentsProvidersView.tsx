@@ -1,4 +1,9 @@
-import { useState, type ReactNode } from "react";
+import type { ProviderWorkflowCapability } from "@matrix-os/contracts";
+import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
+import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
+import { resolveHarnessConnection } from "./harness-connection.js";
+import { updateWorkflowRowStatus } from "./workflow-row-status.js";
+import { useEffect, useState, type ReactNode } from "react";
 import { isRunnableGenericHarnessCredentialRoute, isSupportedGenericHarnessCredentialRoute, type ProviderHarnessInstance, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
@@ -8,7 +13,7 @@ import { HarnessRail } from "./HarnessRail.js";
 import { ConnectionChoices } from "./ConnectionChoices.js";
 import { settingsErrorPresentation } from "./settings-error-presentation.js";
 import type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
-import { relativeCheckedAt, selectedHarness, titleCase } from "./utils.js";
+import { relativeCheckedAt, selectedHarness, titleCase, usageLines } from "./utils.js";
 
 export type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 
@@ -36,7 +41,51 @@ export function AgentsProvidersView({
   onOpenBrowser,
   onAddCredit,
   onSetupHarness,
+  workflowClient,
+  onOpenAuthorizationUrl,
 }: AgentsProvidersViewProps) {
+  const [workflowCapabilities, setWorkflowCapabilities] = useState<ProviderWorkflowCapability[]>([]);
+  const [operationIds, setOperationIds] = useState<Record<string, string>>({});
+  const [workflowStatus, setWorkflowStatus] = useState<Record<string, string>>({});
+  const [stateClient, setStateClient] = useState(workflowClient);
+  if (stateClient !== workflowClient) {
+    setStateClient(workflowClient); setWorkflowCapabilities([]); setOperationIds({}); setWorkflowStatus({});
+  }
+  useEffect(() => {
+    if (!workflowClient) return;
+    const controller = new AbortController();
+    void workflowClient.capabilities(controller.signal).then(value => {
+      if (!controller.signal.aborted) setWorkflowCapabilities(value);
+    }).catch(caught => {
+      if (controller.signal.aborted) return;
+      console.warn("[provider-settings] Workflow capabilities unavailable:", caught instanceof Error ? caught.name : typeof caught);
+      setWorkflowCapabilities([]);
+      // An owner denial is not evidence that the Matrix login expired.
+      if (caught instanceof ProviderWorkflowClientError && caught.reason === "forbidden") return;
+    });
+    return () => controller.abort();
+  }, [workflowClient, snapshot.refreshedAt]);
+  const rememberOperation = (id: string, operation: string | null) => setOperationIds(current => {
+    const next = { ...current };
+    if (operation === null) delete next[id];
+    else if (id in next || Object.keys(next).length < 32) next[id] = operation;
+    return next;
+  });
+  const guidedPanel = (item: Pick<ProviderHarnessInstance, "id" | "harness" | "displayName" | "installState" | "authState"> & Partial<ProviderHarnessInstance>, capability: ProviderWorkflowCapability) => {
+    if (!workflowClient) return null;
+    const exact = snapshot.harnesses.find(row => row.id === item.id);
+    const { account, source } = exact ? resolveHarnessConnection(exact, snapshot.accounts, snapshot.accessSources) : { account: undefined, source: undefined };
+    const usage = source ? usageLines(source.usage) : null;
+    return <HarnessWorkflowPanel harness={item} source={source} capability={capability} client={workflowClient}
+      disabled={mutationsDisabled} operationId={operationIds[item.id] ?? capability.activeOperationId ?? null}
+      onOperationId={id => rememberOperation(item.id, id)} onRefresh={onRefresh} onOpenTerminal={onOpenTerminal}
+      onOpenAuthorizationUrl={onOpenAuthorizationUrl}
+      onStateChange={status => setWorkflowStatus(current => updateWorkflowRowStatus(current, item.id, status))}
+      renderConnection={action => <div className="matrix-ap-connected"><h3>Connection</h3>
+        <div className="matrix-ap-account"><strong>{account?.displayName ?? source?.displayName ?? item.displayName}</strong>
+          {usage ? <span>{usage.primary}{usage.secondary ? ` · ${usage.secondary}` : ""}</span> : null}{action}</div></div>}
+      onDisconnect={exact && supports("set_harness_enabled") ? async () => await onMutate({ type: "set_harness_enabled", harnessInstanceId: exact.id, enabled: false }) : undefined} />;
+  };
   const [addOpen, setAddOpen] = useState(false);
   const [collapsedId, setCollapsedId] = useState<string | null>(null);
   const [gatewayPending, setGatewayPending] = useState(false);
@@ -152,17 +201,21 @@ export function AgentsProvidersView({
         <HarnessRail
           harnesses={snapshot.harnesses}
           sources={snapshot.accessSources}
+          statusOverride={workflowStatus}
+          workflowHarnessIds={workflowCapabilities.map(item => item.harnessInstanceId)}
           selectedId={collapsedId === selectedId ? null : selectedId}
           disabled={mutationsDisabled}
-          canEnable={(item) => configurationHarnessKinds.includes(item.harness) && supports("set_harness_enabled")}
+          canEnable={(item) => !workflowCapabilities.some(cap => cap.harnessInstanceId === item.id) && configurationHarnessKinds.includes(item.harness) && supports("set_harness_enabled")}
           onEnable={(item) => { void onMutate({ type: "set_harness_enabled", harnessInstanceId: item.id,
             enabled: !(item.configuredEnabled ?? item.enabled) }); }}
           onSelect={(id) => {
             setCollapsedId(id === selectedId && collapsedId !== id ? id : null);
             onSelectHarness(id);
           }}
-          renderDetails={(harness) => (
-            <>
+          renderDetails={(harness) => {
+            const capability = workflowCapabilities.find(item => item.harnessInstanceId === harness.id);
+            if (workflowClient && capability) return guidedPanel(harness, capability);
+            return (<>
               <ConnectionChoices snapshot={snapshot} harness={harness} gatewaySource={gatewaySource}
                 gatewaySelected={gatewaySelected} onUseGateway={useGateway} canSetRoute={genericConfiguration && supports("set_route")}
                 disabled={mutationsDisabled} onMutate={onMutate}
@@ -194,10 +247,11 @@ export function AgentsProvidersView({
                 canSelectAccount={genericConfiguration && supports("select_account")}
                 onMutate={onMutate} onRefresh={onRefresh}
               />
-            </>
-          )}
+            </>);
+          }}
         />
-        {snapshot.harnesses.length === 0 ? (
+        {workflowCapabilities.filter(item => !snapshot.harnesses.some(row => row.harness === item.harness)).map(item => <section key={item.harnessInstanceId} aria-label={item.displayName}><h2>{item.displayName}</h2>{guidedPanel({ id: item.harnessInstanceId, harness: item.harness, displayName: item.displayName, installState: item.installState, authState: "unknown" }, item)}</section>)}
+        {snapshot.harnesses.length === 0 && workflowCapabilities.length === 0 ? (
             <div className="matrix-ap-empty-state">
               <strong>No agents found</strong>
               <span>Use + Add agent above to install or connect an agent.</span>
