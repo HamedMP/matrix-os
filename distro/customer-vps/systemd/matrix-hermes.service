@@ -4,6 +4,8 @@ After=network-online.target
 Wants=network-online.target
 ConditionPathExists=/opt/matrix/bin/matrix-install-hermes
 
+ConditionPathExists=!/var/lib/matrix-agent-runtime/disabled-hermes
+
 [Service]
 Type=oneshot
 User=root
