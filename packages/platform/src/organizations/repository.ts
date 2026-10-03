@@ -13,7 +13,7 @@ import type {
   OrganizationMembershipState,
   OrganizationPlatformDatabase,
 } from "./database.js";
-import type { MembershipSnapshot, OrganizationSnapshot } from "./roles.js";
+import type { MemberProfile, MembershipSnapshot, OrganizationSnapshot } from "./roles.js";
 
 type Executor = Kysely<OrganizationPlatformDatabase> | Transaction<OrganizationPlatformDatabase>;
 
@@ -36,6 +36,9 @@ export interface MembershipRecord {
   state: OrganizationMembershipState;
   membershipEpoch: number;
   sourceUpdatedAt: Date;
+  displayName: string | null;
+  email: string | null;
+  imageUrl: string | null;
 }
 
 export interface EndedMembership {
@@ -169,6 +172,13 @@ export class PlatformOrganizationRepository {
       }
       if (existing && existing.sourceUpdatedAt.getTime() === input.sourceUpdatedAt.getTime()
         && existing.state === input.state && existing.role === input.role && existing.membershipId === input.membershipId) {
+        // A renamed person keeps the same membership: refresh the display profile only, never the
+        // epoch, which would end every activation the member holds.
+        if (input.profile && !sameProfile(existing, input.profile)) {
+          await repo.db.updateTable("organization_memberships").set({
+            display_name: input.profile.displayName, email: input.profile.email, image_url: input.profile.imageUrl,
+          }).where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId).execute();
+        }
         return { outcome: "unchanged", membershipEpoch: existing.membershipEpoch, ended: false };
       }
       const epoch = await repo.bumpEpoch(input.organizationId, org.membershipEpoch);
@@ -182,6 +192,7 @@ export class PlatformOrganizationRepository {
         membership_epoch: epoch,
         source_updated_at: input.sourceUpdatedAt,
         updated_at: now,
+        ...profileColumns(input.profile),
       }).onConflict((oc) => oc.columns(["organization_id", "actor_id"]).doUpdateSet({
         membership_id: input.membershipId,
         role: input.role,
@@ -189,6 +200,8 @@ export class PlatformOrganizationRepository {
         membership_epoch: epoch,
         source_updated_at: input.sourceUpdatedAt,
         updated_at: now,
+        // A change that reports no profile (a removal, or an older event shape) keeps the stored one.
+        ...profileColumns(input.profile),
       })).execute();
       const ended = input.state === "removed" && existing?.state === "active";
       if (ended) {
@@ -551,6 +564,7 @@ function toOrganization(row: {
 function toMembership(row: {
   organization_id: string; actor_id: string; membership_id: string; role: string; state: OrganizationMembershipState;
   membership_epoch: number | string; source_updated_at: Date | string;
+  display_name?: string | null; email?: string | null; image_url?: string | null;
 }): MembershipRecord {
   return {
     organizationId: row.organization_id,
@@ -560,7 +574,18 @@ function toMembership(row: {
     state: row.state,
     membershipEpoch: asNumber(row.membership_epoch),
     sourceUpdatedAt: asDate(row.source_updated_at)!,
+    displayName: row.display_name ?? null,
+    email: row.email ?? null,
+    imageUrl: row.image_url ?? null,
   };
+}
+
+function profileColumns(profile: MemberProfile | undefined) {
+  return profile ? { display_name: profile.displayName, email: profile.email, image_url: profile.imageUrl } : {};
+}
+
+function sameProfile(record: MembershipRecord, profile: MemberProfile): boolean {
+  return record.displayName === profile.displayName && record.email === profile.email && record.imageUrl === profile.imageUrl;
 }
 
 function toDenial(row: {

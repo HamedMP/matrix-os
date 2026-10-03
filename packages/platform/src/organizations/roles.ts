@@ -33,6 +33,50 @@ export interface MembershipSnapshot {
   actorId: string;
   role: string;
   sourceUpdatedAt: Date;
+  /** Display-only: who the member is, so Share can show people instead of ids. Never authority. */
+  profile?: MemberProfile;
+}
+
+export interface MemberProfile {
+  displayName: string | null;
+  email: string | null;
+  imageUrl: string | null;
+}
+
+const MAX_DISPLAY_NAME = 120;
+const MAX_EMAIL = 254;
+const MAX_IMAGE_URL = 2_048;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CONTROL_CHARACTERS = /\p{Cc}/gu;
+
+function label(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.replace(CONTROL_CHARACTERS, " ").replace(/\s+/g, " ").trim();
+  return cleaned ? cleaned.slice(0, max) : null;
+}
+
+/**
+ * Clerk's `public_user_data` as a bounded display profile: first and last name, the identifier
+ * only when it is an email address (it may be a phone number or username), and an https image.
+ * Anything else is dropped rather than rejected, so a profile never blocks a membership change.
+ */
+export function projectMemberProfile(data: Readonly<Record<string, unknown>>): MemberProfile {
+  const displayName = label([label(data.first_name, MAX_DISPLAY_NAME), label(data.last_name, MAX_DISPLAY_NAME)]
+    .filter((part): part is string => part !== null).join(" "), MAX_DISPLAY_NAME);
+  const identifier = label(data.identifier, MAX_EMAIL + 1);
+  const email = identifier && identifier.length <= MAX_EMAIL && EMAIL_PATTERN.test(identifier) ? identifier : null;
+  return { displayName, email, imageUrl: httpsImage(data.image_url) ?? httpsImage(data.profile_image_url) };
+}
+
+function httpsImage(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > MAX_IMAGE_URL) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.href : null;
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) console.warn("[organizations] profile image rejected", error instanceof Error ? error.name : "UnknownError");
+    return null;
+  }
 }
 
 export type ClerkOrganizationEventType =
@@ -142,6 +186,7 @@ export function parseClerkOrganizationWebhook(eventId: string, body: unknown): P
           actorId: data.data.public_user_data.user_id,
           role: normalizeClerkRole(data.data.role),
           sourceUpdatedAt,
+          profile: projectMemberProfile(data.data.public_user_data),
         },
       },
     };

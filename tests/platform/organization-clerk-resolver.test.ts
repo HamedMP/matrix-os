@@ -15,7 +15,8 @@ function fakeClerk(memberCount: number, totalCount: number | null = memberCount)
     const offset = Number(url.searchParams.get("offset"));
     const data = Array.from({ length: Math.max(0, Math.min(limit, memberCount - offset)) }, (_, i) => ({
       id: `orgmem_${offset + i}`, role: "org:member", updated_at: 1_000,
-      public_user_data: { user_id: `user_${String(offset + i).padStart(24, "0")}` },
+      public_user_data: { user_id: `user_${String(offset + i).padStart(24, "0")}`, first_name: "Member", last_name: String(offset + i),
+        identifier: `member${offset + i}@example.com`, image_url: "https://img.clerk.com/member.png" },
     }));
     return new Response(JSON.stringify({ data, ...(totalCount === null ? {} : { total_count: totalCount }) }), { status: 200 });
   });
@@ -59,6 +60,15 @@ describe("Clerk organization upstream pagination boundary", () => {
     const snapshot = await client.listMembers(org);
     expect(snapshot.members).toHaveLength(2_000);
     expect(clerk.calls.filter((c) => c.includes("/memberships"))).toHaveLength(20);
+  });
+
+  it("reads each member's name, email and image from the reconcile pages it already fetches", async () => {
+    const clerk = fakeClerk(2);
+    const client = new ClerkOrganizationUpstreamClient({ secretKey: "sk_test_x", fetchImpl: clerk.fetchImpl });
+    expect((await client.listMembers(org)).members.map((entry) => entry.profile)).toEqual([
+      { displayName: "Member 0", email: "member0@example.com", imageUrl: "https://img.clerk.com/member.png" },
+      { displayName: "Member 1", email: "member1@example.com", imageUrl: "https://img.clerk.com/member.png" },
+    ]);
   });
 
   it("accepts exactly 2,000 members without total_count by probing one empty page", async () => {

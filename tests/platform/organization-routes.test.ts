@@ -31,7 +31,8 @@ function signed(id: string, body: string, at: Date) {
   };
 }
 
-function clerkMembershipEvent(type: string, actorId: string, role: string, updatedAt: number, aiSubmission?: string) {
+function clerkMembershipEvent(type: string, actorId: string, role: string, updatedAt: number, aiSubmission?: string,
+  publicUserData: Record<string, unknown> = { identifier: "x@example.com" }) {
   return JSON.stringify({
     type,
     data: {
@@ -40,7 +41,7 @@ function clerkMembershipEvent(type: string, actorId: string, role: string, updat
       created_at: updatedAt,
       updated_at: updatedAt,
       organization: { id: org, name: "Route org", slug: "route-org", public_metadata: aiSubmission ? { collaboration: { aiSubmission } } : {}, created_at: 1, updated_at: updatedAt },
-      public_user_data: { user_id: actorId, identifier: "x@example.com" },
+      public_user_data: { user_id: actorId, ...publicUserData },
     },
   });
 }
@@ -269,6 +270,45 @@ describe("platform organization routes (T018)", () => {
     expect((await app.request(`/api/organizations/${org}/members/${admin}`, { method: "PATCH", headers: json, body: JSON.stringify({ role: "org:member" }) })).status).toBe(409);
     expect((await app.request(`/api/organizations/${org}/members/${admin}`, { method: "DELETE" })).status).toBe(409);
     expect(managementUpstream.updateMemberRole).not.toHaveBeenCalledWith(org, admin, "org:member");
+  });
+
+  it("prefers persisted Clerk member names and emails over directory fallbacks", async () => {
+    await projection.reconcile(org);
+    const named = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: " Lovelace ", identifier: "ada@example.com", image_url: "https://img.clerk.com/ada.png",
+    });
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_1", named, clock), body: named })).status).toBe(200);
+    const epoch = (await repository.getMembership({ organizationId: org, actorId: member }))!.membershipEpoch;
+    // An email-less identifier (a phone or username) is never shown as an email, and only https images are kept.
+    const unnamed = clerkMembershipEvent("organizationMembership.updated", admin, "org:admin", 5_000, "members", {
+      first_name: null, last_name: null, identifier: "+15550100", image_url: "javascript:alert(1)",
+    });
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_2", unnamed, clock), body: unnamed })).status).toBe(200);
+
+    const page = await (await app.request(`/api/organizations/${org}/members?include=profile`)).json() as { members: Array<Record<string, unknown>> };
+    expect(page.members).toEqual([
+      { actorId: admin, displayName: "Alex Admin", emailAddress: "alex@example.com", role: "org:admin", joinedAt: new Date(5_000).toISOString() },
+      { actorId: member, role: "org:member", joinedAt: new Date(5_000).toISOString(),
+        displayName: "Ada Lovelace", emailAddress: "ada@example.com" },
+    ]);
+    // The current management contract always includes a safe display label.
+    const plain = await (await app.request(`/api/organizations/${org}/members`)).json() as { members: Array<Record<string, unknown>> };
+    expect(plain.members).toEqual(page.members);
+    expect((await app.request(`/api/organizations/${org}/members?include=everything`)).status).toBe(422);
+
+    // A later name change with the same membership timestamp updates the name, never the membership epoch.
+    const renamed = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "King", identifier: "ada@example.com",
+    });
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_3", renamed, clock), body: renamed })).status).toBe(200);
+    const after = await repository.getMembership({ organizationId: org, actorId: member });
+    expect(after).toMatchObject({ displayName: "Ada King", email: "ada@example.com", membershipEpoch: epoch });
+    // An older event never overwrites the newer profile.
+    const stale = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 4_000, "members", {
+      first_name: "Old", last_name: "Name", identifier: "old@example.com",
+    });
+    await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_4", stale, clock), body: stale });
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King" });
   });
 
   it("verifies, deduplicates and applies Clerk organization webhooks with the correct status codes", async () => {
