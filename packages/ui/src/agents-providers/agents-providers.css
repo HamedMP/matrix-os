@@ -2,6 +2,8 @@
   --matrix-ap-surface: var(--ap-surface, var(--bg-surface, var(--card)));
   --matrix-ap-sunken: var(--ap-sunken, var(--bg-sunken, var(--muted)));
   --matrix-ap-overlay: var(--ap-overlay, var(--bg-overlay, var(--background)));
+  --matrix-ap-dialog-scrim: var(--ap-dialog-scrim, var(--overlay-dim, rgba(0, 0, 0, 0.55)));
+  --matrix-ap-dialog-shadow: var(--ap-dialog-shadow, var(--shadow-3, 0 18px 48px rgba(0, 0, 0, 0.6)));
   --matrix-ap-text: var(--ap-text, var(--text-primary, var(--foreground)));
   --matrix-ap-muted: var(--ap-muted, var(--text-secondary, var(--muted-foreground)));
   --matrix-ap-faint: var(--ap-faint, var(--text-tertiary, var(--muted-foreground)));
@@ -293,8 +295,8 @@
 .matrix-ap-empty-state { align-items: center; display: flex; flex-direction: column; gap: 7px; justify-content: center; min-height: 140px; text-align: center; }
 .matrix-ap-empty-state span { color: var(--matrix-ap-muted); font-size: 12px; }
 
-.matrix-ap-dialog-backdrop { align-items: center; background: color-mix(in srgb, var(--matrix-ap-text) 28%, transparent); display: flex; inset: 0; justify-content: center; padding: 20px; position: fixed; z-index: var(--ap-dialog-z, 1000); }
-.matrix-ap-dialog { background: var(--matrix-ap-overlay); border: 1px solid var(--matrix-ap-border); border-radius: 14px; box-shadow: 0 18px 48px color-mix(in srgb, var(--matrix-ap-text) 20%, transparent); max-height: min(720px, 86vh); max-width: 600px; overflow: auto; padding: 18px; width: min(600px, 94vw); }
+.matrix-ap-dialog-backdrop { align-items: center; background: var(--matrix-ap-dialog-scrim); display: flex; inset: 0; justify-content: center; padding: 20px; position: fixed; z-index: var(--ap-dialog-z, 1000); }
+.matrix-ap-dialog { background: var(--matrix-ap-overlay); border: 1px solid var(--matrix-ap-border); border-radius: 14px; box-shadow: var(--matrix-ap-dialog-shadow); max-height: min(720px, 86vh); max-width: 600px; overflow: auto; padding: 18px; width: min(600px, 94vw); }
 .matrix-ap-dialog-head { margin-bottom: 16px; }
 .matrix-ap-dialog-head h3 { font-size: 19px; letter-spacing: -0.025em; margin: 0; }
 .matrix-ap-dialog-actions { gap: 8px; justify-content: flex-end; margin-top: 18px; }

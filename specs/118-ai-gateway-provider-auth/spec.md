@@ -310,3 +310,17 @@ not invent a plan, email, quota, reset or zero usage: absent usage renders
 `claude-connection-simulation.test.tsx`. Passing them proves simulated workflow
 and component behavior only; real OAuth consent, live provider metadata and
 model calls require a separately authorized real account acceptance run.
+
+
+## Shared Settings modal scrim and shadow
+
+Agents & providers dialogs use a dedicated dark translucent scrim:
+`--ap-dialog-scrim`, falling back to the desktop `--overlay-dim` token and
+`rgba(0, 0, 0, 0.55)` when no renderer token exists. The scrim must not derive
+from foreground/text colors: light text in a dark theme would brighten the
+background. History, purchase/capability and disconnect dialogs share this
+backdrop. Dialog shadows use `--ap-dialog-shadow`, the desktop `--shadow-3`
+token, or a dark shadow fallback; they must not derive from text colors and emit
+a white glow in dark themes. Modal surfaces, focus containment and close behavior
+remain unchanged.
+Visual acceptance must confirm dimming in Electron Desktop.
