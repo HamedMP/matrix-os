@@ -265,7 +265,10 @@ metadata joins remain scoped to that owner, machine, and runtime. Cross-scope
 cursors are rejected; created-at/entry keyset ordering keeps pagination stable.
 Core migrations add a scope-prefixed expression index for opaque cursor anchors
 and a scope-prefixed ordering index for bounded history pages. These indexes
-change no cursor format, ledger values, or authorization predicates.
+change no cursor format, ledger values, or authorization predicates. The non-null
+timestamp/entry tuple uses a row-comparison seek. Tests explain the actual joined
+endpoint SQL for first, subsequent and deep cursor pages against representative
+ledger and reservation data, rather than a simplified ledger-only query.
 Responses are private/no-store and include only timestamp, exact signed microUSD
 amount, activity kind, and nullable model ID. No credential, payment, ledger,
 reservation, request, or source-reference identifier is returned. Database
