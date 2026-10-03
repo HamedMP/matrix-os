@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { checkoutUnavailablePresentation } from "./checkout-unavailable-presentation.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
 import type {
@@ -155,6 +156,7 @@ export function GatewayPanel({
       source.usage.state === "current" &&
       (ready || creditRequired),
   );
+  const checkoutUnavailable = checkoutUnavailablePresentation(source, policy, canAddCredit);
   const creditDialog = useRef<HTMLElement | null>(null);
   const closeCreditDialog = () => { if (!creditBusy) setCreditDialogOpen(false); };
   useDialogFocus(creditDialog, creditDialogOpen, closeCreditDialog);
@@ -518,7 +520,7 @@ export function GatewayPanel({
             </fieldset> : null}
             {!checkoutAvailable ? (
               <div className="matrix-ap-credit-unavailable" role="status">
-                <p>Credit purchases are unavailable on this computer right now.</p>
+                <p>{checkoutUnavailable.message}</p>
               </div>
             ) : null}
             {creditError ? (
@@ -528,7 +530,7 @@ export function GatewayPanel({
             ) : null}
             </div>
             <footer className="matrix-ap-dialog-actions matrix-ap-credit-actions">
-              {!checkoutAvailable ? <button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button> : null}
+              {!checkoutAvailable && checkoutUnavailable.refreshable ? <button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button> : null}
               <button
                 type="button"
                 className="matrix-ap-button"

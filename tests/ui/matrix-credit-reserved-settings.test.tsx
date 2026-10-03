@@ -39,11 +39,11 @@ it("separates spendable credit, reserved credit and settled usage without offeri
   expect(screen.queryByText("Matrix AI connection not verified. Check again.")).toBeNull();
   expect(screen.queryByRole("button", { name: "Use Matrix AI" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Buy credit" }));
-  expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+  expect(screen.getByText("Credit purchases are not enabled for this computer. Contact your workspace administrator or support.")).toBeVisible();
   expect(screen.queryByRole("radio")).toBeNull();
   expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
-  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", {name: "Check again"}));
-  expect(actions.onRefresh).toHaveBeenCalledOnce();
+  expect(within(screen.getByRole("dialog")).queryByRole("button", {name: "Check again"})).toBeNull();
+  expect(actions.onRefresh).not.toHaveBeenCalled();
   expect(actions.onAddCredit).not.toHaveBeenCalled();
   expect(actions.onUseGateway).not.toHaveBeenCalled();
 });
@@ -82,7 +82,7 @@ it("does not direct a credit-needed owner to an unavailable purchase action", ()
   expect(screen.queryByText("Add credit to use Matrix AI.")).toBeNull();
   expect(screen.queryByText("Matrix AI credit purchases are not available yet.")).toBeNull();
   fireEvent.click(screen.getByRole("button", {name: "Buy credit"}));
-  expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+  expect(screen.getByText("Credit purchases are not enabled for this computer. Contact your workspace administrator or support.")).toBeVisible();
   expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
   expect(actions.onAddCredit).not.toHaveBeenCalled();
   expect(actions.onUseGateway).not.toHaveBeenCalled();

@@ -75,3 +75,31 @@ it.each([false, true])('keeps a new pending checkout isolated from settlement of
   await act(async () => { settleNew(); });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
+
+it.each([
+  ['policy', {policy: {...props.policy, topUpEnabled: false}}, 'Credit purchases are not enabled for this computer. Contact your workspace administrator or support.', false],
+  ['permission', {canAddCredit: false}, 'Your current access does not allow credit purchases. Ask this computer’s owner to buy credit.', false],
+  ['restricted funding', {source: {...source('a'), readiness: {state: 'unavailable', safeReason: 'policy', action: 'contact_owner'}}}, 'Matrix AI is restricted by your workspace. Ask your administrator to review access.', false],
+  ['stale balance', {source: {...source('a'), usage: {...source('a').usage, state: 'stale'}}}, 'The current credit balance could not be confirmed. Refresh to check purchase availability.', true],
+  ['missing funding', {source: null}, 'Purchase availability has not been confirmed for this computer. Refresh to check again.', true],
+  ['reserved funding', {source: {...source('a'), readiness: {state: 'unavailable', safeReason: 'credit_reserved', action: 'retry'}}}, 'Credit usage is still being confirmed. Wait for it to finish, then check again.', true],
+  ['unavailable funding', {source: {...source('a'), readiness: {state: 'unavailable', safeReason: 'provider_unavailable', action: 'retry'}}}, 'This funding source is unavailable for credit purchases. Contact support if the problem continues.', true],
+] as const)('explains unavailable checkout inside the dialog with useful recovery: %s', (_name, overrides, message, refreshable) => {
+  const onRefresh = vi.fn(); const onAddCredit = vi.fn();
+  render(<GatewayPanel {...props as Omit<React.ComponentProps<typeof GatewayPanel>, 'source' | 'onAddCredit'>} source={source('a') as never} {...overrides as unknown as Partial<React.ComponentProps<typeof GatewayPanel>>} onRefresh={onRefresh} onAddCredit={onAddCredit} />);
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Buy credit'}));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText(message)).toBeVisible();
+  const refresh = within(dialog).queryByRole('button', {name: 'Check again'});
+  expect(Boolean(refresh)).toBe(refreshable);
+  if (refresh) {fireEvent.click(refresh); expect(onRefresh).toHaveBeenCalledOnce();}
+  expect(within(dialog).queryByRole('button', {name: 'Continue to checkout'})).not.toBeInTheDocument();
+  expect(onAddCredit).not.toHaveBeenCalled();
+});
+
+it.each([[1, '$0.000001'], [4999, '$0.004999'], [9999, '$0.009999'], [0, '$0.00'], [10000, '$0.01']] as const)('shows exact positive sub-cent spendable credit (%s microUSD)', (amount, label) => {
+  const current = source('a'); current.usage.credit.remainingBalanceMicrousd = amount;
+  render(<GatewayPanel {...props as Omit<React.ComponentProps<typeof GatewayPanel>, 'source' | 'onAddCredit'>} source={current as never} onAddCredit={vi.fn()} />);
+  expect(screen.getByText(label)).toBeVisible();
+});

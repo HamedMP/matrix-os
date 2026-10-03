@@ -586,3 +586,5 @@ Web checkout callback identity is stable for a mounted computer/runtime lifetime
 ordinary Settings snapshot refreshes do not close an active credit dialog or
 invalidate its pending settlement. Actual runtime/lifetime changes still replace
 the callback and reject the former scope before networking or navigation.
+
+Checkout unavailability uses only typed policy, purchase capability and funding observations. Necessary policy/permission guidance stays inside Buy credit; policy-disabled purchases offer administrator/support guidance rather than suggesting refresh enables purchasing. Refresh remains available for unconfirmed or transient funding observations. Positive spendable balances below one cent preserve up to six decimal places, never rounding a positive amount to zero or up to a cent. Dialog owner/runtime settlement and history scope fences remain unchanged.
