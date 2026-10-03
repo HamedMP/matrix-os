@@ -199,6 +199,7 @@ describe("E2E: Per-message kernel selection", () => {
 
   beforeAll(async () => {
     gw = await startTestGateway({
+      mockOwnerCredentials: true,
       spawnFn: async function* (_message, config) {
         observedConfigs.push(config);
         yield { type: "init", sessionId: "override-session" } as KernelEvent;

@@ -117,6 +117,7 @@ describe("E2E: Conversation project context dispatch", () => {
 
   beforeAll(async () => {
     gw = await startTestGateway({
+      mockOwnerCredentials: true,
       spawnFn: async function* (_message, config) {
         observedConfigs.push(config);
         const sessionId = config.sessionId ?? `new-context-session-${observedConfigs.length}`;

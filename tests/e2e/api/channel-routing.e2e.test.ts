@@ -6,6 +6,7 @@ describe("E2E: Channel status + Message API", () => {
 
   beforeAll(async () => {
     gw = await startTestGateway({
+      mockOwnerCredentials: true,
       spawnFn: async function* () {
         yield {
           type: "result",

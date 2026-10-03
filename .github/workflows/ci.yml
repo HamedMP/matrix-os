@@ -598,9 +598,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
-      - name: Install Chromium for terminal presentation regression
+      - name: Install Chromium for both E2E Playwright runtimes
         if: needs.changes.outputs.should_run == 'true'
-        run: pnpm --filter @matrix-os/mcp-browser exec playwright install --with-deps chromium
+        run: |
+          # Terminal tests and provider contrast tests resolve different locked Playwright runtimes.
+          pnpm --filter @matrix-os/mcp-browser exec playwright install --with-deps chromium
+          pnpm --filter shell exec playwright install --with-deps chromium
 
       - name: Run E2E tests
         if: needs.changes.outputs.should_run == 'true'
