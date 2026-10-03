@@ -1,9 +1,42 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ProviderWorkflowCodeNotAcceptedError, createProviderWorkflowService, type ProviderWorkflowAdapter } from '../../packages/gateway/src/ai-providers/provider-workflows.js';
+import { ProviderWorkflowCodeNotAcceptedError, ProviderWorkflowNotStartedError, createProviderWorkflowService, type ProviderWorkflowAdapter } from '../../packages/gateway/src/ai-providers/provider-workflows.js';
 const request = { harnessInstanceId: 'codex', kind: 'login' as const, method: 'device_code' as const, idempotencyKey: 'first' };
 const adapter = (harness: 'codex' | 'claude', start: ProviderWorkflowAdapter['start']): ProviderWorkflowAdapter => ({ harnessInstanceId: harness, harness, displayName: harness, installState: 'installed', loginMethods: ['device_code'], apiKeyProviders: ['openai'], install: false, uninstall: false, start, verifyKey: vi.fn(async () => {}) });
 
 describe('workflow uncertainty and recovery', () => {
+  it('permits recovery only when the adapter proves failure before native side effects', async () => {
+    const launch = vi.fn<ProviderWorkflowAdapter['start']>()
+      .mockRejectedValueOnce(new ProviderWorkflowNotStartedError())
+      .mockResolvedValue({ cancel: async () => {} });
+    const native = adapter('codex', launch);
+    const service = createProviderWorkflowService({ ownerId: 'owner', adapters: [native] });
+    const failed = await service.start('owner', request);
+    expect(failed).toMatchObject({ state: 'failed', safeFailure: 'unavailable' });
+    expect((await service.capabilities('owner'))[0].activeOperationId).toBeUndefined();
+    expect((await service.start('owner', request)).id).toBe(failed.id);
+    await expect(service.cancel('owner', failed.id)).resolves.toMatchObject({ state: 'failed' });
+    await expect(service.verifyKey('owner', { harnessInstanceId: 'codex', providerId: 'openai', apiKey: 'fixture-key' })).resolves.toEqual({ verified: true });
+    expect((await service.start('owner', { ...request, idempotencyKey: 'recovered' })).state).toBe('running');
+    expect(launch).toHaveBeenCalledTimes(2);
+    await service.close();
+  });
+
+  it('still requires registered cleanup to drain even if launch is reported not started', async () => {
+    const cleanup = vi.fn().mockRejectedValueOnce(new Error('lease still held')).mockResolvedValue(undefined);
+    const native = adapter('codex', async ({ registerCleanup }) => {
+      registerCleanup(cleanup);
+      throw new ProviderWorkflowNotStartedError();
+    });
+    const service = createProviderWorkflowService({ ownerId: 'owner', adapters: [native] });
+    const failed = await service.start('owner', request);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    await expect(service.start('owner', { ...request, idempotencyKey: 'blocked' })).rejects.toThrow('conflict');
+    await service.cancel('owner', failed.id);
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect((await service.capabilities('owner'))[0].activeOperationId).toBeUndefined();
+    await service.close();
+  });
+
   it('retains same-profile admission after a launch throws without proving cleanup', async () => {
     const native = adapter('codex', async () => { throw new Error('uncertain native launch'); });
     const service = createProviderWorkflowService({ ownerId: 'owner', adapters: [native] });

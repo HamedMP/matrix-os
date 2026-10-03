@@ -428,10 +428,17 @@ fails; it never reopens admission on the closed service.
 
 Native/browser adapters delivered in the following layer MUST register their
 cleanup before starting native side effects and await native completion before
-cleanup resolves. A launch that cannot supply cleanup remains blocked: retrying
+cleanup resolves. An uncertain launch that cannot supply cleanup remains blocked: retrying
 with another idempotency key is not recovery. Recovery requires confirmed native
 cleanup; process restart alone does not prove that a child or profile writer
 stopped, so the native profile guard remains required across service instances.
+A known preflight failure may throw `ProviderWorkflowNotStartedError` only if
+no child, terminal session, service mutation, account write or durable writer
+lease was acquired. Such a failed receipt permits a new attempt without cleanup.
+Missing cleanup alone is never this proof: generic launch/acquire failures retain
+admission. If cleanup was registered, even a typed not-started error requires
+successful cleanup before release. Adapter code must not convert generic helper,
+lease-acquisition or spawn errors to the no-start type.
 Adapters MUST throw `ProviderWorkflowCodeNotAcceptedError` only when they prove
 no authorization bytes were submitted (for example, the authorization prompt
 is not ready). Ambiguous partial writes retain the submission latch. Accepted

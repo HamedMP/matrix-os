@@ -3,6 +3,10 @@ import { ProviderWorkflowSchema, ProviderWorkflowCapabilitySchema, type Provider
 export class ProviderWorkflowError extends Error {
   constructor(readonly code: 'unavailable' | 'not_found' | 'conflict' | 'rejected' | 'forbidden') { super(code); }
 }
+/** Adapter proves launch failed before acquiring any native resource or writer. */
+export class ProviderWorkflowNotStartedError extends ProviderWorkflowError {
+  constructor() { super('unavailable'); }
+}
 /** Adapter proves no bytes were submitted; all other failures remain ambiguous. */
 export class ProviderWorkflowCodeNotAcceptedError extends ProviderWorkflowError {
   constructor(code: 'conflict' | 'unavailable' = 'conflict') { super(code); }
@@ -177,7 +181,9 @@ export function createProviderWorkflowService(options: {
         }
         catch (error) {
           console.warn('[provider-workflow] Start failed:', error instanceof Error ? error.name : 'UnknownError');
-          entry.cleanupRequired = true;
+          // Only an explicit no-resource proof can free a failed preflight.
+          // Registered cleanup still owns admission until it confirms the drain.
+          entry.cleanupRequired = !(error instanceof ProviderWorkflowNotStartedError) || entry.cancel !== undefined;
           if (!terminal(entry.operation.state)) {
             entry.operation = { ...entry.operation, state: 'failed', safeFailure: 'unavailable', deviceCode: null, authorizationUrl: null };
             record(entry, 'failed');
