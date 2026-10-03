@@ -112,17 +112,53 @@ describe("whole-project sharing confirmation", () => {
     expect(screen.getByText(/Lin is not added to the project/i)).toBeVisible();
   });
 
-  it("asks the owner to share the project before managing organization access", () => {
-    // Before confirmation the project is private: there are no grants to load yet, and loading
-    // them used to fail with "Organization access is unavailable".
+  it("lets the owner choose who gets access before sharing the project", async () => {
+    // Before confirmation the project is private. The owner picks its audience now (through the
+    // owner setup key); the grants are recorded and start when the project is shared.
+    const privateScope: CollaborationScope = { ...scope, organizationId: "org_matrix_team" };
+    const grant = {
+      id: "60000000-0000-4000-8000-000000000401", scopeId: scope.id, organizationId: "org_matrix_team",
+      audience: { kind: "member", actorId: "user_ada" }, preset: "viewer", state: "pending", policyVersion: "v1",
+      revision: "1", createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z",
+    };
+    let grants: unknown[] = [];
     const api = apiFixture();
-    render(<ChatCollaboratorsDialog api={api} scope={scope} members={[]}
-      onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
+    api.get.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/organizations/")) return { members: [{ actorId: "user_ada", role: "org:member", joinedAt: "2026-08-01T00:00:00.000Z" }] };
+      if (path.endsWith("/grants")) return grants;
+      return { ...privateScope, revision: grants.length ? "5" : "4" };
+    });
+    api.post.mockImplementation(async (path: string) => {
+      if (!path.endsWith("/grants")) throw new Error("unexpected");
+      grants = [grant];
+      return grant;
+    });
+    render(<ChatCollaboratorsDialog api={api} scope={privateScope} members={[]}
+      onRefresh={async () => ({ scope: privateScope, members: [] })} onClose={vi.fn()} />);
 
-    expect(screen.getByText("Share the whole project to manage access. Sharing gives everyone in your organization contributor access by default.")).toBeVisible();
-    expect(screen.queryByText(/Organization access is unavailable/i)).toBeNull();
-    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining("/grants"));
+    expect(await screen.findByRole("heading", { name: "Choose who gets access" })).toBeVisible();
+    expect(screen.getByText(/if you choose no one, everyone in your organization gets contributor access/i)).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Grant access" })).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "user_ada" } });
+    fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
+    expect(await screen.findByText("Access starts when you share the whole project.")).toBeVisible();
+    expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
+      expectedRevision: "4", audience: { kind: "member", actorId: "user_ada" }, preset: "viewer",
+    }));
+    expect(await screen.findByText(/starts when shared/)).toBeVisible();
+    expect(screen.queryByText(/Share the whole project to manage access/i)).toBeNull();
+    // A private project has no readiness to load yet.
     expect(api.post).not.toHaveBeenCalledWith(expect.stringContaining("/policy/preflight"), expect.anything());
+  });
+
+  it("asks the owner to wait while a confirmed share is still being published", () => {
+    const api = apiFixture();
+    const preparing: CollaborationScope = { ...scope, organizationId: "org_matrix_team", lifecycle: "preparing" };
+    render(<ChatCollaboratorsDialog api={api} scope={preparing} members={[]}
+      onRefresh={async () => ({ scope: preparing, members: [] })} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Access can be changed once sharing finishes.")).toBeVisible();
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining("/grants"));
   });
 
   it("describes project invitations as whole-project access", () => {
