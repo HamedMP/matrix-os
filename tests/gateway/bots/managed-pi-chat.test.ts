@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, expect, it, vi } from "vitest";
 import { fauxProvider, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { runBotTurn } from "../../../packages/bot-runtime/src/loop.js";
+import { createBotWorker } from "../../../packages/bot-runtime/src/worker.js";
 import { BotBrokerError, type BotBrokerClient } from "../../../packages/bot-runtime/src/broker-client.js";
 import { createManagedPiOwnerTools } from "../../../packages/gateway/src/chat/managed-pi-owner-tools.js";
 import { getService } from "../../../packages/gateway/src/integrations/registry.js";
@@ -32,8 +33,110 @@ import type { ChatRunContext } from "@matrix-os/contracts";
 import type { ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
 const cleanup: Array<() => Promise<unknown>> = [];
-afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
+afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); vi.restoreAllMocks(); });
 const GLM = "@cf/zai-org/glm-5.3-flash";
+
+const privateMarker = "PRIVATE_DIAGNOSTIC_CANARY";
+async function failedWorkerEvents(reply: unknown | (() => Promise<unknown>)) {
+  const snapshot = makeAiProviderSnapshot();
+  const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+  const binding: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: privateMarker, chatId: "chat_diagnostic",
+    runId: "run_diagnostic", runtimeHandle: `runtime_${"d".repeat(32)}`, executionGeneration: "1",
+    workspace: { kind: "chat_workspace" }, rootFingerprint: "d".repeat(64),
+    ...resolveManagedPiRoute(snapshot, selection), capabilities: ["artifact.read"], requestClass: "interactive" };
+  const release = vi.fn(async () => undefined);
+  const forgetRun = vi.fn();
+  const runBot = vi.fn(async () => typeof reply === "function" ? reply() : reply);
+  const runtime = createManagedPiRuntime({ admission: { admit: async () => binding,
+    toolAuthority: async () => ({ permissionMode: "supervised" }), release, workspace: async () => "/owned/chat" },
+    host: { client: { runBot } } as unknown as ScopeRuntimeHost, providers: { getSnapshot: async () => snapshot },
+    lifetime: new AbortController().signal, forgetRun, cancelInference: () => undefined });
+  const events = [];
+  for await (const event of runtime.adapter.start({ owner: { type: "personal", ownerId: privateMarker },
+    chatId: binding.chatId, turnId: "cturn_diagnostic", runId: binding.runId, prompt: privateMarker,
+    parts: [{ type: "text", text: privateMarker }], selection, interactionMode: "default",
+    permissionMode: "supervised", signal: new AbortController().signal })) events.push(event);
+  expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "failed", error: {
+    code: "run_failed", safeMessage: "Matrix AI could not finish this request. Try again.",
+    retryable: true, recoveryActions: ["retry"],
+  } });
+  expect(JSON.stringify(events)).not.toContain(privateMarker);
+  expect(runBot).toHaveBeenCalledTimes(1);
+  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle);
+  expect(forgetRun).toHaveBeenCalledExactlyOnceWith(binding.runId);
+}
+
+it.each([
+  { status: "failed", failureCode: "stale_generation", toolActions: 0 },
+  { status: "failed", failureCode: "unavailable", toolActions: 2, sessionRevision: 1 },
+  { status: "blocked", blockedReason: "budget_exhausted", toolActions: 60 },
+  { status: "waiting_person", toolActions: 1 },
+  { status: "waiting_capacity", toolActions: 0 },
+  { status: "uncertain", failureCode: "timeout", toolActions: 3 },
+  { status: "cancelled", toolActions: 0 },
+])("retains bounded worker outcome diagnostics for $status without exposing them to Chat", async (fields) => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  await failedWorkerEvents({ ok: true, reply: { runId: "run_diagnostic", ...fields } });
+  expect(warn).toHaveBeenCalledExactlyOnceWith("[managed-pi] run failed", {
+    stage: "worker_outcome", status: fields.status, failureCode: fields.failureCode ?? null,
+    blockedReason: fields.blockedReason ?? null, toolActions: fields.toolActions,
+  });
+});
+
+it.each(["invalid_request", "runtime_not_found", "runtime_unavailable", "generation_mismatch", "busy"])(
+  "logs only the typed transport code %s", async (error) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await failedWorkerEvents({ ok: false, error, details: privateMarker });
+    expect(warn).toHaveBeenCalledExactlyOnceWith("[managed-pi] run failed", { stage: "worker_transport", error });
+  });
+
+it.each([
+  { reply: { ok: true, reply: { runId: "run_diagnostic", status: privateMarker, toolActions: 0 } }, stage: "worker_invalid_reply" },
+  { reply: { ok: true, reply: { runId: "run_diagnostic", status: "failed", toolActions: 0, prompt: privateMarker } }, stage: "worker_invalid_reply" },
+  { reply: { ok: true, reply: { runId: `run_${privateMarker}`, status: "completed", toolActions: 0 } }, stage: "worker_run_mismatch" },
+  { reply: { ok: false, error: privateMarker }, stage: "worker_transport" },
+])("classifies $stage without logging raw or mismatched replies", async ({ reply, stage }) => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  await failedWorkerEvents(reply);
+  expect(warn).toHaveBeenCalledExactlyOnceWith("[managed-pi] run failed", {
+    stage, ...(stage === "worker_transport" ? { error: "unknown" } : {}),
+  });
+  expect(JSON.stringify(warn.mock.calls)).not.toContain(privateMarker);
+});
+
+it("keeps actual worker run-load refusal code while excluding broker exception details", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const worker = createBotWorker({ bridgeOrigin: `https://${privateMarker}.invalid`,
+    brokerFor: () => ({ loadRun: async () => { throw new BotBrokerError("stale_generation"); } }) as never });
+  await failedWorkerEvents(async () => ({ ok: true,
+    reply: await worker.handle({ version: 1, kind: "bot.run", runId: "run_diagnostic" }) }));
+  expect(warn).toHaveBeenCalledExactlyOnceWith("[managed-pi] run failed", {
+    stage: "worker_outcome", status: "failed", failureCode: "stale_generation", blockedReason: null, toolActions: 0,
+  });
+});
+
+it("retains an actual Pi session-load failure without inferring a model or funding failure", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const spec = { route: resolveManagedPiRoute(makeAiProviderSnapshot(), {
+    instanceId: "matrix_pi_default", model: "claude-sonnet-5",
+  }).route, systemPrompt: privateMarker, capabilities: [], limits: { maxToolActions: 1 },
+    turn: { kind: "prompt" as const, text: privateMarker } };
+  await failedWorkerEvents(async () => ({ ok: true, reply: await runBotTurn({
+    command: { ...spec, version: 1, kind: "bot.run", runId: "run_diagnostic" },
+    broker: { loadSession: async () => { throw new BotBrokerError("unavailable"); } } as never,
+    bridgeOrigin: `https://${privateMarker}.invalid`,
+  }) }));
+  expect(warn).toHaveBeenCalledExactlyOnceWith("[managed-pi] run failed", {
+    stage: "worker_outcome", status: "failed", failureCode: "unavailable", blockedReason: null, toolActions: 0,
+  });
+});
+
+it("logs a bounded dispatch exception name without its message, cause, or arbitrary name", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const error = new Error(privateMarker, { cause: { token: privateMarker } }); error.name = privateMarker;
+  await failedWorkerEvents(async () => { throw error; });
+  expect(warn).toHaveBeenCalledExactlyOnceWith("[managed-pi] run failed", { stage: "worker_dispatch", error: "UnknownError" });
+});
 
 it("passes the already prepared canonical Agent prompt to Pi exactly once", async () => {
   const snapshot = makeAiProviderSnapshot();
