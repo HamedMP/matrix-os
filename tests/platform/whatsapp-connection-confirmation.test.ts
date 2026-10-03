@@ -4,6 +4,7 @@ import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-
 import { createWhatsAppRepository, WHATSAPP_AGENT_CONSENT_VERSION } from '../../packages/platform/src/whatsapp/repository.js';
 import { createWhatsAppService } from '../../packages/platform/src/whatsapp/service.js';
 import { readWhatsAppConfig } from '../../packages/platform/src/whatsapp/config.js';
+import { decryptWhatsAppPayload, encryptWhatsAppPayload, hashWhatsAppSecret } from '../../packages/platform/src/whatsapp/crypto.js';
 
 const owner = 'user_owner';
 const phone = '46701234567';
@@ -114,14 +115,35 @@ describe('WhatsApp connection confirmation', () => {
     await service.tick(); expect(send).not.toHaveBeenCalled(); lease.mockRestore();
     await service.tick(); expect(send).toHaveBeenCalledOnce();
   });
-  it('caps acknowledgement delivery at challenge expiry even when the reply window is longer', async () => {
-    await confirm(await proof(now + 86_400_000));
+  it('gives late confirmation ten minutes for delivery within the original reply window', async () => {
+    const pending = await proof(now + 86_400_000);
+    now += 599_999;
+    await confirm(pending);
+    now += 1000;
     const acknowledgement = (await repo.lease())!;
-    expect(acknowledgement.expiresAt).toBe(now + 600_000);
+    expect(acknowledgement.expiresAt).toBe(now - 1000 + 600_000);
+  });
+  it('caps late confirmation at the original shorter reply window', async () => {
+    const deadline = now + 650_000;
+    const pending = await proof(deadline);
+    now += 599_999;
+    await confirm(pending);
+    expect((await repo.lease())!.expiresAt).toBe(deadline);
   });
   it('never extends the original reply window for a confirmation', async () => {
     await confirm(await proof(now + 10_000));
     now += 10_000;
     expect(await repo.lease()).toBeNull();
+  });
+  it('uses the conservative challenge deadline for proofs issued before reply-window persistence', async () => {
+    const pending = await proof(now + 86_400_000);
+    const hash = hashWhatsAppSecret(pending.token);
+    const challenge = await sql<{ token_cipher: string }>`SELECT token_cipher FROM whatsapp_link_challenges WHERE token_hash=${hash}`.execute(db.kysely);
+    const payload = decryptWhatsAppPayload(challenge.rows[0]!.token_cipher, key);
+    delete payload.replyDeadline;
+    await sql`UPDATE whatsapp_link_challenges SET token_cipher=${encryptWhatsAppPayload(payload, key)} WHERE token_hash=${hash}`.execute(db.kysely);
+    now += 599_999;
+    await confirm(pending);
+    expect((await repo.lease())!.expiresAt).toBe(now + 1);
   });
 });
