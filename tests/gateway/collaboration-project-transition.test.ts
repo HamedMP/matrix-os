@@ -555,10 +555,18 @@ describe("project collaboration transition journal", () => {
     try {
       await bootstrapPlatformCollaborationDatabase(platform.collaborationDb);
       const directory = new PlatformCollaborationRepository(platform.collaborationDb, { now: () => NOW });
+      // The platform is briefly unavailable for the very first delivery (the share itself): a later
+      // event must not overtake it, or the platform would treat the retried share as stale.
+      let clock = NOW.getTime();
+      let refuseNext = true;
       const outbox = new CollaborationDirectoryOutbox({
         db: fixture.db, platformBaseUrl: "https://platform.internal", runtimeId: DESTINATION_RUNTIME,
-        serviceToken: "s".repeat(32), now: () => NOW, startTimer: false,
+        serviceToken: "s".repeat(32), now: () => new Date(clock), startTimer: false,
         fetchImpl: (async (_url: string, init: RequestInit) => {
+          if (refuseNext) {
+            refuseNext = false;
+            return new Response(null, { status: 503 });
+          }
           const event = JSON.parse(String(init.body)) as Parameters<PlatformCollaborationRepository["applyDirectoryEvent"]>[0];
           sent.push(event as unknown as (typeof sent)[number]);
           await directory.applyDirectoryEvent(event);
@@ -566,7 +574,12 @@ describe("project collaboration transition journal", () => {
         }) as typeof fetch,
       });
       try {
-        expect(await outbox.runOnce()).toBe(3);
+        let delivered = 0;
+        for (let round = 0; round < 10 && delivered < 3; round += 1) {
+          delivered += await outbox.runOnce();
+          clock += 120_000;
+        }
+        expect(delivered).toBe(3);
       } finally {
         await outbox.shutdown();
       }
