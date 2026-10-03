@@ -103,11 +103,12 @@ it.each([false, true])("retries a mentioned draft through its original operation
   vi.mocked(client.getDetail).mockImplementation(async () => ({ record: { ...canonicalChatRecord,
     ...(active ? { activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" as const } } : {}),
   }, messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: snapshot.activities }));
-  const listeners: Array<(event: CanonicalChatInvalidation) => void> = [];
+  const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
   const eventSource = {
     subscribe(next: (event: CanonicalChatInvalidation) => void) {
-      listeners.push(next);
-      return { dispose: () => { const index = listeners.indexOf(next); if (index >= 0) listeners.splice(index, 1); } };
+      if (listeners.size >= 8) throw new Error("Too many fixture subscribers");
+      listeners.add(next);
+      return { dispose: () => { listeners.delete(next); } };
     },
   } as CanonicalChatEventSource;
   const fail = async () => { active = !initiallyActive; throw new Error("Ambiguous acknowledgement"); };

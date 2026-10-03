@@ -208,7 +208,7 @@ function TwoPaneChatProviderChoices({
           {activeEntry?.id === "matrix-ai" ? "Matrix AI is unavailable on this computer." : "No ready connections. Open Agents & providers settings to connect."}
         </p> : null}
       </div>
-      {activeInstance && activeInstance.availability !== "available" && (!loading || canonicalProviderFundingState(activeInstance) === "credit_reserved") ? <div className="matrix-chat-provider-setup">
+      {activeInstance && activeInstance.availability !== "available" && (!loading || canonicalProviderFundingState(activeInstance) === "credit_reserved") ? <div className="matrix-chat-provider-setup" data-has-models={activeRows.length > 0 || undefined}>
         <p>{canonicalProviderAvailabilityLabel(activeInstance)}</p>
         {canonicalProviderFundingState(activeInstance) === "credit_reserved"
           ? <p>Your credit is reserved while usage is confirmed.</p> : null}

@@ -42,6 +42,7 @@ function requestId(): string {
 
 function conversationMeta(record: CanonicalChatRecord) {
   return {
+    canonicalRecord: record,
     readState: record.readState,
     id: record.chat.id,
     title: record.chat.title,

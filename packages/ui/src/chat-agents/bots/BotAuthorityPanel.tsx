@@ -1,10 +1,10 @@
 import { groupBotAuthority, type BotAuthorityView, type BotMemoryMutationRequest } from "@matrix-os/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { RememberedItemPart } from "./RememberedItemPart.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 
-export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged }: {
-  view: BotAuthorityView;
+export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged, compact = false, title = "What this bot can access", beforeMemory }: {
+  compact?: boolean; title?: string; beforeMemory?: ReactNode; view: BotAuthorityView;
   onRevoke: (grantId: string) => Promise<unknown>;
   onMemory: (itemId: string, action: "confirm" | "forget", input: BotMemoryMutationRequest) => Promise<unknown>;
   onChanged?: () => void;
@@ -29,11 +29,11 @@ export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged }: {
       setPending(null);
     }
   };
-  return <section aria-label="Bot authority" className="grid gap-5 rounded-2xl border p-4">
-    <div><h3 className="text-sm font-semibold">What this bot can access</h3>
+  return <section aria-label="Bot authority" className={compact ? "grid gap-5" : "grid gap-5 rounded-2xl border p-4"}>
+    <div><h3 className="text-sm font-semibold">{title}</h3>
       <p className="mt-1 text-xs" style={chatAgentMutedStyle}>Access and memory are shown from saved settings.</p></div>
     <div className="grid gap-3">
-      {groups.length ? groups.map((group) => <div key={group.service} className="grid gap-2 rounded-xl border p-3">
+      {groups.length ? groups.map((group) => <div key={group.service} className={compact ? "grid gap-2 border-b pb-3" : "grid gap-2 rounded-xl border p-3"}>
         <h4 className="text-sm font-medium">{group.service.replaceAll("_", " ")}</h4>
         <p className="text-xs" style={chatAgentMutedStyle}>{group.state.replaceAll("_", " ")}</p>
         {group.grants.map((grant) => <div key={grant.grantId} className="flex flex-wrap items-center justify-between gap-2">
@@ -51,6 +51,7 @@ export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged }: {
         </div>)}
       </div>) : <p className="text-sm" style={chatAgentMutedStyle}>No integration access recorded.</p>}
     </div>
+    {beforeMemory}
     <div className="grid gap-3"><h4 className="text-sm font-semibold">Remembered</h4>
       {current.memory.items.length ? current.memory.items.map((item) => <div key={item.itemId} className="grid gap-2 rounded-xl border p-3">
         <RememberedItemPart item={item} />

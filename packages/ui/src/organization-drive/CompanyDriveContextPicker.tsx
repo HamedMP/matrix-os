@@ -7,15 +7,16 @@ import { driveBrowserEntries } from "./browser-model.js";
 import { companyDriveChatReference } from "./context-reference.js";
 import { loadOrganizationDriveOptions, type OrganizationDriveOption } from "./discovery.js";
 const control = "min-h-9 rounded-md border px-3 py-1.5 text-xs hover:bg-[var(--bg-hover,var(--muted))] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
-export function CompanyDriveContextPicker({ api, resources, onSelect, enabled, mentionQuery = null, disabled = false }: {
+export function CompanyDriveContextPicker({ api, resources, onSelect, enabled, mentionQuery = null, disabled = false, botContext = false }: {
     api: CollaborationDirectApi | null;
     resources: CanonicalChatResourceReference[];
     onSelect(reference: CanonicalChatResourceReference): void;
     enabled: boolean;
     mentionQuery?: string | null;
     disabled?: boolean;
+    botContext?: boolean;
 }) {
-    const [explicitOpen, setExplicitOpen] = useState(false), [dismissed, setDismissed] = useState<string | null>(null), [attempt, setAttempt] = useState(0);
+    const [dismissed, setDismissed] = useState<string | null>(null), [attempt, setAttempt] = useState(0);
     const [listing, setListing] = useState<{
         api: CollaborationDirectApi;
         options: OrganizationDriveOption[];
@@ -27,7 +28,8 @@ export function CompanyDriveContextPicker({ api, resources, onSelect, enabled, m
         folder: string;
         query: string;
     } | null>(null);
-    const open = enabled && !disabled && (explicitOpen || (mentionQuery !== null && mentionQuery !== dismissed));
+    const contextEnabled = enabled && !botContext;
+    const open = contextEnabled && !disabled && (mentionQuery !== null && mentionQuery !== dismissed);
     useEffect(() => {
         if (!open || !api)
             return;
@@ -45,14 +47,13 @@ export function CompanyDriveContextPicker({ api, resources, onSelect, enabled, m
     const folder = drive ? selection!.folder : "", query = drive ? selection!.query : "";
     const entries = useMemo(() => driveBrowserEntries(drive?.snapshot?.files ?? [], folder, query, "name"), [drive, folder, query]);
     const choose = (reference: CanonicalChatResourceReference) => { if (!canAddChatMention(resources, reference))
-        return; onSelect(reference); setExplicitOpen(false); setDismissed(mentionQuery); setSelection(null); };
+        return; onSelect(reference); setDismissed(mentionQuery); setSelection(null); };
     const setLocation = (folder: string, query = "") => { if (drive && api)
         setSelection({ api, scopeId: drive.scopeId, folder, query }); };
+    if (!open || !api) return null;
     return <div className="min-w-0 space-y-2">
-  <button type="button" className={control} aria-label="Add company drive context" aria-expanded={open} disabled={!enabled || disabled || !api} onClick={() => { setExplicitOpen(!open); setDismissed(open ? mentionQuery : null); }}>Add context</button>
-  {!enabled ? <p className="text-xs" style={{ color: "var(--text-secondary,var(--muted-foreground))" }}>Choose Claude Code to use company drive context.</p> : null}
   {open && api ? <section aria-label="Company drive context" className="max-h-80 space-y-2 overflow-y-auto rounded-lg border p-3" style={{ borderColor: "var(--border-default,var(--border))", background: "var(--bg-surface,var(--background))" }}>
-   <header className="flex items-center justify-between gap-2"><strong className="text-xs">Company drives</strong><button type="button" className={control} onClick={() => { setExplicitOpen(false); setDismissed(mentionQuery); }}>Close context picker</button></header>
+   <header className="flex items-center justify-between gap-2"><strong className="text-xs">Company drives</strong><button type="button" className={control} onClick={() => { setDismissed(mentionQuery); }}>Close context picker</button></header>
    <p className="text-xs">Chat searches and reads current files as needed. Chats remain private.</p>
    {!current ? <p role="status" className="text-xs">Loading company drives…</p> : current.error ? <div><p role="alert" className="text-xs">Company drives could not be loaded. Try again.</p><button type="button" className={control} onClick={() => setAttempt(attempt + 1)}>Retry</button></div> : drive ? <>
     <nav className="flex flex-wrap gap-2" aria-label="Context folders"><button type="button" className={control} onClick={() => setSelection(null)}>All drives</button><button type="button" className={control} onClick={() => setLocation("")}>{drive.name}</button>{folder ? <button type="button" className={control} onClick={() => setLocation(folder.split("/").slice(0, -1).join("/"))}>Up one folder</button> : null}</nav>

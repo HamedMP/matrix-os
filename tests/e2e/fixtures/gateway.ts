@@ -38,12 +38,25 @@ export interface TestGatewayOptions {
   authToken?: string;
   config?: Record<string, unknown>;
   spawnFn?: SpawnFn;
+  /** Synthetic owner key for an injected kernel only; never enables real inference. */
+  mockOwnerCredentials?: boolean;
   runningVersion?: string;
 }
 
 export async function startTestGateway(
   options: TestGatewayOptions = {},
 ): Promise<TestGateway> {
+  if (options.mockOwnerCredentials && !options.spawnFn) {
+    throw new Error("Mock owner credentials require an injected kernel");
+  }
+  const kernelConfig = options.config?.kernel;
+  const config = options.mockOwnerCredentials ? {
+    ...options.config,
+    kernel: {
+      ...(kernelConfig && typeof kernelConfig === "object" && !Array.isArray(kernelConfig) ? kernelConfig : {}),
+      anthropicApiKey: "synthetic-e2e-owner-key",
+    },
+  } : options.config;
   const homePath = resolve(mkdtempSync(join(tmpdir(), "e2e-gateway-")));
   cpSync(TEMPLATE_DIR, homePath, { recursive: true });
 
@@ -53,10 +66,10 @@ export async function startTestGateway(
   mkdirSync(join(homePath, "system", "plugins"), { recursive: true });
 
   // Write custom config if provided
-  if (options.config) {
+  if (config) {
     writeFileSync(
       join(homePath, "system", "config.json"),
-      JSON.stringify(options.config, null, 2),
+      JSON.stringify(config, null, 2),
     );
   }
 

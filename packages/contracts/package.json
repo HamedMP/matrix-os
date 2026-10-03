@@ -84,7 +84,9 @@
     "#terminal-links": "./src/terminal-links.ts",
     "#collaboration-identity": "./src/collaboration-identity.ts",
     "#organization-drive-context": "./src/organization-drive-context.ts",
-    "#chat-drive-project": "./src/chat-drive-project.ts"
+    "#chat-drive-project": "./src/chat-drive-project.ts",
+    "#provider-workflows": "./src/provider-workflows.ts",
+    "#ai-credit-history": "./src/ai-credit-history.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

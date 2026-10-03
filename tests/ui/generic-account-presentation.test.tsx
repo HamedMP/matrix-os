@@ -1,13 +1,27 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountsPanel } from "../../packages/ui/src/agents-providers/AccountsPanel.js";
 import { nativeAccountPresentationFixture, ACCOUNT_PRESENTATION_NOW } from "../gateway/generic-account-presentation-fixture.js";
 
 afterEach(() => vi.useRealTimers());
 describe("harness-owned account presentation", () => {
+  it.each([[0, 10000], [2500, 7500], [10000, 0]])("shows remaining native allowance with %i basis points used", async (usedBasisPoints, remainingBasisPoints) => {
+    vi.useFakeTimers(); vi.setSystemTime(ACCOUNT_PRESENTATION_NOW);
+    const snapshot = await nativeAccountPresentationFixture("pi");
+    const selected = { ...snapshot.harnesses[0]!, accountIds: [] };
+    const source = snapshot.accessSources.find((candidate) => candidate.id === selected.accessSourceId)!;
+    source.usage = { kind: "subscription_allowance", authority: "provider_allowance", state: "current",
+      scope: "account", usedBasisPoints, resetsAt: null, asOf: ACCOUNT_PRESENTATION_NOW };
+    render(<AccountsPanel harness={selected} accounts={[]} sources={snapshot.accessSources} allHarnesses={snapshot.harnesses}
+      gatewayPolicy={null} attempt={null} disabled={false} canLogin={false} canLogout={false} canRemove={false} canReassign={false}
+      onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
+    const card = within(screen.getByTestId(`native-account-${selected.id}`));
+    expect(card.getByText(`${usedBasisPoints / 100}% used`)).toBeVisible();
+    expect(card.getByRole("progressbar", { name: "pi account remaining allowance" })).toHaveAttribute("value", String(remainingBasisPoints));
+  });
   it.each(["pi", "opencode"] as const)("describes %s native authentication without inventing a connected Matrix account", async (harness) => {
     vi.useFakeTimers(); vi.setSystemTime(ACCOUNT_PRESENTATION_NOW);
     const snapshot = await nativeAccountPresentationFixture(harness);
@@ -16,7 +30,11 @@ describe("harness-owned account presentation", () => {
       gatewayPolicy={null} attempt={null} disabled={false} canLogin={false} canLogout={false} canRemove={false} canReassign={false}
       onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
     expect(screen.queryByText("No account connected.")).not.toBeInTheDocument();
-    expect(screen.getByText(`${selected.displayName} manages authentication for this route in Terminal.`)).toBeVisible();
+    const card = within(screen.getByTestId(`native-account-${selected.id}`));
+    expect(card.getByText(`${harness} account`)).toBeVisible();
+    expect(card.getByText("Connected")).toBeVisible();
+    expect(card.getByText("Usage unavailable")).toBeVisible();
+    expect(screen.queryByText(/in Terminal/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("account-owner_codex")).not.toBeInTheDocument();
     expect(snapshot.accessSources.find((source) => source.id === selected.accessSourceId)?.readiness.state).toBe("unknown");
   });
@@ -28,7 +46,11 @@ describe("harness-owned account presentation", () => {
       gatewayPolicy={null} attempt={null} disabled={false} canLogin={false} canLogout={false} canRemove={false} canReassign={false}
       onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
     expect(screen.queryByText("No account connected.")).not.toBeInTheDocument();
-    expect(screen.getByText(`${selected.displayName} manages authentication for this route in Terminal.`)).toBeVisible();
+    const card = within(screen.getByTestId(`native-account-${selected.id}`));
+    expect(card.getByText(`${harness} account`)).toBeVisible();
+    expect(card.getByText("Connected")).toBeVisible();
+    expect(card.getByText("Usage unavailable")).toBeVisible();
+    expect(screen.queryByText(/in Terminal/)).not.toBeInTheDocument();
     expect(selected.accessSourceId).toBeNull();
     expect(selected.enabled).toBe(false);
   });
@@ -40,7 +62,8 @@ describe("harness-owned account presentation", () => {
     render(<AccountsPanel harness={selected} accounts={[]} sources={sources} allHarnesses={snapshot.harnesses}
       gatewayPolicy={null} attempt={null} disabled={false} canLogin={false} canLogout={false} canRemove={false} canReassign={false}
       onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
-    expect(screen.queryByText(/manages authentication for this route/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId(`native-account-${selected.id}`)).not.toBeInTheDocument();
+    expect(screen.getByText("No account connected.")).toBeVisible();
     expect(screen.queryByTestId("account-owner_codex")).not.toBeInTheDocument();
     expect(selected.accessSourceId).toBeNull();
     expect(selected.enabled).toBe(false);

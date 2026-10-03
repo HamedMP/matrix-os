@@ -1,3 +1,4 @@
+import { projectChatBalance } from "./ai-funded-chat-balance.js";
 import { assertJevNoDispatchSettlement, type JevNoDispatchAttestation } from "./ai-funded-no-dispatch.js";
 import { createHmac, randomUUID } from "node:crypto";
 import { CleanupSchema, cleanupExpiredReservations as cleanupReservations } from "./ai-funded-reservation-cleanup.js";
@@ -152,7 +153,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
         : [];
       return {
-        funding: fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
+        funding: fundingSummary(await projectChatBalance(trx.executor, identity, balance, checkedAt), monthlyBudgetMicrousd, checkedAt),
         policy: {
           enabled: enabled && allowedModelIds.length > 0,
           globalRevision: global.revision,

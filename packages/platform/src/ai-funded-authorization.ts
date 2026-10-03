@@ -1,3 +1,4 @@
+import { projectChatBalance } from "./ai-funded-chat-balance.js";
 /**
  * Funded AI authorization: the single owner-wide admission point before a
  * reservation. Under an owner advisory lock it checks the credential, runtime
@@ -125,9 +126,10 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         .selectAll().where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
       // Upper bounds ignore active holds, which may still be released. A request that
       // cannot fit even then fails now and never takes a priority place.
+      const chatBalance = await projectChatBalance(trx.executor, identity, balance, checkedAt);
       const sourceAvailability = await fundingSourceAvailability(trx.executor, identity, balance, checkedAt);
       const creditCeiling = Math.min(sourceAvailability.ceilingMicrousd,
-        exactInteger(balance.credit_balance_microusd) - exactInteger(balance.funding_shortfall_microusd));
+        exactInteger(chatBalance.credit_balance_microusd) - exactInteger(balance.funding_shortfall_microusd));
       const budgetCeiling = monthlyBudget - exactInteger(balance.month_spent_microusd);
       const ceilingHold = billingMode === "usage" ? 1 : request.maxCostMicrousd;
       if (ceilingHold > budgetCeiling) throw new AiFundedPolicyError("budget_exceeded");
@@ -151,7 +153,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       let holdMicrousd = request.maxCostMicrousd;
       if (billingMode === "usage") {
         const credit = Math.min(sourceAvailability.availableMicrousd,
-          exactInteger(balance.credit_balance_microusd) - exactInteger(balance.reserved_microusd)
+          exactInteger(chatBalance.credit_balance_microusd) - exactInteger(chatBalance.reserved_microusd)
             - exactInteger(balance.funding_shortfall_microusd));
         const budget = monthlyBudget - exactInteger(balance.month_spent_microusd)
           - exactInteger(balance.month_reserved_microusd);
@@ -182,8 +184,9 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         if (request.maxCostMicrousd > availableBudget) throw new AiFundedPolicyError("budget_exceeded");
         throw new AiFundedPolicyError("insufficient_credit");
       }
-      const remainingBalance = exactInteger(reserved.credit_balance_microusd)
-        - exactInteger(reserved.reserved_microusd)
+      const projectedReserved = await projectChatBalance(trx.executor, identity, reserved, checkedAt);
+      const remainingBalance = exactInteger(projectedReserved.credit_balance_microusd)
+        - exactInteger(projectedReserved.reserved_microusd)
         - exactInteger(reserved.funding_shortfall_microusd);
       const remainingBudget = monthlyBudget - exactInteger(reserved.month_spent_microusd)
         - exactInteger(reserved.month_reserved_microusd);
@@ -216,7 +219,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
           checkedAt,
           staleAfter: new Date(checked.getTime() + deps.policyFreshnessMs).toISOString(),
         },
-        funding: fundingSummary(reserved, monthlyBudget, checkedAt),
+        funding: fundingSummary(projectedReserved, monthlyBudget, checkedAt),
         reservation: {
           reservationId,
           requestId: request.requestId,

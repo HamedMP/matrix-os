@@ -30,7 +30,7 @@ export default function DrawerLayout() {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
-  const { computer, chats, isPending: recentChatsLoading } = useCanonicalChats();
+  const { computer, chats, botConversations, botStatusUnavailable, isPending: recentChatsLoading } = useCanonicalChats();
   const { projects } = useProjects();
   const { activeChatId, selectChat, startDraftChat } = useCanonicalChatSession();
   const { systemInfo } = useSettingsSystemInfo();
@@ -74,6 +74,8 @@ export default function DrawerLayout() {
           pendingInvitationCount={pendingInvitationCount}
           recentChats={chats}
           recentChatsLoading={recentChatsLoading}
+          botConversations={botConversations}
+          botStatusUnavailable={botStatusUnavailable}
           projects={projects}
           activeSessionId={activeChatId}
           onSelectConversation={selectChat}

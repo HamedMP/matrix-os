@@ -79,7 +79,7 @@ export function gatewayCreditLines(source: ProviderAccessSource): { primary: str
   if (source.usage.kind !== "managed_credit") {
     return { primary: "Credit unavailable", secondary: source.usage.kind === "unavailable" ? titleCase(source.usage.reason) : null, stale: false };
   }
-  return usageLines(source.usage);
+  return { primary: money(source.usage.credit.remainingBalanceMicrousd, source.usage.currency), secondary: null, stale: source.usage.state === "stale" };
 }
 
 export function selectedHarness(snapshot: ProviderSettingsSnapshot, id: string | null): ProviderHarnessInstance | null {

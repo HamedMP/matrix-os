@@ -54,7 +54,9 @@ describe("canonical native empty Chat connection wiring", () => {
       expect(scroll?.querySelector('[data-slot="chat-starter-stack"]')).toHaveClass("my-auto");
       expect(scroll?.contains(screen.getByRole("textbox", { name: "Start a chat" }))).toBe(false);
     } else {
-      expect(scroll).toHaveClass("justify-center-safe");
+      expect(scroll).toHaveClass("flex-col");
+      expect(scroll?.contains(screen.getByRole("textbox", { name: "Start a chat" }))).toBe(false);
+      expect(screen.queryByRole("button", { name: "Explore and understand code" })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
   });

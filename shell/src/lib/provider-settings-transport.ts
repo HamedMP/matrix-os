@@ -33,7 +33,7 @@ function requestSignal(signal?: AbortSignal, timeoutMs = REQUEST_TIMEOUT_MS): Ab
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
-async function boundedJson(response: Response): Promise<unknown> {
+export async function boundedProviderSettingsJson(response: Response): Promise<unknown> {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
     throw new ProviderSettingsTransportError("invalid_response");
@@ -83,7 +83,7 @@ async function fetchJson(
   if (!response.ok) {
     let value: unknown;
     try {
-      value = await boundedJson(response);
+      value = await boundedProviderSettingsJson(response);
     } catch (error) {
       console.warn("[provider-settings] Provider settings error response was invalid:", error instanceof Error ? error.name : typeof error);
       throw new ProviderSettingsTransportError("unavailable");
@@ -100,7 +100,7 @@ async function fetchJson(
     }
     throw new ProviderSettingsTransportError("unavailable");
   }
-  return await boundedJson(response);
+  return await boundedProviderSettingsJson(response);
 }
 
 export function createProviderSettingsTransport(
@@ -149,7 +149,7 @@ export async function openWebProviderAgentSetup(
   const runtimeUrl = getGatewayUrl();
   return openProviderAgentSetup({
     harness,
-    getCatalog: () => fetchJson(fetch, canonicalChatProviderCatalogPath(true), {
+    getCatalog: () => fetchJson(fetch, canonicalChatProviderCatalogPath(true, true), {
       signal: requestSignal(undefined, FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs), cache: "no-store",
     }),
     openCommand: async (cmd) => {

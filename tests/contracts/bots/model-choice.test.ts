@@ -57,3 +57,21 @@ it("explains reserved credit for saved Bot choices without creating an executabl
   catalog.instances = [];
   expect(botModelRoutingLabel(selection, catalog)).toBe("Matrix AI · claude-sonnet-5 · unavailable");
 });
+
+it("reserves Automatic for the exact sentinel rather than legacy or malformed routes", () => {
+  expect(botModelRoutingLabel(null)).toBe("Bot model unavailable");
+  expect(botModelRoutingLabel({ instanceId: "matrix_bot_default", model: "other" })).toBe("other · unavailable");
+  expect(botModelRoutingLabel({ instanceId: "matrix_bot_default", model: "auto", options: ["unsupported"] })).toBe("auto · unavailable");
+  expect(botModelRoutingLabel({ instanceId: "codex_default", model: "gpt-old" })).toBe("gpt-old · unavailable");
+  expect(botModelRoutingLabel({ instanceId: "pi_default", model: "auto" })).toBe("auto · unavailable");
+});
+
+it("displays a legacy configured provider/model in Bot details while keeping it unavailable for the Bot route", () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  const base = catalog.instances[0]!;
+  const selection = { instanceId: "codex_default", model: "gpt-old" };
+  catalog.instances = [{ ...base, id: selection.instanceId, driverKind: "codex", displayName: "Codex", connectionLabel: undefined,
+    models: [{ ...base.models[0]!, id: selection.model, displayName: "GPT Old" }] }];
+  expect(botModelRoutingLabel(selection, catalog)).toBe("GPT Old · Codex · unavailable");
+  expect(botModelRoutingLabel({ ...selection, model: "unknown" }, catalog)).toBe("unknown · Codex · unavailable");
+});

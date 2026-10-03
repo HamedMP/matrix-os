@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { startTestGateway, type TestGateway } from "../fixtures/gateway.js";
 
-const OWNER_API_KEY = "e2e-owner-key-not-a-live-credential";
+const OWNER_API_KEY = "synthetic-e2e-owner-key";
 
 describe("E2E: Channel status + Message API", () => {
   let gw: TestGateway;
 
   beforeAll(async () => {
     gw = await startTestGateway({
-      // Only this mocked SDK fixture has owner credentials; no provider readiness is fabricated.
-      config: { kernel: { anthropicApiKey: OWNER_API_KEY } },
+      // Only this injected SDK fixture opts into synthetic owner credentials.
+      mockOwnerCredentials: true,
       spawnFn: async function* (_message, config) {
         expect(config.env?.ANTHROPIC_API_KEY).toBe(OWNER_API_KEY);
         expect(config.env?.ANTHROPIC_BASE_URL).toBeUndefined();
@@ -17,7 +17,7 @@ describe("E2E: Channel status + Message API", () => {
         expect(config.env?.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
         yield {
           type: "result",
-          data: { sessionId: "test-session", cost: 0, tokensIn: 0, tokensOut: 0 },
+          data: { sessionId: "test-session", cost: 0, turns: 1, tokensIn: 0, tokensOut: 0 },
         };
       },
     });
@@ -73,7 +73,7 @@ describe("E2E: Channel status + Message API", () => {
     const noCredentials = await startTestGateway({
       spawnFn: async function* () {
         dispatched = true;
-        yield { type: "result", data: { sessionId: "unexpected", cost: 0, tokensIn: 0, tokensOut: 0 } };
+        yield { type: "result", data: { sessionId: "unexpected", cost: 0, turns: 1, tokensIn: 0, tokensOut: 0 } };
       },
     });
     try {
