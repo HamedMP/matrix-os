@@ -8,7 +8,8 @@ import { MatrixBotModelField } from "./MatrixBotModelField.js";
 import { chatAgentMutedStyle } from "../theme.js";
 
 /** The bound Bot's saved model is independent of an ordinary Chat's provider selection. */
-export function BotComposerControls({ agentId, client, catalog, catalogLoading = false, disabled = false, refreshKey, onChanged, zIndex = 50 }: {
+export function BotComposerControls({ agentId, client, catalog, catalogLoading = false, disabled = false, refreshKey, onChanged, onSetup, onRefreshCatalog, zIndex = 50 }: {
+  onSetup?: () => void; onRefreshCatalog?: () => void;
   agentId: string; client?: ChatAgentClient; catalog?: CanonicalProviderCatalog | null;
   catalogLoading?: boolean; disabled?: boolean; refreshKey?: number; onChanged?: () => void; zIndex?: number;
 }) {
@@ -58,7 +59,7 @@ export function BotComposerControls({ agentId, client, catalog, catalogLoading =
   };
   // Automatic's concrete funding/provider is not projected by this endpoint. Never guess it.
   const routing = agent ? agent.selection?.instanceId === "matrix_bot_default" || !agent.selection
-    ? "Automatic · managed by this computer" : botModelRoutingLabel(agent.selection, catalog) : error ? "Bot settings unavailable" : "Checking bot model…";
+    ? "Automatic" : botModelRoutingLabel(agent.selection, catalog) : error ? "Bot settings unavailable" : "Checking bot model…";
   return <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
     <Popover.Trigger asChild><button type="button" aria-label="Choose bot agent and model" aria-busy={!agent && !error || pending || catalogLoading}
       disabled={disabled || pending} title={`${agent?.name ?? "Your bot"} · ${routing}`} data-slot="bot-composer-model-trigger"
@@ -70,7 +71,7 @@ export function BotComposerControls({ agentId, client, catalog, catalogLoading =
       className="matrix-chat-model-choices z-50 w-80 max-w-[calc(100vw-32px)] rounded-xl border p-4 shadow-xl" style={{ zIndex, borderColor: "var(--border-default,var(--border))", background: "var(--bg-overlay,var(--background))", color: "var(--text-primary,var(--foreground))" }}>
       <p className="mb-3 text-sm font-medium">{agent?.name ?? "Your bot"}</p>
       {agent ? <MatrixBotModelField id={`bot-composer-model-${agentId}`} label="Bot model" selection={agent.selection} models={catalog ? deriveCanonicalProviderChoices(catalog) : []}
-        catalog={catalog} catalogLoading={catalogLoading} pending={pending || !catalog || Boolean(agent.archived)} onChange={selection => { void changeModel(selection); }}/>
+        catalog={catalog} catalogLoading={catalogLoading} onSetup={onSetup ? () => { setOpen(false); onSetup(); } : undefined} onRefreshCatalog={onRefreshCatalog} pending={pending || !catalog || Boolean(agent.archived)} onChange={selection => { void changeModel(selection); }}/>
         : !error ? <p role="status" className="text-xs">Loading bot settings…</p> : null}
       <p className="mt-3 text-xs" style={chatAgentMutedStyle}>This conversation uses {agent?.name ?? "its bound bot"}. Automatic routing is managed by this computer.</p>
       {error ? <div className="mt-3 text-xs"><p role="alert">{error}</p><button type="button" className="mt-2 underline" onClick={() => setAttempt(value => value + 1)}>Refresh bot settings</button></div> : null}

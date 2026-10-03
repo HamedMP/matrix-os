@@ -162,8 +162,8 @@ describe("WorkRail", () => {
     await screen.findByRole("button", { name: "Chat with Research bot" });
     const orderedLabels = [...screen.getByRole("navigation").querySelectorAll("button")]
       .map(button => button.getAttribute("aria-label") ?? button.textContent?.trim())
-      .filter(label => ["New chat", "Search chats", "Agents", "Pinned", "Projects", "Needs you", "Working", "Done", "Recent"].includes(label ?? ""));
-    expect(orderedLabels).toEqual(["New chat", "Search chats", "Agents", "Pinned", "Projects", "Needs you", "Working", "Done", "Recent"]);
+      .filter(label => ["New chat", "Search chats", "Agents", "Pinned", "Projects", "Needs you", "Working", "Done"].includes(label ?? ""));
+    expect(orderedLabels).toEqual(["New chat", "Search chats", "Agents", "Pinned", "Projects", "Needs you", "Working", "Done"]);
     fireEvent.click(screen.getByRole("button", { name: "Collapse agents" }));
     expect(screen.queryByRole("button", { name: "Chat with Research bot" })).toBeNull();
     expect(screen.getByRole("button", { name: "Review Research bot approval" })).toBeTruthy();
@@ -200,7 +200,7 @@ describe("WorkRail", () => {
     expect(scroller.contains(screen.getByRole("button", { name: "New chat" }))).toBe(false);
     expect(scroller.querySelector("button")?.getAttribute("aria-label")).toBe("Search chats");
     const labels = [...scroller.querySelectorAll('[data-slot="chat-sidebar-section-heading"] button')].map(button => button.getAttribute("aria-label"));
-    expect(labels.filter(label => label !== "Create project")).toEqual(["Pinned", "Projects", "Needs you", "Working", "Done", "Recent"]);
+    expect(labels.filter(label => label !== "Create project")).toEqual(["Pinned", "Projects", "Needs you", "Working", "Done"]);
   });
 
   it("moves projects between Projects and Pinned when pin state changes", async () => {
@@ -348,7 +348,9 @@ describe("WorkRail", () => {
     expect(rail.className).toContain("gap-0.5");
     expect(rail.className).toContain("overflow-hidden");
     expect(screen.getByTestId("work-rail-scroll").className).toContain("overflow-y-auto");
-    expect(rail.className).toContain("p-2");
+    expect(rail.className).toContain("py-2");
+    expect(rail.className).not.toContain("px-2");
+    expect(screen.getByTestId("work-rail-scroll").className).toContain("px-2");
     expect(rail.getAttribute("style")).toContain("background: var(--bg-surface)");
     expect(newChat.className).toContain("gap-2.5");
     expect(newChat.className).toContain("px-2.5");
@@ -366,7 +368,7 @@ describe("WorkRail", () => {
     const recentChat = screen.getByRole("button", { name: "Recent global" });
     const pinnedHeading = screen.getByRole("button", { name: "Pinned" });
     const projectsHeading = screen.getByRole("button", { name: "Projects" });
-    const recentsHeading = screen.getByRole("button", { name: "Recent" });
+    const recentsHeading = screen.getByRole("button", { name: "Done" });
 
     for (const item of [pinnedChat, projectChatRow, recentChat]) {
       expect(item.className).toContain("gap-2.5");
@@ -375,10 +377,10 @@ describe("WorkRail", () => {
       expect(item.className).toContain("text-sm");
       expect(item.className).toContain("font-medium");
     }
-    expect(projectsHeading.className).toContain("text-sm");
-    expect(projectsHeading.className).not.toContain("uppercase");
+    expect(projectsHeading.className).toContain("text-xs");
+    expect(projectsHeading.className).toContain("uppercase");
     for (const heading of [pinnedHeading, recentsHeading]) {
-      expect(heading.className).toContain("px-2.5");
+      expect(heading.className).toContain("pl-2.5");
       expect(heading.className).toContain("pt-2");
       expect(heading.className).toContain("pb-1");
       expect(heading.className).toContain("text-xs");
@@ -388,27 +390,16 @@ describe("WorkRail", () => {
     }
   });
 
-  it("keeps the unread filter as a compact toggle beside Search", async () => {
+  it("sorts instead of filtering and retains every ordinary Chat without Recent", async () => {
     const { client } = setup();
-
-    const search = screen.getByRole("button", { name: "Search chats" });
-    const unreadToggle = screen.getByRole("button", { name: "Show unread chats only" });
-    expect(unreadToggle.parentElement).toBe(search.parentElement);
-    expect(unreadToggle.getAttribute("aria-pressed")).toBe("false");
-    expect(screen.queryByRole("button", { name: "All" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Unread" })).toBeNull();
-
-    fireEvent.click(unreadToggle);
-    expect(unreadToggle.getAttribute("aria-pressed")).toBe("true");
-    expect(unreadToggle.getAttribute("aria-label")).toBe("Show all chats");
-    expect(unreadToggle.getAttribute("title")).toBe("Show all chats");
-    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ unreadOnly: true, limit: 100 }));
-
-    fireEvent.click(unreadToggle);
-    expect(unreadToggle.getAttribute("aria-pressed")).toBe("false");
-    expect(unreadToggle.getAttribute("aria-label")).toBe("Show unread chats only");
-    expect(unreadToggle.getAttribute("title")).toBe("Show unread chats only");
-    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ limit: 100 }));
+    await screen.findByRole("button", { name: "Recent global" });
+    const sort = screen.getByRole("button", { name: "Sort chats" });
+    expect(sort.parentElement).toBe(screen.getByRole("button", {name:"Search chats"}).parentElement);
+    fireEvent.pointerDown(sort, {button:0, ctrlKey:false, pointerType:"mouse"});
+    fireEvent.click(await screen.findByRole("menuitemradio", {name:"Manual order"}));
+    expect(screen.queryByRole("button", {name:"Recent"})).toBeNull();
+    expect(screen.getByRole("button", {name:"Recent global"}).closest("section")?.querySelector("[aria-label=Done]")).toBeTruthy();
+    expect(client.list).toHaveBeenLastCalledWith({limit:100});
   });
 
   it("converges two Chat rows from the shared event source without adding WorkRail polling", async () => {

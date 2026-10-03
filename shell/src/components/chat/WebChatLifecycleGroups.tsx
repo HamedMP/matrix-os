@@ -2,15 +2,17 @@ import React, { Fragment, type ReactNode } from 'react';
 import { resolveCanonicalChatLifecycleGroup } from '@matrix-os/ui';
 import type { RenameableConversation } from './ChatTitleRename';
 
-type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done' | 'recent';
+type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done';
+export function webChatLifecycleGroup(item: RenameableConversation): GroupKey {
+  const record = item.canonicalRecord;
+  if (!record) return "done";
+  if (record.chat.userState?.pinned) return "pinned";
+  const group = resolveCanonicalChatLifecycleGroup(record);
+  return group === "recent" ? "done" : group;
+}
 export function groupWebChats(items: readonly RenameableConversation[]): Record<GroupKey, RenameableConversation[]> {
-  const result: Record<GroupKey, RenameableConversation[]> = { pinned: [], needsYou: [], working: [], done: [], recent: [] };
-  for (const item of items) {
-    const record = item.canonicalRecord;
-    if (!record) { result.recent.push(item); continue; }
-    if (record.chat.userState?.pinned) { result.pinned.push(item); continue; }
-    result[resolveCanonicalChatLifecycleGroup(record)].push(item);
-  }
+  const result: Record<GroupKey, RenameableConversation[]> = { pinned: [], needsYou: [], working: [], done: [] };
+  for (const item of items) result[webChatLifecycleGroup(item)].push(item);
   return result;
 }
 
@@ -22,5 +24,5 @@ export function WebChatLifecycleGroups({ conversations, projects, attention, ren
     <h3 className="px-2 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</h3>
     {groups[key].map(item => <Fragment key={item.id}>{renderRow(item)}</Fragment>)}{extra}
   </section> : null;
-  return <>{section('pinned','Pinned')}{projects}{section('needsYou','Needs you',attention)}{section('working','Working')}{section('done','Done')}{section('recent','Recent')}</>;
+  return <>{section('pinned','Pinned')}{projects}{section('needsYou','Needs you',attention)}{section('working','Working')}{section('done','Done')}</>;
 }

@@ -210,3 +210,9 @@ export { useBotDraftRecovery } from './chat-agents/bots/use-bot-draft-recovery.j
 export { BotDraftRecoveryPanel } from './chat-agents/bots/BotDraftRecoveryPanel.js';
 
 export { BotComposerControls } from "./chat-agents/bots/BotComposerControls.js";
+
+export { BotModelRecoveryProvider, BotModelFailureNotice, useBotModelRecovery } from "./chat-agents/bots/BotModelRecovery.js";
+
+export { DEFAULT_RAIL_ORDER, moveRailItem, orderRailItems, parseRailOrderPreference } from "./chat/rail-order.js";
+export type { RailOrderPreference, RailSortMode } from "./chat/rail-order.js";
+export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js";

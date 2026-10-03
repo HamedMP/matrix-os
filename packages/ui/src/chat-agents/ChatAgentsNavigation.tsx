@@ -7,6 +7,7 @@ export type OpenAgents = {
   onSetup?: () => void;
   onStartChat?: StartAgentChat;
   view?: "library" | "recipes";
+  title?: "Your AI team" | "New agent" | "Edit agent";
 };
 type Navigation = {
   opened: OpenAgents | null;
@@ -14,6 +15,7 @@ type Navigation = {
   getGeneration(): number;
   open(value: OpenAgents, trigger: HTMLButtonElement): void;
   close(restoreFocus?: boolean): void;
+  setTitle(client: ChatAgentClient, generation: number, title: NonNullable<OpenAgents["title"]>): void;
 };
 const Context = createContext<Navigation | null>(null);
 
@@ -26,14 +28,18 @@ function LocalWorkspace({ children }: { children: ReactNode }) {
   const open = useCallback((value: OpenAgents, element: HTMLButtonElement) => {
     generationRef.current += 1; setGeneration(generationRef.current);
     trigger.current = element;
-    setOpened(value);
+    setOpened({ ...value, title: value.view === "recipes" ? "New agent" : "Your AI team" });
+  }, []);
+  const setTitle = useCallback((client: ChatAgentClient, ownerGeneration: number, title: NonNullable<OpenAgents["title"]>) => {
+    if (generationRef.current !== ownerGeneration) return;
+    setOpened(current => current?.client === client && current.title !== title ? { ...current, title } : current);
   }, []);
   const close = useCallback((restoreFocus = false) => {
     generationRef.current += 1; setGeneration(generationRef.current);
     setOpened(null);
     if (restoreFocus && trigger.current?.isConnected) trigger.current.focus();
   }, []);
-  const value = useMemo(() => ({ opened, open, close, generation, getGeneration }), [opened, open, close, generation, getGeneration]);
+  const value = useMemo(() => ({ opened, open, close, generation, getGeneration, setTitle }), [opened, open, close, generation, getGeneration, setTitle]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 

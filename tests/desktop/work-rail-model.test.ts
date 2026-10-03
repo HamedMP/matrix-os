@@ -282,3 +282,13 @@ describe("buildWorkRailModel", () => {
     )).toHaveLength(50);
   });
 });
+
+it("preserves ordered inactive display entries without falsely completing older Chats", () => {
+  const legacy = chat("legacy", "Legacy", {updatedAt:"2026-10-03T00:00:00Z"});
+  const completed = statusRecord({unacknowledged:false});
+  const model = buildWorkRailModel([legacy,completed],[]);
+  expect(model.doneDisplay).toEqual([legacy,completed]);
+  expect(model.done).toEqual([completed]);
+  expect(legacy.chat.attention).toBe("none");
+  expect(legacy.latestSuccessfulCompletion).toBeUndefined();
+});

@@ -101,7 +101,7 @@ export function WorkRailChatRow({
         style={{ background: active ? "var(--bg-selected)" : undefined }}
       >
         {renaming ? (
-          <div className="flex w-full min-w-0 items-center gap-2.5 px-2.5 py-1.5 text-sm font-medium">
+          <div className={`flex w-full min-w-0 items-center gap-2.5 px-2.5 py-1.5 text-sm font-medium ${placement === "project" ? "pl-[30px]" : ""}`}>
             <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />
             <ChatTitleEditor
               title={record.chat.title}
@@ -115,7 +115,7 @@ export function WorkRailChatRow({
           type="button"
           aria-label={record.chat.title}
           aria-current={active ? "page" : undefined}
-          className="flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+          className={`flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${placement === "project" ? "pl-[30px]" : ""}`}
           style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
           onClick={(event) => {
             if (event.detail === 0) {

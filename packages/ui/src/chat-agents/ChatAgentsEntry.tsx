@@ -53,8 +53,8 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
   if (!state.enabled) return <p className="mt-5 text-sm">Agents are disabled for this computer.</p>;
   return <div className="matrix-chat-agents-library mx-auto grid w-full max-w-3xl gap-5 py-8">
     <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)} className="grid gap-5">
-    <header className="flex items-center justify-between gap-3">
-      <h3 className="text-xl font-semibold">Your AI team</h3>
+    <header className="flex items-center justify-end gap-3">
+      <h3 className="sr-only">Saved agents</h3>
       <button type="button" aria-label="New Agent" className={button} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>+ New agent</button>
     </header>
     {!state.agents.length && !state.error ? <p className="py-6 text-sm" style={muted}>No agents yet. Add an agent to get started.</p> : null}
@@ -89,7 +89,8 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
   </div>;
 }
 
-export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat }: {
+export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, onTitleChange }: {
+  hostedChrome?: boolean; onTitleChange?: (title: "Your AI team" | "New agent" | "Edit agent") => void;
   client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void;
   onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void;
 }) {
@@ -202,7 +203,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       });
   };
   const edit = (agent: ChatAgent | "new" | "daily-brief") => {
-    const choice = models[0];
+    const choice = matrixBotModelChoices(models)[0];
     const selection: CanonicalChatModelSelection | null = choice ? { instanceId: choice.instanceId, model: choice.modelId,
       ...(choice.selectedOptions.length ? { options: choice.selectedOptions } : {}) } : null;
     if (agent === "daily-brief") {
@@ -275,10 +276,12 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     }
   };
   const recipes = view === "recipes" && !state.editing;
+  const title = state.editing === "new" || recipes ? "New agent" : state.editing ? "Edit agent" : "Your AI team";
+  useEffect(() => { onTitleChange?.(title); }, [onTitleChange, title]);
   return <section aria-label={recipes ? "Agent recipes" : "Agents"} data-agent-surface={recipes ? "recipes" : "library"} className="matrix-chat-agents-panel ph-no-capture flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={chatAgentSurfaceStyle}>
-    <header className="flex shrink-0 items-center justify-between gap-3 px-4 pt-3 sm:px-6">
-      <h2 ref={heading} tabIndex={-1} className="sr-only outline-none">{recipes ? "Agent recipes" : state.editing === "new" ? "New Agent" : state.editing ? "Edit Agent" : "Agents"}</h2>
-      <button type="button" className={`${button} shrink-0`} disabled={state.pending} onClick={onClose}>Back to Chat</button>
+    <header className={hostedChrome ? "sr-only" : "flex h-12 shrink-0 items-center justify-between gap-3 px-4 sm:px-6"} style={{ borderColor: "var(--border-default,var(--border))" }}>
+      <h2 ref={heading} tabIndex={-1} className="text-sm font-semibold outline-none">{title}</h2>
+      {!hostedChrome ? <button type="button" aria-label="Close Agents" className={`${button} shrink-0`} disabled={state.pending} onClick={onClose}>×</button> : null}
     </header>
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}

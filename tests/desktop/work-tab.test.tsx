@@ -16,7 +16,6 @@ import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-age
 import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
-import { expectRenderedIcon } from "../helpers/rendered-icon";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const inspectorProps = vi.hoisted(() => ({
@@ -724,9 +723,7 @@ describe("WorkTab rail integration", () => {
 
   it("makes the Files inspector available on a new Global Chat draft", async () => {
     render(<WorkTab route="chat" active initialChatView="draft" />);
-    await screen.findByRole("button", { name: "Global chat" });
-
-    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
+    expect(await screen.findByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
   });
 
   it("creates and selects a canonical Chat before starting a Terminal from New Chat", async () => {

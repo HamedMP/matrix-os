@@ -2,7 +2,7 @@
 
 Status: implementation in progress; the first UI delivery was rejected in Human Review on 2026-10-03. User additionally requires reference to current Matrix AI Gateway changes and matching Preview testing after implementation.
 
-Current review scope override (2026-10-03): the user excludes further Mobile and documentation work. Complete the sixteen corrections and exact-source Preview/Electron Desktop acceptance. Preserve already completed shared fixes; additional Mobile or public-docs work is not a gate for this correction delivery.
+Current review scope override (2026-10-03): the user excludes further Mobile and documentation work. Complete the sixteen corrections and the fourteen follow-up corrections, with exact-source Preview/Electron Desktop acceptance. Preserve already completed shared fixes; additional Mobile or public-docs work is not a gate for this correction delivery.
 
 ## Goal and value
 
@@ -21,10 +21,10 @@ Backend rules inspected on the active unmerged #2117 head `d687fc468cdcf29db9aca
 | ID | Requirement | Acceptance |
 | --- | --- | --- |
 | R1 | Persistent Bot entry | Clicking a Bot from Agents or another supported entry opens its authenticated bound Chat and history. Lookup failures show a safe retry state and never create a coding-Agent draft. |
-| R2 | Separate conversation lists | Bot conversations do not appear as ordinary Chat entries in Pinned, Project Chats, Working, Done or Recent. Bot identity comes from authenticated bindings, not names. Preserve transcripts, artifacts, memory, grants, stable IDs and older histories. |
+| R2 | Separate conversation lists | Bot conversations do not appear as ordinary Chat entries in Pinned, Project Chats, Working or Done. Bot identity comes from authenticated bindings, not names. Preserve transcripts, artifacts, memory, grants, stable IDs and older histories. |
 | R3 | @Bot navigation | Selecting a Bot candidate opens that Bot Chat and carries composed text into its input without sending or changing the source Chat provider. Preserve an existing target draft; keep source text recoverable on conflict/failure. @Chat and Drive references retain current behavior. |
 | R4 | Project center view | Current expandable Project/Chat tree remains. Project name opens its center view with existing description/files/new-Chat capabilities; expansion is a separate action. Shared sidebar persists and state survives navigation. |
-| R5 | Sidebar | Exact order: New chat, Search, Shared with me, Agents (collapsible), Pinned, Projects, Needs you, Working, Done, Recent. New chat stays sticky and visible while scrolling. Preserve current rabbit AgentAvatar/RecipeRabbit icons. Counts/subtitles/status derive from actual state. |
+| R5 | Sidebar | Exact order: New chat, Search, Shared with me, AGENTS (collapsible), PINNED, PROJECTS, NEEDS YOU, WORKING, DONE. New chat stays sticky and visible while scrolling. Preserve current rabbit AgentAvatar/RecipeRabbit icons. Counts/status derive from actual state. Section headers share uppercase typography and disclosure geometry without leading section icons; Bot rows retain rabbit avatars. Sort supports Last updated and Manual order. |
 | R6 | Existing lifecycle controls | Restyle supported pin/rename/move/delete/settle controls without new lifecycle semantics. Preserve provider/execution-root and current active-run/conflict restrictions; unsupported actions are not offered as working features. |
 | R7 | Home states | Align new/returning-user landing, starters and composer with design using existing state and working connection actions. Suggestions do not promise unavailable capabilities. |
 | R8 | Bot creation | Restyle existing templates/setup, name/model controls and available integration metadata/actions. Preserve idempotent creation and direct binding. Only working triggers are actionable. New scratch-builder, trial and automatic-first-run engines are deferred. |
@@ -37,7 +37,7 @@ Backend rules inspected on the active unmerged #2117 head `d687fc468cdcf29db9aca
 
 This release is UI/navigation only: shared frontend presentation, state derivation, client orchestration and existing API wiring. Add no backend channels/adapters, funding-policy changes, integrations, schedules or engines. Preserve existing template names/coding Agent configurations and all owner history without migration/consolidation. Do not change runtime/auth/grants through UI labels or mentions.
 
-Reuse canonical contracts and shared state derivation across Web Desktop, Web Canvas and Electron Desktop. Apply shared Bot/mention/selector behavior to Web/Native Mobile where those capabilities already exist; mobile chrome can adapt. Include loading/empty/disabled/error/reconnect states, draft handoff races, active streaming and existing approval continuations.
+Reuse canonical contracts and shared state derivation across Web Desktop, Web Canvas and Electron Desktop. Retain previously completed Mobile behavior; additional Mobile work is excluded by the current review scope. Include loading/empty/disabled/error/reconnect states, draft handoff races, active streaming and existing approval continuations.
 
 ## Dependencies and delivery constraints
 
@@ -50,9 +50,9 @@ Snapshot from 2026-10-02; re-query live state/heads before integration:
 
 ## Validation and acceptance delivery
 
-Tests first for navigation/classification/state changes, followed by focused shared UI/renderer suites and affected typechecks/builds. Validate one runnable exact revision in Electron Desktop; use matching Preview VPS for integration with the existing Bot dependency stack. Verify retained history/artifacts/memory/grants, @Bot draft prefill without sending/overwriting, correct rail order/sticky header, Project center with retained dropdown and truthful description semantics, real approval reminder lifecycle and truthful picker/context restrictions. Cover applicable Web/Canvas/Mobile parity with explicit evidence. Prior PR QA does not establish acceptance for this revision.
+Tests first for navigation/classification/state changes, followed by focused shared UI/renderer suites and affected typechecks/builds. Validate one runnable exact revision in Electron Desktop; use matching Preview VPS for integration with the existing Bot dependency stack. Verify retained history/artifacts/memory/grants, @Bot draft prefill without sending/overwriting, correct rail order/sticky header, Project center with retained dropdown and truthful description semantics, real approval reminder lifecycle and truthful picker/context restrictions. Cover affected shared Web/Canvas behavior with explicit evidence; no further Mobile work is required. Prior PR QA does not establish acceptance for this revision.
 
-Deliver focused Conventional Commit PR(s) with one primary English Linear issue per implementation PR after duplicate search, plus a separate public documentation PR in `FinnaAI/matrix-os-site`. Stop at Human Review before Greptile/merge; no production/fleet rollout. The user approved the final scope and implementation is active.
+Deliver focused Conventional Commit PR(s) with one primary English Linear issue per implementation PR after duplicate search, retain the earlier public documentation PR without further documentation work in this correction scope. Stop at Human Review before Greptile/merge; no production/fleet rollout. The user approved the final scope and implementation is active.
 
 ## Deferred scope and risks
 
@@ -64,7 +64,7 @@ Technical risks are active unmerged dependency heads, legacy Bot identity/draft 
 
 The user supplied actual Electron screenshots and16 required corrections. Earlier layout alignment is not accepted. These requirements override the earlier presentation choices without adding channels or changing backend authority.
 
-- Agents and Projects use compact navigation rows with count/disclosure on the right. Agents label opens existing management; its separate disclosure expands all Bot entries, and Add new opens Templates. Shared with me is immediately below Search. Rabbit avatars remain.
+- AGENTS and PROJECTS use the same uppercase section headers as PINNED and DONE, with count/disclosure on the right and no leading section icon. Agents label opens existing management; its separate disclosure expands all Bot entries, and + New agent opens Templates. Shared with me is immediately below Search. Rabbit avatars remain.
 - Project title, Description/Files cards, connection guide and bottom composer share an aligned content width. Its ordinary Chats appear in matching cards; both Project tree and center navigate stable IDs.
 - Bot Chat has one compact identity header and a bottom composer showing the actual Agent and authoritative provider/model/source. Details is a side panel, editor a compact dialog. Templates and management share compact cards/list styling; no invented hero/starter grid. Template CTAs have consistent geometry.
 - The standalone Add context button/hint is removed, and model-search empty/loading/results states have one separator. Existing reference capabilities and unavailable provider reasons remain truthful.
@@ -74,3 +74,14 @@ The user supplied actual Electron screenshots and16 required corrections. Earlie
 - Preserve existing Chat right-click actions and add Move to project submenu with existing Projects and New project. Reuse existing revision/active-run/root rules; successful moves update rail/Project center, failed moves retain original assignment. New Project creation then assignment catches both failure stages and ignores stale scope responses.
 
 Acceptance includes windowed and maximized Electron pixels, refresh/send list continuity, real menu actions, context detach, Bot model controls and editor save. Tests do not replace native interaction evidence. Existing after-reference mention cursor defect remains ENG-109.
+
+## Follow-up review contracts (2026-10-03)
+
+- Remove the Recent section. DONE displays terminal Chats plus remaining ordinary history; this presentation fallback never mutates backend lifecycle. Project/Pinned/Needs you/Working membership remains authoritative and deduplicated.
+- Sort replaces Filter: Last updated uses authoritative update times, Manual order allows within-group drag and Alt+Up/Down. Electron saves local preference per platform host, signed-in account and Computer; Web retains it only for the mounted transport client because no trusted viewer/runtime persistence key is exposed. Do not substitute a resource owner for the current viewer.
+- Shared with me is one stable aligned row below Search, with optional pending count and no unavailable subtitle. Scroll children do not shrink; the scrollbar is at the trailing edge and hides after 700ms idle. Collapse uses 200ms grid/opacity transitions, inert hidden descendants and reduced-motion support.
+- Host toolbar titles are New agent and Your AI team, with no Back to Chat button. + New agent has a fixed inline icon/text baseline. New custom Agent creation uses concrete ready Matrix AI choices only; an empty or restricted catalog offers availability/setup actions and cannot silently fall back to Codex. Existing coding configurations remain editable through their supported path.
+- Explicit managed selections display Matrix AI plus the authoritative model label. Existing Automatic remains Automatic until the backend exposes its resolved source/model; #2117/#2127 currently expose saved selection rather than that resolved projection. UI must not invent a source.
+- A bound Bot canonical model_unavailable failure has one compact in-place recovery notice with Choose model, Check availability and existing Agents & providers actions. No repeated bare terminal status strips and no duplicate giant failure card. Preserve task history in Details; never automatically retry, purchase, fund or widen authority.
+- Repeat genuine request-user-input in the final matching Electron/Preview revision: unresolved question appears in Needs you, navigation preserves it, submission resumes the same Chat and completion moves it to Done. Existing old-head preflight is not final-head acceptance.
+- A Preview with disabled Matrix AI and no eligible owner source cannot establish successful Bot inference. Record that actual limitation separately from UI/recovery acceptance without changing funding policy.

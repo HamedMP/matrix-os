@@ -8,13 +8,15 @@ import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 import { BotEditDialog } from "./BotEditDialog.js";
 import { BotDetailsPanel } from "./BotDetailsPanel.js";
 import { InteractionCard } from "./InteractionCard.js";
-import { BotTaskStatus } from "./BotTaskStatus.js";
+import { useBotModelRecovery } from "./BotModelRecovery.js";
+import { BotCurrentTaskStatus } from "./BotCurrentTaskStatus.js";
 
 import { useDirectBotChat } from "./use-direct-bot-chat.js";
 
 const REFRESH_INTERVAL_MS = 15_000;
 
 interface BotChatPanelProps {
+  onSetup?: () => void; onRefreshCatalog?: () => void; onModelChanged?: () => void;
   chatId?: string;
   client?: ChatAgentClient;
   refreshKey?: number;
@@ -28,7 +30,7 @@ interface BotChatPanelProps {
 }
 
 /** Shared by Web Canvas and Web Desktop through ChatApp. */
-export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog, catalogLoading = false, detailsContainer, headerContainer, headerLeading, headerActions }: BotChatPanelProps) {
+export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog, catalogLoading = false, detailsContainer, headerContainer, headerLeading, headerActions, onSetup, onRefreshCatalog, onModelChanged }: BotChatPanelProps) {
   const bots = client?.bots;
   const agentId = useDirectBotChat(chatId, client, directBotId);
   const [agent, setAgent] = useState<ChatAgent | null>(null);
@@ -43,6 +45,9 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
   const [authority, setAuthority] = useState<BotAuthorityView | null>(null);
   const [showAuthority, setShowAuthority] = useState(false);
   useBotDetailsHost(detailsContainer, showAuthority);
+  const recovery = useBotModelRecovery();
+  const request = recovery?.detailsRequest;
+  useEffect(() => { if (request?.agentId === agentId && request.client === client) setShowAuthority(true); }, [request, agentId, client]);
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -101,7 +106,7 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
       const updated = await client.update(agent.id, { selection, baseRevision: agent.revision });
       if (selectionSequence.current !== sequence) return;
       latestRevision.current = updated.revision;
-      setAgent(updated);
+      setAgent(updated); onModelChanged?.();
     } catch (failure: unknown) {
       console.warn("[bots] Model change unavailable:", failure instanceof Error ? failure.name : "UnknownError");
       if (selectionSequence.current === sequence) setError("Could not change the bot model. Refresh and try again.");
@@ -109,7 +114,7 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
   };
   if (!agentId || !chatId || !bots) return null;
   const details = showAuthority ? <BotDetailsPanel agent={agent} agentId={agentId} authority={authority} bots={bots} catalog={catalog} catalogLoading={catalogLoading} pending={modelPending}
-    hosted={Boolean(detailsContainer)} onModelChange={selection => { void changeModel(selection); }} onClose={() => setShowAuthority(false)} onEdit={() => setShowEdit(true)} onChanged={() => setTick(value => value + 1)}/> : null;
+    tasks={tasks} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} hosted={Boolean(detailsContainer)} onModelChange={selection => { void changeModel(selection); }} onClose={() => setShowAuthority(false)} onEdit={() => setShowEdit(true)} onChanged={() => setTick(value => value + 1)}/> : null;
   const identity = <div className="matrix-bot-identity-bar flex min-w-0 items-center gap-3 px-3 py-1" data-hosted={headerContainer ? "true" : undefined}>
       {headerLeading}
       <AgentAvatar id={agentId} name={name ?? "Your bot"} size="small" />
@@ -126,7 +131,7 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
         actionsAvailable={interactionsFresh}
         onResolve={(input) => bots.resolve(chatId, interaction.interactionId, input)} onResolved={() => setTick((value) => value + 1)}
         />)}
-      {tasks.map((task) => <BotTaskStatus key={task.taskId} task={task} />)}
+      <BotCurrentTaskStatus tasks={tasks}/>
       {details && detailsContainer ? createPortal(details, detailsContainer) : details}
       {showEdit && agent && client ? <BotEditDialog key={agent.id} agent={agent} client={client} catalog={catalog} catalogLoading={catalogLoading} authority={authority} onClose={() => setShowEdit(false)} onSaved={updated => { latestRevision.current = updated.revision; setAgent(updated); setName(updated.name); }}/>:null}
       {error ? <p role="alert" className="text-xs">{error}</p> : null}

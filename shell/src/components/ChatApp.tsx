@@ -1,5 +1,8 @@
 "use client";
-import { WebChatLifecycleGroups } from "./chat/WebChatLifecycleGroups";
+import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
+import { WebChatRailControls } from "./chat/WebChatRailControls";
+import { ChatRailOrderContext, ChatRailOrderItem } from "@matrix-os/ui";
+import { WebChatLifecycleGroups, webChatLifecycleGroup } from "./chat/WebChatLifecycleGroups";
 import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigation";
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
@@ -14,7 +17,7 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
-import { useDirectBotBinding, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
+import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
@@ -203,7 +206,8 @@ function ChatAppContent({
 }: ChatAppProps) {
   const agentsNavigation = useChatAgentsNavigation();
   const [localUnreadOnly, setUnreadOnly] = useState(false);
-  const unreadOnly = filterUnreadOnly ?? localUnreadOnly;
+  const unreadOnly = mobile && (filterUnreadOnly ?? localUnreadOnly);
+  useEffect(()=> { if (!mobile && filterUnreadOnly) onUnreadFilterChange?.(false); },[mobile,filterUnreadOnly,onUnreadFilterChange]);
   useChatReadState({ chatId: sessionId, state: readState, throughSeq: displayedThroughSeq,
     active: active && !agentsNavigation?.opened, onRead: onUpdateReadState });
   const [newChatSequence, setNewChatSequence] = useState(0);
@@ -278,7 +282,7 @@ function ChatAppContent({
   const directBotId = botBinding.agentId;
   const [botModelRevision, setBotModelRevision] = useState(0);
   const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
-  const botComposerControls = directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={agentClient} catalog={providerState.catalog} catalogLoading={providerState.loading} refreshKey={(botEventRevision ?? 0) + botModelRevision} zIndex={SHELL_Z_INDEX.popover} onChanged={() => setBotModelRevision(value => value + 1)}/> : undefined;
+  const botComposerControls = directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={agentClient} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision} zIndex={SHELL_Z_INDEX.popover} onChanged={() => setBotModelRevision(value => value + 1)}/> : undefined;
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error";
   const providerReady = !botIdentityUnknown && Boolean(directBotId || (!providerState.loading && providerState.selected));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
@@ -317,10 +321,12 @@ function ChatAppContent({
   const botSummaries = useBotConversationSummaries(agentClient, conversations.map(item => item.id), active, botEventRevision);
   const excludedBotChats = new Set([...botSummaries.conversations.map(item => item.chatId), ...botSummaries.unresolvedChatIds]);
   const ordinaryConversations = conversations.filter(item => !excludedBotChats.has(item.id));
+  const railOrder = useWebChatRailOrder(ordinaryConversations,agentClient);
+  const orderedConversations = mobile ? ordinaryConversations : railOrder.chats;
   const trimmedSearch = searchQuery.trim();
   const filteredConversations = !trimmedSearch
-    ? ordinaryConversations
-    : ordinaryConversations.filter((c) =>
+    ? orderedConversations
+    : orderedConversations.filter((c) =>
         `${c.title ?? ""}\n${c.preview ?? ""}`.toLowerCase().includes(searchQuery.toLowerCase()),
       );
 
@@ -372,7 +378,7 @@ function ChatAppContent({
         </ShellNotificationPortal>
       )}
       {/* Sidebar */}
-      <aside
+      <ChatRailOrderContext.Provider value={{manual:!mobile && railOrder.mode === "manual",move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root
         className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
           sidebarOpen
             ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
@@ -401,7 +407,7 @@ function ChatAppContent({
 
         <ScrollArea className="min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
         {/* Search */}
-        <div className="px-3 pb-2">
+        {!mobile ? <WebChatRailControls query={searchQuery} onQuery={setSearchQuery} mode={railOrder.mode} onSort={railOrder.setMode}/> : <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
             <SearchIcon className="size-3.5 text-muted-foreground" />
             <input
@@ -415,15 +421,17 @@ function ChatAppContent({
           </div>
         </div>
 
+        }
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
         <div className="px-2 pb-2"><ChatAgentsRailSection activeChatId={sessionId} client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
-        <div className="flex gap-2 px-3 pb-2 text-xs">
+        {mobile ? <div className="flex gap-2 px-3 pb-2 text-xs">
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
         </div>
+        : null}
         {unreadOnly && listedConversations.length === 0 ? <p className="px-3 text-xs text-muted-foreground">No unread chats.</p> : null}
         {/* Conversation list */}
 
@@ -432,7 +440,7 @@ function ChatAppContent({
               projects={<OrganizationDrivesNav chats={ordinaryConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={conv => (
-                  <RenameableConversationRow
+                <ChatRailOrderItem key={conv.id} id={conv.id} kind="chat" group={webChatLifecycleGroup(conv)}><RenameableConversationRow
                     key={conv.id}
                     conversation={conv}
                     onToggleRead={onUpdateReadState ? () => { void onUpdateReadState(conv.id, conv.readState?.unread
@@ -454,7 +462,7 @@ function ChatAppContent({
                         console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
                       }).finally(() => setRenamePending(false));
                     }}
-                  />              )}/>
+                  /></ChatRailOrderItem>              )}/>
             {ordinaryConversations.length === 0 && !botSummaries.loading && (
               <div className="flex flex-col items-center gap-2 px-3 py-10 text-center">
                 <span className="inline-flex size-9 items-center justify-center rounded-full bg-foreground/5 text-muted-foreground/60">
@@ -465,10 +473,10 @@ function ChatAppContent({
             )}
           </div>
         </ScrollArea>
-      </aside>
+      </aside></ChatRailOrderContext.Provider>
 
       {/* Main content */}
-      <ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"} onOpenBotChat={onSwitchConversation}>
+      <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"} onOpenBotChat={onSwitchConversation}>
       <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
         {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
@@ -584,7 +592,7 @@ function ChatAppContent({
             <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => { setSetupOpen(false); openProviderSettings(); }}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
             {!connected ? <span className="text-[10px] text-destructive font-medium">Offline</span> : null}
           </>}
-          catalog={providerState.catalog} catalogLoading={providerState.loading} refreshKey={(botEventRevision ?? 0) + botModelRevision} /> : null}
+          onModelChanged={() => setBotModelRevision(value => value + 1)} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision} /> : null}
         {!collaborationView && !botIdentityUnknown && !directBotId && setupOpen && (
           <ChatProviderSetupPanel
             onDismiss={() => {
@@ -665,7 +673,7 @@ function ChatAppContent({
                             return onSubmitInput ? onSubmitInput(request.runId, request.requestId, input) : false;
                           }}
                         />
-                      ) : msg.role === "system" ? (
+                      ) : directBotId && msg.role === "system" && msg.metadata?.canonicalFailureCode === "model_unavailable" ? <BotModelFailureNotice/> : msg.role === "system" ? (
                         <CanonicalApprovalMessage
                           message={msg}
                           submitting={(() => {
@@ -746,7 +754,7 @@ function ChatAppContent({
         setPreviewFile(null);
         if (previewTrigger.current?.isConnected) previewTrigger.current.focus();
       }} /> : null}
-      </ChatAgentsContent>
+      </ChatAgentsContent></BotModelRecoveryProvider>
     </div>
   );
 }

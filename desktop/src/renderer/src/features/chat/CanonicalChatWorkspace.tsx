@@ -1,3 +1,4 @@
+import { openChatProviderSettings } from "./open-chat-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { projectContext } from "./canonical-project-context";
 import { useBotDraftNavigation } from "./use-bot-draft-navigation";
@@ -10,7 +11,7 @@ import {
   isChatUnread,
   chatReadAction,
   CanonicalSharedChatPanel,
-  BotChatPanel,
+  BotChatPanel, BotModelRecoveryProvider,
   BotComposerControls,
   useDirectBotBinding,
   BotDraftRecoveryPanel,
@@ -713,7 +714,7 @@ export function CanonicalChatWorkspace({
         ))}
         catalog={providerCatalog}
         automaticRouting={Boolean(directBotId)}
-        botControls={directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={client.agents} catalog={providerCatalog} catalogLoading={providerCatalogLoading} zIndex={DESKTOP_Z_INDEX.popover} disabled={uploadingAttachments} refreshKey={botEventRevision} onChanged={() => setBotEventRevision(value => value + 1)}/> : undefined}
+        botControls={directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={client.agents} catalog={providerCatalog} catalogLoading={providerCatalogLoading} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} zIndex={DESKTOP_Z_INDEX.popover} disabled={uploadingAttachments} refreshKey={botEventRevision} onChanged={() => setBotEventRevision(value => value + 1)}/> : undefined}
         providerCatalogLoading={!directBotId && providerCatalogLoading}
         selection={selection}
         onSelectionChange={onSelectionChange}
@@ -778,7 +779,7 @@ export function CanonicalChatWorkspace({
   );
 
   return (
-    <div
+    <BotModelRecoveryProvider agentId={directBotId} client={client.agents} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh}><div
       ref={workspaceRef}
       className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${workspaceLayout === "narrow" ? "flex-col" : "flex-row"}`}
       data-slot="canonical-chat-workspace"
@@ -910,7 +911,7 @@ export function CanonicalChatWorkspace({
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
               client={client.agents} directBotId={directBotId} detailsContainer={botDetailsContainer} headerContainer={botHeaderContainer}
               headerActions={api && !chromeHost ? <ChatSharingButton api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
-              catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
+              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
@@ -983,6 +984,6 @@ export function CanonicalChatWorkspace({
           }}
         />
       ) : null}
-    </div>
+    </div></BotModelRecoveryProvider>
   );
 }

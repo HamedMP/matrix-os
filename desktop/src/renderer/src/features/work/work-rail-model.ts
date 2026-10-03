@@ -18,6 +18,8 @@ export interface WorkRailModel {
   working: CanonicalChatRecord[];
   done: CanonicalChatRecord[];
   recents: CanonicalChatRecord[];
+  /** Inactive display entries; does not change canonical completion or attention. */
+  doneDisplay: CanonicalChatRecord[];
 }
 
 export interface WorkRailSearchResult {
@@ -120,6 +122,7 @@ export function buildWorkRailModel(
   const needsYou: CanonicalChatRecord[] = [];
   const working: CanonicalChatRecord[] = [];
   const done: CanonicalChatRecord[] = [];
+  const doneDisplay: CanonicalChatRecord[] = [];
   const placed = new Set<string>();
   for (const record of records) {
     if (placed.has(record.chat.id) || excluded.has(record.chat.id)) continue;
@@ -134,6 +137,7 @@ export function buildWorkRailModel(
     }
     const group = resolveCanonicalChatLifecycleGroup(record);
     ({needsYou, working, done, recent:recents})[group].push(record);
+    if (group === "done" || group === "recent") doneDisplay.push(record);
   }
   return {
     pinned,
@@ -143,5 +147,6 @@ export function buildWorkRailModel(
     working,
     done,
     recents,
+    doneDisplay,
   };
 }

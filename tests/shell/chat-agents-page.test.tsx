@@ -56,7 +56,7 @@ describe("Web Chat Agents page", () => {
     expect(await screen.findByRole("region", { name: "Agent recipes" })).toBeTruthy();
     view.rerender(<ChatApp {...props} messages={[...props.messages,
       { id: "msg_live", role: "assistant", content: "Arrived while editing", timestamp: 2000 }]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Back to Chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Agents" }));
     expect(screen.getByRole("textbox", { name: "Message chat" })).toBe(draft);
     expect((draft as HTMLTextAreaElement).value).toBe("Keep this draft");
     expect(screen.getByText("Original message")).toBeTruthy();
@@ -67,7 +67,7 @@ describe("Web Chat Agents page", () => {
     expect(screen.queryByRole("region", { name: "Agent recipes" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Message chat" })).toBeNull();
     expect(draft.isConnected).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Back to Chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Agents" }));
     expect(screen.getByRole("textbox", { name: "Message chat" })).toBe(draft);
     expect((draft as HTMLTextAreaElement).value).toBe("Keep this draft");
     expect(screen.getByText("Original message")).toBeTruthy();

@@ -18,3 +18,11 @@ No new backend channels, funding policy or integration capability.
 - [ ] Complete all16 Human Review corrections and full affected-screen audit.
 - [ ] Verify move-to-existing/new-Project submenu, rollback, context detach and no list flicker.
 - [ ] Verify actual maximized New chat pointer input, not only handler/AX action.
+
+## Follow-up review (14 corrections)
+
+- [ ] Complete uppercase rail sections, aligned + New agent, Sort/Manual order, 200ms disclosures, edge/idle scrollbar, Shared with me, Project rows and Recent removal.
+- [ ] Complete scoped New agent/Your AI team toolbar titles, Matrix-only new creation, truthful provider/model and single contextual Bot failure recovery.
+- [ ] Complete focused review/tests/types/lint and matching committed Preview/Electron builds.
+- [ ] Repeat actual Needs you -> answer -> Done on the final head; preserve existing sixteen regression flows.
+- [ ] Record disabled Matrix AI admission limitation separately from successful UI/recovery checks.

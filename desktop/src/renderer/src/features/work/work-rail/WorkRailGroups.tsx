@@ -5,7 +5,7 @@ import { Plus } from "@renderer/lib/hugeicons";
 import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
 import { WorkRailSection } from "./WorkRailSection";
 
-export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done" | "recents";
+export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
 export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives }: {
   model: WorkRailModel;
   activeChatId?: string;
@@ -56,18 +56,8 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
         <WorkRailSection label="Working" count={model.working.length} expanded={sections.working} onToggle={() => onToggle("working")}>
           {model.working.map(record => renderChat(record, "recent"))}
         </WorkRailSection>
-        <WorkRailSection label="Done" count={model.done.length} expanded={sections.done} onToggle={() => onToggle("done")}>
-          {model.done.map(record => renderChat(record, "recent"))}
-        </WorkRailSection>
-        <WorkRailSection
-          label="Recent"
-          count={model.recents.length}
-          expanded={sections.recents}
-          onToggle={() => onToggle("recents")}
-          divider={false}
-
-        >
-          {model.recents.map((record) => renderChat(record, "recent"))}
+        <WorkRailSection label="Done" count={model.doneDisplay.length} expanded={sections.done} onToggle={() => onToggle("done")}>
+          {model.doneDisplay.map(record => renderChat(record, "recent"))}
         </WorkRailSection>
   </>;
 }
