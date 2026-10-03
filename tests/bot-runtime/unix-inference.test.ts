@@ -45,13 +45,20 @@ describe("Pi inference without TCP access", () => {
         const body = JSON.parse(frame.body);
         expect(body).toMatchObject({ model: FUNDED_GLM_FLASH, stream: true,
           max_completion_tokens: 8192, store: false, stream_options: { include_usage: true } });
+        // The pinned Pi SDK marks this bridge non-reasoning and omits effort.
+        // The managed GLM adapter must not let that omission select provider max.
+        expect(body).not.toHaveProperty("reasoning_effort");
+        expect(body.messages[0]).toEqual({ role: "system", content: "Unix QA" });
         const serialized = serializeFundedOpenAiRequest(body);
         const upstream = JSON.parse(serialized.body);
         expect(upstream).toMatchObject({ model: FUNDED_GLM_FLASH, stream: true,
-          max_tokens: 8192, store: false, stream_options: { include_usage: true },
+          max_tokens: 8192, reasoning_effort: "low", store: false, stream_options: { include_usage: true },
           messages: expect.arrayContaining([{ role: "user", content: "GLM_UNIX_QA" }]) });
         expect(upstream).not.toHaveProperty("max_completion_tokens");
+        const { max_completion_tokens: outputLimit, ...sdkFields } = body;
+        expect(upstream).toEqual({ ...sdkFields, max_tokens: outputLimit, reasoning_effort: "low" });
         if (mode === "tool") {
+          expect(upstream.tool_choice).toBe("auto");
           expect(upstream.tools).toEqual(body.tools);
           expect(upstream.tools).toMatchObject([{
             type: "function", function: { name: "read_artifact", description: "Read an authorized QA artifact",
@@ -76,7 +83,8 @@ describe("Pi inference without TCP access", () => {
       messages: [{ role: "user", content: "GLM_UNIX_QA", timestamp: 1 }],
       ...(mode === "tool" ? { tools: [{ name: "read_artifact", description: "Read an authorized QA artifact",
         parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }] } : {}),
-    }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: 8192, maxRetries: 0, signal: AbortSignal.timeout(5000) }).result();
+    }), { apiKey: BROKER_PLACEHOLDER_KEY, reasoning: "off", ...(mode === "tool" ? { toolChoice: "auto" as const } : {}),
+      maxTokens: 8192, maxRetries: 0, signal: AbortSignal.timeout(5000) }).result();
     expect(frames).toHaveLength(1);
     expect(result.usage).toMatchObject({ input: 7, output: 3 });
     expect(result.stopReason).toBe(mode === "text" ? "stop" : "toolUse");
