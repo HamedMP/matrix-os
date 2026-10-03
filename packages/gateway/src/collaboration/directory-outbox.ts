@@ -177,6 +177,9 @@ export class CollaborationDirectoryOutbox {
         .where("outbox.retry_after", "<=", now.toISOString())
         .where("outbox.attempts", "<", MAX_ATTEMPTS)
         .orderBy("outbox.created_at", "asc")
+        // Events committed together share a timestamp; the platform applies them by revision.
+        .orderBy("event.revision", "asc")
+        .orderBy("event.scope_seq", "asc")
         .limit(BATCH_SIZE)
         .forUpdate("outbox")
         .skipLocked()

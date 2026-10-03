@@ -128,9 +128,11 @@ describe("whole-project sharing confirmation", () => {
       if (path.endsWith("/grants")) return grants;
       return { ...privateScope, revision: grants.length ? "5" : "4" };
     });
+    // An organization grant made earlier is stored active on the home, but nobody has access before the share.
+    const organizationGrant = { ...grant, id: "60000000-0000-4000-8000-000000000402", audience: { kind: "organization" }, state: "active" };
     api.post.mockImplementation(async (path: string) => {
       if (!path.endsWith("/grants")) throw new Error("unexpected");
-      grants = [grant];
+      grants = [grant, organizationGrant];
       return grant;
     });
     render(<ChatCollaboratorsDialog api={api} scope={privateScope} members={[]}
@@ -145,7 +147,8 @@ describe("whole-project sharing confirmation", () => {
     expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
       expectedRevision: "4", audience: { kind: "member", actorId: "user_ada" }, preset: "viewer",
     }));
-    expect(await screen.findByText(/starts when shared/)).toBeVisible();
+    expect(await screen.findByText("user_ada · starts when shared")).toBeVisible();
+    expect(screen.getByText("Everyone in the organization · starts when shared")).toBeVisible();
     expect(screen.queryByText(/Share the whole project to manage access/i)).toBeNull();
     // A private project has no readiness to load yet.
     expect(api.post).not.toHaveBeenCalledWith(expect.stringContaining("/policy/preflight"), expect.anything());
