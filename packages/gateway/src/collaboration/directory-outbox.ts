@@ -8,6 +8,14 @@ const MAX_ATTEMPTS = 20;
 const POLL_INTERVAL_MS = 1_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_BACKOFF_MS = 60_000;
+/**
+ * How long a claimed final attempt holds back its scope's later events. A batch sends at most
+ * BATCH_SIZE events one after another, each bounded by REQUEST_TIMEOUT_MS, so an attempt still
+ * unsettled after this long cannot be running any more (its worker died).
+ */
+const FINAL_ATTEMPT_HOLD_MS = 15 * 60_000;
+/** `retry_after` of an event that will never be sent again: it holds nothing back. */
+const EXHAUSTED_AT = new Date(0).toISOString();
 
 interface ClaimedDirectoryEvent {
   eventId: string;
@@ -120,6 +128,7 @@ export class CollaborationDirectoryOutbox {
         await response.body?.cancel();
         if (!response.ok) {
           console.warn("[collaboration-directory] platform rejected event", response.status);
+          await this.settleFailedAttempt(event);
           continue;
         }
         const result = await this.options.db.updateTable("collaboration_directory_outbox").set({
@@ -132,9 +141,25 @@ export class CollaborationDirectoryOutbox {
         if (result) delivered += 1;
       } catch (error: unknown) {
         console.warn("[collaboration-directory] platform unavailable", error instanceof Error ? error.name : "UnknownError");
+        await this.settleFailedAttempt(event);
       }
     }
     return delivered;
+  }
+
+  /** A failed final attempt will never be retried: mark it so it stops holding back its scope. */
+  private async settleFailedAttempt(event: ClaimedDirectoryEvent): Promise<void> {
+    if (event.attempt < MAX_ATTEMPTS) return;
+    try {
+      await this.options.db.updateTable("collaboration_directory_outbox").set({ retry_after: EXHAUSTED_AT })
+        .where("event_id", "=", event.eventId)
+        .where("attempts", "=", event.attempt)
+        .where("delivered_at", "is", null)
+        .execute();
+    } catch (error: unknown) {
+      // Left unsettled, the event still stops holding its scope once FINAL_ATTEMPT_HOLD_MS passes.
+      console.warn("[collaboration-directory] exhausted event not settled", error instanceof Error ? error.name : "UnknownError");
+    }
   }
 
   private async claimBatch(): Promise<ClaimedDirectoryEvent[]> {
@@ -171,8 +196,9 @@ export class CollaborationDirectoryOutbox {
         .where("outbox.attempts", "<", MAX_ATTEMPTS)
         // The platform applies a scope's events by revision and drops an older one that arrives
         // late, so each scope delivers strictly in order: an event is claimable only once every
-        // earlier event of its scope is delivered, or exhausted with its last attempt's window
-        // over (so a final attempt still in flight cannot be overtaken), across retries and workers.
+        // earlier event of its scope is delivered or will never be sent again (quarantined, or its
+        // final attempt failed), so a final attempt still in flight is never overtaken, across
+        // retries and workers.
         .where(({ not, exists, selectFrom }) => not(exists(
           selectFrom("collaboration_directory_outbox as earlier")
             .innerJoin("collaboration_events as earlier_event", "earlier_event.event_id", "earlier.event_id")
@@ -182,7 +208,8 @@ export class CollaborationDirectoryOutbox {
             .where("earlier.delivered_at", "is", null)
             .where((eb) => eb.or([
               eb("earlier.attempts", "<", MAX_ATTEMPTS),
-              eb("earlier.retry_after", ">", now.toISOString()),
+              // A final attempt that may still be in flight, however slow its batch.
+              eb("earlier.retry_after", ">", new Date(now.getTime() - FINAL_ATTEMPT_HOLD_MS).toISOString()),
             ]))
             .whereRef("earlier_event.scope_seq", "<", "event.scope_seq"),
         )))
@@ -215,7 +242,7 @@ export class CollaborationDirectoryOutbox {
           // Quarantined, never sent: it stops holding back the scope's later events at once.
           await trx.updateTable("collaboration_directory_outbox").set({
             attempts: MAX_ATTEMPTS,
-            retry_after: now.toISOString(),
+            retry_after: EXHAUSTED_AT,
           }).where("event_id", "=", row.event_id)
             .where("attempts", "=", attempt)
             .where("delivered_at", "is", null)
