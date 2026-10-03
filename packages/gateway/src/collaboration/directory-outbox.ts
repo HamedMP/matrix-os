@@ -178,7 +178,8 @@ export class CollaborationDirectoryOutbox {
         .where("outbox.attempts", "<", MAX_ATTEMPTS)
         // The platform applies a scope's events by revision and drops an older one that arrives
         // late, so each scope delivers strictly in order: an event is claimable only once every
-        // earlier event of its scope is delivered (or quarantined), across retries and workers.
+        // earlier event of its scope is delivered, or exhausted with its last attempt's window
+        // over (so a final attempt still in flight cannot be overtaken), across retries and workers.
         .where(({ not, exists, selectFrom }) => not(exists(
           selectFrom("collaboration_directory_outbox as earlier")
             .innerJoin("collaboration_events as earlier_event", "earlier_event.event_id", "earlier.event_id")
@@ -186,7 +187,10 @@ export class CollaborationDirectoryOutbox {
             .whereRef("earlier.scope_id", "=", "outbox.scope_id")
             .whereRef("earlier.authority_runtime_id", "=", "outbox.authority_runtime_id")
             .where("earlier.delivered_at", "is", null)
-            .where("earlier.attempts", "<", MAX_ATTEMPTS)
+            .where((eb) => eb.or([
+              eb("earlier.attempts", "<", MAX_ATTEMPTS),
+              eb("earlier.retry_after", ">", now.toISOString()),
+            ]))
             .whereRef("earlier_event.scope_seq", "<", "event.scope_seq"),
         )))
         .orderBy("outbox.created_at", "asc")
@@ -215,8 +219,10 @@ export class CollaborationDirectoryOutbox {
             "[collaboration-directory] quarantined malformed outbox event",
             error instanceof Error ? error.name : "UnknownError",
           );
+          // Quarantined, never sent: it stops holding back the scope's later events at once.
           await trx.updateTable("collaboration_directory_outbox").set({
             attempts: MAX_ATTEMPTS,
+            retry_after: now.toISOString(),
           }).where("event_id", "=", row.event_id)
             .where("attempts", "=", attempt)
             .where("delivered_at", "is", null)

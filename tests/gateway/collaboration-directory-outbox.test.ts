@@ -180,6 +180,41 @@ describe("CollaborationDirectoryOutbox", () => {
     await worker.shutdown();
   });
 
+  it("holds a scope's later event while an earlier event is on its final attempt", async () => {
+    // The earlier event is out on its last attempt (attempts at the limit, retry not yet due);
+    // a later event of the same scope must wait until that attempt can no longer land.
+    await fixture.db.updateTable("collaboration_directory_outbox")
+      .set({ attempts: 20, retry_after: new Date(now.getTime() + 60_000).toISOString() })
+      .where("event_id", "=", "60000000-0000-4000-8000-000000000001")
+      .execute();
+    await fixture.db.insertInto("collaboration_events").values({
+      scope_id: collaborationIds.scope, scope_seq: 2, event_id: "60000000-0000-4000-8000-000000000003",
+      resource_kind: "chat", resource_id: collaborationIds.chat, revision: 2, authority_generation: 1,
+      event_type: "member.accepted", payload: JSON.stringify({}), created_at: now.toISOString(),
+    }).execute();
+    await fixture.db.insertInto("collaboration_directory_outbox").values({
+      event_id: "60000000-0000-4000-8000-000000000003", scope_id: collaborationIds.scope,
+      recipient_actor_ids: JSON.stringify([collaborationActors.editor]), authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 1, resource_kind: "chat", discovery_state: "accepted",
+      retry_after: now.toISOString(), delivered_at: null, created_at: now.toISOString(),
+    }).execute();
+    let clock = now.getTime();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const worker = new CollaborationDirectoryOutbox({
+      db: fixture.db, platformBaseUrl: "https://platform.internal", runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef", fetchImpl, now: () => new Date(clock), startTimer: false,
+    });
+    try {
+      expect(await worker.runOnce()).toBe(0);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      // Once the final attempt's window has passed, the exhausted event no longer holds the scope.
+      clock += 61_000;
+      expect(await worker.runOnce()).toBe(1);
+    } finally {
+      await worker.shutdown();
+    }
+  });
+
   it("quarantines a malformed row without blocking the valid rows after it", async () => {
     await fixture.db.updateTable("collaboration_directory_outbox")
       .set({ recipient_actor_ids: JSON.stringify([""]) })
