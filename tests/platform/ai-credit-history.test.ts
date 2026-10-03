@@ -48,6 +48,29 @@ describe("Matrix AI credit history", () => {
       { occurredAt: "2026-10-01T01:00:00.000Z", kind: "credit", amountMicrousd: 5_000_000, modelId: null },
     ], nextCursor: null });
   });
+  it("prevents browser and CDN caching for owner history and every error response", async () => {
+    const withVary = new Hono();
+    withVary.use("*", async (c, next) => { c.header("Vary", "Accept"); await next(); });
+    withVary.get("/history", createAiCreditHistoryHandler({ db, resolveClerkUserId: async () => "alice" }));
+    const responses = [
+      await withVary.request("/history"),
+      await app(null).request("/history"),
+      await app().request("/history?limit=0"),
+      await app().request("/history?runtimeSlot=missing"),
+    ];
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(db.executor, "selectFrom").mockImplementation(() => { throw new Error("database unavailable"); });
+    responses.push(await app().request("/history"));
+    expect(responses.map(response => response.status)).toEqual([200, 401, 400, 409, 503]);
+    for (const response of responses) {
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(response.headers.get("CDN-Cache-Control")).toBe("no-store");
+      expect(response.headers.get("Cloudflare-CDN-Cache-Control")).toBe("no-store");
+      expect(response.headers.get("Vary")).toContain("Authorization");
+    }
+    expect(responses[0].headers.get("Vary")).toContain("Accept");
+    log.mockRestore();
+  });
   it("keyset paginates equal timestamps without duplicates and rejects cross-runtime/owner markers", async () => {
     const first = await (await app().request("/history?limit=1")).json();
     expect(first.entries).toHaveLength(1);

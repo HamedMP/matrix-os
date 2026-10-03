@@ -13,6 +13,9 @@ export function createAiCreditHistoryHandler(options: {
 }): Handler {
   return async (c) => {
     c.header("Cache-Control", "private, no-store");
+    c.header("CDN-Cache-Control", "no-store");
+    c.header("Cloudflare-CDN-Cache-Control", "no-store");
+    c.header("Vary", "Authorization", { append: true });
     const ownerId = await options.resolveClerkUserId(c);
     if (!ownerId) return c.json({ error: "Unauthorized" }, 401);
     const queries = c.req.queries();
