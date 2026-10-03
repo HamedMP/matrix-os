@@ -144,16 +144,21 @@ cancel_install() {
   printf '{"ok":true,"runtime":"%s","cancelled":true}\n' "$runtime"
 }
 
-uninstall_runtime() {
-  local runtime="$1" unit launcher
-  ensure_control_state
-  # The durable opt-out is written before stopping services so reconciliation
-  # cannot reinstall a package during or after a partial uninstall.
+mark_runtime_disabled() {
+  local runtime="$1"
   if [ ! -f "$state_dir/disabled-$runtime" ]; then
     (set -o noclobber; printf 'disabled\n' >"$state_dir/disabled-$runtime") || {
       printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5;
     }
   fi
+}
+
+uninstall_runtime() {
+  local runtime="$1" unit launcher
+  ensure_control_state
+  # The durable opt-out is written before stopping services so reconciliation
+  # cannot reinstall a package during or after a partial uninstall.
+  mark_runtime_disabled "$runtime"
   if ! stop_install_unit "$runtime"; then
     printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5
   fi
@@ -161,6 +166,9 @@ uninstall_runtime() {
     printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5
   fi
   acquire_control_lock
+  # An installer holding the lock may have cleared the early cancellation
+  # marker. Reassert the durable opt-out before removing any runtime files.
+  mark_runtime_disabled "$runtime"
   case "$runtime" in
     hermes) unit=matrix-hermes-dashboard.service ;;
     openclaw) unit=matrix-openclaw-gateway.service ;;

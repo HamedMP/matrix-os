@@ -359,7 +359,7 @@ export function HarnessWorkflowPanel({
       ) : harness.installState === "missing" ||
       harness.installState === "installing" ||
       (harness.installState === "failed" && capability.install) ||
-      operation?.kind === "install" ? (
+      (operation?.kind === "install" && active(operation)) ? (
         <div className="matrix-ap-install">
           {connecting ? (
             <>

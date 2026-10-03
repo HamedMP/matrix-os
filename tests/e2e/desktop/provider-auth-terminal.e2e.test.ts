@@ -50,7 +50,7 @@ async function settings() {
   if (await claude.getAttribute("aria-expanded") !== "true") await claude.click();
 }
 
-it("keeps browser login, cancellation, completion and logout in Settings without opening Terminal", async () => {
+it("keeps browser login, cancellation, completion and selected-agent disconnect in Settings without opening Terminal", async () => {
   try {
     const identity = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
     expect(identity).toBe(join(root, "desktop/out/main"));
@@ -87,6 +87,11 @@ it("keeps browser login, cancellation, completion and logout in Settings without
     await page.getByRole("dialog", { name: "Disconnect Claude?", exact: true }).getByRole("button", { name: "Disconnect", exact: true }).click();
     await accountChoice.waitFor();
     expect(await claudeRow.textContent()).toContain("Not connected");
+    expect(gateway.workflowEvents.at(-1)).toBe("agent-disabled");
+    // Fixture HTTP state independently proves Disconnect did not log out the account.
+    const retained = await (await fetch(`${gateway.url}/api/ai/provider-settings`, {signal: AbortSignal.timeout(5000)})).json();
+    expect(retained.accounts[0].authState).toBe("authenticated");
+    expect(retained.harnesses[0].enabled).toBe(false);
     await terminal.waitFor({ state: "hidden" });
     expect(gateway.commands).toHaveLength(0);
     await page.screenshot({ path: join(output, "settings-browser-disconnected.png") });

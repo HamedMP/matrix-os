@@ -11,14 +11,14 @@ import { providerAuthSettingsSnapshot, startProviderAuthGateway } from "./provid
 const now = () => new Date().toISOString();
 const later = () => new Date(Date.now() + 600_000).toISOString();
 /** Contract-valid synthetic state. Never represents real provider authentication. */
-function snapshot(authenticated: boolean): ProviderSettingsSnapshot {
+function snapshot(authenticated: boolean, codexEnabled = true, revision = authenticated ? 3 : 2): ProviderSettingsSnapshot {
   const base = providerAuthSettingsSnapshot(true);
   const claude = base.harnesses[0]!;
   const account = base.accounts[0]!;
   const source = base.accessSources[0]!;
   return ProviderSettingsSnapshotSchema.parse({ ...base, refreshedAt: now(),
-    revision: authenticated ? 3 : 2,
-    supportedActions: ["logout_account", "start_login", "add_credit"],
+    revision,
+    supportedActions: ["logout_account", "start_login", "add_credit", "set_harness_enabled"],
     modelProviders: [...base.modelProviders, { id: "openai", displayName: "OpenAI", models: [{ id: "openai/gpt-5.6", displayName: "GPT-5.6", enabled: true }] }],
     accounts: [account, { ...account, id: "codex_account", providerId: "openai", displayName: "Fixture API account", authMethod: "api_key", authState: authenticated ? "authenticated" : "unauthenticated", accessSourceId: "owner_openai_profile" }],
     accessSources: [source, { ...source, id: "owner_openai_profile", providerId: "openai", accountId: "codex_account", displayName: "Fixture API account", fundingKind: "owner_api_key", readiness: { ...source.readiness, state: authenticated ? "ready" : "auth_required", action: authenticated ? "none" : "open_terminal", safeReason: authenticated ? null : "auth" }, eligibleModelIds: ["openai/gpt-5.6"] },
@@ -27,7 +27,7 @@ function snapshot(authenticated: boolean): ProviderSettingsSnapshot {
     ],
     harnesses: [
       { ...claude, displayName: "Claude Code" },
-      { ...claude, id: "codex_harness", harness: "codex", displayName: "Codex", authState: authenticated ? "authenticated" : "unauthenticated", accountIds: ["codex_account"], selectedAccountId: "codex_account", accessSourceId: "owner_openai_profile", connectivity: authenticated ? "online" : "offline", route: { kind: "fixed", providerId: "openai", modelId: "openai/gpt-5.6" } },
+      { ...claude, id: "codex_harness", enabled: codexEnabled, configuredEnabled: codexEnabled, harness: "codex", displayName: "Codex", authState: authenticated ? "authenticated" : "unauthenticated", accountIds: ["codex_account"], selectedAccountId: "codex_account", accessSourceId: "owner_openai_profile", connectivity: authenticated ? "online" : "offline", route: { kind: "fixed", providerId: "openai", modelId: "openai/gpt-5.6" } },
       { ...claude, id: "opencode_harness", harness: "opencode", displayName: "OpenCode", enabled: false, configuredEnabled: false },
       { ...claude, id: "pi_harness", harness: "pi", displayName: "Pi", authState: "expired" },
     ], gatewayPolicy: { accessSourceId: "matrix_funded", monthlyBudgetMicrousd: null, allowedModelIds: ["anthropic/claude-opus-5"], topUpEnabled: true },
@@ -36,8 +36,11 @@ function snapshot(authenticated: boolean): ProviderSettingsSnapshot {
 
 export async function startAgentsProvidersWorkflowGateway() {
   let authenticated = false;
+  let codexEnabled = true;
+  let revision = 2;
+  const currentSnapshot = () => snapshot(authenticated, codexEnabled, revision);
   snapshot(false); snapshot(true);
-  const upstream = await startProviderAuthGateway({ settings: () => snapshot(authenticated) });
+  const upstream = await startProviderAuthGateway({ settings: currentSnapshot });
   const events: string[] = [];
   const operations = new Map<string, ProviderWorkflow>();
   let sequence = 0;
@@ -73,7 +76,7 @@ export async function startAgentsProvidersWorkflowGateway() {
         if (key.harnessInstanceId !== "codex_harness" || key.providerId !== "openai") return json(res, { error: "Unsupported fixture key target" }, 400);
         events.push("key-check");
         if (key.apiKey !== "sk-safe-fixture-valid") return json(res, { error: { code: "rejected", message: "The key could not be verified. Check it and try again." } }, 400);
-        authenticated = true; return json(res, { verified: true });
+        authenticated = true; codexEnabled = true; revision++; return json(res, { verified: true });
       }
       if (path === "/api/ai/provider-settings/workflows" && req.method === "POST") {
         const start = ProviderWorkflowStartSchema.parse(await body(req));
@@ -101,9 +104,10 @@ export async function startAgentsProvidersWorkflowGateway() {
       }
       if (path === "/api/ai/provider-settings/actions" && req.method === "POST") {
         const mutation = ProviderSettingsMutationSchema.parse(await body(req));
-        if (mutation.type !== "logout_account") return json(res, { error: "Unsupported fixture action" }, 400);
-        events.push("disconnect"); authenticated = false;
-        return json(res, { kind: "snapshot", snapshot: snapshot(authenticated) });
+        if (mutation.type !== "set_harness_enabled" || mutation.harnessInstanceId !== "codex_harness") return json(res, { error: "Unsupported fixture action" }, 400);
+        if (mutation.expectedRevision !== revision) return json(res, {error: "Stale fixture revision"}, 409);
+        events.push("disconnect"); codexEnabled = mutation.enabled; revision++;
+        return json(res, { kind: "snapshot", snapshot: currentSnapshot() });
       }
       const forward = request(`${upstream.url}${req.url}`, { method: req.method, headers: req.headers }, response => { res.writeHead(response.statusCode ?? 502, response.headers); response.pipe(res); });
       forward.setTimeout(10_000, () => forward.destroy());

@@ -393,3 +393,15 @@ it("omits View logs when only workflow activity is available", () => {
   expect(screen.queryByRole("region", { name: "Connection logs" })).not.toBeInTheDocument();
   expect(api.logs).not.toHaveBeenCalled();
 });
+
+it("shows login after a retained install receipt completes and refreshed inventory confirms installation", async () => {
+  const api = client();
+  api.get = vi.fn().mockResolvedValue({ id: "installed", harnessInstanceId: "codex", kind: "install", state: "succeeded", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
+  const onRefresh = vi.fn();
+  render(<HarnessWorkflowPanel harness={harness} capability={{...capability, install: true}} client={api} operationId="installed" disabled={false} onRefresh={onRefresh} onOpenTerminal={vi.fn()} />);
+  await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce());
+  expect(await screen.findByRole("button", {name: /ChatGPT account/})).toBeEnabled();
+  expect(screen.queryByRole("button", {name: "Install"})).not.toBeInTheDocument();
+  expect(screen.queryByText(/Not on this computer yet/)).not.toBeInTheDocument();
+  expect(api.start).not.toHaveBeenCalled();
+});

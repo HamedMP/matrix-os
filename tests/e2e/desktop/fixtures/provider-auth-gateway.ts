@@ -23,7 +23,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSe
     revision: authenticated ? 2 : 1,
     refreshedAt: NOW,
     access: { mode: "writable" },
-    supportedActions: [authenticated ? "logout_account" : "start_login"],
+    supportedActions: [authenticated ? "logout_account" : "start_login", "set_harness_enabled"],
     harnessCatalog: (["hermes", "openclaw", "pi", "opencode"] as const).map((harness) => ({
       harness,
       displayName: harness === "openclaw" ? "OpenClaw" : harness[0]!.toUpperCase() + harness.slice(1),
@@ -94,11 +94,20 @@ export async function startProviderAuthGateway(options: {
 } = {}) {
   const upstream = await startStubGateway();
   let authenticated = false;
+  let enabled = true;
+  let enablementRevision = 0;
   const commands: unknown[] = [];
   const workflowEvents: string[] = [];
   let operation: ProviderWorkflow | null = null;
   let workflowSequence = 0;
-  const settings = () => options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
+  const settings = () => {
+    const snapshot = options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
+    return ProviderSettingsSnapshotSchema.parse({...snapshot,
+      revision: snapshot.revision + enablementRevision,
+      projectionOf: {...snapshot.projectionOf, revision: snapshot.projectionOf.revision + enablementRevision},
+      harnesses: snapshot.harnesses.map(harness => harness.id === "claude_harness" ? {...harness, enabled, configuredEnabled: enabled} : harness),
+    });
+  };
   const server = createServer(async (req, res) => {
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
     if (options.inlineClaude && path.startsWith("/api/ai/provider-settings/workflows")) {
@@ -141,6 +150,7 @@ export async function startProviderAuthGateway(options: {
           const { code } = ProviderWorkflowCodeSchema.parse(body);
           if (code !== "synthetic-fixture-code") return json({ error: "Rejected fixture code" }, 400);
           authenticated = true;
+          enabled = true;
           operation = { ...operation, state: "succeeded", authorizationUrl: null };
           workflowEvents.push("code-completed"); return json({ accepted: true });
         }
@@ -169,6 +179,15 @@ export async function startProviderAuthGateway(options: {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const mutation = ProviderSettingsMutationSchema.parse(JSON.parse(Buffer.concat(chunks).toString()));
+      if (mutation.type === "set_harness_enabled") {
+        if (mutation.harnessInstanceId !== "claude_harness" || mutation.expectedRevision !== settings().revision) {
+          res.writeHead(409, {"content-type": "application/json"}); res.end(JSON.stringify({error: "invalid fixture scope or revision"})); return;
+        }
+        enabled = mutation.enabled; enablementRevision++;
+        workflowEvents.push(enabled ? "agent-enabled" : "agent-disabled");
+        res.writeHead(200, {"content-type": "application/json"});
+        res.end(JSON.stringify({kind: "snapshot", snapshot: settings()})); return;
+      }
       if (mutation.type !== "start_login" && mutation.type !== "logout_account") {
         res.writeHead(400, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "unsupported fixture action" }));

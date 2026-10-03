@@ -483,6 +483,14 @@ verification: a Codex `login status` observation cannot prove a subscription
 or inference request succeeds. Row/account readiness still comes from the
 canonical source, not a workflow's `succeeded` label.
 
+An active install may retain its progress panel. Once fresh inventory confirms
+installation, a completed install receipt must not hide the connection choices
+in the same open Settings panel. Host uninstall writes the opt-out before
+stopping installers and reasserts it after acquiring the shared control lock,
+so a concurrent installer cannot erase the owner's durable uninstall choice.
+Electron acceptance fixtures advertise the selected-agent disable action and
+verify Disconnect preserves credentials and other agents.
+
 The injected native-profile guard serializes canonical/legacy login and logout,
 key verification/save, and managed install/uninstall for Claude and Codex.
 Persisted receipts and live Terminal incarnations both participate in admission;

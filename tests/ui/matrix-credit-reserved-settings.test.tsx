@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import type { ProviderAccessSource } from "@matrix-os/contracts";
 import { GatewayPanel } from "../../packages/ui/src/agents-providers/GatewayPanel";
@@ -21,13 +21,15 @@ function heldSource(): ProviderAccessSource {
   };
 }
 function show(source: ProviderAccessSource) {
+  const onAddCredit = vi.fn(); const onRefresh = vi.fn(); const onUseGateway = vi.fn();
   render(<GatewayPanel source={source} policy={{ accessSourceId: source.id, allowedModelIds: ["claude-sonnet-5"], monthlyBudgetMicrousd: 5_100_000, topUpEnabled: false }}
     provider={{ id: "anthropic", displayName: "Anthropic", models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5", enabled: true }] }}
     disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false}
-    onRefresh={vi.fn()} onMutate={vi.fn()} onAddCredit={vi.fn()} onUseGateway={vi.fn()} />);
+    onRefresh={onRefresh} onMutate={vi.fn()} onAddCredit={onAddCredit} onUseGateway={onUseGateway} />);
+  return {onAddCredit, onRefresh, onUseGateway};
 }
 it("separates spendable credit, reserved credit and settled usage without offering execution", () => {
-  show(heldSource());
+  const actions = show(heldSource());
   expect(screen.getByText("Credit reserved")).toBeVisible();
   expect(screen.getByText("Your credit is reserved while usage is confirmed.")).toBeVisible();
   expect(screen.getByText("$0.00")).toBeVisible();
@@ -36,7 +38,14 @@ it("separates spendable credit, reserved credit and settled usage without offeri
   expect(screen.getByText("$0.30 used of $5.10")).toBeVisible();
   expect(screen.queryByText("Matrix AI connection not verified. Check again.")).toBeNull();
   expect(screen.queryByRole("button", { name: "Use Matrix AI" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Buy credit" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Buy credit" }));
+  expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", {name: "Check again"}));
+  expect(actions.onRefresh).toHaveBeenCalledOnce();
+  expect(actions.onAddCredit).not.toHaveBeenCalled();
+  expect(actions.onUseGateway).not.toHaveBeenCalled();
 });
 it("does not describe unrelated failures or stale ledger values as a current credit hold", () => {
   const source = heldSource();
@@ -68,9 +77,13 @@ it("does not direct a credit-needed owner to an unavailable purchase action", ()
   source.usage.usedMicrousd = source.usage.limitMicrousd;
   source.usage.budget.settledThisMonthMicrousd = source.usage.limitMicrousd;
   source.usage.budget.reservedThisMonthMicrousd = 0;
-  show(source);
+  const actions = show(source);
   expect(screen.getByText("Matrix AI needs spendable credit.")).toBeVisible();
   expect(screen.queryByText("Add credit to use Matrix AI.")).toBeNull();
   expect(screen.queryByText("Matrix AI credit purchases are not available yet.")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Buy credit" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", {name: "Buy credit"}));
+  expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+  expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
+  expect(actions.onAddCredit).not.toHaveBeenCalled();
+  expect(actions.onUseGateway).not.toHaveBeenCalled();
 });

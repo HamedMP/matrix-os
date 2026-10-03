@@ -177,9 +177,7 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       expect(gateway.events.filter(event => event === "key-check")).toHaveLength(2);
       await capture("07-key-connected");
 
-      await codex.getByRole("button", { name: "View logs", exact: true }).click();
-      await codex.getByRole("region", { name: "Connection logs", exact: true }).waitFor();
-      await codex.getByRole("button", { name: "Close logs", exact: true }).click();
+      expect(await codex.getByRole("button", { name: "View logs", exact: true }).count()).toBe(0);
       await codex.getByRole("button", { name: "Disconnect", exact: true }).click();
       const disconnect = page.getByRole("dialog", { name: "Disconnect Codex?", exact: true });
       await disconnect.waitFor();

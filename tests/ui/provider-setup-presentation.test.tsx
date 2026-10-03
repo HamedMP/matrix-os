@@ -56,21 +56,30 @@ function fundedSnapshot(): ProviderSettingsSnapshot {
 afterEach(cleanup);
 
 describe("provider setup presentation", () => {
-  it("keeps Matrix AI first with unsupported purchases omitted even without any agents", () => {
+  it("keeps Matrix AI first with unsupported checkout explained even without any agents", () => {
     const value = snapshot();
     value.harnesses = [];
-    setup(value);
+    const onAddCredit = vi.fn();
+    const {onRefresh, onMutate} = setup(value, {onAddCredit});
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Setup needed")).toBeVisible();
     expect(within(gateway).queryByText(/not available on this computer yet/i)).not.toBeInTheDocument();
-    expect(within(gateway).queryByRole("button", { name: "Buy credit" })).not.toBeInTheDocument();
+    expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeEnabled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(within(gateway).queryByText(/\$0/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
+    fireEvent.click(within(gateway).getByRole("button", {name: "Buy credit"}));
+    const dialog = screen.getByRole("dialog", {name: "Add Matrix AI credit"});
+    expect(within(dialog).getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+    expect(within(dialog).queryByRole("button", {name: "Continue to checkout"})).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", {name: "Check again"}));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(onAddCredit).not.toHaveBeenCalled();
+    expect(onMutate).not.toHaveBeenCalled();
   });
 
   it("uses expandable agent rows and keeps customization collapsed", () => {
-    const { container, onSelectHarness } = setup();
+    const { onSelectHarness } = setup();
     const row = screen.getByRole("button", { name: /Pi.*Not connected/ });
     expect(row).toHaveAttribute("aria-expanded", "true");
     expect(row.querySelector("img")).toHaveAttribute("src", "/agent-logos/pi-coding-agent.png");
