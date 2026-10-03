@@ -303,3 +303,26 @@ Host lifecycle tests exercise install/uninstall races, fixed command boundaries,
 service wiring, opt-out persistence, and owner-data preservation. Native Settings
 adapter support is delivered separately; this host layer advertises no new
 foreground workflow capability.
+
+### Negotiated native account identity and offered inventory
+
+Native Codex and Hermes readers return bounded allowlisted identity and quota
+metadata for the exact runtime profile. Provider calls and child lifetimes have
+deadlines, output bounds, and cleanup; errors preserve honest unavailable usage.
+Missing quota is not zero; 0 and 100 percent are valid observations. Hermes reads
+its own selected provider principal and never borrows standalone Codex identity.
+Metadata does not establish model-call readiness or change credentials/routes.
+
+Only the positively resolved runtime owner triggers private account metadata
+reads. Other principals receive redacted identity and unavailable private quota.
+Provider Settings GET responses use `Cache-Control: private, no-store` so
+private identity and quota observations are not retained in HTTP caches.
+GET connectionDetails, model capabilities, and offered Matrix inventory require
+explicit wire negotiation; default historical responses and mutation receipts
+omit new fields. Offered inventory uses the existing authoritative current
+funded policy and canonical catalog; it cannot grant inference permission.
+
+Tests cover owner/collaborator boundaries, stale metadata, profile/provider
+mismatch, schema compatibility, safe errors, bounded readers, and catalog
+policy. Real deployed metadata and Electron presentation remain later combined
+acceptance gates; this layer adds no guided sign-in capability.

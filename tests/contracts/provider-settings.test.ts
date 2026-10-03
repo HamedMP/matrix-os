@@ -348,6 +348,25 @@ describe("provider settings contracts", () => {
     }).success).toBe(false);
   });
 
+  it("validates offered Matrix inventory references without requiring runnable readiness", () => {
+    const snapshot = makeSnapshot();
+    snapshot.accessSources[0]!.readiness = { ...readiness(), state: "unavailable", action: "retry", safeReason: "provider_unavailable" };
+    snapshot.accessSources[0]!.eligibleModelIds = [];
+    snapshot.gatewayPolicy!.allowedModelIds = [];
+    snapshot.harnesses[0]!.accessSourceId = "source_personal";
+    snapshot.harnesses[0]!.selectedAccountId = "account_personal";
+    const model = { ...snapshot.modelProviders[0]!.models[0]!, providerId: "anthropic" as const, accessSourceId: "source_matrix" };
+    expect(ProviderSettingsSnapshotSchema.safeParse({ ...snapshot, matrixModelInventory: [model] })).toEqual(expect.objectContaining({ success: true }));
+    for (const invalid of [
+      { ...model, accessSourceId: "missing_source" },
+      { ...model, accessSourceId: "source_personal" },
+      { ...model, providerId: "openai" },
+      { ...model, id: "missing_model" },
+    ]) {
+      expect(ProviderSettingsSnapshotSchema.safeParse({ ...snapshot, matrixModelInventory: [invalid] }).success).toBe(false);
+    }
+  });
+
   it("keeps accounts owner-funded, opaque, reciprocal, and secret-free", () => {
     const account = makeSnapshot().accounts[0]!;
     expect(ProviderAccountSchema.parse(account).id).toBe("account_personal");
