@@ -269,7 +269,8 @@ change no cursor format, ledger values, or authorization predicates. The non-nul
 timestamp/entry tuple uses a row-comparison seek. Tests explain the actual joined
 endpoint SQL for first, subsequent and deep cursor pages against representative
 ledger and reservation data, rather than a simplified ledger-only query.
-Responses are private/no-store and include only timestamp, exact signed microUSD
+Responses are private/no-store in both browser and CDN caches, vary on
+Authorization without replacing existing Vary fields, and include only timestamp, exact signed microUSD
 amount, activity kind, and nullable model ID. No credential, payment, ledger,
 reservation, request, or source-reference identifier is returned. Database
 failures return safe unavailable feedback. This read-only endpoint changes no
