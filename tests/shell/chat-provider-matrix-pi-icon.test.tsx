@@ -9,7 +9,7 @@ import { ChatProviderSetupPanel } from "../../shell/src/components/chat-app-prov
 
 afterEach(cleanup);
 
-function catalog(available: boolean) {
+function catalog(available: boolean, discoverUnavailableModel = false) {
   return CanonicalProviderCatalogSchema.parse({
     revision: "reserved-matrix-pi",
     drivers: [{ kind: "matrix_pi", displayName: "Matrix Pi", adapterVersion: "1.0.0", capabilityClass: "system_agent" }],
@@ -18,7 +18,7 @@ function catalog(available: boolean) {
       ...(available ? { connectionLabel: "Matrix AI", connectionState: "ready" } : {}),
       availability: available ? "available" : "unavailable", workspaceRequirement: "none",
       catalogRevision: "reserved-matrix-pi",
-      models: available ? [{ id: "matrix-model", displayName: "Matrix model", availability: "available",
+      models: available || discoverUnavailableModel ? [{ id: "matrix-model", displayName: "Matrix model", availability: available ? "available" : "unavailable",
         capabilities: ["tools"], supportsVision: false, supportsToolUse: true }] : [],
       options: [], skills: [], commands: [], setupActions: [],
       supports: { rootChat: true, resume: false, cancellation: true, attachments: [], tools: [],
@@ -29,8 +29,8 @@ function catalog(available: boolean) {
   });
 }
 
-function panel(available: boolean) {
-  const value = catalog(available);
+function panel(available: boolean, discoverUnavailableModel = false) {
+  const value = catalog(available, discoverUnavailableModel);
   const choices = deriveCanonicalProviderChoices(value);
   const onSelect = vi.fn();
   const rendered = render(<ChatProviderSetupPanel catalog={value} choices={choices} selected={choices[0] ?? null}
@@ -40,11 +40,13 @@ function panel(available: boolean) {
   return { ...rendered, onSelect, choices };
 }
 
-describe("reserved general Matrix Pi Chat artwork", () => {
-  it("renders a ready Matrix Pi route with Matrix artwork and selects its exact server choice", () => {
+describe("reserved general Matrix AI Chat artwork", () => {
+  it("renders a ready Matrix AI route with Matrix artwork and selects its exact server choice", () => {
     const { onSelect, choices } = panel(true);
     expect(screen.getByRole("group", { name: "General agents" })).toBeVisible();
-    const option = screen.getByRole("option", { name: "Matrix model via Matrix Pi · Matrix AI" });
+    expect(screen.getByRole("button", { name: "Matrix AI agent, Available" })).toHaveAttribute("data-availability", "available");
+    const option = screen.getByRole("option", { name: "Matrix model via Matrix AI" });
+    expect(option).toBeEnabled();
     expect(option.querySelector("svg.matrix-chat-rabbit-mark")).not.toBeNull();
     expect(option.querySelector(".matrix-ap-agent-logo")).toBeNull();
     fireEvent.click(option);
@@ -54,12 +56,23 @@ describe("reserved general Matrix Pi Chat artwork", () => {
 
   it("renders an unavailable reserved route without requiring connection labels or enabling selection", () => {
     const { onSelect, choices } = panel(false);
-    const agent = screen.getByRole("button", { name: "Matrix Pi agent, Unavailable" });
+    const agent = screen.getByRole("button", { name: "Matrix AI agent, Unavailable" });
+    expect(agent).toHaveAttribute("data-availability", "unavailable");
     expect(agent.querySelector("svg.matrix-chat-rabbit-mark")).not.toBeNull();
-    expect(agent).toBeDisabled();
+    expect(agent).toBeEnabled();
     expect(screen.queryByRole("option")).toBeNull();
     expect(choices).toEqual([]);
     fireEvent.click(agent);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("keeps discovered unavailable models disabled while showing Matrix artwork", () => {
+    const { onSelect, choices } = panel(false, true);
+    const option = screen.getByRole("option", { name: "Matrix model via Matrix AI" });
+    expect(option.querySelector("svg.matrix-chat-rabbit-mark")).not.toBeNull();
+    expect(option).toBeDisabled();
+    expect(choices).toEqual([]);
+    fireEvent.click(option);
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
