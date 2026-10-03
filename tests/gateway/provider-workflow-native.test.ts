@@ -286,11 +286,12 @@ it('starts independent coordinator drains before a pending engine drain settles'
 
 
 it.each(['codex', 'claude'] as const)('fences %s installers across processes before launch and after an ambiguous launch', async kind => {
-  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { mkdtemp, mkdir, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
-  const { join, dirname, basename } = await import('node:path');
+  const { join } = await import('node:path');
   const { createNativeProviderProfileGuard } = await import('../../packages/gateway/src/ai-providers/native-provider-profile-guard.js');
-  const homePath = await mkdtemp(join(tmpdir(), 'installer-admission-'));
+  const root = await mkdtemp(join(tmpdir(), 'installer-admission-'));
+  const homePath = join(root, 'home'); await mkdir(homePath, { mode: 0o700 });
   const registry = { get: async () => { throw Object.assign(new Error('missing'), { code: 'session_not_found' }); }, observeAgentLiveness: async () => 'stopped' as const };
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -318,8 +319,7 @@ it.each(['codex', 'claude'] as const)('fences %s installers across processes bef
     await expect(createNativeProviderProfileGuard({ homePath, registry }).acquire(kind, { kind: 'write' })).rejects.toThrow('lifecycle_unavailable');
   } finally {
     release(); await failed;
-    await rm(homePath, { recursive: true, force: true });
-    await rm(join(dirname(homePath), '.matrix-private', basename(homePath)), { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 

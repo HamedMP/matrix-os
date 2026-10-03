@@ -5,10 +5,14 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createNativeProviderProfileGuard } from '../../packages/gateway/src/ai-providers/native-provider-profile-guard.js';
 const homes: string[] = [];
 const privateRoot = (home: string) => join(dirname(home), '.matrix-private', basename(home));
-afterEach(async () => { await Promise.all(homes.splice(0).flatMap(home => [rm(home, { recursive: true, force: true }), rm(privateRoot(home), { recursive: true, force: true })])); });
+afterEach(async () => { await Promise.all(homes.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+async function fixture(prefix: string) {
+  const root = await mkdtemp(join(tmpdir(), prefix)); homes.push(root);
+  const home = join(root, 'home'); await mkdir(home, { mode: 0o700 }); return home;
+}
 const registry = { get: async () => { throw Object.assign(new Error('missing'), { code: 'session_not_found' }); }, observeAgentLiveness: async () => 'stopped' as const };
 it('fences unresolved direct writers across service restart until confirmed release', async () => {
-  const homePath = await mkdtemp(join(tmpdir(), 'writer-lease-')); homes.push(homePath);
+  const homePath = await fixture('writer-lease-');
   const release = await createNativeProviderProfileGuard({ homePath, registry }).acquire('codex', { kind: 'write', durable: true });
   const restarted = createNativeProviderProfileGuard({ homePath, registry });
   await expect(restarted.acquire('codex', { kind: 'write' })).rejects.toThrow('lifecycle_unavailable');
@@ -19,16 +23,16 @@ it('fences unresolved direct writers across service restart until confirmed rele
   const next = await restarted.acquire('codex', { kind: 'write' }); await next();
 });
 it('never replaces a symlink marker or deletes another owner file', async () => {
-  const homePath = await mkdtemp(join(tmpdir(), 'writer-lease-')); homes.push(homePath);
+  const homePath = await fixture('writer-lease-');
   const target = join(homePath, 'owner-file'); await writeFile(target, 'keep');
-  const directory = join(privateRoot(homePath), 'native-writers'); await mkdir(directory, { recursive: true });
+  const directory = join(privateRoot(homePath), 'native-writers'); await mkdir(directory, { recursive: true, mode: 0o700 });
   await symlink(target, join(directory, 'claude.json'));
   await expect(createNativeProviderProfileGuard({ homePath, registry }).acquire('claude', { kind: 'write', durable: true })).rejects.toThrow('lifecycle_unavailable');
   expect(await readFile(target, 'utf8')).toBe('keep');
 });
 
 it('retains durable admission after an ambiguous singleton save failure', async () => {
-  const homePath = await mkdtemp(join(tmpdir(), 'writer-lease-')); homes.push(homePath);
+  const homePath = await fixture('writer-lease-');
   const guard = createNativeProviderProfileGuard({ homePath, registry });
   const { createProviderKeyVerifier } = await import('../../packages/gateway/src/ai-providers/provider-workflow-key.js');
   const verify = createProviderKeyVerifier({ providerId: 'openai', profileGuard: guard, profile: 'codex', fetchFn: async () => new Response('', { status: 200 }), save: async () => { throw new Error('writer state unknown'); } });
@@ -37,17 +41,17 @@ it('retains durable admission after an ambiguous singleton save failure', async 
 });
 
 it('rejects symlinked admission parents without creating files in their target', async () => {
-  const homePath = await mkdtemp(join(tmpdir(), 'writer-lease-')); homes.push(homePath);
-  const target = await mkdtemp(join(tmpdir(), 'writer-target-')); homes.push(target);
-  await mkdir(dirname(privateRoot(homePath)), { recursive: true });
+  const homePath = await fixture('writer-lease-');
+  const target = await fixture('writer-target-');
+  await mkdir(dirname(privateRoot(homePath)), { recursive: true, mode: 0o700 });
   await symlink(target, privateRoot(homePath));
   await expect(createNativeProviderProfileGuard({ homePath, registry }).acquire('codex', { kind: 'write', durable: true })).rejects.toThrow('lifecycle_unavailable');
   expect(await readdir(target)).toEqual([]);
 });
 
 it('isolates runtime admissions from another owner home and synced owner files', async () => {
-  const first = await mkdtemp(join(tmpdir(), 'writer-lease-')); homes.push(first);
-  const second = await mkdtemp(join(tmpdir(), 'writer-lease-')); homes.push(second);
+  const first = await fixture('writer-lease-');
+  const second = await fixture('writer-lease-');
   const release = await createNativeProviderProfileGuard({ homePath: first, registry }).acquire('codex', { kind: 'write', durable: true });
   await expect(access(join(first, 'system/ai-providers/native-writers'))).rejects.toMatchObject({ code: 'ENOENT' });
   const secondRelease = await createNativeProviderProfileGuard({ homePath: second, registry }).acquire('codex', { kind: 'write', durable: true });
@@ -57,7 +61,7 @@ it('isolates runtime admissions from another owner home and synced owner files',
 
 
 it('releases admission when the real Codex saver proves CODEX_HOME preflight started no writer', async () => {
-  const homePath = await mkdtemp(join(tmpdir(), 'writer-lease-')); homes.push(homePath);
+  const homePath = await fixture('writer-lease-');
   const { createProviderKeyVerifier, createCodexKeySaver } = await import('../../packages/gateway/src/ai-providers/provider-workflow-key.js');
   const guard = createNativeProviderProfileGuard({ homePath, registry });
   vi.stubEnv('CODEX_HOME', join(homePath, 'different-profile'));
