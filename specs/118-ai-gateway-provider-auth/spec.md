@@ -518,3 +518,8 @@ PID. It is never exposed through a Settings DTO and contains no credentials,
 authorization code, account identity, or CLI output. Unsupported-method preflight
 uses the typed no-start signal only before any lease, child, session, or writer
 is acquired; all later failures require confirmed cleanup.
+
+Independent workflow-engine and native coordinator shutdown drains start
+concurrently, so a delayed writer cannot prevent the other coordinators from
+rejecting new work and reaping their own children. Each drain retains its native
+bounded cleanup contract; failure never clears unresolved writer admission.
