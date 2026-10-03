@@ -57,7 +57,7 @@ describe("merged platform schema upgrade", () => {
       await expect(runPlatformMigration(db, migratePlatformSchema, {
         revision: PLATFORM_SCHEMA_REVISION,
       })).resolves.toBeUndefined();
-      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(9);
+      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(10);
       const marker = await sql<{ generation: number; fingerprint: string }>`
         SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'core'
       `.execute(db);
@@ -82,6 +82,32 @@ describe("merged platform schema upgrade", () => {
         SELECT to_regclass('ai_funded_priority_claims')::text AS name
       `.execute(db);
       expect(claims.rows[0]?.name).toBe("ai_funded_priority_claims");
+      const recoveryColumn = await sql<{
+        data_type: string; is_nullable: string; column_default: string | null;
+      }>`
+        SELECT data_type, is_nullable, column_default FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'ai_funded_usage_reservations'
+          AND column_name = 'execution_admission_release'
+      `.execute(db);
+      expect(recoveryColumn.rows).toEqual([{
+        data_type: "text", is_nullable: "YES", column_default: null,
+      }]);
+      const recoveryIndexes = await sql<{ indexname: string; indexdef: string }>`
+        SELECT indexname, indexdef FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = 'ai_funded_usage_reservations'
+          AND indexname IN ('idx_ai_funded_usage_active_owner', 'idx_ai_funded_unknown_admission_owner')
+        ORDER BY indexname
+      `.execute(db);
+      expect(recoveryIndexes.rows.map((row) => row.indexname)).toEqual([
+        "idx_ai_funded_unknown_admission_owner", "idx_ai_funded_usage_active_owner",
+      ]);
+      for (const index of recoveryIndexes.rows) {
+        expect(index.indexdef).toMatch(/CREATE UNIQUE INDEX .* USING btree \(owner_id\)/);
+      }
+      expect(recoveryIndexes.rows[0].indexdef)
+        .toMatch(/WHERE .*execution_admission_release IS NOT NULL.*actual_microusd IS NULL/);
+      expect(recoveryIndexes.rows[1].indexdef)
+        .toMatch(/WHERE .*'reserved'.*'starting'.*'in_flight'.*'settling'.*billingMode.*'usage'.*execution_admission_release IS NULL/);
       expect((await sql`SELECT * FROM preview_drive_grants`.execute(db)).rows).toEqual(legacyBefore);
       expect((await sql`
         SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'preview_drive_grants' ORDER BY indexname
@@ -90,8 +116,11 @@ describe("merged platform schema upgrade", () => {
       const skipped = vi.fn(async () => { throw new Error("completed migration must skip"); });
       await runPlatformMigration(db, skipped, { revision: PLATFORM_SCHEMA_REVISION });
       await runPlatformMigration(db, skipped, { revision: previous });
+      await runPlatformMigration(db, skipped, {
+        revision: { generation: 9, fingerprint: "pre-recovery-branch" },
+      });
       await expect(runPlatformMigration(db, skipped, {
-        revision: { generation: 9, fingerprint: "conflicting-branch" },
+        revision: { generation: PLATFORM_SCHEMA_REVISION.generation, fingerprint: "conflicting-branch" },
       })).rejects.toThrow("Conflicting platform schema fingerprints");
       expect(skipped).not.toHaveBeenCalled();
       expect((await sql`SELECT generation, fingerprint FROM platform_schema_revisions`.execute(db)).rows)
