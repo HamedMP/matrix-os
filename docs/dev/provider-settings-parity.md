@@ -120,9 +120,9 @@ renders provider settings.
 | Surface | UI | Behavior | Recovery | Automated tests | Evidence |
 |---|---|---|---|---|---|
 | Web Canvas | Shared `Settings` → `AgentSection` → `AgentsProvidersView`; Chat uses the canonical picker. | Reads Provider V3/settings and `/api/chat-providers`; unavailable Pi/OpenCode routes remain visible and disabled. | Retry refreshes authoritative settings; setup opens the visible `__terminal__` flow and preserves the draft. | `tests/ui/agents-providers-view.test.tsx`, `tests/ui/provider-settings-controller.test.tsx`, `tests/shell/agent-section.test.tsx`, `tests/shell/chat-app-provider-state.test.tsx` | Shared browser-shell state reference: `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-desktop.jpg`. Canvas and Web Desktop share the same feature component and controller; a release smoke must still exercise Canvas first. |
-| Web Desktop | Same shared settings and Chat components as Web Canvas, with Desktop window chrome. | Same snapshot, route availability, disabled reasons, and mutations as Canvas. | Same refresh and visible Terminal handoff; failed mutations retain confirmed state. | Canvas tests above plus `tests/shell/settings-panel.test.tsx` and `tests/shell/provider-settings-transport.test.ts` | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-desktop.jpg`; browser-shell parity is structural because both presentations mount the same settings feature. |
-| Electron Desktop | `SettingsView` mounts `AgentsProvidersAdapter`, which renders the shared `AgentsProvidersView`. | Uses the same strict contracts and derivations through the Electron transport adapter. | Retry reloads the snapshot; login/setup opens the visible Electron Terminal session. | `tests/desktop/agents-providers-adapter.test.tsx`, `tests/desktop/provider-settings-adapter.test.ts`, `tests/desktop/settings-view.test.tsx`, `tests/e2e/desktop/provider-auth-terminal.e2e.test.ts` | The automated Electron settings and Terminal E2E are the tracked interaction evidence. Current authenticated screenshot evidence remains a release gate because credentials cannot be committed. |
-| Web Mobile | MobileShell mounts the same responsive `Settings` and shared `AgentSection`; the canonical Chat picker remains available. | Uses the same provider snapshot and fail-closed route state with touch-adapted chrome. | The same retry and canonical visible Terminal setup actions are available from the responsive settings sheet. | Shared UI/controller tests above plus `tests/shell/settings-panel.test.tsx`; responsive state reference is covered by the shared component contract. | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-mobile.jpg`. The image is a responsive Web Mobile reference; it is not physical-device evidence. |
+| Web Desktop | Same shared settings and Chat components as Web Canvas, with Desktop window chrome. | Same snapshot, route availability, disabled reasons, and mutations as Canvas. | Same Settings workflow and explicit advanced Terminal handoff; failed mutations retain confirmed state. | Canvas tests above plus `tests/shell/settings-panel.test.tsx` and `tests/shell/provider-settings-transport.test.ts` | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-desktop.jpg`; browser-shell parity is structural because both presentations mount the same settings feature. |
+| Electron Desktop | `SettingsView` mounts `AgentsProvidersAdapter`, which renders the shared `AgentsProvidersView`. | Uses the same strict contracts and derivations through the Electron transport adapter. | Retry reloads the snapshot; supported login stays in Settings. Installation and explicit advanced actions open the canonical Electron Terminal session. | `tests/desktop/agents-providers-adapter.test.tsx`, `tests/desktop/provider-settings-adapter.test.ts`, `tests/desktop/settings-view.test.tsx`, `tests/e2e/desktop/provider-auth-terminal.e2e.test.ts` | The automated Electron settings and Terminal E2E are the tracked interaction evidence. Current authenticated screenshot evidence remains a release gate because credentials cannot be committed. |
+| Web Mobile | MobileShell mounts the same responsive `Settings` and shared `AgentSection`; the canonical Chat picker remains available. | Uses the same provider snapshot and fail-closed route state with touch-adapted chrome. | The same retry and supported Settings login workflows are available from the responsive settings sheet, with canonical Terminal installation actions. | Shared UI/controller tests above plus `tests/shell/settings-panel.test.tsx`; responsive state reference is covered by the shared component contract. | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-mobile.jpg`. The image is a responsive Web Mobile reference; it is not physical-device evidence. |
 | Native Mobile | **N/A for Agents & providers management UI:** Native Mobile currently exposes the canonical Chat model picker, but it does not expose the shared provider-management settings feature changed here. | Existing Chat catalog consumption remains unchanged; this PR adds no native settings behavior. | **N/A for this settings change:** provider management is completed in Web/Electron settings. Native setup workspace/Terminal support is an existing separate capability. | Existing `apps/mobile/__tests__/home-screen.test.tsx` guards the Chat surface; no native settings test applies because that surface does not exist. | **N/A:** no Native Mobile provider-settings screen exists to capture. Physical Native Mobile Chat validation remains a separate release gate and this matrix does not claim it occurred. |
 
 The Native Mobile N/A entries describe an absent product surface rather than a
@@ -147,12 +147,12 @@ responses cannot retarget a newly selected Chat.
 
 ## Authentication and account lifecycle
 
-Authentication should be guided from Settings or Chat. When a provider
-requires a CLI login, open a visible canonical Terminal flow. Canvas and Web
-Desktop use the `__terminal__` built-in on the owner VPS; Electron opens its
-visible terminal surface through the same account-attempt orchestration. The UI
-must show pending, succeeded, denied, expired, failed, and retry states without
-inferring success from a file's existence.
+Authentication is guided from Settings through the advertised native adapter.
+Settings owns transient code/key input, progress, cancellation and completion;
+external provider consent may open a validated browser URL. Explicit supported
+legacy actions remain inside Advanced configuration, and installation opens the
+canonical `__terminal__` surface. The UI shows pending, succeeded, denied,
+expired, failed and retry states without inferring success from file existence.
 
 These actions are distinct:
 
@@ -435,9 +435,10 @@ the required active tax registrations.
   Older runtimes retain plain route selection for enabled agents and show an
   update requirement for one-step connection of disabled agents. Default wire
   snapshots stay unchanged for older strict-schema clients.
-- First sign-in opens the newly returned Terminal action directly. Reopening
-  Settings must not replay an old login attempt. Keep Continue as recovery if
-  the window could not open, and guard handoff against a runtime switch.
+- Supported first sign-in starts an explicit Settings workflow. Reopening
+  Settings recovers the active scoped receipt without replaying a start.
+  Explicit advanced legacy handoffs keep Continue as recovery when their
+  window could not open and reject completion after a runtime switch.
 - Provider-login named Terminal IDs can be 64 characters; route them through
   the canonical named-session protocol, not the legacy UUID attach protocol.
 - Mounting Settings or Chat reads the existing catalog without forcing health
