@@ -410,8 +410,8 @@ async function nativeHostControl() {
 
 /** Keep independent native drains running even when one writer cannot be reaped. */
 export async function closeNativeProviderWorkflowConnections(close: readonly (() => Promise<void>)[]): Promise<void> {
-  for (const drain of close) {
+  await Promise.all(close.map(async drain => {
     try { await drain(); }
     catch (error) { console.warn('[provider-workflow] Native shutdown drain unavailable:', error instanceof Error ? error.name : 'UnknownError'); }
-  }
+  }));
 }

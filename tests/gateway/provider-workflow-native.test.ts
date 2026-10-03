@@ -267,3 +267,19 @@ it('attempts every independent shutdown drain after one native cleanup rejects',
   ]);
   expect(completed).toEqual(['engine', 'opencode', 'pi', 'openclaw']);
 });
+
+
+it('starts independent coordinator drains before a pending engine drain settles', async () => {
+  const { closeNativeProviderWorkflowConnections } = await import('../../packages/gateway/src/ai-providers/provider-workflow-native.js');
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const started: string[] = [];
+  const closing = closeNativeProviderWorkflowConnections([
+    async () => { started.push('engine'); await pending; },
+    async () => { started.push('opencode'); },
+    async () => { started.push('pi'); },
+    async () => { started.push('openclaw'); },
+  ]);
+  try { await vi.waitFor(() => expect(started).toEqual(['engine', 'opencode', 'pi', 'openclaw'])); }
+  finally { release(); await closing; }
+});
