@@ -48,7 +48,16 @@ describe("merged platform schema upgrade", () => {
           VALUES ('credential', ${"a".repeat(64)}, 'owner', 'machine', 'primary',
             'matrix-funded-relay', 'ai:invoke', '2026-10-01', '2026-11-01')
         `.execute(trx);
+        await sql`
+          INSERT INTO ai_funded_credit_ledger
+            (entry_id, owner_id, machine_id, runtime_slot, kind, amount_microusd, source_reference, created_at)
+          VALUES ('legacy-credit', 'owner', 'machine', 'primary', 'addon_grant', 123456,
+            'legacy-source', '2026-10-01T00:00:00.000Z')
+        `.execute(trx);
       }, { revision: previous });
+      const ledgerBefore = (await sql`SELECT * FROM ai_funded_credit_ledger`.execute(db)).rows;
+      expect((await sql`SELECT indexname FROM pg_indexes WHERE tablename = 'ai_funded_credit_ledger'
+        AND indexname IN ('idx_ai_funded_ledger_history_cursor', 'idx_ai_funded_ledger_history_page')`.execute(db)).rows).toEqual([]);
       const legacyBefore = (await sql`SELECT * FROM preview_drive_grants`.execute(db)).rows;
       const legacyIndexesBefore = (await sql`
         SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'preview_drive_grants' ORDER BY indexname
@@ -57,7 +66,7 @@ describe("merged platform schema upgrade", () => {
       await expect(runPlatformMigration(db, migratePlatformSchema, {
         revision: PLATFORM_SCHEMA_REVISION,
       })).resolves.toBeUndefined();
-      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(11);
+      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(12);
       const marker = await sql<{ generation: number; fingerprint: string }>`
         SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'core'
       `.execute(db);
@@ -78,6 +87,18 @@ describe("merged platform schema upgrade", () => {
         next_background_issue_at: "1970-01-01T00:00:00.000Z",
         credit_balance_microusd: "123456", request_class: "interactive", actor_id: "owner",
       }]);
+      expect((await sql`SELECT * FROM ai_funded_credit_ledger`.execute(db)).rows).toEqual(ledgerBefore);
+      const historyIndexes = await sql<{ indexname: string; indexdef: string }>`
+        SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'ai_funded_credit_ledger'
+          AND indexname IN ('idx_ai_funded_ledger_history_cursor', 'idx_ai_funded_ledger_history_page')
+        ORDER BY indexname
+      `.execute(db);
+      expect(historyIndexes.rows.map(row => row.indexname)).toEqual([
+        'idx_ai_funded_ledger_history_cursor', 'idx_ai_funded_ledger_history_page',
+      ]);
+      expect(historyIndexes.rows[0].indexdef).toContain('owner_id, machine_id, runtime_slot, md5(');
+      expect(historyIndexes.rows[0].indexdef).toContain('INCLUDE (entry_id, created_at)');
+      expect(historyIndexes.rows[1].indexdef).toContain('owner_id, machine_id, runtime_slot, created_at DESC, entry_id DESC');
       const claims = await sql<{ name: string }>`
         SELECT to_regclass('ai_funded_priority_claims')::text AS name
       `.execute(db);
