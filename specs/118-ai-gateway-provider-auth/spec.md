@@ -379,3 +379,23 @@ no login, install, or uninstall support until native adapters are delivered.
 Gateway shutdown drains the registered engine. Registration, profile guard,
 receipt lifecycle, route authorization, and key-child cleanup tests exercise
 the delivered boundaries independently from later runtime adapters.
+
+A terminal receipt does not itself prove that a native operation stopped. An
+uncertain launch or failed cancellation/expiry cleanup retains same-profile
+admission and its bounded receipt slot until registered cleanup confirms it
+stopped. Such receipts cannot be evicted to admit replacement work. Failed
+expiry cleanup records a coarse unavailable result without failing unrelated
+harness requests. Shutdown attempts each independent cleanup even if another
+fails; it never reopens admission on the closed service.
+
+Native/browser adapters delivered in the following layer MUST register their
+cleanup before starting native side effects and await native completion before
+cleanup resolves. A launch that cannot supply cleanup remains blocked: retrying
+with another idempotency key is not recovery. Recovery requires confirmed native
+cleanup; process restart alone does not prove that a child or profile writer
+stopped, so the native profile guard remains required across service instances.
+Adapters MUST throw `ProviderWorkflowCodeNotAcceptedError` only when they prove
+no authorization bytes were submitted (for example, the authorization prompt
+is not ready). Ambiguous partial writes retain the submission latch. Accepted
+submission stays single-use under concurrent requests. Adapter integration and
+real authorization acceptance remain pending in the native/browser layer.
