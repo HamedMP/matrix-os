@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ProviderSettingsSnapshot, ProviderWorkflowCapability } from '@matrix-os/contracts';
 import { AgentsProvidersView } from '../../packages/ui/src/agents-providers/AgentsProvidersView';
@@ -27,4 +27,32 @@ it('gives an active replacement login precedence without automatically starting 
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId="codex" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} workflowClient={api} onAddCredit={vi.fn()} />);
   await waitFor(() => expect(within(screen.getByRole('button', { name: /^Codex/ })).getByText('Connecting')).toBeVisible());
   expect(api.start).not.toHaveBeenCalled();
+});
+
+it.each(['pi', 'opencode'] as const)('preserves %s saved model and access controls only inside collapsed Advanced configuration', async kind => {
+  const row = { ...snapshot.harnesses[0]!, id: kind, harness: kind, displayName: kind, enabled: false,
+    authState: 'unauthenticated' as const, route: { kind: 'configurable' as const, providerId: 'anthropic', modelId: 'test' } };
+  const source = { id: 'matrix_included', kind: 'matrix_gateway', providerId: 'anthropic', accountId: null, displayName: 'Matrix AI',
+    fundingKind: 'matrix_included', eligibleModelIds: ['test', 'other'],
+    readiness: { state: 'ready', checkedAt: snapshot.refreshedAt, staleAfter: '2099-01-01T00:00:00Z', action: 'none', safeReason: null },
+    usage: { kind: 'unavailable', authority: 'unavailable', state: 'not_applicable', scope: 'access_source', reason: 'provider_does_not_report', asOf: snapshot.refreshedAt } };
+  const next = { ...snapshot, atomicConnectSupported: true, harnesses: [row], configurationHarnessKinds: [kind],
+    supportedActions: ['set_route', 'select_access_source'], accessSources: [source],
+    modelProviders: [{ id: 'anthropic', displayName: 'Anthropic', models: [{ id: 'test', displayName: 'Test', enabled: true }, { id: 'other', displayName: 'Other', enabled: true }] }],
+    gatewayPolicy: { accessSourceId: 'matrix_included', allowedModelIds: ['test', 'other'], monthlyBudgetMicrousd: 100000, topUpEnabled: false } } as unknown as ProviderSettingsSnapshot;
+  const api = client('running');
+  api.capabilities = vi.fn().mockResolvedValue([{ ...capability, harnessInstanceId: kind, harness: kind, displayName: kind, activeOperationId: undefined }]);
+  const mutate = vi.fn();
+  render(<AgentsProvidersView snapshot={next} selectedHarnessId={kind} onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} workflowClient={api} onAddCredit={vi.fn()} />);
+  const summary = await screen.findByText('Advanced configuration');
+  const advanced = summary.closest('details')!;
+  expect(advanced).not.toHaveAttribute('open');
+  expect(within(advanced).getByText('Use Matrix AI').closest('button')).toBeInTheDocument();
+  expect(within(advanced).getByLabelText('Model')).toHaveValue('test');
+  expect(within(advanced).getByLabelText('Paid through')).toBeInTheDocument();
+  expect(screen.queryByText('Enable this agent')).not.toBeInTheDocument();
+  fireEvent.click(summary);
+  fireEvent.change(within(advanced).getByLabelText('Model'), { target: { value: 'other' } });
+  expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_route', harnessInstanceId: kind,
+    route: { kind: 'configurable', providerId: 'anthropic', modelId: 'other' }, accessSourceId: 'matrix_included', accountId: null }));
 });

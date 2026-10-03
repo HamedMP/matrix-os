@@ -30,7 +30,7 @@ async function requestJson(input: {
     const code = value && typeof value === "object" && "error" in value
       && value.error && typeof value.error === "object" && "code" in value.error
       ? value.error.code : null;
-    throw new ProviderWorkflowClientError(response.status === 403 && code === "forbidden" ? "forbidden"
+    throw new ProviderWorkflowClientError(response.status === 401 ? "unauthorized" : response.status === 403 ? "forbidden"
       : response.status === 400 && code === "rejected" ? "rejected" : "unavailable");
   }
   return value;
@@ -61,6 +61,26 @@ export async function loadWebAiCreditHistory(input: {
 
 export function openWebProviderWorkflowAuthorization(url: string): boolean {
   if (!isProviderWorkflowAuthorizationUrl(url)) return false;
-  window.open(url, "_blank", "noopener,noreferrer");
-  return true;
+  // noopener intentionally returns null even when opening succeeds. Create a
+  // same-origin blank handle, sever its opener before navigation, and suppress
+  // the outbound Referer without mistaking that null for popup blocking.
+  let popup: Window | null = null;
+  try {
+    popup = window.open("about:blank", "_blank");
+    if (!popup) return false;
+    popup.opener = null;
+    if (popup.opener !== null) throw new Error("Popup isolation unavailable");
+    const policy = popup.document.createElement("meta");
+    policy.name = "referrer";
+    policy.content = "no-referrer";
+    popup.document.head.append(policy);
+    popup.location.replace(url);
+    return true;
+  } catch (error) {
+    console.warn("[provider-settings] Authorization popup unavailable:", error instanceof Error ? error.name : typeof error);
+    try { popup?.close(); } catch (closeError) {
+      console.warn("[provider-settings] Popup cleanup unavailable:", closeError instanceof Error ? closeError.name : typeof closeError);
+    }
+    return false;
+  }
 }

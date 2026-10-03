@@ -3,6 +3,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import {
   cleanup,
+  act,
   fireEvent,
   render,
   screen,
@@ -449,4 +450,57 @@ it('keeps account changes and disconnect unavailable until an active replacement
   await waitFor(() => expect(screen.getByRole('button', {name: 'Change account'})).toBeEnabled());
   expect(screen.getByRole('button', {name: 'Disconnect'})).toBeEnabled();
   expect(api.cancel).toHaveBeenCalledWith('replacement', expect.any(AbortSignal));
+});
+
+it("offers terminal-only supported login behind collapsed Advanced configuration", async () => {
+  const api = client();
+  api.start = vi.fn().mockResolvedValue({ id: "terminal", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null });
+  const openTerminal = vi.fn();
+  render(<HarnessWorkflowPanel harness={harness} capability={{ ...capability, loginMethods: ["terminal"], apiKeyProviders: [] }} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
+  const summary = screen.getByText("Advanced configuration");
+  expect(summary.closest("details")).not.toHaveAttribute("open");
+  fireEvent.click(summary);
+  fireEvent.click(screen.getByRole("button", { name: "Sign in in Terminal" }));
+  await waitFor(() => expect(openTerminal).toHaveBeenCalledWith("tws_1:tt_1"));
+  expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ method: "terminal", harnessInstanceId: "codex" }), expect.any(AbortSignal));
+});
+
+it("continues mounted login status after a transient read failure", async () => {
+  vi.useFakeTimers();
+  const api = client();
+  const operation = { id: "poll", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null };
+  api.get = vi.fn().mockResolvedValueOnce(operation).mockRejectedValueOnce(new ProviderWorkflowClientError()).mockResolvedValue({ ...operation, state: "succeeded" });
+  const refresh = vi.fn();
+  try {
+    render(<HarnessWorkflowPanel harness={harness} capability={capability} client={api} disabled={false} onRefresh={refresh} onOpenTerminal={vi.fn()} operationId="poll" />);
+    await act(async () => {});
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+    expect(screen.getByRole("alert")).toHaveTextContent("Connection status is unavailable");
+    await act(() => vi.advanceTimersByTimeAsync(4000));
+    expect(api.get).toHaveBeenCalledTimes(3);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally { cleanup(); vi.useRealTimers(); }
+});
+
+it("rearms bounded status polling after an explicit check following failed cancellation", async () => {
+  vi.useFakeTimers();
+  const api = client();
+  const operation = { id: "cancel-recovery", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null };
+  api.get = vi.fn().mockResolvedValueOnce(operation).mockResolvedValueOnce(operation).mockResolvedValue({ ...operation, state: "succeeded" });
+  api.cancel = vi.fn().mockRejectedValue(new ProviderWorkflowClientError());
+  const refresh = vi.fn();
+  try {
+    render(<HarnessWorkflowPanel harness={harness} capability={capability} client={api} disabled={false} onRefresh={refresh} onOpenTerminal={vi.fn()} operationId="cancel-recovery" />);
+    await act(async () => {});
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Cancel" })));
+    await act(() => vi.advanceTimersByTimeAsync(6000));
+    expect(api.get).toHaveBeenCalledOnce();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Check connection" })));
+    expect(api.get).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+    expect(api.get).toHaveBeenCalledTimes(3);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(api.cancel).toHaveBeenCalledOnce();
+  } finally { cleanup(); vi.useRealTimers(); }
 });

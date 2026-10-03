@@ -71,13 +71,13 @@ export function AgentsProvidersView({
     else if (id in next || Object.keys(next).length < 32) next[id] = operation;
     return next;
   });
-  const guidedPanel = (item: Pick<ProviderHarnessInstance, "id" | "harness" | "displayName" | "installState" | "authState"> & Partial<ProviderHarnessInstance>, capability: ProviderWorkflowCapability) => {
+  const guidedPanel = (item: Pick<ProviderHarnessInstance, "id" | "harness" | "displayName" | "installState" | "authState"> & Partial<ProviderHarnessInstance>, capability: ProviderWorkflowCapability, advancedConfiguration?: import("react").ReactNode) => {
     if (!workflowClient) return null;
     const exact = snapshot.harnesses.find(row => row.id === item.id);
     const { account, source } = exact ? resolveHarnessConnection(exact, snapshot.accounts, snapshot.accessSources) : { account: undefined, source: undefined };
     const usage = source ? usageLines(source.usage) : null;
     return <HarnessWorkflowPanel harness={item} source={source} capability={capability} client={workflowClient}
-      disabled={mutationsDisabled} operationId={operationIds[item.id] ?? capability.activeOperationId ?? null}
+      advancedConfiguration={advancedConfiguration} disabled={mutationsDisabled} operationId={operationIds[item.id] ?? capability.activeOperationId ?? null}
       onOperationId={id => rememberOperation(item.id, id)} onRefresh={onRefresh} onOpenTerminal={onOpenTerminal}
       onOpenAuthorizationUrl={onOpenAuthorizationUrl}
       onStateChange={status => setWorkflowStatus(current => updateWorkflowRowStatus(current, item.id, status))}
@@ -214,7 +214,18 @@ export function AgentsProvidersView({
           }}
           renderDetails={(harness) => {
             const capability = workflowCapabilities.find(item => item.harnessInstanceId === harness.id);
-            if (workflowClient && capability) return guidedPanel(harness, capability);
+            if (workflowClient && capability) return guidedPanel(harness, capability,
+              genericConfiguration ? <>
+                <ConnectionChoices snapshot={snapshot} harness={harness} gatewaySource={gatewaySource}
+                  gatewaySelected={gatewaySelected} onUseGateway={useGateway}
+                  canSetRoute={supports("set_route")} disabled={mutationsDisabled} onMutate={onMutate}
+                  onRefreshForConnection={onRefreshForConnection}
+                  onSetupHarness={onSetupHarness ? () => onSetupHarness(harness.harness) : undefined} />
+                <HarnessEditor snapshot={snapshot} harness={harness} disabled={mutationsDisabled}
+                  canUpdate={supports("update_harness")} canSetRoute={supports("set_route")}
+                  canSelectSource={supports("select_access_source")} canSelectAccount={supports("select_account")}
+                  onMutate={onMutate} onRefresh={onRefresh} />
+              </> : undefined);
             return (<>
               <ConnectionChoices snapshot={snapshot} harness={harness} gatewaySource={gatewaySource}
                 gatewaySelected={gatewaySelected} onUseGateway={useGateway} canSetRoute={genericConfiguration && supports("set_route")}

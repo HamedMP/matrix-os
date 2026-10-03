@@ -8,6 +8,7 @@ import type {
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { ConnectionMethodCard } from "./ConnectionMethodCard.js";
 import { hasConfiguredConnection } from "./harness-connection.js";
+import { useWorkflowPolling } from "./use-workflow-polling.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient } from "./types.js";
 
@@ -34,6 +35,7 @@ export function HarnessWorkflowPanel({
   operationId = null,
   onOperationId,
   renderConnection,
+  advancedConfiguration,
   connectRequest = 0,
 }: {
   harness: Pick<
@@ -55,6 +57,7 @@ export function HarnessWorkflowPanel({
   operationId?: string | null;
   onOperationId?: (id: string | null) => void;
   renderConnection?: (changeAccountAction: ReactNode) => ReactNode;
+  advancedConfiguration?: ReactNode;
   connectRequest?: number;
 }) {
   const [operation, setOperation] = useState<ProviderWorkflow | null>(null);
@@ -188,11 +191,11 @@ export function HarnessWorkflowPanel({
       if (live(controller)) setPending(false);
     }
   };
-  const start = (kind: "login" | "install" | "uninstall") =>
+  const start = (kind: "login" | "install" | "uninstall", terminal = false) =>
     run(async (signal) => {
       const loginMethod =
         kind === "login"
-          ? capability.loginMethods.includes("browser")
+          ? terminal ? "terminal" : capability.loginMethods.includes("browser")
             ? "browser"
             : capability.loginMethods.includes("existing_codex")
             ? "existing_codex"
@@ -228,7 +231,7 @@ export function HarnessWorkflowPanel({
         }
         if (
           result.terminalSessionId &&
-          (kind !== "login")
+          (kind !== "login" || loginMethod === "terminal")
         )
           onOpenTerminal(result.terminalSessionId);
       }
@@ -262,44 +265,20 @@ export function HarnessWorkflowPanel({
           : null,
     );
   }, [pending, operation, failure, disconnectOpen]);
-  useEffect(() => {
-    if (!active(operation)) return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const next = await client.get(operation!.id, controller.signal);
-        if (controller.signal.aborted) return;
-        if (
-          next.id !== operation!.id ||
-          next.harnessInstanceId !== harness.id ||
-          next.kind !== operation!.kind
-        )
-          throw new Error("workflow scope mismatch");
-        setOperation(next);
-        setNow(Date.now());
-        if (next.state === "succeeded") {
-          onOperationId?.(null);
-          setMethod(null);
-          setApiKey("");
-          onRefresh();
-        } else if (active(next)) timer = setTimeout(poll, 2000);
-      } catch (caught) {
-        if (!controller.signal.aborted) {
-          console.warn(
-            "[provider-settings] Workflow status failed:",
-            caught instanceof Error ? caught.name : typeof caught,
-          );
-          setFailure("Connection status is unavailable. Check again.");
-        }
+  const { stop: stopPolling, restart: restartPolling } = useWorkflowPolling({ operation, client, harnessId: harness.id,
+    onFailure: () => setFailure("Connection status is unavailable. Check again."),
+    onUpdate: next => {
+      setOperation(next);
+      setFailure(null);
+      setNow(Date.now());
+      if (next.state === "succeeded") {
+        onOperationId?.(null);
+        setMethod(null);
+        setApiKey("");
+        onRefresh();
       }
-    };
-    timer = setTimeout(poll, 2000);
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [operation?.id, operation?.state, client]);
+    },
+  });
   useEffect(() => {
     if (!active(operation)) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -361,6 +340,16 @@ export function HarnessWorkflowPanel({
         <p className="matrix-ap-help" role="status">
           Connection in Settings is unavailable for this agent on this computer.
         </p>
+      ) : null}
+      {advancedConfiguration || (capability.loginMethods.includes("terminal") && !inlineLogin) ? (
+        <details className="matrix-ap-advanced">
+          <summary>Advanced configuration</summary>
+          {harness.installState === "installed" && capability.loginMethods.includes("terminal") && !inlineLogin ? (
+            <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting}
+              onClick={() => void start("login", true)}>Sign in in Terminal</button>
+          ) : null}
+          {advancedConfiguration}
+        </details>
       ) : null}
       {failure ? (
         <p role="alert" className="matrix-ap-notice" data-tone="danger">
@@ -638,11 +627,14 @@ export function HarnessWorkflowPanel({
                 const next = await client.get(operation!.id, signal);
                 if (
                   next.id !== operation!.id ||
-                  next.harnessInstanceId !== harness.id
+                  next.harnessInstanceId !== harness.id ||
+                  next.kind !== operation!.kind
                 )
                   throw new Error("workflow scope mismatch");
                 if (!signal.aborted) {
                   setOperation(next);
+                  setFailure(null);
+                  if (active(next)) restartPolling();
                   if (next.state === "succeeded") onRefresh();
                 }
               })
@@ -658,6 +650,7 @@ export function HarnessWorkflowPanel({
             disabled={pending || disabled}
             onClick={() =>
               void run(async (signal) => {
+                stopPolling();
                 const result = await client.cancel(operation!.id, signal);
                 if (
                   result.id !== operation!.id ||

@@ -552,3 +552,16 @@ foreground state machine for method selection, native polling, key/code delivery
 and cancellation. Its larger size is intentional for this extraction; subsequent
 refactoring should first extract the disconnect confirmation and pure method
 rendering without splitting lifetime/generation ownership across controllers.
+
+Negotiated Pi/OpenCode foreground login retains Matrix AI, saved model and access
+source controls inside closed Advanced configuration. Supported terminal-only
+login remains an explicit fallback there, never an automatic normal login path.
+Status reads retry transient outages with bounded backoff until receipt expiry;
+authorization denial, cancellation, terminal receipts and scope changes stop
+recovery. A failed cancellation does not resend cancellation or resume reads
+automatically; an explicit successful status check can rearm bounded polling for
+the same still-active receipt. Expiry stops polling without inventing server cleanup or terminal state.
+Web authorization opens a same-origin blank handle, immediately severs its opener
+and sets a no-referrer document policy before trusted navigation. A blocked or
+unisolatable popup returns failure. `noopener`-requested opens cannot be detected
+by their null return alone (WHATWG Window.open / MDN Window.open).
