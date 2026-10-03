@@ -44,12 +44,13 @@ export function createManagedPiSessionsRepository(db: BotExecutor) {
     /**
      * Saves a transcript at `baseRevision`: 0 creates it, any other value must
      * match the stored revision. Returns the new revision. A save that carries
-     * a compaction point also clears the recompaction flag.
+     * a compaction point or invalidation acknowledgement also clears the flag.
      */
     async save(input: ManagedPiSessionKey & {
       baseRevision: number;
       messages: readonly Record<string, unknown>[];
       compactedThroughSeq?: number;
+      recompactionHandled?: true;
       tokenEstimate: number;
       runtimeVersions: Record<string, string>;
       now: string;
@@ -87,6 +88,8 @@ export function createManagedPiSessionsRepository(db: BotExecutor) {
           runtime_versions: runtimeVersions,
           revision: sql<number>`revision + 1`,
           updated_at: input.now,
+          // Only the revision-checked save can acknowledge discarded derived summaries.
+          ...(input.recompactionHandled ? { needs_recompaction: false } : {}),
           // A save that carries a compaction point replaces the summary, so it clears the flag.
           ...(input.compactedThroughSeq !== undefined
             ? { compacted_through_seq: input.compactedThroughSeq, needs_recompaction: false }

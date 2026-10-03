@@ -122,6 +122,8 @@ export const BotSessionSaveRequestSchema = z.object({
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   messages: z.array(z.record(z.string(), z.unknown())).max(4_000),
   compactedThroughSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  /** The worker discarded invalidated derived summaries from this loaded revision. */
+  recompactionHandled: z.literal(true).optional(),
 }).strict().refine((request) => canonicalEncodedByteLength(request.messages) <= BOT_SESSION_MAX_BYTES, { message: "Session is too large" });
 
 /** Largest accepted image, as base64 characters (2 MiB decoded). */
@@ -176,6 +178,8 @@ export const BotBrokerRequestSchema = z.discriminatedUnion("action", [
 ]).refine((request) => canonicalEncodedByteLength(request) <= BOT_BROKER_MAX_FRAME_BYTES, { message: "Broker request is too large" });
 
 export const BotSessionSnapshotSchema = z.object({
+  /** Required so a worker cannot silently reuse summaries when invalidation metadata is missing. */
+  needsRecompaction: z.boolean(),
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   messages: z.array(z.record(z.string(), z.unknown())).max(4_000),
 }).strict();

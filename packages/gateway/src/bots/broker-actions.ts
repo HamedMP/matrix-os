@@ -258,7 +258,7 @@ export function createBotBrokerActions(deps: {
             return success(request.requestId, BotImageChunkSchema.parse(await deps.runs.readImageChunk(binding, request.image)));
           case "bot.session.load": {
             const snapshot = isManagedPiBinding(binding) ? await deps.managedSessions!.load(key) : await deps.sessions.load({ ...key, botId: binding.botId });
-            return success(request.requestId, { revision: snapshot.revision, messages: snapshot.messages });
+            return success(request.requestId, { revision: snapshot.revision, messages: snapshot.messages, needsRecompaction: snapshot.needsRecompaction });
           }
           case "bot.session.save": {
             const fields = {
@@ -266,6 +266,7 @@ export function createBotBrokerActions(deps: {
               baseRevision: request.session.baseRevision,
               messages: request.session.messages,
               ...(request.session.compactedThroughSeq !== undefined ? { compactedThroughSeq: request.session.compactedThroughSeq } : {}),
+              ...(request.session.recompactionHandled ? { recompactionHandled: true as const } : {}),
               tokenEstimate: Math.ceil(JSON.stringify(request.session.messages).length / 4),
               runtimeVersions: { "@earendil-works/pi-agent-core": SCOPE_RUNTIME_BOT_HARNESS_VERSION },
               now: now().toISOString(),

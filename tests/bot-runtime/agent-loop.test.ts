@@ -1,6 +1,6 @@
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
-import type { BotEvent, BotRunCommand, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
+import type { BotEvent, BotRunCommand, BotSessionSnapshot, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
 import { BotBrokerError, type BotBrokerClient } from "../../packages/bot-runtime/src/broker-client.js";
 import { runBotTurn, type BotTurnControl } from "../../packages/bot-runtime/src/loop.js";
 
@@ -12,7 +12,7 @@ function scripted(responses: Parameters<ReturnType<typeof fauxProvider>["setResp
 
 function memoryBroker(options: {
   messages?: Record<string, unknown>[];
-  load?: () => Promise<{ revision: number; messages: Record<string, unknown>[] }>;
+  load?: () => Promise<BotSessionSnapshot>;
   tool?: (request: BotToolRequest) => Promise<BotToolResult>;
   event?: (event: BotEvent) => Promise<void>;
   save?: () => Promise<{ revision: number }>;
@@ -21,7 +21,7 @@ function memoryBroker(options: {
   const tools: BotToolRequest[] = [];
   const saves: Array<{ baseRevision: number; messages: Record<string, unknown>[] }> = [];
   const broker: BotBrokerClient = {
-    loadSession: vi.fn(async () => (options.load ? options.load() : { revision: 3, messages: options.messages ?? [] })),
+    loadSession: vi.fn(async () => (options.load ? options.load() : { revision: 3, needsRecompaction: false, messages: options.messages ?? [] })),
     saveSession: vi.fn(async (session) => {
       saves.push(session);
       return options.save ? options.save() : { revision: 4 };
@@ -191,7 +191,7 @@ describe("bot agent loop", () => {
     const { route } = scripted([fauxAssistantMessage(fauxText("unreachable"))]);
     const down = memoryBroker({ load: async () => { throw new BotBrokerError("timeout"); } });
     await expect(run({ broker: down.broker, route })).resolves.toEqual({ runId: "run_turn1", status: "failed", failureCode: "timeout", toolActions: 0 });
-    const corrupt = memoryBroker({ load: async () => ({ revision: 2, messages: [{ role: "tool", content: "x", timestamp: 1 }] }) });
+    const corrupt = memoryBroker({ load: async () => ({ revision: 2, needsRecompaction: false, messages: [{ role: "tool", content: "x", timestamp: 1 }] }) });
     await expect(run({ broker: corrupt.broker, route })).resolves.toEqual({ runId: "run_turn1", status: "failed", failureCode: "unavailable", toolActions: 0 });
     expect(corrupt.saves).toEqual([]);
   });
