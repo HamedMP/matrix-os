@@ -19,6 +19,7 @@ import { BotBrokerActionError, type BotToolDispatcher } from "./broker-actions.j
 import type { BotInteractionService } from "./interactions.js";
 import type { BotIntegrationTools } from "./integration-tools.js";
 import type { BotMemoryService } from "./memory-service.js";
+import { getAction } from "../integrations/registry.js";
 import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
 
 const MAX_TEXT_PART_CHARS = 60 * 1024;
@@ -53,6 +54,10 @@ const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "artifact.write": "write",
   "integration.inventory": "read",
   "integration.call": "write",
+  "integration.describe": "read",
+  "mcp.inventory": "read",
+  "mcp.describe": "read",
+  "mcp.call": "write",
   "memory.search": "read",
   "memory.propose": "write",
   "interaction.create": "write",
@@ -162,6 +167,7 @@ function textResult(text: string): BotToolResult {
 
 export function createBotToolDispatcher(deps: {
   homePath: string;
+  managedTools?: import("../chat/managed-pi-owner-tools.js").ManagedPiOwnerTools;
   managedWorkspace?: (binding: import("./runtime-registry.js").ManagedPiRuntimeBinding) => Promise<string>;
   interactions?: Pick<BotInteractionService, "createFromTool">;
   memory?: Pick<BotMemoryService, "propose" | "search">;
@@ -262,7 +268,13 @@ export function createBotToolDispatcher(deps: {
   }
 
   return {
-    effectClass: (request) => EFFECTS[request.capability],
+    effectClass: (request) => request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
+    async prepare(binding, request, signal) {
+      if (isManagedPiBinding(binding) && !request.capability.startsWith("artifact.")) {
+        if (!deps.managedTools) throw new BotBrokerActionError("not_granted");
+        await deps.managedTools.prepare(binding, request, signal);
+      }
+    },
     async dispatch(binding, request, signal) {
       if (request.capability === "artifact.write") {
         // Paths may hold characters the checkpoint reference does not allow; the digest names the file.
@@ -270,7 +282,10 @@ export function createBotToolDispatcher(deps: {
         return { result: await write(binding, request), outcomeRef };
       }
       if (request.capability === "artifact.read") return { result: await read(binding, request) };
-      if (isManagedPiBinding(binding)) throw new BotBrokerActionError("not_granted");
+      if (isManagedPiBinding(binding)) {
+        if (!deps.managedTools) throw new BotBrokerActionError("not_granted");
+        return { result: await deps.managedTools.dispatch(binding, request, signal) };
+      }
       if (request.capability === "interaction.create" && deps.interactions) {
         return { result: await deps.interactions.createFromTool(binding, request.args) };
       }

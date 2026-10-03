@@ -117,9 +117,9 @@
       "app-builder-lib@26.15.3": "patches/app-builder-lib@26.15.3.patch"
     },
     "overrides": {
-      "@earendil-works/pi-ai": "0.86.1",
-      "@earendil-works/chord": "0.86.1",
-      "@earendil-works/pi-telemetry": "0.86.1"
+      "@earendil-works/pi-ai": "1.0.0",
+      "@earendil-works/chord": "1.0.0",
+      "@earendil-works/pi-telemetry": "1.0.0"
     }
   },
   "devDependencies": {

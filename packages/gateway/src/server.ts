@@ -44,6 +44,7 @@ import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
+import { managedPiMcpDependencies } from "./startup/managed-pi-tools.js";
 import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
@@ -1513,6 +1514,8 @@ export async function createGateway(config: GatewayConfig) {
     botServices = await startBots({
       homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       providers: aiProviderService,
+      managedMcp: managedPiMcpDependencies({ env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
+        ownerId: process.env.MATRIX_USER_ID, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID }),
       ...(internalIntegrationBaseUrl && internalPlatformToken
         ? { integrations: createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken }) }
         : integrationRoutes ? { integrations: createLocalIntegrationTransport(integrationRoutes) } : {}),

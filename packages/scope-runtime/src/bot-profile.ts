@@ -25,7 +25,7 @@ export const SCOPE_RUNTIME_BOT_PROFILE_ID = "scope-runtime-bot-v1";
 export const SCOPE_RUNTIME_BOT_PROFILE_VERSION = 1;
 export const SCOPE_RUNTIME_BOT_ADAPTER_ID = "matrix-bot";
 /** The pinned Pi agent version inside the bot-runtime bundle. */
-export const SCOPE_RUNTIME_BOT_HARNESS_VERSION = "0.86.1";
+export const SCOPE_RUNTIME_BOT_HARNESS_VERSION = "1.0.0";
 export const SCOPE_RUNTIME_BOT_RUNTIME_MAX_SEC = 900;
 /** Where the bot-runtime bundle directory is mounted, and its entry file inside the sandbox. */
 export const BOT_RUNTIME_MOUNT = "/opt/matrix/scope-sdk/bot-runtime";

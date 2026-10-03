@@ -43,6 +43,10 @@ const TOOL_LABELS: Record<string, string> = {
   "interaction.create": "Asking you",
   "integration.inventory": "Checking connected services",
   "integration.call": "Using a connected service",
+  "integration.describe": "Describing a connected service",
+  "mcp.inventory": "Listing MCP servers",
+  "mcp.describe": "Describing an MCP tool",
+  "mcp.call": "Using an MCP tool",
 };
 
 /** Canonical refs are narrower than model tool IDs; hash anything outside them. */

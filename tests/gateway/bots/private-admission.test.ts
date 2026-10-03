@@ -74,7 +74,7 @@ describe("private bot admission", () => {
       profileId: "scope-runtime-bot-v1",
       workload: "bot_agent",
       adapterId: "matrix-bot",
-      harnessVersion: "0.86.1",
+      harnessVersion: "1.0.0",
       sandbox: {
         version: 1,
         scopeHandle: handle,

@@ -40,7 +40,7 @@ files and managed Chat image attachments are explicitly unavailable in this incr
 2. **Signatures:** `managedPiSandboxRootsForHome(homePath)` returns fixed
    `agent-workspaces/`, `projects/`, and `worktrees/` roots. Gateway admission and
    supervisor discovery pin `scope-runtime-managed-pi-v1`, version 1, digest
-   `158a42f750eec1cca6aebd90cbe5b5955eea57fca1c06d08b72b084b94e32ef4`.
+   `5e2e3b9f0785deb28f7b6334f7df8f96f84d9365978d4d459778b78acf31fc37`.
 3. **Contracts:** managed Chat reuses the pinned Pi worker and `bot_agent` transport,
    with independently selected mount authority. Recipe Bots retain their original
    profile/digest and `bots/` allowlist. The supervisor keeps `ProtectHome=tmpfs`
@@ -121,7 +121,8 @@ reviewed public documentation PR in `FinnaAI/matrix-os-site`. Validate an exact-
 Preview VPS with Electron Desktop: model A text/tool/resume, model B text, bot create/edit/
 reopen, cancellation, safe unavailable behavior and independent route/accounting evidence.
 Record client path/version/commit, immutable bundle runtimeVersion and Relay/Platform
-revision. Stop at Human Review before requested Greptile and landing gates. Automated
+revision. Human Review is approved for this task; after fresh integration/MCP acceptance,
+obtain exact-head Greptile 5/5 and green CI before merging PR #2117. Automated
 faux-provider tests prove wiring; they do not prove deployed paid inference.
 
 Deferred: broader Hermes migration, arbitrary provider routes, full filesystem editing,
@@ -313,3 +314,157 @@ Native Pi, kernel and other instance identities remain excluded from this select
    historical owner data, and use current catalog authority. Do not migrate opaque
    sessions, add unauthorized GLM rows, relabel legacy identity as Pi, or settle an
    unknown reservation from status alone.
+
+
+## Ordinary owner Pi service and Custom MCP broker
+
+### 1. Scope / Trigger
+Ordinary private Matrix AI/Pi Chat discovers and calls the owner's connected services
+and configured Custom MCP. It does not impersonate a recipe Bot or inherit Bot grants.
+Recipe Bot service calls retain their explicit recipe/grant rules. Metadata and tool
+results are untrusted data, never new permission or instructions.
+
+### 2. Signatures
+`createManagedPiOwnerTools({authority, signalFor, integrations?, mcp?, approvals?})`
+provides `open(binding, emit)`, `prepare(binding, request, signal)`,
+`dispatch(binding, request, signal)`, `submit(input)` and `closeRun(runId)`.
+`managedPiMcpDependencies({env, platformUrl, token, handle, ownerId, clerkOwnerId})`
+is production composition only. `createManagedPiMcpClient` provides bounded
+`inventory(ownerId, signal)`, `describe(ownerId, serverId, signal)` and
+`call(ownerId, {serverId, tool, arguments, runId, approvalReceipt?}, signal)`.
+
+### 3. Contracts
+The strict broker discriminated union adds `integration.describe {service}`,
+`mcp.inventory {}`, `mcp.describe {serverId:uuid}` and
+`mcp.call {serverId:uuid, tool, arguments}`. Preserve `integration.call`
+`{service, action, connectionId, params}`. Parameter JSON is capped at32KiB;
+requests at240KiB and results at192KiB. Worker requests never name actor, bearer,
+URL, approval flag, receipt or generation authority.
+
+At each prepare/dispatch, validate the live registered personal owner, private Chat,
+run, runtime handle and execution generation. Only an already registered pending
+run may revalidate while `waiting_for_approval`; it cannot create another binding.
+`supervised` remains read-only. Full-access service writes/sends still require a
+canonical exact-call approval. Descriptions come from the bounded owner-authoritative `/agent-catalog`, intersected
+with reviewed local action risk and parameters. Revalidate the admitted workspace
+fingerprint with the same live binding. Select one current connection ID and a unique current
+service/label; reject ambiguous labels and recheck the account before dispatch.
+
+MCP uses the Platform's existing `/internal/containers/:handle/mcp-servers` and
+`mcp-approvals` routes with machine bearer and signed Gateway delegation.
+Gateway owns the `x-matrix-mcp-run-id`; calls always carry `approvalGranted:false`.
+Prepare intersects current authoritative/local server revision and tool policy;
+`always_ask` requires the existing authenticated human proof and a one-use private
+receipt. The worker never receives that receipt. First MCP initialization is
+serialized per run, and revoked/closed runs cannot initialize another lease.
+
+Approval preparation precedes durable business-effect checkpoint dispatch. Human
+waiting is bounded at10minutes on both broker sides; ordinary discovery and call
+transport retain their10/25/30second deadlines. Stop/lifetime abort bounds even a
+noncooperative preflight. Consume the prepared authorization once; after dispatch,
+an unobserved response remains `effect_unknown`, never an automatic write retry.
+Terminal/expired/recovered runs abort pending waits, clear prepared state and revoke
+MCP leases. Run registries cap64 entries and per-run action state caps60 entries.
+
+The existing isolated staging fixture may delegate only Custom MCP through
+`MATRIX_PREVIEW_CUSTOM_MCP_ORIGIN/TOKEN/OWNER_ID` when `MATRIX_PREVIEW_RUNTIME=true`.
+Origin must be the exact `pr-N---matrix-platform-preview-*.a.run.app` HTTPS tag;
+owner must be `chat-share-preview-fixture-pr-N`. Preserve the actual Chat owner's
+independent authority. Ordinary shared Preview access to personal MCP stays denied.
+No production OAuth credentials are copied into staging.
+
+### 4. Validation & Error Matrix
+- Missing/conflicting configured owner or missing dependencies: omit capability;
+  do not pretend the worker can call it.
+- Foreign/shared/terminal Chat, stale generation, canceled run or ungranted tool:
+  bounded allowlisted refusal before external work.
+- Unknown service/action, invalid/extra params, missing/ambiguous/replaced account:
+  fail closed; never sync or choose the first account.
+- Declined/canceled/stale approval or missing signed MCP human proof: no effect
+  checkpoint or remote action. Duplicate tool IDs/receipts cannot dispatch twice.
+- Preview policy denial, mismatched policy revision, forged `approvalGranted`, unsafe
+  remote URL/redirect/private DNS: existing Platform/broker rejection remains.
+- Network/transport failure after dispatch: preserve unknown-effect accounting.
+  Raw provider messages, credential material and arbitrary URLs never reach clients.
+
+### 5. Good / Base / Bad Cases
+Good: a current owner asks for a registered service read; Pi inventories the account,
+describes its parameters and obtains a real bounded result. An enabled allow-policy
+MCP read executes through a registered run. Base: a service write pauses for the exact
+canonical approval; existing recipe grants and file/memory tools remain independent.
+Bad: a worker invents owner/account/receipt, approves itself, races MCP initialization,
+reuses a declined request, or resumes a terminal generation to repeat a write.
+
+### 6. Tests Required
+`managed-pi-owner-tools.test.ts`: exact account/params/mode checks, fresh unique
+negative tool IDs, canonical approval/decline/Stop, changed account, bounded states.
+`managed-pi-mcp-tools.test.ts`: lazy/concurrent initialization, signed continuation,
+receipt kept private, abort/revoke, actual Pi loop->broker->owner tools and no Bot rows.
+`managed-pi-mcp-client.test.ts`: typed client against real Hono routes/CustomMcpBroker
+DTOs, revision policy, run headers, once-only receipts, bounded parse and owner scope.
+Composition tests cover VPS Clerk-only owner and conflicting identities. Preserve
+Preview/SSRF/approval contracts. Exact-head Electron + the existing Preview VPS
+must separately evidence model continuation, real remote tool checkpoint and settled
+paid usage. A staging allow-policy read does not certify a live production always-ask
+proof or a personal OAuth account; report those facts separately.
+
+### 7. Wrong vs Correct
+Wrong: expose a remote bearer to Pi, grant owner access from the model's arguments,
+use recipe identity for ordinary Chat, or remove Preview/approval gates for testing.
+Correct: inject server-owned services into the registered private run, ask through
+canonical Chat, consume exact authorization and use the existing bounded Platform
+transport. Preserve external unknown effects until independent evidence arrives.
+
+
+## Embedded Pi SDK 1.0 contract
+
+### 1. Scope / Trigger
+Upgrade the Matrix-owned worker SDK to the explicitly requested official stable1.0.0.
+The separately installed user Pi CLI is neither proof nor a dependency of that worker.
+
+### 2. Signatures
+`Agent({finishTurn})` ends a completed turn using `{action:"end"}` for a blocking person
+question or exhausted tool budget. `estimateContextTokens` imports from the public
+`@earendil-works/pi-ai/utils/estimate`, no removed agent-core re-export.
+
+### 3. Contracts
+Direct pi-agent-core/pi-ai, root pi-ai/pi-telemetry pins and immutable lock graph are
+1.0.0. Keep pnpm10.33.4 and global minimumReleaseAge10080. The user-requested fresh
+upgrade uses exactly pi-agent-core@1.0.0, pi-ai@1.0.0 and pi-telemetry@1.0.0 release-age
+exceptions, supported by pnpm>=10.19; no wildcard/version range/general exclusion.
+CI/release paths retain frozen-lockfile. Registry integrities must match the locked
+official tarballs. Chord's unused experimental harness disappears from runtime graph;
+no SDK-native credential discovery, unreviewed MCP, storage or broad network access.
+
+The Bot digest is `884f3410867236443e79580ae16425c23909bc15fb79daec11db6c3dc81eebd4`;
+the managedPi digest is `5e2e3b9f0785deb28f7b6334f7df8f96f84d9365978d4d459778b78acf31fc37`.
+Supervisor, invocation, build/worker metadata and acceptance fixtures pin1.0.0.
+Preserve distinct profile mount roots and broker_only network policy. Historical
+spike/session provenance remains historical; never relabel an old accepted worker.
+
+### 4. Validation & Error Matrix
+Removed shouldStopAfterTurn/estimator exports: test failure/type error until public
+API migration. Wrong harness/version/digest, including0.86.1: reject admission before
+launch. Unknown fresh transitive dependency: do not broaden safety exceptions.
+Blocking questions/budget completion must not request an extra inference turn or
+consume queued steering. Session compaction/cancellation preserve prior semantics.
+
+### 5. Good / Base / Bad Cases
+Good: actual1.0 SDK executes broker-only tools, ends for pending person input and
+resumes accepted steering under the current run. Base: unrelated Claude profile
+and user CLI remain independent. Bad: changing only a displayed version, accepting
+old workers under a new digest, using latest/ranges or disabling frozen installs.
+
+### 6. Tests Required
+Actual installed SDK loop/session tests for questions, exhausted budgets, steering,
+errors/abort and token estimation; real bundled worker import/build; exact profile
+pins/digests and explicit old0.86.1 rejection; private admission and managed Chat.
+Root normal install then frozen install must reproduce the lock with official
+integrities. Final Electron+host immutable provenance must record SDK1.0 alongside
+actual paid model/tool continuation; source manifests alone do not establish deploy.
+
+### 7. Wrong vs Correct
+Wrong: infer embedded SDK version from `pi --version`, replace a removed hook name
+without testing stop semantics, or put every Pi version on a release-age allowlist.
+Correct: verified official exact packages+lock, public1.0 APIs, aligned invocation
+certificates, preserved termination and exact immutable deployed worker evidence.

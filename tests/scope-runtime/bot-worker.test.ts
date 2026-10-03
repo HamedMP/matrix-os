@@ -20,7 +20,7 @@ import { buildWorkerBundle } from "./worker-bundles.js";
 const execFileAsync = promisify(execFile);
 const RUNTIME = `runtime_${"a".repeat(32)}`;
 const SCOPE = `scope_${"b".repeat(32)}`;
-const ARGS = [RUNTIME, SCOPE, "bot_agent", "matrix-bot", "0.86.1", "7"];
+const ARGS = [RUNTIME, SCOPE, "bot_agent", "matrix-bot", "1.0.0", "7"];
 const invocation = parseScopeRuntimeBotWorkerArguments(ARGS);
 const cleanup: Array<() => Promise<void>> = [];
 
@@ -48,13 +48,14 @@ describe("bot workload worker", () => {
   it("accepts only the pinned bot adapter invocation", () => {
     expect(invocation).toEqual({
       runtimeHandle: RUNTIME, scopeHandle: SCOPE, workload: "bot_agent", adapterId: "matrix-bot",
-      harnessVersion: "0.86.1", executionGeneration: "7",
+      harnessVersion: "1.0.0", executionGeneration: "7",
     });
     for (const bad of [
-      [RUNTIME, SCOPE, "chat_ai", "matrix-bot", "0.86.1", "7"],
+      [RUNTIME, SCOPE, "chat_ai", "matrix-bot", "1.0.0", "7"],
       [RUNTIME, SCOPE, "bot_agent", "claude-code", "2.1.240", "7"],
+      [RUNTIME, SCOPE, "bot_agent", "matrix-bot", "0.86.1", "7"],
       [RUNTIME, SCOPE, "bot_agent", "matrix-bot", "0.87.0", "7"],
-      [RUNTIME, SCOPE, "bot_agent", "matrix-bot", "0.86.1", "07"],
+      [RUNTIME, SCOPE, "bot_agent", "matrix-bot", "1.0.0", "07"],
       [...ARGS, "/bin/sh"],
     ]) {
       expect(() => parseScopeRuntimeBotWorkerArguments(bad)).toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));

@@ -106,7 +106,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     }),
     toolExecution: "sequential",
     // A blocking question or a spent budget ends the turn even if a steer is queued; the steer is saved instead.
-    shouldStopAfterTurn: () => tools.waitingForPerson || budgetExhausted,
+    finishTurn: () => tools.waitingForPerson || budgetExhausted ? { action: "end" } : undefined,
     // Fail closed: the hook cannot throw, and anything past the budget is blocked.
     beforeToolCall: async () => {
       if (toolActions >= command.limits.maxToolActions) {

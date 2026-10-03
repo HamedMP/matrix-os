@@ -75,7 +75,7 @@ const botLaunch = (hostPath: string) => ({
   profileId: SCOPE_RUNTIME_BOT_PROFILE_ID,
   workload: "bot_agent" as const,
   adapterId: "matrix-bot",
-  harnessVersion: "0.86.1",
+  harnessVersion: "1.0.0",
   executionGeneration: "7",
   sandbox: manifestFor(hostPath),
 });
@@ -98,7 +98,7 @@ describe("scope runtime systemd launcher bot profile", () => {
     const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
 
     await expect(launcher.supportedAdapters?.(SCOPE_RUNTIME_BOT_PROFILE_ID)).resolves.toEqual([
-      { adapterId: "matrix-bot", harnessVersion: "0.86.1", workloads: ["bot_agent"] },
+      { adapterId: "matrix-bot", harnessVersion: "1.0.0", workloads: ["bot_agent"] },
     ]);
     await expect(launcher.start(botLaunch(join(home, "bots", "bot_abcdef12"))))
       .rejects.toMatchObject({ code: "ENOENT" });
@@ -121,7 +121,7 @@ describe("scope runtime systemd launcher bot profile", () => {
     expect(args.slice(args.indexOf("--") + 1)).toEqual([
       "/usr/bin/env", "-i", "HOME=/workspace", "PATH=/opt/matrix/runtime/node/bin", "MATRIX_SCOPE_RUNTIME=1",
       "/opt/matrix/runtime/node/bin/node", "/opt/matrix/scope-sdk/bot-runtime/bot-worker.mjs",
-      RUNTIME_HANDLE, SCOPE_HANDLE, "bot_agent", "matrix-bot", "0.86.1", "7",
+      RUNTIME_HANDLE, SCOPE_HANDLE, "bot_agent", "matrix-bot", "1.0.0", "7",
     ]);
     expect(() => buildBotSystemdRunArgs(launch, paths, { sandboxProperties: [] })).toThrow("sandbox");
     expect(() => buildBotSystemdRunArgs({ ...launch, adapterId: "claude-code", harnessVersion: "2.1.240" }, paths, {
@@ -136,7 +136,7 @@ describe("scope runtime systemd launcher bot profile", () => {
     const { paths, root } = await fixture();
     const runCommand = vi.fn(async () => ({ stdout: "" }));
     await expect(createSystemdScopeRuntimeLauncher({ ...paths, runCommand }).supportedAdapters?.(SCOPE_RUNTIME_BOT_PROFILE_ID))
-      .resolves.toEqual([{ adapterId: "matrix-bot", harnessVersion: "0.86.1", workloads: ["bot_agent"] }]);
+      .resolves.toEqual([{ adapterId: "matrix-bot", harnessVersion: "1.0.0", workloads: ["bot_agent"] }]);
     await expect(createSystemdScopeRuntimeLauncher({ ...paths, botSandboxRoots: [], runCommand })
       .supportedAdapters?.(SCOPE_RUNTIME_BOT_PROFILE_ID)).resolves.toEqual([]);
     const { botRuntimeDirectory: _unused, ...withoutBundle } = paths;
@@ -193,7 +193,7 @@ describe("scope runtime systemd launcher bot profile", () => {
     await writeFile(join(runtimeRoot, "provenance.json"), JSON.stringify({
       version: 1, runtimeHandle: RUNTIME_HANDLE, profileId: SCOPE_RUNTIME_BOT_PROFILE_ID,
       profileVersion: SCOPE_RUNTIME_BOT_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
-      workload: "bot_agent", adapterId: "matrix-bot", harnessVersion: "0.86.1", executionGeneration: "7",
+      workload: "bot_agent", adapterId: "matrix-bot", harnessVersion: "1.0.0", executionGeneration: "7",
     }));
     const calls: Array<readonly string[]> = [];
     const runCommand: ScopeRuntimeCommandRunner = vi.fn(async (_command, args) => {
