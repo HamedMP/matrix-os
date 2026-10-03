@@ -207,8 +207,41 @@ describe("CollaborationDirectoryOutbox", () => {
     try {
       expect(await worker.runOnce()).toBe(0);
       expect(fetchImpl).not.toHaveBeenCalled();
-      // Once the final attempt's window has passed, the exhausted event no longer holds the scope.
-      clock += 61_000;
+      // A slow batch can hold that attempt well past its retry time: the scope stays held.
+      clock += 5 * 60_000;
+      expect(await worker.runOnce()).toBe(0);
+      // Only an attempt that could no longer be running (its worker died) stops holding the scope.
+      clock += 15 * 60_000;
+      expect(await worker.runOnce()).toBe(1);
+    } finally {
+      await worker.shutdown();
+    }
+  });
+
+  it("releases a scope's later event as soon as the earlier event's final attempt fails", async () => {
+    await fixture.db.updateTable("collaboration_directory_outbox").set({ attempts: 19 })
+      .where("event_id", "=", "60000000-0000-4000-8000-000000000001").execute();
+    await fixture.db.insertInto("collaboration_events").values({
+      scope_id: collaborationIds.scope, scope_seq: 2, event_id: "60000000-0000-4000-8000-000000000004",
+      resource_kind: "chat", resource_id: collaborationIds.chat, revision: 2, authority_generation: 1,
+      event_type: "member.accepted", payload: JSON.stringify({}), created_at: now.toISOString(),
+    }).execute();
+    await fixture.db.insertInto("collaboration_directory_outbox").values({
+      event_id: "60000000-0000-4000-8000-000000000004", scope_id: collaborationIds.scope,
+      recipient_actor_ids: JSON.stringify([collaborationActors.editor]), authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 1, resource_kind: "chat", discovery_state: "accepted",
+      retry_after: now.toISOString(), delivered_at: null, created_at: now.toISOString(),
+    }).execute();
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => new Response(null, {
+      status: String(init.body).includes("60000000-0000-4000-8000-000000000001") ? 503 : 204,
+    }));
+    const worker = new CollaborationDirectoryOutbox({
+      db: fixture.db, platformBaseUrl: "https://platform.internal", runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef", fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: () => now, startTimer: false,
+    });
+    try {
+      expect(await worker.runOnce()).toBe(0);
       expect(await worker.runOnce()).toBe(1);
     } finally {
       await worker.shutdown();
