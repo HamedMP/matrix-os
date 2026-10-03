@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createProviderWorkflowService } from '../../packages/gateway/src/ai-providers/provider-workflows.js';
+import { createProviderWorkflowService, type ProviderWorkflowAdapter } from '../../packages/gateway/src/ai-providers/provider-workflows.js';
 import { createProviderWorkflowRoutes } from '../../packages/gateway/src/ai-providers/provider-workflow-routes.js';
 
 const request = { harnessInstanceId: 'codex', kind: 'login' as const, method: 'device_code' as const, idempotencyKey: 'request-1' };
 function fixture() {
   const cancel = vi.fn(async () => {});
-  const start = vi.fn(async () => ({ cancel, terminalSessionId: 'tws_test:tt_test' }));
+  const start = vi.fn<ProviderWorkflowAdapter['start']>(async () => ({ cancel, terminalSessionId: 'tws_test:tt_test' }));
   const service = createProviderWorkflowService({ ownerId: 'owner', adapters: [{ harnessInstanceId: 'codex', harness: 'codex', displayName: 'Codex', installState: 'installed', loginMethods: ['device_code'], apiKeyProviders: [], install: false, uninstall: false, start }], now: () => new Date('2026-10-01T00:00:00Z') });
   return { service, start, cancel };
 }
