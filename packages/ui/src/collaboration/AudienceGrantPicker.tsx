@@ -30,6 +30,8 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
   const [retryToken, setRetryToken] = useState(0);
   const base = `/api/collaboration/scopes/${encodeURIComponent(scope.id)}`;
   const orgId = scope.organizationId;
+  // Chosen on a private project, access is recorded now and starts when the owner shares it.
+  const beforeShare = scope.kind === "project" && scope.lifecycle === "private";
   useEffect(() => {
     if (!orgId) { setLoading(false); setError(true); return; }
     let active = true;
@@ -113,7 +115,8 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
         clientRequestId: crypto.randomUUID(), expectedRevision: revision, audience: selected, preset,
       }));
       await reloadGrants();
-      setFeedback(created.audience.kind === "organization"
+      setFeedback(beforeShare ? "Access starts when you share the whole project."
+        : created.audience.kind === "organization"
         ? "Organization access is pending until each member opens the share."
         : "Member access is pending until this member opens the share.");
       setError(false);
@@ -123,8 +126,10 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
     } finally { setPending(false); }
   };
   return <section aria-label="Share with organization" className="rounded-xl border p-4">
-    <h3 className="font-medium">Share with your organization</h3>
-    <p className="mt-1 text-xs">Current organization members only. Access starts when the recipient opens the share.</p>
+    <h3 className="font-medium">{beforeShare ? "Choose who gets access" : "Share with your organization"}</h3>
+    <p className="mt-1 text-xs">{beforeShare
+      ? "Current organization members only. Access starts when you share the whole project; if you choose no one, everyone in your organization gets contributor access."
+      : "Current organization members only. Access starts when the recipient opens the share."}</p>
     {loading ? <p role="status" className="mt-2 text-sm">Loading organization members…</p> : null}
     {error ? <div role="alert" className="mt-2 text-sm">Organization access is unavailable. Refresh and try again.
       <button type="button" className={`${buttonClass} ml-2`} onClick={() => { setLoading(true); setError(false); setRetryToken((value) => value + 1); }}>Retry</button>
@@ -145,7 +150,11 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
     </div>
     {cursor ? <button type="button" className={`${buttonClass} mt-2`} disabled={pending} onClick={() => void loadMore()}>More members</button> : null}
     {grants.length ? <ul className="mt-3 space-y-2 text-sm">{grants.filter((grant) => grant.state === "active" || grant.state === "pending").map((grant) => <li key={grant.id} className="flex flex-wrap items-center gap-2 rounded-lg border p-2">
-      <span className="min-w-0 flex-1 truncate">{grant.audience.kind === "organization" ? "Everyone in the organization" : grant.audience.actorId} · {grant.state}</span>
+      {/* Who on one line, the access state below it, so a long name never hides whether access has started. */}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{grant.audience.kind === "organization" ? "Everyone in the organization" : grant.audience.actorId}</span>
+        <span className="block text-xs" style={{ color: "var(--text-secondary)" }}>{beforeShare ? "Starts when shared" : grant.state === "pending" ? "Pending until opened" : "Active"}</span>
+      </span>
       <select aria-label={`Preset for ${grant.audience.kind === "organization" ? "organization" : grant.audience.actorId}`}
         value={grant.preset} disabled={pending || loading || error || !api.patch}
         onChange={(event) => void mutateGrant(grant, event.target.value as "viewer" | "contributor")}

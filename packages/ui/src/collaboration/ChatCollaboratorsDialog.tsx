@@ -77,9 +77,11 @@ function useScopeReadiness(api: CollaborationApi, scope: Scope): CollaborationRe
 }
 
 function ScopeAccess({ api, scope, onRefresh }: { api: CollaborationApi; scope: Scope; onRefresh: () => Promise<unknown> }) {
-  if (projectAwaitingShare(scope)) {
+  // A private project's owner chooses its audience before sharing; the grants take effect when it is shared.
+  // While the share is being published there is nothing to change until it finishes.
+  if (projectAwaitingShare(scope) && scope.lifecycle !== "private") {
     return <p className="rounded-xl border px-3 py-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-      Share the whole project to manage access. Sharing gives everyone in your organization contributor access by default.
+      Access can be changed once sharing finishes.
     </p>;
   }
   return <AudienceGrantPicker api={api} scope={scope} onRefresh={onRefresh} />;
