@@ -41,7 +41,7 @@ The web service validates and enqueues incoming events with background workers d
 
 Linking records explicit versioned owner consent (`whatsapp-general-agent-v1`). The disclosure covers the owner's general Matrix agent and the access it may have to files, commands, tools, and changes on the primary VPS. A request initiated through WhatsApp follows the selected runtime's supported permissions; full access is considered only after this consent is persisted. Waiting approvals or questions return the user to Matrix. Channel code cannot create a general-purpose capability merely by selecting a coding harness.
 
-The upcoming Matrix Pi general agent is a separate runtime feature. Delivery selects a ready `system_agent` from the authoritative runtime catalog. A restricted Pi coding harness does not qualify. Missing agent readiness, entitlement, or primary runtime availability fails closed; no other owner's machine or credential supplies a fallback.
+The Matrix-owned Pi general agent is a separate runtime feature. Delivery selects a ready `system_agent` from the authoritative runtime catalog, including `matrix_pi` when deployed and ready. A restricted Pi coding harness does not qualify. Missing agent readiness, entitlement, or primary runtime availability fails closed; no other owner's machine or credential supplies a fallback.
 
 The existing Chat remains bound to its harness after its first turn; introducing a different general agent requires an explicit supported migration rather than silently changing its binding. WhatsApp and Matrix clients read the same canonical Chat. The current Telegram adapter still keeps a channel-specific session, so this pilot does not establish one shared conversation across every messaging channel.
 
