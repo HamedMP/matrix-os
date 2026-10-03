@@ -74,7 +74,7 @@ describe("shared canonical Chat SSE parser", () => {
 });
 
 describe("shared canonical Chat event source", () => {
-  it("opens only after server attachment and publishes safe replay metadata", async () => {
+  it("opens only after server attachment and coalesces replay metadata into one refresh", async () => {
     const stream = streamingResponse();
     const openStream = vi.fn(async () => stream.response);
     const source = createCanonicalChatEventSource({ openStream });
@@ -85,12 +85,12 @@ describe("shared canonical Chat event source", () => {
     expect(source.connectionState()).toBe("connecting");
     stream.emit('data: {"type":"chat.stream.attached"}\n\n');
     stream.emit(`id: 9\ndata: ${JSON.stringify(event(9, "chat_streamed"))}\n\n`);
-    stream.emit('data: {"type":"chat.replay.end","nextCursor":9}\n\n');
+    stream.emit(`id: 10\ndata: ${JSON.stringify(event(10, "chat_second"))}\n\n`);
+    stream.emit('data: {"type":"chat.replay.end","nextCursor":10}\n\n');
 
     await vi.waitFor(() => expect(source.connectionState()).toBe("open"));
     await vi.waitFor(() => expect(invalidations).toEqual([
-      { type: "chat.changed", chatId: "chat_streamed", cursor: 9, revision: 9, eventType: "run.message" },
-      { type: "chat.full_refresh", cursor: 9 },
+      { type: "chat.full_refresh", cursor: 10 },
     ]));
     source.dispose();
   });

@@ -365,7 +365,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     ]);
   });
 
-  it("projects Claude tool activity and safe published process text through the provider-neutral seam", async () => {
+  it("projects Claude tool activity and safe published process text through the provider-neutral seam in shared Chat", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({
         type: "system",
@@ -414,7 +414,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
     const events = [];
 
-    for await (const event of adapter.start(baseInput)) events.push(event);
+    for await (const event of adapter.start({ ...baseInput, sharedScopeId: "shared_projection_fixture" })) events.push(event);
 
     expect(events).toEqual(expect.arrayContaining([
       {
@@ -524,7 +524,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     ]);
   });
 
-  it("keeps official Claude text blocks and completed command detail in provider order", async () => {
+  it("keeps official Claude text blocks and completed command detail in provider order in shared Chat", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({
         type: "system",
@@ -588,7 +588,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
     const events = [];
 
-    for await (const event of adapter.start(baseInput)) events.push(event);
+    for await (const event of adapter.start({ ...baseInput, sharedScopeId: "shared_projection_fixture" })) events.push(event);
 
     expect(events).toEqual([
       {
@@ -631,7 +631,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     ]);
   });
 
-  it("preserves harmless JSX closers and prose separators while redacting real unrelated absolute paths", async () => {
+  it("preserves harmless JSX closers, prose separators, and owner-visible absolute paths", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({
         type: "result",
@@ -645,6 +645,27 @@ describe("Claude canonical Chat Provider adapter", () => {
     const events = [];
 
     for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toContainEqual({
+      type: "assistant.delta",
+      delta: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
+    });
+  });
+
+  it("redacts unrelated absolute paths while preserving harmless syntax in shared Chat", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
+        session_id: "claude_shared_path_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start({ ...baseInput, sharedScopeId: "shared_projection_fixture" })) events.push(event);
 
     expect(events).toContainEqual({
       type: "assistant.delta",
@@ -1183,4 +1204,24 @@ it("answers Claude AskUserQuestion on the same running stdin connection", async 
   expect(spawnFn).toHaveBeenCalledOnce();
   expect(frames.filter(frame => frame.type === "user")).toHaveLength(1);
   expect(spawnFn.mock.calls[0]?.[1]).not.toContain(baseInput.prompt);
+});
+
+it("retains safe command preview when a private cwd detail is rejected by the canonical schema", async () => {
+  const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([
+    JSON.stringify({ type: "stream_event", event: { type: "content_block_start", index: 0,
+      content_block: { type: "tool_use", id: "tool_safe_command", name: "Bash",
+        input: { command: "pnpm build", cwd: "/home/matrix/home/apps/demo" } } } }),
+    JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
+    JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Done.", session_id: "safe_preview_session" }),
+  ]));
+  const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+  const events = [];
+  for await (const event of adapter.start(baseInput)) events.push(event);
+  const activities = events.filter(event => event.type === "agent.activity");
+  expect(activities).toHaveLength(2);
+  for (const activity of activities) {
+    expect(activity).toMatchObject({ preview: "pnpm build", previewKind: "command" });
+    expect(activity).not.toHaveProperty("detail");
+  }
+  expect(JSON.stringify(activities)).not.toContain("/home/matrix/home");
 });

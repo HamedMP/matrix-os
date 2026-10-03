@@ -24,6 +24,19 @@ function exactInteger(value: unknown): number {
   return parsed;
 }
 
+export function eligiblePromotionalCredit(
+  grant: { grant_entry_id: string; remaining_microusd: unknown; expires_at: string | null },
+  protectedMicrousd: number,
+  checkedAt: string,
+  namespace: "general" | "speech_monthly" = "general",
+): number {
+  const available = exactInteger(grant.remaining_microusd) - protectedMicrousd;
+  if (available < 0) throw new Error("Funded AI promotional allocation invariant violated");
+  const speech = grant.grant_entry_id.startsWith("speech-monthly:");
+  if (speech !== (namespace === "speech_monthly") || (grant.expires_at !== null && grant.expires_at <= checkedAt)) return 0;
+  return available;
+}
+
 export async function activePromotionalProtection(
   executor: PlatformDB["executor"],
   identity: FundedAiRuntimeIdentity,
@@ -105,9 +118,7 @@ export async function reserveFundingSources(
   for (const grant of grants) {
     if (remaining === 0) break;
     const alreadyAllocated = protection.get(grant.grant_entry_id) ?? 0;
-    const unallocated = exactInteger(grant.remaining_microusd) - alreadyAllocated;
-    if (unallocated < 0) throw new Error("Funded AI promotional allocation invariant violated");
-    if (grant.expires_at !== null && grant.expires_at <= checkedAt) continue;
+    const unallocated = eligiblePromotionalCredit(grant, alreadyAllocated, checkedAt, allowedSources.promotionalGrantNamespace);
     const allocation = Math.min(unallocated, remaining);
     if (allocation > 0) {
       grantAllocations.push({ grantEntryId: grant.grant_entry_id, amountMicrousd: allocation });
@@ -126,6 +137,33 @@ export async function reserveFundingSources(
   if (addonReservedMicrousd > exactInteger(balance.addon_balance_microusd) - existingAddonReserved) {
     if (!allowedSources.promotional || !allowedSources.addon) {
       throw new AiFundedPolicyError("insufficient_credit");
+    }
+    // The aggregate balance also contains speech-only promotion. Its exclusion
+    // is an expected eligibility refusal, not missing general attribution.
+    if (allowedSources.promotionalGrantNamespace !== "speech_monthly") {
+      const excludedGrants = await executor.selectFrom("ai_funded_promotional_grant_balances")
+        .select(["grant_entry_id", "remaining_microusd", "expires_at"])
+        .where("owner_id", "=", identity.ownerId).where("machine_id", "=", identity.machineId)
+        .where("runtime_slot", "=", identity.runtimeSlot).where("remaining_microusd", ">", 0)
+        .where("grant_entry_id", "like", "speech-monthly:%")
+        .limit(MAX_PROMOTIONAL_GRANTS_PER_RUNTIME + 1).execute();
+      if (excludedGrants.length > MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
+        throw new Error("Funded AI promotional grant limit invariant violated");
+      }
+      let excludedAvailable = 0;
+      let attributedPromotional = 0;
+      for (const grant of [...grants, ...excludedGrants]) {
+        attributedPromotional = exactInteger(attributedPromotional + exactInteger(grant.remaining_microusd));
+      }
+      for (const grant of excludedGrants) {
+        excludedAvailable = exactInteger(excludedAvailable + eligiblePromotionalCredit(
+          grant, protection.get(grant.grant_entry_id) ?? 0, checkedAt, "speech_monthly",
+        ));
+      }
+      const availableAddon = exactInteger(balance.addon_balance_microusd) - existingAddonReserved;
+      const shortfall = addonReservedMicrousd - availableAddon;
+      if (availableAddon >= 0 && attributedPromotional === exactInteger(balance.promotional_balance_microusd)
+        && shortfall <= excludedAvailable) throw new AiFundedPolicyError("insufficient_credit");
     }
     throw new Error("Funded AI add-on reservation allocation invariant violated");
   }
