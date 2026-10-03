@@ -150,7 +150,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
     </div>
     {cursor ? <button type="button" className={`${buttonClass} mt-2`} disabled={pending} onClick={() => void loadMore()}>More members</button> : null}
     {grants.length ? <ul className="mt-3 space-y-2 text-sm">{grants.filter((grant) => grant.state === "active" || grant.state === "pending").map((grant) => <li key={grant.id} className="flex flex-wrap items-center gap-2 rounded-lg border p-2">
-      <span className="min-w-0 flex-1 truncate">{grant.audience.kind === "organization" ? "Everyone in the organization" : grant.audience.actorId} · {beforeShare && grant.state === "pending" ? "starts when shared" : grant.state}</span>
+      <span className="min-w-0 flex-1 truncate">{grant.audience.kind === "organization" ? "Everyone in the organization" : grant.audience.actorId} · {beforeShare ? "starts when shared" : grant.state}</span>
       <select aria-label={`Preset for ${grant.audience.kind === "organization" ? "organization" : grant.audience.actorId}`}
         value={grant.preset} disabled={pending || loading || error || !api.patch}
         onChange={(event) => void mutateGrant(grant, event.target.value as "viewer" | "contributor")}

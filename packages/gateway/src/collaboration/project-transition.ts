@@ -656,15 +656,20 @@ export function createProjectTransitionJournal(options: {
         const pendingMembers = members.filter((member): member is typeof member & { invitation_id: string } =>
           member.status === "pending" && member.invitation_id !== null,
         );
+        // The platform applies a scope's directory events by metadata revision and ignores one
+        // that is not newer than the last it applied, so every further event this activation
+        // publishes carries its own next revision; the scope ends at the last one.
+        let publishedRevision = nextRevision;
         if (pendingMembers.length > 0) {
           const invitationEventId = z.uuid().parse(createEventId());
+          publishedRevision += 1;
           await trx.insertInto("collaboration_events").values({
             scope_id: scope.id,
             scope_seq: scopeSequence + 1,
             event_id: invitationEventId,
             resource_kind: "project",
             resource_id: scope.resource_id,
-            revision: nextRevision,
+            revision: publishedRevision,
             authority_generation: Number(updatedScope.authority_generation),
             event_type: "project.transition.invited",
             payload: {},
@@ -705,13 +710,14 @@ export function createProjectTransitionJournal(options: {
         for (let offset = 0; offset < memberGrants.length; offset += DIRECTORY_EVENT_RECIPIENT_LIMIT) {
           const batch = memberGrants.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT);
           const grantEventId = z.uuid().parse(createEventId());
+          publishedRevision += 1;
           await trx.insertInto("collaboration_events").values({
             scope_id: scope.id,
             scope_seq: grantSequence,
             event_id: grantEventId,
             resource_kind: "project",
             resource_id: scope.resource_id,
-            revision: nextRevision,
+            revision: publishedRevision,
             authority_generation: Number(updatedScope.authority_generation),
             event_type: "project.transition.granted",
             payload: {},
@@ -731,6 +737,12 @@ export function createProjectTransitionJournal(options: {
             delivered_at: null,
             created_at: now(),
           }).execute();
+        }
+        if (publishedRevision !== nextRevision) {
+          const advanced = await trx.updateTable("collaboration_scopes").set({ revision: publishedRevision })
+            .where("id", "=", scope.id).where("revision", "=", nextRevision)
+            .returning("id").executeTakeFirst();
+          if (!advanced) throw new ProjectTransitionError("conflict");
         }
         await trx.insertInto("collaboration_audit").values({
           scope_id: scope.id,
