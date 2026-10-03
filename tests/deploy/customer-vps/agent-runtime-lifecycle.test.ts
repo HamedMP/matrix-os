@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  access,
   rm,
   symlink,
   writeFile,
@@ -19,6 +20,9 @@ afterEach(async () => {
     roots.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
 });
+function managedLauncher(home: string): string {
+  return `#!/usr/bin/env bash\nunset PYTHONPATH\nunset PYTHONHOME\nexec "${home}/.hermes/hermes-agent/venv/bin/python" "${home}/.hermes/hermes-agent/hermes" "$@"\n`;
+}
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "matrix-lifecycle-"));
   roots.push(root);
@@ -33,7 +37,7 @@ async function fixture() {
   await writeFile(join(home, ".hermes/config.yaml"), "owner-profile");
   await mkdir(join(home, "chats"));
   await writeFile(join(home, "chats/thread"), "owner-chat");
-  await writeFile(join(home, ".local/bin/hermes"), "#!/bin/sh\nexit 0\n");
+  await writeFile(join(home, ".local/bin/hermes"), managedLauncher(home));
   await chmod(join(home, ".local/bin/hermes"), 0o755);
   const log = join(root, "calls");
   const mocks: Record<string, string> = {
@@ -73,12 +77,12 @@ async function fixture() {
   };
   return { root, home, prefix, state, log, script, env };
 }
-it("cancels the installer cgroup without waiting on the install lock", async () => {
+it("stops the installer before fencing cancellation with its control lock", async () => {
   const f = await fixture();
   await run("bash", [f.script, "cancel-install", "hermes"], { env: f.env });
   const calls = await readFile(f.log, "utf8");
   expect(calls).toContain("systemctl stop matrix-agent-install-hermes.service");
-  expect(calls).not.toContain("flock");
+  expect(calls.indexOf("systemctl stop matrix-agent-install-hermes.service")).toBeLessThan(calls.indexOf("flock"));
 });
 it("uninstalls the Hermes launcher while retaining owner data and a durable opt-out", async () => {
   const f = await fixture();
@@ -110,7 +114,7 @@ it("fails safely if a service cannot be stopped", async () => {
     }),
   ).rejects.toMatchObject({ code: 5 });
   expect(await readFile(join(f.home, ".local/bin/hermes"), "utf8")).toContain(
-    "exit 0",
+    "unset PYTHONPATH",
   );
 });
 it("uninstalls only the fixed OpenClaw package as the owner without lifecycle scripts", async () => {
@@ -183,4 +187,120 @@ it("automatic installers and release reconciliation honor durable opt-outs", asy
     ).toContain(
       `ConditionPathExists=!/var/lib/matrix-agent-runtime/disabled-${kind}`,
     );
+});
+
+it("retains an owner-customized Hermes launcher and reports incomplete uninstall", async () => {
+  const f = await fixture();
+  const customized = "#!/bin/sh\n# owner custom launcher\nexit 0\n";
+  await writeFile(join(f.home, ".local/bin/hermes"), customized);
+  await expect(run("bash", [f.script, "uninstall", "hermes"], { env: f.env })).rejects.toMatchObject({ code: 5 });
+  expect(await readFile(join(f.home, ".local/bin/hermes"), "utf8")).toBe(customized);
+  expect(await readFile(join(f.state, "disabled-hermes"), "utf8")).toBe("disabled\n");
+});
+
+it("keeps repeated concurrent uninstall opt-outs idempotent without following marker symlinks", async () => {
+  const f = await fixture();
+  const results = await Promise.allSettled(Array.from({ length: 12 }, () => run("bash", [f.script, "uninstall", "hermes"], { env: f.env })));
+  expect(results.every(result => result.status === "fulfilled")).toBe(true);
+  expect(await readFile(join(f.state, "disabled-hermes"), "utf8")).toBe("disabled\n");
+  await rm(join(f.state, "disabled-hermes"));
+  await symlink(join(f.home, "chats/thread"), join(f.state, "disabled-hermes"));
+  await expect(run("bash", [f.script, "uninstall", "hermes"], { env: f.env })).rejects.toMatchObject({ code: 5 });
+  expect(await readFile(join(f.home, "chats/thread"), "utf8")).toBe("owner-chat");
+});
+
+it("does not report cancellation before a delayed installer unit is visible and stopped", async () => {
+  const f = await fixture();
+  await rm(join(f.home, ".local/bin/hermes"));
+  await mkdir(join(f.root, "host/bin"), { recursive: true });
+  await writeFile(join(f.root, "host/bin/matrix-install-hermes"), "#!/bin/sh\nexit 0\n");
+  await chmod(join(f.root, "host/bin/matrix-install-hermes"), 0o755);
+  await writeFile(join(f.root, "tools/flock"), `#!/usr/bin/env python3
+import fcntl, sys, time
+fd = int(sys.argv[-1])
+deadline = time.monotonic() + (float(sys.argv[2]) if sys.argv[1] == '-w' else 0)
+while True:
+  try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    sys.exit(0)
+  except BlockingIOError:
+    if time.monotonic() >= deadline: sys.exit(1)
+    time.sleep(0.01)
+`);
+  await writeFile(join(f.root, "tools/systemd-run"), `#!/bin/bash
+: > "$RACE_ROOT/entered"
+while [ ! -f "$RACE_ROOT/release" ]; do sleep 0.01; done
+: > "$RACE_ROOT/loaded"
+while [ ! -f "$RACE_ROOT/stopped" ]; do sleep 0.01; done
+exit 1
+`);
+  await writeFile(join(f.root, "tools/systemctl"), `#!/bin/bash
+if [ "$1" = show ]; then
+  if [ -f "$RACE_ROOT/loaded" ]; then echo loaded; else : > "$RACE_ROOT/checked-not-found"; echo not-found; fi
+elif [ "$1" = stop ] && [ "$2" = matrix-agent-install-hermes.service ] && [ -f "$RACE_ROOT/loaded" ]; then
+  : > "$RACE_ROOT/stopped"
+fi
+`);
+  const env = { ...f.env, RACE_ROOT: f.root };
+  const installing = run("bash", [f.script, "install", "hermes"], { env });
+  let installFailure: Error | undefined;
+  const installed = installing.then(() => "success", error => { installFailure = error; return "failed"; });
+  const deadline = Date.now() + 10_000;
+  while (await access(join(f.root, "entered")).then(() => false, () => true)) {
+    if (installFailure) throw installFailure;
+    if (Date.now() > deadline) throw new Error("installer fixture did not start");
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  let settled = false;
+  const cancellation = run("bash", [f.script, "cancel-install", "hermes"], { env }).then(result => { settled = true; return result; });
+  let launchWasFenced = false;
+  try {
+    const checkedDeadline = Date.now() + 5000;
+    while (await access(join(f.root, "checked-not-found")).then(() => false, () => true)) {
+      if (Date.now() > checkedDeadline) throw new Error("cancellation fixture did not check unit");
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    await new Promise(resolve => setTimeout(resolve, 600));
+    expect(settled).toBe(false);
+    launchWasFenced = true;
+  } finally {
+    await writeFile(join(f.root, "release"), "");
+    if (!launchWasFenced) {
+      await writeFile(join(f.root, "stopped"), "");
+      await installed;
+      await cancellation.catch(error => { expect(error).toBeInstanceOf(Error); });
+    }
+  }
+  expect(JSON.parse((await cancellation).stdout)).toMatchObject({ cancelled: true });
+  expect(await installed).toBe("failed");
+  await access(join(f.root, "stopped"));
+  await expect(access(join(f.state, "disabled-hermes"))).rejects.toMatchObject({ code: "ENOENT" });
+}, 30_000);
+
+it("fails cancellation within its deadline when installer admission cannot drain", async () => {
+  const f = await fixture();
+  await writeFile(f.script, (await readFile(f.script, "utf8")).replace(/cancel_timeout_seconds=\d+/, "cancel_timeout_seconds=1"));
+  await writeFile(join(f.root, "tools/flock"), "#!/bin/sh\nexit 1\n");
+  await expect(run("bash", [f.script, "cancel-install", "hermes"], { env: f.env, timeout: 5000 })).rejects.toMatchObject({ code: 5 });
+});
+
+it("retains an unproven launcher symlink without deleting its owner target", async () => {
+  const f = await fixture();
+  await rm(join(f.home, ".local/bin/hermes"));
+  await symlink(join(f.home, "chats/thread"), join(f.home, ".local/bin/hermes"));
+  await expect(run("bash", [f.script, "uninstall", "hermes"], { env: f.env })).rejects.toMatchObject({ code: 5 });
+  expect(await readFile(join(f.home, ".local/bin/hermes"), "utf8")).toBe("owner-chat");
+  expect(await readFile(join(f.home, "chats/thread"), "utf8")).toBe("owner-chat");
+});
+
+it("removes the exact legacy managed launcher symlink while retaining the venv entrypoint", async () => {
+  const f = await fixture();
+  const target = join(f.home, ".hermes/hermes-agent/venv/bin/hermes");
+  await mkdir(join(f.home, ".hermes/hermes-agent/venv/bin"), { recursive: true });
+  await writeFile(target, "legacy managed entrypoint");
+  await rm(join(f.home, ".local/bin/hermes"));
+  await symlink(target, join(f.home, ".local/bin/hermes"));
+  await run("bash", [f.script, "uninstall", "hermes"], { env: f.env });
+  await expect(access(join(f.home, ".local/bin/hermes"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(target, "utf8")).toBe("legacy managed entrypoint");
 });
