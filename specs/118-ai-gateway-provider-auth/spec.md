@@ -532,3 +532,23 @@ foreground installs pin the verified native adapter version 1.0.0.
 Concurrent release calls share one ownership check and unlink. A failed unlink
 preserves admission and permits release retry; an already completed admission
 cannot remove a newer writer marker.
+
+Shared foreground workflow foundation uses the same bounded, capability-negotiated
+client in Web Desktop, Web Canvas, and Electron Desktop. Authorization codes and
+API keys stay transient in the mounted exact harness/transport lifetime, outside
+generic Settings mutation receipts. A runtime/client switch clears previous
+capabilities, operation references and row status before exposing the new scope.
+Owner-only 403 is an action denial, while transport 401 retains the existing
+session-expiry behavior. While a replacement workflow is active, account changes
+and Disconnect are unavailable; supported cancellation remains available and
+settled workflows restore those account actions. A successful native connection enables the exact route
+server-side; capability reads and refresh alone never enable a saved agent.
+
+This boundary mounts foreground workflows through a narrow existing-view slot
+for negotiated harness capabilities. Unsupported drivers retain current Settings
+controls; grouped presentation, full connected cards, allowance bars and billing
+dialog composition follow in separate layers. `HarnessWorkflowPanel` retains one
+foreground state machine for method selection, native polling, key/code delivery
+and cancellation. Its larger size is intentional for this extraction; subsequent
+refactoring should first extract the disconnect confirmation and pure method
+rendering without splitting lifetime/generation ownership across controllers.

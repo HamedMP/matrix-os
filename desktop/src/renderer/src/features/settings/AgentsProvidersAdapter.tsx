@@ -6,6 +6,7 @@ import "@matrix-os/ui/agents-providers.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
+import { createDesktopProviderWorkflowClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "./provider-workflow-transport";
 import {
   createDesktopProviderSettingsTransport,
   desktopProviderIdentityKey,
@@ -98,6 +99,10 @@ function ConnectedAgentsProvidersAdapter({
     () => desktopProviderIdentityKey(useConnection.getState()) === identityKey,
     [identityKey],
   );
+  const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
+  const loadUsageHistory = useCallback((cursor: string | null, signal: AbortSignal) => loadDesktopAiCreditHistory({
+    api: runtimeApi, runtimeSlot, cursor, signal, isIdentityCurrent,
+  }), [runtimeApi, runtimeSlot, isIdentityCurrent]);
 
   const openTerminal = useCallback((terminalSessionId: string) => {
     setActionError(null);
@@ -182,6 +187,14 @@ function ConnectedAgentsProvidersAdapter({
       onSetupHarness={(harness) => openDesktopProviderAgentSetup(runtimeApi, harness, isIdentityCurrent)}
       onOpenTerminal={openTerminal}
       onOpenBrowser={openBrowser}
+      workflowClient={workflowClient}
+      onOpenAuthorizationUrl={(url) => {
+        if (!isIdentityCurrent()) return;
+        void openDesktopProviderWorkflowAuthorization(url).then(opened => {
+          if (!opened && isIdentityCurrent()) setActionError(ACTION_ERROR);
+        });
+      }}
+      onLoadUsageHistory={loadUsageHistory}
       onAddCredit={addCredit}
     />
   );

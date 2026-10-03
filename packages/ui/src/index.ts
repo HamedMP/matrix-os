@@ -199,3 +199,5 @@ export type {DriveChatContextSelection} from "./organization-drive/OrganizationD
 
 export { useDirectBotChat } from "./chat-agents/bots/use-direct-bot-chat.js";
 export { ChatProviderLoadingIndicator } from "./chat-provider-loading-indicator.js";
+export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
+export type { ProviderWorkflowClient } from "./agents-providers/types.js";

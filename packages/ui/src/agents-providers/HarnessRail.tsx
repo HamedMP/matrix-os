@@ -1,3 +1,4 @@
+import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import type { ReactNode } from "react";
 import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type { ProviderAccessSource, ProviderHarnessInstance, ProviderHarnessKind } from "@matrix-os/contracts";
@@ -41,7 +42,9 @@ function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSourc
   return "Ready";
 }
 
-export function HarnessRail({ harnesses, sources, selectedId, disabled, canEnable, onSelect, onEnable, renderDetails }: {
+export function HarnessRail({ harnesses, sources, selectedId, disabled, canEnable, onSelect, onEnable, renderDetails, statusOverride = {}, workflowHarnessIds = [] }: {
+  statusOverride?: Readonly<Record<string, string>>;
+  workflowHarnessIds?: readonly string[];
   harnesses: ProviderHarnessInstance[];
   sources: ProviderAccessSource[];
   selectedId: string | null;
@@ -63,7 +66,7 @@ export function HarnessRail({ harnesses, sources, selectedId, disabled, canEnabl
         const needsConnection = !configuredEnabled && (harness.harness === "pi" || harness.harness === "opencode")
           && !isSupportedGenericHarnessCredentialRoute(harness, source);
         const toggleDisabled = disabled || (!configuredEnabled && (harness.installState !== "installed" || needsConnection));
-        const status = rowStatus(harness, source);
+        const status = workflowHarnessIds.includes(harness.id) ? resolvedWorkflowRowStatus(harness, source, statusOverride[harness.id]) : rowStatus(harness, source);
         const detailsId = `matrix-ap-details-${harness.id}`;
         const connectionHintId = `matrix-ap-connection-hint-${harness.id}`;
         return (
