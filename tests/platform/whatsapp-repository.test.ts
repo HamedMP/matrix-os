@@ -28,6 +28,11 @@ async function codeFor(token: string): Promise<string> {
   await repo.finish(job!.id, job!.fence, 'complete');
   return code!;
 }
+async function finishConnectionConfirmation(): Promise<void> {
+  const acknowledgement = (await repo.lease())!;
+  expect(acknowledgement?.payload).toMatchObject({ kind: 'reply', owner, text: expect.stringContaining('connected to WhatsApp') });
+  await repo.finish(acknowledgement.id, acknowledgement.fence, 'complete');
+}
 
 describe('WhatsApp linking repository', () => {
   it('requires sender proof, makes repeated claims idempotent, and consumes tokens', async () => {
@@ -45,6 +50,7 @@ describe('WhatsApp linking repository', () => {
     expect(await repo.confirm(first.token, owner, code, 'whatsapp-general-agent-v1')).toMatchObject({ owner, sender });
     await expect(repo.confirm(first.token, owner, code, 'whatsapp-general-agent-v1')).rejects.toThrow();
     expect(await repo.getConnection(owner)).toMatchObject({ sender, chatId: null, machineId: null });
+    await finishConnectionConfirmation();
     expect(await repo.lease()).toBeNull();
   });
   it('expires challenges and locks after five invalid attempts without reset on claim', async () => {
@@ -171,6 +177,7 @@ describe('WhatsApp linking repository', () => {
     const current = await repo.confirm(second.token, owner, await codeFor(second.token), 'whatsapp-general-agent-v1');
     expect(await repo.stop(sender, 'wamid.capacity-stop', now + 60_000, now)).toBe(false);
     expect((await repo.getConnection(owner))?.id).toBe(current.id);
+    await finishConnectionConfirmation();
     expect(await repo.lease()).toBeNull();
     now += 7 * 86_400_000 + 1;
     await repo.cleanup();
@@ -205,6 +212,7 @@ describe('WhatsApp linking repository', () => {
     const current = await repo.confirm(token, owner, await codeFor(token), 'whatsapp-general-agent-v1');
     expect(await repo.stop(sender, 'wamid.old-stop', now + 60_000, messageTimestamp)).toBe(false);
     expect((await repo.getConnection(owner))?.id).toBe(current.id);
+    await finishConnectionConfirmation();
     expect(await repo.lease()).toBeNull();
   });
   it('pins a chat to the verified association and runtime', async () => {

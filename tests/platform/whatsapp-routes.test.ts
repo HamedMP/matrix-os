@@ -138,6 +138,12 @@ describe('WhatsApp route authority and failures', () => {
     vi.mocked(repository.confirm).mockRejectedValueOnce(new WhatsAppRepositoryError('invalid_link'));
     expect((await call('/api/whatsapp/confirm', 'POST', { token, code: '123456', consentVersion: 'whatsapp-general-agent-v1' })).status).toBe(403);
   });
+  it('keeps capacity guidance retryable for the existing confirmation proof', async () => {
+    vi.mocked(repository.confirm).mockRejectedValueOnce(new WhatsAppRepositoryError('capacity'));
+    const response = await call('/api/whatsapp/confirm', 'POST', { token, code: '123456', consentVersion: 'whatsapp-general-agent-v1' });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Connection is busy. Please retry this step shortly.' });
+  });
   it('returns masked connection state and disconnects only the verified owner', async () => {
     expect(await (await call('/api/whatsapp/connection')).json()).toEqual({ connected: false });
     vi.mocked(repository.getConnection).mockResolvedValueOnce(connection as never);
