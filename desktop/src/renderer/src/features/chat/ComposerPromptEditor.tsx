@@ -445,18 +445,56 @@ function ComposerPromptEditorInner({
   const consumedFocusRequest = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (disabled || !focusRequestId || focusRequestId <= 0) return;
-    const consumed = consumedFocusRequest.current === focusRequestId;
-    if (consumed && !restoreFocusAfterLoading.current) return;
-    const root = editor.getRootElement();
-    if (!root) return;
-    const focused = root.ownerDocument.activeElement;
-    if (consumed && focused !== root.ownerDocument.body && focused !== root.ownerDocument.documentElement && !root.contains(focused)) {
+    if (consumedFocusRequest.current === focusRequestId && !restoreFocusAfterLoading.current) return;
+    let cancelled = false;
+    let observer: MutationObserver | null = null;
+    let root: HTMLElement | null = null;
+    const cancelForUserAction = (event: Event) => {
+      if (!root || !(event.target instanceof Node) || root.contains(event.target)) return;
+      if (event.type === "focusin" && (event.target === root.ownerDocument.body || event.target === root.ownerDocument.documentElement)) return;
+      cancelled = true;
       restoreFocusAfterLoading.current = false;
-      return;
-    }
-    focusEditor();
-    consumedFocusRequest.current = focusRequestId;
-    restoreFocusAfterLoading.current = false;
+      observer?.disconnect();
+    };
+    const tryFocus = () => {
+      if (cancelled || !root?.isConnected || root.getAttribute("contenteditable") !== "true" || !editor.isEditable()) return;
+      const consumed = consumedFocusRequest.current === focusRequestId;
+      if (consumed && !restoreFocusAfterLoading.current) return;
+      const focused = root.ownerDocument.activeElement;
+      if (consumed && focused !== root.ownerDocument.body && focused !== root.ownerDocument.documentElement && !root.contains(focused)) {
+        cancelled = true;
+        restoreFocusAfterLoading.current = false;
+        return;
+      }
+      focusEditor();
+      // Lexical's editable state can precede React's ContentEditable commit.
+      // A browser rejects focus until the DOM agrees; consume only real focus.
+      if (root.contains(root.ownerDocument.activeElement)) {
+        consumedFocusRequest.current = focusRequestId;
+        restoreFocusAfterLoading.current = false;
+        observer?.disconnect();
+      }
+    };
+    const detachRoot = () => {
+      observer?.disconnect();
+      root?.ownerDocument.removeEventListener("focusin", cancelForUserAction);
+      root?.ownerDocument.removeEventListener("pointerdown", cancelForUserAction);
+    };
+    const unregisterRoot = editor.registerRootListener(nextRoot => {
+      detachRoot();
+      root = nextRoot;
+      if (!root || cancelled) return;
+      root.ownerDocument.addEventListener("focusin", cancelForUserAction);
+      root.ownerDocument.addEventListener("pointerdown", cancelForUserAction);
+      observer = new MutationObserver(tryFocus);
+      observer.observe(root, { attributes: true, attributeFilter: ["contenteditable"] });
+      tryFocus();
+    });
+    return () => {
+      cancelled = true;
+      unregisterRoot();
+      detachRoot();
+    };
   }, [disabled, editor, focusEditor, focusRequestId]);
 
   useLayoutEffect(() => {

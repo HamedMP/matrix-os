@@ -994,3 +994,19 @@ it.each(['none','control','blank'])('restores request-owned focus after a later 
  view.rerender(<><button>Another control</button><SharedChatComposer {...props} disabled={false}/></>);
  await waitFor(() => expect(document.activeElement).toBe(action === "control" ? other : action === "blank" ? document.body : editor));
 });
+
+it('waits for the committed editable DOM before consuming focus when the browser rejects disabled roots', async () => {
+ const nativeFocus=HTMLElement.prototype.focus;
+ const focus=vi.spyOn(HTMLElement.prototype,'focus').mockImplementation(function(this:HTMLElement, options?:FocusOptions) {
+  if(this.getAttribute('role')==='textbox' && this.getAttribute('contenteditable')!=='true') {return;}
+  nativeFocus.call(this,options);
+ });
+ try {
+  const catalog=catalogFixture(); const props={value:"",onChange:vi.fn(),onSubmit:vi.fn(),busy:false,catalog,selection:createCanonicalComposerSelection(catalog,"claude_personal"),onSelectionChange:vi.fn(),instanceLocked:false,focusRequestId:91};
+  const view=render(<SharedChatComposer {...props} disabled/>);
+  view.rerender(<SharedChatComposer {...props} disabled={false}/>);
+  const editor=screen.getByRole('textbox');
+  await waitFor(() => expect(editor.getAttribute('contenteditable')).toBe('true'));
+  await waitFor(() => expect(document.activeElement).toBe(editor));
+ } finally {focus.mockRestore();}
+});
