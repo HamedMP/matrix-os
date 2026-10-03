@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CanonicalChatWorkspace } from '@desktop/renderer/src/features/chat/CanonicalChatWorkspace';
 import { openWorkProject, openWorkProjectDraft } from "@desktop/renderer/src/features/work/work-navigation";
+import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useBoard } from '@desktop/renderer/src/stores/board';
 import { useConnection } from '@desktop/renderer/src/stores/connection';
@@ -75,4 +76,17 @@ it('opens a same-Project ordinary draft, preserves text, and admits no Project a
  fireEvent.click(await screen.findByRole('button',{name:'Remove project context'}));
  fireEvent.click(screen.getByRole('button',{name:'Send'}));
  await waitFor(() => expect(client.create).toHaveBeenCalledWith(expect.not.objectContaining({projectId:expect.anything()})));
+});
+
+it('focuses explicit Project draft after asynchronous canonical loading settles', async () => {
+ const client = createCanonicalChatWorkspaceClient();
+ let resolveList!: (value: {items:[]}) => void;
+ vi.mocked(client.list).mockImplementation(() => new Promise(resolve => {resolveList=resolve;}));
+ useCodingAgentWorkspace.setState({composerFocusRequestId:42});
+ render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialView="draft" externalNavigation active catalog={providerCatalog}/>);
+ const editor=await screen.findByRole('textbox',{name:'Start a chat'});
+ await waitFor(() => expect(editor.getAttribute('contenteditable')).toBe('false'));
+ await act(async () => {resolveList({items:[]});});
+ await waitFor(() => expect(editor.getAttribute('contenteditable')).toBe('true'));
+ await waitFor(() => expect(document.activeElement).toBe(editor));
 });
