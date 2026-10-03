@@ -141,19 +141,22 @@ async function publishRoute(trx: CollaborationTransaction, child: ScopeRow, now:
 
 /**
  * Startup backfill for projects shared before Chat routes existed. Each batch commits on its own,
- * so a large backlog never holds one long transaction; it runs until nothing is left.
+ * so a large backlog never holds one long transaction; it runs until nothing is left, or stops
+ * between batches once `shouldContinue` says the home is shutting down.
  */
 export async function publishMissingProjectChatRoutes(
   db: Kysely<OwnerCollaborationDatabase>,
-  options: { now?: () => Date } = {},
+  options: { now?: () => Date; shouldContinue?: () => boolean } = {},
 ): Promise<number> {
   const now = options.now ?? (() => new Date());
+  const shouldContinue = options.shouldContinue ?? (() => true);
   let published = 0;
-  for (;;) {
+  while (shouldContinue()) {
     const batch = await db.transaction().execute((trx) => publishRouteBatch(trx, { now: now(), limit: MAX_ROUTES_PER_PASS }));
     published += batch.published;
     if (batch.selected < MAX_ROUTES_PER_PASS) return published;
   }
+  return published;
 }
 
 /** A shared project as members see it: its name and the Chats they can open, newest first. */

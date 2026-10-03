@@ -302,6 +302,8 @@ export async function createGatewayCollaboration(options: {
   cleanupTimer?.unref?.();
   let registered = false;
   let closing = false;
+  /** The startup Chat-route backfill; shutdown waits for its in-flight batch. */
+  let projectChatBackfill: Promise<void> | undefined;
   let chatExecutionAdapter: CollaborationChatExecutionAdapter | undefined;
   let sharedAiRuntime: Awaited<ReturnType<typeof createSharedAiRuntime>> | undefined;
   let sharedAiOrchestrator: CanonicalChatOrchestrator | undefined;
@@ -592,7 +594,8 @@ export async function createGatewayCollaboration(options: {
         inventory,
       });
       await projectTransitionCoordinator.recover();
-      await backfillProjectChatRoutes(options.db);
+      // Runs beside serving, never before it: a large backlog must not hold the home's start.
+      projectChatBackfill = backfillProjectChatRoutes(options.db, () => !closing);
       projectSharing = createProjectSharingService({
         db: options.db,
         inventory,
@@ -785,6 +788,8 @@ export async function createGatewayCollaboration(options: {
       // interrupted.
       controlLossWatchdog?.stop();
       controlLossWatchdog = undefined;
+      // The backfill stops at its next batch boundary; let that batch commit before the database goes.
+      await projectChatBackfill;
       await controlClient?.shutdown();
       await directSessions.shutdown();
       // Owner runtime sessions drain with the other session registries, before any resource
@@ -861,9 +866,12 @@ export type GatewayCollaborationRuntime = Awaited<ReturnType<typeof createGatewa
  * those Chats without the owner sharing again. A failure is logged and retried at the next start;
  * it never blocks the home from serving.
  */
-async function backfillProjectChatRoutes(db: Parameters<typeof publishMissingProjectChatRoutes>[0]): Promise<void> {
+async function backfillProjectChatRoutes(
+  db: Parameters<typeof publishMissingProjectChatRoutes>[0],
+  shouldContinue: () => boolean,
+): Promise<void> {
   try {
-    await publishMissingProjectChatRoutes(db);
+    await publishMissingProjectChatRoutes(db, { shouldContinue });
   } catch (error: unknown) {
     console.warn("[collaboration-project] Chat route backfill failed", error instanceof Error ? error.name : "UnknownError");
   }

@@ -178,6 +178,13 @@ describe("shared project Chats on the owner's home", () => {
       .where("delivered_at", "is", null).execute()).toEqual([]);
   });
 
+  it("stops the backfill between batches once the home starts shutting down", async () => {
+    await shareProject();
+    await fixture.db.deleteFrom("collaboration_events").where("event_type", "=", PROJECT_CHAT_ROUTE_EVENT).execute();
+    expect(await publishMissingProjectChatRoutes(fixture.db, { now: () => LATER, shouldContinue: () => false })).toBe(0);
+    expect(await publishMissingProjectChatRoutes(fixture.db, { now: () => LATER, shouldContinue: () => true })).toBe(chats.length);
+  });
+
   it("publishes every Chat of a project however many batches it takes", async () => {
     await shareProject();
     await fixture.db.deleteFrom("collaboration_events").where("event_type", "=", PROJECT_CHAT_ROUTE_EVENT).execute();
