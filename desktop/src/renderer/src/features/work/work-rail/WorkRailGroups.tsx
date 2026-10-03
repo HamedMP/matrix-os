@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { AgentAvatar, ChatSidebarAddAction, type BotConversationSummary } from "@matrix-os/ui";
 import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
+import { SharedWorkRailProjects } from "./SharedWorkRailProjects";
 import { WorkRailSection } from "./WorkRailSection";
 
 export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
@@ -37,6 +38,7 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
 
         >
           {model.projects.map(renderProject)}
+          <SharedWorkRailProjects />
           <ChatSidebarAddAction label="New project" ariaLabel="Create project" onClick={onCreateProject} />
           {organizationDrives}
         </WorkRailSection>
