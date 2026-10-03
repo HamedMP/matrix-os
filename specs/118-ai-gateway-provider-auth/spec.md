@@ -361,3 +361,48 @@ or reusing unverified identity from a previous native profile. Canonical
 connection/readiness remains authoritative. Safe profile-aware caching is not
 delivered here; repeated owner GET/usage presentation still requires Electron
 Desktop acceptance before claiming complete UX validation.
+
+### Owner foreground workflow boundary
+
+Settings foreground workflows mount behind the existing request principal and
+resolved runtime owner. Anonymous requests return 401, other owners 403, and
+missing runtime dependencies 503. Start, code submission, key verification, and
+cancellation validate bounded strict payloads before execution. Receipts retain
+only safe bounded state, expire, and use owner-scoped idempotency; native profile
+writes require serialized admission and confirmed child cleanup. Secrets never
+enter public receipts or logs. Fixed-origin key probes enforce deadlines and
+redirect rejection before the injected native saver may replace credentials.
+
+This engine layer registers an empty adapter registry: owner capabilities are
+empty and attempts to start undelivered adapters are unavailable. It advertises
+no login, install, or uninstall support until native adapters are delivered.
+Gateway shutdown drains the registered engine. Registration, profile guard,
+receipt lifecycle, route authorization, and key-child cleanup tests exercise
+the delivered boundaries independently from later runtime adapters.
+
+A terminal receipt does not itself prove that a native operation stopped. An
+uncertain launch or failed cancellation/expiry cleanup retains same-profile
+admission and its bounded receipt slot until registered cleanup confirms it
+stopped. Such receipts cannot be evicted to admit replacement work. Failed
+expiry cleanup records a coarse unavailable result without failing unrelated
+harness requests. Shutdown attempts each independent cleanup even if another
+fails; it never reopens admission on the closed service.
+
+Native/browser adapters delivered in the following layer MUST register their
+cleanup before starting native side effects and await native completion before
+cleanup resolves. An uncertain launch that cannot supply cleanup remains blocked: retrying
+with another idempotency key is not recovery. Recovery requires confirmed native
+cleanup; process restart alone does not prove that a child or profile writer
+stopped, so the native profile guard remains required across service instances.
+A known preflight failure may throw `ProviderWorkflowNotStartedError` only if
+no child, terminal session, service mutation, account write or durable writer
+lease was acquired. Such a failed receipt permits a new attempt without cleanup.
+Missing cleanup alone is never this proof: generic launch/acquire failures retain
+admission. If cleanup was registered, even a typed not-started error requires
+successful cleanup before release. Adapter code must not convert generic helper,
+lease-acquisition or spawn errors to the no-start type.
+Adapters MUST throw `ProviderWorkflowCodeNotAcceptedError` only when they prove
+no authorization bytes were submitted (for example, the authorization prompt
+is not ready). Ambiguous partial writes retain the submission latch. Accepted
+submission stays single-use under concurrent requests. Adapter integration and
+real authorization acceptance remain pending in the native/browser layer.
