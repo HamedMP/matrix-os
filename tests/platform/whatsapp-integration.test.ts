@@ -71,6 +71,9 @@ describe('WhatsApp account linking and delivery', () => {
     const code = String(proof!.payload.text).match(/\b\d{6}\b/)![0];
     await repo.finish(proof!.id, proof!.fence, 'complete');
     await repo.confirm(token, owner, code, 'whatsapp-general-agent-v1');
+    await service.tick();
+    expect(sends.at(-1)?.text).toContain('connected to WhatsApp');
+    sends = [];
     const original = repo.checkpoint;
     let interrupted = false;
     const save = vi.spyOn(repo, 'checkpoint').mockImplementation(async (id, fence, payload) => {
@@ -103,6 +106,9 @@ describe('WhatsApp account linking and delivery', () => {
     const code = String(proof!.payload.text).match(/\b\d{6}\b/)![0];
     await repo.finish(proof!.id, proof!.fence, 'complete');
     await repo.confirm(token, owner, code, 'whatsapp-general-agent-v1');
+    await service.tick();
+    expect(sends.at(-1)?.text).toContain('connected to WhatsApp');
+    sends = [];
     let lost = false;
     agent = createWhatsAppAgentClient(api.resolveTarget, async (input, init) => {
       if (lost && init?.method === 'GET' && String(input).includes('/api/chats/')) {
@@ -137,6 +143,9 @@ describe('WhatsApp account linking and delivery', () => {
     const code = String(proof!.payload.text).match(/\b\d{6}\b/)![0];
     await repo.finish(proof!.id, proof!.fence, 'complete');
     await repo.confirm(token, owner, code, 'whatsapp-general-agent-v1');
+    await service.tick();
+    expect(sends.at(-1)?.text).toContain('connected to WhatsApp');
+    sends = [];
     let catalogReached!: () => void;
     let releaseCatalog!: () => void;
     const reached = new Promise<void>((resolve) => { catalogReached = resolve; });
@@ -167,6 +176,9 @@ describe('WhatsApp account linking and delivery', () => {
     const code = String(proof!.payload.text).match(/\b\d{6}\b/)![0];
     await repo.finish(proof!.id, proof!.fence, 'complete');
     await repo.confirm(token, owner, code, 'whatsapp-general-agent-v1');
+    await service.tick();
+    expect(sends.at(-1)?.text).toContain('connected to WhatsApp');
+    sends = [];
     vi.mocked(agent.start).mockRejectedValue(new Error('private provider diagnostic'));
     service = createWhatsAppService({ config, repository: repo, agent, now: () => now,
       send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; }, logError: () => {},
@@ -194,6 +206,9 @@ describe('WhatsApp account linking and delivery', () => {
     await service.tick();
     const code = sends[1]!.text.match(/\b\d{6}\b/)![0];
     expect((await call('/api/whatsapp/confirm', { token, code, consentVersion: 'whatsapp-general-agent-v1' })).status).toBe(200);
+    await service.tick();
+    expect(sends[2]).toEqual({ to: sender, text: expect.stringContaining('connected to WhatsApp') });
+    expect(agent.start).not.toHaveBeenCalled();
     expect((await webhook('wamid.question', 'Who are you?')).status).toBe(200);
     await service.tick(); await service.tick();
     expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({ owner, sender, text: 'Who are you?', allowFullAccess: true }), expect.any(Function), expect.any(Function));
@@ -229,6 +244,9 @@ describe('WhatsApp account linking and delivery', () => {
     const code = String(proof!.payload.text).match(/\b\d{6}\b/)![0];
     await repo.finish(proof!.id, proof!.fence, 'complete');
     await repo.confirm(token, owner, code, 'whatsapp-general-agent-v1');
+    await service.tick();
+    expect(sends.at(-1)?.text).toContain('connected to WhatsApp');
+    sends = [];
     await webhook('wamid.stop', 'STOP'); await service.tick();
     expect(await repo.getConnection(owner)).toBeNull();
     expect(agent.start).not.toHaveBeenCalled();

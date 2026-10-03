@@ -279,13 +279,20 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
         .onConflict((oc) => oc.doNothing()).execute();
       const persisted = await trx.selectFrom('whatsapp_connections').selectAll().where('owner', '=', owner).executeTakeFirst();
       if (!persisted || persisted.sender !== challenge.sender) throw new WhatsAppRepositoryError('invalid_link');
+      const proof = decryptWhatsAppPayload(challenge.token_cipher, key);
+      const phone = WhatsAppPhoneSchema.optional().parse(proof.phone);
       const consumed = await trx.updateTable('whatsapp_link_challenges').set({ state: 'consumed', code_hash: null, token_cipher: '' }).where('token_hash', '=', hash)
         .where('state', '=', 'claimed').where('owner', '=', owner).where('attempts', '<', 5).where('expires_at', '>', time).returning('token_hash').executeTakeFirst();
       if (!consumed) throw new WhatsAppRepositoryError('invalid_link');
       await trx.updateTable('whatsapp_jobs').set({ state: 'revoked', payload: null, fence: null, lease_expires_at: null, finished_at: time })
         .where('id', '=', `verification:${hash}`).where('state', 'in', ACTIVE).execute();
-      const row = await trx.selectFrom('whatsapp_connections').selectAll().where('owner', '=', owner).executeTakeFirstOrThrow();
-      return connection(row);
+      // Commit the acknowledgement with the verified association. Worker delivery
+      // survives request-process restarts and rechecks consent before sending.
+      await insertJob(trx, { id: `connected:${hash}`, sender: challenge.sender, expiresAt: challenge.expires_at,
+        payload: { kind: 'reply', owner, connectionId: persisted.id, ...(phone ? { phone } : {}),
+          text: 'Your Matrix account is connected to WhatsApp. Send a message to talk to your Matrix agent. Send STOP to disconnect.' },
+      }, time);
+      return connection(persisted);
     });
     if (!result) throw new WhatsAppRepositoryError('invalid_link');
     return result;
