@@ -83,8 +83,11 @@ OTA payloads.
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 
 The `ready-for-ci` label is sticky: applying it starts full PR validation, and every later PR
-head reruns both core CI and Docker classification while the label remains. Reviewers must use
-the checks attached to the exact head SHA rather than an earlier green commit.
+head or label event reruns core CI while the label remains; each later head also reruns Docker
+classification. Reviewers must use
+the checks attached to the exact head SHA rather than an earlier green commit. Until CI is
+explicitly requested, the aggregate `CI Results` check stays red so skipped shards cannot be
+mistaken for validated source changes.
 
 ## Delivery Lane Router
 

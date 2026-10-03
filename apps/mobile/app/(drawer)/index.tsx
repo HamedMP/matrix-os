@@ -35,6 +35,7 @@ import {
 } from "@/lib/canonical-chat-transcript";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
 import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
+import { useStreamedTextReveal } from "@/lib/streamed-text-reveal";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectPicker } from "@/components/ProjectPicker";
 import { Icon, IconButton } from "@/components/ui";
@@ -387,6 +388,9 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
   const expanded = manualExpanded ?? message.isRunning;
   const hasWork = message.toolCalls.length > 0 || message.activities.length > 0;
   const workedLabel = transcriptWorkLabel(message);
+  // While the reply streams, show it at a steady pace with each new chunk
+  // fading in, rather than in the uneven bursts the network delivers.
+  const reveal = useStreamedTextReveal(message.text, message.isRunning);
   // Re-parses on every text change, which is exactly what a growing streamed
   // string needs -- markdown applies as the text arrives, not once at the end.
   const markdownNodes = useMemo(() => {
@@ -400,8 +404,8 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
       boldFontFamily: theme.v2.fonts.semibold,
       headingFontFamily: theme.v2.fonts.semibold,
     };
-    return renderChatMarkdown(message.text, markdownTheme);
-  }, [message.text, theme]);
+    return renderChatMarkdown(reveal.text, markdownTheme, reveal.fades);
+  }, [reveal.text, reveal.fades, theme]);
 
   return (
     <View style={styles.matrixBubble}>

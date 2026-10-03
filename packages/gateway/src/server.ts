@@ -1531,6 +1531,7 @@ export async function createGateway(config: GatewayConfig) {
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
         homePath,
+        credentialKey: toolOutputKey,
         resolveCredentialLaunch: resolveClaudeCredentialLaunch,
         matrixMcpCapabilityIssuer: matrixMcpCapabilities,
         customMcpApprovalClient: internalPlatformUrl && internalPlatformToken && internalHandle
@@ -1673,6 +1674,7 @@ export async function createGateway(config: GatewayConfig) {
   const localChatImportLifecycle = registerCollaborationChatRoutes({
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+    credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
     canonicalChatProviderCatalog, aiProviderService, botServices,

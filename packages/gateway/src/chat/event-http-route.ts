@@ -1,3 +1,4 @@
+import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
 import { ChatReadStateWireVersionSchema, projectChatReadStateResponse } from "@matrix-os/contracts";
 import {
@@ -116,7 +117,7 @@ export function registerCanonicalChatEventHttpRoute(options: {
           const readProjected = projected.type === "chat.content" ? {
             ...projected, content: projectChatReadStateResponse(projected.content, readStateVersion.data),
           } : projected;
-          controller.enqueue(encodeFrame(encoder, projectChatMetadata(readProjected, metadataVersion.data)));
+          controller.enqueue(encodeFrame(encoder, projectChatMetadata(projectChatRecipeSources(readProjected), metadataVersion.data)));
           return true;
         } catch (error: unknown) {
           console.warn("[chat/event-http-route] Frame enqueue failed:", error instanceof Error ? error.name : "UnknownError");

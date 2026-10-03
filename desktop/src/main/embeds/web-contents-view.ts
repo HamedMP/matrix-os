@@ -238,7 +238,11 @@ export function createWebContentsView(options: {
 
   return {
     setBounds(bounds: Bounds) {
-      view.setBounds(bounds);
+      const { cornerRadius = 0, ...rectangle } = bounds;
+      view.setBounds(rectangle);
+      // Native views paint above renderer clipping. Hit targets stay outside
+      // their rectangle because even rounded cutouts still capture clicks.
+      view.setBorderRadius(cornerRadius);
     },
     setScale(factor: number) {
       contents.setZoomFactor(factor);

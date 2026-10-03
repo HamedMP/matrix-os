@@ -1,4 +1,5 @@
 import type { PlatformMigrationExecutor } from './migration-types.js';
+import { migrateWhatsApp } from './migrations/whatsapp.js';
 import { migrateIdentity } from './migrations/identity.js';
 import { migrateUserMachines } from './migrations/user-machines.js';
 import { migrateAiFunded } from './migrations/ai-funded.js';
@@ -36,6 +37,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'golden-snapshots', run: migrateGoldenSnapshots },
   { name: 'provider-deletion', run: migrateProviderDeletion },
   { name: 'directory-and-social', run: migrateDirectoryAndSocial },
+  { name: 'whatsapp', run: migrateWhatsApp },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

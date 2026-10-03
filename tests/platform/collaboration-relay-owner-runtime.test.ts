@@ -119,10 +119,15 @@ describe("relaying a private project owner's setup requests", () => {
     } as unknown as CollaborationRouteOptions));
     forwarded = [];
     relay = new CollaborationRelay({
-      resolveScopeHome: async (id) => (id === privateScopeId || id === sharedScopeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
+      // As in production: a private project is never published to the platform directory until it
+      // becomes active (project-scope.ts writes no outbox row), so only the shared scope has a route.
+      // Stubbing a route for the private scope here is what hid the owner-setup 404 in production.
+      resolveScopeHome: async (id) => (id === sharedScopeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       resolveInvitationHome: async () => null,
       resolveRuntimeHome: async () => null,
       resolveSessionHome: async (id) => (id === logicalRuntimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
+      // Only the runtime's own owner may be routed to it by runtime id.
+      resolveOwnerRuntimeHome: async (actorId, id) => (actorId === ownerId && id === logicalRuntimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       fetchImpl: (async (input: string, init: RequestInit) => {
         const url = new URL(input);
         forwarded.push(new Headers(init.headers));

@@ -189,6 +189,37 @@ export function sanitizeAssistantText(
   return redactAssistantCredentials(projected).replace(ABSOLUTE_PATH, redactAbsolutePath);
 }
 
+export type AssistantCredentialCapture = { offset: number; length: number; value: string };
+export type CapturedAssistantText = { text: string; captures: AssistantCredentialCapture[] };
+
+/** Capture only values already recognized by the existing redactor. Offsets are
+ * UTF-16 positions in the safe text returned here, never in provider text. */
+export function projectAssistantTextWithCaptures(value: string, options: PathProjectionOptions): CapturedAssistantText {
+  const matches = /\bBearer\s+[A-Za-z0-9._~+/=-]+|\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
+  let text = "";
+  let cursor = 0;
+  const captures: AssistantCredentialCapture[] = [];
+  for (const match of value.matchAll(matches)) {
+    text += sanitizeAssistantText(value.slice(cursor, match.index), options);
+    const raw = match[0];
+    const bearer = /^Bearer\s+/i.exec(raw);
+    const secret = bearer ? raw.slice(bearer[0].length) : raw.slice(raw.indexOf("=") + 1).trimStart();
+    const marker = bearer ? "[redacted]" : "[redacted credential]";
+    const prefix = bearer ? "Bearer " : "";
+    if (secret && Buffer.byteLength(secret, "utf8") <= 2_048 && captures.length < 16) {
+      captures.push({ offset: text.length + prefix.length, length: marker.length, value: secret });
+    }
+    text += prefix + marker;
+    cursor = match.index + raw.length;
+  }
+  text += sanitizeAssistantText(value.slice(cursor), options);
+  // Credential patterns intentionally run in a particular order in the
+  // longstanding sanitizer. Ambiguous overlapping forms stay masked-only.
+  const canonical = sanitizeAssistantText(value, options);
+  if (text !== canonical) return { text: canonical, captures: [] };
+  return { text, captures };
+}
+
 /** Project streamed text only after its path or credential token is complete. */
 export function createAssistantTextStreamProjector(options: PathProjectionOptions) {
   let pending = "";
@@ -209,22 +240,26 @@ export function createAssistantTextStreamProjector(options: PathProjectionOption
     const token = /[A-Za-z][A-Za-z0-9_-]*$/u.exec(pending)?.[0].toLowerCase();
     return token !== undefined && SECRET_KEYWORDS.some((keyword) => keyword.startsWith(token));
   };
-  const finishPending = () => {
+  const finishPending = (): CapturedAssistantText => {
     if (droppingOversizedToken) {
       droppingOversizedToken = false;
       pending = "";
-      return "";
+      return { text: "", captures: [] };
     }
     const safeTail = pending
       .replace(DANGLING_BEARER, (match) => `${match.slice(0, match.toLowerCase().indexOf("bearer"))}Bearer [redacted]`)
       .replace(DANGLING_SECRET_VALUE, (_match, prefix: string) => `${prefix}[redacted credential]`);
     pending = "";
-    return sanitizeAssistantText(safeTail, options);
+    return projectAssistantTextWithCaptures(safeTail, options);
   };
 
-  return {
-    push(value: string): string {
+  const pushCaptured = (value: string): CapturedAssistantText => {
       let projected = "";
+      const captures: AssistantCredentialCapture[] = [];
+      const append = (result: CapturedAssistantText) => {
+        captures.push(...result.captures.map((capture) => ({ ...capture, offset: capture.offset + projected.length })));
+        projected += result.text;
+      };
       for (const character of value) {
         if (droppingOversizedToken) {
           if (/\s/u.test(character)) {
@@ -239,7 +274,7 @@ export function createAssistantTextStreamProjector(options: PathProjectionOption
           && !DANGLING_BEARER.test(pending)
           && !DANGLING_SECRET_ASSIGNMENT.test(pending)
           && !incompleteKnownRoot()) {
-          projected += sanitizeAssistantText(pending, options);
+          append(projectAssistantTextWithCaptures(pending, options));
           pending = "";
         } else if (character.codePointAt(0)! > 0x7f
           && !/\s/u.test(character)
@@ -257,8 +292,12 @@ export function createAssistantTextStreamProjector(options: PathProjectionOption
           projected += "[redacted]";
         }
       }
-      return projected;
-    },
+      return { text: projected, captures };
+    };
+
+  return {
+    pushCaptured,
+    push(value: string): string { return pushCaptured(value).text; },
     flushBoundary(nextCharacter?: string): string {
       if (droppingOversizedToken || pending.includes("/") || ACTIVE_BEARER.test(pending)
         || DANGLING_SECRET_ASSIGNMENT.test(pending)
@@ -283,8 +322,10 @@ export function createAssistantTextStreamProjector(options: PathProjectionOption
         && !SECRET_TEXT.test(pending) && !ACTIVE_BEARER.test(pending)
         && !DANGLING_SECRET_ASSIGNMENT.test(pending) && !incompleteSecretKeyword();
     },
-    flush: finishPending,
-    flushIndependentBoundary: finishPending,
+    flushCaptured: finishPending,
+    flush: (): string => finishPending().text,
+    flushIndependentBoundaryCaptured: finishPending,
+    flushIndependentBoundary: (): string => finishPending().text,
     discard(): void {
       pending = "";
       droppingOversizedToken = false;

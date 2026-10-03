@@ -20,7 +20,9 @@ import { ChatContextMenu } from "@matrix-os/ui";
 import { openChatWebLink } from "./chat-web-navigation";
 import type {
   CanonicalChatClient,
+  CanonicalChatEventConnectionState,
   CanonicalChatEventSource,
+  CanonicalChatInvalidation,
 } from "../../lib/canonical-chat-client";
 import type {
   AgentProviderSummary,
@@ -31,7 +33,8 @@ import type {
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
 import { Plus, Search } from "@renderer/lib/hugeicons";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
@@ -73,6 +76,8 @@ import { chatAgentComposerDraft } from "./chat-agent-draft";
 import { QueuedTurnEditContext } from "./QueuedTurnEditContext";
 import { useImportedChatAssets } from "./use-imported-chat-assets";
 import { useChatArtifactActions } from "./use-chat-artifact-actions";
+import { useChatCredentialDisclosure } from "./use-chat-credential-disclosure";
+import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
@@ -138,8 +143,20 @@ export function CanonicalChatWorkspace({
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const actorId = useConnection((state) => state.userId);
+  const authStatus = useConnection((state) => state.status);
+  const authGeneration = useConnection((state) => state.authGeneration);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const subscribeConnection = useCallback((notify: () => void) => {
+    const source = eventSource as Partial<CanonicalChatEventSource> | undefined;
+    const subscription = source?.subscribeConnectionState?.(notify);
+    return () => subscription?.dispose();
+  }, [eventSource]);
+  const getConnection = useCallback((): CanonicalChatEventConnectionState => (
+    (eventSource as Partial<CanonicalChatEventSource> | undefined)?.connectionState?.() ?? "idle"
+  ), [eventSource]);
+  const chatConnection = useSyncExternalStore(subscribeConnection, getConnection, getConnection);
+  const [credentialSuspendedChatId, setCredentialSuspendedChatId] = useState<string | null>(null);
   const explicitSharedRoute = Boolean(sharedScopeId);
   const collaborationApi = useMemo(
     () => createDesktopCollaborationApi(platformHost),
@@ -159,6 +176,20 @@ export function CanonicalChatWorkspace({
   });
   const providerCatalog = catalog ?? liveCatalog.catalog;
   const providerCatalogLoading = !catalog && liveCatalog.status === "loading";
+  const onCredentialInvalidation = useCallback((event: CanonicalChatInvalidation) => {
+    if (event.type !== "chat.changed"
+      || (event.eventType !== "chat.updated" && event.eventType !== "chat.deleted")) return;
+    // A share conversion changes the Chat row. Flush plaintext before the
+    // controller starts its potentially delayed canonical detail refresh.
+    flushSync(() => setCredentialSuspendedChatId(event.chatId));
+    if (event.eventType === "chat.deleted") return;
+    void client.getDetail(event.chatId, { limit: 1 }).then((fresh) => {
+      if (fresh.record.chat.collaboration || fresh.record.chat.lifecycle !== "active") return;
+      setCredentialSuspendedChatId((current) => current === event.chatId ? null : current);
+    }).catch(() => {
+      // Keep disclosure suspended until a fresh private-owner read succeeds.
+    });
+  }, [client]);
   const controller = useCanonicalChatRouteController({
     client,
     projectId,
@@ -166,6 +197,7 @@ export function CanonicalChatWorkspace({
     initialChatId,
     autoSelectFirst: false,
     eventSource,
+    onInvalidation: onCredentialInvalidation,
   });
   const [botEventRevision, setBotEventRevision] = useState(0);
   useEffect(() => {
@@ -348,6 +380,14 @@ export function CanonicalChatWorkspace({
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
+  const privateOwner = controller.detail?.record.chat.ownerScope;
+  const credentialScopeKey = active && live && api && authStatus === "signed-in" && actorId
+    && privateOwner?.type === "personal" && privateOwner.ownerId === actorId
+    && !sharedScopeId && !projectedSharedChat && chatConnection === "open"
+    && credentialSuspendedChatId !== controller.detail?.record.chat.id
+    && controller.detail?.record.chat.lifecycle === "active"
+    ? `${actorId}\u0000${authGeneration}\u0000${runtimeSlot}\u0000${controller.detail.record.chat.id}` : null;
+  const credentialDisclosure = useChatCredentialDisclosure({ client, detail: controller.detail, scopeKey: credentialScopeKey });
   const artifactActions = useChatArtifactActions(api, controller.detail, projects);
   const importedAssets = useImportedChatAssets(api, controller.detail?.record.chat.id);
 
@@ -896,13 +936,31 @@ export function CanonicalChatWorkspace({
         ) : null}
         {controller.detail && globalView === "conversation" ? (
           <>
-            {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
+            {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id}
+              copyText={copyText} onLiveShareStart={() => flushSync(() => setCredentialSuspendedChatId(controller.detail!.record.chat.id))}
+              onLiveShareFailed={() => {
+                const chatId = controller.detail?.record.chat.id;
+                if (!chatId) return;
+                void client.getDetail(chatId, { limit: 1 }).then((fresh) => {
+                  if (fresh.record.chat.collaboration || fresh.record.chat.lifecycle !== "active") return;
+                  setCredentialSuspendedChatId((current) => current === chatId ? null : current);
+                }).catch(() => { /* Keep disclosure suspended until owner authority can be checked. */ });
+              }} /> : null}
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
               client={client.agents} directBotId={directBotId} catalog={providerCatalog} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
               ...artifactActions,
+              renderCredentialMarker: (message, offset, marker, number) => {
+                if (message.role !== "assistant" || credentialScopeKey === null) return marker;
+                const occurrence = credentialDisclosure.occurrences.find((item) =>
+                  item.messageId === message.id && item.offset === offset && item.length === marker.length);
+                return <ChatCredentialDisclosure marker={marker} number={number} occurrence={occurrence}
+                  value={occurrence && !credentialDisclosure.unavailable.includes(occurrence.id) ? credentialDisclosure.values[occurrence.id] : undefined}
+                  loaded={credentialDisclosure.loaded} availabilityFailed={credentialDisclosure.availabilityFailed}
+                  onReveal={credentialDisclosure.reveal} onHide={credentialDisclosure.hide} />;
+              },
               copyText,
               openImportedAsset: importedAssets.openImportedAsset,
               openAttachment: (rawPath) => {

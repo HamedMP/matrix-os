@@ -2,7 +2,7 @@ import { hasCompanyDriveMaterial } from "../chat/drive-sharing-guard.js";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 import { sql, type Kysely, type Transaction } from "kysely";
-import type { ChatOwner } from "../chat/records.js";
+import { toOutbox, type ChatOwner, type ChatOutboxEvent } from "../chat/records.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationScopeRecord } from "./repository.js";
 import { parseCollaborationAiEligibility } from "./chat-execution-adapter.js";
@@ -53,6 +53,7 @@ export class CollaborationChatScopeService {
       preflightSecret: string;
       now?: () => Date;
       createScopeId?: () => string;
+      onChatShared?: (ownerId: string, event: ChatOutboxEvent) => void;
     },
   ) {
     if (Buffer.byteLength(options.preflightSecret) < 32) {
@@ -106,7 +107,8 @@ export class CollaborationChatScopeService {
     confirmationToken: string;
   }): Promise<CollaborationScopeRecord> {
     const now = this.now().toISOString();
-    return this.withCapabilityTransition(() => this.db.transaction().execute(async (trx) => {
+    let committedChatEvent: ChatOutboxEvent | undefined;
+    const result = await this.withCapabilityTransition(() => this.db.transaction().execute(async (trx) => {
       const chat = await trx.selectFrom("chats")
         .selectAll()
         .where("id", "=", input.chatId)
@@ -230,6 +232,16 @@ export class CollaborationChatScopeService {
         .returning("id")
         .executeTakeFirst();
       if (!updatedChat) throw new CollaborationChatScopeError("conflict", "Chat revision changed");
+      // The Chat row lock serializes this revocation with owner credential reads.
+      // Public snapshot links do not perform this transition and retain private state.
+      await trx.updateTable("chat_credentials").set({ revealed: false })
+        .where("chat_id", "=", input.chatId).where("revealed", "=", true).execute();
+      const chatOutboxRow = await trx.insertInto("chat_outbox").values({
+        owner_type: "personal", owner_id: input.ownerId, chat_id: input.chatId,
+        revision: input.expectedChatRevision + 1, event_type: "chat.updated",
+        payload: jsonb({}), created_at: now,
+      }).returningAll().executeTakeFirstOrThrow();
+      committedChatEvent = toOutbox(chatOutboxRow);
       const activated = await trx.updateTable("collaboration_scopes").set({
         lifecycle: "shared",
         revision: 1,
@@ -282,6 +294,13 @@ export class CollaborationChatScopeService {
       await writeCreateOperation(trx, activated, input, now);
       return scopeRecord(activated);
     }));
+    if (committedChatEvent) {
+      try { this.options.onChatShared?.(input.ownerId, committedChatEvent); }
+      catch (error: unknown) {
+        console.warn("[collaboration/chat-scope] Chat notification failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+    return result;
   }
 
   async assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void> {

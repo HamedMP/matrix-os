@@ -6,7 +6,8 @@ import { submitCanonicalInput } from "./input-control.js";
 import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
 import { activityPersistenceId } from "./activity-persistence.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { assistantMessageId } from "./assistant-credential-crypto.js";
 import {
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
@@ -149,13 +150,6 @@ function mapSteerFinalizationError(error: unknown): never {
     503,
   );
 }
-
-function assistantMessageId(runId: string, providerMessageId?: string): string {
-  if (!providerMessageId) return `msg_${runId.slice("run_".length)}_assistant`;
-  const digest = createHash("sha256").update(`${runId}\0${providerMessageId}`).digest("hex").slice(0, 32);
-  return `msg_${digest}`;
-}
-
 
 export class CanonicalChatOrchestrator {
   private readonly active = new Map<string, ActiveRun>();
@@ -741,6 +735,7 @@ export class CanonicalChatOrchestrator {
             runId: run.id,
             messageId,
             delta: event.delta,
+            ...(event.credentials ? { credentials: event.credentials } : {}),
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
           await this.sharedExecution.notify(sharedScopeId);

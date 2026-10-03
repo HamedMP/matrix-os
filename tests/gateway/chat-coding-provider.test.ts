@@ -16,6 +16,7 @@ import {
   type CodingAgentTurnStore,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter.js";
+import { assistantMessageId, openAssistantCredential } from "../../packages/gateway/src/chat/assistant-credential-crypto.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_coding" };
 const occurredAt = "2026-08-26T00:00:00.000Z";
@@ -132,7 +133,8 @@ describe("canonical coding Chat Provider adapter", () => {
       event({ type: "assistant.text.delta", eventId: "evt_secret", messageId: "msg_final", delta: "KEN=qa-fake-2058" }),
       event({ type: "thread.completed", eventId: "evt_done", outcome: "completed" }),
     ]);
-    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    const credentialKey = Buffer.alloc(32, 11);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store, toolOutputKey: credentialKey });
     const received: CanonicalProviderRunEvent[] = [];
     for await (const item of adapter.start(input(shared ? { sharedScopeId: "scope_qa" } : {}))) received.push(item);
     const answer = received.filter((item) => item.type === "assistant.delta").map((item) => item.delta).join("");
@@ -140,6 +142,18 @@ describe("canonical coding Chat Provider adapter", () => {
       ? "Open ~/apps/chart.png. [redacted credential]"
       : "Open /home/matrix/home/apps/chart.png. [redacted credential]");
     expect(JSON.stringify(received)).not.toContain("qa-fake-2058");
+    const sealedEvent = received.find((item) => item.type === "assistant.delta" && item.credentials?.length);
+    if (shared) expect(sealedEvent).toBeUndefined();
+    else {
+      expect(sealedEvent?.type).toBe("assistant.delta");
+      if (sealedEvent?.type === "assistant.delta") {
+        const sealed = sealedEvent.credentials![0]!;
+        expect(openAssistantCredential(credentialKey, {
+          ownerId: owner.ownerId, chatId: "chat_coding", runId: "run_coding",
+          messageId: assistantMessageId("run_coding", sealedEvent.messageId), occurrenceId: sealed.occurrenceId,
+        }, sealed.envelope)).toBe("qa-fake-2058");
+      }
+    }
   });
 
   it("projects captured provider media as a canonical assistant attachment", async () => {

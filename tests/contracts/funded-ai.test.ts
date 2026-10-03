@@ -222,6 +222,17 @@ describe("funded AI control-plane contracts", () => {
     }).success).toBe(false);
   });
 
+  it("accepts only identity-bound Jev no-dispatch finalization without an amount or provider claim", () => {
+    const request = { reservationId: "reservation_123", tokenId, mode: "not_dispatched",
+      expectedRequestId: "request_123", jevPricingVersion: "typesafe-jev-input-2026-09" };
+    expect(FundedAiFinalizationRequestSchema.parse(request)).toEqual(request);
+    for (const invalid of [ { ...request, actualCostMicrousd: 0 }, { ...request, resolvedModel: "jev-1.13.0" },
+      { ...request, expectedRequestId: undefined }, { ...request, jevPricingVersion: undefined },
+      { ...request, jevPricingVersion: "unreviewed" } ]) {
+      expect(FundedAiFinalizationRequestSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
   it("allows only coarse, secret-free control-plane errors", () => {
     expect(FundedAiSafeErrorSchema.safeParse({
       error: { code: "access_disabled", message: "Matrix-funded AI is unavailable" },
