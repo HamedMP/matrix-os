@@ -1,3 +1,4 @@
+import { codexApprovalDisplay, codexFileChangePreview } from "./codex-approval-display.mjs";
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
@@ -407,6 +408,8 @@ const idleHibernation = createCodexIdleHibernation(() => ({
 const assistantItemsWithDelta = new Set();
 const assistantDeltaBuffers = new Map();
 const startedToolItems = new Set();
+// Display-only, bounded and cleared at every turn boundary. Never retain raw diffs.
+const approvalFilePreviews = new Map();
 // Same bounded lifecycle as startedToolItems; retain only a privacy bit.
 const privateToolItems = new Set();
 const toolItemsWithOutput = new Set();
@@ -643,15 +646,6 @@ function request(method, params, timeoutMs = RPC_TIMEOUT_MS, subagentMetadata) {
   });
 }
 
-function approvalCopy(method) {
-  if (method === "item/commandExecution/requestApproval") {
-    return { title: "Run command", safeDescription: "The coding agent wants to run a command.", actionKind: "command", risk: "medium" };
-  }
-  if (method === "item/fileChange/requestApproval") {
-    return { title: "Change files", safeDescription: "The coding agent wants to change project files.", actionKind: "file_change", risk: "medium" };
-  }
-  return { title: "Change permissions", safeDescription: "The coding agent wants additional permissions.", actionKind: "provider", risk: "high" };
-}
 
 function decisionMapping(request) {
   const source = request.params.availableDecisions ?? ["accept", "acceptForSession", "decline", "cancel"];
@@ -711,7 +705,10 @@ async function handleApproval(raw) {
     type: "matrix.codex.approval.requested",
     approvalId: identity.approvalId,
     correlationId: identity.correlationId,
-    ...approvalCopy(parsed.data.method),
+    ...codexApprovalDisplay(parsed.data.method, parsed.data.params, {
+      writableRoots: config.writableRoots,
+      filePreview: approvalFilePreviews.get(itemIdentity(parsed.data.params.turnId, parsed.data.params.itemId)),
+    }),
     allowedDecisions: decisions.allowedDecisions,
   });
   pendingApprovals.set(identity.approvalId, {
@@ -905,6 +902,16 @@ async function handleItemLifecycle(raw) {
   }
   const presentation = toolPresentation(item);
   const details = safeToolDetails(item);
+  if (parsed.data.method === "item/started" && item.type === "fileChange") {
+    const preview = codexFileChangePreview(item.changes, config.writableRoots);
+    if (preview) {
+      if (!approvalFilePreviews.has(matrixItemId) && approvalFilePreviews.size >= MAX_TRACKED_ITEMS) {
+        approvalFilePreviews.delete(approvalFilePreviews.keys().next().value);
+      }
+      approvalFilePreviews.set(matrixItemId, preview);
+    }
+  }
+  if (parsed.data.method === "item/completed") approvalFilePreviews.delete(matrixItemId);
   if (parsed.data.method === "item/started") {
     assertTrackedItemCapacity(startedToolItems, matrixItemId);
     await persist({
@@ -1315,6 +1322,7 @@ function stop() {
 }
 
 async function finishTurn(outcome) {
+  approvalFilePreviews.clear();
   executionWatchdog.stop();
   await mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||

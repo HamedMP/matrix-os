@@ -1,7 +1,9 @@
+import { codexApprovalDisplay } from "./codex-approval-display.mjs";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
+  ApprovalPreviewSchema,
   SafeDisplayStringSchema,
   UserInputQuestionSchema,
   type AgentThreadEvent,
@@ -89,6 +91,7 @@ export interface CodexAppServerPendingRequest {
 
 export interface CodexAppServerRequestContext {
   threadId: string;
+  writableRoots?: readonly string[];
   now: () => Date;
   nextEventId: () => string;
 }
@@ -167,42 +170,16 @@ function allowedDecisions(request: z.infer<typeof ApprovalRequestSchema>) {
   return { allowedDecisions: unique, nativeDecisionByMatrixDecision };
 }
 
-function approvalCopy(method: ApprovalMethod): {
-  title: string;
-  safeDescription: string;
-  actionKind: "command" | "file_change" | "provider";
-  risk: "medium" | "high";
-} {
-  if (method === "item/commandExecution/requestApproval") {
-    return {
-      title: "Run command",
-      safeDescription: "The coding agent wants to run a command.",
-      actionKind: "command",
-      risk: "medium",
-    };
-  }
-  if (method === "item/fileChange/requestApproval") {
-    return {
-      title: "Change files",
-      safeDescription: "The coding agent wants to change project files.",
-      actionKind: "file_change",
-      risk: "medium",
-    };
-  }
-  return {
-    title: "Change permissions",
-    safeDescription: "The coding agent wants additional permissions.",
-    actionKind: "provider",
-    risk: "high",
-  };
-}
 
 function approvalResult(
   request: z.infer<typeof ApprovalRequestSchema>,
   context: CodexAppServerRequestContext,
 ): CodexAppServerRequestParseResult {
   const identity = requestIdentity(request);
-  const copy = approvalCopy(request.method);
+  const copy = codexApprovalDisplay(request.method, request.params, context);
+  // Optional review evidence must not invalidate the native decision request.
+  // Validate after composition/truncation, retaining the strict privacy guard.
+  const preview = ApprovalPreviewSchema.safeParse(copy.preview);
   const decisions = allowedDecisions(request);
   const event = AgentThreadEventSchema.parse({
     type: "approval.requested",
@@ -213,6 +190,7 @@ function approvalResult(
       approvalId: identity.approvalId,
       threadId: context.threadId,
       ...copy,
+      preview: preview.success ? preview.data : undefined,
       allowedDecisions: decisions.allowedDecisions,
       correlationId: identity.correlationId,
     },

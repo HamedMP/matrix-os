@@ -306,7 +306,7 @@ function Request({
                 </span>
               ) : null}
             </div>
-            {request.detail ? <p className="mt-1 whitespace-pre-wrap text-sm" style={{ color: "var(--text-secondary)" }}>{request.detail}</p> : null}
+            {request.detail ? <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere] text-sm" style={{ color: "var(--text-secondary)" }}>{request.detail}</p> : null}
             <RequestApprovalOutcome request={request} />
             {request.state === "waiting" && inputAction ? (
               <form
