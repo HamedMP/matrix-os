@@ -1,5 +1,5 @@
 import { z } from 'zod/v4';
-import type { WhatsAppConfig } from './config.js';
+import { isWhatsAppSenderAllowed, WhatsAppPhoneSchema, type WhatsAppConfig } from './config.js';
 import { canAdmitWhatsAppMessage, isWhatsAppSenderEligible, isWhatsAppReplyWindowOpen, sendWhatsAppText, WhatsAppSendError, type WhatsAppMessage } from './cloud-api.js';
 import type { createWhatsAppRepository } from './repository.js';
 import { WhatsAppPreparedAdmissionSchema, type WhatsAppAgentClient, type WhatsAppAgentCheckpoint } from './agent-client.js';
@@ -9,11 +9,12 @@ const inputSchema = z.object({
   kind: z.literal('incoming'), text: z.string().max(4096).optional(), type: z.string().max(80),
   owner: z.string().max(160).nullable(), connectionId: z.string().max(160).nullable(),
   timestamp: z.number().int().positive(),
+  phone: WhatsAppPhoneSchema.optional(),
   preparedAdmission: WhatsAppPreparedAdmissionSchema.optional(),
 });
-const runSchema = z.object({ kind: z.literal('run'), owner: z.string().max(160), connectionId: z.string().max(160), checkpoint: checkpointSchema });
-const replySchema = z.object({ kind: z.literal('reply'), text: z.string().min(1).max(4096), owner: z.string().max(160).optional(), connectionId: z.string().max(160).optional() });
-const verificationSchema = z.object({ kind: z.literal('verification'), text: z.string().min(1).max(4096), owner: z.string().max(160), tokenHash: z.string().regex(/^[a-f0-9]{64}$/) });
+const runSchema = z.object({ kind: z.literal('run'), owner: z.string().max(160), connectionId: z.string().max(160), checkpoint: checkpointSchema, phone: WhatsAppPhoneSchema.optional() });
+const replySchema = z.object({ kind: z.literal('reply'), text: z.string().min(1).max(4096), owner: z.string().max(160).optional(), connectionId: z.string().max(160).optional(), phone: WhatsAppPhoneSchema.optional() });
+const verificationSchema = z.object({ kind: z.literal('verification'), text: z.string().min(1).max(4096), owner: z.string().max(160), tokenHash: z.string().regex(/^[a-f0-9]{64}$/), phone: WhatsAppPhoneSchema.optional() });
 const payloadSchema = z.discriminatedUnion('kind', [inputSchema, runSchema, replySchema, verificationSchema]);
 type Repository = ReturnType<typeof createWhatsAppRepository>;
 type Job = NonNullable<Awaited<ReturnType<Repository['lease']>>>;
@@ -46,15 +47,17 @@ export function createWhatsAppService(deps: {
       const admitted = canAdmitWhatsAppMessage(config, message, now()) || (message.sender.includes('.') && connection !== null
         && isWhatsAppSenderEligible(message.sender) && isWhatsAppReplyWindowOpen(message.timestamp, now()));
       if (!admitted) continue;
+      // Only signed, explicitly allowlisted phone/account pairs may route replies.
+      const phone = message.phone && isWhatsAppSenderAllowed(config, message.phone) ? message.phone : undefined;
       const expiresAt = Math.min(now() + 86_400_000, message.timestamp * 1000 + 86_400_000);
       if (message.text?.trim().toUpperCase() === 'STOP' || message.text?.trim().toLowerCase() === '/disconnect') {
-        await repo.stop(message.sender, message.id, expiresAt, message.timestamp * 1000);
+        await repo.stop(message.sender, message.id, expiresAt, message.timestamp * 1000, ...(phone ? [phone] : []));
         continue;
       }
       // Snapshot association at admission: linking later must not execute an old greeting.
       await repo.enqueue({ id: message.id, sender: message.sender,
         payload: { kind: 'incoming', text: message.text, type: message.type, timestamp: message.timestamp,
-          owner: connection?.owner ?? null, connectionId: connection?.id ?? null },
+          owner: connection?.owner ?? null, connectionId: connection?.id ?? null, ...(phone ? { phone } : {}) },
         expiresAt,
       });
     }
@@ -76,6 +79,9 @@ export function createWhatsAppService(deps: {
   }
 
   async function deliver(job: Job, payload: z.infer<typeof replySchema> | z.infer<typeof verificationSchema>) {
+    if (payload.phone && !isWhatsAppSenderAllowed(config, payload.phone)) {
+      await repo.finish(job.id, job.fence, 'failed'); return;
+    }
     if (payload.kind === 'verification' && !await repo.isChallengeActive(payload.tokenHash, payload.owner)) {
       await repo.finish(job.id, job.fence, 'failed'); return;
     }
@@ -86,7 +92,7 @@ export function createWhatsAppService(deps: {
     // Record uncertainty BEFORE the external side effect. Expired sends are never replayed.
     if (!await repo.markSending(job.id, job.fence)) return;
     try {
-      await send(job.sender, payload.text);
+      await send(payload.phone ?? job.sender, payload.text);
       await repo.finish(job.id, job.fence, 'complete');
     } catch (error) {
       log(error);
@@ -95,7 +101,8 @@ export function createWhatsAppService(deps: {
   }
 
   async function reply(job: Job, text: string, owner?: string, connectionId?: string) {
-    const payload = { kind: 'reply' as const, text, ...(owner ? { owner, connectionId } : {}) };
+    const payload = { kind: 'reply' as const, text, ...(owner ? { owner, connectionId } : {}),
+      ...(typeof job.payload.phone === 'string' ? { phone: job.payload.phone } : {}) };
     if (await saveCheckpoint(job, payload)) await deliver(job, payload);
   }
 
@@ -118,7 +125,7 @@ export function createWhatsAppService(deps: {
       return;
     }
     if (payload.text?.trim().toUpperCase() === 'STOP' || payload.text?.trim().toLowerCase() === '/disconnect') {
-      await repo.stop(job.sender, job.id, job.expiresAt, payload.timestamp * 1000);
+      await repo.stop(job.sender, job.id, job.expiresAt, payload.timestamp * 1000, ...(payload.phone ? [payload.phone] : []));
       return;
     }
     if (payload.type !== 'text') { await reply(job, 'Matrix on WhatsApp currently accepts text messages. Send your request as text.'); return; }
@@ -126,7 +133,7 @@ export function createWhatsAppService(deps: {
       await reply(job, `Chat with your Matrix agent here. Send STOP to disconnect. For human help, reach our team: https://discord.gg/cSBBQWtPwV`); return;
     }
     if (!payload.owner || !payload.connectionId) {
-      const link = await repo.startLink(job.sender, job.id, job.expiresAt);
+      const link = await repo.startLink(job.sender, job.id, job.expiresAt, ...(payload.phone ? [payload.phone] : []));
       await reply(job, `Connect your Matrix agent to WhatsApp:\n${config.publicUrl}/whatsapp/connect?token=${encodeURIComponent(link.token)}\n\nSign in, then confirm the code sent here. Send HELP for support or STOP to disconnect.`);
       return;
     }
@@ -145,7 +152,8 @@ export function createWhatsAppService(deps: {
     if (checkpoint.replacedChatId) await repo.bindChat(...binding, checkpoint.replacedChatId);
     else await repo.bindChat(...binding);
     const storedCheckpoint = { machineId: checkpoint.machineId, chatId: checkpoint.chatId, runId: checkpoint.runId };
-    if (await saveCheckpoint(job, { kind: 'run', owner: payload.owner, connectionId: payload.connectionId, checkpoint: storedCheckpoint })) {
+    if (await saveCheckpoint(job, { kind: 'run', owner: payload.owner, connectionId: payload.connectionId, checkpoint: storedCheckpoint,
+      ...(payload.phone ? { phone: payload.phone } : {}) })) {
       await repo.retry(job.id, job.fence, 0);
     }
   }
