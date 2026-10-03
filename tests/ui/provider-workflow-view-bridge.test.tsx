@@ -15,6 +15,7 @@ function client(state: 'failed' | 'expired' | 'running'): ProviderWorkflowClient
 it.each(['failed', 'expired'] as const)('keeps the confirmed connected row over a stale %s login receipt', async state => {
   const api = client(state); const mutate = vi.fn();
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId="codex" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} workflowClient={api} onAddCredit={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", {name: /^Codex/}));
   await waitFor(() => expect(api.get).toHaveBeenCalled());
   const row = screen.getByRole('button', { name: /^Codex/ });
   await waitFor(() => expect(within(row).getByText('Connected')).toBeVisible());
@@ -25,6 +26,7 @@ it.each(['failed', 'expired'] as const)('keeps the confirmed connected row over 
 it('gives an active replacement login precedence without automatically starting another login', async () => {
   const api = client('running');
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId="codex" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} workflowClient={api} onAddCredit={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', {name: /^Codex/}));
   await waitFor(() => expect(within(screen.getByRole('button', { name: /^Codex/ })).getByText('Connecting')).toBeVisible());
   expect(api.start).not.toHaveBeenCalled();
 });
