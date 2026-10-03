@@ -10,12 +10,20 @@
     "mos": "./bin/matrixos.mjs"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=24 <25"
   },
   "packageManager": "pnpm@10.33.4",
   "scripts": {
     "postinstall": "node scripts/fix-node-pty-perms.mjs",
     "dev": "pnpm --filter '@matrix-os/observability' --filter '@matrix-os/brand' --filter '@matrix-os/kernel' build && pnpm --parallel --filter '@matrix-os/gateway' --filter '@matrix-os/proxy' --filter './shell' dev",
+    "dev:infra": "pnpm node scripts/dev-local.mjs infra",
+    "dev:infra:stop": "pnpm node scripts/dev-local.mjs stop",
+    "dev:source": "pnpm node scripts/dev-local.mjs full",
+    "dev:full": "pnpm node scripts/dev-production-parity.mjs up",
+    "dev:parity": "pnpm node scripts/dev-production-parity.mjs up",
+    "dev:parity:down": "pnpm node scripts/dev-production-parity.mjs down",
+    "dev:parity:status": "pnpm node scripts/dev-production-parity.mjs status",
+    "dev:parity:logs": "pnpm node scripts/dev-production-parity.mjs logs",
     "dev:kernel": "pnpm --filter '@matrix-os/kernel' dev",
     "dev:gateway": "pnpm --filter '@matrix-os/observability' --filter '@matrix-os/kernel' build && pnpm --filter '@matrix-os/gateway' dev",
     "dev:speech": "node scripts/dev-speech-stack.mjs",

@@ -1142,10 +1142,12 @@ describe("createHomeMirror", () => {
 
     it("syncignore negations never override hard exclusions during directory traversal", async () => {
       await mkdir(join(tmpRoot, ".ssh"), { recursive: true });
+      await mkdir(join(tmpRoot, ".cua-driver", "packages"), { recursive: true });
       await mkdir(join(tmpRoot, "node_modules", "pkg"), { recursive: true });
       await writeFile(join(tmpRoot, ".ssh", "config.md"), "ssh config");
+      await writeFile(join(tmpRoot, ".cua-driver", "packages", "driver.md"), "generated driver");
       await writeFile(join(tmpRoot, "node_modules", "pkg", "README.md"), "dependency");
-      await writeFile(join(tmpRoot, ".syncignore"), "!*.md\n!.ssh/config.md\n!node_modules/pkg/README.md\n");
+      await writeFile(join(tmpRoot, ".syncignore"), "!*.md\n!.ssh/config.md\n!.cua-driver/packages/driver.md\n!node_modules/pkg/README.md\n");
       await writeFile(join(tmpRoot, "safe.md"), "safe");
 
       const mirror = createHomeMirror({
@@ -1163,6 +1165,7 @@ describe("createHomeMirror", () => {
       const manifest = storedManifest(r2);
       expect(manifest?.files["safe.md"]?.objectKey).toBeDefined();
       expect(manifest?.files[".ssh/config.md"]).toBeUndefined();
+      expect(manifest?.files[".cua-driver/packages/driver.md"]).toBeUndefined();
       expect(manifest?.files["node_modules/pkg/README.md"]).toBeUndefined();
       await mirror.stop();
     });
@@ -1641,6 +1644,36 @@ describe("createHomeMirror", () => {
       );
 
       await mirror.stop();
+    });
+
+    it("does not watch files through symlinked directories", async () => {
+      const outsideRoot = await mkdtemp(join(tmpdir(), "home-mirror-outside-"));
+      const link = join(tmpRoot, "linked-directory");
+      await symlink(outsideRoot, link);
+
+      const putSpy = vi.spyOn(r2, "putObject");
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      try {
+        await mirror.start();
+        await writeFile(join(outsideRoot, "external.txt"), "do not upload through directory symlinks");
+        await settle(500);
+
+        expect(putSpy).not.toHaveBeenCalledWith(
+          "matrixos-sync/alice/files/linked-directory/external.txt",
+          expect.any(Buffer),
+        );
+      } finally {
+        await mirror.stop();
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
     });
 
     it("does not re-broadcast (no infinite echo loop)", async () => {

@@ -60,6 +60,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
+  const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
   const renderDocument = (includePostHogIdentify: boolean) => (
     <html
       lang="en"
@@ -81,7 +82,7 @@ export default function RootLayout({
     </html>
   );
 
-  if (selfHostedMode) {
+  if (selfHostedMode || localAuthBypass) {
     return renderDocument(false);
   }
 

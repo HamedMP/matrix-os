@@ -53,7 +53,13 @@ function readRuntimeSlotFromLocation(): string | null {
 
 type ShellHomeProps = { initialCollaborationView?: ChatCollaborationView };
 
-export function ShellHome({ initialCollaborationView }: ShellHomeProps = {}) {
+const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
+
+export function ShellHome(props: ShellHomeProps = {}) {
+  if (localAuthBypass) {
+    return <ShellHomeContent {...props} userId={null} sessionId={null} />;
+  }
+
   // Self-hosted documents render without ClerkProvider, so useAuth must never run there.
   // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- both sides read the same MATRIX_SELF_HOSTED flag: the server from its env, the client from the data-matrix-self-hosted attribute the root layout renders from that env
   if (isSelfHostedRuntime()) {
@@ -61,15 +67,28 @@ export function ShellHome({ initialCollaborationView }: ShellHomeProps = {}) {
       <ShellHomeBody
         userId={SELF_HOSTED_SHELL_USER_ID}
         sessionId={null}
-        initialCollaborationView={initialCollaborationView}
+        initialCollaborationView={props.initialCollaborationView}
       />
     );
   }
-  return <ClerkShellHome initialCollaborationView={initialCollaborationView} />;
+
+  return <ManagedShellHome {...props} />;
 }
 
-function ClerkShellHome({ initialCollaborationView }: ShellHomeProps) {
+function ManagedShellHome(props: ShellHomeProps) {
+  return <ClerkShellHome {...props} />;
+}
+
+function ClerkShellHome(props: ShellHomeProps) {
   const { userId, sessionId } = useAuth();
+  return <ShellHomeContent {...props} userId={userId} sessionId={sessionId} />;
+}
+
+function ShellHomeContent({
+  initialCollaborationView,
+  userId,
+  sessionId,
+}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
   return (
     <ShellHomeBody
       userId={userId}

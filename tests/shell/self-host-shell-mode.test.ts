@@ -19,7 +19,7 @@ describe("self-host shell mode", () => {
     expect(page).toContain("selfHostedMode || hasServerVerifiedMatrixSession");
     expect(layout).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
     expect(layout).toContain('data-matrix-self-hosted={selfHostedMode ? "1" : undefined}');
-    expect(layout).toContain("if (selfHostedMode) {");
+    expect(layout).toContain("if (selfHostedMode || localAuthBypass) {");
     expect(layout).toContain("return renderDocument(false);");
     expect(layout).toContain("<ClerkProvider>");
     expect(layout).toContain("{renderDocument(true)}");
@@ -37,5 +37,17 @@ describe("self-host shell mode", () => {
     expect(selfHostMode).toContain('SELF_HOSTED_SHELL_USER_ID = "self-hosted-owner"');
     expect(win11StartMenu).not.toContain("@clerk/nextjs");
     expect(win11StartMenu).toContain("isSelfHostedDocument() ? null : <Win11ManagedAccountActions");
+  });
+
+  it("does not invoke Clerk identity hooks when the explicit local bypass is enabled", () => {
+    const layout = readFileSync(join(root, "shell/src/app/layout.tsx"), "utf8");
+    const shellHome = readFileSync(join(root, "shell/src/components/ShellHome.tsx"), "utf8");
+
+    expect(layout).toContain('const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1"');
+    expect(layout).toContain("if (selfHostedMode || localAuthBypass) {");
+    expect(layout).toContain("return renderDocument(false);");
+    expect(shellHome).toContain("if (localAuthBypass) {");
+    expect(shellHome).toContain("<ShellHomeContent {...props} userId={null} sessionId={null} />");
+    expect(shellHome).toContain("function ManagedShellHome(props: ShellHomeProps)");
   });
 });
