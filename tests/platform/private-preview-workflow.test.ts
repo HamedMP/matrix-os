@@ -34,7 +34,7 @@ function evaluateExpression(expression: string, context: Record<string, unknown>
   }, { timeout: 100 });
 }
 
-function concurrencyGroup(eventName: string, bundleOnly = false, action = '', pr = 1907): string {
+function concurrencyGroup(eventName: string, bundleOnly = false, action = '', pr: number | string = 1907): string {
   const context = {
     github: { event_name: eventName, event: { action, pull_request: { number: eventName === 'pull_request' ? pr : undefined }, label: { name: 'preview-vps' } }, run_id: 42 },
     inputs: { pr: String(pr), bundle_only: bundleOnly },
@@ -141,6 +141,14 @@ describe('Private Preview bundles in the Preview workflow', () => {
         github: { event_name: eventName, event: { action } },
       })).toBe(false);
     }
+  });
+
+  it('keeps malformed dispatch PR text out of the other operation concurrency namespace', () => {
+    const publication = concurrencyGroup('workflow_dispatch', true, '', 123);
+    expect(concurrencyGroup('workflow_dispatch', false, '', '123-bundle')).not.toBe(publication);
+    const deployment = concurrencyGroup('workflow_dispatch', false, '', 123);
+    expect(concurrencyGroup('workflow_dispatch', true, '', '123-bundle')).not.toBe(deployment);
+    expect(concurrencyGroup('schedule', false, '', '')).toBe('preview-vps-reaper-active');
   });
 
   it.each(['bundle', 'deploy', 'deploy_existing', 'verify', 'teardown', 'skip', 'unknown'])

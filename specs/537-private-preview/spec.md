@@ -370,7 +370,9 @@ Public docs are N/A. This is an internal engineering tool, and its reference is
    publication retain immutable version, PR provenance and `--channel none`.
    Manual bundle-only publication uses a distinct PR concurrency group, so a
    replacement publication can cancel an earlier publication without cancelling
-   a deploy, inventory verification or teardown for the same PR.
+   a deploy, inventory verification or teardown for the same PR. Its operation
+   namespace precedes raw dispatch PR text, so a malformed PR input cannot collide
+   with the other operation before the gate validates the numeric PR.
 4. **Validation / errors:** reject combination with nonempty version, inventory
    verification or teardown before any build; fork PRs cannot build/publish.
 5. **Good / base / bad:** bundle-only builds/publishes without machine writes;
