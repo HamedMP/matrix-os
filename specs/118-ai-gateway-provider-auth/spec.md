@@ -406,3 +406,48 @@ no authorization bytes were submitted (for example, the authorization prompt
 is not ready). Ambiguous partial writes retain the submission latch. Accepted
 submission stays single-use under concurrent requests. Adapter integration and
 real authorization acceptance remain pending in the native/browser layer.
+
+Native foreground adapters register cleanup before launching side effects and
+await confirmed child/terminal drain plus any completion writer before reporting
+cancellation. Only explicit unsupported-method preflight uses a no-start proof;
+lease acquisition or launch errors never become that proof. Claude prompt-not-
+ready rejection proves no code bytes were submitted and permits retry, while an
+ambiguous write failure remains single-use. Pi Settings discovers the managed
+native 1.0 API, without modifying the embedded SDK/runtime modules.
+
+Direct Codex/Claude native writers and singleton API-key saves use exclusive,
+symlink-safe durable profile admission. Markers live in the runtime-private sibling
+`.matrix-private/<home basename>/native-writers`, outside the synced owner home;
+they never migrate with owner files to another computer. Terminal-backed historical writers also
+remain fenced by canonical registry liveness. Markers contain only bounded
+admission/profile/process identity and survive gateway restart; TTL, receipt
+expiry, and an old gateway PID's death cannot clear them. Confirmed successful
+writer drain removes the owned marker. An ambiguous writer failure remains
+blocked and requires operator-confirmed native process/registry cleanup before
+recovering admission; there is no automatic reset or broader access grant.
+Native protocol fixtures simulate Claude success/rejection without asserting
+that a real paid subscription was exercised.
+
+Composition extraction plan: the existing oversized `server.ts` remains a
+dependency-wiring entrypoint in this bounded layer. A follow-up extracts native
+Settings connection construction and adapter registration into
+`server/provider-settings-native-runtime.ts`, taking explicit store, registry,
+profile guard, inventory reader, environment, and owner dependencies, and
+returning one close lifecycle. Connection protocols and policy stay in their
+existing focused modules; no behavior belongs in that composition helper.
+The terminal login coordinator has one responsibility: serialized canonical
+terminal login handoff and recovery. Its retained larger size is reviewed as
+that single state machine; native subprocess protocols are separate modules.
+
+A private admission marker may outlive its receipt after an interrupted launch,
+ambiguous partial writer failure, or marker persistence/release failure. Such an
+orphan remains unavailable rather than being inferred stale from its gateway
+PID. It is never exposed through a Settings DTO and contains no credentials,
+authorization code, account identity, or CLI output. Unsupported-method preflight
+uses the typed no-start signal only before any lease, child, session, or writer
+is acquired; all later failures require confirmed cleanup.
+
+Independent workflow-engine and native coordinator shutdown drains start
+concurrently, so a delayed writer cannot prevent the other coordinators from
+rejecting new work and reaping their own children. Each drain retains its native
+bounded cleanup contract; failure never clears unresolved writer admission.

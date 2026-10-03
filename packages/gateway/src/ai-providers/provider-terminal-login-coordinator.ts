@@ -1,3 +1,4 @@
+import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -135,7 +136,7 @@ function legacyLoginSessionName(harness: "codex" | "claude", legacyPayloadHash: 
 
 function matchesLegacyLoginPayload(
   input: LoginInput,
-  receipt: ReceiptDocument["receipts"][number],
+  receipt: Pick<ReceiptDocument["receipts"][number], "recoveryHash" | "key" | "payloadHash">,
 ): boolean {
   if (receipt.recoveryHash !== undefined) return false;
   // Legacy receipts did not persist their recovery identity. Recompute the exact
@@ -186,6 +187,7 @@ export function createProviderTerminalLoginCoordinator(options: {
   homePath: string;
   registry: ProviderLoginRegistry;
   enabledHarnesses: readonly ("codex" | "claude")[];
+  profileGuard?: NativeProviderProfileGuard;
   now?: () => Date;
   persistReceipt?: ReceiptWriter;
 }): ProviderLoginCoordinator & { resolveTerminalIdentity(attempt: ProviderConnectionAttempt): Promise<string> } {
@@ -246,7 +248,7 @@ export function createProviderTerminalLoginCoordinator(options: {
     },
 
     async startLogin(input) {
-      return await serialize(async () => {
+      const start = () => serialize(async () => {
         if (input.harness.id !== input.mutation.harnessInstanceId
           || input.mutation.method !== "terminal"
           || !supportsHarness(enabledHarnesses, input.harness)) {
@@ -581,6 +583,17 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         return attempt;
       });
+      if (options.profileGuard && (input.harness.harness === "codex" || input.harness.harness === "claude")) {
+        // Preserve the historical conflict response before profile admission.
+        // This is a read-only preflight; the serialized path rechecks receipts.
+        const known = (await Promise.all([readReceipts(receiptsPath), readReceipts(recoveryPath)]))
+          .flatMap(document => document.receipts).filter(receipt => receipt.key === input.mutation.idempotencyKey);
+        if (known.some(receipt => receipt.payloadHash !== payloadHash(input))) {
+          throw new ProviderSettingsStoreError("idempotency_conflict", 409);
+        }
+        return options.profileGuard.run(input.harness.harness, { kind: "login", recoveryKey: recoveryIdentityHash(input), matchesLegacyReceipt: (key, hash) => matchesLegacyLoginPayload(input, { key, payloadHash: hash }) }, start);
+      }
+      return start();
     },
   };
 }
