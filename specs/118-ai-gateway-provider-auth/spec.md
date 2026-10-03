@@ -303,3 +303,61 @@ Host lifecycle tests exercise install/uninstall races, fixed command boundaries,
 service wiring, opt-out persistence, and owner-data preservation. Native Settings
 adapter support is delivered separately; this host layer advertises no new
 foreground workflow capability.
+
+### Negotiated native account identity and offered inventory
+
+Native Codex and Hermes readers return bounded allowlisted identity and quota
+metadata for the exact runtime profile. Provider calls and child lifetimes have
+deadlines, output bounds, and cleanup; errors preserve honest unavailable usage.
+Missing quota is not zero; 0 and 100 percent are valid observations. Hermes reads
+its own selected provider principal and never borrows standalone Codex identity.
+Metadata does not establish model-call readiness or change credentials/routes.
+
+Only the positively resolved runtime owner triggers private account metadata
+reads. Other principals receive redacted identity and unavailable private quota.
+Provider Settings GET responses use `Cache-Control: private, no-store` so
+private identity and quota observations are not retained in HTTP caches.
+GET connectionDetails, model capabilities, and offered Matrix inventory require
+explicit wire negotiation; default historical responses and mutation receipts
+omit new fields. Offered inventory uses the existing authoritative current
+funded policy and canonical catalog; it cannot grant inference permission.
+
+Tests cover owner/collaborator boundaries, stale metadata, profile/provider
+mismatch, schema compatibility, safe errors, bounded readers, and catalog
+policy. Real deployed metadata and Electron presentation remain later combined
+acceptance gates; this layer adds no guided sign-in capability.
+
+Optional native metadata is read only for installed native harnesses. Native
+inventory, funding/catalog enrichment and profile verification all run outside
+Settings mutation admission. A fresh canonical revalidation is paired with a
+fresh funding/catalog observation, never the policy captured before metadata.
+Native principal verification follows that complete fresh epoch. These bounded
+reads establish point-in-time observations, not an atomic transaction across
+external native profiles and platform policy.
+Null/cooldown metadata does not cause a second canonical pipeline. Configuration
+reconciliation and a final persisted-revision/mutation-generation fence serialize
+with writes; a raced read retries once without optional metadata, then fails
+closed if it cannot publish a coherent snapshot.
+
+Canonical presentation labels are not principal proof. Each optional observation
+has a private, observation-lifetime verification callback in a WeakMap. Codex
+uses the same selected `CODEX_HOME` and official read-only app-server protocol;
+its final verification reads account identity only, with `refreshToken: false`
+and no quota request. Exact ChatGPT type, native ID, email and plan must still
+match. Missing ChatGPT native ID drops optional identity. API-key observations verify
+only the current API-key authentication class and contain no principal claim,
+email, plan or allowance; they never inherit ChatGPT metadata. Hermes verifies
+its own pinned singleton/pool selection through a bounded native helper without
+an HTTP quota request, credential import, refresh or login. A changed token
+discards the observation conservatively, including normal token rotation.
+Private binding evidence and callbacks never enter snapshots, contracts,
+persistence, or logs. Reader subprocess deadlines/output bounds remain enforced;
+verification also has an eight-second outer bound. These observations do not
+change canonical routing/readiness, enablement, budgets or policy.
+
+Readers coalesce their bounded in-flight observation. During cooldown they
+return no optional metadata rather than sleeping inside a foreground request
+or reusing unverified identity from a previous native profile. Canonical
+connection/readiness remains authoritative. Safe profile-aware caching is not
+delivered here; repeated owner GET/usage presentation still requires Electron
+Desktop acceptance before claiming complete UX validation.
