@@ -51,6 +51,12 @@ export const CanonicalChatOutboxEventTypeSchema = z.enum([
   "run.aborted",
   "chat.deleted",
   "migration.completed",
+  "bot.created",
+  "interaction.requested",
+  "interaction.resolved",
+  "bot.task.updated",
+  "bot.authority.changed",
+  "bot.memory.remembered",
 ]);
 
 export const CanonicalChatStreamEventSchema = z.object({

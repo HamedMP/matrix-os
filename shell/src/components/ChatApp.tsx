@@ -1,8 +1,9 @@
 "use client";
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
-import { useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
+import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
@@ -11,7 +12,7 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
-import { ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
+import { useDirectBotChat, BotChatPanel, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
@@ -133,6 +134,8 @@ interface ChatAppProps {
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
+  activeRunId?: string;
+  onAbortCurrent?: () => void;
   connected: boolean;
   conversations: ConversationMeta[];
   onNewChat: () => void;
@@ -145,6 +148,7 @@ interface ChatAppProps {
     options?: ChatSubmitOptions,
   ) => void | Promise<boolean>;
   agentClient?: ChatAgentClient;
+  botEventRevision?: number;
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
   providerSelection?: CanonicalChatModelSelection;
@@ -202,6 +206,8 @@ function ChatAppContent({
   messages,
   sessionId,
   busy,
+  activeRunId,
+  onAbortCurrent,
   connected,
   conversations,
   onNewChat: createChat,
@@ -211,7 +217,7 @@ function ChatAppContent({
   onSubmit,
   providerSelection,
   boundProviderInstanceId,
-  agentClient, queuedTurns = [], onCancelQueuedTurn,
+  agentClient, botEventRevision, queuedTurns = [], onCancelQueuedTurn,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -289,6 +295,8 @@ function ChatAppContent({
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
   const providerState = useChatProviderState(providerSelection, boundProviderInstanceId);
+  const directBotId = useDirectBotChat(collaborationView ? undefined : sessionId, agentClient);
+  const providerReady = Boolean(directBotId || (!providerState.loading && providerState.selected));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
@@ -302,6 +310,10 @@ function ChatAppContent({
     files?: Array<{ name: string; type: string; data: string }>,
     mentionOptions?: ChatSubmitOptions,
   ) => {
+    if (directBotId) return onSubmit(text, files, { displayText: text, instanceId: MATRIX_BOT_SELECTION.instanceId, model: MATRIX_BOT_SELECTION.model,
+      interactionMode: "default", permissionMode: "default", modelOptions: [],
+      ...(mentionOptions?.resources?.length ? { resources: mentionOptions.resources, clientRequestId: mentionOptions.clientRequestId } : {}),
+    });
     if (!providerState.selected) return Promise.resolve(false);
     const usesChannels = providerState.selected.driverKind === "hermes";
     const promptText = usesChannels ? createChannelConfiguredPrompt(text, selectedChannels) : text;
@@ -400,7 +412,7 @@ function ChatAppContent({
           </Button>
         </div>
 
-        <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
@@ -474,7 +486,7 @@ function ChatAppContent({
       </aside>
 
       {/* Main content */}
-      <ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"}>
+      <ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"} onOpenBotChat={onSwitchConversation}>
       <main className="relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
         <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
@@ -540,14 +552,14 @@ function ChatAppContent({
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
                   {collaborationView
                     ? activeSharedMetadata ? `Shared · ${activeSharedMetadata.role}` : "Shared session"
-                    : providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
+                    : directBotId ? "Bot model" : providerState.displayModelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
                 </p>
               </div>
             </div>
           </div>
           {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
           {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
-          {!collaborationView ? <Button
+          {!collaborationView && !directBotId ? <Button
             data-chat-model-trigger
             aria-label="Choose model and connection"
             aria-haspopup="dialog"
@@ -558,6 +570,8 @@ function ChatAppContent({
             onClick={() => setSetupOpen((value) => !value)}
           >
             <span className="truncate">{providerState.selected ? `${providerState.selected.harnessLabel}${providerState.selected.connectionLabel && providerState.selected.connectionLabel !== providerState.selected.harnessLabel ? ` · ${providerState.selected.connectionLabel}` : ""} · Model` : "Model"}</span>
+            {providerState.loading ? <ChatProviderLoadingIndicator /> : null}
+            {providerState.selectionStatus ? <span className="shrink-0">{providerState.selectionStatus}</span> : null}
             <ChevronDownIcon className="size-3.5" aria-hidden="true" />
           </Button> : null}
           {!collaborationView ? <Button
@@ -577,14 +591,17 @@ function ChatAppContent({
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header>
-        {!collaborationView && setupOpen && (
+        {!collaborationView && sessionId ? <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} catalog={providerState.catalog} refreshKey={botEventRevision} /> : null}
+        {!collaborationView && !directBotId && setupOpen && (
           <ChatProviderSetupPanel
             onDismiss={() => {
               setSetupOpen(false);
             }}
             catalog={providerState.catalog}
+            loading={providerState.loading}
             choices={providerState.choices}
             selected={providerState.selected}
+            displaySelection={providerState.displaySelection}
             onSelect={providerState.select}
             onInteractionModeChange={providerState.selectInteractionMode}
             onPermissionModeChange={providerState.selectPermissionMode}
@@ -614,16 +631,16 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <EmptyState
-            composerProps={{ composer, agentClient, scope: composerScope, permissionMode: providerState.selected?.permissionMode ?? "supervised", driveContextEnabled: providerState.selected?.supportsCompanyDriveContext === true }}
+            composerProps={{ composer, agentClient, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, permissionMode: directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             suggestions={suggestions}
             mobile={mobile}
             composerDraftRequest={activeDraftRequest}
             onComposerDraftConsumed={consumeDraftRequest}
-            modelLabel={providerState.selected?.modelLabel ?? null}
-            providerReady={providerState.selected !== null}
-            attachmentsEnabled={providerState.selected?.supportsFileAttachments ?? false}
+            modelLabel={directBotId ? "Bot model" : providerState.selected?.modelLabel ?? null}
+            providerReady={providerReady}
+            attachmentsEnabled={!directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
           />
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -709,17 +726,19 @@ function ChatAppContent({
                 </div>
               )}
               <ChatInput
-                driveContextEnabled={providerState.selected?.supportsCompanyDriveContext === true}
-                key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} permissionMode={providerState.selected?.permissionMode ?? "supervised"}
-                connected={connected && providerState.selected !== null}
+                driveContextEnabled={!directBotId && providerState.selected?.supportsCompanyDriveContext === true}
+                key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} permissionMode={directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised"}
+                connected={connected && providerReady}
                 busy={busy}
+                activeRunId={activeRunId}
+                onAbortCurrent={onAbortCurrent}
                 onSubmit={submitWithHermesSetup}
                 draftRequest={activeDraftRequest}
                 onDraftConsumed={consumeDraftRequest}
-                unavailablePlaceholder={!providerState.loading && providerState.selected === null
+                unavailablePlaceholder={!providerState.loading && !providerReady
                   ? "Write or dictate a draft — connect a harness to send"
                   : undefined}
-                attachmentsEnabled={providerState.selected?.supportsFileAttachments ?? false}
+                attachmentsEnabled={!directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
               />
             </div>
           </div>

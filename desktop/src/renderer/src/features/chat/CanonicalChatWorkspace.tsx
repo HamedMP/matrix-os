@@ -1,10 +1,13 @@
 import { CanonicalNewChatContent } from "./CanonicalNewChatContent";
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 import { canonicalComposerSelectionIsAvailable } from "./canonical-composer-state";
 import {
   isChatUnread,
   chatReadAction,
   CanonicalSharedChatPanel,
+  BotChatPanel,
+  useDirectBotChat,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
 } from "@matrix-os/ui";
@@ -53,7 +56,7 @@ import { canonicalChatPresentation } from "./canonical-chat-presentation";
 import { canonicalChatInputParts, canonicalChatTitle } from "./canonical-chat-submission";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
 import { chatSendFailureMessage } from "./chat-send-error";
-import { failClosedProviderCatalog, useChatProviderCatalog } from "./chat-provider-catalog";
+import { useChatProviderCatalog } from "./chat-provider-catalog";
 import { searchGlobalChatResources } from "./chat-resource-search";
 import ConversationContextPicker from "./ConversationContextPicker";
 import {
@@ -171,10 +174,8 @@ export function CanonicalChatWorkspace({
     api: api ?? null,
     active: live && !explicitSharedRoute,
   });
-  const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallbackCatalog), [fallbackCatalog]);
-  const providerCatalog = catalog ?? (
-    liveCatalog.status === "ready" || liveCatalog.status === "error" ? liveCatalog.catalog : unavailableCatalog
-  );
+  const providerCatalog = catalog ?? liveCatalog.catalog;
+  const providerCatalogLoading = !catalog && liveCatalog.status === "loading";
   const onCredentialInvalidation = useCallback((event: CanonicalChatInvalidation) => {
     if (event.type !== "chat.changed"
       || (event.eventType !== "chat.updated" && event.eventType !== "chat.deleted")) return;
@@ -198,6 +199,17 @@ export function CanonicalChatWorkspace({
     eventSource,
     onInvalidation: onCredentialInvalidation,
   });
+  const [botEventRevision, setBotEventRevision] = useState(0);
+  useEffect(() => {
+    if (!live || !eventSource) return;
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === controller.activeChatId
+        && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
+        setBotEventRevision((revision) => revision + 1);
+      }
+    });
+    return () => subscription.dispose();
+  }, [live, eventSource, controller.activeChatId]);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
   );
@@ -262,14 +274,17 @@ export function CanonicalChatWorkspace({
     refreshRuntimeSummary,
     api ?? null,
   );
-  const { selection, onSelectionChange } = useCanonicalComposerSelection({
+  const { selection: providerSelection, onSelectionChange } = useCanonicalComposerSelection({
     catalog: providerCatalog,
-    catalogReady: Boolean(catalog || liveCatalog.status === "ready" || liveCatalog.status === "error"),
+    catalogReady: Boolean(catalog || liveCatalog.hasTrustedCatalog || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
     chatId: controller.detail?.record.chat.id ?? null,
     currentSelection: controller.detail?.record.chat.currentSelection,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
+  const directBotId = useDirectBotChat(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
+  const selection = directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : providerSelection;
+  const selectionAvailable = Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, mentionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -473,7 +488,8 @@ export function CanonicalChatWorkspace({
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       !selection
-      || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
+      || (!directBotId && providerCatalogLoading)
+      || !selectionAvailable
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
     ) return;
@@ -550,7 +566,8 @@ export function CanonicalChatWorkspace({
       (!activeRun && !editingQueuedTurn && !mentionResources.length)
       || !controller.detail
       || !selection
-      || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
+      || (!directBotId && providerCatalogLoading)
+      || !selectionAvailable
       || composerAction
       || uploadingAttachments
       || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
@@ -726,12 +743,13 @@ export function CanonicalChatWorkspace({
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
-        disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
-        canSubmit={Boolean(canonicalComposerSelectionIsAvailable(providerCatalog, selection) && !uploadingAttachments && (
+        disabled={controller.status === "loading" || uploadingAttachments}
+        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
-        onProviderPickerOpen={catalog ? undefined : liveCatalog.refresh}
+        automaticRouting={Boolean(directBotId)}
+        providerCatalogLoading={!directBotId && providerCatalogLoading}
         selection={selection}
         onSelectionChange={onSelectionChange}
         onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
@@ -928,6 +946,8 @@ export function CanonicalChatWorkspace({
                   setCredentialSuspendedChatId((current) => current === chatId ? null : current);
                 }).catch(() => { /* Keep disclosure suspended until owner authority can be checked. */ });
               }} /> : null}
+            <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
+              client={client.agents} directBotId={directBotId} catalog={providerCatalog} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{

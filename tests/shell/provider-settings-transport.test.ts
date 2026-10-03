@@ -3,7 +3,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderSettingsSnapshotSchema } from "@matrix-os/contracts";
 
-vi.mock("@matrix-os/ui", () => ({
+vi.mock("@matrix-os/ui", async () => ({
+  ...await import("../../packages/ui/src/provider-projection-paths"),
   ProviderSettingsTransportError: class ProviderSettingsTransportError extends Error {
     constructor(readonly code: string) {
       super("Provider settings are unavailable.");
@@ -100,7 +101,7 @@ describe("provider settings shell transport", () => {
 
     await expect(transport.getSnapshot()).resolves.toEqual(snapshot);
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true`,
+      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
     expect(timeout).toHaveBeenCalledWith(15_000);
@@ -129,7 +130,7 @@ describe("provider settings shell transport", () => {
     const fetcher = vi.fn(async () => Response.json(snapshot));
     await createProviderSettingsTransport({ fetcher }).getSnapshot(undefined, { refresh: true });
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&refresh=true`, expect.any(Object),
+      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&refresh=true`, expect.any(Object),
     );
   });
 

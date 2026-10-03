@@ -544,6 +544,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await vi.waitFor(() => expect(events).toContain("generate"));
     const denied = await app.request("/v1/messages", fundedRequest());
     expect(denied.status).toBe(429);
+    expect(denied.headers.get("x-matrix-funded-reason")).toBe("slot_busy");
     expect(events).toContain("release:reservation_2:pre_upstream_failure");
     expect(events).not.toContain("start:reservation_2");
     releaseFirst?.();
@@ -587,6 +588,108 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
     expect(events).toEqual(["start_denied", "release"]);
     await relay.close();
+  });
+
+  it("forwards only an allowlisted priority reason on an authorization 429", async () => {
+    const responses = [
+      { error: { code: "rate_limited", message: "Try again later", reason: "slot_busy" } },
+      { error: { code: "rate_limited", message: "Try again later" } },
+      { error: { code: "rate_limited", message: "Try again later", reason: "owner_alice_busy" } },
+    ];
+    for (const body of responses) {
+      const fetchMock = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/check")) return json(checkResponse());
+        if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
+        if (url.endsWith("/authorize")) return json(body, 429);
+        return json({});
+      });
+      const relay = configuredRelay(fetchMock as typeof fetch);
+      const app = new Hono();
+      relay.register(app);
+
+      const response = await app.request("/v1/messages", fundedRequest());
+
+      expect(response.status).toBe(429);
+      expect(response.headers.get("x-matrix-funded-reason")).toBe(body.error.reason === "slot_busy" ? "slot_busy" : null);
+      expect(await response.json()).toEqual({ type: "error", error: { type: "rate_limit_error", message: "AI capacity is temporarily limited" } });
+      await relay.close();
+    }
+  });
+
+  it("passes only a valid claim key through to authorization", async () => {
+    for (const [header, expected] of [["run_a:turn.1", "run_a:turn.1"], ["bad key", undefined]] as const) {
+      const bodies: Array<Record<string, unknown>> = [];
+      const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/check")) return json(checkResponse());
+        if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
+        if (url.endsWith("/authorize")) {
+          bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return json({ error: { code: "rate_limited", message: "Try again later" } }, 429);
+        }
+        return json({});
+      });
+      const relay = configuredRelay(fetchMock as typeof fetch);
+      const app = new Hono();
+      relay.register(app);
+
+      expect((await app.request("/v1/messages", fundedRequest(requestBody(), { "x-matrix-funded-claim-key": header }))).status).toBe(429);
+
+      expect(bodies[0]?.claimKey).toBe(expected);
+      await relay.close();
+    }
+  });
+
+  it("never marks an upstream provider 429 as a safe capacity retry", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
+      if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
+      if (url.endsWith("/start")) return json(startResponse("request_123"));
+      if (url.endsWith("/finalize")) {
+        return json(finalizationResponse({ requestId: "request_123", actualCostMicrousd: RESERVED_MICROUSD, finalizationMode: "conservative" }));
+      }
+      void init;
+      return new Response("rate limited", { status: 429 });
+    });
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+
+    const response = await app.request("/v1/messages", fundedRequest());
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("x-matrix-funded-reason")).toBeNull();
+    await relay.close();
+  });
+
+  it("does not mark per-minute limits or token-count throttling as a safe capacity retry", async () => {
+    const counted = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/v1/messages/count_tokens")) return new Response("slow down", { status: 429 });
+      return json({});
+    });
+    const throttled = configuredRelay(counted as typeof fetch);
+    const throttledApp = new Hono();
+    throttled.register(throttledApp);
+    const tokenCount = await throttledApp.request("/v1/messages", fundedRequest());
+    expect(tokenCount.status).toBe(429);
+    expect(tokenCount.headers.get("x-matrix-funded-reason")).toBeNull();
+    await throttled.close();
+
+    const perRuntime = configuredRelay(counted as typeof fetch, { rateLimitPerMinute: 1 });
+    const perRuntimeApp = new Hono();
+    perRuntime.register(perRuntimeApp);
+    await perRuntimeApp.request("/v1/messages", fundedRequest());
+    const windowSpent = await perRuntimeApp.request("/v1/messages", fundedRequest());
+    expect(windowSpent.status).toBe(429);
+    expect(windowSpent.headers.get("x-matrix-funded-reason")).toBeNull();
+    // The second request stopped at the runtime window, before token counting.
+    expect(counted.mock.calls.filter(([input]) => String(input).endsWith("/v1/messages/count_tokens"))).toHaveLength(2);
+    await perRuntime.close();
   });
 
   it("never releases an in-flight reservation after generation fetch fails", async () => {
@@ -666,7 +769,10 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     const app = new Hono();
     relay.register(app);
     expect((await app.request("/v1/messages", fundedRequest("{not-json"))).status).toBe(400);
-    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+    const windowSpent = await app.request("/v1/messages", fundedRequest());
+    expect(windowSpent.status).toBe(429);
+    // A spent per-minute window does not free soon, so it is not a safe retry signal.
+    expect(windowSpent.headers.get("x-matrix-funded-reason")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     await relay.close();
   });
@@ -681,7 +787,9 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     relay.register(app);
     const first = app.request("/v1/messages", fundedRequest());
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+    const denied = await app.request("/v1/messages", fundedRequest());
+    expect(denied.status).toBe(429);
+    expect(denied.headers.get("x-matrix-funded-reason")).toBe("slot_busy");
     expect(fetchMock).toHaveBeenCalledOnce();
     finishCheck?.(json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401));
     expect((await first).status).toBe(401);

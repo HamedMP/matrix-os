@@ -1,3 +1,5 @@
+import { managedPiChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -108,6 +110,39 @@ describe("Chat Agent HTTP boundary", () => {
     }));
     expect(repaired.status).toBe(200);
     expect((await repaired.json()).archived).toBe(false);
+  });
+
+  it("protects server-routed recipe bots from coding-model edits while allowing profile edits", async () => {
+    const bot = await agents.createRecipeBot(owner, {
+      id: "bot_writingroute", createHash: "a".repeat(64),
+      fields: { name: "Writing Bot", description: "Write", instructions: "Help write", selection: fields.selection },
+      recipeRef: { recipeId: "writing-bot", version: "1" },
+    });
+    const rejected = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", {
+      baseRevision: bot.revision, selection: fields.selection,
+    }));
+    expect(rejected.status).toBe(400);
+    expect((await agents.get(owner, bot.id))?.revision).toBe(bot.revision);
+    const edited = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", {
+      baseRevision: bot.revision, name: "My Writing Bot",
+    }));
+    expect(edited.status).toBe(200);
+    expect(await edited.json()).toMatchObject({ name: "My Writing Bot", recipeRef: bot.recipeRef });
+  });
+
+  it("saves a recipe bot managed model with revision checks and can restore Automatic", async () => {
+    const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+    catalog.drivers.push({ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" });
+    catalog.instances.push(...managedPiChatInstances(makeAiProviderSnapshot()).map((instance) => ({ ...instance, catalogRevision: catalog.revision })));
+    const bot = await agents.createRecipeBot(owner, { id: "bot_managededit", createHash: "c".repeat(64),
+      fields: { name: "Writing Bot", description: "Write", instructions: "Help write", selection: { instanceId: "matrix_bot_default", model: "auto" } },
+      recipeRef: { recipeId: "writing-bot", version: "1" } });
+    const response = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: bot.revision, selection }));
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ selection, revision: 2, description: "Write" });
+    expect((await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: bot.revision, selection }))).status).toBe(409);
+    const automatic = { instanceId: "matrix_bot_default", model: "auto" };
+    const restored = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: 2, selection: automatic }));
+    expect(restored.status).toBe(200); expect(await restored.json()).toMatchObject({ selection: automatic, revision: 3 });
   });
 
   it("stamps owner, exact label, connection ID and expected email on Jev creation", async () => {

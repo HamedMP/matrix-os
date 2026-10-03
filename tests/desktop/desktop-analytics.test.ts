@@ -143,3 +143,8 @@ describe("Desktop analytics allowlist", () => {
     window.removeEventListener(DESKTOP_ANALYTICS_EVENT, listener);
   });
 });
+
+it("accepts the managed Pi Chat harness without admitting arbitrary telemetry fields", () => {
+  expect(DesktopAnalyticsDetailSchema.safeParse({ name: "desktop_chat_response_completed", chatScope: "global",
+    harness: "matrix_pi", modelProvider: "cloudflare", model: "cloudflare:@cf/zai-org/glm-5.3-flash", responseCharacterCount: 4 }).success).toBe(true);
+});

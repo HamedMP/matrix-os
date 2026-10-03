@@ -1,5 +1,6 @@
+import { MatrixBotModelField } from "./bots/MatrixBotModelField.js";
 import { useId } from "react";
-import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { AgentRecipeEditor } from "./AgentRecipeEditor.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
@@ -25,11 +26,11 @@ function AgentModelField({ id, selected, pending, models, change, onSetup, herme
         ...(choice.selectedOptions.length ? { options: choice.selectedOptions } : {}) } });
     }}>
       {!available ? <option value={modelKey}>{selected ? `${selected.model} · unavailable` : "No Agent model available"}</option> : null}
-      {models.map((choice) => <option key={`${choice.instanceId}:${choice.modelId}`} value={JSON.stringify([choice.instanceId, choice.modelId])}>{choice.modelLabel} · {choice.harnessLabel}</option>)}
+      {models.map((choice) => <option key={`${choice.instanceId}:${choice.modelId}`} value={JSON.stringify([choice.instanceId, choice.modelId])}>{choice.modelLabel} · {choice.connectionLabel ? `${choice.connectionLabel} · ` : ""}{choice.harnessLabel}</option>)}
     </select></label>
     {!available ? <p className="text-sm" style={muted}>{hermesOnly
       ? "Configure a supported Hermes model in Agents & providers to use this Inbox workflow."
-      : "Set up Codex or Hermes in Agents & providers to use this Agent."} {onSetup ? <button type="button" className="underline" disabled={pending} onClick={onSetup}>Open setup</button> : null}</p> : null}
+      : "Choose a ready Matrix AI, Codex or Hermes model in Agents & providers to use this Agent."} {onSetup ? <button type="button" className="underline" disabled={pending} onClick={onSetup}>Open setup</button> : null}</p> : null}
   </>;
 }
 
@@ -44,29 +45,33 @@ function AgentEditorActions({ editing, pending, saveDisabled, onArchive, onBack 
   </div>;
 }
 
-export function AgentEditor({ draft, editing, pending, models, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
+export function AgentEditor({ draft, editing, pending, models, catalog, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
   change, onSave, onArchive, onBack, onSetup, onRetryRecipe }: {
   draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
+  catalog?: CanonicalProviderCatalog | null;
   recipeCatalog: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[];
   recipeLoading: boolean; recipeError: string; connectionError: string;
   change(value: Partial<AgentDraft>): void; onSave(): Promise<void>; onArchive(): Promise<void>; onBack(): void;
   onRetryRecipe(): void; onSetup?: () => void;
 }) {
   const ids = useId();
+  const recipeBot = editing !== "new" && Boolean(editing.recipeRef);
   const modelAvailable = models.some((choice) => choice.instanceId === draft.selection?.instanceId && choice.modelId === draft.selection?.model);
-  const recipeValid = draft.recipe === undefined || draft.recipe === null || (ChatAgentRecipeSchema.safeParse(draft.recipe).success
+  const recipeValid = recipeBot || draft.recipe === undefined || draft.recipe === null || (ChatAgentRecipeSchema.safeParse(draft.recipe).success
     && recipeSkillsFit(draft.recipe.skills, recipeCatalog?.skills ?? []));
   const saveDisabled = pending || !draft.name.trim() || !draft.instructions.trim() || !recipeValid || (editing === "new" && !modelAvailable);
   return <form className="mt-5 grid gap-4" onSubmit={(event) => { event.preventDefault(); void onSave(); }}>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-name`}>Name<input id={`${ids}-name`} className={input} value={draft.name} maxLength={80} required disabled={pending} onChange={(event) => change({ name: event.target.value })} /></label>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-description`}>Description <span className="text-xs" style={muted}>Optional</span><input id={`${ids}-description`} className={input} value={draft.description} maxLength={400} disabled={pending} onChange={(event) => change({ description: event.target.value })} /></label>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-instructions`}>Instructions<textarea id={`${ids}-instructions`} className={`${input} min-h-32 resize-y`} value={draft.instructions} maxLength={8000} required disabled={pending} placeholder="What should this Agent do? How should it work?" onChange={(event) => change({ instructions: event.target.value })} /></label>
-      <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup}
-        hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />
-      <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={recipeCatalog}
+      {recipeBot ? <div className="grid gap-3 text-sm">
+        <MatrixBotModelField id={`${ids}-model`} selection={draft.selection} models={models} catalog={catalog} pending={pending} onChange={(selection) => change({ selection })} />
+        <p className="text-xs" style={muted}>This bot runs in its own Chat. Its model and tool access are managed by this computer.</p>
+      </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />}
+      {!recipeBot ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={recipeCatalog}
         connections={connections} loading={recipeLoading} error={recipeError} connectionError={connectionError} pending={pending}
-        onChange={(recipe) => change({ recipe })} onRetry={onRetryRecipe} />
-      <p className="text-xs" style={muted}>Agent requests use Full access. You choose this access when sending. Creating an Agent does not run it.</p>
+        onChange={(recipe) => change({ recipe })} onRetry={onRetryRecipe} /> : null}
+      {!recipeBot ? <p className="text-xs" style={muted}>Agent requests use Full access. You choose this access when sending. Creating an Agent does not run it.</p> : null}
       <AgentEditorActions editing={editing} pending={pending} saveDisabled={saveDisabled} onArchive={onArchive} onBack={onBack} />
     </form>;
 }

@@ -4,15 +4,36 @@ import type { ProviderAccessSource, ProviderGatewayPolicy, ProviderModelProvider
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayCreditLines, money, shortDate, titleCase } from "./utils.js";
 
+export function matrixGatewayEligibleModels(
+  source: ProviderAccessSource | null,
+  policy: ProviderGatewayPolicy | null,
+  provider: ProviderModelProvider | null,
+): ProviderModelProvider["models"] {
+  if (source?.kind !== "matrix_gateway" || !policy || !provider) return [];
+  return provider.models.filter((model) => model.enabled
+    && source.eligibleModelIds.includes(model.id)
+    && policy.allowedModelIds.includes(model.id));
+}
+
 export function isMatrixGatewaySourceReady(
   source: ProviderAccessSource | null,
   policy: ProviderGatewayPolicy | null,
   provider: ProviderModelProvider | null,
 ): boolean {
-  if (source?.kind !== "matrix_gateway" || source.readiness.state !== "ready" || !policy || !provider) return false;
-  return provider.models.some((model) => model.enabled
-    && source.eligibleModelIds.includes(model.id)
-    && policy.allowedModelIds.includes(model.id));
+  return source?.readiness.state === "ready"
+    && matrixGatewayEligibleModels(source, policy, provider).length > 0;
+}
+
+/** Server-projected discovery is display-only and cannot establish readiness. */
+export function isMatrixGatewaySourceDiscoverable(
+  source: ProviderAccessSource,
+  policy: ProviderGatewayPolicy | null,
+  provider: ProviderModelProvider | null,
+): boolean {
+  return source.readiness.checkedAt !== null
+    && (source.readiness.state === "ready" || source.readiness.state === "unavailable")
+    && source.usage.kind === "managed_credit" && source.usage.state === "current"
+    && matrixGatewayEligibleModels(source, policy, provider).length > 0;
 }
 
 export function GatewayPanel({
@@ -70,8 +91,16 @@ export function GatewayPanel({
   }, [budget]);
   const credit = source ? gatewayCreditLines(source) : { primary: "Credit unavailable", secondary: null, stale: false };
   const usageAsOf = source?.usage.asOf ?? null;
+  const eligibleModels = matrixGatewayEligibleModels(source, policy, provider);
   const ready = isMatrixGatewaySourceReady(source, policy, provider);
   const creditRequired = source?.readiness.safeReason === "credit_required";
+  const creditReserved = source?.readiness.safeReason === "credit_reserved"
+    && source.usage.kind === "managed_credit" && source.usage.state === "current";
+  const reservedCredit = source?.usage.kind === "managed_credit" && source.usage.credit.reservedMicrousd > 0
+    ? `${money(source.usage.credit.reservedMicrousd, source.usage.currency)} reserved${source.usage.state === "stale" ? " (last confirmed)" : ""}` : null;
+  const reservedBudget = source?.usage.kind === "managed_credit" && source.usage.budget.reservedThisMonthMicrousd > 0
+    && source.usage.budget.reservedThisMonthMicrousd !== source.usage.credit.reservedMicrousd
+    ? `${money(source.usage.budget.reservedThisMonthMicrousd, source.usage.currency)} monthly budget reserved${source.usage.state === "stale" ? " (last confirmed)" : ""}` : null;
   const checkoutAvailable = Boolean(source && policy?.topUpEnabled && canAddCredit
     && source.usage.kind === "managed_credit" && source.usage.state === "current"
     && (ready || creditRequired));
@@ -79,7 +108,7 @@ export function GatewayPanel({
   useEffect(() => {
     if (!checkoutAvailable) setCreditDialogOpen(false);
   }, [checkoutAvailable]);
-  const status = !source || !policy ? "Setup needed" : ready ? "Ready" : creditRequired ? "Credit needed"
+  const status = !source || !policy ? "Setup needed" : ready ? "Ready" : creditReserved ? "Credit reserved" : creditRequired ? "Credit needed"
     : source.readiness.state === "ready" ? "Unavailable" : titleCase(source.readiness.state);
 
   const saveBudget = () => {
@@ -125,8 +154,10 @@ export function GatewayPanel({
 
       {!source || !policy ? (
         <p className="matrix-ap-help">Matrix AI is not available on this computer yet. Credit purchases are unavailable.</p>
+      ) : creditReserved ? (
+        <p className="matrix-ap-help">Your credit is reserved while usage is confirmed.</p>
       ) : creditRequired ? (
-        <p className="matrix-ap-help">Add credit to use Matrix AI.</p>
+        <p className="matrix-ap-help">{checkoutAvailable ? "Add credit to use Matrix AI." : "Matrix AI needs spendable credit."}</p>
       ) : !ready ? (
         <p className="matrix-ap-help">{source.readiness.safeReason === "policy" || source.readiness.action === "contact_owner"
           ? "Matrix AI is restricted by your workspace. Ask your administrator."
@@ -140,6 +171,8 @@ export function GatewayPanel({
         <div>
           <strong>{credit.primary}</strong>
           {credit.secondary ? <span>{credit.secondary}</span> : null}
+          {reservedCredit ? <span>{reservedCredit}</span> : null}
+          {reservedBudget ? <span>{reservedBudget}</span> : null}
           {credit.stale ? <span>Credit last confirmed {shortDate(usageAsOf)}</span> : null}
         </div>
         <div className="matrix-ap-actions">
@@ -234,7 +267,7 @@ export function GatewayPanel({
               })}
           </fieldset>
           ) : (
-            <div className="matrix-ap-available-models"><span>Available models</span><ul>{provider?.models.filter((model) => model.enabled && source.eligibleModelIds.includes(model.id) && policy.allowedModelIds.includes(model.id)).map((model) => <li key={model.id}>{model.displayName}</li>)}</ul>{!provider?.models.some((model) => model.enabled && source.eligibleModelIds.includes(model.id) && policy.allowedModelIds.includes(model.id)) ? <p className="matrix-ap-help">No models are enabled for this computer.</p> : null}</div>
+            <div className="matrix-ap-available-models"><span>Available models</span><ul>{eligibleModels.map((model) => <li key={model.id}>{model.displayName}</li>)}</ul>{eligibleModels.length === 0 ? <p className="matrix-ap-help">No models are enabled for this computer.</p> : null}</div>
           )}
         </div></details>
       ) : null}

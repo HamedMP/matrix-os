@@ -166,11 +166,12 @@ export function SharedChatComposer({
   selection,
   onSelectionChange,
   instanceLocked,
+  automaticRouting = false,
   resources = [],
   resourceSearch,
   onAttach,
   onProviderSetup,
-  onProviderPickerOpen,
+  providerCatalogLoading = false,
   onNewChat,
   attachments,
   leadingControls,
@@ -201,6 +202,7 @@ export function SharedChatComposer({
   selection: CanonicalComposerSelection | null;
   onSelectionChange: (selection: CanonicalComposerSelection) => void;
   instanceLocked: boolean;
+  automaticRouting?: boolean;
   resources?: CanonicalChatResourceReference[];
   resourceSearch?: (query: string) => Promise<CanonicalChatResourceReference[]>;
   onAttach?: () => void;
@@ -209,7 +211,7 @@ export function SharedChatComposer({
     action: CanonicalProviderSetupAction,
   ) => void;
   onNewChat?: () => void;
-  onProviderPickerOpen?: () => void;
+  providerCatalogLoading?: boolean;
   attachments?: ReactNode;
   leadingControls?: ReactNode;
   footer?: ReactNode;
@@ -361,7 +363,7 @@ export function SharedChatComposer({
           && !blockedDriveContext
           && (canSubmit ?? (value.trim().length > 0 || referenceTokens.length > 0))
         ) {
-          onSubmit(currentSubmission());
+          if (!providerCatalogLoading) onSubmit(currentSubmission());
         }
         return true;
       }
@@ -453,14 +455,14 @@ export function SharedChatComposer({
             const submission = currentSubmission();
             if (markdownPreview) restoreEditorFocus.current = true;
             setPreviewState({ scopeKey: draftScopeKey, active: false });
-            onSubmit(submission);
+            if (!providerCatalogLoading) onSubmit(submission);
           }
         }}
         onAbort={onAbort}
         busy={busy}
         submitWhileBusy={submitWhileBusy}
         disabled={disabled}
-        canSubmit={!blockedDriveContext && !speechActive && (canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0)))}
+        canSubmit={!providerCatalogLoading && !blockedDriveContext && !speechActive && (canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0)))}
         autoFocus={autoFocus}
         focusRequestId={focusRequestId}
         layout={layout}
@@ -541,18 +543,18 @@ export function SharedChatComposer({
               />
             ) : null}
             {runActions}
-            <ProviderModelPicker
+            {automaticRouting ? <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Bot model</span> : <ProviderModelPicker
               catalog={catalog}
               selection={selection}
               instanceLocked={instanceLocked}
               disabled={disabled}
+              loading={providerCatalogLoading}
               unavailableProviderLabel={unavailableProviderLabel}
               menuSide={menuSide}
               onSetupAction={onProviderSetup}
-              onOpen={onProviderPickerOpen}
               onNewChat={onNewChat}
               onChange={onSelectionChange}
-            />
+            />}
             <div data-slot="composer-secondary-controls" className="contents @max-[42rem]/chat-composer:hidden">
               {selection ? composerOptions.map((option) => option.kind === "enum" ? (
                 <CompactSelect

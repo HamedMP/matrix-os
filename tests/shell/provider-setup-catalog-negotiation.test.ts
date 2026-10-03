@@ -9,13 +9,13 @@ describe("Settings catalog connection-label negotiation", () => {
     const fetcher = vi.fn(async () => Response.json({ revision: "revision", drivers: [], instances: [] }));
     vi.stubGlobal("fetch", fetcher);
     expect(await openWebProviderAgentSetup("pi", vi.fn())).toBe(false);
-    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/chat-providers?refresh=true&includeConnectionLabels=true"), expect.any(Object));
+    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true"), expect.any(Object));
     expect(fetcher).toHaveBeenCalledOnce();
   });
   it("opts Electron Settings into labels without losing bounded response and timeout", async () => {
     const api = { get: vi.fn(async () => ({ revision: "revision", drivers: [], instances: [] })) };
     expect(await openDesktopProviderAgentSetup(api as never, "pi", () => true)).toBe(false);
-    expect(api.get).toHaveBeenCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true",
+    expect(api.get).toHaveBeenCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true",
       expect.objectContaining({ maxBytes: 1024 * 1024, signal: expect.any(AbortSignal), timeoutMs: 15_000 }));
     expect(api.get).toHaveBeenCalledOnce();
   });

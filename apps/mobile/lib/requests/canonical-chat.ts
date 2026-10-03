@@ -121,7 +121,9 @@ export function fetchChatProviderCatalog(
 ): Promise<CanonicalProviderCatalog> {
   let url: string;
   try {
-    url = buildGatewayRequestUrl(computerGatewayUrl, "/api/chat-providers");
+    url = buildGatewayRequestUrl(computerGatewayUrl, "/api/chat-providers", {
+      includeConnectionLabels: "true", includeConnectionState: "true", includeFundingState: "true",
+    });
   } catch {
     return Promise.reject(new Error(PROVIDER_CATALOG_ERROR));
   }

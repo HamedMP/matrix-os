@@ -1,3 +1,4 @@
+import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
 import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
@@ -34,7 +35,7 @@ import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
-import { managedChatInstances } from "./managed-chat-catalog.js";
+import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
 
 const ADAPTER_VERSION = "1.0.0";
@@ -77,7 +78,7 @@ export interface CodingModelCatalogProjection {
 }
 
 export interface ChatProviderCatalogService {
-  getCatalog(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
+  getCatalog(principal: RequestPrincipal, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog>;
   refresh(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
 }
 
@@ -97,7 +98,7 @@ function driverDisplayName(kind: CanonicalProviderDriverKind): string {
   if (kind === "claude_code") return "Claude Code";
   if (kind === "openclaw") return "OpenClaw";
   if (kind === "opencode") return "OpenCode";
-  if (kind === "pi") return "Pi";
+  if (kind === "pi" || kind === "matrix_pi") return "Pi";
   return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
@@ -629,7 +630,7 @@ export function createChatProviderCatalogService(options: {
         systemRepairAction,
         now: options.now?.() ?? new Date(),
         instances: [
-        ...managedChatInstances(aiSnapshot, skills),
+        ...managedPiChatInstances(aiSnapshot, (options.now?.() ?? new Date()).getTime()),
         ...systemInstances,
         ...completeCodingInstances,
         ],
@@ -651,6 +652,7 @@ export function createChatProviderCatalogService(options: {
       }
       const driverKinds: CanonicalProviderDriverKind[] = [
         ...(instances.some((instance) => instance.driverKind === "kernel") ? ["kernel" as const] : []),
+        ...(instances.some((instance) => instance.driverKind === "matrix_pi") ? ["matrix_pi" as const] : []),
         ...SYSTEM_DRIVERS,
         ...CODING_DRIVERS,
       ];
@@ -658,7 +660,7 @@ export function createChatProviderCatalogService(options: {
         kind,
         displayName: driverDisplayName(kind),
         adapterVersion: ADAPTER_VERSION,
-        capabilityClass: kind === "kernel" || SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
+        capabilityClass: kind === "matrix_pi" || kind === "kernel" || SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
           ? "system_agent" as const
           : "coding_agent" as const,
       }));
@@ -754,6 +756,9 @@ export function validateChatProviderSelection(input: {
       "This Chat is already bound to another Provider instance.",
       ["fork_chat", "start_new_chat"],
     );
+  }
+  if (isRetiredMatrixSdkInstance(selection.data.instanceId)) {
+    return { ok: false, error: matrixSdkRetirementError() };
   }
   const instance = input.catalog.instances.find((candidate) =>
     candidate.id === selection.data.instanceId

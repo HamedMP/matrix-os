@@ -19,10 +19,12 @@ export function createChatProviderRoutes(options: {
         refresh: z.enum(["true", "false"]).optional(),
         includeConnectionLabels: z.enum(["true", "false"]).optional(),
         includeConnectionState: z.enum(["true", "false"]).optional(),
+        includeFundingState: z.enum(["true", "false"]).optional(),
       }).strict().safeParse({
         refresh: context.req.query("refresh"),
         includeConnectionLabels: context.req.query("includeConnectionLabels"),
         includeConnectionState: context.req.query("includeConnectionState"),
+        includeFundingState: context.req.query("includeFundingState"),
       });
       if (!query.success) return context.json({ error: "Invalid request" }, 400);
       const catalog = query.data.refresh === "true"
@@ -35,7 +37,10 @@ export function createChatProviderRoutes(options: {
         instances: catalog.instances.map(({ connectionLabel, connectionState, ...legacy }) => ({
           ...legacy,
           ...(query.data.includeConnectionLabels === "true" && connectionLabel !== undefined ? { connectionLabel } : {}),
-          ...(query.data.includeConnectionState === "true" && connectionState !== undefined ? { connectionState } : {}),
+          ...(query.data.includeConnectionState === "true" && connectionState !== undefined ? {
+            connectionState: connectionState === "credit_reserved" && query.data.includeFundingState !== "true"
+              ? "credit_required" : connectionState,
+          } : {}),
         })),
       });
     } catch (error: unknown) {

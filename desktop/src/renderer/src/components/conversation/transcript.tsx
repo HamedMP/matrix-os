@@ -402,11 +402,14 @@ function ConversationTurn({
 }) {
   const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
   const rootKind = turn.executionRoot?.kind;
-  const rootProjectId = turn.executionRoot?.projectId;
+  const rootProjectId = turn.executionRoot && turn.executionRoot.kind !== "bot_workspace" ? turn.executionRoot.projectId : undefined;
+  const rootBotId = turn.executionRoot?.kind === "bot_workspace" ? turn.executionRoot.botId : undefined;
   const rootWorktreeId = turn.executionRoot?.kind === "worktree" ? turn.executionRoot.worktreeId : undefined;
-  const appRoot = useMemo(() => rootKind && rootProjectId
-    ? rootKind === "worktree" ? { kind: rootKind, projectId: rootProjectId, worktreeId: rootWorktreeId! } : { kind: rootKind, projectId: rootProjectId }
-    : undefined, [rootKind, rootProjectId, rootWorktreeId]);
+  const appRoot = useMemo(() => rootKind === "bot_workspace" && rootBotId
+    ? { kind: rootKind, botId: rootBotId }
+    : rootKind && rootKind !== "bot_workspace" && rootProjectId
+      ? rootKind === "worktree" ? { kind: rootKind, projectId: rootProjectId, worktreeId: rootWorktreeId! } : { kind: rootKind, projectId: rootProjectId }
+      : undefined, [rootKind, rootProjectId, rootWorktreeId, rootBotId]);
   const resolveRunApp = useCallback((path: string) => callbacks.resolveApp?.(path, appRoot) ?? null, [callbacks.resolveApp, appRoot]);
   const openRunApp = useCallback((path: string) => callbacks.openApp?.(path, appRoot) ?? false, [callbacks.openApp, appRoot]);
   const fileCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile

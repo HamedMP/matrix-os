@@ -1,6 +1,6 @@
 import { mergeCanonicalChatRecord } from "@matrix-os/ui";
 import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
-import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
 import { ChatSharingButton } from "../chat/ChatSharingButton";
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
@@ -277,7 +277,7 @@ function WorkTabContent({
     if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")), {
+        return api.openStream(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events"))), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,
@@ -707,6 +707,10 @@ function WorkTabContent({
         ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
         : null;
 
+  const openBotChat = useCallback((chatId: string) => {
+    showChat(layout === "narrow");
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatId, chatView: "conversation", closable: false });
+  }, [layout, showChat]);
   const navigationVisible = layout === "narrow" ? narrowPane === "rail" : navigationOpen;
   const navigationRail = useMemo(() => (
     <WorkRail
@@ -727,8 +731,9 @@ function WorkTabContent({
       onChatRenamed={applyRenamedChat}
       onOpenAgents={() => { if (layout === "narrow") showChat(); }}
       onStartAgentChat={openAgentDraft}
+      onOpenBotChat={openBotChat}
     />
-  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat, layout, showChat]);
+  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openBotChat, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat, layout, showChat]);
   const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
     ? sharedScopeId ? <span className="block min-w-0 max-w-full truncate" title={activeChatTitle}>{activeChatTitle}</span>
       : editingChatTitle ? (
@@ -886,7 +891,8 @@ function WorkTabContent({
             ? "hidden"
             : "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"}
         >
-          <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}>
+          <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
+            onOpenBotChat={openBotChat}>
             {content}
             {draftInspector}
           </ChatAgentsContent>

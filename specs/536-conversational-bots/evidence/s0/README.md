@@ -1,0 +1,7 @@
+# S0 local package probe — preliminary
+
+On 2026-09-28, the first synthetic local run failed all cases with zero returned usage. Pi's `createProvider()` exposes auth metadata but does not apply it when callers invoke `provider.streamSimple()` directly. The production bot loop and isolated probe both omitted `apiKey` from stream options. A one-token direct provider check returned HTTP 200 with 8 input and 1 output tokens (estimated USD 0.000013). The runtime fix passes only an inert bridge placeholder into production Pi streams; the broker retains the actual funded credential. The local probe injects the test key directly, outside the production worker.
+
+After the fix, the six existing synthetic cases passed in `2026-09-28T20-13-18-483Z.json`: text/tool, image, denied tool nonexecution, cancellation, context reconstruction, and compaction. Recorded model usage was USD 0.007670, for USD 0.007683 observed including the direct check. The first failed run is retained as `2026-09-28T20-10-34-067Z.json`; its zero-usage calls are reserved at USD 0.10 in the [spend ledger](../spend-budget.md) until provider reconciliation.
+
+This was a **local package probe**, not S0 profile qualification. It did not run inside the disposable VPS scope-runtime bot profile, measure its memory/CPU caps, test broker inference, or test steering. S0 remains open until those cases pass on the preview VPS. No customer data or account integration was used.

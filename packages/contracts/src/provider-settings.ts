@@ -52,7 +52,7 @@ export const ProviderSourceReadinessSchema = z.object({
   checkedAt: IsoTimestampSchema.nullable(),
   staleAfter: IsoTimestampSchema.nullable(),
   action: z.enum(["none", "connect", "enter_api_key", "open_terminal", "retry", "contact_owner"]),
-  safeReason: z.enum(["auth", "timeout", "rate_limited", "provider_unavailable", "policy", "credit_required", "unknown"]).nullable(),
+  safeReason: z.enum(["auth", "timeout", "rate_limited", "provider_unavailable", "policy", "credit_required", "credit_reserved", "unknown"]).nullable(),
 }).strict().superRefine((readiness, ctx) => {
   if (readiness.state === "ready" && readiness.action !== "none") {
     ctx.addIssue({ code: "custom", path: ["action"], message: "Ready sources cannot require an action" });

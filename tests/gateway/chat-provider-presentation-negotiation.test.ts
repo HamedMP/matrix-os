@@ -39,4 +39,25 @@ describe("Chat provider presentation negotiation", () => {
     const response = await routes.request("/api/chat-providers?includeConnectionState=yes");
     expect(response.status).toBe(400);
   });
+
+  it.each([
+    ["?includeConnectionState=true", "credit_required"],
+    ["?includeConnectionState=true&includeFundingState=true", "credit_reserved"],
+  ])("negotiates reserved-credit state without breaking existing negotiated clients: %s", async (query, expected) => {
+    const held = { ...catalog, instances: [{ ...instance, availability: "unavailable" as const,
+      connectionState: "credit_reserved" as const, defaultSelection: undefined,
+      models: instance.models.map(model => ({ ...model, availability: "unavailable" as const })) }] };
+    const server = createChatProviderRoutes({ catalog: { getCatalog: async () => held, refresh: async () => held },
+      getPrincipal: () => ({ userId: "owner", source: "jwt" }) });
+    const response = await server.request(`/api/chat-providers${query}`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.instances[0]).toMatchObject({ connectionState: expected, availability: "unavailable",
+      models: [{ availability: "unavailable" }] });
+    expect(body.instances[0].defaultSelection).toBeUndefined();
+    expect(held.instances[0]!.connectionState).toBe("credit_reserved");
+  });
+  it("rejects an invalid funding-state capability", async () => {
+    expect((await routes.request("/api/chat-providers?includeFundingState=yes")).status).toBe(400);
+  });
 });

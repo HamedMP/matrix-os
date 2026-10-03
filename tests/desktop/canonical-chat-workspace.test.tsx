@@ -416,11 +416,14 @@ describe("CanonicalChatWorkspace", () => {
   });
 
   it("keeps the focused prompt editable during a background full refresh", async () => {
-    let listener: ((event: CanonicalChatInvalidation) => void) | undefined;
+    const listeners: Array<(event: CanonicalChatInvalidation) => void> = [];
     const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
       subscribe(next) {
-        listener = next;
-        return { dispose: () => { listener = undefined; } };
+        listeners.push(next);
+        return { dispose: () => {
+          const index = listeners.indexOf(next);
+          if (index !== -1) listeners.splice(index, 1);
+        } };
       },
     };
     let resolveRefresh!: (value: { items: typeof record[] }) => void;
@@ -428,7 +431,7 @@ describe("CanonicalChatWorkspace", () => {
       resolveRefresh = resolve;
     });
     const routeClient = client();
-    render(
+    const { unmount } = render(
       <CanonicalChatWorkspace
         client={routeClient}
         projectId="matrix-os"
@@ -443,12 +446,14 @@ describe("CanonicalChatWorkspace", () => {
     prompt.focus();
     vi.mocked(routeClient.list).mockImplementationOnce(() => refresh);
 
-    act(() => listener?.({ type: "chat.full_refresh", cursor: 2 }));
+    act(() => listeners.slice().forEach((listener) => listener({ type: "chat.full_refresh", cursor: 2 })));
     await waitFor(() => expect(routeClient.list).toHaveBeenCalledTimes(2));
 
     expect(prompt.getAttribute("contenteditable")).toBe("true");
     expect(document.activeElement).toBe(prompt);
     await act(async () => resolveRefresh({ items: [record] }));
+    unmount();
+    expect(listeners).toEqual([]);
   });
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {

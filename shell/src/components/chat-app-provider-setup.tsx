@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import {
   CanonicalProviderCatalogSchema,
@@ -15,6 +15,8 @@ import {
   HarnessIcon,
   deriveCanonicalProviderChoices,
   type CanonicalProviderChoice,
+  canonicalChatProviderCatalogPath,
+  canonicalProviderUnavailableSelectionLabel,
 } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
@@ -106,6 +108,8 @@ export function useChatProviderState(
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
+  const refreshRef = useRef<() => void>(() => undefined);
+  const requestRefresh = useCallback(() => refreshRef.current(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,16 +119,19 @@ export function useChatProviderState(
     const refresh = async (force = false) => {
       forcePending = forcePending || force;
       if (refreshing) {
-        pending = true;
+        // Focus/visibility belong to the read already in progress. Only an
+        // explicit post-change refresh must queue a newer observation.
+        pending = pending || force;
         return;
       }
       refreshing = true;
+      if (!cancelled) setLoading(true);
       do {
         pending = false;
         const forceRefresh = forcePending;
         forcePending = false;
         try {
-          const response = await fetch(`${getGatewayUrl()}${forceRefresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true" : "/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true"}`, {
+          const response = await fetch(`${getGatewayUrl()}${canonicalChatProviderCatalogPath(forceRefresh)}`, {
             signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
           });
           if (!response.ok) throw new Error("ProviderCatalogUnavailable");
@@ -137,21 +144,23 @@ export function useChatProviderState(
           console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
           if (!cancelled) setUnavailable(true);
         }
-        if (!cancelled) setLoading(false);
       } while (!cancelled && pending);
       refreshing = false;
+      if (!cancelled) setLoading(false);
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refresh();
     };
     const onFocus = () => { void refresh(); };
     const onSettingsChange = () => { void refresh(true); };
+    refreshRef.current = () => { void refresh(true); };
     void refresh();
     window.addEventListener("focus", onFocus);
     window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
+      refreshRef.current = () => undefined;
       window.removeEventListener("focus", onFocus);
       window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
       document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -237,7 +246,13 @@ export function useChatProviderState(
     });
   };
 
-  const activeInstance = catalog?.instances.find((instance) => instance.id === selected?.instanceId) ?? null;
+  const displaySelection = selected ? { instanceId: selected.instanceId, modelId: selected.modelId }
+    : currentSelection ? { instanceId: currentSelection.instanceId, modelId: currentSelection.model } : null;
+  const activeInstance = catalog?.instances.find((instance) => instance.id === displaySelection?.instanceId) ?? null;
+  const displayModelLabel = selected?.modelLabel
+    ?? activeInstance?.models.find(model => model.id === displaySelection?.modelId)?.displayName
+    ?? currentSelection?.model;
+  const selectionStatus = currentSelection && !selected ? canonicalProviderUnavailableSelectionLabel(activeInstance, currentSelection.model) : null;
   return {
     catalog,
     choices,
@@ -247,8 +262,12 @@ export function useChatProviderState(
     selectPermissionMode,
     selectOption,
     loading,
+    refresh: requestRefresh,
     unavailable,
     activeInstance,
+    displaySelection,
+    displayModelLabel,
+    selectionStatus,
   };
 }
 
@@ -260,6 +279,7 @@ export function ChatProviderSetupPanel({
   catalog,
   choices,
   selected,
+  displaySelection,
   onSelect,
   onInteractionModeChange,
   onPermissionModeChange,
@@ -270,10 +290,12 @@ export function ChatProviderSetupPanel({
   channels,
   onToggleChannel,
   onDismiss,
+  loading = false,
 }: {
   catalog: CanonicalProviderCatalog | null;
   choices: CanonicalProviderChoice[];
   selected: CanonicalProviderChoice | null;
+  displaySelection?: Pick<CanonicalProviderChoice, "instanceId" | "modelId"> | null;
   onSelect: (choice: CanonicalProviderChoice) => void;
   onInteractionModeChange: (mode: string) => void;
   onPermissionModeChange: (mode: string) => void;
@@ -287,8 +309,10 @@ export function ChatProviderSetupPanel({
   channels: Set<string>;
   onToggleChannel: (channel: string) => void;
   onDismiss: () => void;
+  loading?: boolean;
 }) {
   const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => { panelRef.current?.focus(); }, []);
   useEffect(() => {
     const dismiss = (event: PointerEvent) => {
       const target = event.target;
@@ -299,7 +323,7 @@ export function ChatProviderSetupPanel({
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [onDismiss]);
   return (
-    <section ref={panelRef} role="dialog" aria-label="Choose model and connection"
+    <section ref={panelRef} tabIndex={-1} role="dialog" aria-label="Choose model and connection"
       onKeyDown={(event) => { if (event.key === "Escape") {
         event.stopPropagation();
         panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
@@ -309,8 +333,8 @@ export function ChatProviderSetupPanel({
       style={{ maxHeight: "min(520px, calc(100% - 72px))" }}>
       <div className="grid min-w-0 gap-3">
         <div>
-          <CompactChatProviderChoices catalog={catalog ?? undefined} choices={choices} selected={selected} lockedInstanceId={lockedInstanceId}
-            renderDriverIcon={(kind) => kind === "kernel" || kind === "matrix_pi" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
+          <CompactChatProviderChoices loading={loading} catalog={catalog ?? undefined} choices={choices} selected={displaySelection ?? selected} lockedInstanceId={lockedInstanceId}
+            renderDriverIcon={(kind) => kind === "kernel" || kind === "matrix_bot" || kind === "matrix_pi" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
               dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("matrix-chat-rabbit-mark") }} /> : (
               <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">
                 <HarnessIcon harness={kind === "claude_code" ? "claude" : kind} />
@@ -322,7 +346,7 @@ export function ChatProviderSetupPanel({
               panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
               onDismiss();
             }} />
-          {!catalog && choices.length === 0 ? <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
+          {!loading && !catalog && choices.length === 0 ? <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
             Connect a harness in Settings to start chatting.
           </p> : null}
           {selected ? (

@@ -64,6 +64,8 @@ export const CanonicalProviderDriverKindSchema = z.enum([
   "claude_code",
   "opencode",
   "pi",
+  "matrix_bot",
+  "matrix_pi",
 ]);
 
 export const CanonicalChatExecutionRootRefSchema = z.discriminatedUnion("kind", [
@@ -76,7 +78,17 @@ export const CanonicalChatExecutionRootRefSchema = z.discriminatedUnion("kind", 
     projectId: canonicalReferenceId(160),
     worktreeId: canonicalReferenceId(128),
   }).strict(),
+  /** A recipe bot's private workspace; the gateway derives its path from owner and bot id. */
+  z.object({
+    kind: z.literal("bot_workspace"),
+    botId: z.string().regex(/^bot_[a-z0-9]{8,64}$/),
+  }).strict(),
 ]);
 
 export type CanonicalProviderDriverKind = z.infer<typeof CanonicalProviderDriverKindSchema>;
 export type CanonicalChatExecutionRootRef = z.infer<typeof CanonicalChatExecutionRootRefSchema>;
+
+/** Project that owns an execution root; bot workspaces belong to no Project. */
+export function canonicalExecutionRootProjectId(root: CanonicalChatExecutionRootRef): string | undefined {
+  return root.kind === "bot_workspace" ? undefined : root.projectId;
+}

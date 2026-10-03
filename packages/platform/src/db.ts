@@ -117,6 +117,7 @@ export interface AiFundedRuntimePoliciesTable {
   monthly_budget_microusd: number;
   expires_at: string | null;
   next_issue_at: string;
+  next_background_issue_at: Generated<string>;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -133,9 +134,21 @@ export interface AiRuntimeCredentialsTable {
   issued_at: string;
   expires_at: string;
   revoked_at: string | null;
+  request_class: Generated<"interactive" | "background">;
+}
+
+export interface AiFundedPriorityClaimsTable {
+  owner_id: string;
+  machine_id: string;
+  runtime_slot: string;
+  claim_key: Generated<string>;
+  billing_mode: "usage" | "hold";
+  created_at: string;
+  expires_at: string;
 }
 
 export interface AiFundedUsageReservationsTable {
+  execution_admission_release: Generated<string | null>;
   reservation_id: string;
   request_id: string;
   payload_hash: string;
@@ -778,6 +791,7 @@ export interface PlatformDatabase {
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
+  ai_funded_priority_claims: AiFundedPriorityClaimsTable;
   ai_funded_usage_reservations: AiFundedUsageReservationsTable;
   ai_funded_reservation_promotional_allocations: AiFundedReservationPromotionalAllocationsTable;
   ai_funded_credit_ledger: AiFundedCreditLedgerTable;

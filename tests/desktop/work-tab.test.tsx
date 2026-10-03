@@ -232,6 +232,25 @@ function activeWorkTab() {
 }
 
 describe("WorkTab rail integration", () => {
+  it("creates a recipe bot and navigates to its saved Chat from the real WorkTab", async () => {
+    const api = useConnection.getState().api!;
+    const originalGet = api.get;
+    api.get = vi.fn(async (path: string) => {
+      if (path === "/api/chat-agents/bot-recipes") return { recipes: [{ recipeId: "competitor-watch", version: "1", name: "Competitor Watch", description: "Watch pages", output: "Change report" }] };
+      return originalGet(path);
+    }) as typeof api.get;
+    api.post = vi.fn(async () => ({ chatId: "chat_bot_created", operation: "created", agent: { id: "bot_competitor1", name: "Competitor Watch", avatarSeed: "a".repeat(16), revision: 1, status: "active" } })) as typeof api.post;
+    render(<WorkTab route="chat" active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    const recipe = (await screen.findByText("Watch pages")).closest("article")!;
+    const create = within(recipe).getByRole("button", { name: "Use Competitor Watch" });
+    expect((create as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(create);
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    await waitFor(() => expect(activeWorkTab()?.chatId).toBe("chat_bot_created"));
+    expect(activeWorkTab()?.chatView).toBe("conversation");
+  });
+
   beforeEach(() => {
     resizeObserverEntries.length = 0;
     inspectorProps.active = [];

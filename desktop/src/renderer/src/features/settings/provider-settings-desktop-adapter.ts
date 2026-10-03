@@ -10,7 +10,7 @@ import {
   type ProviderSettingsSnapshot,
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
-import { openProviderAgentSetup } from "@matrix-os/ui";
+import { openProviderAgentSetup, canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath } from "@matrix-os/ui";
 import type {
   ProviderSettingsTransport,
   ProviderSettingsTransportErrorCode,
@@ -23,8 +23,6 @@ import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stor
 import { useTabs } from "../../stores/tabs";
 import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 
-const PROVIDER_SETTINGS_PATH = "/api/ai/provider-settings";
-const PROVIDER_SETTINGS_ACTIONS_PATH = "/api/ai/provider-settings/actions";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MUTATION_BYTES = 64 * 1024;
 const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
@@ -58,7 +56,7 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
   return {
     async getSnapshot(signal, options = {}) {
       try {
-        const value = await api.get<unknown>(`${PROVIDER_SETTINGS_PATH}?includeCapabilities=true${options.refresh ? "&refresh=true" : ""}`, {
+        const value = await api.get<unknown>(providerSettingsSnapshotPath(options.refresh), {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
           timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs,
@@ -78,7 +76,7 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
         throw new DesktopProviderSettingsTransportError("invalid_request");
       }
       try {
-        const value = await api.post<unknown>(`${PROVIDER_SETTINGS_ACTIONS_PATH}?includeCapabilities=true`, mutation.data, {
+        const value = await api.post<unknown>(providerSettingsActionsPath, mutation.data, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
         });
@@ -148,7 +146,7 @@ export async function openDesktopProviderAgentSetup(
 ): Promise<boolean> {
   return openProviderAgentSetup({
     harness,
-    getCatalog: () => api.get("/api/chat-providers?refresh=true&includeConnectionLabels=true", {
+    getCatalog: () => api.get(canonicalChatProviderCatalogPath(true), {
       maxBytes: MAX_RESPONSE_BYTES, timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs,
       signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
     }),

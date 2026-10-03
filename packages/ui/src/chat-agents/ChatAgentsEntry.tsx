@@ -1,7 +1,8 @@
+import { matrixBotModelChoices } from "./bots/MatrixBotModelField.js";
 import { isChatAgentDriver } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type BotRecipeSummary, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { accountForNewIntegration } from "./recipe-integrations.js";
@@ -48,7 +49,7 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
 }) {
   if (state.loading) return <p role="status" className="mt-5 text-sm">Loading Agents…</p>;
   if (!state.enabled) return <p className="mt-5 text-sm">Agents are disabled for this computer.</p>;
-  if (state.draft && state.editing) return <AgentEditor draft={state.draft} editing={state.editing} pending={state.pending} models={models}
+  if (state.draft && state.editing) return <AgentEditor draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog}
     recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
     connectionError={state.connectionError}
     change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRetryRecipe={retryRecipes} />;
@@ -58,7 +59,7 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={muted}>Agent library</p>
             <h3 id="agent-team-heading" className="mt-2 text-2xl font-semibold tracking-[-0.035em]">Your AI team</h3>
-            <p className="mt-2 max-w-xl text-sm leading-6" style={muted}>Create specialists with their own role, skills, and connected tools—then bring them into any Chat with @.</p>
+            <p className="mt-2 max-w-xl text-sm leading-6" style={muted}>Open recipe bots in their own Chat, or bring custom specialists into a Chat with @.</p>
           </div>
           <div className="matrix-chat-agents-presence flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs">
             <span className="relative flex h-2.5 w-2.5" aria-hidden="true"><span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500/25" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" /></span>
@@ -85,7 +86,7 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
         <button type="button" className={button} onClick={retryRecipes}>Retry recipe options</button></div> : null}
       <section aria-labelledby="agent-roster-heading" className="grid gap-3">
         <div><h3 id="agent-roster-heading" className="text-base font-semibold tracking-[-0.015em]">Your collaborators</h3>
-          <p className="mt-1 text-xs" style={muted}>Specialists you can mention in any Chat.</p></div>
+          <p className="mt-1 text-xs" style={muted}>Recipe bots have their own Chat; custom specialists can be mentioned with @.</p></div>
         {!state.agents.length && !state.error ? <div className="matrix-chat-agents-empty rounded-2xl border border-dashed px-5 py-8 text-center"><p className="text-sm font-medium">Your team is waiting to take shape.</p><p className="mx-auto mt-1 max-w-md text-xs leading-5" style={muted}>Create a reusable specialist for briefs, reviews, research, or any work you repeat.</p></div> : null}
         <div className="grid gap-3 sm:grid-cols-2">
         {state.agents.map((agent) => {
@@ -96,8 +97,8 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
             : "Custom instructions";
           return <button key={agent.id} type="button" aria-label={`Edit ${agent.name}`} data-agent-card="saved" className={`${button} matrix-chat-agent-card group min-h-36 min-w-0 max-w-full overflow-hidden rounded-2xl p-4 text-left`} onClick={() => edit(agent)}>
             <span className="matrix-chat-agent-card__content flex h-full min-w-0 flex-col justify-between gap-5">
-              <span className="flex min-w-0 items-start gap-3"><AgentAvatar id={agent.id} name={agent.name} /><span className="min-w-0 flex-1"><span className="flex min-w-0 items-center gap-2"><span className="min-w-0 flex-1 truncate text-base font-semibold" title={agent.name}>{agent.name}</span><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" title="Ready to mention" aria-hidden="true" /></span><span className="mt-1.5 block w-full min-w-0 text-xs leading-5" title={agent.description} style={muted}>{agent.description || "Saved specialist"}</span></span></span>
-              <span className="flex min-w-0 flex-wrap items-center gap-2 text-[11px]"><span className="matrix-chat-agent-mention max-w-full truncate rounded-full px-2 py-1 font-medium">@{agent.name}</span><span className="matrix-chat-agent-chip truncate rounded-full border px-2 py-1" style={muted}><span className="sr-only">Ready to mention · </span>{capabilitySummary}</span></span>
+              <span className="flex min-w-0 items-start gap-3"><AgentAvatar id={agent.id} name={agent.name} /><span className="min-w-0 flex-1"><span className="flex min-w-0 items-center gap-2"><span className="min-w-0 flex-1 truncate text-base font-semibold" title={agent.name}>{agent.name}</span><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" title={agent.recipeRef ? "Bot Chat" : "Ready to mention"} aria-hidden="true" /></span><span className="mt-1.5 block w-full min-w-0 text-xs leading-5" title={agent.description} style={muted}>{agent.description || "Saved specialist"}</span></span></span>
+              <span className="flex min-w-0 flex-wrap items-center gap-2 text-[11px]"><span className="matrix-chat-agent-mention max-w-full truncate rounded-full px-2 py-1 font-medium">{agent.recipeRef ? "Own Chat" : `@${agent.name}`}</span><span className="matrix-chat-agent-chip truncate rounded-full border px-2 py-1" style={muted}><span className="sr-only">{agent.recipeRef ? "Bot Chat · " : "Ready to mention · "}</span>{agent.recipeRef ? "Recipe bot" : capabilitySummary}</span></span>
             </span>
           </button>;
         })}
@@ -106,12 +107,24 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
     </div>;
 }
 
-export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, onStartChat }: { client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void; onStartChat?: StartAgentChat }) {
+export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat }: {
+  client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void;
+  onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void;
+}) {
   const heading = useRef<HTMLHeadingElement>(null);
   const jevCreateAttempt = useRef<{ accountLabel: string; selectionKey: string; requestId: string } | null>(null);
   const [state, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
     recipeCatalog: null, connections: [], recipeLoading: true, recipeError: "", connectionError: "" });
+  const [botRecipes, setBotRecipes] = useState<BotRecipeSummary[]>([]);
+  useEffect(() => {
+    if (!client.bots) return;
+    let current = true;
+    void client.bots.recipes().then((recipes) => { if (current) setBotRecipes(recipes); }).catch((failure: unknown) => {
+      console.warn("[chat-agents] Bot recipes unavailable:", failure instanceof Error ? failure.name : "UnknownError");
+    });
+    return () => { current = false; };
+  }, [client]);
   useEffect(() => { heading.current?.focus(); }, [state.editing]);
   const patch = (value: Partial<Library>) => setState((current) => ({ ...current, ...value }));
   useEffect(() => {
@@ -243,8 +256,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
   };
   const save = async () => {
     const draft = state.draft;
+    const recipeBot = state.editing !== null && state.editing !== "new" && Boolean(state.editing.recipeRef);
     if (state.pending || !draft?.selection || !draft.name.trim() || !draft.instructions.trim()
-      || (draft.recipe !== undefined && draft.recipe !== null && (!ChatAgentRecipeSchema.safeParse(draft.recipe).success
+      || (!recipeBot && draft.recipe !== undefined && draft.recipe !== null && (!ChatAgentRecipeSchema.safeParse(draft.recipe).success
         || !recipeSkillsFit(draft.recipe.skills, state.recipeCatalog?.skills ?? [])))) return;
     patch({ pending: true, error: "" });
     try {
@@ -253,10 +267,11 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
         ? await client.create({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) })
         : await client.update(state.editing!.id, { ...fields,
           ...(JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
-          ...(draft.recipe === undefined ? {} : { recipe: draft.recipe }) });
+          ...(recipeBot || draft.recipe === undefined ? {} : { recipe: draft.recipe }) });
       setState((current) => ({ ...current, pending: false, editing: null, draft: null,
         agents: [...current.agents.filter((agent) => agent.id !== saved.id), saved],
-        notice: `Saved. Type @${saved.name} in a Chat to give this Agent a request.`,
+        notice: recipeBot ? "Saved. Open this bot’s Chat from the sidebar to send a request."
+          : `Saved. Type @${saved.name} in a Chat to give this Agent a request.`,
       }));
     } catch (failure: unknown) {
       console.warn("[chat-agents] Save failed:", failure instanceof Error ? failure.name : "UnknownError");
@@ -285,6 +300,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     </header>
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
+      matrixModels={matrixBotModelChoices(models)} catalog={state.catalog} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? (chatId) => { onClose(); onOpenBotChat(chatId); } : undefined}
+      onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection) =>
+        (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}) })).chatId : undefined}
       onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
     <AgentLibraryBody state={state} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")

@@ -15,14 +15,16 @@ import {
 const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
-function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean): ProviderSettingsSnapshot {
-  const publicSnapshot = { ...snapshot, harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness) };
+function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeFundingState: boolean): ProviderSettingsSnapshot {
+  const publicSnapshot = { ...snapshot, harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness),
+    accessSources: snapshot.accessSources.map(source => source.readiness.safeReason === "credit_reserved" && !includeFundingState
+      ? { ...source, readiness: { ...source.readiness, safeReason: "credit_required" as const } } : source) };
   if (include) return { ...publicSnapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
     && snapshot.supportedActions.includes("set_harness_enabled") };
   return {
     ...publicSnapshot,
     harnesses: publicSnapshot.harnesses.map(({ configuredEnabled: _configuredEnabled, configuredAccessSourceId: _configuredAccessSourceId, localObservation: _localObservation, ...harness }) => harness),
-    accessSources: snapshot.accessSources.map(({ localObservation: _localObservation, ...source }) => source),
+    accessSources: publicSnapshot.accessSources.map(({ localObservation: _localObservation, ...source }) => source),
   };
 }
 const DeleteAccountBodySchema = z.object({
@@ -150,9 +152,10 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (authError) return authError;
     const refresh = RefreshQuerySchema.safeParse(context.req.query("refresh"));
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
-    if (!refresh.success || !capabilities.success) return invalidRequest(context);
+    const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
+    if (!refresh.success || !capabilities.success || !fundingState.success) return invalidRequest(context);
     try {
-      return context.json(withCapabilities(await options.store.getSnapshot({ refresh: refresh.data === "true" }), capabilities.data === "true"));
+      return context.json(withCapabilities(await options.store.getSnapshot({ refresh: refresh.data === "true" }), capabilities.data === "true", fundingState.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -162,12 +165,13 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const authError = authorize(context, options);
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
-    if (!capabilities.success) return invalidRequest(context);
+    const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
+    if (!capabilities.success || !fundingState.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse(await readJson(context));
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", fundingState.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -177,7 +181,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const authError = authorize(context, options);
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
-    if (!capabilities.success) return invalidRequest(context);
+    const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
+    if (!capabilities.success || !fundingState.success) return invalidRequest(context);
     const body = DeleteAccountBodySchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse({
@@ -191,7 +196,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", fundingState.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }

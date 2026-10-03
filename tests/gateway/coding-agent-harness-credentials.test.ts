@@ -142,6 +142,7 @@ describe("coding harness credential resolution", () => {
       { UPGRADE_TOKEN: "platform-secret" },
       "matrix_included",
       undefined,
+      { requestClass: "interactive" },
     );
   });
 

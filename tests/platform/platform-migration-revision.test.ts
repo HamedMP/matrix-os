@@ -13,7 +13,9 @@ describe("platform schema revision", () => {
     for (const file of files) {
       digest.update(file).update("\0").update(await readFile(`${base}/${file}`)).update("\0");
     }
-    expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(0);
+    // Generation 10 was deployed by the funded execution-recovery preview.
+    // The merged core source must advance past it rather than conflict or skip.
+    expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(10);
     expect(PLATFORM_SCHEMA_REVISION.fingerprint).toBe(digest.digest("hex"));
   });
 });

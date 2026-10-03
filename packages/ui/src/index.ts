@@ -40,9 +40,11 @@ export {
 
 export {
   canonicalProviderAvailabilityLabel,
+  canonicalProviderUnavailableSelectionLabel,
   deriveCanonicalProviderChoices,
   orderCanonicalProviderInstancesForDefault,
 } from "./canonical-provider-choice.js";
+export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath } from "./provider-projection-paths.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 export {
   ChatEventFrameTooLarge,
@@ -149,6 +151,7 @@ export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from
 export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection, type ChatAgentDraftRequest, type StartAgentChat } from "./chat-agents/client.js";
 export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgentsEntry.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
+export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
 export { chatResourceKey, isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
@@ -193,3 +196,6 @@ export { CompanyDriveContextPicker } from "./organization-drive/CompanyDriveCont
 
 export {companyDriveChatReference} from "./organization-drive/context-reference.js";
 export type {DriveChatContextSelection} from "./organization-drive/OrganizationDriveBrowser.js";
+
+export { useDirectBotChat } from "./chat-agents/bots/use-direct-bot-chat.js";
+export { ChatProviderLoadingIndicator } from "./chat-provider-loading-indicator.js";
