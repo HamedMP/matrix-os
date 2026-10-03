@@ -29,7 +29,7 @@ import {
   utcMonthStart,
 } from "./ai-funded-metering-helpers.js";
 import { evaluateFundedPriority, findConflictingActiveReservation, type FundedBillingMode } from "./ai-funded-priority-claims.js";
-import { reconcileExpiredPromotionalCredit, reserveFundingSources } from "./ai-funded-reservation-sources.js";
+import { fundingSourceAvailability, reconcileExpiredPromotionalCredit, reserveFundingSources } from "./ai-funded-reservation-sources.js";
 
 type AuthorizeOutcome =
   | { kind: "authorized"; response: FundedAiAuthorizationResponse }
@@ -125,7 +125,9 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         .selectAll().where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
       // Upper bounds ignore active holds, which may still be released. A request that
       // cannot fit even then fails now and never takes a priority place.
-      const creditCeiling = exactInteger(balance.credit_balance_microusd) - exactInteger(balance.funding_shortfall_microusd);
+      const sourceAvailability = await fundingSourceAvailability(trx.executor, identity, balance, checkedAt);
+      const creditCeiling = Math.min(sourceAvailability.ceilingMicrousd,
+        exactInteger(balance.credit_balance_microusd) - exactInteger(balance.funding_shortfall_microusd));
       const budgetCeiling = monthlyBudget - exactInteger(balance.month_spent_microusd);
       const ceilingHold = billingMode === "usage" ? 1 : request.maxCostMicrousd;
       if (ceilingHold > budgetCeiling) throw new AiFundedPolicyError("budget_exceeded");
@@ -148,14 +150,16 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       }
       let holdMicrousd = request.maxCostMicrousd;
       if (billingMode === "usage") {
-        const credit = exactInteger(balance.credit_balance_microusd) - exactInteger(balance.reserved_microusd)
-          - exactInteger(balance.funding_shortfall_microusd);
+        const credit = Math.min(sourceAvailability.availableMicrousd,
+          exactInteger(balance.credit_balance_microusd) - exactInteger(balance.reserved_microusd)
+            - exactInteger(balance.funding_shortfall_microusd));
         const budget = monthlyBudget - exactInteger(balance.month_spent_microusd)
           - exactInteger(balance.month_reserved_microusd);
         if (credit <= 0) throw new AiFundedPolicyError("insufficient_credit");
         if (budget <= 0) throw new AiFundedPolicyError("budget_exceeded");
         holdMicrousd = Math.min(holdMicrousd, credit, budget);
       }
+      if (holdMicrousd > sourceAvailability.availableMicrousd) throw new AiFundedPolicyError("insufficient_credit");
       const reserved = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         reserved_microusd: sql<number>`reserved_microusd + ${holdMicrousd}`,
         month_reserved_microusd: sql<number>`month_reserved_microusd + ${holdMicrousd}`,
