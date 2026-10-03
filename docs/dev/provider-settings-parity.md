@@ -507,3 +507,13 @@ first, applicable build/pattern gates, current visual evidence, and Greptile
 Do not claim a later layer in UI copy or documentation before its source of
 truth, security boundaries, tests, and all-shell behavior ship. Production
 activation and public product documentation are separate reviewed deliverables.
+
+## Reconstructed Settings delivery contract
+
+The grouped page preserves compatible account/source/model/route actions and explicitly server-advertised Terminal fallback inside collapsed Advanced configuration. Normal supported login stays in Settings, with browser consent when required. No Enable switch is exposed: successful explicit Connect enables its exact current route, while refresh preserves saved Off.
+
+Current Connected takes precedence over stale failed/expired receipts; active replacement remains Connecting. Change account and Disconnect stay disabled until replacement settles, while cancellation and supported recovery remain available. Private identity and quota resolve only from the selected native account/source, never an unrelated account. Confirmed Not installed is red; real OpenCode/Hermes/Pi/OpenClaw icons override design lettermarks. Remaining quota meters have rounded track/fill and fully used quota is empty.
+
+Buy credit stays visible. Typed unavailable purchase guidance is contextual inside its dialog; policy-disabled purchases cannot be enabled by refreshing. Authoritative spendable microUSD excludes reservations and positive sub-cent balances remain nonzero without rounding up to a cent. Model capabilities and offered inventory are display-only and never grant admission. Loaded history and checkout settlement remain bound to the current owner/runtime/source/callback lifetime, including late response and error rejection.
+
+System dark scrim/shadow tokens dim modal backgrounds without white glow. Disclosure motion is reversible and reduced-motion-aware, collapsed controls are inert, visited workflow drafts persist and async status updates preserve scroll. Cross-surface parity and exact-current Preview/Electron acceptance remain separate from synthetic fixture and historical screenshot evidence. See [Settings specification](../../specs/543-agents-providers-settings/spec.md).

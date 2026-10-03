@@ -620,3 +620,8 @@ captured workflow owner and exact harness/action target, rather than the identit
 of a newly allocated render callback; former-owner settlements cannot refresh a
 replacement connection. Saved reconnect admission also rejects expired and
 future-dated native observations during its fresh exact validation.
+## Final reconstructed Settings regression boundary
+
+The final grouped composition retains negotiated native identity, display-only Matrix inventory/capabilities, authoritative spendable microUSD, selected-account/source pairing and scoped history/checkout fences. Compatible unsupported-driver actions remain in collapsed Advanced configuration; normal supported auth stays in Settings. Current Connected overrides historical failed/expired receipts while active replacement remains Connecting and guards account-changing actions. No refresh enables saved Off.
+
+Final broad UI and synthetic Electron fixtures exercise the combined delivered stack. Historical screenshots/QA reports attest only their recorded older build and synthetic gateway. New acceptance records exact source/client/Preview provenance and separately verifies native auth, actual usage, real model replies and settled usage; fixture success cannot substitute for these gates. Public product documentation omits private account/runtime and operator authorization details.

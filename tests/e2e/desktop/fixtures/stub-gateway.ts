@@ -143,7 +143,7 @@ const TASKS = [
     linkedSessionId: null,
     linkedWorktreeId: null,
     previewIds: [],
-    tags: [],
+    tags: [] as string[],
     updatedAt: new Date(0).toISOString(),
     revision: 1,
   },
