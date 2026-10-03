@@ -32,7 +32,7 @@ Inside the existing transaction and owner advisory lock:
 
 1. Idempotent replay check (unchanged).
 2. Load live claims for the owner: `expires_at > now()`, ordered by `created_at`.
-3. Conflict test, unchanged: usage-mode conflicts with any active reservation, and other modes conflict with an active usage-mode reservation.
+3. Conflict test: usage-mode conflicts with any execution-active reservation, and other modes conflict with an execution-active usage-mode reservation. An explicit audited operator execution recovery may exclude one expired unresolved obligation from execution conflict checks; its complete financial hold remains protected. Neither timeouts nor expiry automatically exclude it.
 4. Class rules:
    - `background` and any live claim that would conflict with this request exists: reject with `rate_limited` and reason `priority_hold`.
    - `interactive` and a conflicting active reservation exists: upsert the claim for this runtime slot and claim key. On conflict, keep the existing `created_at` and `expires_at`, so a claim is never extended or moved back in line. Reject with `rate_limited` and reason `slot_busy`.
@@ -68,3 +68,51 @@ The existing reservation cleanup worker deletes claims whose `expires_at < now()
 | Pi and OpenCode harness credentials | interactive when attached to a foreground Chat turn; otherwise background |
 | Collaboration broker | class of the requesting turn |
 | Bot runs | background, except a turn that directly answers a waiting person's message in the bot's direct chat (interactive) |
+
+
+## Audited support recovery of unresolved execution
+
+`POST /api/operator/ai/funded/runtimes/:handle/policy-execution-release` is private
+operator support, authenticated solely with the Platform operator secret. It is
+not a Chat/runtime/Relay endpoint and accepts no query overrides. The strict body
+is limited to 4 KiB. The server derives owner/machine/runtime from the running,
+authorized handle and checks the separately supplied expected owner.
+
+The payload pins reservation/token/request IDs and immutable started/expiry
+timestamps; supplies a terminal local run ID/state/time, bounded evidence and
+reviewer references; explicitly accepts unknown upstream liability; and supplies
+an upper liability amount matching the reservation's saved `maxCostMicrousd`.
+Only an expired `in_flight` usage request with unknown actual cost is eligible.
+A full 15-minute maximum Relay lifetime plus a 1-minute grace must have elapsed
+since inference start, with at least 1 minute after the attested local run end.
+The supplied ceiling cannot exceed 500,000 microusd. This is administrative risk
+acceptance, not evidence that upstream execution stopped or that cost is zero.
+
+Under the existing owner advisory transaction lock, the transition stores one
+immutable `execution_admission_release` audit record. It leaves financial status
+`in_flight`, actual cost null, every balance/monthly reserve/source allocation,
+and debit ledger unchanged. Exact replay returns the recorded result; conflicting
+replay rejects. At most ONE audited still-unknown obligation per owner is allowed,
+enforced by both transaction checks and a partial unique PostgreSQL index.
+Other live executions prevent recovery. Ordinary authorization/start cannot replay
+an audited request into another inference dispatch.
+
+The durable `idx_ai_funded_usage_active_owner` index retains its name and excludes
+only audited execution releases. A transactional replacement preserves uniqueness
+through migration; older instances retain conservative admission checks and skip
+newer schema generations. Old code may block new execution beside an audited
+unknown obligation, so a runtime rollback can reduce availability. Older binaries
+do not implement the audit-aware authorization/start replay fences: schema
+compatibility alone does not prove dispatch safety on rollback. Keep a recovered
+owner's funded control-plane routing on recovery-aware binaries until exact
+settlement; do not roll that path back while its audited usage remains unknown.
+Financial protection still includes all
+in-flight reservations, even when the backing promotion expires. Late exact
+settlement remains once-only and cannot remove a newer execution slot.
+
+Required evidence: rejected ordinary/Relay/runtime auth and oversized/malformed
+bodies; exact identity, expiry/lifetime, non-usage and terminal-evidence refusal;
+unchanged financial/source state; replay fencing; one-unknown cap; actual independent
+PostgreSQL pools with one live execution; and late settlement preserving the newer
+slot. No automatic timeout unlock, fake exact charge, grant, or paid upstream call
+belongs to this support API.

@@ -36,6 +36,7 @@ export async function findConflictingActiveReservation(
   const active = await executor.selectFrom("ai_funded_usage_reservations")
     .select("reservation_id").where("owner_id", "=", ownerId)
     .where("status", "in", ["reserved", "starting", "in_flight", "settling"])
+    .where("execution_admission_release", "is", null)
     .$if(billingMode !== "usage", (query) => query.where(
       sql<boolean>`authorization_response::jsonb #>> '{reservation,billingMode}' = 'usage'`,
     )).limit(1).executeTakeFirst();

@@ -1,5 +1,6 @@
 import {
   FundedAiAuthorizationRequestSchema,
+  FundedAiExecutionRecoveryRequestSchema,
   FundedAiOperatorGlobalPolicyResponseSchema,
   FundedAiOperatorGlobalPolicyUpdateRequestSchema,
   FundedAiOperatorRuntimePolicyResponseSchema,
@@ -478,6 +479,21 @@ export function createAiFundedOperatorRoutes(options: {
     } catch (error) {
       return policyErrorResponse(c, error);
     }
+  });
+
+  app.post("/runtimes/:handle/policy-execution-release", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
+    const handle = HandleSchema.safeParse(c.req.param("handle"));
+    const query = EmptyQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+    const request = FundedAiExecutionRecoveryRequestSchema.safeParse(await readStrictJson(c));
+    if (!handle.success || !query.success || !request.success
+      || Date.parse(request.data.localRunEndedAt) > now().getTime()) return c.json(safeError("invalid_request"), 400);
+    try {
+      const machine = await getRunningUserMachineByHandle(options.db, handle.data);
+      if (!machine) return c.json(safeError("not_found"), 404);
+      return c.json(await options.repository.releaseExecutionAdmission({
+        ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
+      }, request.data), 200);
+    } catch (error) { return policyErrorResponse(c, error); }
   });
 
   app.post("/runtimes/:handle/promotional-grant", bodyLimit({ maxSize: RUNTIME_BODY_LIMIT }), async (c) => {

@@ -111,6 +111,53 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
       .resolves.toMatchObject({ authorized: true });
   });
 
+  it("serializes audited recovery and preserves one live execution across independent pools", async () => {
+    const authorization = await first.authorize({ credential: credentials[0], requestId: "recover_unknown",
+      modelId, maxCostMicrousd: 100, billingMode: "usage" });
+    const key = { reservationId: authorization.reservation.reservationId, tokenId: tokenIds[0] };
+    await first.startReservation(key);
+    const row = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    clock = new Date(clock.getTime() + 20 * 60_000);
+    const recovery = { ...key, expectedOwnerId: identities[0].ownerId,
+      expectedRequestId: "recover_unknown", expectedStartedAt: row.started_at!, expectedExpiresAt: row.expires_at,
+      maximumLiabilityMicrousd: 100, localRunId: "run_old", localRunState: "failed" as const,
+      localRunEndedAt: new Date(Date.parse(row.started_at!) + 10_000).toISOString(),
+      evidenceRef: "support:observed-terminal-run", reviewer: "operator:qa", acceptUnknownUpstreamLiability: true as const };
+    const recovered = await Promise.all([first.releaseExecutionAdmission(identities[0], recovery),
+      second.releaseExecutionAdmission(identities[0], recovery)]);
+    expect(recovered[0]).toEqual(recovered[1]);
+    expect(await first.getFundingSummary(identities[0])).toMatchObject({ reservedMicrousd: 100, settledThisMonthMicrousd: 0 });
+    const fresh = await Promise.all(identities.map((identity) => first.issueRuntimeCredential(identity)));
+    const attempts = await Promise.allSettled([
+      first.authorize({ credential: fresh[0].credential.token, requestId: "recovered_first", modelId, maxCostMicrousd: 100, billingMode: "usage" }),
+      second.authorize({ credential: fresh[1].credential.token, requestId: "recovered_second", modelId, maxCostMicrousd: 100, billingMode: "usage" }),
+    ]);
+    expect(attempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "rate_limited" } });
+    const live = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("execution_admission_release", "is", null).where("status", "in", ["reserved", "starting", "in_flight", "settling"]).execute();
+    expect(live).toHaveLength(1);
+    // Prove the durable constraints independently of application advisory locks.
+    await expect(secondDb.executor.insertInto("ai_funded_usage_reservations").values({
+      ...live[0], reservation_id: "forbidden_second_execution", request_id: "forbidden_second_execution",
+    }).execute()).rejects.toMatchObject({ code: "23505", constraint: "idx_ai_funded_usage_active_owner" });
+    const audited = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    await expect(secondDb.executor.insertInto("ai_funded_usage_reservations").values({
+      ...audited, reservation_id: "forbidden_second_unknown", request_id: "forbidden_second_unknown",
+    }).execute()).rejects.toMatchObject({ code: "23505", constraint: "idx_ai_funded_unknown_admission_owner" });
+    await first.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 40 });
+    await expect(second.authorize({ credential: fresh[0].credential.token, requestId: "still_live", modelId,
+      maxCostMicrousd: 100, billingMode: "usage" })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select(["status", "actual_microusd"])
+      .where("reservation_id", "=", live[0].reservation_id).executeTakeFirstOrThrow())
+      .toEqual({ status: "reserved", actual_microusd: null });
+    const indexes = await admin.query("SELECT indexname FROM pg_indexes WHERE schemaname=$1 AND tablename='ai_funded_usage_reservations'", [schema]);
+    expect(indexes.rows.map((value: { indexname: string }) => value.indexname)).toContain("idx_ai_funded_usage_active_owner");
+    expect(indexes.rows.map((value: { indexname: string }) => value.indexname)).toContain("idx_ai_funded_unknown_admission_owner");
+  });
+
   it("replays matching no-dispatch zero settlement across independent pools without releasing twice", async () => {
     await first.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
     await first.setRuntimePolicy({ identity: identities[0], expectedRevision: 1, enabled: true,

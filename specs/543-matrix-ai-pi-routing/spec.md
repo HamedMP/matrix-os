@@ -170,7 +170,9 @@ Native Pi, kernel and other instance identities remain excluded from this select
    500, transport failure, or errors after HTTP200/SSE remain conservative.
    Finalization retries reuse the same exact-zero reservation locator and never
    retry inference. Usage-mode conservative finalization retains its hold and
-   owner admission barrier until exact evidence arrives; this policy is unchanged.
+   owner admission barrier until exact evidence arrives, except the explicitly
+   audited operator execution recovery below. Financial holds never unlock
+   through that support transition.
 5. **Good / base / bad cases:** an unbound Pi Settings panel can show ready
    Sonnet while its Cloudflare anchor is unavailable. A saved unavailable source
    retains explicit intent. A complete known pre-stream rate rejection settles
@@ -468,3 +470,51 @@ Wrong: infer embedded SDK version from `pi --version`, replace a removed hook na
 without testing stop semantics, or put every Pi version on a release-age allowlist.
 Correct: verified official exact packages+lock, public1.0 APIs, aligned invocation
 certificates, preserved termination and exact immutable deployed worker evidence.
+
+
+## Audited support recovery of unresolved execution
+
+`POST /api/operator/ai/funded/runtimes/:handle/policy-execution-release` is private
+operator support, authenticated solely with the Platform operator secret. It is
+not a Chat/runtime/Relay endpoint and accepts no query overrides. The strict body
+is limited to 4 KiB. The server derives owner/machine/runtime from the running,
+authorized handle and checks the separately supplied expected owner.
+
+The payload pins reservation/token/request IDs and immutable started/expiry
+timestamps; supplies a terminal local run ID/state/time, bounded evidence and
+reviewer references; explicitly accepts unknown upstream liability; and supplies
+an upper liability amount matching the reservation's saved `maxCostMicrousd`.
+Only an expired `in_flight` usage request with unknown actual cost is eligible.
+A full 15-minute maximum Relay lifetime plus a 1-minute grace must have elapsed
+since inference start, with at least 1 minute after the attested local run end.
+The supplied ceiling cannot exceed 500,000 microusd. This is administrative risk
+acceptance, not evidence that upstream execution stopped or that cost is zero.
+
+Under the existing owner advisory transaction lock, the transition stores one
+immutable `execution_admission_release` audit record. It leaves financial status
+`in_flight`, actual cost null, every balance/monthly reserve/source allocation,
+and debit ledger unchanged. Exact replay returns the recorded result; conflicting
+replay rejects. At most ONE audited still-unknown obligation per owner is allowed,
+enforced by both transaction checks and a partial unique PostgreSQL index.
+Other live executions prevent recovery. Ordinary authorization/start cannot replay
+an audited request into another inference dispatch.
+
+The durable `idx_ai_funded_usage_active_owner` index retains its name and excludes
+only audited execution releases. A transactional replacement preserves uniqueness
+through migration; older instances retain conservative admission checks and skip
+newer schema generations. Old code may block new execution beside an audited
+unknown obligation, so a runtime rollback can reduce availability. Older binaries
+do not implement the audit-aware authorization/start replay fences: schema
+compatibility alone does not prove dispatch safety on rollback. Keep a recovered
+owner's funded control-plane routing on recovery-aware binaries until exact
+settlement; do not roll that path back while its audited usage remains unknown.
+Financial protection still includes all
+in-flight reservations, even when the backing promotion expires. Late exact
+settlement remains once-only and cannot remove a newer execution slot.
+
+Required evidence: rejected ordinary/Relay/runtime auth and oversized/malformed
+bodies; exact identity, expiry/lifetime, non-usage and terminal-evidence refusal;
+unchanged financial/source state; replay fencing; one-unknown cap; actual independent
+PostgreSQL pools with one live execution; and late settlement preserving the newer
+slot. No automatic timeout unlock, fake exact charge, grant, or paid upstream call
+belongs to this support API.
