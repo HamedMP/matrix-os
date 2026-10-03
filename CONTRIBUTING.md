@@ -30,7 +30,7 @@ See [Developer Onboarding](docs/dev/onboarding.md) for the full setup guide incl
 ### Dev Servers
 
 ```bash
-bun run dev            # Start gateway + shell together
+bun run dev            # Start gateway + proxy + shell together
 bun run dev:gateway    # Gateway only (http://localhost:4000)
 bun run dev:shell      # Shell only (http://localhost:3000)
 ```
@@ -60,7 +60,7 @@ TDD is non-negotiable. Write failing tests first, then implement (red-green-refa
 ### Commands
 
 ```bash
-bun run test              # Unit tests (~993 tests, Vitest)
+bun run test              # Unit tests (3,032 tests, Vitest)
 bun run test:watch        # Watch mode
 bun run test:integration  # Integration tests (requires ANTHROPIC_API_KEY, uses haiku)
 bun run test:coverage     # Coverage report (target: 99-100%)
