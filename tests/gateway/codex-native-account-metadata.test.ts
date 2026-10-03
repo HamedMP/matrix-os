@@ -1,3 +1,4 @@
+import { verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
@@ -33,7 +34,7 @@ describe("native Codex account metadata", () => {
   it("rejects unsafe identity instead of echoing arbitrary native strings", () => {
     expect(normalizeCodexNativeAccountMetadata({ account: { type: "chatgpt", email: "/private/secret" } }, limits, now)).toBeNull();
   });
-  function fixture(changed = false, quotaFails = false, accountResult = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }, omitId?: number) {
+  function fixture(changed = false, quotaFails = false, accountResult: unknown = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }, omitId?: number) {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => { queueMicrotask(() => child.emit("close")); return true; }) });
     const methods: unknown[] = [];
     child.stdin.on("data", chunk => {
@@ -52,6 +53,59 @@ describe("native Codex account metadata", () => {
     const spawnProcess = vi.fn(() => child as never);
     return { child, methods, spawnProcess };
   }
+  it("verifies the exact selected native principal after the metadata helper exits, without quota or token refresh", async () => {
+    const first = fixture(false, false, { account: { ...account.account, id: "private-old-id" } });
+    const current = fixture(false, false, { account: { ...account.account, id: "private-new-id" } });
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess);
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home", CODEX_HOME: "/selected/profile" }, now: () => now, spawnProcess });
+    const value = await reader();
+    expect(value?.usage).toBeDefined();
+    expect(await verifyNativeAccountMetadata(value)).toBeNull();
+    expect(current.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" }));
+    expect(spawnProcess.mock.calls[1]?.[2]?.env.CODEX_HOME).toBe("/selected/profile");
+    expect(JSON.stringify(value)).not.toContain("private-old-id");
+  });
+  it("coalesces current principal reads without transferring proof across observations", async () => {
+    let clock = now;
+    const first = fixture(false, false, { account: { ...account.account, id: "old-private-id" } });
+    const second = fixture(false, false, { account: { ...account.account, id: "new-private-id" } });
+    const current = fixture(false, false, { account: { ...account.account, id: "old-private-id" } });
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(second.spawnProcess).mockImplementationOnce(current.spawnProcess);
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => clock, spawnProcess });
+    const old = await reader(); clock = new Date(now.getTime() + 6000); const newer = await reader();
+    const [oldVerified, newVerified] = await Promise.all([verifyNativeAccountMetadata(old), verifyNativeAccountMetadata(newer)]);
+    expect(oldVerified).toBe(old);
+    expect(newVerified).toBeNull();
+    expect(spawnProcess).toHaveBeenCalledTimes(3);
+    expect(current.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" }));
+    expect(JSON.stringify([old, newer])).not.toContain("private-id");
+  });
+  it("fails closed when native account/read lacks exact principal proof", async () => {
+    const f = fixture();
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess });
+    expect(await verifyNativeAccountMetadata(await reader())).toBeNull();
+    expect(f.spawnProcess).toHaveBeenCalledTimes(1);
+  });
+  it("revalidates API-key class without borrowing ChatGPT identity or quota", async () => {
+    const first = fixture(false, false, { account: { type: "apiKey" } });
+    const current = fixture(false, false, { account: { type: "apiKey" } });
+    const changed = fixture(false, false, { account: { ...account.account, id: "private-id" } });
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess).mockImplementationOnce(changed.spawnProcess);
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess });
+    const value = await reader();
+    expect(await verifyNativeAccountMetadata(value)).toEqual({ accountLabel: "API key", authMethod: "api_key", checkedAt: now.toISOString(), staleAfter: new Date(now.getTime() + 30000).toISOString() });
+    expect(await verifyNativeAccountMetadata(value)).toBeNull();
+    expect([...first.methods, ...current.methods, ...changed.methods]).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" }));
+  });
+  it("keeps a proved ChatGPT principal and allowance without exposing its native ID", async () => {
+    const first = fixture(false, false, { account: { ...account.account, id: "private-current-id" } });
+    const current = fixture(false, false, { account: { ...account.account, id: "private-current-id" } });
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess);
+    const value = await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess })();
+    expect(await verifyNativeAccountMetadata(value)).toBe(value);
+    expect(value?.usage?.usedBasisPoints).toBe(2500);
+    expect(JSON.stringify(value)).not.toContain("private-current-id");
+  });
   it.each([3, 4])("drops identity when sequence times out before final equality (id %i)", async omitId => {
     const f = fixture(false, false, account, undefined, undefined, omitId);
     const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, timeoutMs: 10, now: () => now, spawnProcess: f.spawnProcess });

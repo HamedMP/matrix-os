@@ -1,3 +1,4 @@
+import { bindNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { z } from "zod/v4";
 import type { ProviderAccessSource, ProviderAccount } from "@matrix-os/contracts";
@@ -57,12 +58,14 @@ export function createCodexNativeAccountMetadataReader(input: {
   let pending: Promise<CodexNativeAccountMetadata | null> | null = null;
   let blockedUntilExit = false;
   let lastStartedAt = -Infinity;
-  const read = async (): Promise<CodexNativeAccountMetadata | null> => {
-    if (blockedUntilExit) return null;
+  let verification: Promise<CodexNativeAccountMetadata | null> | null = null;
+  const principals = new WeakMap<CodexNativeAccountMetadata, string>();
+  const read = async (identityOnly = false): Promise<CodexNativeAccountMetadata | null> => {
+    if (blockedUntilExit || (!identityOnly && verification)) return null;
     const startedAt = (input.now ?? (() => new Date()))().getTime();
     const waitMs = Math.max(0, 5000 - (startedAt - lastStartedAt));
-    if (waitMs > 0) return null;
-    lastStartedAt = (input.now ?? (() => new Date()))().getTime();
+    if (!identityOnly && waitMs > 0) return null;
+    if (!identityOnly) lastStartedAt = (input.now ?? (() => new Date()))().getTime();
     const child = (input.spawnProcess ?? spawn)(input.executable, ["app-server", "--stdio"], {
       cwd: input.cwd, env: Object.fromEntries(Object.entries(input.environment).filter(([key]) => ["HOME", "CODEX_HOME", "MATRIX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR", "MATRIX_NODE_PREFIX"].includes(key))), stdio: "pipe",
     });
@@ -132,7 +135,7 @@ export function createCodexNativeAccountMetadataReader(input: {
             account = message.result;
             accountObservedAt = (input.now ?? (() => new Date()))();
             if (message.error || !normalizeCodexNativeAccountMetadata(account, undefined, (input.now ?? (() => new Date()))())) { finish(); return; }
-            const kind = AccountSchema.parse(account).account?.type;
+            const kind = identityOnly ? "apiKey" : AccountSchema.parse(account).account?.type;
             send((kind === "apiKey" ? 4 : 3) + sequenceOffset, kind === "apiKey" ? "account/read" : "account/rateLimits/read", kind === "apiKey" ? { refreshToken: false } : {});
           } else if (message.id === 3 + sequenceOffset) {
             quota = message.error ? undefined : message.result;
@@ -140,7 +143,19 @@ export function createCodexNativeAccountMetadataReader(input: {
           } else if (message.id === 4 + sequenceOffset) {
             const first = AccountSchema.safeParse(account); const last = AccountSchema.safeParse(message.result);
             if (message.error || !first.success || !last.success || JSON.stringify(first.data) !== JSON.stringify(last.data)) { finish(); return; }
-            finish(normalizeCodexNativeAccountMetadata(account, quota, (input.now ?? (() => new Date()))()));
+            const value = normalizeCodexNativeAccountMetadata(account, quota, (input.now ?? (() => new Date()))());
+            const principal = first.data.account;
+            if (value && (principal?.type === "apiKey" || (principal?.type === "chatgpt" && principal.id))) {
+              const proof = JSON.stringify(principal);
+              principals.set(value, proof);
+              bindNativeAccountMetadata(value, async () => {
+                if (pending) return false;
+                if (!verification) verification = read(true).finally(() => { verification = null; });
+                const current = await verification;
+                return current !== null && principals.get(current) === proof;
+              });
+            }
+            finish(value);
           }
         }
       });
