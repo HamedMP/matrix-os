@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,12 +16,32 @@ interface Job { if?: string; needs?: string[]; steps: Step[]; env?: Record<strin
 const workflow = YAML.parse(readFileSync(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8')) as {
   on: { workflow_dispatch: { inputs: Record<string, { type: string; default?: boolean }> } };
   jobs: Record<string, Job>;
+  concurrency: { group: string; 'cancel-in-progress': string };
 };
 const step = (job: string, name: string): Step => {
   const found = workflow.jobs[job]!.steps.find((candidate) => candidate.name === name);
   if (!found) throw new Error(`missing step ${job}/${name}`);
   return found;
 };
+
+// These workflow guards use the JavaScript-compatible subset of GitHub expressions.
+// Evaluate their actual boolean behavior rather than matching a reassuring substring.
+function evaluateExpression(expression: string, context: Record<string, unknown>): unknown {
+  return runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), {
+    always: () => true,
+    cancelled: () => false,
+    ...context,
+  }, { timeout: 100 });
+}
+
+function concurrencyGroup(eventName: string, bundleOnly = false, action = '', pr = 1907): string {
+  const context = {
+    github: { event_name: eventName, event: { action, pull_request: { number: eventName === 'pull_request' ? pr : undefined }, label: { name: 'preview-vps' } }, run_id: 42 },
+    inputs: { pr: String(pr), bundle_only: bundleOnly },
+  };
+  return workflow.concurrency.group.replace(/\$\{\{([\s\S]*?)\}\}/g,
+    (_match, expression: string) => String(evaluateExpression(expression, context)));
+}
 
 const headSha = '0123456789abcdef0123456789abcdef01234567';
 const directories: string[] = [];
@@ -102,13 +123,44 @@ describe('Private Preview bundles in the Preview workflow', () => {
     expect(status).toBe(0);
     expect(outputs).toMatchObject({ action: 'bundle', head_sha: liveSha, head_ref: 'fresh-feature', author: 'fresh-author', requested_version: '', teardown_private: 'false' });
     expect(workflow.jobs.build!.steps.find((candidate) => candidate.uses === 'actions/checkout@v6')?.with?.ref).toBe('${{ needs.gate.outputs.head_sha }}');
-    for (const job of ['deploy', 'verify_inventory', 'teardown']) {
-      expect(workflow.jobs[job]!.if).not.toContain("== 'bundle'");
-    }
     expect((await decide({ EVENT_NAME: 'workflow_dispatch' })).outputs.action).toBe('deploy');
   });
 
-  it.each([
+  it('isolates bundle-only publication from the PR deployment concurrency group', () => {
+    const deployment = concurrencyGroup('workflow_dispatch');
+    const publication = concurrencyGroup('workflow_dispatch', true);
+    expect(publication).not.toBe(deployment);
+    expect(concurrencyGroup('pull_request', false, 'synchronize')).toBe(deployment);
+    expect(concurrencyGroup('workflow_dispatch', true)).toBe(publication);
+    expect(concurrencyGroup('workflow_dispatch', true, '', 1908)).not.toBe(publication);
+    expect(evaluateExpression(workflow.concurrency['cancel-in-progress'], {
+      github: { event_name: 'workflow_dispatch', event: { action: '' } },
+    })).toBe(true);
+    for (const [eventName, action] of [['pull_request', 'closed'], ['schedule', '']]) {
+      expect(evaluateExpression(workflow.concurrency['cancel-in-progress'], {
+        github: { event_name: eventName, event: { action } },
+      })).toBe(false);
+    }
+  });
+
+  it.each(['bundle', 'deploy', 'deploy_existing', 'verify', 'teardown', 'skip', 'unknown'])
+    ('runs only the intended jobs for action %s, including failed/skipped builds', (action) => {
+      for (const buildResult of ['success', 'failure', 'skipped']) {
+        const context = { needs: { gate: { outputs: { action } }, build: { result: buildResult } } };
+        const expected: Record<string, boolean> = {
+          build: action === 'deploy' || action === 'bundle',
+          publish_bundle: action === 'bundle' && buildResult === 'success',
+          deploy: (action === 'deploy' && buildResult === 'success') || action === 'deploy_existing',
+          verify_inventory: action === 'verify',
+          teardown: action === 'teardown',
+        };
+        for (const [job, shouldRun] of Object.entries(expected)) {
+          expect(Boolean(evaluateExpression(workflow.jobs[job]!.if!, context)), `${job}/${action}/${buildResult}`).toBe(shouldRun);
+        }
+      }
+    });
+
+  it.each<Record<string, string>>([
     { REQUESTED_VERSION: 'v2026.10.03-pr1907-1-1-0123456' },
     { VERIFY_INVENTORY: 'true' },
     { TEARDOWN_PREVIEW: 'true' },

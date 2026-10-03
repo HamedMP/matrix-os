@@ -62,7 +62,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.event.label.name != 'preview-collaboration' && github.run_id || 'active' }}
+  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}${{ github.event_name == 'workflow_dispatch' && inputs.bundle_only && '-bundle' || '' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.event.label.name != 'preview-collaboration' && github.run_id || 'active' }}
   cancel-in-progress: ${{ github.event.action != 'closed' && github.event_name != 'schedule' }}
 
 env:
