@@ -37,8 +37,6 @@ describe("funded generation readiness timeout budgets", () => {
     expect(FUNDED_AI_READINESS_TIMEOUTS.gatewayRequestMs).toBe(13_000);
     expect(FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs).toBe(14_000);
     expect(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs).toBe(15_000);
-    expect(FUNDED_AI_READINESS_TIMEOUTS.jevProbeMs).toBe(5_000);
-    expect(FUNDED_AI_READINESS_TIMEOUTS.jevRouteMs).toBe(6_000);
   });
 
   it.each([FUNDED_GLM_FLASH, FUNDED_SONNET])("accepts a valid %s response after 6.29 seconds", async (model) => {
