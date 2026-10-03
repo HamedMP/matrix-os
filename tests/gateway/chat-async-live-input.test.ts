@@ -154,4 +154,34 @@ describe("live asynchronous input delivery", () => {
     } finally { f.controller.abort(); await finished; }
     expect(events.filter(event => event.type === "input.resolved")).toEqual([{ type: "input.resolved", requestId: "first", reason: "answered" }, { type: "input.resolved", requestId: "second", reason: "answered" }]);
   });
+
+  it.each(["not-delivered", "uncertain", "non-error"] as const)("delivers the next answer after a %s rejection without replay or a false receipt", async failure => {
+    const f = fixture(); let rejectFirst!: (error: unknown) => void;
+    const firstReceipt = new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+    const error = failure === "not-delivered" ? new ChatInputNotDeliveredError() : failure === "uncertain" ? new TypeError("private answer and provider details") : { privateAnswer: "sensitive" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const submitDeferredInput = vi.fn(async (input: Parameters<NonNullable<CanonicalChatProviderAdapter["steer"]>>[0]) => { expect(input.runId).toBe(f.input.runId); }).mockImplementationOnce(() => firstReceipt);
+    const adapter = withAsyncChatInput({ ...f.native, submitDeferredInput, async *start() {
+      yield { type: "state.updated", state: { session: "same_native" } } as const;
+      yield f.question("first"); yield f.question("second");
+      await new Promise<void>(resolve => f.controller.signal.addEventListener("abort", () => resolve(), { once: true }));
+      yield { type: "run.completed", outcome: "completed" } as const;
+    } });
+    const { events, finished } = f.collect(adapter);
+    try {
+      await vi.waitFor(() => expect(events.filter(event => event.type === "input.requested")).toHaveLength(2));
+      const first = adapter.submitInput!(f.answer("first"));
+      const rejected = expect(first).rejects.toBe(error);
+      await vi.waitFor(() => expect(submitDeferredInput).toHaveBeenCalledOnce());
+      const second = adapter.submitInput!(f.answer("second"));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(submitDeferredInput).toHaveBeenCalledOnce();
+      rejectFirst(error); await rejected; await second;
+      expect(submitDeferredInput.mock.calls.map(([input]) => input.clientRequestId)).toEqual(["answer_first", "answer_second"]);
+      expect(f.resume).not.toHaveBeenCalled();
+      if (failure === "not-delivered") expect(warn).not.toHaveBeenCalled();
+      else expect(warn.mock.calls).toEqual([["[chat/input] Previous live answer delivery failed:", failure === "uncertain" ? "TypeError" : "UnknownError"]]);
+    } finally { rejectFirst(error); f.controller.abort(); await finished; warn.mockRestore(); }
+    expect(events.filter(event => event.type === "input.resolved" && event.reason === "answered")).toEqual([{ type: "input.resolved", requestId: "second", reason: "answered" }]);
+  });
 });

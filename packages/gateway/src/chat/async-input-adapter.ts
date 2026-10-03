@@ -202,7 +202,13 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
         const remove = () => { const index = run.continuations.indexOf(queued); if (index >= 0) run.continuations.splice(index, 1); };
         // Native controls are ordered. A second pending answer must enter this
         // same phase after the prior receipt, rather than wait for phase completion.
-        const delivery = (run.deliveryTail ?? Promise.resolve()).catch(() => undefined).then(() => pending.released).then(released => {
+        const delivery = (run.deliveryTail ?? Promise.resolve()).catch((error: unknown) => {
+          // The original caller retains its rejection. This queue boundary only
+          // lets a different answer proceed; it never retries the failed answer.
+          if (error instanceof ChatInputNotDeliveredError || error instanceof ChatSteerNotDeliveredError) return;
+          const errorClass = error instanceof TypeError ? "TypeError" : error instanceof RangeError ? "RangeError" : error instanceof Error ? "Error" : "UnknownError";
+          console.warn("[chat/input] Previous live answer delivery failed:", errorClass);
+        }).then(() => pending.released).then(released => {
           if (run.input.signal.aborted || runs.get(input.runId) !== run) throw new ChatInputNotDeliveredError();
           if (!released) throw new ChatSteerNotDeliveredError();
           return deliverLive({
