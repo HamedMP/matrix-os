@@ -43,7 +43,7 @@ import { useWorkBotHeaderBinding } from "./use-work-bot-header-binding";
 import { OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
 import type { WorkFilesScope } from "./work-files-scope";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
-import { openWorkProject } from "./work-navigation";
+import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 
@@ -504,9 +504,13 @@ function WorkTabContent({
   }, [hostedRuntime, navigateToGlobalDraft, requestAgentDraft]);
   const openGlobalDraft = useCallback(() => openAgentDraft("", []), [openAgentDraft]);
   const openCreateProject = useCallback(() => useUi.getState().openCreateProject(), []);
-  const openProjectDraft = useCallback((project: Project) => {
+  const selectProject = useCallback((project: Project) => {
     showChat(layout === "narrow");
     openWorkProject(project);
+  }, [layout, showChat]);
+  const openProjectDraft = useCallback((project: Project) => {
+    showChat(layout === "narrow");
+    openWorkProjectDraft(project);
   }, [layout, showChat]);
   const selectRailChat = useCallback((record: CanonicalChatRecord, project?: Project) => {
     showChat(layout === "narrow");
@@ -702,7 +706,7 @@ function WorkTabContent({
   const selectedProject = projects.find(project => project.slug === projectSlug);
   const projectChats = projectSlug ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} /> : null;
   const projectCenter = selectedProject
-    ? <ProjectLanding project={selectedProject} client={client ?? undefined} eventSource={eventSource ?? undefined} active={active} onSelectChat={record => selectRailChat(record, selectedProject)} showMetadata={!initialChatId}>{projectChats}</ProjectLanding>
+    ? <ProjectLanding project={selectedProject} client={client ?? undefined} eventSource={eventSource ?? undefined} active={active} onSelectChat={record => selectRailChat(record, selectedProject)} showMetadata={!initialChatId && initialChatView !== "draft"}>{projectChats}</ProjectLanding>
     : projectChats;
   const content = route === "chat"
     ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView}
@@ -735,7 +739,7 @@ function WorkTabContent({
       showCollapseControl={!hostedChrome}
       onNewGlobalChat={openGlobalDraft}
       onCreateProject={openCreateProject}
-      onSelectProject={openProjectDraft}
+      onSelectProject={selectProject}
       onNewProjectChat={openProjectDraft}
       onSelectChat={selectRailChat}
       onChatMoved={(record, project) => {
@@ -747,7 +751,7 @@ function WorkTabContent({
       onStartAgentChat={openAgentDraft}
       onOpenBotChat={openBotChat}
     />
-  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openBotChat, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat, layout, showChat]);
+  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openBotChat, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectProject, selectRailChat, layout, showChat]);
   const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
     ? sharedScopeId ? <span className="block min-w-0 max-w-full truncate" title={activeChatTitle}>{activeChatTitle}</span>
       : editingChatTitle ? (

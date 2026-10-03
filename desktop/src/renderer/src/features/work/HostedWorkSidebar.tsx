@@ -4,7 +4,7 @@ import { useBoard, type Project } from "../../stores/board";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { WorkRail } from "./WorkRail";
-import { openWorkProject } from "./work-navigation";
+import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 
 export const HOSTED_WORK_SIDEBAR_WIDTH = 240;
@@ -62,7 +62,7 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       })}
       onCreateProject={() => useUi.getState().openCreateProject()}
       onSelectProject={openWorkProject}
-      onNewProjectChat={openWorkProject}
+      onNewProjectChat={openWorkProjectDraft}
       onSelectChat={selectChat}
       onChatMoved={(record, project) => {
         if (record.chat.id === tab.chatId) selectChat(record, project);

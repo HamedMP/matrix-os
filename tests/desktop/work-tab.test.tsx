@@ -493,6 +493,23 @@ describe("WorkTab rail integration", () => {
     expect(useUi.getState().createProjectOpen).toBe(true);
   });
 
+  it("opens a distinct Project draft from the same overview and retains its unsent text", async () => {
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "project", projectSlug: "alpha", chatView: "index", closable: false });
+    const view = render(<WorkTab route="project" projectSlug="alpha" initialChatView="index" active />);
+    await screen.findByRole("heading", { name: "Alpha" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat draft" }), { target: { value: "Unsent project plan" } });
+    const focusRequest = useCodingAgentWorkspace.getState().composerFocusRequestId;
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Alpha" }));
+    expect(activeWorkTab()).toMatchObject({ workRoute: "project", projectSlug: "alpha", chatView: "draft", chatId: undefined });
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequest + 1);
+    view.rerender(<WorkTab route="project" projectSlug="alpha" initialChatView={activeWorkTab()!.chatView} active />);
+    expect(screen.queryByRole("heading", { name: "Alpha" })).toBeNull();
+    expect((screen.getByRole("textbox", { name: "Chat draft" }) as HTMLInputElement).value).toBe("Unsent project plan");
+    expect(useConnection.getState().api?.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Alpha", exact: true }));
+    expect(activeWorkTab()?.chatView).toBe("index");
+  });
+
   it("clears the old Chat for Project compose and does not expose Board", async () => {
     useTabs.getState().openTab({
       kind: "work",
