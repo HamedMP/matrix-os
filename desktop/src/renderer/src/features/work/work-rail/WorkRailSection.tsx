@@ -30,7 +30,7 @@ export function WorkRailSection({
           onClick={onToggle}
         >
           <span>{label}</span>
-          <span className="ml-auto text-[10px] font-normal tabular-nums" aria-hidden>{count || null}</span>
+          <span className="ml-auto mr-2.5 text-[10px] font-normal tabular-nums" aria-hidden>{count || null}</span>
           <span className="grid w-8 shrink-0 place-items-center"><ChevronRight size={12} aria-hidden className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} /></span>
         </button>
         {action}

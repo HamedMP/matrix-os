@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { AgentAvatar, type BotConversationSummary } from "@matrix-os/ui";
-import { Plus } from "@renderer/lib/hugeicons";
+import { AgentAvatar, ChatSidebarAddAction, type BotConversationSummary } from "@matrix-os/ui";
 import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
 import { WorkRailSection } from "./WorkRailSection";
 
@@ -38,7 +37,7 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
 
         >
           {model.projects.map(renderProject)}
-          <button type="button" aria-label="Create project" className="flex min-h-8 items-center gap-2 rounded-md px-2.5 text-left text-xs outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]" style={{ color: "var(--text-tertiary)" }} onClick={onCreateProject}><Plus size={12} aria-hidden />New project</button>
+          <ChatSidebarAddAction label="New project" ariaLabel="Create project" onClick={onCreateProject} />
           {organizationDrives}
         </WorkRailSection>
 

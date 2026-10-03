@@ -53,9 +53,11 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
   if (!state.enabled) return <p className="mt-5 text-sm">Agents are disabled for this computer.</p>;
   return <div className="matrix-chat-agents-library mx-auto grid w-full max-w-3xl gap-5 py-8">
     <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)} className="grid gap-5">
-    <header className="flex items-center justify-end gap-3">
+    <header className="flex flex-wrap items-center justify-between gap-3">
       <h3 className="sr-only">Saved agents</h3>
-      <button type="button" aria-label="New Agent" className={button} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>+ New agent</button>
+      {state.recipeCatalog?.enabled ? <button type="button" aria-label="Personal Daily Brief" className={button}
+        disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("daily-brief")}>Personal Daily Brief</button> : null}
+      <button type="button" aria-label="New Agent" className={`${button} ml-auto`} disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>+ New agent</button>
     </header>
     {!state.agents.length && !state.error ? <p className="py-6 text-sm" style={muted}>No agents yet. Add an agent to get started.</p> : null}
     <div className="grid gap-2" aria-label="Saved agents">
@@ -68,8 +70,6 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
         <span aria-hidden="true" style={muted}>›</span>
       </button>)}
     </div>
-    {state.recipeCatalog?.enabled ? <button type="button" aria-label="Personal Daily Brief" className={`${button} justify-self-start text-xs`}
-      disabled={!state.catalog || state.agents.length >= 100} onClick={() => edit("daily-brief")}>Personal Daily Brief</button> : null}
     {state.recipeLoading ? <p role="status" className="text-xs" style={muted}>Loading recipe templates…</p> : null}
     {state.recipeError || state.connectionError ? <div className="flex flex-wrap items-center gap-2"><p className="text-xs">{state.recipeError
       ? "Recipe templates are unavailable." : "Connection status is unavailable. Recipe account choices will ask when run."}</p>
