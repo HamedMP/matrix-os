@@ -234,6 +234,88 @@ describe("member-addressed grants end to end", () => {
     expect(scope.status).toBe(200);
   });
 
+  /** Publishes one directory event the way the legacy invitation paths do: an outbox row with explicit recipients. */
+  async function publishLegacy(recipients: Array<{ actorId: string; invitationId?: string }>, discoveryState: "invited" | "accepted") {
+    const scope = await home.db.selectFrom("collaboration_scopes").select(["revision", "kind", "resource_id"])
+      .where("id", "=", scopeId).executeTakeFirstOrThrow();
+    const latest = await home.db.selectFrom("collaboration_events").select(({ fn }) => fn.max("scope_seq").as("sequence"))
+      .where("scope_id", "=", scopeId).executeTakeFirst();
+    const eventId = randomUUID();
+    const revision = Number(scope.revision) + 1;
+    await home.db.updateTable("collaboration_scopes").set({ revision }).where("id", "=", scopeId).execute();
+    await home.db.insertInto("collaboration_events").values({
+      scope_id: scopeId, scope_seq: Number(latest?.sequence ?? 0) + 1, event_id: eventId, resource_kind: scope.kind,
+      resource_id: scope.resource_id, revision, authority_generation: 1, event_type: "member.invited", payload: {}, created_at: now,
+    } as never).execute();
+    await home.db.insertInto("collaboration_directory_outbox").values({
+      event_id: eventId, scope_id: scopeId, recipient_actor_ids: JSON.stringify(recipients), authority_runtime_id: runtimeId,
+      authority_generation: 1, resource_kind: scope.kind, discovery_state: discoveryState, retry_after: now, delivered_at: null, created_at: now,
+    } as never).execute();
+    expect(await outbox.runOnce()).toBe(1);
+  }
+
+  it("keeps a member's pending grant reachable across a legacy invitation for the same project", async () => {
+    await platformRepository.applyDirectoryEvent({
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
+    });
+    const owner = await openSession(ownerId);
+    const created = await owner.request("POST", `/api/collaboration/scopes/${scopeId}/grants`, {
+      clientRequestId: randomUUID(), expectedRevision: "1", audience: { kind: "member", actorId: memberId }, preset: "viewer",
+    });
+    const grant = CollaborationGrantSchema.parse(await created.json());
+    expect(await outbox.runOnce()).toBe(1);
+
+    // An older invitation for the same member: it is listed as the invitation, and its accept-only
+    // session must stay an invitation session (a grant-only session cannot accept invitations).
+    const invitationId = randomUUID();
+    await home.db.insertInto("collaboration_members").values({
+      scope_id: scopeId, actor_id: memberId, role: "viewer", status: "pending", organization_id: organizationId,
+      invitation_id: invitationId, invited_by: ownerId, accepted_at: null, expires_at: new Date(now.getTime() + 86_400_000),
+      revision: 1, joined_at: null, updated_at: now, dispositioned_at: null,
+    }).execute();
+    await publishLegacy([{ actorId: memberId, invitationId }], "invited");
+    expect(await discovery(memberId, "inbox")).toEqual([expect.objectContaining({ status: "invited", invitationId })]);
+    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project" });
+
+    // Settling the invitation does not hide the grant the member still has to open.
+    await home.db.updateTable("collaboration_members").set({ status: "accepted", accepted_at: now, joined_at: now })
+      .where("scope_id", "=", scopeId).where("actor_id", "=", memberId).execute();
+    await publishLegacy([{ actorId: memberId }], "accepted");
+    expect(await discovery(memberId, "inbox")).toEqual([expect.objectContaining({ status: "organization_pending", grantId: grant.id })]);
+    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project", pendingGrantId: grant.id });
+  });
+
+  it("withdraws an expired member grant from the member's inbox", async () => {
+    await platformRepository.applyDirectoryEvent({
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
+    });
+    const owner = await openSession(ownerId);
+    const created = await owner.request("POST", `/api/collaboration/scopes/${scopeId}/grants`, {
+      clientRequestId: randomUUID(), expectedRevision: "1", audience: { kind: "member", actorId: memberId }, preset: "viewer",
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    });
+    expect(created.status).toBe(201);
+    expect(await outbox.runOnce()).toBe(1);
+    expect(await discovery(memberId, "inbox")).toHaveLength(1);
+    // The home's expiry sweep, an hour later, ends the grant and tells the platform.
+    const hourLater = () => new Date(now.getTime() + 3_600_000);
+    const later = new CollaborationCapabilityRepository(home.db, { now: hourLater, createId: randomUUID });
+    expect(await later.expireGrants()).toBe(1);
+    const laterOutbox = new CollaborationDirectoryOutbox({
+      db: home.db, runtimeId, platformBaseUrl: "https://platform.internal", serviceToken, startTimer: false, now: hourLater,
+      fetchImpl: async (url, init) => platformApp.request(new URL(String(url)).pathname, init),
+    });
+    try {
+      expect(await laterOutbox.runOnce()).toBe(1);
+    } finally {
+      await laterOutbox.shutdown();
+    }
+    expect(await discovery(memberId, "inbox")).toEqual([]);
+    await expect(openSession(memberId)).rejects.toMatchObject({ code: "not_found" });
+  });
+
   it("admits an accept-only session for a member grant only to its addressee", async () => {
     await platformRepository.applyDirectoryEvent({
       eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,

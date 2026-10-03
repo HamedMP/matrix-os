@@ -10,12 +10,10 @@ import {
   reconcileProjectMembershipAtPublication,
 } from "./project-membership-transition.js";
 import { jsonb, OPERATION_RETENTION_MS, parseJson, PRESET_POLICY_VERSION } from "./repository-shared.js";
-import { MAX_GRANTS_PER_SCOPE } from "./capability-repository.js";
+import { DIRECTORY_EVENT_RECIPIENT_LIMIT, MAX_GRANTS_PER_SCOPE } from "./capability-repository.js";
 import type { ChatOutboxEvent } from "../chat/records.js";
 
 const MAX_RECOVERY_BATCH = 100;
-/** `CollaborationDirectoryEventSchema` carries at most eight recipients per event. */
-const DIRECTORY_EVENT_RECIPIENT_LIMIT = 8;
 const DEFAULT_RECOVERY_TIMEOUT_MS = 30_000;
 const MAX_RECOVERY_TIMEOUT_MS = 60_000;
 const TransitionIdSchema = z.uuid();
