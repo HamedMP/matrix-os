@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
@@ -75,3 +75,37 @@ it.each([true, false])("retains only advertised unsupported login inside Advance
     expect(mutate).not.toHaveBeenCalled();
   }
 });
+
+
+it("opens Own account after more than 32 removed agent IDs on the same connection", async () => {
+  const row = (id: string) => ({ id, harness: "opencode", displayName: `OpenCode ${id}`, installState: "installed", authState: "unknown", connectivity: "online", enabled: true, configuredEnabled: true, configuredAccessSourceId: null, accessSourceId: null, accountIds: [], selectedAccountId: null, loginMethods: [], route: { kind: "configurable", providerId: "openai", modelId: "test" } });
+  const snapshot = (id: string, index: number, retainRows = false) => ({ harnesses: retainRows ? Array.from({ length: index }, (_, position) => row(`agent-${position}`)) : [row(id)], accounts: [], accessSources: [], modelProviders: [], gatewayPolicy: null, configurationHarnessKinds: ["opencode"], supportedActions: ["set_route"], access: { mode: "writable" }, refreshedAt: `2026-10-04T00:00:${String(index).padStart(2, "0")}Z` }) as unknown as ProviderSettingsSnapshot;
+  const client = { capabilities: vi.fn().mockResolvedValue([]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
+  const props = { onSelectHarness: vi.fn(), onRefresh: vi.fn(), onMutate: vi.fn(), onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit: vi.fn(), workflowClient: client as never };
+  const view = render(<AgentsProvidersView {...props} snapshot={snapshot("agent-0", 0)} selectedHarnessId="agent-0" />);
+  for (let index = 0; index < 33; index++) {
+    const id = `agent-${index}`;
+    client.capabilities.mockResolvedValue([{ harnessInstanceId: id, harness: "opencode", displayName: `OpenCode ${id}`, installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["openai"], install: false, uninstall: false, logs: false }]);
+    view.rerender(<AgentsProvidersView {...props} snapshot={snapshot(id, index + 1, true)} selectedHarnessId={id} />);
+    await waitFor(() => expect(client.capabilities).toHaveBeenCalledTimes(index + 2));
+    fireEvent.click(document.getElementById(`matrix-ap-details-${id}-trigger`)!);
+    const panel = within(document.getElementById(`matrix-ap-details-${id}`)!);
+    await panel.findByRole("button", { name: /Provider account/ });
+    const summary = panel.getByText("Advanced configuration");
+    if (!summary.closest("details")?.hasAttribute("open")) fireEvent.click(summary);
+    fireEvent.click(panel.getByRole("button", { name: /Own account/ }));
+    if (index < 32) {
+      await waitFor(() => expect(panel.getByRole("button", { name: /Provider account/ }), id).toHaveFocus());
+    } else {
+      await panel.findByRole("alert");
+      expect(panel.getByText("Connection could not be updated. Try again.")).toBeInTheDocument();
+      expect(panel.getByRole("button", { name: /Provider account/ })).not.toHaveFocus();
+      view.rerender(<AgentsProvidersView {...props} snapshot={snapshot(id, 34)} selectedHarnessId={id} />);
+      await waitFor(() => expect(client.capabilities).toHaveBeenCalledTimes(35));
+      fireEvent.click(panel.getByRole("button", { name: /Own account/ }));
+      await waitFor(() => expect(panel.getByRole("button", { name: /Provider account/ })).toHaveFocus());
+    }
+  }
+  expect(client.start).not.toHaveBeenCalled();
+  expect(props.onMutate).not.toHaveBeenCalled();
+}, 60_000);

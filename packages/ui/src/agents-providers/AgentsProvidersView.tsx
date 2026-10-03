@@ -93,6 +93,16 @@ export function AgentsProvidersView({
     ...inventoryHarnesses.map(item => ({ id: item.harnessInstanceId, harness: item.harness })),
     ...(snapshot.harnessCatalog ?? []).filter(item => !snapshot.harnesses.some(row => row.harness === item.harness) && !inventoryHarnesses.some(row => row.harness === item.harness)).map(item => ({ id: `catalog:${item.harness}`, harness: item.harness })),
   ];
+  const requestConnect = async (id: string): Promise<boolean> => {
+    // Keep current rows' counters intact: resetting them can reopen a live chooser.
+    // Removed IDs must not exhaust admission after an install/catalog refresh.
+    const currentIds = rowIdentities.map(item => item.id);
+    if (!currentIds.includes(id)) return false;
+    const retained = Object.fromEntries(Object.entries(connectRequests).filter(([key]) => currentIds.includes(key)));
+    if (!(id in retained) && Object.keys(retained).length >= 32) return false;
+    setConnectRequests({ ...retained, [id]: (retained[id] ?? 0) + 1 });
+    return true;
+  };
   const resolvedExpandedId = expandedRowId === null ? null
     : rowIdentities.some(item => item.id === expandedRowId) ? expandedRowId
     : rowIdentities.find(item => item.harness === expandedRowKind)?.id ?? null;
@@ -236,10 +246,7 @@ export function AgentsProvidersView({
                   onMutate={onMutate}
                   onRefreshForConnection={onRefreshForConnection}
                   onConnectSettings={capability && (capability.loginMethods.some(method => method !== "terminal") || capability.apiKeyProviders.length > 0)
-                    ? async () => {
-                        setConnectRequests(current => harness.id in current || Object.keys(current).length < 32 ? { ...current, [harness.id]: (current[harness.id] ?? 0) + 1 } : current);
-                        return true;
-                      }
+                    ? () => requestConnect(harness.id)
                     : undefined}
 
                 /> : null}
@@ -270,10 +277,7 @@ export function AgentsProvidersView({
                         gatewaySelected={gatewaySelected} onUseGateway={useGateway} canSetRoute={supports("set_route")}
                         disabled={mutationsDisabled} onMutate={onMutate} onRefreshForConnection={onRefreshForConnection}
                         onConnectSettings={capability && (capability.loginMethods.some(method => method !== "terminal") || capability.apiKeyProviders.length > 0)
-                          ? async () => {
-                            setConnectRequests(current => harness.id in current || Object.keys(current).length < 32 ? { ...current, [harness.id]: (current[harness.id] ?? 0) + 1 } : current);
-                            return true;
-                          } : undefined} />
+                          ? () => requestConnect(harness.id) : undefined} />
                       <HarnessEditor snapshot={snapshot} harness={harness} disabled={mutationsDisabled}
                         canUpdate={supports("update_harness")} canSetRoute={supports("set_route")}
                         canSelectSource={supports("select_access_source")} canSelectAccount={supports("select_account")}
