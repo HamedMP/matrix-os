@@ -61,7 +61,7 @@ export function createCodexNativeAccountMetadataReader(input: {
     if (blockedUntilExit) return null;
     const startedAt = (input.now ?? (() => new Date()))().getTime();
     const waitMs = Math.max(0, 5000 - (startedAt - lastStartedAt));
-    if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
+    if (waitMs > 0) return null;
     lastStartedAt = (input.now ?? (() => new Date()))().getTime();
     const child = (input.spawnProcess ?? spawn)(input.executable, ["app-server", "--stdio"], {
       cwd: input.cwd, env: Object.fromEntries(Object.entries(input.environment).filter(([key]) => ["HOME", "CODEX_HOME", "MATRIX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR", "MATRIX_NODE_PREFIX"].includes(key))), stdio: "pipe",
@@ -96,7 +96,7 @@ export function createCodexNativeAccountMetadataReader(input: {
           termination.unref();
         }, grace); termination.unref();
       };
-      const timeout = setTimeout(() => finish(accountObservedAt ? normalizeCodexNativeAccountMetadata(account, undefined, accountObservedAt) : null), Math.max(1, Math.min(input.timeoutMs ?? 4000, 5000))); timeout.unref();
+      const timeout = setTimeout(() => finish(), Math.max(1, Math.min(input.timeoutMs ?? 4000, 5000))); timeout.unref();
       const send = (id: number, method: string, params: unknown) => { if (!finishing) child.stdin.write(JSON.stringify({ id, method, params }) + "\n"); };
       child.once("error", () => finish());
       const onExit = () => { blockedUntilExit = false; settle(); };

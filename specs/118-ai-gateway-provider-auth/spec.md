@@ -326,3 +326,21 @@ Tests cover owner/collaborator boundaries, stale metadata, profile/provider
 mismatch, schema compatibility, safe errors, bounded readers, and catalog
 policy. Real deployed metadata and Electron presentation remain later combined
 acceptance gates; this layer adds no guided sign-in capability.
+
+Optional native metadata is read outside Settings mutation admission, only for
+installed native harnesses. The owner snapshot revalidates mutation generation,
+configuration revision, and canonical profile/source identity after the read;
+intervening account or route changes discard that observation and project fresh
+canonical/configuration state. Native Codex metadata uses the same selected
+`CODEX_HOME` as credential observation and requires a final equal account read;
+timeout before that check yields no identity. Exact native API-key observations
+may correct projected account/source presentation without changing canonical
+routing, readiness, enablement, budgets, or policy; they never inherit ChatGPT
+identity, plan, or subscription allowance.
+
+Readers coalesce their bounded in-flight observation. During cooldown they
+return no optional metadata rather than sleeping inside a foreground request
+or reusing unverified identity from a previous native profile. Canonical
+connection/readiness remains authoritative. Safe profile-aware caching is not
+delivered here; repeated owner GET/usage presentation still requires Electron
+Desktop acceptance before claiming complete UX validation.

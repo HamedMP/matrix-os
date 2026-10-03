@@ -80,11 +80,11 @@ export function createHermesNativeAccountMetadataReader(input: { homePath: strin
     if (pending) return pending;
     const now = (input.now ?? (() => new Date()))();
     const waitMs = Math.max(0, 5000 - (now.getTime() - lastStartedAt));
+    if (waitMs > 0) return Promise.resolve(null);
     const environment = buildAgentRuntimeEnvironment(homePath);
     const env = Object.fromEntries(Object.entries(environment).filter(([key]) => ["HOME", "MATRIX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR", "MATRIX_NODE_PREFIX"].includes(key)));
     pending = (async () => {
       try {
-        if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
         lastStartedAt = (input.now ?? (() => new Date()))().getTime();
         const { stdout } = await promisify(input.execute ?? execFile)(join(installation, "venv/bin/python"), ["-c", HERMES_NATIVE_METADATA_SCRIPT], {
           cwd: installation, env: { ...env, HERMES_HOME: join(homePath, ".hermes") }, timeout: 5000, killSignal: "SIGKILL", maxBuffer: 4096, windowsHide: true,

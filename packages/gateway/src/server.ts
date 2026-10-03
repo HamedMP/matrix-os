@@ -1459,7 +1459,7 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     hermesNativeAccountMetadataReader: createHermesNativeAccountMetadataReader({ homePath }),
     ...(codexExecutable ? { codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({
-      executable: codexExecutable, cwd: homePath, environment: buildSettingsAccountEnvironment(homePath),
+      executable: codexExecutable, cwd: homePath, environment: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) },
     }) } : {}),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
