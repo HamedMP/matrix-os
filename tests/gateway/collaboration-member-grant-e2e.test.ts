@@ -281,7 +281,8 @@ describe("member-addressed grants end to end", () => {
     // Settling the invitation does not hide the grant the member still has to open.
     await home.db.updateTable("collaboration_members").set({ status: "accepted", accepted_at: now, joined_at: now })
       .where("scope_id", "=", scopeId).where("actor_id", "=", memberId).execute();
-    await publishLegacy([{ actorId: memberId }], "accepted");
+    // The acceptance event still names the invitation it settled.
+    await publishLegacy([{ actorId: memberId, invitationId }], "accepted");
     expect(await discovery(memberId, "inbox")).toEqual([expect.objectContaining({ status: "organization_pending", grantId: grant.id })]);
     expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project", pendingGrantId: grant.id });
   });
@@ -314,6 +315,44 @@ describe("member-addressed grants end to end", () => {
     }
     expect(await discovery(memberId, "inbox")).toEqual([]);
     await expect(openSession(memberId)).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("keeps a member's other access listed when their member grant expires", async () => {
+    await platformRepository.applyDirectoryEvent({
+      eventId: randomUUID(), scopeId, runtimeId, ownerId, kind: "project", organizationId,
+      authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: ownerId, status: "accepted" }],
+    });
+    const owner = await openSession(ownerId);
+    // The member already opened the organization-wide share.
+    const organizationGrant = CollaborationGrantSchema.parse(await (await owner.request("POST", `/api/collaboration/scopes/${scopeId}/grants`, {
+      clientRequestId: randomUUID(), expectedRevision: "1", audience: { kind: "organization" }, preset: "viewer",
+    })).json());
+    expect(await outbox.runOnce()).toBe(1);
+    const joining = await openSession(memberId);
+    expect(joining.ticket.resource).toEqual({ scopeId, kind: "project", pendingGrantId: organizationGrant.id });
+    expect((await joining.request("POST", `/api/collaboration/scopes/${scopeId}/grants/${organizationGrant.id}/accept`, {})).status).toBe(200);
+    expect(await outbox.runOnce()).toBe(1);
+    // A temporary upgrade addressed to them lapses.
+    const scopeRevision = (await home.db.selectFrom("collaboration_scopes").select("revision").where("id", "=", scopeId).executeTakeFirstOrThrow()).revision;
+    expect((await owner.request("POST", `/api/collaboration/scopes/${scopeId}/grants`, {
+      clientRequestId: randomUUID(), expectedRevision: String(scopeRevision), audience: { kind: "member", actorId: memberId },
+      preset: "contributor", expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    })).status).toBe(201);
+    expect(await outbox.runOnce()).toBe(1);
+    const hourLater = () => new Date(now.getTime() + 3_600_000);
+    expect(await new CollaborationCapabilityRepository(home.db, { now: hourLater, createId: randomUUID }).expireGrants()).toBe(1);
+    const laterOutbox = new CollaborationDirectoryOutbox({
+      db: home.db, runtimeId, platformBaseUrl: "https://platform.internal", serviceToken, startTimer: false, now: hourLater,
+      fetchImpl: async (url, init) => platformApp.request(new URL(String(url)).pathname, init),
+    });
+    try {
+      expect(await laterOutbox.runOnce()).toBe(1);
+    } finally {
+      await laterOutbox.shutdown();
+    }
+    // The organization-wide access they still hold keeps the project listed and openable.
+    expect(await discovery(memberId, "shared")).toEqual([expect.objectContaining({ scopeId, status: "accepted" })]);
+    expect((await openSession(memberId)).ticket.resource).toEqual({ scopeId, kind: "project" });
   });
 
   it("admits an accept-only session for a member grant only to its addressee", async () => {

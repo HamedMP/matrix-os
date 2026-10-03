@@ -206,7 +206,7 @@ export class CollaborationDirectoryOutbox {
           continue;
         }
         if (row.discovery_state === "invited" || row.discovery_state === "accepted") {
-          recipientEntries = await withPendingMemberGrants(trx, row.scope_id, recipientEntries, now);
+          recipientEntries = await withPendingMemberGrants(trx, row.scope_id, recipientEntries, row.discovery_state, now);
         }
         claimed.push({
           eventId: row.event_id,
@@ -252,6 +252,7 @@ async function withPendingMemberGrants(
   trx: Transaction<OwnerCollaborationDatabase>,
   scopeId: string,
   entries: ClaimedDirectoryEvent["recipientEntries"],
+  discoveryState: "invited" | "accepted",
   now: Date,
 ): Promise<ClaimedDirectoryEvent["recipientEntries"]> {
   const candidates = entries.filter((entry) => !entry.grantId).map((entry) => entry.actorId);
@@ -269,7 +270,10 @@ async function withPendingMemberGrants(
   const byActor = new Map(pending.map((grant) => [grant.audience_actor_id!, grant.id]));
   return entries.map((entry) => {
     const grantId = entry.grantId ? undefined : byActor.get(entry.actorId);
-    return grantId ? { ...entry, grantId, status: "invited" as const } : entry;
+    if (!grantId) return entry;
+    // An accepted event has settled the invitation it names: only the grant is left to open.
+    const { invitationId, ...rest } = entry;
+    return { ...(discoveryState === "invited" && invitationId ? { invitationId } : {}), ...rest, grantId, status: "invited" as const };
   });
 }
 
