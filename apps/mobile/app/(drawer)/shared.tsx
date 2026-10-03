@@ -826,7 +826,7 @@ function DiscoveryCard({ item, hydrating, onReview, onAccept, onDecline, onOpen 
   onOpen: (item: Extract<DiscoveryItem, { status: "accepted" }>) => Promise<void>;
 }) {
   if (item.status === "organization_pending") return <View style={styles.card}>
-    <Text style={styles.cardTitle}>Shared with you</Text>
+    <Text style={styles.cardTitle}>Shared with your organization</Text>
     <Text style={styles.muted}>Shared {kindLabel(item.kind)} · open it from Matrix on the web to join</Text>
   </View>;
   if (!item.resource) return <View style={styles.card}>

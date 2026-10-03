@@ -262,7 +262,7 @@ describe("native shared Chat screen", () => {
     expect(screen.getByText("The owner's computer is offline. Try again later.")).toBeTruthy();
     expect(screen.getByText("Access is no longer available.")).toBeTruthy();
     expect(screen.getByText("Open this shared file from Matrix on the web.")).toBeTruthy();
-    expect(screen.getByText("Shared with you")).toBeTruthy();
+    expect(screen.getByText("Shared with your organization")).toBeTruthy();
     expect(screen.queryByLabelText(/^Open /)).toBeNull();
     expect(screen.queryByLabelText(/^Accept invitation/)).toBeNull();
   });
