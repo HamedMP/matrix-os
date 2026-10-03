@@ -980,3 +980,17 @@ it("fulfills a draft focus request once the composer becomes editable, without r
  view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled={false}/></>);
  expect(document.activeElement).toBe(other);
 });
+
+it.each(['none','control','blank'])('restores request-owned focus after a later loading blur unless the user acted elsewhere (action=%s)', async action => {
+ const catalog=catalogFixture(); const props={value:"",onChange:vi.fn(),onSubmit:vi.fn(),busy:false,catalog,selection:createCanonicalComposerSelection(catalog,"claude_personal"),onSelectionChange:vi.fn(),instanceLocked:false,focusRequestId:77};
+ const view=render(<><button>Another control</button><SharedChatComposer {...props}/></>);
+ const editor=screen.getByRole('textbox'); await waitFor(() => expect(document.activeElement).toBe(editor));
+ view.rerender(<><button>Another control</button><SharedChatComposer {...props} disabled/></>);
+ // Chromium blurs a focused contenteditable when its loading gate disables it.
+ editor.blur();
+ const other=screen.getByRole('button',{name:'Another control'});
+ if(action === "control") other.focus();
+ if(action === "blank") fireEvent.pointerDown(document.body);
+ view.rerender(<><button>Another control</button><SharedChatComposer {...props} disabled={false}/></>);
+ await waitFor(() => expect(document.activeElement).toBe(action === "control" ? other : action === "blank" ? document.body : editor));
+});

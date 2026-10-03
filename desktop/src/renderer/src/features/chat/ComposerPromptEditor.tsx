@@ -387,7 +387,26 @@ function ComposerPromptEditorInner({
     }, { tag: SKIP_SCROLL_INTO_VIEW_TAG });
   }, [editor]);
 
-  useEffect(() => editor.setEditable(!disabled), [disabled, editor]);
+  const restoreFocusAfterLoading = useRef(false);
+  useEffect(() => {
+    const root = editor.getRootElement();
+    const ownerDocument = root?.ownerDocument;
+    if (disabled) restoreFocusAfterLoading.current = Boolean(root?.contains(ownerDocument?.activeElement ?? null));
+    editor.setEditable(!disabled);
+    if (!disabled || !root || !ownerDocument || !restoreFocusAfterLoading.current) return;
+    // Loading can blur Chromium's contenteditable after its request was already
+    // fulfilled. Retain only that editor-owned focus; a user's next action wins.
+    const cancelRestore = (event: Event) => {
+      if ((event.type === "pointerdown" || (event.target !== ownerDocument.body && event.target !== ownerDocument.documentElement))
+        && event.target instanceof Node && !root.contains(event.target)) restoreFocusAfterLoading.current = false;
+    };
+    ownerDocument.addEventListener("focusin", cancelRestore);
+    ownerDocument.addEventListener("pointerdown", cancelRestore);
+    return () => {
+      ownerDocument.removeEventListener("focusin", cancelRestore);
+      ownerDocument.removeEventListener("pointerdown", cancelRestore);
+    };
+  }, [disabled, editor]);
   useEffect(() => {
     const handleKeyCommand = (event: globalThis.KeyboardEvent | null): boolean => (
       event ? Boolean(onKeyDown(event)) : false
@@ -425,10 +444,19 @@ function ComposerPromptEditorInner({
   }, [autoFocus, focusEditor]);
   const consumedFocusRequest = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (disabled || !focusRequestId || focusRequestId <= 0 || consumedFocusRequest.current === focusRequestId) return;
-    if (!editor.getRootElement()) return;
+    if (disabled || !focusRequestId || focusRequestId <= 0) return;
+    const consumed = consumedFocusRequest.current === focusRequestId;
+    if (consumed && !restoreFocusAfterLoading.current) return;
+    const root = editor.getRootElement();
+    if (!root) return;
+    const focused = root.ownerDocument.activeElement;
+    if (consumed && focused !== root.ownerDocument.body && focused !== root.ownerDocument.documentElement && !root.contains(focused)) {
+      restoreFocusAfterLoading.current = false;
+      return;
+    }
     focusEditor();
     consumedFocusRequest.current = focusRequestId;
+    restoreFocusAfterLoading.current = false;
   }, [disabled, editor, focusEditor, focusRequestId]);
 
   useLayoutEffect(() => {
