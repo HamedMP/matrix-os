@@ -39,7 +39,8 @@ export interface MembershipRecord {
   displayName: string | null;
   email: string | null;
   imageUrl: string | null;
-  profileObservedAt: Date | null;
+  /** When the source observed each stored profile field (internal ordering, never returned to clients). */
+  profileObservedAt: { displayName: Date | null; email: Date | null; imageUrl: Date | null };
 }
 
 export interface EndedMembership {
@@ -175,8 +176,10 @@ export class PlatformOrganizationRepository {
         && existing.state === input.state && existing.role === input.role && existing.membershipId === input.membershipId) {
         // A renamed person keeps the same membership: refresh the display profile only, never the
         // epoch, which would end every activation the member holds.
+        // Written even when the values match, so the observation time advances and a report
+        // observed in between cannot later pass for the newest.
         const profile = newerProfile(existing, input.profile);
-        if (profile && !sameProfile(existing, profile)) {
+        if (profile) {
           await repo.db.updateTable("organization_memberships").set(profileColumns(profile))
             .where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId).execute();
         }
@@ -566,7 +569,8 @@ function toOrganization(row: {
 function toMembership(row: {
   organization_id: string; actor_id: string; membership_id: string; role: string; state: OrganizationMembershipState;
   membership_epoch: number | string; source_updated_at: Date | string;
-  display_name?: string | null; email?: string | null; image_url?: string | null; profile_observed_at?: Date | string | null;
+  display_name?: string | null; email?: string | null; image_url?: string | null;
+  display_name_observed_at?: Date | string | null; email_observed_at?: Date | string | null; image_url_observed_at?: Date | string | null;
 }): MembershipRecord {
   return {
     organizationId: row.organization_id,
@@ -579,33 +583,38 @@ function toMembership(row: {
     displayName: row.display_name ?? null,
     email: row.email ?? null,
     imageUrl: row.image_url ?? null,
-    profileObservedAt: asDate(row.profile_observed_at),
+    profileObservedAt: {
+      displayName: asDate(row.display_name_observed_at),
+      email: asDate(row.email_observed_at),
+      imageUrl: asDate(row.image_url_observed_at),
+    },
   };
 }
 
-/** The reported profile unless the stored one was observed later (webhooks and reconciles race). */
+/**
+ * The reported fields the stored profile has not seen a later observation of (webhooks and
+ * reconciles race, and a report may carry only some fields), or nothing when none remain.
+ */
 function newerProfile(existing: MembershipRecord | null, profile: MemberProfile | undefined): MemberProfile | undefined {
   if (!profile) return undefined;
-  if (existing?.profileObservedAt && existing.profileObservedAt.getTime() > profile.observedAt.getTime()) return undefined;
-  return profile;
+  const fresh = (stored: Date | null | undefined) => !stored || stored.getTime() <= profile.observedAt.getTime();
+  const kept: MemberProfile = { observedAt: profile.observedAt };
+  if (profile.displayName !== undefined && fresh(existing?.profileObservedAt.displayName)) kept.displayName = profile.displayName;
+  if (profile.email !== undefined && fresh(existing?.profileObservedAt.email)) kept.email = profile.email;
+  if (profile.imageUrl !== undefined && fresh(existing?.profileObservedAt.imageUrl)) kept.imageUrl = profile.imageUrl;
+  return Object.keys(kept).length > 1 ? kept : undefined;
 }
 
-/** Only the fields the source reported; the observation time moves with them. */
+/** Only the fields the source reported, each with its own observation time. */
 function profileColumns(profile: MemberProfile | undefined) {
   if (!profile) return {};
   return {
-    ...(profile.displayName !== undefined ? { display_name: profile.displayName } : {}),
-    ...(profile.email !== undefined ? { email: profile.email } : {}),
-    ...(profile.imageUrl !== undefined ? { image_url: profile.imageUrl } : {}),
-    profile_observed_at: profile.observedAt,
+    ...(profile.displayName !== undefined ? { display_name: profile.displayName, display_name_observed_at: profile.observedAt } : {}),
+    ...(profile.email !== undefined ? { email: profile.email, email_observed_at: profile.observedAt } : {}),
+    ...(profile.imageUrl !== undefined ? { image_url: profile.imageUrl, image_url_observed_at: profile.observedAt } : {}),
   };
 }
 
-function sameProfile(record: MembershipRecord, profile: MemberProfile): boolean {
-  return (profile.displayName === undefined || record.displayName === profile.displayName)
-    && (profile.email === undefined || record.email === profile.email)
-    && (profile.imageUrl === undefined || record.imageUrl === profile.imageUrl);
-}
 
 function toDenial(row: {
   denial_id: string; organization_id: string | null; actor_id: string | null; scope_id: string | null; generation: number | string;

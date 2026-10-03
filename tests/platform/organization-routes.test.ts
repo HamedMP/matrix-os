@@ -329,6 +329,22 @@ describe("platform organization routes (T018)", () => {
     const sparse = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {}, clock.getTime() + 1_000);
     expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_3", sparse, clock), body: sparse })).status).toBe(200);
     expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King", email: "ada@example.com" });
+    // Each field keeps its own observation time: an email-only report does not make a name
+    // change observed before it (but after the stored name) look stale.
+    const emailOnly = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      identifier: "ada.king@example.com",
+    }, clock.getTime() + 20_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_4", emailOnly, clock), body: emailOnly })).status).toBe(200);
+    const renamedBefore = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "Byron",
+    }, clock.getTime() + 10_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_5", renamedBefore, clock), body: renamedBefore })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada Byron", email: "ada.king@example.com" });
+    const staleEmail = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      identifier: "ada.old@example.com",
+    }, clock.getTime() + 15_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_6", staleEmail, clock), body: staleEmail })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ email: "ada.king@example.com" });
   });
 
   it("drops an image whose normalized address is too long instead of failing the membership change", async () => {
