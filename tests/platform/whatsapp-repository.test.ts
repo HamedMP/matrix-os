@@ -108,6 +108,29 @@ describe('WhatsApp linking repository', () => {
     await repo.confirm(token, owner, await codeFor(token), 'whatsapp-general-agent-v1');
     expect(await repo.getConnectionBySender(bsuid)).toMatchObject({ sender: bsuid, owner });
   });
+  it('keeps the proven phone encrypted through linking and verification', async () => {
+    const { token } = await repo.startLink('SE.opaque', 'wamid.paired', now + 60_000, sender);
+    await repo.claim(token, owner);
+    const verification = await repo.lease();
+    expect(verification?.sender).toBe('SE.opaque');
+    expect(verification?.payload.phone).toBe(sender);
+    const row = await sql<{ token_cipher: string }>`SELECT token_cipher FROM whatsapp_link_challenges WHERE request_id='wamid.paired'`.execute(db.kysely);
+    expect(row.rows[0]?.token_cipher).not.toContain(sender);
+  });
+  it('rejects invalid delivery phones and does not replace the original proof on replay', async () => {
+    await expect(repo.startLink('SE.opaque', 'wamid.invalid-phone', now + 60_000, '+46700000000')).rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(repo.stop('SE.opaque', 'wamid.invalid-stop', now + 60_000, now, 'not-phone')).rejects.toMatchObject({ code: 'invalid_input' });
+    const original = await repo.startLink('SE.opaque', 'wamid.phone-replay', now + 60_000, sender);
+    expect(await repo.startLink('SE.opaque', 'wamid.phone-replay', now + 60_000, '46707654321')).toEqual(original);
+    await repo.claim(original.token, owner);
+    expect((await repo.lease())?.payload.phone).toBe(sender);
+  });
+  it('preserves the signed phone on a STOP acknowledgement', async () => {
+    await repo.stop('SE.opaque', 'wamid.paired-stop', now + 60_000, now, sender);
+    const acknowledgement = await repo.lease();
+    expect(acknowledgement?.sender).toBe('SE.opaque');
+    expect(acknowledgement?.payload.phone).toBe(sender);
+  });
   it('revokes immediately on STOP and does not revoke a later connection on replay', async () => {
     const first = await repo.startLink(sender, 'wamid.first');
     const previous = await repo.confirm(first.token, owner, await codeFor(first.token), 'whatsapp-general-agent-v1');
