@@ -32,6 +32,7 @@ const secondRenamedRecord: CanonicalChatRecord = {
   ...renamedRecord,
   chat: { ...renamedRecord.chat, id: "chat_second", title: "Second synced title" },
 };
+const draftCallbacks = vi.hoisted(() => ({ starts: [] as StartAgentChat[], newChats: [] as Array<() => void> }));
 
 vi.mock("@desktop/renderer/src/features/work/WorkRail", () => ({
   WorkRail: (props: {
@@ -40,7 +41,10 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", () => ({
     onStartAgentChat?: StartAgentChat;
     onOpenBotChat?: (chatId: string) => void;
     onNewGlobalChat?: () => void;
-  }) => (<>
+  }) => {
+    if (props.onStartAgentChat) draftCallbacks.starts.push(props.onStartAgentChat);
+    if (props.onNewGlobalChat) draftCallbacks.newChats.push(props.onNewGlobalChat);
+    return (<>
     <button onClick={() => props.onNewGlobalChat?.()}>New chat</button>
     <button onClick={() => props.onOpenBotChat?.("chat_bound_bot")}>Open recipe bot</button>
     <button onClick={() => props.onStartAgentChat?.("", [{ kind: "agent", id: "bot_review", label: "Review agent", revision: "3" }])}>Start saved agent</button>
@@ -51,7 +55,8 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", () => ({
     <span data-testid="hosted-rail-projected-title">
       {props.projectedChatTitles?.map((projection) => projection.title).join("|") || "No projection"}
     </span>
-  </>),
+  </>);
+  },
 }));
 
 function ProjectHeaderRename() {
@@ -74,6 +79,8 @@ function HostedComposer({ client }: { client: ReturnType<typeof createCanonicalC
 }
 
 beforeEach(() => {
+  draftCallbacks.starts = [];
+  draftCallbacks.newChats = [];
   useConnection.setState(useConnection.getInitialState(), true);
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
   useTabs.setState(useTabs.getInitialState(), true);
@@ -138,6 +145,21 @@ describe("HostedWorkSidebar", () => {
     act(()=>useConnection.setState({api:{} as never}));
     expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!)).toEqual(request);
     act(()=>useConnection.setState({authGeneration:1}));
+    expect(screen.getByTestId("hosted-agent-draft").textContent).toBe("null");
+  });
+  it("does not navigate the current runtime from retained old Agent or New chat callbacks", () => {
+    render(<WorkSurfaceRuntimeProvider active={false}><HostedDraftReceipt /><HostedWorkSidebar
+      tab={{ id: "work", kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false }} active />
+    </WorkSurfaceRuntimeProvider>);
+    const oldStart = draftCallbacks.starts.at(-1)!;
+    const oldNewChat = draftCallbacks.newChats.at(-1)!;
+    act(() => useConnection.setState({ authGeneration: 1, runtimeSlot: "preview" }));
+    act(() => useTabs.getState().openTab({ kind: "work", title: "Current chat", workRoute: "chat", chatId: "chat_current", chatView: "conversation", closable: false }));
+    const tabs = useTabs.getState().tabs;
+    act(() => oldStart("Late result"));
+    expect(useTabs.getState().tabs).toBe(tabs);
+    act(() => oldNewChat());
+    expect(useTabs.getState().tabs).toBe(tabs);
     expect(screen.getByTestId("hosted-agent-draft").textContent).toBe("null");
   });
   it("opens a recipe bot's bound conversation instead of an Agent draft", () => {

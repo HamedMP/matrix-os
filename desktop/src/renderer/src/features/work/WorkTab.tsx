@@ -1,5 +1,5 @@
 import { mergeCanonicalChatRecord } from "@matrix-os/ui";
-import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
+import type { StartAgentChat } from "@matrix-os/ui";
 import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
 import { ChatSharingButton } from "../chat/ChatSharingButton";
@@ -44,6 +44,7 @@ import type { WorkFilesScope } from "./work-files-scope";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { openWorkProject } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
+import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 
 type WorkLayout = "wide" | "medium" | "narrow";
 type NarrowWorkPane = "rail" | "chat" | "inspector";
@@ -264,8 +265,7 @@ function WorkTabContent({
   const activeTitleRecordRef = useRef<CanonicalChatRecord | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState(initialChatTitle ?? "Chat");
   const updateSharedChatMetadata = useCallback(({ title }: { title: string }) => setActiveChatTitle(title), []);
-  const [agentDraftRequest, setAgentDraftRequest] = useState<ChatAgentDraftRequest | null>(null);
-  const agentDraftSequence = useRef(0);
+  const { agentDraftRequest, requestAgentDraft, consumeAgentDraft } = useWorkAgentDraftRequest();
   const [editingChatTitle, setEditingChatTitle] = useState(false);
   const [renamingChatTitle, setRenamingChatTitle] = useState(false);
   const [renameChatError, setRenameChatError] = useState<string | null>(null);
@@ -497,13 +497,10 @@ function WorkTabContent({
     });
   }, [layout, showChat]);
   const openAgentDraft = useCallback<StartAgentChat>((text, resources) => {
-    if (hostedRuntime) hostedRuntime.requestAgentDraft(text, resources);
-    else {
-      agentDraftSequence.current += 1;
-      setAgentDraftRequest({ id: agentDraftSequence.current, text, resources });
-    }
+    const accepted = (hostedRuntime?.requestAgentDraft ?? requestAgentDraft)(text, resources);
+    if (!accepted) return;
     navigateToGlobalDraft();
-  }, [hostedRuntime, navigateToGlobalDraft]);
+  }, [hostedRuntime, navigateToGlobalDraft, requestAgentDraft]);
   const openGlobalDraft = useCallback(() => openAgentDraft("", []), [openAgentDraft]);
   const openCreateProject = useCallback(() => useUi.getState().openCreateProject(), []);
   const openProjectDraft = useCallback((project: Project) => {
@@ -711,6 +708,7 @@ function WorkTabContent({
         sharedScopeId={sharedScopeId} sharedHeaderContainer={sharedHeaderContainer}
         onSharedChatMetadata={updateSharedChatMetadata}
         draftRequest={hostedRuntime ? hostedRuntime.agentDraftRequest : agentDraftRequest} eventSource={eventSource ?? undefined}
+        onDraftConsumed={hostedRuntime ? hostedRuntime.consumeAgentDraft : consumeAgentDraft}
         externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />

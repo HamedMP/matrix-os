@@ -25,6 +25,7 @@ export function CanonicalChatRoute({
   sharedHeaderContainer,
   onSharedChatMetadata,
   draftRequest,
+  onDraftConsumed,
   projectLabel,
   active,
   live = active,
@@ -44,6 +45,7 @@ export function CanonicalChatRoute({
   sharedHeaderContainer?: HTMLElement | null;
   onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
+  onDraftConsumed?: (id: number) => void;
   projectLabel?: string;
   active: boolean;
   live?: boolean;
@@ -162,6 +164,7 @@ export function CanonicalChatRoute({
       sharedHeaderContainer={sharedHeaderContainer}
       onSharedChatMetadata={onSharedChatMetadata}
       draftRequest={draftRequest}
+      onDraftConsumed={onDraftConsumed}
       projectLabel={projectLabel}
       active={active}
       live={live}

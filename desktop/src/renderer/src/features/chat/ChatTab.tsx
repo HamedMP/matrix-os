@@ -408,6 +408,7 @@ export default function ChatTab({
   sharedHeaderContainer,
   onSharedChatMetadata,
   draftRequest,
+  onDraftConsumed,
   externalNavigation = false,
   renderInspector,
   inspectorExclusive = false,
@@ -423,6 +424,7 @@ export default function ChatTab({
   sharedHeaderContainer?: HTMLElement | null;
   onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
+  onDraftConsumed?: (id: number) => void;
   externalNavigation?: boolean;
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
@@ -443,6 +445,7 @@ export default function ChatTab({
       sharedHeaderContainer={sharedHeaderContainer}
       onSharedChatMetadata={onSharedChatMetadata}
       draftRequest={draftRequest}
+      onDraftConsumed={onDraftConsumed}
       active={active}
       live={visible}
       eventSource={eventSource}

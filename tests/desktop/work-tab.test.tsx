@@ -38,7 +38,7 @@ const chatTabProps = vi.hoisted(() => ({
   tabIds: [] as Array<string | undefined>,
   draftRequests: [] as Array<{ id: number; text: string } | null | undefined>,
 }));
-const eventSourceProps = vi.hoisted(() => ({ rail: [] as unknown[], chat: [] as unknown[], project: [] as unknown[] }));
+const eventSourceProps = vi.hoisted(() => ({ rail: [] as unknown[], chat: [] as unknown[], project: [] as unknown[], agentStarts: [] as Array<(text: string) => void> }));
 const chatEventSourceFactory = vi.hoisted(() => ({
   sources: [] as Array<{
     subscribe: ReturnType<typeof vi.fn>;
@@ -73,6 +73,7 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", async (importOriginal) =
     ...actual,
     WorkRail: (props: React.ComponentProps<typeof actual.WorkRail> & { eventSource?: unknown }) => {
       eventSourceProps.rail.push(props.eventSource);
+      if (props.onStartAgentChat) eventSourceProps.agentStarts.push(props.onStartAgentChat);
       return <actual.WorkRail {...props} />;
     },
   };
@@ -283,6 +284,7 @@ describe("WorkTab rail integration", () => {
     eventSourceProps.rail = [];
     eventSourceProps.chat = [];
     eventSourceProps.project = [];
+    eventSourceProps.agentStarts = [];
     chatEventSourceFactory.sources = [];
     initialWorkWidth = 1_400;
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
@@ -363,6 +365,22 @@ describe("WorkTab rail integration", () => {
     render(<WorkTab tabId="chat-tab-2" route="chat" active />);
 
     expect(chatTabProps.tabIds).toContain("chat-tab-2");
+  });
+
+  it("does not carry an unconsumed standalone draft intent into another authenticated runtime", async () => {
+    render(<WorkTab route="chat" active initialChatView="draft" />);
+    const retainedStart = eventSourceProps.agentStarts.at(-1)!;
+    fireEvent.click(screen.getByRole("button", { name: "New chat", exact: true }));
+    expect(chatTabProps.draftRequests.at(-1)).toMatchObject({ text: "", id: 1 });
+    act(() => useConnection.setState({ authGeneration: 2, runtimeSlot: "preview" }));
+    expect(chatTabProps.draftRequests.at(-1)).toBeNull();
+    const tabs = useTabs.getState().tabs;
+    const focusRequest = useCodingAgentWorkspace.getState().composerFocusRequestId;
+    act(() => retainedStart("Late old-runtime result"));
+    expect(useTabs.getState().tabs).toBe(tabs);
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequest);
+    expect(chatTabProps.draftRequests.at(-1)).toBeNull();
+    await act(async () => undefined);
   });
 
   it.each(["chat", "project"] as const)("preserves drafts across Chat A, Chat B, and New Chat in the %s route", async (route) => {

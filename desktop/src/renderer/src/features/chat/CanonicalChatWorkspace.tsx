@@ -74,7 +74,7 @@ import { useCanonicalComposerSelection } from "./use-canonical-composer-selectio
 import { useProviderSetup } from "./use-provider-setup";
 import { useCreateAppRequest } from "../../stores/create-app-request";
 import { useChatComposerDrafts } from "./use-chat-composer-drafts";
-import { chatAgentComposerDraft } from "./chat-agent-draft";
+import { useChatAgentDraftRequest } from "./use-chat-agent-draft-request";
 import { QueuedTurnEditContext } from "./QueuedTurnEditContext";
 import { useImportedChatAssets } from "./use-imported-chat-assets";
 import { useChatArtifactActions } from "./use-chat-artifact-actions";
@@ -92,6 +92,7 @@ export function CanonicalChatWorkspace({
   sharedHeaderContainer,
   onSharedChatMetadata,
   draftRequest,
+  onDraftConsumed,
   projectLabel,
   active,
   live = active,
@@ -113,6 +114,7 @@ export function CanonicalChatWorkspace({
   sharedHeaderContainer?: HTMLElement | null;
   onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
+  onDraftConsumed?: (id: number) => void;
   projectLabel?: string;
   active: boolean;
   live?: boolean;
@@ -212,19 +214,14 @@ export function CanonicalChatWorkspace({
   const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
-  const consumedDraftRequest = useRef<number | null>(null);
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const submissionSequence = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
-  useEffect(() => {
-    if (!draftRequest || consumedDraftRequest.current === draftRequest.id) return;
-    consumedDraftRequest.current = draftRequest.id;
-    prepareNewChatDraft(chatAgentComposerDraft(draftRequest));
-    setGlobalView("draft");
-    setLocalComposerFocusRequestId((requestId) => requestId + 1);
-  }, [draftRequest, prepareNewChatDraft]);
+  useChatAgentDraftRequest({ request: draftRequest, eligible: active && !initialChatId && initialView !== "conversation" && !explicitSharedRoute,
+    prepare: prepareNewChatDraft, showDraft: () => setGlobalView("draft"),
+    focus: () => setLocalComposerFocusRequestId((requestId) => requestId + 1), onConsumed: onDraftConsumed });
   const runtimeSummary = useCodingAgentWorkspace((state) => state.summary);
   const runtimeStatus = useCodingAgentWorkspace((state) => state.status);
   const composerFocusRequestId = useCodingAgentWorkspace((state) => state.composerFocusRequestId);

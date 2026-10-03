@@ -21,7 +21,7 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
     closable: false,
   });
   const openGlobalDraft = () => {
-    runtime?.requestAgentDraft("", []);
+    if (runtime && !runtime.requestAgentDraft("", [])) return;
     navigateToGlobalDraft();
   };
   const selectChat = (record: CanonicalChatRecord, project?: Project) => {
@@ -53,7 +53,7 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       showCollapseControl={false}
       onNewGlobalChat={openGlobalDraft}
       onStartAgentChat={(text, resources) => {
-        runtime?.requestAgentDraft(text, resources);
+        if (runtime && !runtime.requestAgentDraft(text, resources)) return;
         navigateToGlobalDraft();
       }}
       onOpenBotChat={(chatId) => useTabs.getState().openTab({
