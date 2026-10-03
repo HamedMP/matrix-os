@@ -41,7 +41,6 @@ import {
   compatModeForShellSession,
   getCanonicalShellSessionIds,
   getFirstPaneId,
-  getFocusedSessionId,
   getPaneIdsForSession,
   getSessionIds,
   genId,
@@ -1280,7 +1279,7 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
                   : {})}
               >
                 {desktopParity ? (
-                  <DesktopTerminalSessionHeader title={activeTab.label} terminalId={getFocusedSessionId(activeTab.paneTree, focusedPaneId)} />
+                  <DesktopTerminalSessionHeader title={activeTab.label} />
                 ) : null}
                 {!suspended ? (
                   <PaneGrid

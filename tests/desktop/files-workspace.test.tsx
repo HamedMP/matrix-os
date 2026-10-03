@@ -211,6 +211,19 @@ describe("Files workspace", () => {
     expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("preview");
   });
 
+  it("offers no standalone file or folder share: projects are the only live-shareable resource", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
+
+    fireEvent.click(workspaces);
+    expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
+
+    fireEvent.doubleClick(workspaces);
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    expect(await screen.findByRole("region", { name: "File preview" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
+  });
+
   it("shows the designed empty-folder preview state", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
 
