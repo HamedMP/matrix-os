@@ -492,18 +492,22 @@ export class CollaborationCapabilityRepository {
         const members = rows.flatMap((row) => row.audience_kind === "member" && row.audience_actor_id ? [row.audience_actor_id] : []);
         if (members.length > 0) {
           // One discovery row per member and scope: a member who still has other access keeps it listed.
-          const retaining = await actorsWithOtherAccess(trx, scopeId, members, now);
+          const { retaining, invitations } = await actorsWithOtherAccess(trx, scopeId, members, now);
+          const recipientsByState: Array<readonly ["revoked" | "accepted" | "invited", Array<{ actorId: string; invitationId?: string }>]> = [
+            ["revoked", members.filter((actorId) => !retaining.has(actorId) && !invitations.has(actorId)).map((actorId) => ({ actorId }))],
+            ["accepted", members.filter((actorId) => retaining.has(actorId)).map((actorId) => ({ actorId }))],
+            // An invitation the member has not answered stays listed as that invitation.
+            ["invited", members.filter((actorId) => !retaining.has(actorId) && invitations.has(actorId))
+              .map((actorId) => ({ actorId, invitationId: invitations.get(actorId)! }))],
+          ];
           let current = scope;
-          for (const [state, actors] of [
-            ["revoked", members.filter((actorId) => !retaining.has(actorId))],
-            ["accepted", members.filter((actorId) => retaining.has(actorId))],
-          ] as const) {
+          for (const [state, recipients] of recipientsByState) {
             // The directory contract carries eight recipients per event, and each event needs its own revision.
-            for (let offset = 0; offset < actors.length; offset += DIRECTORY_EVENT_RECIPIENT_LIMIT) {
+            for (let offset = 0; offset < recipients.length; offset += DIRECTORY_EVENT_RECIPIENT_LIMIT) {
               current = await advanceScopeAccessRevision(trx, current, now);
               await appendMutationRecords(trx, {
                 scope: current, actorId: scope.owner_id, action: "grant.expired",
-                recipients: actors.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT).map((actorId) => ({ actorId })),
+                recipients: recipients.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT),
                 discoveryState: state, publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle), now,
               });
             }
@@ -617,13 +621,14 @@ export class CollaborationCapabilityRepository {
 }
 
 /**
- * Members who keep access to the scope another way: an active activation of a live organization
- * grant, or an accepted legacy membership. The home still re-checks membership evidence on every
- * request; this only decides what discovery lists.
+ * What else each member still has on the scope: access another way (an active activation of a
+ * live organization grant, or an accepted legacy membership), or an open invitation to answer.
+ * The home still re-checks membership evidence on every request; this only decides what
+ * discovery lists.
  */
 async function actorsWithOtherAccess(
   trx: Transaction<OwnerCollaborationDatabase>, scopeId: string, actorIds: readonly string[], now: string,
-): Promise<Set<string>> {
+): Promise<{ retaining: Set<string>; invitations: Map<string, string> }> {
   const viaOrganization = await trx.selectFrom("collaboration_grant_activations as a")
     .innerJoin("collaboration_grants as g", "g.id", "a.grant_id")
     .select("a.actor_id")
@@ -636,7 +641,16 @@ async function actorsWithOtherAccess(
     .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", now)]))
     .where("actor_id", "in", actorIds)
     .execute();
-  return new Set([...viaOrganization, ...viaMembership].map((row) => row.actor_id));
+  const pendingInvitations = await trx.selectFrom("collaboration_members").select(["actor_id", "invitation_id"])
+    .where("scope_id", "=", scopeId).where("status", "=", "pending").where("dispositioned_at", "is", null)
+    .where("invitation_id", "is not", null)
+    .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", now)]))
+    .where("actor_id", "in", actorIds)
+    .execute();
+  return {
+    retaining: new Set([...viaOrganization, ...viaMembership].map((row) => row.actor_id)),
+    invitations: new Map(pendingInvitations.map((row) => [row.actor_id, row.invitation_id!])),
+  };
 }
 
 /** A changed access decision advances discovery and authorization under the scope lock. */
