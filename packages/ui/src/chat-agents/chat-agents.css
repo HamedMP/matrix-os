@@ -91,6 +91,11 @@
 .matrix-recipe-rabbit--medium { width: 48px; height: 48px; }
 .matrix-recipe-rabbit--large { width: 52px; height: 52px; }
 
+.matrix-bot-composer-avatar > [data-agent-avatar] {
+  width: 100%;
+  height: 100%;
+}
+
 .matrix-recipe-rabbit svg {
   width: 100%;
   height: 100%;

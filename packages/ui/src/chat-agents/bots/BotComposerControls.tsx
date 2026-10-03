@@ -64,7 +64,7 @@ export function BotComposerControls({ agentId, client, catalog, catalogLoading =
     <Popover.Trigger asChild><button type="button" aria-label="Choose bot agent and model" aria-busy={!agent && !error || pending || catalogLoading}
       disabled={disabled || pending} title={`${agent?.name ?? "Your bot"} · ${routing}`} data-slot="bot-composer-model-trigger"
       className="no-drag flex h-8 min-w-0 max-w-[24rem] items-center gap-1.5 rounded-lg px-2 text-xs outline-none hover:bg-[var(--bg-hover,var(--muted))] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50" style={chatAgentMutedStyle}>
-      <span className="size-5 shrink-0 overflow-hidden [&_svg]:size-5"><AgentAvatar id={agentId} name={agent?.name ?? "Your bot"}/></span>
+      <span className="matrix-bot-composer-avatar size-5 shrink-0"><AgentAvatar id={agentId} name={agent?.name ?? "Your bot"}/></span>
       <span className="truncate">{agent?.name ?? "Your bot"} · {routing}</span><span aria-hidden>⌄</span>
     </button></Popover.Trigger>
     <Popover.Portal><Popover.Content side="top" align="end" sideOffset={8} collisionPadding={16} role="dialog" aria-label="Bot agent and model"
