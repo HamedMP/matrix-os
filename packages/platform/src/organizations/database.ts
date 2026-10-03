@@ -41,6 +41,10 @@ export interface OrganizationMembershipsTable {
   membership_epoch: number | string;
   source_updated_at: Timestamp;
   updated_at: Timestamp;
+  /** Display-only Clerk profile; null until a webhook or reconcile reports one. */
+  display_name: ColumnType<string | null, string | null | undefined, string | null>;
+  email: ColumnType<string | null, string | null | undefined, string | null>;
+  image_url: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface OrganizationWebhookInboxTable {
@@ -135,6 +139,13 @@ async function createOrganizationTables(db: Transaction<OrganizationPlatformData
       PRIMARY KEY (organization_id, actor_id)
     )
   `.execute(db);
+  // Display-only member profile for Share; added in place on existing tables.
+  await sql`ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS display_name TEXT
+    CHECK (display_name IS NULL OR char_length(display_name) BETWEEN 1 AND 120)`.execute(db);
+  await sql`ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS email TEXT
+    CHECK (email IS NULL OR char_length(email) BETWEEN 3 AND 254)`.execute(db);
+  await sql`ALTER TABLE organization_memberships ADD COLUMN IF NOT EXISTS image_url TEXT
+    CHECK (image_url IS NULL OR char_length(image_url) BETWEEN 1 AND 2048)`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_organization_memberships_actor_active
       ON organization_memberships(actor_id, organization_id) WHERE state = 'active'

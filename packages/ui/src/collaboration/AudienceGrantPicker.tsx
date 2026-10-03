@@ -2,11 +2,18 @@ import { CollaborationGrantSchema, CollaborationScopeSchema, type CollaborationS
 import { useEffect, useState } from "react";
 import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
+import { memberLabel } from "./member-label.js";
 
-const MembersPageSchema = z.object({
-  members: z.array(z.object({ actorId: z.string().min(1).max(160), role: z.string().min(1).max(80), joinedAt: z.iso.datetime() }).strict()).max(50),
+const MembersPageSchema = z.strictObject({
+  members: z.array(z.strictObject({
+    actorId: z.string().min(1).max(160), role: z.string().min(1).max(80), joinedAt: z.iso.datetime(),
+    displayName: z.string().min(1).max(120).optional(),
+    email: z.string().min(3).max(254).optional(),
+    imageUrl: z.string().min(1).max(2_048).optional(),
+  })).max(50),
   nextCursor: z.string().min(1).max(2_048).optional(),
-}).strict();
+});
+const MEMBERS_QUERY = "include=profile";
 const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
@@ -30,13 +37,14 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
   const [retryToken, setRetryToken] = useState(0);
   const base = `/api/collaboration/scopes/${encodeURIComponent(scope.id)}`;
   const orgId = scope.organizationId;
+  const audienceLabel = (actorId: string) => memberLabel(members.find((member) => member.actorId === actorId), actorId);
   // Chosen on a private project, access is recorded now and starts when the owner shares it.
   const beforeShare = scope.kind === "project" && scope.lifecycle === "private";
   useEffect(() => {
     if (!orgId) { setLoading(false); setError(true); return; }
     let active = true;
     void Promise.all([
-      api.get(`/api/organizations/${encodeURIComponent(orgId)}/members`),
+      api.get(`/api/organizations/${encodeURIComponent(orgId)}/members?${MEMBERS_QUERY}`),
       api.get(`${base}/grants`),
       api.get(base),
     ]).then(([memberPage, grantRows, scopeValue]) => {
@@ -61,7 +69,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
     if (!orgId || !cursor || pending) return;
     setPending(true);
     try {
-      const page = MembersPageSchema.parse(await api.get(`/api/organizations/${encodeURIComponent(orgId)}/members?cursor=${encodeURIComponent(cursor)}`));
+      const page = MembersPageSchema.parse(await api.get(`/api/organizations/${encodeURIComponent(orgId)}/members?${MEMBERS_QUERY}&cursor=${encodeURIComponent(cursor)}`));
       setMembers((current) => {
         const byActor = new Map(current.map((member) => [member.actorId, member]));
         for (const member of page.members) if (member.actorId !== scope.ownerId) byActor.set(member.actorId, member);
@@ -138,7 +146,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
       <label className="grid gap-1 text-sm">Share with
         <select value={audience} disabled={loading || pending || error} onChange={(event) => setAudience(event.target.value)} className="min-w-0 rounded-lg border bg-transparent px-3 py-2">
           <option value="organization">Everyone in the organization</option>
-          {members.map((member) => <option key={member.actorId} value={member.actorId}>{member.actorId}</option>)}
+          {members.map((member) => <option key={member.actorId} value={member.actorId}>{memberLabel(member, member.actorId)}</option>)}
         </select>
       </label>
       <label className="grid gap-1 text-sm">Access preset
@@ -150,8 +158,8 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
     </div>
     {cursor ? <button type="button" className={`${buttonClass} mt-2`} disabled={pending} onClick={() => void loadMore()}>More members</button> : null}
     {grants.length ? <ul className="mt-3 space-y-2 text-sm">{grants.filter((grant) => grant.state === "active" || grant.state === "pending").map((grant) => <li key={grant.id} className="flex flex-wrap items-center gap-2 rounded-lg border p-2">
-      <span className="min-w-0 flex-1 truncate">{grant.audience.kind === "organization" ? "Everyone in the organization" : grant.audience.actorId} · {beforeShare && grant.state === "pending" ? "starts when shared" : grant.state}</span>
-      <select aria-label={`Preset for ${grant.audience.kind === "organization" ? "organization" : grant.audience.actorId}`}
+      <span className="min-w-0 flex-1 truncate">{grant.audience.kind === "organization" ? "Everyone in the organization" : audienceLabel(grant.audience.actorId)} · {beforeShare && grant.state === "pending" ? "starts when shared" : grant.state}</span>
+      <select aria-label={`Preset for ${grant.audience.kind === "organization" ? "organization" : audienceLabel(grant.audience.actorId)}`}
         value={grant.preset} disabled={pending || loading || error || !api.patch}
         onChange={(event) => void mutateGrant(grant, event.target.value as "viewer" | "contributor")}
         className="rounded-lg border bg-transparent px-2 py-1">

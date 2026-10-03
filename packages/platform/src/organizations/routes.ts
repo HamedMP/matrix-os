@@ -30,6 +30,8 @@ const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+
 const MembersQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MEMBERSHIP_PAGE_LIMIT).default(50),
   cursor: CollaborationOrganizationMembersCursorSchema.optional(),
+  /** Opt-in: released clients parse the page strictly and must not receive profile fields. */
+  include: z.literal("profile").optional(),
 }).strict();
 const AccessResolveSchema = z.object({
   protocolVersion: z.literal(COLLABORATION_DIRECT_PROTOCOL_VERSION),
@@ -111,7 +113,14 @@ export function createPlatformOrganizationRoutes(options: {
       const page = await options.repository.listMembers(organizationId.data, { limit: query.data.limit, afterActorId });
       c.header("Cache-Control", "private, no-store");
       return c.json({
-        members: page.members.map((member) => ({ actorId: member.actorId, role: member.role, joinedAt: member.sourceUpdatedAt.toISOString() })),
+        members: page.members.map((member) => ({
+          actorId: member.actorId, role: member.role, joinedAt: member.sourceUpdatedAt.toISOString(),
+          ...(query.data.include === "profile" ? {
+            ...(member.displayName ? { displayName: member.displayName } : {}),
+            ...(member.email ? { email: member.email } : {}),
+            ...(member.imageUrl ? { imageUrl: member.imageUrl } : {}),
+          } : {}),
+        })),
         ...(page.nextActorId ? { nextCursor: Buffer.from(page.nextActorId, "utf8").toString("base64url") } : {}),
       });
     } catch (error: unknown) {

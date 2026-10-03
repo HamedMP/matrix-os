@@ -136,7 +136,7 @@ describe("organization ready-to-work presentation", () => {
   it("creates only Viewer or Contributor grants for a current organization member or the organization", async () => {
     let revision = "4";
     const api = {
-      baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members")
+      baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members?include=profile")
         ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-01-01T00:00:00.000Z" }] }
         : path.endsWith("/grants") ? [] : { ...scope, revision }),
       post: vi.fn(async (_path: string, body: { audience: unknown; preset: string }) => {
@@ -172,7 +172,8 @@ describe("organization ready-to-work presentation", () => {
     let currentGrants = [grant];
     const api = { baseUrl: "http://localhost",
       get: vi.fn(async (path: string) => path.startsWith("/api/organizations/")
-        ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-01-01T00:00:00.000Z" }] }
+        ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-01-01T00:00:00.000Z",
+          displayName: "Ada Lovelace", email: "ada@example.com" }] }
         : path.endsWith("/grants") ? currentGrants : currentScope),
       post: vi.fn(),
       patch: vi.fn(async () => {
@@ -186,7 +187,9 @@ describe("organization ready-to-work presentation", () => {
       }),
     };
     render(<AudienceGrantPicker api={api} scope={scope} />);
-    fireEvent.change(await screen.findByLabelText("Preset for user_ada"), { target: { value: "contributor" } });
+    // The grant row names the person, not their Clerk id.
+    expect(await screen.findByText("Ada Lovelace · ada@example.com · active")).toBeVisible();
+    fireEvent.change(await screen.findByLabelText("Preset for Ada Lovelace · ada@example.com"), { target: { value: "contributor" } });
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants/${grant.id}`,
       expect.objectContaining({ expectedRevision: "4", expectedGrantRevision: "2", preset: "contributor" })));
     fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
@@ -195,7 +198,7 @@ describe("organization ready-to-work presentation", () => {
   });
 
   it("resolves an exact file identity before creating a standalone scope", async () => {
-    const api = { baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members") ? { members: [] }
+    const api = { baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.includes("/members") ? { members: [] }
       : path.endsWith("/grants") ? [] : { ...scope, kind: "file", resourceId: "30000000-0000-4000-8000-000000000401" }),
       post: vi.fn(async (path: string) => path.endsWith("/catalog/resolve")
         ? { id: "30000000-0000-4000-8000-000000000401", kind: "file", path: "notes/plan.md", incarnation: "file_v1", revision: "1" }
@@ -254,7 +257,7 @@ describe("organization ready-to-work presentation", () => {
   });
 
   it("places the organization member picker in the existing owner manager", async () => {
-    const api = { baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members") ? { members: [] }
+    const api = { baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.includes("/members") ? { members: [] }
       : path.endsWith("/grants") ? [] : scope), post: vi.fn(async () => undefined), delete: vi.fn() };
     render(<ChatCollaboratorsDialog api={api} scope={scope} members={[]} onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
     expect(await screen.findByLabelText("Share with")).toBeVisible();
