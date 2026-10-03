@@ -399,3 +399,21 @@ identity with private principal/file proof; final paired-snapshot verification
 still runs independently. Concurrent reads coalesce, quota reads remain rate
 limited, and changed/missing proof, failed reads or expired observations discard
 the single-slot cache. Reuse does not extend timestamps or confer API-key validity.
+
+### Owner foreground workflow boundary
+
+Settings foreground workflows mount behind the existing request principal and
+resolved runtime owner. Anonymous requests return 401, other owners 403, and
+missing runtime dependencies 503. Start, code submission, key verification, and
+cancellation validate bounded strict payloads before execution. Receipts retain
+only safe bounded state, expire, and use owner-scoped idempotency; native profile
+writes require serialized admission and confirmed child cleanup. Secrets never
+enter public receipts or logs. Fixed-origin key probes enforce deadlines and
+redirect rejection before the injected native saver may replace credentials.
+
+This engine layer registers an empty adapter registry: owner capabilities are
+empty and attempts to start undelivered adapters are unavailable. It advertises
+no login, install, or uninstall support until native adapters are delivered.
+Gateway shutdown drains the registered engine. Registration, profile guard,
+receipt lifecycle, route authorization, and key-child cleanup tests exercise
+the delivered boundaries independently from later runtime adapters.

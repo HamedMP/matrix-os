@@ -1,6 +1,8 @@
 import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
 import { createCodexNativeAccountMetadataReader } from "./ai-providers/codex-native-account-metadata.js";
 import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from "./agent-launcher.js";
+
+import { registerProviderWorkflowRuntime } from "./server/provider-workflow-runtime.js";
 import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
@@ -157,7 +159,7 @@ import { createHostToolPackInstaller, createToolPackService, InMemoryToolPackRep
 import { createPreviewManager } from "./preview-manager.js";
 import { createProjectManager } from "./project-manager.js";
 import { createProvisioner } from "./provisioner.js";
-import { requireRequestPrincipal } from "./request-principal.js";
+import { getOptionalRequestPrincipal, requireRequestPrincipal } from "./request-principal.js";
 import { createReviewStore } from "./review-store.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import {
@@ -1678,6 +1680,13 @@ export async function createGateway(config: GatewayConfig) {
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
+  // Native adapters are delivered separately; this owner boundary advertises none.
+  const providerWorkflowLifecycle = await registerProviderWorkflowRuntime({
+    app,
+    ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
+    getPrincipal: getOptionalRequestPrincipal,
+    createAdapters: async () => [],
+  });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
@@ -1864,6 +1873,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await providerWorkflowLifecycle.close();
       await localChatImportLifecycle.close();
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
