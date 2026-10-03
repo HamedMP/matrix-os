@@ -444,3 +444,18 @@ no authorization bytes were submitted (for example, the authorization prompt
 is not ready). Ambiguous partial writes retain the submission latch. Accepted
 submission stays single-use under concurrent requests. Adapter integration and
 real authorization acceptance remain pending in the native/browser layer.
+
+### Private native writer admission primitive
+
+The adapter-independent writer lease stores only process/profile admission in a
+runtime-private sibling directory outside the synced owner home. Exclusive,
+symlink-safe acquisition prevents a second process from claiming the same profile.
+Release coalesces concurrent ownership checks and unlinks: an older cleanup must
+never remove a replacement writer's marker. A failed unlink remains fenced and
+permits an explicit cleanup retry. No timeout or gateway death clears admission.
+Owner-authorized native adapters consume this primitive in the following layer;
+the primitive alone exposes no endpoint or new credential-writing capability.
+
+Direct primitive tests cover exclusive cross-instance acquisition, independent
+profiles, absence from synced owner paths, symlinked admission ancestors/markers,
+and replacement-marker identity retention, in addition to release races/retries.
