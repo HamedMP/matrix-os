@@ -9,7 +9,7 @@ import {
   ProjectMembershipTransitionError,
   reconcileProjectMembershipAtPublication,
 } from "./project-membership-transition.js";
-import { jsonb, OPERATION_RETENTION_MS, parseJson } from "./repository-shared.js";
+import { jsonb, OPERATION_RETENTION_MS, parseJson, PRESET_POLICY_VERSION } from "./repository-shared.js";
 import type { ChatOutboxEvent } from "../chat/records.js";
 
 const MAX_RECOVERY_BATCH = 100;
@@ -66,6 +66,56 @@ export class ProjectTransitionError extends Error {
 
 type TransitionRow = Selectable<CollaborationTransitionsTable>;
 type CollaborationTransaction = Transaction<OwnerCollaborationDatabase>;
+
+/**
+ * The share default: everyone in the project's organization may contribute. Runs inside the
+ * activation transaction, which already moves the scope revision and auth epoch, so it adds no
+ * revision of its own. An organization grant the owner already made is kept as it is.
+ */
+async function ensureDefaultOrganizationGrant(trx: CollaborationTransaction, input: {
+  scopeId: string;
+  organizationId: string | null;
+  ownerId: string;
+  revision: number;
+  grantId: string;
+  now: Date;
+}): Promise<void> {
+  if (!input.organizationId) return;
+  const existing = await trx.selectFrom("collaboration_grants").select("id")
+    .where("scope_id", "=", input.scopeId)
+    .where("audience_kind", "=", "organization")
+    .where("state", "in", ["pending", "active"])
+    .limit(1).executeTakeFirst();
+  if (existing) return;
+  const now = input.now.toISOString();
+  await trx.insertInto("collaboration_grants").values({
+    id: input.grantId,
+    scope_id: input.scopeId,
+    organization_id: input.organizationId,
+    audience_kind: "organization",
+    audience_actor_id: null,
+    preset: "contributor",
+    state: "active",
+    policy_version: PRESET_POLICY_VERSION,
+    source_id: null,
+    legacy_ceiling: null,
+    expires_at: null,
+    revision: 1,
+    created_by: input.ownerId,
+    created_at: now,
+    updated_at: now,
+    revoked_at: null,
+  }).execute();
+  await trx.insertInto("collaboration_audit").values({
+    scope_id: input.scopeId,
+    actor_id: input.ownerId,
+    action: "grant.created",
+    outcome: "completed",
+    revision: input.revision,
+    reason_code: "organization:contributor:default",
+    created_at: input.now,
+  }).execute();
+}
 
 function timestamp(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
@@ -515,6 +565,17 @@ export function createProjectTransitionJournal(options: {
           .where("authority_generation", "=", Number(row.source_authority_generation))
           .returningAll().executeTakeFirst();
         if (!updatedScope) throw new ProjectTransitionError("conflict");
+        // Sharing a whole project shares it with its organization by default: in this same
+        // transaction, so the project is never shared with nobody, and the directory outbox
+        // claim publishes it with `audience: "organization"` and this grant id.
+        await ensureDefaultOrganizationGrant(trx, {
+          scopeId: scope.id,
+          organizationId: updatedScope.organization_id,
+          ownerId: scope.owner_id,
+          revision: nextRevision,
+          grantId: z.uuid().parse(createEventId()),
+          now: now(),
+        });
         const updated = await trx.updateTable("collaboration_transitions").set({
           status: "active",
           error_code: null,

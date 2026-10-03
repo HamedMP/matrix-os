@@ -16,6 +16,9 @@ const MembersSchema = z.object({ members: z.array(CollaborationMemberSchema).max
 
 export const PROJECT_SHARING_UNAVAILABLE_MESSAGE = "Project sharing is unavailable. The project remains private and unchanged.";
 
+const PUBLICATION_POLL_MS = 1_000;
+const PUBLICATION_WAIT_MS = 60_000;
+
 export interface ProjectSharingController {
   pending: boolean;
   open: boolean;
@@ -45,6 +48,8 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
   const [error, setError] = useState(false);
   const alive = useRef(true);
   const starting = useRef(false);
+  /** The scope whose publication is being awaited; cleared by close so the wait ends with the dialog. */
+  const publishingScope = useRef<string | null>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -131,8 +136,40 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
     }
   };
 
+  /**
+   * A confirmed project publishes on the owner's home asynchronously; until the platform lists it,
+   * the scope key cannot reach it. Read it once a second, for a bounded time, and show the shared
+   * project's collaborators as soon as it is shared. Closing the dialog ends the wait.
+   */
+  const awaitPublication = async (scopeId: string) => {
+    if (publishingScope.current === scopeId) return;
+    publishingScope.current = scopeId;
+    const deadline = Date.now() + PUBLICATION_WAIT_MS;
+    let lastFailure = "none";
+    while (alive.current && publishingScope.current === scopeId && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, PUBLICATION_POLL_MS));
+      if (!alive.current || publishingScope.current !== scopeId) return;
+      try {
+        const refreshed = await refreshScope(scopeId);
+        if (refreshed.scope.lifecycle === "shared") {
+          publishingScope.current = null;
+          if (alive.current) setSurface("members");
+          return;
+        }
+      } catch (failure: unknown) {
+        // Expected while the home finishes publishing: the scope is not routable yet.
+        lastFailure = failure instanceof Error ? failure.name : "UnknownError";
+      }
+    }
+    if (publishingScope.current === scopeId) {
+      publishingScope.current = null;
+      console.warn("[project-collaboration] publication still pending", lastFailure);
+    }
+  };
+
   const close = () => {
     if (pending) return;
+    publishingScope.current = null;
     setSurface(null);
     setInventory(null);
     setScope(null);
@@ -148,6 +185,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
       inventory={inventory}
       refreshInventory={() => refreshInventory(scope.id)}
       onManageMembers={() => setSurface("members")}
+      onConfirmed={() => { void awaitPublication(scope.id); }}
       onClose={close}
     /> : null}
     {surface === "members" && scope ? <ChatCollaboratorsDialog

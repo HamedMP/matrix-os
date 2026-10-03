@@ -6,6 +6,7 @@ import {
   ProjectTransitionError,
   createProjectTransitionJournal,
 } from "../../packages/gateway/src/collaboration/project-transition.js";
+import { CollaborationDirectoryOutbox } from "../../packages/gateway/src/collaboration/directory-outbox.js";
 import {
   createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
@@ -409,6 +410,93 @@ describe("project collaboration transition journal", () => {
         discovery_state: "invited",
       },
     ]);
+  });
+
+  it("shares a confirmed project with its whole organization as contributors, published at activation", async () => {
+    // Product default (2026-10-03): confirming "Share whole project" shares it with everyone in the
+    // organization. The owner takes no further step; before this the project was published to
+    // nobody and recipients never saw it.
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: SCOPE_ID, actor_id: OWNER_ID, role: "owner", status: "accepted", organization_id: "org_matrix_team",
+      invitation_id: null, invited_by: OWNER_ID, accepted_at: NOW, expires_at: null, revision: 1,
+      joined_at: NOW, updated_at: NOW,
+    } as never).execute();
+    const transitions = journal();
+    await prepare();
+    // Nothing is granted while the project is still private.
+    expect(await fixture.db.selectFrom("collaboration_grants").select("id").where("scope_id", "=", SCOPE_ID).execute()).toEqual([]);
+    await transitions.beginStaging(TRANSITION_ID);
+    await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
+    await transitions.markFenced({
+      transitionId: TRANSITION_ID, sourceFenceEpoch: 8, currentInventoryRevision: 7,
+      currentInventoryHash: INVENTORY_HASH, currentMembershipHash: MEMBERSHIP_HASH,
+    });
+    await transitions.beginCommit(TRANSITION_ID);
+    await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
+    await transitions.activate(TRANSITION_ID);
+    await transitions.activate(TRANSITION_ID);
+
+    const grants = await fixture.db.selectFrom("collaboration_grants")
+      .select(["id", "organization_id", "audience_kind", "audience_actor_id", "preset", "state", "policy_version", "created_by"])
+      .where("scope_id", "=", SCOPE_ID).execute();
+    expect(grants).toEqual([{
+      id: expect.any(String), organization_id: "org_matrix_team", audience_kind: "organization", audience_actor_id: null,
+      preset: "contributor", state: "active", policy_version: "v1", created_by: OWNER_ID,
+    }]);
+    // The revision moves once, with the share itself.
+    expect(await fixture.db.selectFrom("collaboration_scopes").select(["lifecycle", "revision"])
+      .where("id", "=", SCOPE_ID).executeTakeFirstOrThrow()).toEqual({ lifecycle: "shared", revision: 5 });
+    expect(await fixture.db.selectFrom("collaboration_audit").select(["action", "actor_id", "reason_code"])
+      .where("scope_id", "=", SCOPE_ID).where("action", "=", "grant.created").execute())
+      .toEqual([{ action: "grant.created", actor_id: OWNER_ID, reason_code: "organization:contributor:default" }]);
+
+    // What the home actually sends the platform: an organization-wide share, so every member sees it.
+    const sent: Array<Record<string, unknown>> = [];
+    const outbox = new CollaborationDirectoryOutbox({
+      db: fixture.db, platformBaseUrl: "https://platform.internal", runtimeId: DESTINATION_RUNTIME,
+      serviceToken: "s".repeat(32), now: () => NOW, startTimer: false,
+      fetchImpl: (async (_url: string, init: RequestInit) => {
+        sent.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return new Response(null, { status: 204 });
+      }) as typeof fetch,
+    });
+    try {
+      await outbox.runOnce();
+    } finally {
+      await outbox.shutdown();
+    }
+    expect(sent).toEqual([expect.objectContaining({
+      scopeId: SCOPE_ID, kind: "project", organizationId: "org_matrix_team",
+      audience: "organization", organizationGrantId: grants[0]!.id,
+    })]);
+  });
+
+  it("keeps an organization grant the owner already made instead of adding a second one", async () => {
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: SCOPE_ID, actor_id: OWNER_ID, role: "owner", status: "accepted", organization_id: "org_matrix_team",
+      invitation_id: null, invited_by: OWNER_ID, accepted_at: NOW, expires_at: null, revision: 1,
+      joined_at: NOW, updated_at: NOW,
+    } as never).execute();
+    const existingGrantId = "60000000-0000-4000-8000-000000000051";
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: existingGrantId, scope_id: SCOPE_ID, organization_id: "org_matrix_team", audience_kind: "organization",
+      audience_actor_id: null, preset: "viewer", state: "active", policy_version: "v1", source_id: null,
+      legacy_ceiling: null, expires_at: null, revision: 1, created_by: OWNER_ID, created_at: NOW, updated_at: NOW, revoked_at: null,
+    } as never).execute();
+    const transitions = journal();
+    await prepare();
+    await transitions.beginStaging(TRANSITION_ID);
+    await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
+    await transitions.markFenced({
+      transitionId: TRANSITION_ID, sourceFenceEpoch: 8, currentInventoryRevision: 7,
+      currentInventoryHash: INVENTORY_HASH, currentMembershipHash: MEMBERSHIP_HASH,
+    });
+    await transitions.beginCommit(TRANSITION_ID);
+    await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
+    await transitions.activate(TRANSITION_ID);
+
+    expect(await fixture.db.selectFrom("collaboration_grants").select(["id", "preset"])
+      .where("scope_id", "=", SCOPE_ID).execute()).toEqual([{ id: existingGrantId, preset: "viewer" }]);
   });
 
   it("invalidates stale confirmation under the fence and preserves the source authority", async () => {

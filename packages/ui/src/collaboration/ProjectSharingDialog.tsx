@@ -26,6 +26,7 @@ export function ProjectSharingDialog({
   inventory,
   refreshInventory,
   onManageMembers,
+  onConfirmed,
   onClose,
 }: {
   api: CollaborationApi;
@@ -34,6 +35,8 @@ export function ProjectSharingDialog({
   inventory: CollaborationProjectInventory;
   refreshInventory: () => Promise<CollaborationProjectInventory>;
   onManageMembers?: () => void;
+  /** Called once the home accepts the confirmation; the project then publishes asynchronously. */
+  onConfirmed?: () => void;
   onClose: () => void;
 }) {
   const [currentInventory, setCurrentInventory] = useState(() =>
@@ -88,6 +91,7 @@ export function ProjectSharingDialog({
         setFeedback(result.status === "active"
           ? "The whole project is shared."
           : "Preparing the shared project. Everyone gets access only after publication completes.");
+        onConfirmed?.();
       }
     } catch (failure: unknown) {
       console.warn("[project-collaboration] confirmation failed", failure instanceof Error ? failure.name : "UnknownError");

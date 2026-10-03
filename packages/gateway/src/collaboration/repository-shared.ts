@@ -4,6 +4,8 @@ import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "./dat
 
 export const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const MAX_SCOPE_PARTICIPANTS = 8;
+/** Policy version recorded on every preset grant, whether the owner or the share default made it. */
+export const PRESET_POLICY_VERSION = "v1";
 
 export type ScopeRow = Selectable<CollaborationScopesTable>;
 
