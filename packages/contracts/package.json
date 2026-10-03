@@ -69,6 +69,7 @@
     "#kernel-conversations": "./src/kernel-conversations.ts",
     "#provider-settings": "./src/provider-settings.ts",
     "#funded-ai": "./src/funded-ai.ts",
+    "#funded-ai-execution-recovery": "./src/funded-ai-execution-recovery.ts",
     "#jev": "./src/jev.ts",
     "#jev-hermes-route": "./src/jev-hermes-route.ts",
     "#getting-started": "./src/getting-started.ts",
