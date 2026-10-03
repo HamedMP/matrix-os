@@ -6,6 +6,7 @@ import type {
   CollaborationResourceBindingsTable,
   OwnerCollaborationDatabase,
 } from "./database.js";
+import { publishProjectChatRoutes } from "./project-chat-routes.js";
 import { revokeProjectSharedChatCredentials } from "./project-membership-transition.js";
 import type { ChatOutboxEvent } from "../chat/records.js";
 
@@ -330,6 +331,10 @@ export function createProjectInheritanceResolver(options: {
             chatId: input.resourceId, ownerType: project.owner_type,
             ownerId: input.ownerId, now: createdAt,
           });
+        }
+        // A Chat added to a project that is already shared is opened through its own route.
+        if (project.lifecycle === "shared" && input.kind === "chat") {
+          await publishProjectChatRoutes(trx, { projectScopeId: project.id, now: createdAt });
         }
         return rowToBinding(winner);
       });

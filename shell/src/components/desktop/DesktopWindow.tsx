@@ -213,6 +213,7 @@ export function DesktopWindow({
               <ChatApp
                 collaborationView={chat.collaborationView}
                 onOpenSharedChat={chat.openSharedChat}
+                onOpenSharedProject={chat.openSharedProject}
                 onOpenSharedHome={chat.openSharedHome}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
