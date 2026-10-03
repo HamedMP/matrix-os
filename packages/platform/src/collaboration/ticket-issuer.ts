@@ -251,8 +251,10 @@ export class CollaborationTicketIssuer {
     // Existence is never disclosed: every denial is the same not-found.
     if (!directory || !organizationId || status === "revoked") throw denied();
     // An accept-only pointer: the actor's own pending member grant, or else the organization-wide
-    // grant of a share the actor has never opened. The home re-checks the grant either way.
-    const pendingGrantId = status === "invited" && entry?.grantId
+    // grant of a share the actor has never opened. The home re-checks the grant either way. An
+    // open invitation is settled first, through its own invitation session (which a grant-only
+    // session cannot use); the grant is offered again once the invitation is decided.
+    const pendingGrantId = status === "invited" && entry?.grantId && !entry.invitationId
       ? entry.grantId
       : !status && directory.audience === "organization" ? directory.organizationGrantId : null;
     if (!status && (!pendingGrantId || purpose !== "direct_session")) throw denied();

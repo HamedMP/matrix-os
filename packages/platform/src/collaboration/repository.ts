@@ -234,14 +234,15 @@ export class PlatformCollaborationRepository {
   /** The actor's index row for one scope, with the pending member-grant pointer when there is one. */
   async getScopeActorEntry(scopeId: string, actorId: string): Promise<{
     status: "invited" | "accepted" | "revoked";
+    invitationId: string | null;
     grantId: string | null;
   } | null> {
     const row = await this.db.selectFrom("collaboration_user_index")
-      .select(["status", "grant_id"])
+      .select(["status", "invitation_id", "grant_id"])
       .where("scope_id", "=", scopeId)
       .where("actor_id", "=", actorId)
       .executeTakeFirst();
-    return row ? { status: row.status, grantId: row.grant_id } : null;
+    return row ? { status: row.status, invitationId: row.invitation_id, grantId: row.grant_id } : null;
   }
 
   async listForActor(actorId: string): Promise<CollaborationDirectoryEntry[]> {

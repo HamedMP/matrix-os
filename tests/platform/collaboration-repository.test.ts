@@ -164,11 +164,11 @@ describe("PlatformCollaborationRepository", () => {
     await repository.applyDirectoryEvent(event);
     expect((await repository.listForActorPage(actorId, "invited", { limit: 10 })).items)
       .toMatchObject([{ scopeId, status: "invited", grantId, organizationId: "org_matrix_team" }]);
-    expect(await repository.getScopeActorEntry(scopeId, actorId)).toEqual({ status: "invited", grantId });
+    expect(await repository.getScopeActorEntry(scopeId, actorId)).toEqual({ status: "invited", invitationId: null, grantId });
     // A pointer is never kept on a decided row, even if a home sends one along.
     await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000402", metadataRevision: 3,
       recipients: [{ actorId, status: "accepted" as const, grantId }] });
-    expect(await repository.getScopeActorEntry(scopeId, actorId)).toEqual({ status: "accepted", grantId: null });
+    expect(await repository.getScopeActorEntry(scopeId, actorId)).toEqual({ status: "accepted", invitationId: null, grantId: null });
     expect((await repository.listForActorPage(actorId, "accepted", { limit: 10 })).items[0]).not.toHaveProperty("grantId");
   });
 

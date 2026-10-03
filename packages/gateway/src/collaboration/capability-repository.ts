@@ -34,6 +34,11 @@ import {
   writeOperation,
 } from "./repository-shared.js";
 
+/** `CollaborationDirectoryEventSchema` carries at most eight recipients per event. */
+const DIRECTORY_EVENT_RECIPIENT_LIMIT = 8;
+/** Scopes handled per expiry sweep call; the periodic sweep picks up the rest. */
+const EXPIRY_BATCH_SIZE = 100;
+
 /** Contract limit: grants 100 per scope. */
 export const MAX_GRANTS_PER_SCOPE = 100;
 /** Bound on any in-memory participant/activation enumeration; larger audiences page through listActivations. */
@@ -449,16 +454,50 @@ export class CollaborationCapabilityRepository {
     }
   }
 
-  /** Lazily marks expired grants; effective access treats expiry by timestamp regardless. */
-  async expireGrants(): Promise<number> {
+  /**
+   * Marks lapsed grants expired. Effective access already treats expiry by timestamp; this is
+   * what tells the platform, so a member grant that lapsed is withdrawn from its addressee's
+   * `Shared with me` instead of staying listed as pending. One transaction per scope, scope row
+   * first (home lock order), bounded per call; the gateway sweep calls it periodically.
+   */
+  async expireGrants(input: { limit?: number } = {}): Promise<number> {
     const now = this.options.now().toISOString();
-    const rows = await this.db.updateTable("collaboration_grants").set({ state: "expired", updated_at: now })
+    const limit = Math.max(1, Math.min(input.limit ?? EXPIRY_BATCH_SIZE, EXPIRY_BATCH_SIZE));
+    const due = await this.db.selectFrom("collaboration_grants").select("scope_id").distinct()
       .where("state", "in", ["pending", "active"])
       .where("expires_at", "is not", null)
       .where("expires_at", "<=", now)
-      .returning("id")
-      .execute();
-    return rows.length;
+      .orderBy("scope_id").limit(limit).execute();
+    let expired = 0;
+    for (const { scope_id: scopeId } of due) {
+      expired += await this.db.transaction().execute(async (trx) => {
+        const scope = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", scopeId).forUpdate().executeTakeFirst();
+        if (!scope) return 0;
+        const rows = await trx.updateTable("collaboration_grants")
+          .set({ state: "expired", updated_at: now, revision: sql<number>`revision + 1` })
+          .where("scope_id", "=", scopeId)
+          .where("state", "in", ["pending", "active"])
+          .where("expires_at", "is not", null)
+          .where("expires_at", "<=", now)
+          .returning(["audience_kind", "audience_actor_id"])
+          .execute();
+        const members = rows.flatMap((row) => row.audience_kind === "member" && row.audience_actor_id ? [row.audience_actor_id] : []);
+        if (members.length > 0) {
+          let current = await advanceScopeAccessRevision(trx, scope, now);
+          // The directory contract carries eight recipients per event.
+          for (let offset = 0; offset < members.length; offset += DIRECTORY_EVENT_RECIPIENT_LIMIT) {
+            if (offset > 0) current = await advanceScopeAccessRevision(trx, current, now);
+            await appendMutationRecords(trx, {
+              scope: current, actorId: scope.owner_id, action: "grant.expired",
+              recipients: members.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT).map((actorId) => ({ actorId })),
+              discoveryState: "revoked", now,
+            });
+          }
+        }
+        return rows.length;
+      });
+    }
+    return expired;
   }
 
   async getGrant(grantId: string): Promise<GrantRecord | null> {
