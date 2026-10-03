@@ -163,6 +163,34 @@ describe("platform collaboration routes", () => {
     expect(await shared.json()).toMatchObject({ items: [{ scopeId: orgScopeId, status: "accepted" }] });
   });
 
+  it("keeps the inbox available when one indexed entry cannot be represented", async () => {
+    // Production 2026-10-03: a member-audience grant is published as an `invited` recipient with no
+    // invitation id (capability-repository.ts). The strict item parse used to throw, and the catch
+    // turned the recipient's whole inbox into a 503 ("Shared items are unavailable").
+    await repository.applyDirectoryEvent({ ...directoryEvent("invited"), organizationId: "org_1" });
+    await repository.applyDirectoryEvent({
+      ...directoryEvent("invited"), eventId: "20000000-0000-4000-8000-0000000000a1",
+      scopeId: "10000000-0000-4000-8000-0000000000a1", kind: "project" as never, organizationId: "org_1",
+      recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "invited" as const }],
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const inbox = await app.request("/api/collaboration/inbox", {
+        headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+      });
+      expect(inbox.status).toBe(200);
+      expect(await inbox.json()).toEqual({ items: [{
+        scopeId, runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1,
+        status: "invited", invitationId: inviteId, organizationId: "org_1",
+      }] });
+      // The drop is visible to operators, with a count and never an id.
+      expect(warn).toHaveBeenCalledWith("[platform-collaboration] discovery items dropped", 1);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("10000000-0000-4000-8000-0000000000a1");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("paginates organization-pending shares after ordinary invitations without losing any", async () => {
     await repository.applyDirectoryEvent(directoryEvent("invited"));
     // Each organization share needs organizationGrantId below: pending discovery selects only rows

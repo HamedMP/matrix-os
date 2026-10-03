@@ -214,9 +214,20 @@ async function listDiscovery(
         nextCursor = encodeDiscoveryCursor(actorId, status, "pending", remaining === 0 ? undefined : pending.nextCursor);
       }
     }
+    // One entry the contract cannot represent (a member-audience grant is indexed as `invited`
+    // with no invitation id) must not take down the actor's whole inbox. It is dropped from the
+    // page and counted for operators; it never reaches the client half-formed.
+    const valid: unknown[] = [];
+    let dropped = 0;
+    for (const item of items) {
+      const parsed = CollaborationDiscoveryItemSchema.safeParse(item);
+      if (parsed.success) valid.push(parsed.data);
+      else dropped += 1;
+    }
+    if (dropped > 0) console.warn("[platform-collaboration] discovery items dropped", dropped);
     c.header("Cache-Control", "private, no-store");
     return c.json(CollaborationDiscoveryResponseSchema.parse({
-      items: items.map((item) => CollaborationDiscoveryItemSchema.parse(item)),
+      items: valid,
       ...(nextCursor ? { nextCursor } : {}),
     }));
   } catch (error: unknown) {
