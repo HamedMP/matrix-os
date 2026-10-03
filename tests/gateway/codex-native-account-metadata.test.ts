@@ -33,12 +33,12 @@ describe("native Codex account metadata", () => {
   it("rejects unsafe identity instead of echoing arbitrary native strings", () => {
     expect(normalizeCodexNativeAccountMetadata({ account: { type: "chatgpt", email: "/private/secret" } }, limits, now)).toBeNull();
   });
-  function fixture(changed = false, quotaFails = false, accountResult = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }) {
+  function fixture(changed = false, quotaFails = false, accountResult = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }, omitId?: number) {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => { queueMicrotask(() => child.emit("close")); return true; }) });
     const methods: unknown[] = [];
     child.stdin.on("data", chunk => {
       const request = JSON.parse(chunk.toString()); methods.push(request);
-      if (!request.id) return;
+      if (!request.id || request.id === omitId) return;
       const result = request.id >= 5 && retry
         ? request.method === "account/rateLimits/read" ? retry.limits : request.id === 7 ? retry.finalAccount ?? retry.account : retry.account
         : request.id === 1 ? {} : request.method === "account/rateLimits/read" ? limits : changed && request.id === 4 ? { account: { type: "chatgpt", email: "other@example.test" } } : accountResult;
@@ -52,6 +52,18 @@ describe("native Codex account metadata", () => {
     const spawnProcess = vi.fn(() => child as never);
     return { child, methods, spawnProcess };
   }
+  it.each([3, 4])("drops identity when sequence times out before final equality (id %i)", async omitId => {
+    const f = fixture(false, false, account, undefined, undefined, omitId);
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, timeoutMs: 10, now: () => now, spawnProcess: f.spawnProcess });
+    expect(await reader()).toBeNull();
+  });
+  it("returns unavailable during cooldown instead of delaying another read", async () => {
+    const f = fixture();
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess });
+    await reader();
+    expect(await Promise.race([reader(), new Promise(resolve => setTimeout(() => resolve("delayed"), 20))])).toBeNull();
+    expect(f.spawnProcess).toHaveBeenCalledTimes(1);
+  });
   it("uses only the supplied runtime and refreshToken false; exits child", async () => {
     const f = fixture();
     const reader = createCodexNativeAccountMetadataReader({ executable: "/runtime/bin/codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home", CODEX_HOME: "/runtime/codex", OPENAI_API_KEY: "operator-key-never-use" }, now: () => now, spawnProcess: f.spawnProcess });

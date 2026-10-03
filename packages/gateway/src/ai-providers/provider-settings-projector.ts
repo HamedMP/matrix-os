@@ -463,13 +463,18 @@ export async function projectProviderSettings(input: {
   const metadataFresh = metadata && Date.parse(metadata.checkedAt) <= input.now.getTime()
     && Date.parse(metadata.staleAfter) > input.now.getTime();
   const methodMatches = metadata?.authMethod === "api_key"
-    ? nativeSource?.fundingKind === "owner_api_key" : nativeSource?.fundingKind === "owner_account";
+    ? nativeSource?.fundingKind === "owner_api_key" || nativeSource?.fundingKind === "owner_account"
+    : nativeSource?.fundingKind === "owner_account";
   if (metadataFresh && methodMatches && nativeSource && nativeAccount) {
     nativeAccount.displayName = metadata.accountLabel;
-    if (metadata.connectionDetails) nativeAccount.connectionDetails = metadata.connectionDetails;
+    if (metadata.authMethod === "api_key") {
+      nativeAccount.authMethod = "api_key";
+      nativeSource.fundingKind = "owner_api_key";
+      delete nativeAccount.connectionDetails;
+    } else if (metadata.connectionDetails) nativeAccount.connectionDetails = metadata.connectionDetails;
     nativeAccount.authState = "authenticated";
     nativeAccount.lastCheckedAt = metadata.checkedAt;
-    if (metadata.usage) nativeSource.usage = metadata.usage;
+    if (metadata.authMethod === "terminal" && metadata.usage) nativeSource.usage = metadata.usage;
   }
   const hermesMetadata = input.hermesNativeAccountMetadata;
   const hermesSource = sources.find(source => source.kind === "harness_profile" && source.harness === "hermes" && source.providerId === "openai-codex");

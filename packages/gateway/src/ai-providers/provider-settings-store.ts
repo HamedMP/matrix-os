@@ -106,6 +106,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #genericModelCatalog?: GenericHarnessModelCatalogReader;
   readonly #readRuntimeRecovery: (refresh: boolean) => Promise<void>;
   #writeTail: Promise<void> = Promise.resolve();
+  #mutationGeneration = 0;
 
   constructor(options: ProviderSettingsStoreOptions) {
     if (!options.homePath) throw new Error("Provider settings home path is required");
@@ -242,14 +243,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   }
 
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<ProviderSettingsSnapshot> {
-    return await this.#serialize(async () => {
-      await this.#readRuntimeRecovery(options.refresh === true);
-      const refresh = options.refresh === true;
-      const metadataRead = options.includeNativeAccountMetadata === true
-        ? Promise.all([this.#nativeAccountMetadata?.(), this.#hermesAccountMetadata?.()]) : Promise.resolve([]);
+    const refresh = options.refresh === true;
+    const captured = await this.#serialize(async () => {
+      await this.#readRuntimeRecovery(refresh);
       const inventory = this.#canonical(refresh, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
-      // Begin these bounded observations inside the serialized read, not behind
-      // inventory. Never share results across mutations or authorize from them alone.
       const [canonical, enrichment] = await Promise.all([
         inventory,
         readProviderSettingsEnrichment({
@@ -258,13 +255,52 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           catalogFailureHarnesses: ["pi", "opencode"],
         }),
       ]);
-      const [metadata, hermesMetadata] = await metadataRead;
-      return await this.#project(canonical, await this.#configuration(canonical, enrichment), refresh, enrichment, metadata, hermesMetadata);
+      const config = await this.#configuration(canonical, enrichment);
+      return { canonical, enrichment, config, generation: this.#mutationGeneration };
+    });
+    if (!options.includeNativeAccountMetadata) {
+      return this.#serialize(async () => {
+        if (captured.generation !== this.#mutationGeneration) {
+          const canonical = await this.#canonical(false, options.suppressFundedProbes === true);
+          return this.#project(canonical, await this.#configuration(canonical), false);
+        }
+        return this.#project(captured.canonical, captured.config, refresh, captured.enrichment);
+      });
+    }
+    // Optional subprocess/network reads never hold mutation admission. Missing
+    // installations have no native profile to observe and must not spawn helpers.
+    const installed = (id: string) => captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
+    const [metadata, hermesMetadata] = await Promise.all([
+      installed("codex") ? this.#nativeAccountMetadata?.() : undefined,
+      installed("hermes") ? this.#hermesAccountMetadata?.() : undefined,
+    ]);
+    return this.#serialize(async () => {
+      options.signal?.throwIfAborted();
+      if (captured.generation !== this.#mutationGeneration) {
+        const canonical = await this.#canonical(false, options.suppressFundedProbes === true);
+        return this.#project(canonical, await this.#configuration(canonical), false);
+      }
+      const canonical = await this.#canonical(false, options.suppressFundedProbes === true);
+      const config = await this.#configuration(canonical, captured.enrichment);
+      // Canonical refresh timestamps are not identity. Compare profile/source
+      // semantics as well as revisions to detect out-of-band account changes.
+      const identity = (value: AiProviderSnapshotV3) => JSON.stringify({
+        revision: value.revision,
+        instances: value.instances.map(({ id, driverId, accountId, accessSourceId }) => ({ id, driverId, accountId, accessSourceId })),
+        accounts: value.accounts.map(({ id, vendor, authMethod, accountLabel, state }) => ({ id, vendor, authMethod, accountLabel, state })),
+        sources: value.accessSources.map(({ id, fundingKind, vendor, state, localObservation }) => ({ id, fundingKind, vendor, state, observation: localObservation?.state })),
+        drivers: value.drivers.map(({ id, installState, nativeRouteObservation }) => ({ id, installState, provider: nativeRouteObservation?.providerId, credential: nativeRouteObservation?.credentialKind })),
+      });
+      if (config.revision !== captured.config.revision || identity(canonical) !== identity(captured.canonical)) {
+        return this.#project(canonical, await this.#configuration(canonical), false);
+      }
+      return this.#project(canonical, config, refresh, captured.enrichment, metadata, hermesMetadata);
     });
   }
 
   async setAccountSecret(accountId: string, value: string): Promise<void> {
     await this.#serialize(async () => {
+      this.#mutationGeneration += 1;
       const canonical = await this.#canonical();
       if (!canonical.accounts.some((account) => account.id === accountId)) {
         throw new ProviderSettingsStoreError("not_found", 404);
@@ -414,6 +450,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     const parsed = ProviderSettingsMutationSchema.safeParse(input);
     if (!parsed.success) throw new ProviderSettingsStoreError("invalid_request", 400);
     return await this.#serialize(async () => {
+      this.#mutationGeneration += 1;
       let canonical = await this.#canonical();
       const enrichment = await readProviderSettingsEnrichment({ canonical, fundingSummary: this.#fundingSummary,
         genericModelCatalog: this.#genericModelCatalog, refresh: false, catalogFailureHarnesses: ["pi", "opencode"] });
