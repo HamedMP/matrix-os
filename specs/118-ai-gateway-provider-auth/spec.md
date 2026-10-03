@@ -291,6 +291,13 @@ arguments, verifies managed installation paths, and preserves all owner home
 files, credentials, sessions, projects, and conversations. Install and sync paths
 respect the opt-out; provisioning installs only OS-owned service control.
 Systemd wrappers preserve non-root runtime execution and current service scope.
+Cancellation polls/stops the install unit within one bounded deadline and reports
+success only after the installer-held control lock drains and a final stop proves
+no earlier launch can appear. It does not write an uninstall opt-out. Concurrent
+opt-out creation accepts only a regular root-control marker; symlinks fail closed.
+Hermes removal requires the exact pinned managed launcher bytes or legacy venv
+symlink target. Customized or unproven entrypoints are retained and uninstall
+reports incomplete while preserving the durable opt-out.
 
 Host lifecycle tests exercise install/uninstall races, fixed command boundaries,
 service wiring, opt-out persistence, and owner-data preservation. Native Settings

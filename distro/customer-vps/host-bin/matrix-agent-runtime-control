@@ -41,9 +41,10 @@ MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
 MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$MATRIX_RUNTIME_USER}"
 install_timeout_seconds=1810
 action_timeout_seconds=50
+cancel_timeout_seconds=25
 active_wait_seconds=45
 # This root-owned directory holds control state only, never owner data. Status
-# reads need no lock; cancellation must not wait on an installer holding it.
+# reads need no lock; cancellation stops the unit while fencing any late launch.
 readonly state_dir=/var/lib/matrix-agent-runtime
 ensure_control_state() {
   [ ! -L "$state_dir" ] || { printf '{"ok":false,"code":"runtime_unavailable"}\n'; exit 3; }
@@ -125,31 +126,61 @@ install_runtime() {
 }
 
 stop_install_unit() {
-  local unit="matrix-agent-install-$1.service" load_state
-  load_state="$(systemctl show --property=LoadState --value "$unit")" || return 1
+  local unit="matrix-agent-install-$1.service" load_state deadline="${2:-0}" remaining="$action_timeout_seconds"
+  if [ "$deadline" -gt 0 ]; then remaining=$((deadline - SECONDS)); [ "$remaining" -gt 0 ] || return 1; fi
+  load_state="$(timeout "$remaining" systemctl show --property=LoadState --value "$unit")" || return 1
   [ "$load_state" = not-found ] && return 0
-  timeout "$action_timeout_seconds" systemctl stop "$unit"
+  if [ "$deadline" -gt 0 ]; then remaining=$((deadline - SECONDS)); [ "$remaining" -gt 0 ] || return 1; fi
+  timeout "$remaining" systemctl stop "$unit"
 }
 
 cancel_install() {
-  local runtime="$1"
-  if ! stop_install_unit "$runtime"; then
-    printf '{"ok":false,"code":"cancellation_failed"}\n'
-    exit 5
+  local runtime="$1" deadline=$((SECONDS + cancel_timeout_seconds)) remaining
+  ensure_control_state
+  [ ! -L "$state_dir/host-control.lock" ] || { printf '{"ok":false,"code":"cancellation_failed"}\n'; exit 5; }
+  exec 9>"$state_dir/host-control.lock"
+  # Install holds this lock before launching systemd-run and until its --wait
+  # child drains. A not-found unit alone cannot prove a pending launch stopped.
+  while true; do
+    if ! stop_install_unit "$runtime" "$deadline"; then
+      printf '{"ok":false,"code":"cancellation_failed"}\n'; exit 5
+    fi
+    flock -n 9 && break
+    [ "$SECONDS" -lt "$deadline" ] || { printf '{"ok":false,"code":"cancellation_failed"}\n'; exit 5; }
+    sleep 0.1
+  done
+  # With the installer lock held, no earlier launch can now create another unit.
+  if ! stop_install_unit "$runtime" "$deadline"; then
+    printf '{"ok":false,"code":"cancellation_failed"}\n'; exit 5
   fi
-  if [ "$runtime" = hermes ] && ! timeout "$action_timeout_seconds" systemctl stop matrix-hermes.service; then
-    printf '{"ok":false,"code":"cancellation_failed"}\n'
-    exit 5
+  remaining=$((deadline - SECONDS))
+  if [ "$remaining" -le 0 ] || { [ "$runtime" = hermes ] && ! timeout "$remaining" systemctl stop matrix-hermes.service; }; then
+    printf '{"ok":false,"code":"cancellation_failed"}\n'; exit 5
   fi
   printf '{"ok":true,"runtime":"%s","cancelled":true}\n' "$runtime"
 }
 
 mark_runtime_disabled() {
-  local runtime="$1"
-  if [ ! -f "$state_dir/disabled-$runtime" ]; then
-    (set -o noclobber; printf 'disabled\n' >"$state_dir/disabled-$runtime") || {
-      printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5;
+  local runtime="$1" marker="$state_dir/disabled-$1"
+  # Root-owned control state: a concurrent exclusive creator is a successful
+  # repeat only if its winner is a regular file, never an owner-data symlink.
+  [ ! -L "$marker" ] || { printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5; }
+  if [ ! -f "$marker" ]; then
+    (set -o noclobber; printf 'disabled\n' >"$marker") || {
+      [ -f "$marker" ] && [ ! -L "$marker" ] || { printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5; }
     }
+  fi
+}
+
+managed_hermes_launcher() {
+  local launcher="$1" install_dir="${HERMES_HOME:-$MATRIX_RUNTIME_HOME/.hermes}/hermes-agent"
+  if [ -L "$launcher" ]; then
+    [ "$(readlink "$launcher")" = "$install_dir/venv/bin/hermes" ]
+  elif [ -f "$launcher" ]; then
+    # Exact shim emitted by the pinned upstream installer, not a path heuristic.
+    cmp -s "$launcher" <(printf '#!/usr/bin/env bash\nunset PYTHONPATH\nunset PYTHONHOME\nexec "%s/venv/bin/python" "%s/hermes" "$@"\n' "$install_dir" "$install_dir")
+  else
+    [ ! -e "$launcher" ]
   fi
 }
 
@@ -184,6 +215,7 @@ uninstall_runtime() {
         [ ! -L "$directory" ] || { printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5; }
       done
       launcher="$MATRIX_RUNTIME_HOME/.local/bin/hermes"
+      managed_hermes_launcher "$launcher" || { printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5; }
       if ! timeout "$action_timeout_seconds" setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_GROUP" --init-groups rm -f -- "$launcher"; then
         printf '{"ok":false,"code":"uninstall_failed"}\n'; exit 5
       fi
