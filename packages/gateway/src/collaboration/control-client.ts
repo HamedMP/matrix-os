@@ -8,8 +8,11 @@
  * and are acknowledged with a fence; generation frames move this home's
  * authority generation and, as the platform's keepalive, are acknowledged
  * with the unchanged fence so the platform reads the home as live.
- * Reconnects with bounded backoff; control snapshots have fixed expiry and
- * are extended only by an inbound frame, never by a reconnect.
+ * Reconnects with bounded, jittered backoff that resets only once a stream has
+ * applied an inbound frame; a stream that closes after being healthy (routine
+ * platform rotation or drain) reconnects after a short jittered delay, and a
+ * registration Retry-After on 429/503 floors the next attempt. Control snapshots
+ * have fixed expiry and are extended only by an inbound frame, never by a reconnect.
  */
 import {
   COLLABORATION_DIRECT_LIMITS,
@@ -65,7 +68,40 @@ const REGISTRATION_TIMEOUT_MS = COLLABORATION_DIRECT_LIMITS.externalApiTimeoutMs
 const MAX_PENDING_CONTROL_FRAMES = 128;
 const CONTROL_SNAPSHOT_TTL_MS = COLLABORATION_DIRECT_LIMITS.organizationEvidenceTtlSeconds * 1_000;
 const REREGISTER_INTERVAL_MS = 5 * 60_000;
+/** Re-registration runs every interval x [0.8, 1.2] so homes started together drift apart. */
+const REREGISTER_JITTER_RATIO = 0.2;
+const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
+/**
+ * Delay range after a stream that had proven healthy closes. The platform rotates control
+ * streams routinely and drains instances, so a whole fleet can lose its streams in the same
+ * second; spreading the reconnect over this window keeps them from arriving in lockstep.
+ */
+const HEALTHY_RECONNECT_MIN_MS = 500;
+const HEALTHY_RECONNECT_MAX_MS = 5_000;
+/** Bounds for a registration Retry-After (delta-seconds) used as the next reconnect floor. */
+const MIN_RETRY_AFTER_MS = 1_000;
+const MAX_RETRY_AFTER_MS = 300_000;
+
+/** Registration refused by the platform with a non-success status; carries only coarse retry hints. */
+export class RegistrationRejectedError extends Error {
+  override readonly name = "RegistrationRejectedError";
+  constructor(readonly status: number, readonly retryAfterMs?: number) {
+    super(`Registration rejected (${status})`);
+  }
+}
+
+/**
+ * Parses a Retry-After header in its delta-seconds form, clamped to a sane range. The
+ * HTTP-date form and anything malformed are ignored rather than trusted.
+ */
+export function parseRetryAfterMs(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const trimmed = value.trim();
+  if (!/^\d{1,10}$/.test(trimmed)) return undefined;
+  const ms = Number(trimmed) * 1_000;
+  return Math.min(MAX_RETRY_AFTER_MS, Math.max(MIN_RETRY_AFTER_MS, ms));
+}
 
 export class CollaborationControlClient {
   static readonly MAX_PENDING_CONTROL_FRAMES = MAX_PENDING_CONTROL_FRAMES;
@@ -75,9 +111,13 @@ export class CollaborationControlClient {
   private closed = false;
   private stream: ControlStreamHandle | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-  private registerTimer: ReturnType<typeof setInterval> | undefined;
-  private backoffMs = 1_000;
+  private registerTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Exponential base for the next failed-attempt delay; reset only by a stream that applied a frame. */
+  private backoffMs = INITIAL_BACKOFF_MS;
+  /** One-shot floor from a registration Retry-After, consumed by the next scheduled reconnect. */
+  private retryAfterFloorMs: number | undefined;
   private readonly now: () => Date;
+  private readonly random: () => number;
   private readonly fetchImpl: typeof fetch;
   private readonly endpoint: string;
   /** Time of the last denial this home applied and acknowledged; keepalive acks repeat it. */
@@ -99,10 +139,13 @@ export class CollaborationControlClient {
     /** Opens the control WebSocket; production uses `ws` through `loadDefaultConnector`, tests pass a fake. */
     connect?(url: string, headers: Record<string, string>, onMessage: (raw: string) => void, onClose: () => void): ControlSocketLike | Promise<ControlSocketLike>;
     now?: () => Date;
+    /** Source of jitter in [0, 1]; defaults to `Math.random`, tests pin it. */
+    random?: () => number;
     startTimers?: boolean;
     initialGeneration?: number;
   }) {
     this.now = options.now ?? (() => new Date());
+    this.random = options.random ?? Math.random;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.generation = options.initialGeneration ?? 1;
     // Bearer token and one-use control ticket travel on this origin: https, or http only to loopback.
@@ -141,7 +184,10 @@ export class CollaborationControlClient {
       signal: AbortSignal.timeout(REGISTRATION_TIMEOUT_MS),
     });
     if (response.status === 426) throw new Error("upgrade_required");
-    if (!response.ok) throw new Error(`Registration rejected (${response.status})`);
+    if (!response.ok) {
+      const throttled = response.status === 429 || response.status === 503;
+      throw new RegistrationRejectedError(response.status, throttled ? parseRetryAfterMs(response.headers.get("retry-after")) : undefined);
+    }
     const parsed = RegistrationResponseSchema.safeParse(await response.json());
     if (!parsed.success || parsed.data.runtime.runtimeId !== toLogicalRuntimeId(this.options.runtimeId)) throw new Error("Registration response is invalid");
     // The fence can land while this request is in flight. A registration that comes back
@@ -166,6 +212,9 @@ export class CollaborationControlClient {
     // A failed frame, an overflowing backlog or an explicit close terminates this stream: every frame
     // queued behind that point is dropped, so no denial, fence or acknowledgement is applied after it.
     let terminated = false;
+    // A socket object exists before its upgrade completes, so a stream is proven healthy only
+    // once it has applied an inbound frame (the platform's keepalives arrive every few seconds).
+    let healthy = false;
     let pending = 0;
     const terminate = (): void => {
       if (terminated) return;
@@ -190,6 +239,10 @@ export class CollaborationControlClient {
       const run = inbound.then(() => {
         if (terminated) throw new Error("Control stream is terminated");
         return this.applyFrame(raw, () => socket);
+      }).then(() => {
+        if (healthy) return;
+        healthy = true;
+        this.backoffMs = INITIAL_BACKOFF_MS;
       }).finally(() => { pending -= 1; });
       const settled = run.catch((error: unknown) => {
         console.warn("[collaboration-control-client] frame rejected", error instanceof Error ? error.name : "UnknownError");
@@ -210,7 +263,7 @@ export class CollaborationControlClient {
       void enqueue(raw).settled;
     }, () => {
       if (this.stream === handle) this.stream = undefined;
-      this.scheduleReconnect();
+      this.scheduleReconnect(healthy ? "healthy_close" : "failure");
     });
     // Adoption is the commit point, and the fence may have landed while the socket was
     // connecting. Close the late arrival instead of installing it: nothing would ever
@@ -275,15 +328,24 @@ export class CollaborationControlClient {
   async start(): Promise<void> {
     if (!this.options.startTimers) return;
     await this.registerAndConnect();
-    // Startup itself can span the fence: without this the interval is installed behind it and
-    // a fenced runtime keeps authenticating to the platform every five minutes, with nothing
+    // Startup itself can span the fence: without this the timer is installed behind it and
+    // a fenced runtime keeps authenticating to the platform every few minutes, with nothing
     // left to clear the timer.
+    this.scheduleReregister();
+  }
+
+  /** Self-rescheduling jittered re-registration; never installed or re-armed behind the fence. */
+  private scheduleReregister(): void {
     if (this.closed) return;
-    this.registerTimer = setInterval(() => {
+    const factor = 1 - REREGISTER_JITTER_RATIO + 2 * REREGISTER_JITTER_RATIO * this.jitter();
+    this.registerTimer = setTimeout(() => {
+      this.registerTimer = undefined;
       this.register().catch((error: unknown) => {
         console.warn("[collaboration-control-client] re-registration failed", error instanceof Error ? error.name : "UnknownError");
+      }).finally(() => {
+        this.scheduleReregister();
       });
-    }, REREGISTER_INTERVAL_MS);
+    }, Math.round(REREGISTER_INTERVAL_MS * factor));
     this.registerTimer.unref?.();
   }
 
@@ -298,7 +360,7 @@ export class CollaborationControlClient {
     this.closed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
-    if (this.registerTimer) clearInterval(this.registerTimer);
+    if (this.registerTimer) clearTimeout(this.registerTimer);
     this.registerTimer = undefined;
     const stream = this.stream;
     this.stream = undefined;
@@ -313,23 +375,49 @@ export class CollaborationControlClient {
   private async registerAndConnect(): Promise<void> {
     try {
       const registration = await this.register();
+      // Backoff is not reset here: the socket may still be mid-upgrade and fail. It resets
+      // when the stream applies its first frame.
       await this.connectControl(registration.controlTicket);
-      this.backoffMs = 1_000;
     } catch (error: unknown) {
       console.warn("[collaboration-control-client] registration or control connect failed", error instanceof Error ? error.name : "UnknownError");
-      this.scheduleReconnect();
+      if (error instanceof RegistrationRejectedError && error.retryAfterMs !== undefined) {
+        this.retryAfterFloorMs = error.retryAfterMs;
+      }
+      this.scheduleReconnect("failure");
     }
   }
 
-  private scheduleReconnect(): void {
+  /**
+   * A failed attempt waits an "equal jitter" delay in [base/2, base] and doubles the base up to
+   * MAX_BACKOFF_MS, floored once by a registration Retry-After. A stream that closes after being
+   * healthy reconnects after a uniform HEALTHY_RECONNECT_MIN_MS..HEALTHY_RECONNECT_MAX_MS delay.
+   */
+  private scheduleReconnect(reason: "failure" | "healthy_close"): void {
     if (this.closed || !this.options.startTimers || this.reconnectTimer) return;
-    const delay = this.backoffMs;
-    this.backoffMs = Math.min(MAX_BACKOFF_MS, this.backoffMs * 2);
+    let delay: number;
+    if (reason === "healthy_close") {
+      delay = HEALTHY_RECONNECT_MIN_MS + (HEALTHY_RECONNECT_MAX_MS - HEALTHY_RECONNECT_MIN_MS) * this.jitter();
+    } else {
+      const base = this.backoffMs;
+      delay = base / 2 + (base / 2) * this.jitter();
+      this.backoffMs = Math.min(MAX_BACKOFF_MS, base * 2);
+    }
+    if (this.retryAfterFloorMs !== undefined) {
+      delay = Math.max(delay, this.retryAfterFloorMs);
+      this.retryAfterFloorMs = undefined;
+    }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       void this.registerAndConnect();
-    }, delay);
+    }, Math.round(delay));
     this.reconnectTimer.unref?.();
+  }
+
+  /** Injected randomness clamped to [0, 1], so a misbehaving source cannot produce a negative or unbounded delay. */
+  private jitter(): number {
+    const value = this.random();
+    if (!Number.isFinite(value)) return 0.5;
+    return Math.min(1, Math.max(0, value));
   }
 
   private sendAck(socket: ControlSocketLike | undefined, authorityGeneration: number): void {
