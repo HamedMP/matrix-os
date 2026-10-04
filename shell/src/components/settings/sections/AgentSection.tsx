@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AgentsProvidersView, useProviderSettingsController } from "@matrix-os/ui";
+import { AgentsProvidersView, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
 import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
@@ -29,6 +29,15 @@ export function AgentSection({
       lifetime.abort();
       checkoutLifetime.current = null;
     };
+  }, [identityKey, runtimeSlot]);
+  const addCredit = useCallback<AgentsProvidersViewProps["onAddCredit"]>(async (_sourceId, packageId, requestId) => {
+    const lifetime = checkoutLifetime.current;
+    await openWebAiCreditCheckout({
+      packageId, requestId, runtimeSlot,
+      signal: lifetime?.signal,
+      isIdentityCurrent: () => lifetime !== null && checkoutLifetime.current === lifetime
+        && getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
+    });
   }, [identityKey, runtimeSlot]);
   const controller = useProviderSettingsController({
     identityKey,
@@ -85,15 +94,7 @@ export function AgentSection({
           if (!openWebProviderWorkflowAuthorization(url)) throw new Error("Browser unavailable");
         }}
         onLoadUsageHistory={loadUsageHistory}
-        onAddCredit={async (_sourceId, packageId, requestId) => {
-          const lifetime = checkoutLifetime.current;
-          await openWebAiCreditCheckout({
-            packageId, requestId, runtimeSlot,
-            signal: lifetime?.signal,
-            isIdentityCurrent: () => lifetime !== null && checkoutLifetime.current === lifetime
-              && getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
-          });
-        }}
+        onAddCredit={addCredit}
       />
     </div>
   );

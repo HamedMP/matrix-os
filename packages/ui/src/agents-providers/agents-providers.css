@@ -406,3 +406,66 @@
 .matrix-ap-link-button:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
 .matrix-ap-connection-choice:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--matrix-ap-sunken); }
 .matrix-ap-method-icon { flex: 0 0 auto; display: flex; align-items: center; padding-top: 1px; }
+
+/* Matrix credit overview and bounded billing dialogs. */
+.matrix-ap-gateway { padding: 0; background: transparent; border: 0; }
+.matrix-ap-gateway .matrix-ap-panel-head { margin-bottom: 12px; }
+.matrix-ap-beta { border: 1px solid var(--matrix-ap-border); border-radius: 26px; color: var(--matrix-ap-muted); font-size: 11px; font-weight: 400; padding: 2px 8px; }
+.matrix-ap-gateway .matrix-ap-credit-row { padding: 20px; margin: 0; background: var(--matrix-ap-surface); border: 1px solid var(--matrix-ap-border); border-radius: 12px 12px 0 0; }
+.matrix-ap-credit-row strong { font-size: 24px; font-weight: 600; line-height: 35px; }
+.matrix-ap-credit-row span { font-size: 12px; }
+.matrix-ap-model-inventory { border: 1px solid var(--matrix-ap-border); border-top: 0; padding: 16px 20px 8px; background: var(--matrix-ap-surface); }
+.matrix-ap-model-inventory h3 { margin: 0; font-size: 12px; font-weight: 500; }
+.matrix-ap-model-inventory ul { list-style: none; margin: 0; padding: 0; }
+.matrix-ap-model-inventory li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--matrix-ap-border); padding: 12px 0; font-size: 14px; }
+.matrix-ap-model-inventory li:last-child { border: 0; }
+.matrix-ap-gateway-footer { margin: 0; border: 1px solid var(--matrix-ap-border); border-top: 0; border-radius: 0 0 12px 12px; background: var(--matrix-ap-surface); padding: 12px 20px; color: var(--matrix-ap-muted); font-size: 12px; }
+.matrix-ap-history-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 12px; text-align: left; }
+.matrix-ap-history-table th, .matrix-ap-history-table td { padding: 10px 6px; border-bottom: 1px solid var(--matrix-ap-border); }
+.matrix-ap-history-table small { display: block; color: var(--matrix-ap-muted); }
+.matrix-ap-gateway .matrix-ap-credit-row { padding: 24px; min-height: 112px; }
+.matrix-ap-model-inventory { padding: 18px 24px 8px; }
+/* Billing history keeps its title and pagination visible while the ledger scrolls. */
+.matrix-ap-dialog.matrix-ap-history-dialog { display: flex; flex-direction: column; max-width: 760px; width: min(760px, calc(100vw - 40px)); max-height: min(640px, 80dvh); overflow: hidden; padding: 0; }
+.matrix-ap-history-head { flex: 0 0 auto; gap: 16px; margin: 0; padding: 20px 24px 16px; }
+.matrix-ap-history-head .matrix-ap-help { margin: 6px 0 0; }
+.matrix-ap-history-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 24px; scrollbar-gutter: stable; }
+.matrix-ap-history-scroll:focus-visible { outline: 2px solid var(--matrix-ap-focus); outline-offset: -2px; }
+.matrix-ap-history-table { margin: 0; table-layout: fixed; font-size: 13px; }
+.matrix-ap-history-table th { background: var(--matrix-ap-overlay); color: var(--matrix-ap-muted); font-size: 11px; font-weight: 500; position: sticky; top: 0; z-index: 1; }
+.matrix-ap-history-table th, .matrix-ap-history-table td { padding: 12px 8px; vertical-align: middle; }
+.matrix-ap-history-table th:first-child { width: 46%; }
+.matrix-ap-history-table th:nth-child(2) { width: 28%; }
+.matrix-ap-history-table th:last-child, .matrix-ap-history-table td:last-child { text-align: right; white-space: nowrap; }
+.matrix-ap-history-model { display: block; font-weight: 500; overflow-wrap: anywhere; }
+.matrix-ap-history-kind { display: inline-block; color: var(--matrix-ap-muted); background: color-mix(in srgb, var(--matrix-ap-muted) 8%, transparent); border-radius: 4px; font-size: 10px; line-height: 1.4; padding: 2px 5px; margin-top: 5px; }
+.matrix-ap-history-kind[data-kind="credit"], .matrix-ap-history-amount[data-kind="credit"] { color: var(--matrix-ap-success); }
+.matrix-ap-history-amount { font-variant-numeric: tabular-nums; font-weight: 500; }
+.matrix-ap-history-table small { margin-top: 4px; font-size: 11px; }
+.matrix-ap-history-state { text-align: center; color: var(--matrix-ap-muted); padding: 48px 16px; font-size: 13px; }
+.matrix-ap-history-state strong { color: var(--matrix-ap-text); font-weight: 500; }
+.matrix-ap-history-state p { margin: 8px 0 0; }
+.matrix-ap-history-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--matrix-ap-border); padding: 12px 24px; min-height: 60px; }
+.matrix-ap-history-footer .matrix-ap-help { margin: 0; }
+@media (max-width: 520px) {
+  .matrix-ap-history-head { padding: 16px; }
+  .matrix-ap-history-scroll { padding: 0 8px; }
+  .matrix-ap-history-table { font-size: 12px; }
+  .matrix-ap-history-table th, .matrix-ap-history-table td { padding: 10px 6px; }
+  .matrix-ap-history-footer { padding: 12px 16px; }
+}
+
+.matrix-ap-dialog.matrix-ap-credit-dialog { display: flex; flex-direction: column; max-width: 480px; width: min(480px, calc(100vw - 40px)); max-height: min(600px, 80dvh); overflow: hidden; padding: 0; }
+.matrix-ap-credit-head { align-items: flex-start; flex: 0 0 auto; gap: 16px; margin: 0; padding: 20px 24px 16px; }
+.matrix-ap-credit-head .matrix-ap-icon-button { flex: 0 0 30px; }
+.matrix-ap-credit-content { min-height: 0; overflow: auto; padding: 0 24px 20px; }
+.matrix-ap-credit-unavailable { color: var(--matrix-ap-muted); font-size: 13px; line-height: 1.5; }
+.matrix-ap-credit-unavailable p { margin: 0; }
+.matrix-ap-credit-actions { border-top: 1px solid var(--matrix-ap-border); flex: 0 0 auto; margin: 0; padding: 12px 24px; }
+@media (max-width: 520px) {
+  .matrix-ap-credit-head { padding: 16px; }
+  .matrix-ap-credit-content { padding: 0 16px 16px; }
+  .matrix-ap-credit-actions { padding: 12px 16px; }
+}
+
+.matrix-ap-model-capability { font-size: 11px; color: var(--matrix-ap-muted); border-radius: 26px; background: var(--matrix-ap-sunken); padding: 2px 8px; }
