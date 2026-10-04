@@ -39,6 +39,15 @@ it("CI runs all provider Settings regressions and retains their captures at the 
   expect(section).toContain("MATRIX_SETTINGS_EVIDENCE_DIR: output/playwright/settings-providers");
   expect(section).toContain("path: output/playwright/settings-providers/");
 });
+it("installs the Chromium revision used by shell-scoped Settings tests before general E2E", () => {
+  const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const e2e = ci.slice(ci.indexOf("  e2e:"));
+  const setup = e2e.slice(0, e2e.indexOf("- name: Run E2E tests"));
+  // Settings contrast resolves @playwright/test from shell, while terminal tests
+  // use mcp-browser's separately locked Playwright. Both revisions are required.
+  expect(setup).toContain("pnpm --filter shell exec playwright install --with-deps chromium");
+  expect(setup).toContain("pnpm --filter @matrix-os/mcp-browser exec playwright install --with-deps chromium");
+});
 it("measures complete disabled group opacity without claiming disabled WCAG conformance", () => {
   const opaque = [{ background: [0, 0, 0, 1], opacity: 1 }];
   const faded = [{ background: [0, 0, 0, 1], opacity: .45 }, { background: [0, 0, 0, 1], opacity: 1 }];
