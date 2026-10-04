@@ -572,3 +572,5 @@ requires advertised Terminal support and no inline adapter; settled, cancelled,
 expired, denied and unadvertised login receipts never expose that fallback.
 
 Guided saved-Off connections expose an explicit Connect saved connection action without reauthentication or an Enable toggle. The action refreshes the current scope and verifies writable permission, server action support, unchanged selected account/source/route/configuration and current credential observation before enabling; refresh or rendering alone never restores Off. Pending guided authentication disables conflicting Advanced configuration controls while retaining cancellation. Web workflow authorization denial is classified from HTTP 401/403 even when its body is plain text.
+
+Saved reconnection admission is bound to the mounted runtime/workflow client, not refresh-function identity. Same-runtime parent renders may recreate inline refresh callbacks; changing workflow scope during the pending observation invalidates the old request.

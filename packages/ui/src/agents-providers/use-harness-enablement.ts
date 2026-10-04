@@ -14,6 +14,7 @@ export function canRefreshNativeEnable(harness: ProviderHarnessInstance, sources
 export function useHarnessEnablement(input: {
   snapshot: ProviderSettingsSnapshot;
   refresh?: () => Promise<ProviderSettingsSnapshot | null>;
+  scope?: object;
   mutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean> | void;
 }) {
   const [pending, setPending] = useState(false);
@@ -22,13 +23,13 @@ export function useHarnessEnablement(input: {
   const lifetime = useRef(0);
   const latest = useRef(input.snapshot);
   latest.current = input.snapshot;
-  const refreshScope = useRef(input.refresh);
-  refreshScope.current = input.refresh;
+  const latestScope = useRef(input.scope);
+  latestScope.current = input.scope;
   useEffect(() => () => { lifetime.current += 1; }, []);
   const enable = async (harness: ProviderHarnessInstance, reconnect = false) => {
     if (active.current) return;
     const generation = lifetime.current;
-    const expectedRefresh = input.refresh;
+    const expectedScope = input.scope;
     active.current = true;
     setPending(true);
     setError(null);
@@ -37,7 +38,7 @@ export function useHarnessEnablement(input: {
       if (!currentlyEnabled && (reconnect || canRefreshNativeEnable(harness, input.snapshot.accessSources))) {
         if (!input.refresh) throw new Error("Refresh unavailable");
         const fresh = await input.refresh();
-        if (generation !== lifetime.current || refreshScope.current !== expectedRefresh) return;
+        if (generation !== lifetime.current || latestScope.current !== expectedScope) return;
         const current = fresh?.harnesses.find(item => item.id === harness.id);
         const visible = latest.current.harnesses.find(item => item.id === harness.id);
         if (!fresh || fresh.access.mode !== "writable" || !fresh.supportedActions.includes("set_harness_enabled")
@@ -64,7 +65,7 @@ export function useHarnessEnablement(input: {
         // Do not race the short observation TTL against rendering/network time.
         // The explicit mutation revalidates current credentials server-side.
       }
-      if (generation !== lifetime.current || refreshScope.current !== expectedRefresh) return;
+      if (generation !== lifetime.current || latestScope.current !== expectedScope) return;
       await input.mutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: !currentlyEnabled });
     } catch (caught) {
       console.warn("[provider-settings] Enable check failed:", caught instanceof Error ? caught.name : typeof caught);

@@ -72,7 +72,7 @@ export function AgentsProvidersView({
     else if (id in next || Object.keys(next).length < 32) next[id] = operation;
     return next;
   });
-  const enablement = useHarnessEnablement({ snapshot, refresh: onRefreshForConnection, mutate: onMutate });
+  const enablement = useHarnessEnablement({ snapshot, refresh: onRefreshForConnection, mutate: onMutate, scope: workflowClient });
   const guidedPanel = (item: Pick<ProviderHarnessInstance, "id" | "harness" | "displayName" | "installState" | "authState"> & Partial<ProviderHarnessInstance>, capability: ProviderWorkflowCapability, advancedConfiguration?: import("react").ReactNode) => {
     if (!workflowClient) return null;
     const exact = snapshot.harnesses.find(row => row.id === item.id);

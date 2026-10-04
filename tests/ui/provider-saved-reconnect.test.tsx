@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderSettingsSnapshot, ProviderUsage } from "@matrix-os/contracts";
 import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
@@ -34,5 +34,24 @@ it.each(["unchanged", "route", "source", "account", "readonly", "credential", "c
   await waitFor(() => expect(connect).toBeEnabled());
   if (change === "unchanged") expect(mutate).toHaveBeenCalledExactlyOnceWith({ type: "set_harness_enabled", harnessInstanceId: "hermes", enabled: true });
   else expect(mutate).not.toHaveBeenCalled();
+  expect(client.start).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("accepts callback churn but rejects a new workflow scope during saved reconnect (scope changed: %s)", async changeScope => {
+  const snapshot = fixture(); const mutate = vi.fn().mockResolvedValue(true);
+  let resolve!: (fresh: ProviderSettingsSnapshot) => void;
+  const pending = new Promise<ProviderSettingsSnapshot>(done => { resolve = done; });
+  const refresh = vi.fn(() => pending);
+  const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "hermes", harness: "hermes", displayName: "Hermes", installState: "installed", loginMethods: ["existing_codex"], apiKeyProviders: [], install: false, uninstall: false, logs: false }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
+  const props = { snapshot, selectedHarnessId: "hermes", onSelectHarness: vi.fn(), onRefresh: vi.fn(), onMutate: mutate, onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit: vi.fn() };
+  const view = render(<AgentsProvidersView {...props} onRefreshForConnection={refresh} workflowClient={client as never} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Connect saved connection" }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  // Web parent renders recreate this closure while the same runtime request is pending.
+  view.rerender(<AgentsProvidersView {...props} onRefreshForConnection={changeScope ? refresh : () => pending} workflowClient={(changeScope ? { ...client } : client) as never} />);
+  await act(async () => { resolve(fixture()); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Connect saved connection" })).toBeEnabled());
+  if (changeScope) expect(mutate).not.toHaveBeenCalled();
+  else expect(mutate).toHaveBeenCalledExactlyOnceWith({ type: "set_harness_enabled", harnessInstanceId: "hermes", enabled: true });
   expect(client.start).not.toHaveBeenCalled();
 });
