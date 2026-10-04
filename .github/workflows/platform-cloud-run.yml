@@ -52,6 +52,14 @@ jobs:
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       PLATFORM_MAX_INSTANCES: '30'
+      # Each open WebSocket/SSE stream counts toward per-instance concurrency. Idle streams cost
+      # almost no CPU, so a low cap makes the autoscaler add and remove instances for idle
+      # connections, and an instance being removed keeps its max-instance slot until its streams
+      # end. High concurrency keeps the stream population on a few instances.
+      PLATFORM_CONCURRENCY: '500'
+      PLATFORM_CPU: '2'
+      PLATFORM_MEMORY: '2Gi'
+      PLATFORM_PRODUCTION_MIN_INSTANCES: '2'
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
       WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}
@@ -853,9 +861,9 @@ jobs:
             --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
             --platform managed \
             --port 8080 \
-            --cpu 1 \
-            --memory 1Gi \
-            --concurrency 80 \
+            --cpu "$PLATFORM_CPU" \
+            --memory "$PLATFORM_MEMORY" \
+            --concurrency "$PLATFORM_CONCURRENCY" \
             --timeout 3600 \
             --min-instances 0 \
             --max-instances "$PLATFORM_MAX_INSTANCES" \
@@ -1094,7 +1102,7 @@ jobs:
           set -euo pipefail
           min_instances=0
           if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
-            min_instances=1
+            min_instances="$PLATFORM_PRODUCTION_MIN_INSTANCES"
           fi
           deploy_json="$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
@@ -1126,6 +1134,22 @@ jobs:
           actual_max_instances="$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/maxScale"] // empty')"
           if [ "$actual_max_instances" != "$PLATFORM_MAX_INSTANCES" ]; then
             echo "production revision maximum instances is $actual_max_instances, expected $PLATFORM_MAX_INSTANCES" >&2
+            exit 1
+          fi
+          actual_min_instances="$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/minScale"] // empty')"
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && [ "$actual_min_instances" != "$PLATFORM_PRODUCTION_MIN_INSTANCES" ]; then
+            echo "production revision minimum instances is $actual_min_instances, expected $PLATFORM_PRODUCTION_MIN_INSTANCES" >&2
+            exit 1
+          fi
+          actual_concurrency="$(printf '%s\n' "$revision_json" | jq -r '.spec.containerConcurrency // empty')"
+          if [ "$actual_concurrency" != "$PLATFORM_CONCURRENCY" ]; then
+            echo "production revision concurrency is $actual_concurrency, expected $PLATFORM_CONCURRENCY" >&2
+            exit 1
+          fi
+          actual_cpu="$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].resources.limits.cpu // empty')"
+          actual_memory="$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].resources.limits.memory // empty')"
+          if [ "$actual_cpu" != "$PLATFORM_CPU" ] || [ "$actual_memory" != "$PLATFORM_MEMORY" ]; then
+            echo "production revision resources are cpu=$actual_cpu memory=$actual_memory, expected cpu=$PLATFORM_CPU memory=$PLATFORM_MEMORY" >&2
             exit 1
           fi
           required_production_env=(

@@ -21,6 +21,14 @@ export const COLLABORATION_CONTROL_PATH = "/internal/collaboration/control";
 const ControlUpgradeTicketSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
 const MAX_RAW_PATH_LENGTH = 1_024;
 const HEARTBEAT_INTERVAL_MS = 15_000;
+/**
+ * Lifetime of one control socket before the platform rotates it with 1012. Cloud Run stops
+ * routing new requests to an instance it scales in but keeps the instance, and its max-instance
+ * slot, until every open request ends. Rotating well before the 3600s request timeout bounds how
+ * long a draining instance holds its slot; the jitter spreads the fleet's reconnects.
+ */
+export const CONTROL_SOCKET_LIFETIME_MS = { minMs: 10 * 60_000, maxMs: 15 * 60_000 } as const;
+const CONTROL_SOCKET_ROTATION_CODE = 1012;
 
 export function isCollaborationControlUpgradePath(rawPath: string): boolean {
   if (rawPath.length > MAX_RAW_PATH_LENGTH || /[\r\n]/.test(rawPath)) return false;
@@ -36,10 +44,17 @@ export function createCollaborationControlUpgradeHandler(options: {
   stream: CollaborationControlStream;
   authenticateRuntime(input: { runtimeId: string; bearerToken: string }): Promise<AuthenticatedRuntime | null>;
   heartbeatIntervalMs?: number;
+  lifetime?: { minMs: number; maxMs: number };
+  random?: () => number;
 }): {
   handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean>;
   close(): void;
 } {
+  const lifetime = options.lifetime ?? CONTROL_SOCKET_LIFETIME_MS;
+  if (!(Number.isFinite(lifetime.minMs) && Number.isFinite(lifetime.maxMs) && lifetime.minMs > 0 && lifetime.maxMs >= lifetime.minMs)) {
+    throw new RangeError("Control socket lifetime must be positive with minMs <= maxMs");
+  }
+  const random = options.random ?? Math.random;
   const server = new WebSocketServer({ noServer: true, maxPayload: COLLABORATION_DIRECT_LIMITS.wsFrameBytes, perMessageDeflate: false });
   return {
     async handleUpgrade(req, socket, head) {
@@ -72,6 +87,10 @@ export function createCollaborationControlUpgradeHandler(options: {
           ws.ping();
         }, options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
         heartbeat.unref?.();
+        const rotation = setTimeout(() => {
+          ws.close(CONTROL_SOCKET_ROTATION_CODE, "Control stream rotation");
+        }, lifetime.minMs + Math.floor(random() * (lifetime.maxMs - lifetime.minMs)));
+        rotation.unref?.();
         ws.on("pong", () => {
           alive = true;
           connection.heartbeat();
@@ -88,6 +107,7 @@ export function createCollaborationControlUpgradeHandler(options: {
         });
         ws.on("close", () => {
           clearInterval(heartbeat);
+          clearTimeout(rotation);
           connection.close();
         });
         ws.on("error", (error: Error) => {

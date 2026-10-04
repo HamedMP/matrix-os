@@ -973,7 +973,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('DEPLOY_ENVIRONMENT: ${{ github.event_name == \'workflow_dispatch\' && inputs.environment || \'production\' }}');
     expect(workflow).toContain('min_instances=0');
     expect(workflow).toContain('if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then');
-    expect(workflow).toContain('min_instances=1');
+    expect(workflow).toContain('min_instances="$PLATFORM_PRODUCTION_MIN_INSTANCES"');
     expect(workflow).toContain('--min-instances "$min_instances"');
   });
 
