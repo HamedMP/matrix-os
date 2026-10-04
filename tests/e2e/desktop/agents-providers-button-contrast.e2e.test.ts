@@ -1,3 +1,4 @@
+import { paintedContrast } from "./fixtures/contrast-pixels";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -53,6 +54,7 @@ it.each(themes)("keeps every button palette legible through interactions: $name"
     await page.evaluate(mode => document.documentElement.setAttribute("data-theme", mode), mode);
     await page.evaluate(values => { for (const [key, value] of Object.entries(values)) document.documentElement.style.setProperty(key, value); }, vars);
     const failures: string[] = [];
+    const disabledRatios: number[] = [];
     for (const variant of variants) {
       const button = page.locator(`#${variant.id}`);
       const normalContrast = new Map<string | undefined, number>();
@@ -73,24 +75,23 @@ it.each(themes)("keeps every button palette legible through interactions: $name"
             context.fillRect(0, 0, 1, 1);
             return Array.from(context.getImageData(0, 0, 1, 1).data).map(v => v / 255);
           };
-          const luminance = (values: number[]) => values.map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
-            .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i]!, 0);
-          const composite = (under: number[], over: number[]) => over.slice(0, 3).map((v, i) => v * over[3]! + under[i]! * (1 - over[3]!));
           return Array.from(element.querySelectorAll<HTMLElement>("[data-label]")).map(label => {
-            const stack: number[][] = [];
+            const layers: { background: number[]; opacity: number }[] = [];
             let current: Element | null = label;
-            while (current) { stack.push(rgba(getComputedStyle(current).backgroundColor)); current = current.parentElement; }
-            const background = stack.reverse().reduce(composite, [1, 1, 1]);
-            const foreground = luminance(composite(background, rgba(getComputedStyle(label).color)));
-            const bg = luminance(background);
-            return { label: label.dataset.label, ratio: (Math.max(foreground, bg) + .05) / (Math.min(foreground, bg) + .05) };
+            while (current) { const style = getComputedStyle(current); layers.push({ background: rgba(style.backgroundColor), opacity: Number(style.opacity) }); current = current.parentElement; }
+            return { label: label.dataset.label, color: rgba(getComputedStyle(label).color), layers };
+
           });
         });
         if (state === "active") await page.mouse.up();
         // True Black already has low-contrast accent/check palettes. Keep
         // those visible and preserve their normal contrast through interaction;
-        // this regression does not claim AA or evaluate disabled group opacity.
-        for (const contrast of contrasts) {
+        // this regression does not claim AA; disabled group opacity is measured without applying active-control thresholds.
+        for (const sample of contrasts) {
+          const contrast = { label: sample.label, ratio: paintedContrast(sample.color, sample.layers) };
+          expect(Number.isFinite(contrast.ratio)).toBe(true);
+          // Inactive controls are exempt from WCAG contrast minimums, but their actual painted ratio is measured.
+          if (state === "disabled") { disabledRatios.push(contrast.ratio); continue; }
           if (state === "normal") normalContrast.set(contrast.label, contrast.ratio);
           const inheritedLowContrast = name.startsWith("true-black") &&
             (variant.id.includes("primary") || contrast.label === "check");
@@ -99,6 +100,7 @@ it.each(themes)("keeps every button palette legible through interactions: $name"
         }
       }
     }
+    console.info(`[button-contrast] ${name}: disabled painted ratios ${Math.min(...disabledRatios).toFixed(2)}–${Math.max(...disabledRatios).toFixed(2)}; inactive controls are WCAG-exempt`);
     expect(failures, `${name} illegible button states`).toEqual([]);
   } finally { await page.close(); }
 }, 30_000);

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -6,10 +6,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startAgentsProvidersWorkflowGateway } from "./fixtures/agents-providers-workflows";
 
+import { createEvidenceDirectory } from "./fixtures/evidence-directory";
+
 const root = resolve(__dirname, "../../..");
 // Fresh captures never overwrite historical committed evidence.
-const evidence = process.env.MATRIX_SETTINGS_EVIDENCE_DIR
-  ?? join(tmpdir(), `matrix-settings-evidence-${Date.now()}`);
+let captures: ReturnType<typeof createEvidenceDirectory> | undefined;
+let evidence: string;
 const hasBuild = existsSync(join(root, "desktop/out/main/index.js"));
 if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasBuild) throw new Error("Required Electron Desktop build is missing");
 const suite = hasBuild ? describe : describe.skip;
@@ -21,7 +23,8 @@ let profile: string;
 
 suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)", () => {
   beforeAll(async () => {
-    mkdirSync(evidence, { recursive: true });
+    captures = createEvidenceDirectory(process.env.MATRIX_SETTINGS_EVIDENCE_DIR);
+    evidence = captures.path;
     gateway = await startAgentsProvidersWorkflowGateway();
     profile = mkdtempSync(join(tmpdir(), "matrix-settings-figma-"));
     app = await _electron.launch({ executablePath, args: [join(root, "desktop/out/main/index.js")],
@@ -40,7 +43,7 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     try { await page.getByRole("region", { name: "General agents", exact: true }).waitFor({ timeout: 10_000 }); }
     catch (error) { await page.screenshot({ path: join(evidence, "setup-failure.png") }); console.warn("[figma-e2e] setup state:", await page.locator("body").innerText()); throw error; }
   }, 60_000);
-  afterAll(async () => { await app?.close(); await gateway?.close(); if (profile) rmSync(profile, { recursive: true, force: true }); });
+  afterAll(async () => { try { await app?.close(); } finally { try { await gateway?.close(); } finally { if (profile) rmSync(profile, { recursive: true, force: true }); captures?.cleanup(); } } });
 
   async function capture(name: string) { await page.screenshot({ path: join(evidence, `${name}.png`) }); }
   const feature = () => page.locator(".matrix-agents-providers");

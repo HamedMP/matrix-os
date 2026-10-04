@@ -34,7 +34,13 @@ function snapshot(authenticated: boolean, codexEnabled = true, revision = authen
   });
 }
 
-export async function startAgentsProvidersWorkflowGateway() {
+export async function startAgentsProvidersWorkflowGateway(options: { now?: () => number } = {}) {
+  const clock = options.now ?? Date.now;
+  function pruneOperations() {
+    for (const [id, operation] of operations) {
+      if (Date.parse(operation.expiresAt) <= clock()) operations.delete(id);
+    }
+  }
   let authenticated = false;
   let codexEnabled = true;
   let revision = 2;
@@ -43,6 +49,7 @@ export async function startAgentsProvidersWorkflowGateway() {
   const upstream = await startProviderAuthGateway({ settings: currentSnapshot });
   const events: string[] = [];
   const operations = new Map<string, ProviderWorkflow>();
+  const requests = new WeakMap<ProviderWorkflow, { key: string; method?: string }>();
   let sequence = 0;
   const capabilities = ProviderWorkflowCapabilitiesSchema.parse([
     { harnessInstanceId: "claude_harness", harness: "claude", displayName: "Claude Code", installState: "installed", loginMethods: ["terminal"], apiKeyProviders: [], install: false, uninstall: true, logs: true },
@@ -60,6 +67,7 @@ export async function startAgentsProvidersWorkflowGateway() {
   }
   const server = createServer(async (req, res) => {
     try {
+      pruneOperations();
       const url = new URL(req.url ?? "/", "http://localhost"); const path = url.pathname;
       if (path === "/billing/ai-credit/history") {
         const query = AiCreditHistoryQuerySchema.parse(Object.fromEntries(url.searchParams));
@@ -70,7 +78,11 @@ export async function startAgentsProvidersWorkflowGateway() {
       if (path === "/api/ai/provider-settings/workflows/capabilities") return json(res, ProviderWorkflowCapabilitiesSchema.parse(capabilities.map(capability => ({ ...capability,
         activeOperationId: [...operations.values()].findLast(operation => operation.harnessInstanceId === capability.harnessInstanceId && ["pending", "running"].includes(operation.state))?.id ?? null,
       }))));
-      if (path.startsWith("/api/ai/provider-settings/workflows/logs/")) return json(res, ProviderWorkflowLogsSchema.parse({ entries: [{ at: now(), event: "started" }] }));
+      if (path.startsWith("/api/ai/provider-settings/workflows/logs/")) {
+        const target = path.split("/")[6];
+        if (!capabilities.some(capability => capability.harnessInstanceId === target && capability.logs)) return json(res, { error: "Unknown log target" }, 404);
+        return json(res, ProviderWorkflowLogsSchema.parse({ entries: [{ at: now(), event: "started" }] }));
+      }
       if (path === "/api/ai/provider-settings/workflows/keys") {
         const key = ProviderWorkflowKeySchema.parse(await body(req));
         if (key.harnessInstanceId !== "codex_harness" || key.providerId !== "openai") return json(res, { error: "Unsupported fixture key target" }, 400);
@@ -82,6 +94,15 @@ export async function startAgentsProvidersWorkflowGateway() {
         const start = ProviderWorkflowStartSchema.parse(await body(req));
         const capability = capabilities.find(item => item.harnessInstanceId === start.harnessInstanceId);
         if (!capability || start.kind === "login" && (!start.method || !capability.loginMethods.includes(start.method)) || start.kind === "install" && !capability.install || start.kind === "uninstall" && !capability.uninstall) return json(res, { error: "Unsupported fixture operation" }, 400);
+        const replay = [...operations.values()].find(operation => requests.get(operation)?.key === start.idempotencyKey);
+        if (replay) {
+          if (replay.harnessInstanceId !== start.harnessInstanceId || replay.kind !== start.kind || requests.get(replay)?.method !== start.method) return json(res, { error: "Conflicting fixture request" }, 409);
+          return json(res, replay);
+        }
+        if (operations.size >= 32) {
+          const settled = [...operations.values()].find(operation => !["pending", "running"].includes(operation.state));
+          if (settled) operations.delete(settled.id);
+        }
         if (operations.size >= 32) return json(res, { error: "Fixture operation limit" }, 429);
         events.push(start.kind); const id = `fixture_operation_${++sequence}`;
         let terminalSessionId: string | null = null;
@@ -93,7 +114,8 @@ export async function startAgentsProvidersWorkflowGateway() {
           const result = await (await fetch(`${upstream.url}/api/terminal/workspaces/${workspaceId}/tabs`, { method: "POST", headers: { authorization, "content-type": "application/json" }, body: JSON.stringify({ name: "Install Hermes", cwd: "projects", command: ["sh", "-lc", "printf 'Fixture installation only\\n'"] }), signal: AbortSignal.timeout(10_000) })).json() as { tab: {id:string} };
           terminalSessionId = `${workspaceId}:${result.tab.id}`;
         }
-        const operation = ProviderWorkflowSchema.parse({ id, harnessInstanceId: start.harnessInstanceId, kind: start.kind, state: "running", expiresAt: later(), terminalSessionId, deviceCode: start.kind === "login" ? "TEST-CODE" : null, authorizationUrl: start.kind === "login" ? "https://auth.openai.com/codex/device" : null, safeFailure: null });
+        const operation = ProviderWorkflowSchema.parse({ id, harnessInstanceId: start.harnessInstanceId, kind: start.kind, state: "running", expiresAt: new Date(clock() + 600_000).toISOString(), terminalSessionId, deviceCode: start.kind === "login" ? "TEST-CODE" : null, authorizationUrl: start.kind === "login" ? "https://auth.openai.com/codex/device" : null, safeFailure: null });
+        requests.set(operation, { key: start.idempotencyKey, method: start.method });
         operations.set(id, operation); return json(res, operation);
       }
       if (path.startsWith("/api/ai/provider-settings/workflows/")) {
