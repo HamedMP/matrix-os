@@ -588,3 +588,35 @@ invalidate its pending settlement. Actual runtime/lifetime changes still replace
 the callback and reject the former scope before networking or navigation.
 
 Checkout unavailability uses only typed policy, purchase capability and funding observations. Necessary policy/permission guidance stays inside Buy credit; policy-disabled purchases offer administrator/support guidance rather than suggesting refresh enables purchasing. Refresh remains available for unconfirmed or transient funding observations. Positive spendable balances below one cent preserve up to six decimal places, never rounding a positive amount to zero or up to a cent. Dialog owner/runtime settlement and history scope fences remain unchanged.
+### Grouped connection presentation and retained-driver boundary
+
+Coding agents and general agents share mounted, inert-on-collapse disclosure state with ~200ms reversible transitions and a reduced-motion override. Refresh resolves an expanded catalog/workflow ID to the same agent's saved ID; transport replacement clears expansion, operation IDs and bounded per-row Connect request counters before exposure. A Connect request preserves other visited rows' counters, choices and drafts. Removed row IDs are pruned before admission; the 32-current-row limit rejects explicitly rather than reporting a successful no-op. Identical project-sized SVG chevrons rotate rather than swapping geometry; shipped upstream artwork preserves packaged and explicit-VM/runtime paths. Missing/failed installation is red, disconnected is yellow and connected is green.
+
+Saved row status consumes the reviewed configured-connection resolver: installation truth and active Connecting take precedence; historical failure cannot negate a current connected observation. Exact selected account/source supplies actual email/plan and usage, with unavailable/stale observations remaining honest. Subscription meters render remaining allowance with rounded track/fill, empty at 100% used. No reading/refresh restores saved Off; successful deliberate connection uses current server capability/revision and atomic enable behavior.
+
+Normal guided login, replacement and disconnect remain in Settings using the unchanged workflow panel and its active-operation guards. Unsupported-driver account/model/route controls remain only inside collapsed Advanced configuration; they do not create a second normal account card, offer a manual Enable toggle or revive Terminal login as the normal connection flow. The fallback retains owner-only mutations and never fabricates guided capability. Existing billing loader/callback fences, private history and dark system modal tokens remain unchanged. Actual combined Electron Desktop/Preview acceptance and Human Review are separate gates.
+
+Grouped composition preserves negotiated generic-agent Matrix/model/access-source
+controls through the workflow panel's collapsed Advanced configuration slot.
+Unsupported drivers retain only server-advertised legacy login methods there;
+owner denial never enables a fallback, and no login starts during rendering or
+refresh. Supported opaque Terminal/browser continuations stay explicit inside
+that disclosure. The grouped normal connection card remains singular.
+
+Non-guided saved agents retain Disconnect under advertised set_harness_enabled:
+it disables only the agent, preserving account credentials and saved routing.
+Failures retain the visible connection and present a safe retry. An explicit
+server catalog open_terminal action may launch Pi/OpenCode setup only inside
+Advanced configuration; callback presence alone and owner-denied access never
+create that capability. Saved missing rows use actual catalog install support,
+including runtime_not_supported, rather than synthesizing availability.
+Native connection labels share finite observation freshness and saved Off rules;
+observation expiry updates the row and account details without claiming known
+quota or remotely verified authentication from local login presence.
+
+Retained non-guided recovery actions keep pending and safe failure state across
+unrelated snapshot renders. Their asynchronous settlements are bound to the
+captured workflow owner and exact harness/action target, rather than the identity
+of a newly allocated render callback; former-owner settlements cannot refresh a
+replacement connection. Saved reconnect admission also rejects expired and
+future-dated native observations during its fresh exact validation.

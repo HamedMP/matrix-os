@@ -469,3 +469,82 @@
 }
 
 .matrix-ap-model-capability { font-size: 11px; color: var(--matrix-ap-muted); border-radius: 26px; background: var(--matrix-ap-sunken); padding: 2px 8px; }
+
+/* Grouped connection presentation; preserve existing billing/workflow rules. */
+/* Shared Settings reference: Figma 1112:9707. Runtime values remain canonical. */
+.matrix-agents-providers { width: 100%; max-width: 1080px; font-size: 14px; line-height: 1.45; }
+.matrix-ap-page-head h1 { font-size: 18px; line-height: 24px; font-weight: 500; letter-spacing: -.025em; }
+.matrix-ap-workspace { gap: 32px; }
+.matrix-ap-agent-groups { display: flex; flex-direction: column; gap: 32px; }
+.matrix-ap-list-heading { padding: 0 0 12px; }
+.matrix-ap-list-heading h2, .matrix-ap-gateway h2 { font-size: 14px; font-weight: 500; line-height: 20px; }
+.matrix-ap-agent-list { border: 0; overflow: visible; margin-top: 0; }
+.matrix-ap-agent-row-head { padding-right: 0; }
+.matrix-ap-agent-row { border: 1px solid var(--matrix-ap-border); background: var(--matrix-ap-surface); }
+.matrix-ap-agent-row + .matrix-ap-agent-row { border-top: 0; }
+.matrix-ap-agent-row:nth-child(2) { border-radius: 12px 12px 0 0; }
+.matrix-ap-agent-row:last-child { border-radius: 0 0 12px 12px; }
+.matrix-ap-agent-row:nth-child(2):last-child { border-radius: 12px; }
+.matrix-ap-rail-item { min-height: 56px; padding: 12px 16px; gap: 12px; border: 0; border-radius: inherit; }
+.matrix-ap-rail-name { font-size: 14px; font-weight: 500; }
+.matrix-ap-status-chip { font-size: 12px; font-weight: 400; border: 0; background: var(--matrix-ap-sunken); padding: 3px 8px; }
+.matrix-ap-status-chip[data-state="connected"] { color: var(--matrix-ap-success); background: color-mix(in srgb, var(--matrix-ap-success) 8%, transparent); }
+.matrix-ap-status-chip[data-state="connected"] i { background: var(--matrix-ap-success); }
+.matrix-ap-status-chip[data-state="not-connected"] i, .matrix-ap-status-chip[data-state="not-installed"] i, .matrix-ap-status-chip[data-state^="off-in-settings"] i { background: var(--matrix-ap-faint); }
+.matrix-ap-status-chip[data-state="needs-attention"] i { background: var(--matrix-ap-warning); }
+.matrix-ap-agent-details { padding: 0 16px 20px; }
+.matrix-ap-enablement { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; color: var(--matrix-ap-muted); font-size: 11px; }
+.matrix-ap-button { border-radius: 10px; font-size: 12px; min-height: 28px; }
+@media (max-width: 520px) { .matrix-ap-agent-details { padding-left: 20px; } .matrix-ap-rail-item { padding-inline: 12px; gap: 8px; } .matrix-ap-status-chip { font-size: 11px; } }
+.matrix-ap-workflow h3, .matrix-ap-connected h3 { font-size: 12px; font-weight: 500; margin: 14px 0 8px; }
+.matrix-ap-install progress, .matrix-ap-account-usage progress { width: 100%; accent-color: var(--matrix-ap-accent); height: 6px; }
+.matrix-ap-account-usage progress { appearance: none; background: color-mix(in srgb, var(--matrix-ap-muted) 45%, transparent); border: 0; border-radius: 999px; overflow: hidden; }
+.matrix-ap-account-usage progress::-webkit-progress-bar { background: color-mix(in srgb, var(--matrix-ap-muted) 45%, transparent); border-radius: 999px; }
+.matrix-ap-account-usage progress::-webkit-progress-value { background: var(--matrix-ap-success); border-radius: 999px; }
+.matrix-ap-account-usage progress::-moz-progress-bar { background: var(--matrix-ap-success); border-radius: 999px; }
+.matrix-ap-connection-choice .matrix-ap-method-check { position: absolute; right: 12px; top: 12px; color: var(--matrix-ap-accent); font-size: 14px; }
+
+/* The connection chooser stays compact even on runtimes without guided workflows. */
+.matrix-ap-agent-details > .matrix-ap-advanced { border: 0; padding-top: 0; margin-top: 16px; }
+.matrix-ap-agent-details .matrix-ap-workflow h3, .matrix-ap-agent-details .matrix-ap-connected h3 { margin: 4px 0 8px; font-size: 13px; font-weight: 500; }
+.matrix-ap-connection-choice { min-height: 66px; padding: 12px 16px; border-radius: 10px; justify-content: center; }
+.matrix-ap-connection-choice strong { font-size: 14px; font-weight: 500; }
+.matrix-ap-connection-choice > span { font-size: 12px; }
+.matrix-ap-connection-choice .matrix-ap-selected-tag { border: 0; padding: 2px 8px; font-size: 12px; color: var(--matrix-ap-text); background: color-mix(in srgb, var(--matrix-ap-text) 5%, transparent); }
+.matrix-ap-agent-logo, .matrix-ap-harness-mark:has(.matrix-ap-agent-logo) { height: 32px; width: 32px; }
+.matrix-ap-agent-logo { border: 1px solid var(--matrix-ap-border); background: var(--matrix-ap-sunken); border-radius: 8px; }
+.matrix-ap-agent-logo img { height: 20px; width: 20px; }
+.matrix-ap-status-chip[data-state="not-connected"] { color: var(--matrix-ap-warning); background: color-mix(in srgb, var(--matrix-ap-warning) 8%, transparent); }
+.matrix-ap-status-chip[data-state="not-connected"] i { background: var(--matrix-ap-warning); }
+.matrix-ap-status-chip[data-state="not-installed"], .matrix-ap-status-chip[data-state="install-failed"] { color: var(--matrix-ap-danger); background: color-mix(in srgb, var(--matrix-ap-danger) 8%, transparent); }
+.matrix-ap-status-chip[data-state="not-installed"] i, .matrix-ap-status-chip[data-state="install-failed"] i { background: var(--matrix-ap-danger); }
+.matrix-ap-gateway .matrix-ap-advanced { border: 0; padding-top: 0; }
+.matrix-ap-gateway .matrix-ap-panel-head > .matrix-ap-status-chip { display: none; }
+.matrix-ap-gateway .matrix-ap-credit-row { padding: 24px; min-height: 112px; }
+.matrix-ap-model-inventory { padding: 18px 24px 8px; }
+.matrix-ap-gateway-footer { padding: 14px 24px; background: var(--matrix-ap-sunken); }
+.matrix-ap-gateway .matrix-ap-button { min-height: 32px; border: 0; }
+/* Filled actions keep their paired background and inverse label in every state. */
+.matrix-ap-gateway .matrix-ap-button:where(:not(.matrix-ap-button-primary, .matrix-ap-button-danger)) { background: color-mix(in srgb, var(--matrix-ap-text) 5%, transparent); }
+.matrix-ap-gateway .matrix-ap-button-primary { color: var(--matrix-ap-overlay); background: var(--matrix-ap-text); }
+@media (max-width: 520px) { .matrix-ap-agent-details { padding-inline: 12px; } .matrix-ap-connection-options { grid-template-columns: 1fr; } .matrix-ap-rail-item { gap: 10px; padding-inline: 12px; } }
+.matrix-ap-agent-lettermark { font-size: 12px; font-weight: 600; color: var(--matrix-ap-text); }
+
+.matrix-ap-agent-logo img.matrix-ap-claude-logo { width: 22px; height: 22px; }
+/* Keep the exact monochrome SVG readable on the shared dark presentation. */
+[data-theme="dark"] .matrix-ap-agent-logo img.matrix-ap-openai-logo,
+.dark .matrix-ap-agent-logo img.matrix-ap-openai-logo { filter: invert(1); }
+
+.matrix-ap-agent-logo img.matrix-ap-upstream-logo { width: 24px; height: 24px; }
+@media (prefers-reduced-motion: reduce) {
+  .matrix-agents-providers .matrix-ap-accordion,
+  .matrix-agents-providers .matrix-ap-chevron svg,
+  .matrix-agents-providers .matrix-ap-switch span,
+  .matrix-agents-providers .matrix-ap-switch span::after { transition: none; }
+}
+.matrix-ap-accordion { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows 200ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease-out, visibility 0s 200ms; }
+.matrix-ap-accordion[data-expanded="true"] { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition-delay: 0s; }
+.matrix-ap-accordion-clip { min-height: 0; overflow: hidden; }
+.matrix-ap-chevron { color: var(--matrix-ap-muted); display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 28px; }
+.matrix-ap-chevron svg { width: 16px; height: 16px; transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1); }
+.matrix-ap-chevron[data-expanded="true"] svg { transform: rotate(180deg); }

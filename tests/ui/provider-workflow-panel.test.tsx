@@ -373,7 +373,7 @@ it("offers explicit Connect for a saved Off account instead of silently restorin
 });
 it("shows account actions for a configured native connection without claiming remote readiness", () => {
   const api = client();
-  render(<HarnessWorkflowPanel harness={{...harness, authState: "unknown", enabled: true, localObservation: {state: "present_unverified", checkedAt: "2026-10-02T00:00:00Z", staleAfter: "2026-10-02T00:10:00Z"}}} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} renderConnection={action => <article>Current account{action}</article>} />);
+  render(<HarnessWorkflowPanel harness={{...harness, authState: "unknown", enabled: true, localObservation: {state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 60000).toISOString()}}} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} renderConnection={action => <article>Current account{action}</article>} />);
   expect(screen.getByText("Current account")).toBeInTheDocument();
   expect(screen.getByRole("button", {name: "Change account"})).toBeInTheDocument();
   expect(screen.queryByText("Connect Codex with")).not.toBeInTheDocument();

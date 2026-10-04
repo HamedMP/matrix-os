@@ -1,5 +1,12 @@
 import { isSupportedGenericHarnessCredentialRoute, type ProviderAccount, type ProviderAccessSource, type ProviderHarnessInstance } from "@matrix-os/contracts";
 
+function fresh(observation: ProviderHarnessInstance["localObservation"]): boolean {
+  if (observation?.state !== "present_unverified") return false;
+  const checked = Date.parse(observation.checkedAt ?? "");
+  const expires = Date.parse(observation.staleAfter ?? "");
+  return Number.isFinite(checked) && checked <= Date.now() && Number.isFinite(expires) && expires > Date.now();
+}
+
 /** A configured credential is a connection; execution readiness stays canonical. */
 export function hasConfiguredConnection(harness: Pick<ProviderHarnessInstance, "installState" | "authState">
   & Partial<Pick<ProviderHarnessInstance, "enabled" | "configuredEnabled" | "localObservation" | "harness" | "route" | "accessSourceId">>, source?: ProviderAccessSource): boolean {
@@ -8,8 +15,7 @@ export function hasConfiguredConnection(harness: Pick<ProviderHarnessInstance, "
     || (source && ["invalid", "expired", "auth_required"].includes(source.readiness.state))) return false;
   if (source && harness.harness && harness.route && harness.accessSourceId !== undefined
     && !isSupportedGenericHarnessCredentialRoute({ harness: harness.harness, route: harness.route, accessSourceId: harness.accessSourceId }, source)) return false;
-  return harness.authState === "authenticated" || harness.localObservation?.state === "present_unverified"
-    || source?.localObservation?.state === "present_unverified";
+  return harness.authState === "authenticated" || fresh(harness.localObservation) || fresh(source?.localObservation);
 }
 
 /** Resolve only the account belonging to this route; never borrow another native account. */

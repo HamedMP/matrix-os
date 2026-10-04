@@ -15,6 +15,7 @@ function client(state: 'failed' | 'expired' | 'running'): ProviderWorkflowClient
 it.each(['failed', 'expired'] as const)('keeps the confirmed connected row over a stale %s login receipt', async state => {
   const api = client(state); const mutate = vi.fn();
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId="codex" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} workflowClient={api} onAddCredit={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", {name: /^Codex/}));
   await waitFor(() => expect(api.get).toHaveBeenCalled());
   const row = screen.getByRole('button', { name: /^Codex/ });
   await waitFor(() => expect(within(row).getByText('Connected')).toBeVisible());
@@ -25,6 +26,7 @@ it.each(['failed', 'expired'] as const)('keeps the confirmed connected row over 
 it('gives an active replacement login precedence without automatically starting another login', async () => {
   const api = client('running');
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId="codex" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} workflowClient={api} onAddCredit={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', {name: /^Codex/}));
   await waitFor(() => expect(within(screen.getByRole('button', { name: /^Codex/ })).getByText('Connecting')).toBeVisible());
   expect(api.start).not.toHaveBeenCalled();
 });
@@ -44,10 +46,13 @@ it.each(['pi', 'opencode'] as const)('preserves %s saved model and access contro
   api.capabilities = vi.fn().mockResolvedValue([{ ...capability, harnessInstanceId: kind, harness: kind, displayName: kind, activeOperationId: undefined }]);
   const mutate = vi.fn();
   render(<AgentsProvidersView snapshot={next} selectedHarnessId={kind} onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} workflowClient={api} onAddCredit={vi.fn()} />);
-  const summary = await screen.findByText('Advanced configuration');
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${kind}`, 'i') }));
+  await waitFor(() => expect(within(screen.getByText('Advanced configuration').closest('details')!).getByText('Use Matrix AI')).toBeInTheDocument());
+  const summary = screen.getByText('Advanced configuration');
   const advanced = summary.closest('details')!;
   expect(advanced).not.toHaveAttribute('open');
   expect(within(advanced).getByText('Use Matrix AI').closest('button')).toBeInTheDocument();
+  expect(screen.getAllByRole('group', { name: `${kind} connection`, hidden: true })).toHaveLength(1);
   expect(within(advanced).getByLabelText('Model')).toHaveValue('test');
   expect(within(advanced).getByLabelText('Paid through')).toBeInTheDocument();
   expect(screen.queryByText('Enable this agent')).not.toBeInTheDocument();
