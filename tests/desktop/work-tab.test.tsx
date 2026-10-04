@@ -5,14 +5,17 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
-import { SurfaceChromeContext, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
+import { BotHeaderBindingContext, SurfaceChromeContext, type BotHeaderBindingReport, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
+import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
+import { createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical-chat-workspace-test-utils";
+import { clientFixture, saved } from "./chat-agents-fixture";
+import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useBoard, type Project } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
-import { expectRenderedIcon } from "../helpers/rendered-icon";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const inspectorProps = vi.hoisted(() => ({
@@ -30,10 +33,12 @@ function DraftHarness({ chatId }: { chatId?: string }) {
   </>;
 }
 const chatTabProps = vi.hoisted(() => ({
+  contentClient: null as CanonicalChatClient | null,
+  bindingReporters: [] as Array<(binding: BotHeaderBindingReport) => () => void>,
   tabIds: [] as Array<string | undefined>,
   draftRequests: [] as Array<{ id: number; text: string } | null | undefined>,
 }));
-const eventSourceProps = vi.hoisted(() => ({ rail: [] as unknown[], chat: [] as unknown[], project: [] as unknown[] }));
+const eventSourceProps = vi.hoisted(() => ({ rail: [] as unknown[], chat: [] as unknown[], project: [] as unknown[], agentStarts: [] as Array<(text: string) => void> }));
 const chatEventSourceFactory = vi.hoisted(() => ({
   sources: [] as Array<{
     subscribe: ReturnType<typeof vi.fn>;
@@ -68,13 +73,14 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", async (importOriginal) =
     ...actual,
     WorkRail: (props: React.ComponentProps<typeof actual.WorkRail> & { eventSource?: unknown }) => {
       eventSourceProps.rail.push(props.eventSource);
+      if (props.onStartAgentChat) eventSourceProps.agentStarts.push(props.onStartAgentChat);
       return <actual.WorkRail {...props} />;
     },
   };
 });
 
 vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
-  default: ({
+  default: function MockChatTab({
     tabId,
     initialChatId,
     eventSource,
@@ -88,10 +94,14 @@ vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
     renderInspector?: (detail: unknown) => React.ReactNode;
     inspectorExclusive?: boolean;
     draftRequest?: { id: number; text: string } | null;
-  }) => {
+  }) {
+    const report = React.useContext(BotHeaderBindingContext);
+    React.useEffect(() => { if (report) chatTabProps.bindingReporters.push(report); }, [report]);
     chatTabProps.tabIds.push(tabId);
     chatTabProps.draftRequests.push(draftRequest);
     eventSourceProps.chat.push(eventSource);
+    if (chatTabProps.contentClient) return <CanonicalChatWorkspace client={chatTabProps.contentClient}
+      initialChatId={initialChatId} initialView="conversation" active catalog={providerCatalog} externalNavigation />;
     return (
       <>
         <main aria-hidden={inspectorExclusive || undefined}>Chat center
@@ -225,6 +235,16 @@ function chat(id: string, title: string, projectId?: string): CanonicalChatRecor
 }
 
 const globalChat = chat("chat_global", "Global chat");
+function botContentClient(directBot: () => Promise<string | null>) {
+  const content = createCanonicalChatWorkspaceClient();
+  vi.mocked(content.getDetail).mockResolvedValue({ record: globalChat, messages: [], turns: [], runs: [], activities: [] });
+  const agents = clientFixture();
+  agents.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipeRef: { recipeId: "writer", version: "1" } }] });
+  agents.bots = { directBot, interactions: vi.fn(async () => []), tasks: vi.fn(async () => []),
+    authority: vi.fn(async () => ({ grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) } as never;
+  content.agents = agents;
+  return content;
+}
 const projectChat = chat("chat_alpha", "Alpha chat", "project_alpha_id");
 
 function activeWorkTab() {
@@ -241,12 +261,18 @@ describe("WorkTab rail integration", () => {
     }) as typeof api.get;
     api.post = vi.fn(async () => ({ chatId: "chat_bot_created", operation: "created", agent: { id: "bot_competitor1", name: "Competitor Watch", avatarSeed: "a".repeat(16), revision: 1, status: "active" } })) as typeof api.post;
     render(<WorkTab route="chat" active />);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     const recipe = (await screen.findByText("Watch pages")).closest("article")!;
     const create = within(recipe).getByRole("button", { name: "Use Competitor Watch" });
     expect((create as HTMLButtonElement).disabled).toBe(false);
+    HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
     fireEvent.click(create);
-    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/chat-agents/instantiate", expect.objectContaining({
+      selection: { instanceId: "matrix_bot_default", model: "auto" },
+    })));
     await waitFor(() => expect(activeWorkTab()?.chatId).toBe("chat_bot_created"));
     expect(activeWorkTab()?.chatView).toBe("conversation");
   });
@@ -255,10 +281,13 @@ describe("WorkTab rail integration", () => {
     resizeObserverEntries.length = 0;
     inspectorProps.active = [];
     chatTabProps.tabIds = [];
+    chatTabProps.contentClient = null;
+    chatTabProps.bindingReporters = [];
     chatTabProps.draftRequests = [];
     eventSourceProps.rail = [];
     eventSourceProps.chat = [];
     eventSourceProps.project = [];
+    eventSourceProps.agentStarts = [];
     chatEventSourceFactory.sources = [];
     initialWorkWidth = 1_400;
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
@@ -279,6 +308,7 @@ describe("WorkTab rail integration", () => {
     globalThis.ResizeObserver = WorkResizeObserver;
     const get = vi.fn(async (path: string) => {
       if (path === "/api/chat-agents") return { enabled: true, agents: [] };
+      if (/^\/api\/chats\/[^/]+\/bot$/.test(path)) return { agentId: null };
       if (path === "/api/chats/chat_global?limit=200&messageVersion=2&inputVersion=1&readStateVersion=1") return {
         record: globalChat,
         messages: [],
@@ -321,11 +351,11 @@ describe("WorkTab rail integration", () => {
     useUi.setState(useUi.getInitialState(), true);
   });
 
-  it("routes the Agents plus action into a fresh conversational Chat draft", async () => {
+  it("routes Add new into Templates while preserving the current Chat", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Create an agent" }));
-    await waitFor(() => expect(chatTabProps.draftRequests.at(-1)?.text).toContain("Help me create an agent"));
-    expect(useTabs.getState().tabs.find((tab) => tab.kind === "work")?.chatView).toBe("draft");
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
+    await screen.findByText("What should your agent do?");
+    expect(chatTabProps.draftRequests.filter(Boolean)).toEqual([]);
   });
 
   afterEach(() => {
@@ -338,6 +368,22 @@ describe("WorkTab rail integration", () => {
     render(<WorkTab tabId="chat-tab-2" route="chat" active />);
 
     expect(chatTabProps.tabIds).toContain("chat-tab-2");
+  });
+
+  it("does not carry an unconsumed standalone draft intent into another authenticated runtime", async () => {
+    render(<WorkTab route="chat" active initialChatView="draft" />);
+    const retainedStart = eventSourceProps.agentStarts.at(-1)!;
+    fireEvent.click(screen.getByRole("button", { name: "New chat", exact: true }));
+    expect(chatTabProps.draftRequests.at(-1)).toMatchObject({ text: "", id: 1 });
+    act(() => useConnection.setState({ authGeneration: 2, runtimeSlot: "preview" }));
+    expect(chatTabProps.draftRequests.at(-1)).toBeNull();
+    const tabs = useTabs.getState().tabs;
+    const focusRequest = useCodingAgentWorkspace.getState().composerFocusRequestId;
+    act(() => retainedStart("Late old-runtime result"));
+    expect(useTabs.getState().tabs).toBe(tabs);
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequest);
+    expect(chatTabProps.draftRequests.at(-1)).toBeNull();
+    await act(async () => undefined);
   });
 
   it.each(["chat", "project"] as const)("preserves drafts across Chat A, Chat B, and New Chat in the %s route", async (route) => {
@@ -450,6 +496,23 @@ describe("WorkTab rail integration", () => {
     expect(useUi.getState().createProjectOpen).toBe(true);
   });
 
+  it("opens a distinct Project draft from the same overview and retains its unsent text", async () => {
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "project", projectSlug: "alpha", chatView: "index", closable: false });
+    const view = render(<WorkTab route="project" projectSlug="alpha" initialChatView="index" active />);
+    await screen.findByRole("heading", { name: "Alpha" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat draft" }), { target: { value: "Unsent project plan" } });
+    const focusRequest = useCodingAgentWorkspace.getState().composerFocusRequestId;
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Alpha" }));
+    expect(activeWorkTab()).toMatchObject({ workRoute: "project", projectSlug: "alpha", chatView: "draft", chatId: undefined });
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequest + 1);
+    view.rerender(<WorkTab route="project" projectSlug="alpha" initialChatView={activeWorkTab()!.chatView} active />);
+    expect(screen.queryByRole("heading", { name: "Alpha" })).toBeNull();
+    expect((screen.getByRole("textbox", { name: "Chat draft" }) as HTMLInputElement).value).toBe("Unsent project plan");
+    expect(useConnection.getState().api?.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Alpha", exact: true }));
+    expect(activeWorkTab()?.chatView).toBe("index");
+  });
+
   it("clears the old Chat for Project compose and does not expose Board", async () => {
     useTabs.getState().openTab({
       kind: "work",
@@ -470,7 +533,7 @@ describe("WorkTab rail integration", () => {
       />,
     );
     await screen.findByRole("button", { name: "Alpha" });
-    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
 
     fireEvent.click(screen.getByRole("button", { name: "New chat in Alpha" }));
     expect(activeWorkTab()).toMatchObject({
@@ -500,7 +563,7 @@ describe("WorkTab rail integration", () => {
       projectSlug: undefined,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
     fireEvent.click(screen.getByRole("button", { name: "Alpha chat" }));
     expect(activeWorkTab()).toMatchObject({
       kind: "work",
@@ -698,9 +761,7 @@ describe("WorkTab rail integration", () => {
 
   it("makes the Files inspector available on a new Global Chat draft", async () => {
     render(<WorkTab route="chat" active initialChatView="draft" />);
-    await screen.findByRole("button", { name: "Global chat" });
-
-    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
+    expect(await screen.findByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
   });
 
   it("creates and selects a canonical Chat before starting a Terminal from New Chat", async () => {
@@ -756,6 +817,101 @@ describe("WorkTab rail integration", () => {
 
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
+  });
+
+  it("replaces the generic title with a Bot identity target on the existing native toolbar after authenticated binding", async () => {
+    chatTabProps.contentClient = botContentClient(vi.fn(async () => saved.id));
+    function HostedBot() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({setChrome}), []);
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}{chrome?.rightActions}</header>
+        <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation"/></SurfaceChromeContext.Provider>;
+    }
+    render(<HostedBot/>);
+    await waitFor(()=>expect(document.querySelector("header [data-slot='desktop-bot-header']")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Rename Chat" })).toBeNull();
+    expect(within(document.querySelector("header")!).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
+  });
+
+  it("recovers the same toolbar when its Bot query failed and content resolves identity after Retry", async () => {
+    const api = useConnection.getState().api!;
+    const original = api.get;
+    api.get = vi.fn(async (path: string) => {
+      if (path === "/api/chats/chat_global/bot") throw new Error("temporary toolbar lookup");
+      return original(path);
+    }) as typeof api.get;
+    const directBot = vi.fn().mockRejectedValueOnce(new Error("temporary content lookup")).mockResolvedValue(saved.id);
+    chatTabProps.contentClient = botContentClient(directBot);
+    function HostedBot() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header data-testid="recovered-bot-toolbar">{chrome?.title}{chrome?.rightActions}</header>
+        <WorkTab route="chat" active initialChatId="chat_global" initialChatTitle="Global chat" initialChatView="conversation" />
+      </SurfaceChromeContext.Provider>;
+    }
+    render(<HostedBot />);
+    const retry = await screen.findByRole("button", { name: "Retry", exact: true });
+    expect(screen.queryByRole("button", { name: "Choose model and connection" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Choose bot agent and model" })).toBeNull();
+    fireEvent.click(retry);
+    await screen.findByRole("button", { name: "Choose bot agent and model" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Details" }).closest("header")).toBe(screen.getByTestId("recovered-bot-toolbar")));
+    expect(screen.queryByRole("button", { name: "Rename Global chat" })).toBeNull();
+    expect(document.querySelectorAll(".matrix-bot-identity-bar")).toHaveLength(1);
+    expect(directBot).toHaveBeenCalledTimes(2);
+    expect(api.get).not.toHaveBeenCalledWith("/api/chats/chat_global/bot");
+  });
+
+  it("rejects stale content identity reports after changing Chat or runtime authority", async () => {
+    function HostedBot({ chatId }: { chatId: string }) {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}</header>
+        <WorkTab route="chat" active initialChatId={chatId} initialChatTitle={`Title ${chatId}`} initialChatView="conversation" />
+      </SurfaceChromeContext.Provider>;
+    }
+    const view = render(<HostedBot chatId="chat_global" />);
+    await waitFor(() => expect(chatTabProps.bindingReporters.length).toBeGreaterThan(0));
+    const firstChatReport = chatTabProps.bindingReporters.at(-1)!;
+    const reportClient = {};
+    act(() => firstChatReport({ chatId: "chat_global", client: reportClient, status: "bot", agentId: saved.id }));
+    await waitFor(() => expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeTruthy());
+    view.rerender(<HostedBot chatId="chat_other" />);
+    await waitFor(() => expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull());
+    act(() => firstChatReport({ chatId: "chat_global", client: reportClient, status: "bot", agentId: saved.id }));
+    expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull();
+    const oldRuntimeReport = chatTabProps.bindingReporters.at(-1)!;
+    act(() => useConnection.setState({ api: { ...useConnection.getState().api!, baseUrl: "https://preview.matrix.test" }, runtimeSlot: "preview", authGeneration: 2 }));
+    await waitFor(() => expect(chatTabProps.bindingReporters.at(-1)).not.toBe(oldRuntimeReport));
+    act(() => oldRuntimeReport({ chatId: "chat_other", client: reportClient, status: "bot", agentId: saved.id }));
+    expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull();
+    const currentReport = chatTabProps.bindingReporters.at(-1)!;
+    act(() => currentReport({ chatId: "chat_global", client: reportClient, status: "bot", agentId: saved.id }));
+    expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull();
+    let releaseOld!: () => void;
+    act(() => { releaseOld = currentReport({ chatId: "chat_other", client: reportClient, status: "bot", agentId: saved.id }); });
+    act(() => currentReport({ chatId: "chat_other", client: reportClient, status: "bot", agentId: saved.id }));
+    act(() => releaseOld());
+    expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeTruthy();
+    act(() => currentReport({ chatId: "chat_other", client: {}, status: "ordinary", agentId: null }));
+    expect(screen.getByRole("button", { name: "Rename Title chat_other" })).toBeTruthy();
+  });
+
+  it("releases the Bot toolbar identity when canonical content unmounts without changing Chat", async () => {
+    chatTabProps.contentClient = botContentClient(vi.fn(async () => saved.id));
+    function HostedBot() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}</header>
+        <WorkTab route="chat" active initialChatId="chat_global" initialChatTitle="Global chat" initialChatView="conversation" />
+      </SurfaceChromeContext.Provider>;
+    }
+    const view = render(<HostedBot />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Details" }).closest("header")).toBeTruthy());
+    chatTabProps.contentClient = null;
+    view.rerender(<HostedBot />);
+    await waitFor(() => expect(document.querySelector("[data-slot='desktop-bot-header']")).toBeNull());
+    expect(screen.getByRole("button", { name: "Rename Global chat" })).toBeTruthy();
   });
 
   it("leaves the sidebar trigger to OSWindow while registering shared Chat chrome", async () => {
@@ -954,7 +1110,7 @@ describe("WorkTab rail integration", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Show Chat navigation" })));
 
     fireEvent.click(screen.getByRole("button", { name: "Show Chat navigation" }));
-    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
     fireEvent.click(screen.getByRole("button", { name: "New chat in Alpha" }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Show Chat navigation" })));
 

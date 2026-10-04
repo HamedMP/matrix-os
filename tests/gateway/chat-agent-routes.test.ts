@@ -309,6 +309,26 @@ describe("Chat Agent HTTP boundary", () => {
     expect((await result.json()).selection).toEqual(selection);
   });
 
+  it("creates a custom Agent with an authorized Matrix model and rejects unavailable or private Bot routes", async () => {
+    const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+    catalog.drivers.push({ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" });
+    const instances = managedPiChatInstances(makeAiProviderSnapshot()).map(instance => ({ ...instance, catalogRevision: catalog.revision }));
+    catalog.instances.push(...instances);
+    const input = { ...fields, clientRequestId: "req_route_matrix_agent", selection };
+    const response = await app.request("/api/chat-agents", json("POST", input));
+    expect(response.status).toBe(201);
+    const created = await response.json();
+    expect(created).toMatchObject({ selection, name: fields.name });
+    expect((await agents.get(owner, created.id))?.selection).toEqual(selection);
+    const instance = catalog.instances.find(candidate => candidate.id === selection.instanceId)!;
+    instance.availability = "unavailable";
+    instance.defaultSelection = undefined;
+    expect((await app.request("/api/chat-agents", json("POST", input))).status).toBe(201);
+    expect((await app.request("/api/chat-agents", json("POST", { ...input, clientRequestId: "req_route_matrix_blocked" }))).status).toBe(400);
+    expect((await app.request("/api/chat-agents", json("POST", { ...input, clientRequestId: "req_route_private_bot", selection: { instanceId: "matrix_bot_default", model: "auto" } }))).status).toBe(400);
+    expect(await agents.list(owner)).toHaveLength(1);
+  });
+
   it("persists conversational MCP creation through the real route and makes retries idempotent", async () => {
     const server = createIntegrationsMcpServer({ fetcher: async (url, init) => app.request(new URL(url).pathname, init) });
     const client = new Client({ name: "agent-creation-route-test", version: "1" });

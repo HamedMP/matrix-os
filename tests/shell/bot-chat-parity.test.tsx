@@ -24,19 +24,19 @@ it("renders a direct bot's identity, pending interaction and authority from its 
       status: "waiting_person", revision: 1, updatedAt: "2026-09-28T12:00:00.000Z" }]),
     authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
     resolve: vi.fn(), revoke: vi.fn(), memory: vi.fn(),
-  }, list: vi.fn(async () => ({ agents: [{ id: "bot_research1", name: "Research Rabbit" }] })) };
+  }, list: vi.fn(async () => ({ agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" }, recipeRef: { recipeId: "research", version: "1" } }] })) };
   render(<BotChatPanel chatId="chat_research" client={client as never} />);
-  expect(await screen.findByText("Research Rabbit")).toBeTruthy();
+  expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
   expect(await screen.findByText("Which company?")).toBeTruthy();
   expect(screen.getByText("Waiting for your answer")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Show bot authority" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Details" })).toBeTruthy();
 });
 
 it("keeps bot controls absent for a non-bot Chat", async () => {
   const client = { bots: { directBot: vi.fn(async () => null) } };
   render(<BotChatPanel chatId="chat_general" client={client as never} />);
   await waitFor(() => expect(client.bots.directBot).toHaveBeenCalledOnce());
-  expect(screen.queryByRole("button", { name: "Show bot authority" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
 });
 
 it("keeps bot interactions visible when only the agent library request fails", async () => {
@@ -112,15 +112,18 @@ for (const surface of ["Web Canvas", "Web Desktop"] as const) {
           pendingInteractions: [], memory: { items: [{ itemId: "mem_abcdefgh", kind: "preference", scope: "bot",
             content: "Keep briefs concise", source: { at: "2026-09-28T12:00:00.000Z" }, confirmed: true, revision: 1 }] } })),
       },
-      list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit" }] })),
+      list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" }, recipeRef: { recipeId: "research", version: "1" } }] })),
       search: vi.fn(async () => ({ enabled: true, resources: [] })),
     } as unknown as ChatAgentClient;
 
     render(<ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} />);
-    expect(await screen.findByText("Research Rabbit")).toBeTruthy();
+    expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
+    expect(document.querySelector("[data-slot='chat-session-header']")).toBeNull();
+    expect(document.querySelectorAll(".matrix-bot-identity-bar")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Open Agents & providers settings" }).closest(".matrix-bot-identity-bar")).toBeTruthy();
     expect(await screen.findByText("Which company?")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show bot authority" }));
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
   });
 }
@@ -133,10 +136,24 @@ it("sends a verified direct bot Chat without an ordinary harness selection", asy
   }, list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
   render(<ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
     onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit} agentClient={client} />);
-  await screen.findByText("Your bot's Chat");
+  await screen.findByRole("button", { name: "Choose bot agent and model" });
+  expect(screen.queryByText("Company drive context is not available in Bot chats.")).toBeNull();
+  expect(screen.queryByText("Choose Claude Code to use company drive context.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add company drive context" })).toBeNull();
   fireEvent.change(screen.getByRole("textbox", { name: /message/i }), { target: { value: "Check the pages" } });
   fireEvent.click(screen.getByRole("button", { name: /send/i }));
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Check the pages", undefined, expect.objectContaining({
     instanceId: "matrix_bot_default", model: "auto", interactionMode: "default", permissionMode: "default",
   })));
+});
+it('retains authenticated access details when only Bot metadata cannot be read and retries it',async()=>{
+ const client={bots:{directBot:vi.fn(async()=> 'bot_research1'),interactions:vi.fn(async()=>[]),tasks:vi.fn(async()=>[]),
+  authority:vi.fn(async()=>({agentId:'bot_research1',revision:1,grants:[],connections:[],routines:[],pendingInteractions:[],memory:{items:[{itemId:'mem_abcdefgh',kind:'preference',scope:'bot',content:'Keep briefs concise',source:{at:'2026-09-28T12:00:00.000Z'},confirmed:true,revision:1}]}})),
+ },list:vi.fn(async()=>{throw new Error('metadata unavailable');})};
+ render(<BotChatPanel chatId='chat_research' client={client as never}/>);
+ await waitFor(()=>expect(client.list).toHaveBeenCalledOnce());fireEvent.click(screen.getByRole('button',{name:'Details'}));
+ expect(await screen.findByText('Keep briefs concise')).toBeTruthy();expect(screen.getByText('Bot instructions are unavailable.')).toBeTruthy();
+ expect((screen.getByRole('button',{name:'Edit bot'}) as HTMLButtonElement).disabled).toBe(true);
+ expect(screen.queryByRole('combobox',{name:'Bot model'})).toBeNull();fireEvent.click(screen.getByRole('button',{name:'Retry bot details'}));
+ await waitFor(()=>expect(client.list).toHaveBeenCalledTimes(2));
 });

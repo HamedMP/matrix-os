@@ -1,0 +1,8 @@
+/* The scroller reaches the rail edge; content padding belongs inside it. */
+.work-rail-scroll { scrollbar-color: transparent transparent; }
+.work-rail-scroll > * { flex-shrink: 0; }
+.work-rail-scroll::-webkit-scrollbar { width: 6px; }
+.work-rail-scroll::-webkit-scrollbar-thumb,
+.work-rail-scroll::-webkit-scrollbar-thumb:hover { background: transparent; border: 0; }
+.work-rail-scroll[data-scrolling="true"] { scrollbar-color: var(--scrollbar-thumb) transparent; }
+.work-rail-scroll[data-scrolling="true"]::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); }

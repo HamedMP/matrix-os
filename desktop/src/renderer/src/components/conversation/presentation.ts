@@ -77,6 +77,7 @@ export interface ConversationNoticePresentation {
   kind: "notice";
   id: string;
   phase: "commentary" | "final";
+  failureCode?: import("@matrix-os/contracts").CanonicalChatSafeError["code"];
   tone: "neutral" | "info" | "success" | "warning" | "stopped" | "failed";
   label: string;
   markdown: string;

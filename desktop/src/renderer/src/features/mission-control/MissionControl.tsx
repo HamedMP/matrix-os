@@ -18,6 +18,7 @@ import { codingAgentRuntimeScope } from "../../../../shared/coding-agent-project
 import { useShellSessionSync } from "../../lib/shell-session-sync";
 import { preloadAppIcons, useAppsQuery } from "../apps/apps.api";
 import NativeDesktopShell from "../desktop-shell/NativeDesktopShell";
+import { moveChatToCreatedProject, projectMoveAuthorityKey } from "../work/work-rail/new-project-chat-move";
 import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
 
 export default function MissionControl() {
@@ -40,6 +41,11 @@ export default function MissionControl() {
       s.createProjectOpen ||
       s.rendererOverlayCount > 0,
   );
+
+  useEffect(() => {
+    const pending = useUi.getState().pendingProjectChatMove;
+    if ((pending && pending.authorityKey !== projectMoveAuthorityKey()) || useUi.getState().projectChatMoveError) useUi.getState().clearPendingProjectChatMove();
+  }, [api, platformHost, runtimeSlot, authGeneration]);
 
   useGlobalShortcuts();
   useShellSessionSync(api, `${runtimeScope}|${authGeneration}|${runtimeSlot}`);
@@ -148,7 +154,7 @@ export default function MissionControl() {
       <Composer />
       <CommandPalette />
       <QuickOpen />
-      <CreateProjectDialog open={createProjectOpen} onClose={() => setCreateProjectOpen(false)} />
+      <CreateProjectDialog onProjectReady={moveChatToCreatedProject} open={createProjectOpen} onClose={() => setCreateProjectOpen(false)} />
     </div>
   );
 }

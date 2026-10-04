@@ -320,6 +320,7 @@ export function runPresentation(
         phase: "final" as const,
         tone: stopped ? "stopped" as const : "failed" as const,
         label: stopped ? "Agent work stopped" : "Agent work failed",
+        ...(!stopped && runError ? { failureCode: runError.error.code } : {}),
         markdown: stopped ? "Run was cancelled."
           : canonicalChatSafeFailureReason(runError?.error.code)
             ?? canonicalChatSafeFailureReason("run_failed")!,

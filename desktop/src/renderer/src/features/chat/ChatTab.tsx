@@ -8,6 +8,7 @@ import { cn } from "../../lib/cn";
 import type { CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { Button } from "../../design/primitives";
+import { BrandLogo } from "../../design/BrandPanel";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -319,6 +320,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
       {empty ? (
         <div data-testid="chat-empty-content" className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center gap-[26px] px-5 py-8", CHAT_CONTENT_WIDTH_CLASS)}>
           <div className="flex shrink-0 flex-col items-center gap-[26px] text-center">
+            <BrandLogo size={48} className="block" testId="chat-welcome-matrix-logo" />
             <h1
               className="text-[32px] font-semibold leading-tight tracking-[-0.02em]"
               style={{ color: "var(--text-primary)" }}
@@ -408,6 +410,7 @@ export default function ChatTab({
   sharedHeaderContainer,
   onSharedChatMetadata,
   draftRequest,
+  onDraftConsumed,
   externalNavigation = false,
   renderInspector,
   inspectorExclusive = false,
@@ -423,6 +426,7 @@ export default function ChatTab({
   sharedHeaderContainer?: HTMLElement | null;
   onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
+  onDraftConsumed?: (id: number) => void;
   externalNavigation?: boolean;
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
@@ -443,6 +447,7 @@ export default function ChatTab({
       sharedHeaderContainer={sharedHeaderContainer}
       onSharedChatMetadata={onSharedChatMetadata}
       draftRequest={draftRequest}
+      onDraftConsumed={onDraftConsumed}
       active={active}
       live={visible}
       eventSource={eventSource}

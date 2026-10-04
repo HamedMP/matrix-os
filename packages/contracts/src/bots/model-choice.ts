@@ -1,5 +1,6 @@
 import type { CanonicalProviderCatalog, CanonicalProviderInstanceDescriptor } from "#canonical-chat-provider";
 import type { CanonicalChatModelSelection } from "#canonical-chat";
+import { MATRIX_BOT_SELECTION } from "#bots/selection";
 
 export const MATRIX_PI_CHAT_INSTANCE_ID = "matrix_pi_default";
 
@@ -21,13 +22,24 @@ export function managedPiBotModelChoices(catalog?: CanonicalProviderCatalog | nu
       ? [{ label: `${model.displayName} · Matrix AI`, selection: { instanceId: instance.id, model: model.id } }] : []) : []) ?? [];
 }
 
+/** Only the supported legacy sentinel denotes configured Automatic routing. */
+export function isAutomaticBotSelection(selection: CanonicalChatModelSelection | null | undefined): boolean {
+  return Boolean(selection && selection.instanceId === MATRIX_BOT_SELECTION.instanceId && selection.model === MATRIX_BOT_SELECTION.model
+    && !selection.options?.length);
+}
+
 export function botModelRoutingLabel(selection: CanonicalChatModelSelection | null | undefined,
   catalog?: CanonicalProviderCatalog | null): string {
   if (selection === undefined) return "Checking bot model…";
-  if (selection?.instanceId !== MATRIX_PI_CHAT_INSTANCE_ID) return "Model routing: automatic";
+  if (!selection) return "Bot model unavailable";
+  if (isAutomaticBotSelection(selection)) return "Model routing: automatic";
   const instance = catalog?.instances.find((candidate) => candidate.id === selection.instanceId);
   const model = instance?.models.find((candidate) => candidate.id === selection.model);
-  const unavailable = catalog && (instance?.availability !== "available" || model?.availability !== "available");
+  if (selection.instanceId !== MATRIX_PI_CHAT_INSTANCE_ID) {
+    return `${canonicalProviderModelRouteLabel(instance, model?.displayName ?? selection.model)} · unavailable`;
+  }
+  const unavailable = catalog && (instance?.availability !== "available" || model?.availability !== "available"
+    || !isManagedPiBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }));
   const status = instance && model && canonicalProviderFundingState(instance) === "credit_reserved" ? "credit reserved" : "unavailable";
   return `Matrix AI · ${model?.displayName ?? selection.model}${unavailable ? ` · ${status}` : ""}`;
 }

@@ -133,9 +133,12 @@
 .matrix-chat-provider-setup {
   margin-top: 0.25rem;
   padding: 0.5rem;
-  border-top: 1px solid var(--model-choice-border);
   color: var(--model-choice-secondary);
   font-size: 0.75rem;
+}
+
+.matrix-chat-provider-setup[data-has-models] {
+  border-top: 1px solid var(--model-choice-border);
 }
 
 .matrix-chat-provider-setup button {

@@ -150,6 +150,7 @@ export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from
 
 export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection, type ChatAgentDraftRequest, type StartAgentChat } from "./chat-agents/client.js";
 export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgentsEntry.js";
+export { ChatSidebarAddAction } from "./chat-agents/ChatSidebarAddAction.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
 export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
@@ -197,7 +198,24 @@ export { CompanyDriveContextPicker } from "./organization-drive/CompanyDriveCont
 export {companyDriveChatReference} from "./organization-drive/context-reference.js";
 export type {DriveChatContextSelection} from "./organization-drive/OrganizationDriveBrowser.js";
 
-export { useDirectBotChat } from "./chat-agents/bots/use-direct-bot-chat.js";
+export { BotBindingStatus } from "./chat-agents/bots/BotBindingStatus.js";
+export { useDirectBotBinding, useDirectBotChat } from "./chat-agents/bots/use-direct-bot-chat.js";
 export { ChatProviderLoadingIndicator } from "./chat-provider-loading-indicator.js";
+export { useBotConversationSummaries, type BotConversationSummary, type BotConversationSummaries } from './chat-agents/bots/use-bot-conversation-summaries.js';
+export { useBotMentionNavigation, BOT_ATTACHMENT_HANDOFF_REASON } from './chat-agents/bots/use-bot-mention-navigation.js';
+export { AgentAvatar } from './chat-agents/AgentAvatar.js';
+
+export { resolveCanonicalChatAttention, resolveCanonicalChatLifecycleGroup, type CanonicalChatAttentionState } from './chat/attention-state.js';
+
+export { useBotDraftRecovery } from './chat-agents/bots/use-bot-draft-recovery.js';
+export { BotDraftRecoveryPanel } from './chat-agents/bots/BotDraftRecoveryPanel.js';
+
+export { BotComposerControls } from "./chat-agents/bots/BotComposerControls.js";
+
+export { BotModelRecoveryProvider, BotModelFailureNotice, useBotModelRecovery } from "./chat-agents/bots/BotModelRecovery.js";
+
+export { DEFAULT_RAIL_ORDER, moveRailItem, orderRailItems, parseRailOrderPreference } from "./chat/rail-order.js";
+export type { RailOrderPreference, RailSortMode } from "./chat/rail-order.js";
+export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js";
 export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
 export type { ProviderWorkflowClient } from "./agents-providers/types.js";

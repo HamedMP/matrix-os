@@ -9,6 +9,7 @@ import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import type { ChatAgentClient } from "@matrix-os/ui";
 import type { CanonicalChatEventSource, CanonicalChatInvalidation } from "@matrix-os/ui";
 import { createCanonicalChatWorkspaceClient, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
+import { BotHeaderContext } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 
 beforeAll(() => {
   globalThis.ResizeObserver = class implements ResizeObserver {
@@ -36,15 +37,24 @@ describe("Electron Desktop bot Chat", () => {
           pendingInteractions: [], memory: { items: [{ itemId: "mem_abcdefgh", kind: "preference", scope: "bot",
             content: "Keep briefs concise", source: { at: "2026-09-28T12:00:00.000Z" }, confirmed: true, revision: 1 }] } })),
       },
-      list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit" }] })),
+      list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" }, recipeRef: { recipeId: "research", version: "1" } }] })),
     } as unknown as ChatAgentClient;
 
-    render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
-      initialView="conversation" active catalog={providerCatalog} />);
+    function HostedBot() {
+      const [header, setHeader] = React.useState<HTMLElement | null>(null);
+      return <BotHeaderContext.Provider value={header}>
+        <header ref={setHeader} data-testid="bot-toolbar" />
+        <CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
+          initialView="conversation" active catalog={providerCatalog} />
+      </BotHeaderContext.Provider>;
+    }
+    render(<HostedBot />);
 
-    expect(await screen.findByText("Research Rabbit")).toBeTruthy();
+    expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Details" }).closest("header")).toBe(screen.getByTestId("bot-toolbar"));
+    expect(document.querySelector("[data-slot='canonical-chat-workspace'] .matrix-bot-identity-bar")).toBeNull();
     expect(await screen.findByText("Which company?")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show bot authority" }));
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
     await waitFor(() => expect(client.agents!.bots!.directBot).toHaveBeenCalledWith(snapshot.chat.id));
   });
@@ -99,7 +109,7 @@ describe("Electron Desktop bot Chat", () => {
     await waitFor(() => expect(resolve).toHaveBeenCalledWith(snapshot.chat.id, "in_abcdefgh",
       { kind: "question", baseRevision: 1, structuredAnswers: { target: ["Acme"] } }));
     await waitFor(() => expect(interactions.mock.calls.length).toBeGreaterThan(1));
-    fireEvent.click(screen.getByRole("button", { name: "Show bot authority" }));
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     fireEvent.click(await screen.findByRole("button", { name: "Revoke Work" }));
     await waitFor(() => expect(revoke).toHaveBeenCalledWith("bot_research1", "gr_abcdefgh"));
   });
@@ -113,8 +123,11 @@ it("admits a direct bot turn when the ordinary provider catalog is empty", async
     list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
   render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation"
     active catalog={{ ...providerCatalog, instances: [] }} />);
-  await screen.findByText("Your bot's Chat");
-  expect(screen.getByText("Model: Checking bot model…")).toBeTruthy();
+  await screen.findByRole("button", { name: "Choose bot agent and model" });
+  expect(screen.queryByText("Bot model")).toBeNull();
+  expect(screen.queryByText("Company drive context is not available in Bot chats.")).toBeNull();
+  expect(screen.queryByText("Choose Claude Code to use company drive context.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add company drive context" })).toBeNull();
   const composer = screen.getByRole("textbox", { name: "Reply to chat" });
   await setSharedComposerText(composer, "Check the pages");
   fireEvent.click(screen.getByRole("button", { name: "Send" }));

@@ -155,6 +155,7 @@ export function SharedChatComposer({
   draftScopeKey,
   referenceTokens = [],
   onReferenceTokensChange,
+  onAgentMention,
   onSubmit,
   onAbort,
   busy,
@@ -167,6 +168,7 @@ export function SharedChatComposer({
   onSelectionChange,
   instanceLocked,
   automaticRouting = false,
+  botControls,
   resources = [],
   resourceSearch,
   onAttach,
@@ -191,6 +193,7 @@ export function SharedChatComposer({
   draftScopeKey?: string;
   referenceTokens?: ComposerReferenceToken[];
   onReferenceTokensChange?: (tokens: ComposerReferenceToken[]) => void;
+  onAgentMention?: (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void) => boolean;
   onSubmit: (submission: SharedChatComposerSubmission) => void;
   onAbort?: () => void;
   busy: boolean;
@@ -203,6 +206,7 @@ export function SharedChatComposer({
   onSelectionChange: (selection: CanonicalComposerSelection) => void;
   instanceLocked: boolean;
   automaticRouting?: boolean;
+  botControls?: ReactNode;
   resources?: CanonicalChatResourceReference[];
   resourceSearch?: (query: string) => Promise<CanonicalChatResourceReference[]>;
   onAttach?: () => void;
@@ -247,7 +251,7 @@ export function SharedChatComposer({
     editorRef.current?.focus();
   }, [markdownPreview]);
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
-  const driveContextEnabled = instance?.supports.resources.includes("organization_drive") === true;
+  const driveContextEnabled = !automaticRouting && instance?.supports.resources.includes("organization_drive") === true;
   const selectedResources = referenceTokens.flatMap(token => token.type === "resource" ? [token.resource] : []);
   const blockedDriveContext = selectedResources.some(resource => resource.kind === "organization_drive") && !driveContextEnabled;
   const valueBeforeCursor = value.slice(0, cursor);
@@ -341,7 +345,10 @@ export function SharedChatComposer({
       // Keep keyboard behavior deterministic after mouse or Enter selection:
       // the next Enter belongs to the composer, not the stale resource menu.
       setDismissedSuggestionKey(suggestionKey);
-      editorRef.current?.insertToken({ type: "resource", resource }, `@${resourceMatch?.[1] ?? ""}`, cursor);
+      const insert = () => editorRef.current?.insertToken({ type: "resource", resource }, `@${resourceMatch?.[1] ?? ""}`, cursor);
+      const token = `@${resourceMatch?.[1] ?? ""}`;
+      const text = value.slice(0, cursor - token.length) + value.slice(cursor);
+      if (!onAgentMention?.(resource, text.trimEnd(), insert)) insert();
     }
   };
   const onSuggestionKeyDown = (
@@ -384,11 +391,10 @@ export function SharedChatComposer({
   };
   const insertResource = (resource: CanonicalChatResourceReference) => {
     setDismissedSuggestionKey(suggestionKey);
-    editorRef.current?.insertToken(
-      { type: "resource", resource },
-      resourceQuery !== null ? `@${resourceMatch?.[1] ?? ""}` : "",
-      cursor,
-    );
+    const token = resourceQuery !== null ? `@${resourceMatch?.[1] ?? ""}` : "";
+    const insert = () => editorRef.current?.insertToken({ type: "resource", resource }, token, cursor);
+    const text = token ? value.slice(0, cursor - token.length) + value.slice(cursor) : value;
+    if (!onAgentMention?.(resource, text.trimEnd(), insert)) insert();
   };
   const composerOptions = selection
     ? instance?.options.filter((option) => option.placement === "composer") ?? []
@@ -446,7 +452,7 @@ export function SharedChatComposer({
           />
         </SuggestionMenu>
       ) : null}
-      <CompanyDriveContextControl resources={selectedResources} enabled={driveContextEnabled} disabled={disabled} query={resourceMenuOpen ? resourceQuery : null} onSelect={insertResource}/>
+      <CompanyDriveContextControl botContext={automaticRouting} resources={selectedResources} enabled={driveContextEnabled} disabled={disabled} query={resourceMenuOpen ? resourceQuery : null} onSelect={insertResource}/>
       <PromptInput
         value={value}
         onChange={onChange}
@@ -543,7 +549,7 @@ export function SharedChatComposer({
               />
             ) : null}
             {runActions}
-            {automaticRouting ? <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Bot model</span> : <ProviderModelPicker
+            {automaticRouting ? botControls : <ProviderModelPicker
               catalog={catalog}
               selection={selection}
               instanceLocked={instanceLocked}
