@@ -46,9 +46,11 @@ async function settings() {
   await page.getByRole("button", { name: "Open account menu", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
+  const row = page.getByRole("button", { name: /^Claude/ });
+  if (await row.getAttribute("aria-expanded") !== "true") await row.click();
 }
 
-it("reveals a closed Terminal for Connect and refreshes auth after logout", async () => {
+it("reveals a closed Terminal for advertised Advanced login and disables without logout", async () => {
   try {
     const identity = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
     expect(identity).toBe(join(root, "desktop/out/main"));
@@ -58,6 +60,7 @@ it("reveals a closed Terminal for Connect and refreshes auth after logout", asyn
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await terminal.waitFor({ state: "hidden" });
     await settings();
+    await page.getByText("Advanced configuration", { exact: true }).click();
     await page.getByRole("button", { name: "Log in Claude", exact: true }).click();
     await terminal.waitFor();
     await terminal.getByText("Connect Claude", { exact: true }).first().waitFor();
@@ -68,15 +71,15 @@ it("reveals a closed Terminal for Connect and refreshes auth after logout", asyn
     gateway.setAuthenticated(true);
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await settings();
-    const disconnect = page.getByRole("button", { name: "Log out Claude", exact: true });
+    const disconnect = page.getByRole("button", { name: "Disconnect", exact: true });
     await disconnect.waitFor();
     expect(await page.getByRole("button", { name: "Log in Claude", exact: true }).count()).toBe(0);
     await page.screenshot({ path: join(output, "authenticated-disconnect.png") });
     await disconnect.click();
-    await page.getByRole("button", { name: "Log in Claude", exact: true }).waitFor();
+    await page.getByRole("button", { name: /^Claude.*Not connected/ }).waitFor();
     await terminal.waitFor({ state: "hidden" });
     expect(gateway.commands).toHaveLength(1);
-    await page.screenshot({ path: join(output, "logged-out.png") });
+    await page.screenshot({ path: join(output, "agent-disabled.png") });
   } catch (error) {
     await page.screenshot({ path: join(output, "failure.png") });
     throw error;

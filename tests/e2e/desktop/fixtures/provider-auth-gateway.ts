@@ -21,7 +21,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSe
     revision: authenticated ? 2 : 1,
     refreshedAt: NOW,
     access: { mode: "writable" },
-    supportedActions: [authenticated ? "logout_account" : "start_login"],
+    supportedActions: [authenticated ? "logout_account" : "start_login", "set_harness_enabled"],
     harnessCatalog: (["hermes", "openclaw", "pi", "opencode"] as const).map((harness) => ({
       harness,
       displayName: harness === "openclaw" ? "OpenClaw" : harness[0]!.toUpperCase() + harness.slice(1),
@@ -92,7 +92,13 @@ export async function startProviderAuthGateway(options: {
   const upstream = await startStubGateway();
   let authenticated = false;
   const commands: unknown[] = [];
-  const settings = () => options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
+  const enabledOverrides: Record<string, boolean> = {};
+  const settings = () => {
+    const snapshot = options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
+    return { ...snapshot, harnesses: snapshot.harnesses.map(harness => harness.id in enabledOverrides
+      ? { ...harness, enabled: enabledOverrides[harness.id]!, configuredEnabled: enabledOverrides[harness.id]! }
+      : harness) };
+  };
   const server = createServer(async (req, res) => {
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
     if (req.method === "GET" && path === "/api/chat-providers" && options.catalog) {
@@ -114,6 +120,18 @@ export async function startProviderAuthGateway(options: {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const mutation = ProviderSettingsMutationSchema.parse(JSON.parse(Buffer.concat(chunks).toString()));
+      if (mutation.type === "set_harness_enabled") {
+        if (!settings().harnesses.some(harness => harness.id === mutation.harnessInstanceId)
+          || (!(mutation.harnessInstanceId in enabledOverrides) && Object.keys(enabledOverrides).length >= 32)) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "unsupported fixture target" }));
+          return;
+        }
+        enabledOverrides[mutation.harnessInstanceId] = mutation.enabled;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ kind: "snapshot", snapshot: settings() }));
+        return;
+      }
       if (mutation.type !== "start_login" && mutation.type !== "logout_account") {
         res.writeHead(400, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "unsupported fixture action" }));
