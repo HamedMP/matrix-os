@@ -32,3 +32,35 @@ it("projects minimal task inputs and rejects invalid canonical status", () => {
   expect(workspace.tasks.items.find(task => task.id === "task_polish")).toMatchObject({ status: "blocked", revision: 7 });
   expect(() => codingAgentProjectWorkspace([{ id: "task_polish", status: "unsupported", revision: 7 }])).toThrow();
 });
+
+it("rejects stale disable without a write and returns increasing committed revisions", async () => {
+  gateway = await startProviderAuthGateway(); gateway.setAuthenticated(true);
+  const read = async () => ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway!.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(1000) })).json());
+  const before = await read();
+  const write = (expectedRevision: number, enabled: boolean, idempotencyKey: string) => fetch(`${gateway!.url}/api/ai/provider-settings/actions`, { method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(1000), body: JSON.stringify({ type: "set_harness_enabled", harnessInstanceId: "claude_harness", enabled, idempotencyKey, expectedRevision }) });
+  const stale = await write(before.revision - 1, false, "stale");
+  expect(stale.status).toBe(409); expect(await stale.json()).toMatchObject({ error: { code: "revision_conflict" }, latestRevision: before.revision });
+  expect(await read()).toEqual(before);
+  const success = await write(before.revision, false, "disable"); expect(success.status).toBe(200);
+  const committed = ProviderSettingsSnapshotSchema.parse((await success.json()).snapshot);
+  expect(committed.revision).toBe(before.revision + 1);
+  const replay = await write(before.revision, false, "disable"); expect(replay.status).toBe(200);
+  expect((await replay.json()).snapshot.revision).toBe(committed.revision);
+  const reused = await write(before.revision, true, "disable"); expect(reused.status).toBe(409);
+  expect((await reused.json()).error.code).toBe("idempotency_conflict");
+  const restore = await write(committed.revision, true, "restore"); expect(restore.status).toBe(200);
+  expect((await restore.json()).snapshot.revision).toBe(committed.revision + 1);
+  gateway.setAuthenticated(false); expect((await read()).revision).toBe(committed.revision + 1);
+  expect(gateway.commands).toHaveLength(0);
+});
+
+it("evicts old disable receipts without accepting their stale revisions", async () => {
+  gateway = await startProviderAuthGateway(); gateway.setAuthenticated(true);
+  const write = (expectedRevision: number, index: number) => fetch(`${gateway!.url}/api/ai/provider-settings/actions`, { method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(1000), body: JSON.stringify({ type: "set_harness_enabled", harnessInstanceId: "claude_harness", enabled: index % 2 === 0, idempotencyKey: `bounded_${index}`, expectedRevision }) });
+  for (let index = 0; index < 33; index++) expect((await write(2 + index, index)).status).toBe(200);
+  expect((await write(34, 32)).status).toBe(200);
+  const expired = await write(2, 0); expect(expired.status).toBe(409);
+  expect((await expired.json()).error.code).toBe("revision_conflict");
+  const snapshot = ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(1000) })).json());
+  expect(snapshot.revision).toBe(35); expect(snapshot.accounts[0]?.authState).toBe("authenticated");
+});

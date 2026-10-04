@@ -93,9 +93,12 @@ export async function startProviderAuthGateway(options: {
   let authenticated = false;
   const commands: unknown[] = [];
   const enabledOverrides: Record<string, boolean> = {};
+  let committedRevision: number | undefined;
+  // Fixture lifetime cache: at most 32 disable receipts, evicted oldest first.
+  const disableReceipts = new Map<string, string>();
   const settings = () => {
     const snapshot = options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
-    return { ...snapshot, harnesses: snapshot.harnesses.map(harness => harness.id in enabledOverrides
+    return { ...snapshot, revision: committedRevision ?? snapshot.revision, harnesses: snapshot.harnesses.map(harness => harness.id in enabledOverrides
       ? { ...harness, enabled: enabledOverrides[harness.id]!, configuredEnabled: enabledOverrides[harness.id]! }
       : harness) };
   };
@@ -121,13 +124,35 @@ export async function startProviderAuthGateway(options: {
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const mutation = ProviderSettingsMutationSchema.parse(JSON.parse(Buffer.concat(chunks).toString()));
       if (mutation.type === "set_harness_enabled") {
-        if (!settings().harnesses.some(harness => harness.id === mutation.harnessInstanceId)
+        const fingerprint = JSON.stringify(mutation);
+        const duplicate = disableReceipts.get(mutation.idempotencyKey);
+        if (duplicate !== undefined) {
+          res.writeHead(duplicate === fingerprint ? 200 : 409, { "content-type": "application/json" });
+          res.end(JSON.stringify(duplicate === fingerprint ? { kind: "snapshot", snapshot: settings() }
+            : { error: { code: "idempotency_conflict", message: "Provider settings changed. Refresh and try again." } }));
+          return;
+        }
+        const current = settings();
+        if (mutation.expectedRevision !== current.revision) {
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { code: "revision_conflict", message: "Provider settings changed. Refresh and try again." }, latestRevision: current.revision }));
+          return;
+        }
+        if (current.revision >= 1_000_000_000) {
+          res.writeHead(503, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "fixture revision limit reached" }));
+          return;
+        }
+        if (!current.harnesses.some(harness => harness.id === mutation.harnessInstanceId)
           || (!(mutation.harnessInstanceId in enabledOverrides) && Object.keys(enabledOverrides).length >= 32)) {
           res.writeHead(400, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "unsupported fixture target" }));
           return;
         }
         enabledOverrides[mutation.harnessInstanceId] = mutation.enabled;
+        committedRevision = current.revision + 1;
+        if (disableReceipts.size >= 32) disableReceipts.delete(disableReceipts.keys().next().value!);
+        disableReceipts.set(mutation.idempotencyKey, fingerprint);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ kind: "snapshot", snapshot: settings() }));
         return;
@@ -227,7 +252,7 @@ export async function startProviderAuthGateway(options: {
   return {
     url: `http://127.0.0.1:${address.port}`, commands,
     setAuthenticated(value: boolean) { authenticated = value; },
-    async close() { server.closeAllConnections(); await upstream.close(); await new Promise<void>((resolve) => server.close(() => resolve())); },
+    async close() { disableReceipts.clear(); server.closeAllConnections(); await upstream.close(); await new Promise<void>((resolve) => server.close(() => resolve())); },
   };
 }
 
