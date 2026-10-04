@@ -24,6 +24,13 @@ async function requestJson(input: {
     await response.body?.cancel();
     throw unavailable();
   }
+  if (response.status === 401 || response.status === 403) {
+    try { await response.body?.cancel(); } catch (error) {
+      console.warn("[provider-settings] Denial body cleanup unavailable:", error instanceof Error ? error.name : typeof error);
+    }
+    if (input.signal.aborted || !input.isIdentityCurrent()) throw unavailable();
+    throw new ProviderWorkflowClientError(response.status === 401 ? "unauthorized" : "forbidden");
+  }
   const value = await boundedProviderSettingsJson(response);
   if (input.signal.aborted || !input.isIdentityCurrent()) throw unavailable();
   if (!response.ok) {

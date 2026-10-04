@@ -30,6 +30,7 @@ export function HarnessWorkflowPanel({
   onRefresh,
   onOpenTerminal,
   onOpenAuthorizationUrl,
+  onConnectSaved,
   onDisconnect,
   onStateChange,
   operationId = null,
@@ -49,6 +50,7 @@ export function HarnessWorkflowPanel({
   onRefresh: () => void;
   onOpenTerminal: (reference: string) => void;
   onOpenAuthorizationUrl?: (url: string) => void;
+  onConnectSaved?: () => Promise<void>;
   onDisconnect?: () => Promise<boolean | void>;
   onSetupHarness?: (
     harness: ProviderHarnessInstance["harness"],
@@ -335,6 +337,8 @@ export function HarnessWorkflowPanel({
       aria-busy={pending}
     >
       {harness.installState === "installed" && connected ? renderConnection?.(changeAccountAction) : null}
+      {onConnectSaved && !connected ? <button type="button" className="matrix-ap-button"
+        disabled={disabled || pending || connecting} onClick={() => void run(onConnectSaved)}>Connect saved connection</button> : null}
       {harness.installState === "installed" && !connected
         && !inlineLogin && capability.apiKeyProviders.length === 0 ? (
         <p className="matrix-ap-help" role="status">
@@ -355,7 +359,7 @@ export function HarnessWorkflowPanel({
               Continue in Terminal
             </button>
           ) : null}
-          {advancedConfiguration}
+          <fieldset disabled={disabled || pending || connecting} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{advancedConfiguration}</fieldset>
         </details>
       ) : null}
       {failure ? (

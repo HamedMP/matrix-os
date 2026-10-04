@@ -570,3 +570,5 @@ A restored active terminal-only login can reopen its exact server receipt sessio
 inside Advanced configuration without creating another login. This continuation
 requires advertised Terminal support and no inline adapter; settled, cancelled,
 expired, denied and unadvertised login receipts never expose that fallback.
+
+Guided saved-Off connections expose an explicit Connect saved connection action without reauthentication or an Enable toggle. The action refreshes the current scope and verifies writable permission, server action support, unchanged selected account/source/route/configuration and current credential observation before enabling; refresh or rendering alone never restores Off. Pending guided authentication disables conflicting Advanced configuration controls while retaining cancellation. Web workflow authorization denial is classified from HTTP 401/403 even when its body is plain text.

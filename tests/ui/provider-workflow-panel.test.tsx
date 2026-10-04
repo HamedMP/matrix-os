@@ -438,17 +438,19 @@ it('keeps account changes and disconnect unavailable until an active replacement
   api.get = vi.fn().mockResolvedValue({ id: 'replacement', harnessInstanceId: 'codex', kind: 'login', state: 'running', expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
   api.cancel = vi.fn().mockResolvedValue({ id: 'replacement', harnessInstanceId: 'codex', kind: 'login', state: 'cancelled', expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
   const disconnect = vi.fn();
-  render(<HarnessWorkflowPanel harness={{...harness, authState: 'authenticated'}} capability={capability} client={api} operationId="replacement" disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} onDisconnect={disconnect} />);
+  render(<HarnessWorkflowPanel harness={{...harness, authState: 'authenticated'}} capability={capability} client={api} operationId="replacement" disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} onDisconnect={disconnect} advancedConfiguration={<button>Choose model</button>} />);
   await screen.findByText('Finish signing in to ChatGPT');
   expect(screen.getByRole('button', {name: 'Change account'})).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Disconnect'})).toBeDisabled();
   fireEvent.click(screen.getByRole('button', {name: 'Disconnect'}));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(disconnect).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', {name: 'Choose model'})).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Cancel'})).toBeEnabled();
   fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
   await waitFor(() => expect(screen.getByRole('button', {name: 'Change account'})).toBeEnabled());
   expect(screen.getByRole('button', {name: 'Disconnect'})).toBeEnabled();
+  expect(screen.getByRole('button', {name: 'Choose model'})).toBeEnabled();
   expect(api.cancel).toHaveBeenCalledWith('replacement', expect.any(AbortSignal));
 });
 

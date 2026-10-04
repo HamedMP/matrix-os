@@ -60,6 +60,10 @@ describe("web provider workflow transport", () => {
       vi.useRealTimers();
     }
   });
+  it.each([[401, "unauthorized"], [403, "forbidden"]] as const)("classifies plain-text HTTP %s independently of response JSON", async (status, reason) => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("Access denied", { status }));
+    await expect(createWebProviderWorkflowClient({ fetcher }).capabilities(new AbortController().signal)).rejects.toMatchObject({ reason });
+  });
   it("binds workflows to the captured gateway with caller cancellation and no cache", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json([]));
     const caller = new AbortController();

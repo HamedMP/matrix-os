@@ -1,7 +1,8 @@
+import { useHarnessEnablement } from "./use-harness-enablement.js";
 import type { ProviderWorkflowCapability } from "@matrix-os/contracts";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
-import { resolveHarnessConnection } from "./harness-connection.js";
+import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
 import { updateWorkflowRowStatus } from "./workflow-row-status.js";
 import { useEffect, useState, type ReactNode } from "react";
 import { isRunnableGenericHarnessCredentialRoute, isSupportedGenericHarnessCredentialRoute, type ProviderHarnessInstance, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
@@ -71,19 +72,21 @@ export function AgentsProvidersView({
     else if (id in next || Object.keys(next).length < 32) next[id] = operation;
     return next;
   });
+  const enablement = useHarnessEnablement({ snapshot, refresh: onRefreshForConnection, mutate: onMutate });
   const guidedPanel = (item: Pick<ProviderHarnessInstance, "id" | "harness" | "displayName" | "installState" | "authState"> & Partial<ProviderHarnessInstance>, capability: ProviderWorkflowCapability, advancedConfiguration?: import("react").ReactNode) => {
     if (!workflowClient) return null;
     const exact = snapshot.harnesses.find(row => row.id === item.id);
     const { account, source } = exact ? resolveHarnessConnection(exact, snapshot.accounts, snapshot.accessSources) : { account: undefined, source: undefined };
     const usage = source ? usageLines(source.usage) : null;
     return <HarnessWorkflowPanel harness={item} source={source} capability={capability} client={workflowClient}
-      advancedConfiguration={advancedConfiguration} disabled={mutationsDisabled} operationId={operationIds[item.id] ?? capability.activeOperationId ?? null}
+      advancedConfiguration={advancedConfiguration} disabled={mutationsDisabled || enablement.pending} operationId={operationIds[item.id] ?? capability.activeOperationId ?? null}
       onOperationId={id => rememberOperation(item.id, id)} onRefresh={onRefresh} onOpenTerminal={onOpenTerminal}
       onOpenAuthorizationUrl={onOpenAuthorizationUrl}
       onStateChange={status => setWorkflowStatus(current => updateWorkflowRowStatus(current, item.id, status))}
       renderConnection={action => <div className="matrix-ap-connected"><h3>Connection</h3>
         <div className="matrix-ap-account"><strong>{account?.displayName ?? source?.displayName ?? item.displayName}</strong>
           {usage ? <span>{usage.primary}{usage.secondary ? ` · ${usage.secondary}` : ""}</span> : null}{action}</div></div>}
+      onConnectSaved={exact && supports("set_harness_enabled") && (exact.configuredEnabled ?? exact.enabled) === false && hasConfiguredConnection({ ...exact, configuredEnabled: true, enabled: true }, source) ? () => enablement.connectSaved(exact) : undefined}
       onDisconnect={exact && supports("set_harness_enabled") ? async () => await onMutate({ type: "set_harness_enabled", harnessInstanceId: exact.id, enabled: false }) : undefined} />;
   };
   const [addOpen, setAddOpen] = useState(false);
@@ -95,7 +98,7 @@ export function AgentsProvidersView({
   const supports = (action: SupportedAction) => actions.includes(action);
   const readOnly = snapshot.access.mode === "read_only";
   const mutationsDisabled = busy || readOnly || gatewayPending;
-  const errorPresentation = settingsErrorPresentation(gatewayError ? null : error);
+  const errorPresentation = settingsErrorPresentation(gatewayError ? null : error ?? enablement.error);
   const selectedId = harness?.id ?? null;
   const configurationHarnessKinds = snapshot.configurationHarnessKinds ?? [];
   const genericConfiguration = harness !== null
@@ -175,7 +178,7 @@ export function AgentsProvidersView({
           <span>{snapshot.access.reason === "remote_policy" ? "Your organization controls these settings." : `Changes are unavailable: ${titleCase(snapshot.access.reason).toLowerCase()}.`}</span>
         </div>
       ) : null}
-      {error || gatewayError ? (
+      {error || enablement.error || gatewayError ? (
         <div className="matrix-ap-notice" data-tone="danger" role="alert">
           <strong>{errorPresentation.title}</strong>
           <span>{errorPresentation.message}</span>
