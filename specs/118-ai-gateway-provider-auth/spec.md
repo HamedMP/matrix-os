@@ -613,3 +613,10 @@ including runtime_not_supported, rather than synthesizing availability.
 Native connection labels share finite observation freshness and saved Off rules;
 observation expiry updates the row and account details without claiming known
 quota or remotely verified authentication from local login presence.
+
+Retained non-guided recovery actions keep pending and safe failure state across
+unrelated snapshot renders. Their asynchronous settlements are bound to the
+captured workflow owner and exact harness/action target, rather than the identity
+of a newly allocated render callback; former-owner settlements cannot refresh a
+replacement connection. Saved reconnect admission also rejects expired and
+future-dated native observations during its fresh exact validation.

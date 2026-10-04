@@ -1,24 +1,28 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-/** Explicit legacy actions preserve their callback scope across async settlement. */
-export function RetainedHarnessAction({ label, disabled, action, onSuccess }: {
+/** Explicit legacy actions retain their captured owner/target scope across renders. */
+export function RetainedHarnessAction({ label, disabled, action, onSuccess, scopeKey, scopeOwner }: {
   label: string; disabled: boolean; action: () => Promise<boolean | void> | void;
-  onSuccess?: () => void;
+  onSuccess?: () => void; scopeKey: string; scopeOwner: unknown;
 }) {
-  const scope = useRef<typeof action | null>(action);
-  const [state, setState] = useState({ action, pending: false, failed: false });
-  if (state.action !== action) setState({ action, pending: false, failed: false });
-  useEffect(() => { scope.current = action; return () => { scope.current = null; }; }, [action]);
+  const scope = useMemo(() => ({ scopeKey, scopeOwner }), [scopeKey, scopeOwner]);
+  const activeScope = useRef<object | null>(scope);
+  const [state, setState] = useState({ scope, pending: false, failed: false });
+  if (state.scope !== scope) setState({ scope, pending: false, failed: false });
+  useEffect(() => {
+    activeScope.current = scope;
+    return () => { activeScope.current = null; };
+  }, [scope]);
   const run = async () => {
-    setState({ action, pending: true, failed: false });
+    setState({ scope, pending: true, failed: false });
     try {
       const result = await action();
-      if (scope.current !== action) return;
-      if (result === false) setState({ action, pending: false, failed: true });
-      else { setState({ action, pending: false, failed: false }); onSuccess?.(); }
+      if (activeScope.current !== scope) return;
+      if (result === false) setState({ scope, pending: false, failed: true });
+      else { setState({ scope, pending: false, failed: false }); onSuccess?.(); }
     } catch (error) {
       console.warn("[provider-settings] Retained action failed:", error instanceof Error ? error.name : typeof error);
-      if (scope.current === action) setState({ action, pending: false, failed: true });
+      if (activeScope.current === scope) setState({ scope, pending: false, failed: true });
     }
   };
   return <div className="matrix-ap-workflow-actions">

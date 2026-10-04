@@ -1,4 +1,3 @@
-import { useHarnessEnablement } from "./use-harness-enablement.js";
 import type { ProviderWorkflowCapability } from "@matrix-os/contracts";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
@@ -257,14 +256,14 @@ export function AgentsProvidersView({
                   disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} /> : null}
                 {!guided ? <>{connected ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}</> : null}
                 {!guided && (harness.configuredEnabled ?? harness.enabled) && supports("set_harness_enabled") ?
-                  <RetainedHarnessAction label="Disconnect" disabled={mutationsDisabled || workflowPermission === "forbidden"}
+                  <RetainedHarnessAction scopeKey={`${harness.harness}:${harness.id}:disconnect`} scopeOwner={workflowClient} label="Disconnect" disabled={mutationsDisabled || workflowPermission === "forbidden"}
                     action={() => onMutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false })}
                     onSuccess={refreshSettings} /> : null}
                 {!guided && harness.installState === "installed" ? <details className="matrix-ap-advanced"><summary>Advanced configuration</summary>
                   {(harness.harness === "pi" || harness.harness === "opencode") && catalog?.available && catalog.setupAction === "open_terminal"
                     && !(supports("start_login") && harness.loginMethods.length > 0)
                     && workflowPermission !== "forbidden" && onSetupHarness ?
-                    <RetainedHarnessAction label="Connect in Terminal" disabled={mutationsDisabled}
+                    <RetainedHarnessAction scopeKey={`${harness.harness}:${harness.id}:terminal`} scopeOwner={workflowClient} label="Connect in Terminal" disabled={mutationsDisabled}
                       action={() => onSetupHarness(harness.harness)} /> : null}
                   <HarnessEditor snapshot={snapshot} harness={harness} disabled={mutationsDisabled}
                     canUpdate={genericConfiguration && supports("update_harness")} canSetRoute={genericConfiguration && supports("set_route")}
