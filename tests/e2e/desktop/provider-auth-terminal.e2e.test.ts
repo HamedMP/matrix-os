@@ -87,7 +87,9 @@ it("keeps browser login, cancellation, completion and selected-agent disconnect 
     await page.getByRole("button", { name: /^Claude.*Connected/ }).waitFor();
     expect(await claudeRow.getAttribute("aria-expanded")).toBe("true");
     expect(await claudeRow.textContent()).toContain("Connected");
-    expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed"]);
+    expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed", "agent-enabled"]);
+    const connected = await (await fetch(`${gateway.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(5000) })).json();
+    expect(connected.harnesses[0]).toMatchObject({ enabled: true, configuredEnabled: true, authState: "authenticated" });
     await terminal.waitFor({ state: "hidden" });
     expect(gateway.commands).toHaveLength(0);
     await page.screenshot({ path: join(output, "settings-browser-connected.png") });

@@ -1,6 +1,9 @@
 import { createServer, request } from "node:http";
 import { connect } from "node:net";
 import { startStubGateway } from "./stub-gateway";
+import { createNativeProviderWorkflowAdapters } from "../../../../packages/gateway/src/ai-providers/provider-workflow-native";
+import type { ProviderSettingsStoreWriter } from "../../../../packages/gateway/src/ai-providers/provider-settings-store";
+import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { providerAuthActions } from "../../../../packages/gateway/src/coding-agents/provider-auth-actions";
 import {
   ProviderSettingsMutationSchema,
@@ -95,7 +98,7 @@ export async function startProviderAuthGateway(options: {
   const upstream = await startStubGateway();
   let authenticated = false;
   const commands: unknown[] = [];
-  const enabledOverrides: Record<string, boolean> = {};
+  const enabledOverrides: Record<string, boolean> = options.inlineClaude ? { claude_harness: false } : {};
   let committedRevision: number | undefined;
   // Fixture lifetime cache: at most 32 mutation receipts, evicted oldest first.
   const disableReceipts = new Map<string, string>();
@@ -104,6 +107,7 @@ export async function startProviderAuthGateway(options: {
   // Fixture lifetime cache: settled starts may be evicted; a live receipt is retained.
   const startReceipts = new Map<string, { fingerprint: string; operation: ProviderWorkflow }>();
   let workflowSequence = 0;
+  let completeNativeLogin: ((code: string) => Promise<void>) | null = null;
   const settings = () => {
     const snapshot = options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
     return ProviderSettingsSnapshotSchema.parse({ ...snapshot, revision: committedRevision ?? snapshot.revision,
@@ -150,12 +154,39 @@ export async function startProviderAuthGateway(options: {
           operation = ProviderWorkflowSchema.parse({ id: `fixture_claude_${++workflowSequence}`, harnessInstanceId: start.harnessInstanceId,
             kind: "login", state: "running", expiresAt: new Date(Date.now() + 600_000).toISOString(),
             terminalSessionId: null, deviceCode: null, authorizationUrl: "https://claude.com/cai/oauth/authorize", safeFailure: null });
+          const terminalUnavailable = async () => { throw new Error("Inline fixture must not open Terminal"); };
+          const [adapter] = await createNativeProviderWorkflowAdapters({
+            store: {
+              getSnapshot: async () => settings(),
+              mutate: async (mutation: unknown) => {
+                const action = ProviderSettingsMutationSchema.parse(mutation);
+                if (action.type !== "set_harness_enabled" || action.harnessInstanceId !== "claude_harness"
+                  || !action.enabled || action.expectedRevision !== settings().revision)
+                  throw new Error("Invalid native fixture enablement");
+                enabledOverrides.claude_harness = true;
+                committedRevision = settings().revision + 1;
+                workflowEvents.push("agent-enabled");
+                return { kind: "snapshot", snapshot: settings() };
+              },
+            } as unknown as ProviderSettingsStoreWriter,
+            terminal: { ensureWorkspace: terminalUnavailable, createTab: terminalUnavailable,
+              terminateTab: terminalUnavailable, attach: () => { throw new Error("Inline fixture must not attach Terminal"); },
+              listWorkspaces: terminalUnavailable } as Pick<TerminalRuntimeSocketClient, "ensureWorkspace" | "createTab" | "terminateTab" | "attach" | "listWorkspaces">,
+            hostControl: { available: false, run: terminalUnavailable },
+            claudeBrowserLogin: async ({ onSuccess }) => ({ cancel: async () => {}, submitCode: async (code) => {
+              if (code !== "synthetic-fixture-code") throw new Error("Rejected fixture code");
+              await onSuccess();
+            } }),
+          });
+          const nativeLogin = await adapter!.start({ request: start, publish: () => {}, registerCleanup: () => {} });
+          completeNativeLogin = nativeLogin.submitCode ?? null;
           startReceipts.set(start.idempotencyKey, { fingerprint, operation });
           return json(operation);
         }
         const operationPath = operation ? `/api/ai/provider-settings/workflows/${operation.id}` : null;
         if (operation && req.method === "GET" && path === operationPath) return json(ProviderWorkflowSchema.parse(operation));
         if (operation && active && req.method === "POST" && path === `${operationPath}/cancel`) {
+          completeNativeLogin = null;
           Object.assign(operation, { state: "cancelled", authorizationUrl: null });
           workflowEvents.push("cancel"); return json(ProviderWorkflowSchema.parse(operation));
         }
@@ -164,9 +195,12 @@ export async function startProviderAuthGateway(options: {
           if (code !== "synthetic-fixture-code") return json({ error: "Rejected fixture code" }, 400);
           committedRevision = settings().revision + 1;
           authenticated = true;
-          enabledOverrides.claude_harness = true;
+          workflowEvents.push("code-completed");
+          if (!completeNativeLogin) throw new Error("Native login completion unavailable");
+          await completeNativeLogin(code);
+          completeNativeLogin = null;
           Object.assign(operation, { state: "succeeded", authorizationUrl: null });
-          workflowEvents.push("code-completed"); return json({ accepted: true });
+          return json({ accepted: true });
         }
         return json({ error: "Unknown fixture workflow" }, 404);
       } catch (error) {

@@ -83,3 +83,20 @@ it("advances one canonical revision across disable and logout and rejects pre-lo
   expect((await replay.json()).snapshot.revision).toBe(loggedOut.revision);
   expect(await read()).toEqual(loggedOut);
 });
+
+it("starts inline Claude disabled and uses native login completion to enable only that harness", async () => {
+  gateway = await startProviderAuthGateway({ inlineClaude: true });
+  const read = async () => ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway!.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(1000) })).json());
+  const post = (path: string, body: unknown) => fetch(`${gateway!.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(1000), body: JSON.stringify(body) });
+  const before = await read();
+  expect(before.harnesses[0]).toMatchObject({ enabled: false, configuredEnabled: false });
+  const started = await post("/api/ai/provider-settings/workflows", { kind: "login", method: "browser", harnessInstanceId: "claude_harness", idempotencyKey: "inline_login" });
+  expect(started.status).toBe(200);
+  const operation = await started.json();
+  expect((await post(`/api/ai/provider-settings/workflows/${operation.id}/code`, { code: "synthetic-fixture-code" })).status).toBe(200);
+  const connected = await read();
+  expect(connected.harnesses[0]).toMatchObject({ enabled: true, configuredEnabled: true, authState: "authenticated" });
+  expect(connected.revision).toBe(before.revision + 2);
+  expect(gateway.workflowEvents).toEqual(["browser-login", "code-completed", "agent-enabled"]);
+  expect(gateway.commands).toHaveLength(0);
+});
