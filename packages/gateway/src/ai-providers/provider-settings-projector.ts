@@ -316,6 +316,7 @@ async function projectAccounts(input: {
 }
 
 function projectHarness(input: {
+  nativeAuthenticatedAccountId?: string;
   stored: HarnessConfiguration;
   canonical: AiProviderSnapshotV3;
   modelProviders: ProviderSettingsSnapshot["modelProviders"];
@@ -378,6 +379,11 @@ function projectHarness(input: {
   const accounts = source?.kind === "harness_profile"
     || (nativeCredentialRoute && source?.kind !== "provider_account") ? []
     : input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
+  const nativeCredentialAuthenticated = input.nativeAuthenticatedAccountId !== undefined
+    && input.stored.harness === "codex" && driverId === "codex" && driver?.installState === "installed"
+    && routeSourceEligible && source?.id === "owner_openai_profile" && source.kind === "provider_account"
+    && source.accountId === input.nativeAuthenticatedAccountId
+    && input.stored.selectedAccountId === input.nativeAuthenticatedAccountId;
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)
     : input.loginMethods(input.stored);
@@ -394,7 +400,8 @@ function projectHarness(input: {
     version: null,
     installState: driver?.installState ?? "missing",
     ...projectHermesNativeRouteObservation({ driver, stored: input.stored, source, accounts: input.accounts, now: input.now }),
-    authState: projectMissingCredentialAuth({ canonical: input.canonical, stored: input.stored, source, driver, now: input.now }) ?? authState(readiness),
+    authState: nativeCredentialAuthenticated ? "authenticated"
+      : projectMissingCredentialAuth({ canonical: input.canonical, stored: input.stored, source, driver, now: input.now }) ?? authState(readiness),
     loginMethods: [...visibleMethods],
     recommendedLoginMethod: visibleMethods[0] ?? null,
     connectivity: connectivity(readiness),
@@ -465,7 +472,15 @@ export async function projectProviderSettings(input: {
   const methodMatches = metadata?.authMethod === "api_key"
     ? nativeSource?.fundingKind === "owner_api_key" || nativeSource?.fundingKind === "owner_account"
     : nativeSource?.fundingKind === "owner_account";
-  if (metadataFresh && methodMatches && nativeSource && nativeAccount) {
+  let nativeAuthenticatedAccountId: string | undefined;
+  const installedCodex = input.canonical.drivers.some(driver => driver.id === "codex" && driver.installState === "installed");
+  const exactNativeAccount = nativeSource?.kind === "provider_account" && nativeSource.providerId === "openai"
+    && nativeAccount?.providerId === "openai" && nativeSource.accountId === nativeAccount.id
+    && input.canonical.instances.some(instance => instance.driverId === "codex"
+      && instance.vendor === nativeSource.providerId && instance.accessSourceId === nativeSource.id
+      && instance.accountId === nativeAccount.id);
+  if (metadataFresh && methodMatches && installedCodex && exactNativeAccount && nativeSource && nativeAccount) {
+    nativeAuthenticatedAccountId = nativeAccount.id;
     nativeAccount.displayName = metadata.accountLabel;
     if (metadata.authMethod === "api_key") {
       nativeAccount.authMethod = "api_key";
@@ -546,6 +561,7 @@ export async function projectProviderSettings(input: {
   );
   const harnesses = input.config.harnesses.flatMap((stored) => {
     const harness = projectHarness({
+      nativeAuthenticatedAccountId,
       stored,
       canonical: input.canonical,
       modelProviders,

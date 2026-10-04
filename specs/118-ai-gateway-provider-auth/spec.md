@@ -375,3 +375,13 @@ again on the fresh paired Settings observation. Same presentation with changed
 credentials is rejected. Unknown, auto or keyring storage never borrows a stale
 auth.json; missing proof fails closed. Existing genuine native-ID binding and
 API-key class-only projection remain supported without borrowing allowance.
+
+Verified fresh standalone Codex metadata can establish authenticated credential
+connection for only its installed canonical Codex driver, exact owner OpenAI
+profile/account, and saved eligible provider/model/account route. The projection
+must keep account and harness authentication coherent after short local scan
+evidence expires. This does not change source readiness, connectivity, model
+admission, or saved enablement; explicitly disabled agents remain disabled.
+Expired, future, rejected, mismatched-profile or absent-driver metadata cannot
+provide this authority. API-key projection remains class-only without ChatGPT
+identity or subscription allowance.
