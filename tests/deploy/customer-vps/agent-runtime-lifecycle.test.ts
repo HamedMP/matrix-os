@@ -44,7 +44,19 @@ async function fixture() {
     id: "echo 0",
     install: 'while [ "$#" -gt 1 ]; do shift; done; mkdir -p "$1"',
     chown: "exit 0",
-    flock: 'printf "flock %s\\n" "$*" >>"$CALLS"',
+    flock: `printf 'flock %s\\n' "$*" >>"$CALLS"
+exec python3 - "$@" <<'PYLOCK'
+import fcntl, sys, time
+fd = int(sys.argv[-1])
+deadline = time.monotonic() + (float(sys.argv[2]) if sys.argv[1] == '-w' else 0)
+while True:
+  try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    sys.exit(0)
+  except BlockingIOError:
+    if time.monotonic() >= deadline: sys.exit(1)
+    time.sleep(0.01)
+PYLOCK`,
     timeout: 'shift; exec "$@"',
     systemctl:
       'printf "systemctl %s\\n" "$*" >>"$CALLS"; [ "${STOP_FAILURE:-}" != yes ]',
@@ -200,7 +212,17 @@ it("retains an owner-customized Hermes launcher and reports incomplete uninstall
 
 it("keeps repeated concurrent uninstall opt-outs idempotent without following marker symlinks", async () => {
   const f = await fixture();
+  // Launcher validation/removal belongs under the same cross-process lock.
+  // Delaying comparison makes a logging-only flock stub's false concurrency deterministic.
+  await writeFile(join(f.root, "tools/cmp"), `#!/bin/bash
+mkdir "$MATRIX_RUNTIME_HOME/compare-active" || exit 70
+trap 'rmdir "$MATRIX_RUNTIME_HOME/compare-active"' EXIT
+sleep 0.2
+/usr/bin/cmp "$@"
+`);
+  await chmod(join(f.root, "tools/cmp"), 0o755);
   const results = await Promise.allSettled(Array.from({ length: 12 }, () => run("bash", [f.script, "uninstall", "hermes"], { env: f.env })));
+  expect(results.filter(result => result.status === "rejected")).toEqual([]);
   expect(results.every(result => result.status === "fulfilled")).toBe(true);
   expect(await readFile(join(f.state, "disabled-hermes"), "utf8")).toBe("disabled\n");
   await rm(join(f.state, "disabled-hermes"));
