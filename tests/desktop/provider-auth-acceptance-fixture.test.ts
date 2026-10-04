@@ -64,3 +64,22 @@ it("evicts old disable receipts without accepting their stale revisions", async 
   const snapshot = ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(1000) })).json());
   expect(snapshot.revision).toBe(35); expect(snapshot.accounts[0]?.authState).toBe("authenticated");
 });
+
+it("advances one canonical revision across disable and logout and rejects pre-logout writes", async () => {
+  gateway = await startProviderAuthGateway(); gateway.setAuthenticated(true);
+  const read = async () => ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway!.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(1000) })).json());
+  const before = await read();
+  const write = (body: unknown) => fetch(`${gateway!.url}/api/ai/provider-settings/actions`, { method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(1000), body: JSON.stringify(body) });
+  const disable = { type: "set_harness_enabled", harnessInstanceId: "claude_harness", enabled: false, expectedRevision: before.revision, idempotencyKey: "mixed_disable" };
+  const disabled = ProviderSettingsSnapshotSchema.parse((await (await write(disable)).json()).snapshot);
+  const logout = { type: "logout_account", accountId: "claude_account", expectedRevision: disabled.revision, idempotencyKey: "mixed_logout" };
+  const loggedOut = ProviderSettingsSnapshotSchema.parse((await (await write(logout)).json()).snapshot);
+  expect(loggedOut.revision).toBe(disabled.revision + 1);
+  expect(loggedOut.projectionOf.revision).toBe(loggedOut.revision);
+  expect(loggedOut.accounts[0]?.authState).toBe("unauthenticated");
+  const stale = await write({ ...disable, enabled: true, expectedRevision: disabled.revision, idempotencyKey: "before_logout" });
+  expect(stale.status).toBe(409); expect((await stale.json()).latestRevision).toBe(loggedOut.revision);
+  const replay = await write(logout); expect(replay.status).toBe(200);
+  expect((await replay.json()).snapshot.revision).toBe(loggedOut.revision);
+  expect(await read()).toEqual(loggedOut);
+});

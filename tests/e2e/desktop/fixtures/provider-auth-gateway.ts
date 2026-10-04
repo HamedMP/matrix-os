@@ -94,11 +94,11 @@ export async function startProviderAuthGateway(options: {
   const commands: unknown[] = [];
   const enabledOverrides: Record<string, boolean> = {};
   let committedRevision: number | undefined;
-  // Fixture lifetime cache: at most 32 disable receipts, evicted oldest first.
+  // Fixture lifetime cache: at most 32 mutation receipts, evicted oldest first.
   const disableReceipts = new Map<string, string>();
   const settings = () => {
     const snapshot = options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
-    return { ...snapshot, revision: committedRevision ?? snapshot.revision, harnesses: snapshot.harnesses.map(harness => harness.id in enabledOverrides
+    return { ...snapshot, revision: committedRevision ?? snapshot.revision, projectionOf: { ...snapshot.projectionOf, revision: committedRevision ?? snapshot.projectionOf.revision }, harnesses: snapshot.harnesses.map(harness => harness.id in enabledOverrides
       ? { ...harness, enabled: enabledOverrides[harness.id]!, configuredEnabled: enabledOverrides[harness.id]! }
       : harness) };
   };
@@ -123,7 +123,7 @@ export async function startProviderAuthGateway(options: {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const mutation = ProviderSettingsMutationSchema.parse(JSON.parse(Buffer.concat(chunks).toString()));
-      if (mutation.type === "set_harness_enabled") {
+      if (mutation.type === "set_harness_enabled" || mutation.type === "logout_account") {
         const fingerprint = JSON.stringify(mutation);
         const duplicate = disableReceipts.get(mutation.idempotencyKey);
         if (duplicate !== undefined) {
@@ -143,13 +143,22 @@ export async function startProviderAuthGateway(options: {
           res.end(JSON.stringify({ error: "fixture revision limit reached" }));
           return;
         }
-        if (!current.harnesses.some(harness => harness.id === mutation.harnessInstanceId)
-          || (!(mutation.harnessInstanceId in enabledOverrides) && Object.keys(enabledOverrides).length >= 32)) {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "unsupported fixture target" }));
-          return;
+        if (mutation.type === "set_harness_enabled") {
+          if (!current.harnesses.some(harness => harness.id === mutation.harnessInstanceId)
+            || (!(mutation.harnessInstanceId in enabledOverrides) && Object.keys(enabledOverrides).length >= 32)) {
+            res.writeHead(400, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "unsupported fixture target" }));
+            return;
+          }
+          enabledOverrides[mutation.harnessInstanceId] = mutation.enabled;
+        } else {
+          if (!current.accounts.some(account => account.id === mutation.accountId)) {
+            res.writeHead(400, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "unsupported fixture target" }));
+            return;
+          }
+          authenticated = false;
         }
-        enabledOverrides[mutation.harnessInstanceId] = mutation.enabled;
         committedRevision = current.revision + 1;
         if (disableReceipts.size >= 32) disableReceipts.delete(disableReceipts.keys().next().value!);
         disableReceipts.set(mutation.idempotencyKey, fingerprint);
@@ -157,18 +166,9 @@ export async function startProviderAuthGateway(options: {
         res.end(JSON.stringify({ kind: "snapshot", snapshot: settings() }));
         return;
       }
-      if (mutation.type !== "start_login" && mutation.type !== "logout_account") {
+      if (mutation.type !== "start_login") {
         res.writeHead(400, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "unsupported fixture action" }));
-        return;
-      }
-      if (mutation.type === "logout_account") {
-        authenticated = false;
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({
-          kind: "snapshot",
-          snapshot: settings(),
-        }));
         return;
       }
       const summary = claudeSummary(authenticated);
