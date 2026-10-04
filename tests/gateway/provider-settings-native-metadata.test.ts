@@ -105,10 +105,30 @@ describe('owner native account enrichment', () => {
     const { canonical, config } = codexFixture();
     const key = normalizeCodexNativeAccountMetadata({ account: { type: 'apiKey' } }, undefined, now)!;
     const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: key });
-    expect(snapshot.harnesses.find(h => h.harness === 'codex')?.authState).toBe('authenticated');
-    expect(snapshot.accounts.find(a => a.id === 'owner_openai')).toMatchObject({ displayName: 'API key', authMethod: 'api_key' });
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')?.authState).toBe('unknown');
+    expect(snapshot.accounts.find(a => a.id === 'owner_openai')).toMatchObject({ displayName: 'API key', authMethod: 'api_key', authState: 'unknown' });
     expect(snapshot.accounts.find(a => a.id === 'owner_openai')?.connectionDetails).toBeUndefined();
     expect(snapshot.accessSources.find(s => s.id === 'owner_openai_profile')?.usage.kind).not.toBe('subscription_allowance');
+  });
+  it.each([
+    ['unknown', 'unknown'], ['invalid', 'failed'], ['expired', 'expired'],
+    ['auth_required', 'unauthenticated'], ['ready', 'authenticated'],
+  ] as const)('preserves canonical %s key validity despite native API-key class', async (state, expected) => {
+    const { canonical, config } = codexFixture();
+    const source = canonical.accessSources.find(s => s.id === 'owner_openai_profile')!;
+    const account = canonical.accounts.find(a => a.id === 'owner_openai')!;
+    const checkedAt = now.toISOString();
+    const staleAfter = new Date(now.getTime() + 60_000).toISOString();
+    Object.assign(source, { state, checkedAt, staleAfter, action: state === 'ready' ? 'none' : 'retry' });
+    Object.assign(account, { state, checkedAt, staleAfter, authMethod: 'api_key' });
+    const key = normalizeCodexNativeAccountMetadata({ account: { type: 'apiKey' } }, undefined, now)!;
+    const before = await projectProviderSettings({ canonical, config, now, supportedActions: [] });
+    const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: key });
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')?.authState).toBe(expected);
+    expect(snapshot.accounts.find(a => a.id === 'owner_openai')).toMatchObject({ authState: expected, lastCheckedAt: checkedAt, displayName: 'API key', authMethod: 'api_key' });
+    expect(snapshot.accessSources.find(s => s.id === source.id)?.readiness).toEqual(before.accessSources.find(s => s.id === source.id)?.readiness);
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')?.enabled).toBe(before.harnesses.find(h => h.harness === 'codex')?.enabled);
+    expect(snapshot.accessSources.find(s => s.id === source.id)?.usage.kind).not.toBe('subscription_allowance');
   });
   it('Hermes projects its own exact native metadata without borrowing standalone Codex', async () => {
     const canonical = providerSettingsCanonicalFixture();

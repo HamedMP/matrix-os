@@ -385,3 +385,9 @@ admission, or saved enablement; explicitly disabled agents remain disabled.
 Expired, future, rejected, mismatched-profile or absent-driver metadata cannot
 provide this authority. API-key projection remains class-only without ChatGPT
 identity or subscription allowance.
+
+A native Codex API-key class observation identifies only the connection method,
+not key validity. It must preserve canonical unknown, rejected, expired and
+auth-required authentication states and their verification timestamps. Only
+canonical provider-ready evidence may authenticate a key; the native class
+observation cannot change source readiness, execution policy or enablement.

@@ -480,15 +480,17 @@ export async function projectProviderSettings(input: {
       && instance.vendor === nativeSource.providerId && instance.accessSourceId === nativeSource.id
       && instance.accountId === nativeAccount.id);
   if (metadataFresh && methodMatches && installedCodex && exactNativeAccount && nativeSource && nativeAccount) {
-    nativeAuthenticatedAccountId = nativeAccount.id;
+    if (metadata.authMethod === "terminal") nativeAuthenticatedAccountId = nativeAccount.id;
     nativeAccount.displayName = metadata.accountLabel;
     if (metadata.authMethod === "api_key") {
       nativeAccount.authMethod = "api_key";
       nativeSource.fundingKind = "owner_api_key";
       delete nativeAccount.connectionDetails;
     } else if (metadata.connectionDetails) nativeAccount.connectionDetails = metadata.connectionDetails;
-    nativeAccount.authState = "authenticated";
-    nativeAccount.lastCheckedAt = metadata.checkedAt;
+    if (metadata.authMethod === "terminal") {
+      nativeAccount.authState = "authenticated";
+      nativeAccount.lastCheckedAt = metadata.checkedAt;
+    }
     if (metadata.authMethod === "terminal" && metadata.usage) nativeSource.usage = metadata.usage;
   }
   const hermesMetadata = input.hermesNativeAccountMetadata;

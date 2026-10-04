@@ -62,7 +62,7 @@ describe('metadata recovery boundaries', () => {
     const canonical = codexFixture();
     const original = structuredClone(canonical);
     const snapshot = await projectProviderSettings({ canonical, config: initialProviderSettingsConfiguration(canonical), now, supportedActions: [], codexNativeAccountMetadata: { ...metadata, accountLabel: 'API key', authMethod: 'api_key' } });
-    expect(snapshot.accounts.find(a => a.id === 'owner_openai')).toMatchObject({ displayName: 'API key', authMethod: 'api_key', authState: 'authenticated' });
+    expect(snapshot.accounts.find(a => a.id === 'owner_openai')).toMatchObject({ displayName: 'API key', authMethod: 'api_key', authState: 'unknown' });
     expect(snapshot.accessSources.find(s => s.id === 'owner_openai_profile')).toMatchObject({ fundingKind: 'owner_api_key', readiness: { state: 'unknown' }, usage: { kind: 'unavailable' } });
     expect(canonical).toEqual(original);
   });
