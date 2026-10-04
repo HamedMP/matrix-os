@@ -399,3 +399,83 @@ identity with private principal/file proof; final paired-snapshot verification
 still runs independently. Concurrent reads coalesce, quota reads remain rate
 limited, and changed/missing proof, failed reads or expired observations discard
 the single-slot cache. Reuse does not extend timestamps or confer API-key validity.
+
+### Owner foreground workflow boundary
+
+Settings foreground workflows mount behind the existing request principal and
+resolved runtime owner. Anonymous requests return 401, other owners 403, and
+missing runtime dependencies 503. Start, code submission, key verification, and
+cancellation validate bounded strict payloads before execution. Receipts retain
+only safe bounded state, expire, and use owner-scoped idempotency; native profile
+writes require serialized admission and confirmed child cleanup. Secrets never
+enter public receipts or logs. Fixed-origin key probes enforce deadlines and
+redirect rejection before the injected native saver may replace credentials.
+
+This engine layer registers an empty adapter registry: owner capabilities are
+empty and attempts to start undelivered adapters are unavailable. It advertises
+no login, install, or uninstall support until native adapters are delivered.
+Gateway shutdown drains the registered engine. Registration, profile guard,
+receipt lifecycle, route authorization, and key-child cleanup tests exercise
+the delivered boundaries independently from later runtime adapters.
+
+A terminal receipt does not itself prove that a native operation stopped. An
+uncertain launch or failed cancellation/expiry cleanup retains same-profile
+admission and its bounded receipt slot until registered cleanup confirms it
+stopped. Such receipts cannot be evicted to admit replacement work. Failed
+expiry cleanup records a coarse unavailable result without failing unrelated
+harness requests. Shutdown attempts each independent cleanup even if another
+fails; it never reopens admission on the closed service.
+
+Native/browser adapters delivered in the following layer MUST register their
+cleanup before starting native side effects and await native completion before
+cleanup resolves. An uncertain launch that cannot supply cleanup remains blocked: retrying
+with another idempotency key is not recovery. Recovery requires confirmed native
+cleanup; process restart alone does not prove that a child or profile writer
+stopped, so the native profile guard remains required across service instances.
+A known preflight failure may throw `ProviderWorkflowNotStartedError` only if
+no child, terminal session, service mutation, account write or durable writer
+lease was acquired. Such a failed receipt permits a new attempt without cleanup.
+Missing cleanup alone is never this proof: generic launch/acquire failures retain
+admission. If cleanup was registered, even a typed not-started error requires
+successful cleanup before release. Adapter code must not convert generic helper,
+lease-acquisition or spawn errors to the no-start type.
+Adapters MUST throw `ProviderWorkflowCodeNotAcceptedError` only when they prove
+no authorization bytes were submitted (for example, the authorization prompt
+is not ready). Ambiguous partial writes retain the submission latch. Accepted
+submission stays single-use under concurrent requests. Adapter integration and
+real authorization acceptance remain pending in the native/browser layer.
+
+### Private native writer admission primitive
+
+The adapter-independent writer lease stores only process/profile admission in a
+runtime-private sibling directory outside the synced owner home. Exclusive,
+symlink-safe acquisition prevents a second process from claiming the same profile.
+The actual owner home is resolved at the filesystem boundary; trusted aliases of
+that home share one canonical private marker path. Lexical and canonical trust
+checks remain mandatory, and retargeting an alias cannot release another home's
+marker. An unresolved home fails closed with a safe lifecycle error.
+Release coalesces concurrent ownership checks and unlinks: an older cleanup must
+never remove a replacement writer's marker. A failed unlink remains fenced and
+permits an explicit cleanup retry. No timeout or gateway death clears admission.
+Owner-authorized native adapters consume this primitive in the following layer;
+the primitive alone exposes no endpoint or new credential-writing capability.
+
+Direct primitive tests cover exclusive cross-instance acquisition, independent
+profiles, absence from synced owner paths, symlinked admission ancestors/markers,
+and replacement-marker identity retention, in addition to release races/retries.
+
+Private admission directories must belong to the gateway UID and have mode 0700;
+existing directory permissions are never changed. Both lexical and resolved ancestors must
+belong to that UID or root and reject group/other write access, except root-owned
+sticky shared anchors. Creation initialization failures close the descriptor and
+attempt removal of the never-admitted marker; cleanup failures remain fenced.
+The original initialization error is preserved.
+
+Only the owning admission closure may release a live marker. There is no
+cross-process recovery-delete API, TTL expiry, or PID-death unlock. Cooperating
+processes cannot admit a replacement until that owned unlink finishes. Operators
+must stop all gateway admission holders and confirm every native writer has
+stopped before any out-of-band recovery.
+POSIX path stat/unlink is not atomic against noncooperating same-UID or root
+actors deleting/replacing a live marker; those actors and filesystem ACLs are
+within the trusted runtime boundary. The primitive does not claim to contain them.
