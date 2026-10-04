@@ -4,6 +4,8 @@ import { startStubGateway } from "./stub-gateway";
 import { providerAuthActions } from "../../../../packages/gateway/src/coding-agents/provider-auth-actions";
 import {
   ProviderSettingsMutationSchema,
+  ProviderWorkflowCapabilitiesSchema, ProviderWorkflowCodeSchema, ProviderWorkflowStartSchema, ProviderWorkflowSchema,
+  type ProviderWorkflow,
   ProviderSettingsSnapshotSchema,
   type AgentProviderSummary,
   type CanonicalProviderCatalog,
@@ -85,6 +87,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSe
 
 /** Isolated provider fixture; no real provider login/logout is executed. */
 export async function startProviderAuthGateway(options: {
+  inlineClaude?: boolean;
   catalog?: CanonicalProviderCatalog;
   settings?: (authenticated: boolean) => ProviderSettingsSnapshot;
   failSettingsRead?: () => boolean;
@@ -96,14 +99,81 @@ export async function startProviderAuthGateway(options: {
   let committedRevision: number | undefined;
   // Fixture lifetime cache: at most 32 mutation receipts, evicted oldest first.
   const disableReceipts = new Map<string, string>();
+  const workflowEvents: string[] = [];
+  let operation: ProviderWorkflow | null = null;
+  // Fixture lifetime cache: settled starts may be evicted; a live receipt is retained.
+  const startReceipts = new Map<string, { fingerprint: string; operation: ProviderWorkflow }>();
+  let workflowSequence = 0;
   const settings = () => {
     const snapshot = options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
-    return { ...snapshot, revision: committedRevision ?? snapshot.revision, projectionOf: { ...snapshot.projectionOf, revision: committedRevision ?? snapshot.projectionOf.revision }, harnesses: snapshot.harnesses.map(harness => harness.id in enabledOverrides
+    return ProviderSettingsSnapshotSchema.parse({ ...snapshot, revision: committedRevision ?? snapshot.revision,
+      projectionOf: { ...snapshot.projectionOf, revision: committedRevision ?? snapshot.projectionOf.revision }, harnesses: snapshot.harnesses.map(harness => harness.id in enabledOverrides
       ? { ...harness, enabled: enabledOverrides[harness.id]!, configuredEnabled: enabledOverrides[harness.id]! }
-      : harness) };
+      : harness) });
   };
   const server = createServer(async (req, res) => {
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (options.inlineClaude && path.startsWith("/api/ai/provider-settings/workflows")) {
+      const json = (value: unknown, status = 200) => {
+        res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+        res.end(JSON.stringify(value));
+      };
+      try {
+        const active = operation && ["pending", "running"].includes(operation.state);
+        if (req.method === "GET" && path.endsWith("/capabilities")) return json(ProviderWorkflowCapabilitiesSchema.parse([{
+          harnessInstanceId: "claude_harness", harness: "claude", displayName: "Claude", installState: "installed",
+          loginMethods: new URL(req.url!, "http://localhost").searchParams.get("connectionVersion") === "2" ? ["browser"] : ["terminal"],
+          apiKeyProviders: [], install: false, uninstall: false, logs: false,
+          activeOperationId: active ? operation!.id : null,
+        }]));
+        const chunks: Buffer[] = []; let bytes = 0;
+        for await (const chunk of req) {
+          bytes += chunk.length;
+          if (bytes > 8192) throw new Error("Fixture body exceeded limit");
+          chunks.push(Buffer.from(chunk));
+        }
+        const body = req.method === "POST" ? JSON.parse(Buffer.concat(chunks).toString()) : null;
+        if (req.method === "POST" && path === "/api/ai/provider-settings/workflows") {
+          const start = ProviderWorkflowStartSchema.parse(body);
+          const fingerprint = JSON.stringify(start);
+          const receipt = startReceipts.get(start.idempotencyKey);
+          if (receipt) return receipt.fingerprint === fingerprint ? json(receipt.operation)
+            : json({ error: "Conflicting fixture workflow retry" }, 409);
+          if (start.harnessInstanceId !== "claude_harness" || start.kind !== "login" || start.method !== "browser" || active)
+            return json({ error: "Unsupported fixture workflow" }, 400);
+          if (startReceipts.size >= 32) {
+            const settled = [...startReceipts].find(([, value]) => !["pending", "running"].includes(value.operation.state));
+            if (!settled) return json({ error: "Fixture workflow limit reached" }, 429);
+            startReceipts.delete(settled[0]);
+          }
+          workflowEvents.push("browser-login");
+          operation = ProviderWorkflowSchema.parse({ id: `fixture_claude_${++workflowSequence}`, harnessInstanceId: start.harnessInstanceId,
+            kind: "login", state: "running", expiresAt: new Date(Date.now() + 600_000).toISOString(),
+            terminalSessionId: null, deviceCode: null, authorizationUrl: "https://claude.com/cai/oauth/authorize", safeFailure: null });
+          startReceipts.set(start.idempotencyKey, { fingerprint, operation });
+          return json(operation);
+        }
+        const operationPath = operation ? `/api/ai/provider-settings/workflows/${operation.id}` : null;
+        if (operation && req.method === "GET" && path === operationPath) return json(ProviderWorkflowSchema.parse(operation));
+        if (operation && active && req.method === "POST" && path === `${operationPath}/cancel`) {
+          Object.assign(operation, { state: "cancelled", authorizationUrl: null });
+          workflowEvents.push("cancel"); return json(ProviderWorkflowSchema.parse(operation));
+        }
+        if (operation && active && req.method === "POST" && path === `${operationPath}/code`) {
+          const { code } = ProviderWorkflowCodeSchema.parse(body);
+          if (code !== "synthetic-fixture-code") return json({ error: "Rejected fixture code" }, 400);
+          committedRevision = settings().revision + 1;
+          authenticated = true;
+          enabledOverrides.claude_harness = true;
+          Object.assign(operation, { state: "succeeded", authorizationUrl: null });
+          workflowEvents.push("code-completed"); return json({ accepted: true });
+        }
+        return json({ error: "Unknown fixture workflow" }, 404);
+      } catch (error) {
+        console.warn("[provider-auth-fixture] Workflow rejected:", error instanceof Error ? error.name : typeof error);
+        return json({ error: "Invalid fixture workflow" }, 400);
+      }
+    }
     if (req.method === "GET" && path === "/api/chat-providers" && options.catalog) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(options.catalog));
@@ -160,6 +230,7 @@ export async function startProviderAuthGateway(options: {
           authenticated = false;
         }
         committedRevision = current.revision + 1;
+        workflowEvents.push(mutation.type === "logout_account" ? "logout" : mutation.enabled ? "agent-enabled" : "agent-disabled");
         if (disableReceipts.size >= 32) disableReceipts.delete(disableReceipts.keys().next().value!);
         disableReceipts.set(mutation.idempotencyKey, fingerprint);
         res.writeHead(200, { "content-type": "application/json" });
@@ -250,9 +321,9 @@ export async function startProviderAuthGateway(options: {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as { port: number };
   return {
-    url: `http://127.0.0.1:${address.port}`, commands,
+    url: `http://127.0.0.1:${address.port}`, commands, workflowEvents,
     setAuthenticated(value: boolean) { authenticated = value; },
-    async close() { disableReceipts.clear(); server.closeAllConnections(); await upstream.close(); await new Promise<void>((resolve) => server.close(() => resolve())); },
+    async close() { startReceipts.clear(); disableReceipts.clear(); server.closeAllConnections(); await upstream.close(); await new Promise<void>((resolve) => server.close(() => resolve())); },
   };
 }
 
