@@ -964,3 +964,49 @@ it("keeps drive drafts unsent on unsupported routes and submits typed context on
  fireEvent.click(screen.getByRole("button",{name:"Send"}));expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({text:draft.text,resources:[ref]}));
  cleanup();
 });
+
+it("fulfills a draft focus request once the composer becomes editable, without refocusing a consumed request", async () => {
+ const catalog = catalogFixture();
+ const props = {value:"", onChange:vi.fn(), onSubmit:vi.fn(), busy:false, catalog,
+  selection:createCanonicalComposerSelection(catalog,"claude_personal"), onSelectionChange:vi.fn(), instanceLocked:false, focusRequestId:42};
+ const view = render(<><button>Other focus</button><SharedChatComposer {...props} disabled /></>);
+ const other = screen.getByRole('button',{name:'Other focus'});
+ fireEvent.click(other); other.focus();
+ view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled={false}/></>);
+ const editor = screen.getByRole('textbox');
+ await waitFor(() => expect(document.activeElement).toBe(editor));
+ other.focus();
+ view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled/></>);
+ view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled={false}/></>);
+ expect(document.activeElement).toBe(other);
+});
+
+it.each(['none','control','blank'])('restores request-owned focus after a later loading blur unless the user acted elsewhere (action=%s)', async action => {
+ const catalog=catalogFixture(); const props={value:"",onChange:vi.fn(),onSubmit:vi.fn(),busy:false,catalog,selection:createCanonicalComposerSelection(catalog,"claude_personal"),onSelectionChange:vi.fn(),instanceLocked:false,focusRequestId:77};
+ const view=render(<><button>Another control</button><SharedChatComposer {...props}/></>);
+ const editor=screen.getByRole('textbox'); await waitFor(() => expect(document.activeElement).toBe(editor));
+ view.rerender(<><button>Another control</button><SharedChatComposer {...props} disabled/></>);
+ // Chromium blurs a focused contenteditable when its loading gate disables it.
+ editor.blur();
+ const other=screen.getByRole('button',{name:'Another control'});
+ if(action === "control") other.focus();
+ if(action === "blank") fireEvent.pointerDown(document.body);
+ view.rerender(<><button>Another control</button><SharedChatComposer {...props} disabled={false}/></>);
+ await waitFor(() => expect(document.activeElement).toBe(action === "control" ? other : action === "blank" ? document.body : editor));
+});
+
+it('waits for the committed editable DOM before consuming focus when the browser rejects disabled roots', async () => {
+ const nativeFocus=HTMLElement.prototype.focus;
+ const focus=vi.spyOn(HTMLElement.prototype,'focus').mockImplementation(function(this:HTMLElement, options?:FocusOptions) {
+  if(this.getAttribute('role')==='textbox' && this.getAttribute('contenteditable')!=='true') {return;}
+  nativeFocus.call(this,options);
+ });
+ try {
+  const catalog=catalogFixture(); const props={value:"",onChange:vi.fn(),onSubmit:vi.fn(),busy:false,catalog,selection:createCanonicalComposerSelection(catalog,"claude_personal"),onSelectionChange:vi.fn(),instanceLocked:false,focusRequestId:91};
+  const view=render(<SharedChatComposer {...props} disabled/>);
+  view.rerender(<SharedChatComposer {...props} disabled={false}/>);
+  const editor=screen.getByRole('textbox');
+  await waitFor(() => expect(editor.getAttribute('contenteditable')).toBe('true'));
+  await waitFor(() => expect(document.activeElement).toBe(editor));
+ } finally {focus.mockRestore();}
+});

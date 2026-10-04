@@ -133,9 +133,12 @@
 .matrix-chat-provider-setup {
   margin-top: 0.25rem;
   padding: 0.5rem;
-  border-top: 1px solid var(--model-choice-border);
   color: var(--model-choice-secondary);
   font-size: 0.75rem;
+}
+
+.matrix-chat-provider-setup[data-has-models] {
+  border-top: 1px solid var(--model-choice-border);
 }
 
 .matrix-chat-provider-setup button {
@@ -177,4 +180,19 @@
 .matrix-chat-provider-setup button:focus-visible {
   outline: 2px solid var(--model-choice-focus);
   outline-offset: 2px;
+}
+
+.matrix-chat-provider-loading {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.matrix-chat-provider-loading-spinner {
+  animation: matrix-chat-provider-loading 1s linear infinite;
+}
+@keyframes matrix-chat-provider-loading {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .matrix-chat-provider-loading-spinner { animation: none; }
 }

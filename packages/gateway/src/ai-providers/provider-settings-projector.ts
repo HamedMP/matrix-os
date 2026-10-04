@@ -1,3 +1,5 @@
+import { projectMatrixModelInventory } from "./provider-matrix-model-inventory.js";
+import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import { projectHermesNativeRouteObservation } from "./hermes-native-route-observation.js";
 import { projectMissingCredentialAuth } from "./provider-missing-credential-auth.js";
 import { qualifyGeneratedNativeSource } from "./provider-generated-native-route.js";
@@ -314,6 +316,7 @@ async function projectAccounts(input: {
 }
 
 function projectHarness(input: {
+  nativeAuthenticatedAccountId?: string;
   stored: HarnessConfiguration;
   canonical: AiProviderSnapshotV3;
   modelProviders: ProviderSettingsSnapshot["modelProviders"];
@@ -376,6 +379,11 @@ function projectHarness(input: {
   const accounts = source?.kind === "harness_profile"
     || (nativeCredentialRoute && source?.kind !== "provider_account") ? []
     : input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
+  const nativeCredentialAuthenticated = input.nativeAuthenticatedAccountId !== undefined
+    && input.stored.harness === "codex" && driverId === "codex" && driver?.installState === "installed"
+    && routeSourceEligible && source?.id === "owner_openai_profile" && source.kind === "provider_account"
+    && source.accountId === input.nativeAuthenticatedAccountId
+    && input.stored.selectedAccountId === input.nativeAuthenticatedAccountId;
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)
     : input.loginMethods(input.stored);
@@ -392,7 +400,8 @@ function projectHarness(input: {
     version: null,
     installState: driver?.installState ?? "missing",
     ...projectHermesNativeRouteObservation({ driver, stored: input.stored, source, accounts: input.accounts, now: input.now }),
-    authState: projectMissingCredentialAuth({ canonical: input.canonical, stored: input.stored, source, driver, now: input.now }) ?? authState(readiness),
+    authState: nativeCredentialAuthenticated ? "authenticated"
+      : projectMissingCredentialAuth({ canonical: input.canonical, stored: input.stored, source, driver, now: input.now }) ?? authState(readiness),
     loginMethods: [...visibleMethods],
     recommendedLoginMethod: visibleMethods[0] ?? null,
     connectivity: connectivity(readiness),
@@ -408,6 +417,8 @@ function projectHarness(input: {
 }
 
 export async function projectProviderSettings(input: {
+  codexNativeAccountMetadata?: CodexNativeAccountMetadata | null;
+  hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   canonical: AiProviderSnapshotV3;
   config: ProviderSettingsConfiguration;
   now: Date;
@@ -443,7 +454,7 @@ export async function projectProviderSettings(input: {
     ...projected.sources,
     ...(input.genericModelCatalog?.accessSources ?? []).filter((source) =>
       !projected.sources.some((candidate) => candidate.id === source.id))
-      .map((source) => qualifyGeneratedNativeSource(source, input.canonical, generatedSourceIds)),
+      .map((source) => ({ ...qualifyGeneratedNativeSource(source, input.canonical, generatedSourceIds) })),
   ];
   const sourceByAccount = projected.sourceByAccount;
   const accounts = await projectAccounts({
@@ -453,17 +464,57 @@ export async function projectProviderSettings(input: {
     sourceIds: new Set(sources.map((source) => source.id)),
     dependencies: input.dependencies,
   });
+  const metadata = input.codexNativeAccountMetadata;
+  const nativeSource = sources.find(source => source.id === "owner_openai_profile");
+  const nativeAccount = accounts.find(account => account.accessSourceId === "owner_openai_profile");
+  const metadataFresh = metadata && Date.parse(metadata.checkedAt) <= input.now.getTime()
+    && Date.parse(metadata.staleAfter) > input.now.getTime();
+  const methodMatches = metadata?.authMethod === "api_key"
+    ? nativeSource?.fundingKind === "owner_api_key" || nativeSource?.fundingKind === "owner_account"
+    : nativeSource?.fundingKind === "owner_account";
+  let nativeAuthenticatedAccountId: string | undefined;
+  const installedCodex = input.canonical.drivers.some(driver => driver.id === "codex" && driver.installState === "installed");
+  const exactNativeAccount = nativeSource?.kind === "provider_account" && nativeSource.providerId === "openai"
+    && nativeAccount?.providerId === "openai" && nativeSource.accountId === nativeAccount.id
+    && input.canonical.instances.some(instance => instance.driverId === "codex"
+      && instance.vendor === nativeSource.providerId && instance.accessSourceId === nativeSource.id
+      && instance.accountId === nativeAccount.id);
+  if (metadataFresh && methodMatches && installedCodex && exactNativeAccount && nativeSource && nativeAccount) {
+    if (metadata.authMethod === "terminal") nativeAuthenticatedAccountId = nativeAccount.id;
+    nativeAccount.displayName = metadata.accountLabel;
+    if (metadata.authMethod === "api_key") {
+      nativeAccount.authMethod = "api_key";
+      nativeSource.fundingKind = "owner_api_key";
+      delete nativeAccount.connectionDetails;
+    } else if (metadata.connectionDetails) nativeAccount.connectionDetails = metadata.connectionDetails;
+    if (metadata.authMethod === "terminal") {
+      nativeAccount.authState = "authenticated";
+      nativeAccount.lastCheckedAt = metadata.checkedAt;
+    }
+    if (metadata.authMethod === "terminal" && metadata.usage) nativeSource.usage = metadata.usage;
+  }
+  const hermesMetadata = input.hermesNativeAccountMetadata;
+  const hermesSource = sources.find(source => source.kind === "harness_profile" && source.harness === "hermes" && source.providerId === "openai-codex");
+  const activeHermesProvider = input.canonical.drivers.find(driver => driver.id === "hermes")?.nativeRouteObservation?.providerId;
+  if (activeHermesProvider === "openai-codex" && hermesMetadata?.authMethod === "terminal" && hermesSource
+    && hermesSource.localObservation?.state === "present_unverified"
+    && Date.parse(hermesMetadata.checkedAt) <= input.now.getTime()
+    && Date.parse(hermesMetadata.staleAfter) > input.now.getTime()) {
+    hermesSource.displayName = hermesMetadata.accountLabel;
+    if (hermesMetadata.usage) hermesSource.usage = hermesMetadata.usage;
+  }
   const modelsByVendor = new Map<string, typeof input.canonical.models>();
   for (const model of input.canonical.models) {
     modelsByVendor.set(model.vendor, [...(modelsByVendor.get(model.vendor) ?? []), model]);
   }
-  const modelProviders = [...modelsByVendor].map(([id, models]) => ({
+  const modelProviders: ProviderSettingsSnapshot["modelProviders"] = [...modelsByVendor].map(([id, models]) => ({
     id,
     displayName: id === "cloudflare" ? "Cloudflare Workers AI" : id[0]!.toUpperCase() + id.slice(1),
     models: models.map((model) => ({
       id: model.id,
       displayName: model.displayName,
       enabled: model.status !== "retired" && model.status !== "unavailable",
+      capabilities: [...model.capabilities],
     })),
   }));
   const canonicalProviderIds = new Set(modelProviders.map((provider) => provider.id));
@@ -472,13 +523,13 @@ export async function projectProviderSettings(input: {
     if (!existing) {
       modelProviders.push({
         ...discovered,
-        models: discovered.models.map((model) => ({ ...model })),
+        models: discovered.models.map(({ id, displayName, enabled }) => ({ id, displayName, enabled })),
       });
       continue;
     }
     for (const model of discovered.models) {
       if (!existing.models.some((candidate) => candidate.id === model.id)) {
-        existing.models.push({ ...model });
+        existing.models.push({ id: model.id, displayName: model.displayName, enabled: model.enabled });
       }
     }
   }
@@ -512,6 +563,7 @@ export async function projectProviderSettings(input: {
   );
   const harnesses = input.config.harnesses.flatMap((stored) => {
     const harness = projectHarness({
+      nativeAuthenticatedAccountId,
       stored,
       canonical: input.canonical,
       modelProviders,
@@ -540,6 +592,7 @@ export async function projectProviderSettings(input: {
     configurationHarnessKinds: input.configurationHarnessKinds ?? [],
     harnessCatalog,
     modelProviders,
+    matrixModelInventory: projectMatrixModelInventory(input.canonical, fundedPolicyAuthoritative ? input.fundedPolicy : undefined),
     accessSources: sources,
     accounts,
     harnesses,

@@ -1,7 +1,13 @@
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
 import { ChatReadStateWireVersionSchema, projectChatReadStateResponse } from "@matrix-os/contracts";
-import { ChatInputWireVersionSchema, ChatMessageWireVersionSchema, projectChatMessageFrame } from "@matrix-os/contracts";
+import {
+  ChatEventWireVersionSchema,
+  ChatInputWireVersionSchema,
+  ChatMessageWireVersionSchema,
+  projectChatEventFrame,
+  projectChatMessageFrame,
+} from "@matrix-os/contracts";
 import { CanonicalChatEventCursorSchema, type CanonicalChatTransportFrame } from "@matrix-os/contracts";
 import { type Context, type Hono } from "hono";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -66,6 +72,8 @@ export function registerCanonicalChatEventHttpRoute(options: {
     if (!metadataVersion.success) return context.json({ error: "Unsupported metadata version" }, 400);
     const readStateVersion = ChatReadStateWireVersionSchema.safeParse(context.req.query("readStateVersion"));
     if (!readStateVersion.success) return context.json({ error: "Unsupported read-state version" }, 400);
+    const eventVersion = ChatEventWireVersionSchema.safeParse(context.req.query("eventVersion"));
+    if (!eventVersion.success) return context.json({ error: "Unsupported event version" }, 400);
     const encoder = new TextEncoder();
     const principal = options.getPrincipal(context);
     const protocol = context.req.header("x-matrix-chat-protocol");
@@ -105,7 +113,7 @@ export function registerCanonicalChatEventHttpRoute(options: {
       send(frame: CanonicalChatTransportFrame): boolean {
         if (closed || (controller.desiredSize ?? 0) <= 0) return false;
         try {
-          const projected = projectChatMessageFrame(frame, messageVersion.data, inputVersion.data);
+          const projected = projectChatMessageFrame(projectChatEventFrame(frame, eventVersion.data), messageVersion.data, inputVersion.data);
           const readProjected = projected.type === "chat.content" ? {
             ...projected, content: projectChatReadStateResponse(projected.content, readStateVersion.data),
           } : projected;

@@ -7,13 +7,13 @@ import {
   createDispatcher,
   type SpawnFn,
 } from "../../packages/gateway/src/dispatcher.js";
-import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 
 const temporaryHomePaths: string[] = [];
 
 function makeHomePath(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "dispatch-overrides-")));
   mkdirSync(join(dir, "system"), { recursive: true });
+  writeFileSync(join(dir, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-test-key" } }));
   temporaryHomePaths.push(dir);
   return dir;
 }
@@ -96,48 +96,15 @@ describe("dispatcher per-message kernel overrides", () => {
     expect(configs[1].env?.ANTHROPIC_API_KEY).toBe("sk-ant-owner-key");
   });
 
-  it("injects rotating Matrix credentials and aborts the funded run at its bounded deadline", async () => {
-      const provider: MatrixFundedCredentialProvider = {
-        enabled: true,
-        maxRunMs: 250,
-        getCredential: vi.fn(async () => ({
-          token: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
-          tokenId: "credential_123",
-          expiresAt: "2099-01-01T00:00:00.000Z",
-          relayBaseUrl: "https://relay.matrix-os.com",
-          maxRunMs: 250,
-        })),
-        invalidate: vi.fn(),
-        close: vi.fn(),
-      };
-      const seen: KernelConfig[] = [];
-      const spawn = vi.fn<SpawnFn>(async function* (_message, config, controller) {
-        seen.push(config);
-        await new Promise<void>((_resolve, reject) => {
-          controller?.signal.addEventListener("abort", () => reject(new Error("run aborted")), { once: true });
-        });
-        yield resultEvent();
-      });
-      const dispatcher = createDispatcher({
-        homePath: makeHomePath(),
-        spawnFn: spawn,
-        maxConcurrency: 1,
-        fundedCredentialProvider: provider,
-      });
-      const dispatched = dispatcher.dispatch(
-        "use included AI",
-        undefined,
-        () => {},
-        undefined,
-        undefined,
-        { accessSourceId: "matrix_included" },
-      );
-      await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
-      expect(seen[0].env).toMatchObject({
-        ANTHROPIC_API_KEY: expect.stringMatching(/^sk-matrix-funded-/),
-        ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
-      });
-      await expect(dispatched).rejects.toThrow("run aborted");
+  it("rejects an explicit Matrix SDK route before credential acquisition or spawn", async () => {
+    const getCredential = vi.fn();
+    const spawn = vi.fn<SpawnFn>(async function* () { yield resultEvent(); });
+    const dispatcher = createDispatcher({ homePath: makeHomePath(), spawnFn: spawn, maxConcurrency: 1,
+      fundedCredentialProvider: { enabled: true, maxRunMs: 250, getCredential, invalidate: vi.fn(), close: vi.fn() },
+    });
+    await expect(dispatcher.dispatch("use included AI", undefined, () => {}, undefined, undefined, { accessSourceId: "matrix_included" })).rejects.toThrow();
+    expect(getCredential).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it("passes a validated working directory to only the selected queued dispatch", async () => {
@@ -194,6 +161,22 @@ describe("dispatcher per-message kernel overrides", () => {
 
     expect(configs).toHaveLength(2);
     expect(configs.every((config) => config.ownerAudioTranscriber === ownerAudioTranscriber)).toBe(true);
+  });
+
+  it("rejects background Matrix SDK dispatches and implicit funded batches", async () => {
+    const homePath = makeHomePath();
+    writeFileSync(join(homePath, "system/config.json"), "{}");
+    const getCredential = vi.fn();
+    const spawn = vi.fn<SpawnFn>(async function* () { yield resultEvent(); });
+    const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1,
+      fundedCredentialProvider: { enabled: true, maxRunMs: 60_000, getCredential, invalidate: vi.fn(), close: vi.fn() },
+    });
+    await expect(dispatcher.dispatch("heartbeat", undefined, () => {}, undefined, undefined, {
+      accessSourceId: "matrix_included", fundedRequestClass: "background",
+    })).rejects.toThrow();
+    await expect(dispatcher.dispatchBatch([{ taskId: "batch-1", message: "batch", onEvent: () => {} }])).resolves.toMatchObject([{ taskId: "batch-1", status: "rejected" }]);
+    expect(getCredential).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it("waits for async event admission before consuming the next kernel event", async () => {

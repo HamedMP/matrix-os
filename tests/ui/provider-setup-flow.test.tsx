@@ -263,13 +263,16 @@ describe("truthful account setup", () => {
     expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
   });
 
-  it("keeps one visible native setup action for an authenticated generic agent", async () => {
+  it("uses the supplied Settings connection action without a legacy Terminal setup action", async () => {
     const input = props();
     const onSetupHarness = vi.fn().mockResolvedValue(true);
-    render(<AccountsPanel {...input} harness={{ ...input.harness, harness: "opencode", displayName: "OpenCode",
+    const onConnectSettings = vi.fn();
+    render(<AccountsPanel {...input} connectionAction={<button onClick={onConnectSettings}>Connect OpenCode</button>} harness={{ ...input.harness, harness: "opencode", displayName: "OpenCode",
       authState: "authenticated", loginMethods: [], recommendedLoginMethod: null }} canLogin={false} onSetupHarness={onSetupHarness} />);
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
-    await waitFor(() => expect(onSetupHarness).toHaveBeenCalledWith("opencode"));
+    expect(onConnectSettings).toHaveBeenCalledOnce();
+    expect(onSetupHarness).not.toHaveBeenCalled();
+    expect(input.onOpenTerminal).not.toHaveBeenCalled();
     expect(screen.getAllByRole("button", { name: "Connect OpenCode" })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /Add account/ })).not.toBeInTheDocument();
   });

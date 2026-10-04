@@ -366,7 +366,7 @@ export class CanonicalChatOrchestrator {
     }
     try { await this.options.agentContext?.revalidate(owner, chatId, context.latestRun.context); }
     catch (error: unknown) { return mapRepositoryError(error); }
-    const catalog = await this.options.catalog.getCatalog(principal);
+    const catalog = await this.options.catalog.getCatalog(principal, context.latestRun.selection);
     const validated = validateChatProviderSelection({
       catalog,
       selection: context.latestRun.selection,
@@ -691,7 +691,7 @@ export class CanonicalChatOrchestrator {
         permissionMode: run.permissionMode,
         ...(sharedScopeId ? { sharedScopeId } : {}),
         ...(resolvedRoot ? { executionRoot: resolvedRoot.primaryWorkspaceRoot } : {}),
-        ...(resolvedRoot ? { projectSlug: resolvedRoot.projectSlug } : {}),
+        ...(resolvedRoot?.projectSlug ? { projectSlug: resolvedRoot.projectSlug } : {}),
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
         signal: controller.signal,

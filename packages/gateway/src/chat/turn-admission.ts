@@ -5,6 +5,7 @@ import {
   CanonicalChatRunSchema, CanonicalChatTurnAdmissionResponseSchema,
   type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
   type CanonicalChatTurnAdmissionResponse,
+  canonicalExecutionRootProjectId,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
@@ -63,7 +64,7 @@ export async function admitCanonicalTurn(
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
     const effective = { ...input, ...prepared };
-    const catalog = await deps.catalog.getCatalog(principal);
+    const catalog = await deps.catalog.getCatalog(principal, prepared?.selection);
     const requirements = requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
       part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
     const validated = validateChatProviderSelection({
@@ -85,9 +86,18 @@ export async function admitCanonicalTurn(
         503,
       );
     }
+    // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
+    // so no ordinary Chat can mount a bot's private files.
+    if (input.executionRoot?.kind === "bot_workspace") {
+      throw new CanonicalChatOrchestrationError(
+        safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
+        400,
+      );
+    }
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
-    if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
+    if (input.executionRoot && record.projectId
+      && canonicalExecutionRootProjectId(input.executionRoot) !== record.projectId) {
       throw new CanonicalChatOrchestrationError(
         safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
         400,
@@ -166,7 +176,7 @@ export async function admitCanonicalTurn(
       selection: validated.selection,
       interactionMode: effective.interactionMode,
       ...(prepared?.context ? { context: prepared.context } : {}),
-      permissionMode: input.permissionMode,
+      permissionMode: effective.permissionMode,
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
         executionRootFingerprint: resolvedRoot.fingerprint,

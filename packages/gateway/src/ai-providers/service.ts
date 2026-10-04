@@ -60,6 +60,7 @@ interface AiProviderServiceOptions {
   driverInventory?: (signal: AbortSignal) => Promise<AiProviderSnapshotV3["drivers"]>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedReadinessReader?: FundedAiReadinessReader;
+  codexNativeKeyReadiness?: () => Promise<AiProviderReadiness | null>;
   codexLocalObservation?: (signal: AbortSignal) => Promise<CodexLocalCredentialObservation>;
 }
 
@@ -193,6 +194,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #nativeHarnessCatalogReader?: (refresh: boolean) => Promise<NonNullable<AiProviderSnapshotV3["nativeHarnessCatalog"]>>;
   readonly #driverInventory?: AiProviderServiceOptions["driverInventory"];
   readonly #fundedReadiness?: FundedAiReadinessReader;
+  readonly #codexNativeKeyReadiness?: AiProviderServiceOptions["codexNativeKeyReadiness"];
   readonly #codexLocalObservation?: AiProviderServiceOptions["codexLocalObservation"];
 
   constructor(options: AiProviderServiceOptions) {
@@ -214,6 +216,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     this.#nativeHarnessCatalogReader = options.nativeHarnessCatalogReader ? createCanonicalNativeHarnessCatalogReader(options.nativeHarnessCatalogReader,
       { hermesRuntimeSource: options.hermesRuntimeSource, now: this.#now }) : undefined;
     this.#fundedReadiness = options.fundedReadinessReader;
+    this.#codexNativeKeyReadiness = options.codexNativeKeyReadiness;
     this.#codexLocalObservation = options.codexLocalObservation;
   }
 
@@ -357,20 +360,21 @@ export class AiProviderService implements AiProviderSnapshotReader {
     // preserve its original timestamps rather than extending stale evidence.
     const codexLocalObservation = await this.#readCodexLocalObservation();
     options.signal?.throwIfAborted();
+    const codexNativeKey = await this.#codexNativeKeyReadiness?.();
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     // Driver health and CLI login are local observations. Neither proves the
     // selected OpenAI account or model can complete a remote request.
-    const codexReadiness: AiProviderReadiness = codexDriver?.installState === "installed"
+    const codexReadiness: AiProviderReadiness = codexNativeKey ?? (codexDriver?.installState === "installed"
       ? { state: "unknown", checkedAt: now, staleAfter: null, action: "retry", safeReason: "unknown" }
-      : readinessForDriver(codexDriver, now);
+      : readinessForDriver(codexDriver, now));
     const matrixReadiness = funded?.readiness ?? readinessForObservation(
       credentials.matrixIncluded.state === "ready" ? "unverified" : credentials.matrixIncluded.state,
       "matrix",
       now,
     );
     const fundedSourceReadiness = (modelId: string): AiProviderReadiness =>
-      (matrixReadiness.state === "ready" || matrixReadiness.safeReason === "credit_required")
-        && !funded?.allowedModelIds.includes(modelId)
+      funded !== undefined && (matrixReadiness.state === "ready" ? !funded.allowedModelIds.includes(modelId)
+        : !funded.discoverableModelIds?.includes(modelId) && !funded.allowedModelIds.includes(modelId))
         ? { state: "unavailable", checkedAt: matrixReadiness.checkedAt, staleAfter: null,
           action: "retry", safeReason: "provider_unavailable" }
         : matrixReadiness;
@@ -381,7 +385,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
         vendor: "cloudflare", accountLabel: "Included",
         eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
-          .filter((model) => funded?.allowedModelIds.includes(model.id)).map((model) => model.id),
+          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id)).map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSourceReadiness("@cf/zai-org/glm-5.3-flash")),
       sourceFromReadiness({
@@ -391,7 +395,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         vendor: "anthropic",
         accountLabel: "Included",
         eligibleModelIds: eligibleModelsForSource("matrix_included", catalog)
-          .filter((model) => funded?.allowedModelIds.includes(model.id))
+          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id))
           .map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSourceReadiness("claude-sonnet-5")),
@@ -424,15 +428,15 @@ export class AiProviderService implements AiProviderSnapshotReader {
       }, readinessForObservation("setup_required", "profile", now)),
       sourceFromReadiness({
         id: "owner_openai_profile",
-        displayName: "Codex account",
-        fundingKind: "owner_account",
+        displayName: codexNativeKey ? "OpenAI API key" : "Codex account",
+        fundingKind: codexNativeKey ? "owner_api_key" : "owner_account",
         vendor: "openai",
-        accountLabel: "Codex",
+        accountLabel: codexNativeKey ? "API key" : "Codex",
         eligibleModelIds: [...OWNER_OPENAI_MODEL_IDS],
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, codexReadiness),
     ];
-    if (codexLocalObservation) {
+    if (codexLocalObservation && !codexNativeKey) {
       accessSources[accessSources.length - 1] = {
         ...accessSources[accessSources.length - 1]!, localObservation: codexLocalObservation,
       };
@@ -462,8 +466,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
       {
         id: "owner_codex",
         vendor: "openai",
-        authMethod: codexReadiness.state === "setup_required" ? null : "provider_profile",
-        accountLabel: "Codex",
+        authMethod: codexNativeKey ? "api_key" : codexReadiness.state === "setup_required" ? null : "provider_profile",
+        accountLabel: codexNativeKey ? "OpenAI API key" : "Codex",
         ...codexReadiness,
       },
     ];

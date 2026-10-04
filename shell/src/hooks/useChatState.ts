@@ -34,11 +34,14 @@ export interface ChatState {
   displayedThroughSeq?: number;
   updateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
   agentClient?: ChatAgentClient;
+  botEventRevision?: number;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
+  /** Cancellable run from the selected canonical Chat detail, separate from admission/loading. */
+  activeRunId?: string;
   /** Name of the currently-running tool, or null when the agent is just
       generating text. Drives the global AgentStatusCard's stage label. */
   currentTool: string | null;

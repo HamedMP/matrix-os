@@ -12,32 +12,34 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 describe('WhatsApp schema startup', () => {
-  it('upgrades the deployed preview generation without overwriting owner data or additive columns', async () => {
+  it.each([8, 9, 10])('upgrades deployed core generation %s without overwriting owner data or additive columns', async (generation) => {
     const instance = await KyselyPGlite.create();
     const db = new Kysely<PlatformDatabase>({ dialect: instance.dialect });
     try {
       await runPlatformMigration(db, async (trx) => {
         await migratePlatformSchema(trx);
-        await sql`ALTER TABLE ai_runtime_credentials ADD COLUMN request_class TEXT NOT NULL
+        await sql`ALTER TABLE ai_runtime_credentials ADD COLUMN IF NOT EXISTS request_class TEXT NOT NULL
           DEFAULT 'interactive' CHECK (request_class IN ('interactive', 'background'))`.execute(trx);
+        await sql`ALTER TABLE ai_runtime_credentials ADD COLUMN preview_extension TEXT NOT NULL
+          DEFAULT 'retained-preview'`.execute(trx);
         await sql`INSERT INTO user_machines (machine_id, clerk_user_id, handle, provisioned_at)
           VALUES ('retained-machine', 'retained-owner', 'retained-owner', '2026-10-01')`.execute(trx);
         await sql`INSERT INTO ai_runtime_credentials
           (token_id, token_hash, owner_id, machine_id, runtime_slot, audience, scope, issued_at, expires_at, request_class)
           VALUES ('retained-credential', ${'a'.repeat(64)}, 'retained-owner', 'retained-machine', 'primary',
             'matrix-funded-relay', 'ai:invoke', '2026-10-01', '2026-11-01', 'background')`.execute(trx);
-      }, { revision: { generation: 8, fingerprint: 'preview-core' } });
+      }, { revision: { generation, fingerprint: 'preview-core' } });
       await runPlatformStartupMigrations(db);
-      const retained = await sql<{ owner: string; request_class: string }>`
-        SELECT machine.clerk_user_id AS owner, credential.request_class
+      const retained = await sql<{ owner: string; request_class: string; preview_extension: string }>`
+        SELECT machine.clerk_user_id AS owner, credential.request_class, credential.preview_extension
         FROM user_machines machine JOIN ai_runtime_credentials credential USING (machine_id)
         WHERE machine.machine_id = 'retained-machine'
       `.execute(db);
-      expect(retained.rows).toEqual([{ owner: 'retained-owner', request_class: 'background' }]);
+      expect(retained.rows).toEqual([{ owner: 'retained-owner', request_class: 'background', preview_extension: 'retained-preview' }]);
       const core = await sql<{ generation: number; fingerprint: string }>`
         SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'core'
       `.execute(db);
-      expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(8);
+      expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(generation);
       expect(core.rows).toEqual([PLATFORM_SCHEMA_REVISION]);
       const tables = await sql<{ name: string }>`SELECT to_regclass('whatsapp_connections')::text AS name`.execute(db);
       expect(tables.rows[0]?.name).toBe('whatsapp_connections');

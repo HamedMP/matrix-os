@@ -74,10 +74,11 @@ function ModeCard({
 
 // Inner form mounts only while open, so its state is fresh per open (no
 // reset-on-prop effect). autoFocus replaces a focus setTimeout.
-function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject }: {
+function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject, onProjectReady }: {
   onClose: () => void;
   canShareAfterCreate: boolean;
   onCreatedProject: (project: Project) => void;
+  onProjectReady?: (project: Project) => Promise<void | (() => void)>;
 }) {
   const api = useConnection((s) => s.api);
   const createProject = useBoard((s) => s.createProject);
@@ -236,6 +237,7 @@ function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject }: {
         setError,
         close: closeFromUser,
         ...(shareAfterCreating ? { onCreatedProject } : {}),
+        onProjectReady,
       },
     };
   };
@@ -495,7 +497,7 @@ function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject }: {
   );
 }
 
-export default function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export default function CreateProjectDialog({ open, onClose, onProjectReady }: { open: boolean; onClose: () => void; onProjectReady?: (project: Project) => Promise<void | (() => void)> }) {
   const organizationId = useConnection((state) => state.organizationId);
   const [shareTarget, setShareTarget] = useState<{
     id: string;
@@ -530,6 +532,7 @@ export default function CreateProjectDialog({ open, onClose }: { open: boolean; 
         onClose={onClose}
         canShareAfterCreate={Boolean(open && sharing?.organizationId)}
         onCreatedProject={handleCreatedProject}
+        onProjectReady={onProjectReady}
       />
     </Dialog>
     {shareTarget && sharing?.organizationId === shareTarget.organizationId ? <DesktopProjectSharingHost

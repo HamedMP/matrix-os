@@ -22,13 +22,14 @@ const repo = { cleanup: vi.fn(), lease: vi.fn(), getConnectionBySender: vi.fn(),
   checkpoint: vi.fn(), retry: vi.fn(), bindChat: vi.fn(), startLink: vi.fn() };
 const agent = { start: vi.fn(), poll: vi.fn() };
 const send = vi.fn();
+const react = vi.fn(async () => {});
 const logError = vi.fn();
 let now: number;
 let service: ReturnType<typeof createWhatsAppService>;
 type ServiceDependencies = Parameters<typeof createWhatsAppService>[0];
 function compose(options: Partial<ServiceDependencies> = {}) {
   service = createWhatsAppService({ config, repository: repo as unknown as ServiceDependencies['repository'],
-    agent, now: () => now, send, logError, ...options });
+    agent, now: () => now, send, react, logError, ...options });
   return service;
 }
 function job(payload: Record<string, unknown>, options: Partial<WhatsAppJob> = {}): WhatsAppJob {
@@ -229,7 +230,7 @@ describe('WhatsApp agent checkpoint and retry lifecycle', () => {
     'keeps persisted progress through %s failure without restarting the agent', async (failure) => {
       const { db } = await createTestPlatformDb();
       const durable = createWhatsAppRepository(db, config.encryptionKey, () => now);
-      const runtime = createWhatsAppService({ config, repository: durable, agent, send, logError, now: () => now });
+      const runtime = createWhatsAppService({ config, repository: durable, agent, send, react, logError, now: () => now });
       const spies: Array<{ mockRestore(): void }> = [];
       try {
         await sql`INSERT INTO whatsapp_connections(id,owner,sender,machine_id,chat_id,consent_version,created_at)
@@ -310,7 +311,8 @@ describe('WhatsApp agent checkpoint and retry lifecycle', () => {
     repo.checkpoint.mockResolvedValue(false); await process(incoming('Do work')); expect(agent.start).not.toHaveBeenCalled();
   });
   it('does not retry an admitted run when checkpoint persistence lost its fence', async () => {
-    repo.checkpoint.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    // Own the reaction and admission fences, then lose the run checkpoint.
+    repo.checkpoint.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     await process(incoming()); expect(repo.bindChat).toHaveBeenCalledOnce(); expect(repo.retry).not.toHaveBeenCalled();
   });
   it.each([undefined, -1, 2, 4])('bounds agent failures and returns safe recovery after exhaustion: %s', async (failures) => {

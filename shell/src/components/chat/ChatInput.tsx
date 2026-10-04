@@ -1,6 +1,7 @@
 "use client";
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
 import {
+  BOT_ATTACHMENT_HANDOFF_REASON,
   usePlatformSpeechDraft,
   SpeechInputWaveform,
   type ChatAgentDraftRequest,
@@ -13,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { CircleStop, Loader2Icon, MicIcon, SendIcon, XCircleIcon } from "@/lib/hugeicons";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
-import { ChatMentionControls, useChatMentionPermission, type ChatAgentClient } from "@matrix-os/ui";
+import { ChatMentionControls, useChatMentionPermission, useBotMentionNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import { ChatMentionTokens } from "./ChatInputExtras";
 import { handleChatInputKey } from "./chat-input-keyboard";
 import { chatInputPlaceholder, canSendChatInput } from "./chat-input-placeholder";
@@ -29,9 +30,11 @@ import {
   PlatformSpeechRecorderError,
 } from "@/lib/platform-speech-recorder";
 export function ChatInput({
-  composer, agentClient, scope, permissionMode,
+  composer, agentClient, scope, permissionMode, onOpenBotMention,
   connected,
   busy,
+  activeRunId,
+  onAbortCurrent,
   onSubmit,
   autoFocus,
   draftRequest,
@@ -39,15 +42,20 @@ export function ChatInput({
   unavailablePlaceholder,
   attachmentsEnabled,
   driveContextEnabled = false,
+  botContext = false,
+  botControls,
   speechClient,
   speechCaptureAdapter,
 }: {
   composer: ChatComposerDraft;
+  onOpenBotMention?: (chatId: string, text: string) => boolean | Promise<boolean>;
   agentClient?: ChatAgentClient;
   scope: string;
   permissionMode: string;
   connected: boolean;
   busy: boolean;
+  activeRunId?: string;
+  onAbortCurrent?: () => void;
   onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>, options?: ChatSubmitOptions) => void | Promise<boolean>;
   autoFocus?: boolean;
   draftRequest?: ChatAgentDraftRequest | null;
@@ -55,6 +63,8 @@ export function ChatInput({
   unavailablePlaceholder?: string;
   attachmentsEnabled: boolean;
   driveContextEnabled?: boolean;
+  botContext?: boolean;
+  botControls?: React.ReactNode;
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
 }) {
@@ -66,6 +76,7 @@ export function ChatInput({
   const query = queryMatch && dismissedQuery !== input ? queryMatch[1]! : null;
   const permission = useChatMentionPermission(scope, resources, permissionMode, composer.permissionIdentity);
   const mayQueue = resources.length > 0;
+  const canAbort = Boolean(activeRunId && onAbortCurrent);
 
 
   const mentionListRef = useRef<HTMLDivElement>(null);
@@ -73,6 +84,7 @@ export function ChatInput({
   const inputRef = useRef(input);
   const consumedDraftRequest = useRef<number | null>(null);
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
+  const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention, attachments.length ? BOT_ATTACHMENT_HANDOFF_REASON : undefined);
   const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
   const [defaultSpeechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());
   const speech = usePlatformSpeechDraft({
@@ -88,7 +100,8 @@ export function ChatInput({
     },
   });
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
-  const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !driveContextEnabled;
+  const contextEnabled = driveContextEnabled && !botContext;
+  const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
   const canSend = !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length, text: input, attachments: attachments.length });
 
   useEffect(() => {
@@ -136,17 +149,19 @@ export function ChatInput({
   return (
     <div className="flex flex-col gap-2">
       <ChatMentionPicker listRef={mentionListRef} onDismiss={() => { setDismissedQuery(input); textareaRef.current?.focus(); }} client={agentClient} scope={scope} query={query} resources={resources} onSelect={(resource) => {
-        composer.setResources([...resources, resource]);
-        setInput(input.replace(/@[^\s@]*$/, ""));
-        textareaRef.current?.focus();
+        const text = input.replace(/@[^\s@]*$/, "");
+        const insert = () => { composer.setResources([...resources, resource]); setInput(text); textareaRef.current?.focus(); };
+        if (!botMention.select(resource, text.trimEnd(), insert)) insert();
       }} />
-      <CompanyDriveContextControl identity={scope} resources={resources} enabled={driveContextEnabled} query={query} onSelect={resource => {
+      <CompanyDriveContextControl botContext={botContext} identity={scope} resources={resources} enabled={contextEnabled} query={query} onSelect={resource => {
         composer.setResources([...resources, resource]);
         if (query !== null) setInput(input.replace(/@[^\s@]*$/, ""));
         textareaRef.current?.focus();
       }}/>
       <ChatMentionTokens resources={resources} onRemove={(resource) => composer.setResources(resources.filter((item) => item !== resource))} />
       <ChatMentionControls client={agentClient} resources={resources} permissionMode={permissionMode} confirmed={permission.confirmed} onConfirm={permission.confirm} />
+      {botMention.pending ? <p role="status" className="text-xs">Opening bot Chat…</p> : null}
+      {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
       {speech.error ? <p role="alert" className="text-xs text-destructive">{speech.error}</p> : null}
       <Attachments attachments={attachments} onRemove={removeFile} />
@@ -207,18 +222,33 @@ export function ChatInput({
               </span>
             </>
           ) : null}
-          <Button
-            type="button"
-            aria-label={busy && mayQueue ? "Queue next" : "Send"}
-            size="icon"
-            className="size-8 rounded-full"
-            disabled={!canSend}
-            onClick={() => handleSubmit()}
-          >
-            <SendIcon className="size-4" />
-          </Button>
+          {canAbort ? (
+            <Button
+              type="button"
+              aria-label="Stop"
+              title="Stop"
+              size="icon"
+              className="size-8 rounded-full"
+              onClick={onAbortCurrent}
+            >
+              <CircleStop className="size-4" />
+            </Button>
+          ) : null}
+          {!canAbort || mayQueue ? (
+            <Button
+              type="button"
+              aria-label={busy && mayQueue ? "Queue next" : "Send"}
+              size="icon"
+              className="size-8 rounded-full"
+              disabled={!canSend}
+              onClick={() => handleSubmit()}
+            >
+              <SendIcon className="size-4" />
+            </Button>
+          ) : null}
         </div>
       </div>
+      {botControls ? <div className="flex min-w-0 justify-end pt-1">{botControls}</div> : null}
     </div>
   );
 }

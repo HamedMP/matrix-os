@@ -1,17 +1,27 @@
+import { openChatProviderSettings } from "./open-chat-provider-settings";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { projectContext } from "./canonical-project-context";
+import { useBotDraftNavigation } from "./use-bot-draft-navigation";
+import { CanonicalChatIdentityGate } from "./CanonicalChatIdentityGate";
 import { CanonicalNewChatContent } from "./CanonicalNewChatContent";
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 import { canonicalComposerSelectionIsAvailable } from "./canonical-composer-state";
 import {
   isChatUnread,
   chatReadAction,
   CanonicalSharedChatPanel,
+  BotChatPanel, BotModelRecoveryProvider,
+  BotComposerControls,
+  useDirectBotBinding,
+  BotDraftRecoveryPanel,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
 } from "@matrix-os/ui";
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { createChatMentionRequestTracker } from "@matrix-os/ui";
 import { ChatMentionControls, useChatMentionPermission } from "@matrix-os/ui";
-import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { ChatSharingButton } from "./ChatSharingButton";
 import { ChatContextMenu } from "@matrix-os/ui";
 import { openChatWebLink } from "./chat-web-navigation";
@@ -27,10 +37,9 @@ import type {
   CanonicalChatDetailResponse,
   CanonicalProviderCatalog,
   CanonicalChatQueuedTurn,
-  KernelConversationContextProjection,
 } from "@matrix-os/contracts";
 import { Plus, Search } from "@renderer/lib/hugeicons";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
@@ -53,13 +62,12 @@ import { canonicalChatPresentation } from "./canonical-chat-presentation";
 import { canonicalChatInputParts, canonicalChatTitle } from "./canonical-chat-submission";
 import { createLegacyGlobalProviderCatalog } from "./canonical-composer-adapter";
 import { chatSendFailureMessage } from "./chat-send-error";
-import { failClosedProviderCatalog, useChatProviderCatalog } from "./chat-provider-catalog";
+import { useChatProviderCatalog } from "./chat-provider-catalog";
 import { searchGlobalChatResources } from "./chat-resource-search";
 import ConversationContextPicker from "./ConversationContextPicker";
 import {
   SharedChatComposer,
   supportsNativeFileAttachments,
-  type ComposerReferenceToken,
   type SharedChatComposerSubmission,
 } from "./SharedChatComposer";
 import { SharedChatSurface } from "./SharedChatSurface";
@@ -68,8 +76,8 @@ import { useCanonicalChatRouteController } from "./use-canonical-chat-route-cont
 import { useCanonicalComposerSelection } from "./use-canonical-composer-selection";
 import { useProviderSetup } from "./use-provider-setup";
 import { useCreateAppRequest } from "../../stores/create-app-request";
-import { useChatComposerDrafts } from "./use-chat-composer-drafts";
-import { chatAgentComposerDraft } from "./chat-agent-draft";
+import { desktopComposerDraftIdentity, useChatComposerDrafts } from "./use-chat-composer-drafts";
+import { useChatAgentDraftRequest } from "./use-chat-agent-draft-request";
 import { QueuedTurnEditContext } from "./QueuedTurnEditContext";
 import { useImportedChatAssets } from "./use-imported-chat-assets";
 import { useChatArtifactActions } from "./use-chat-artifact-actions";
@@ -78,23 +86,6 @@ import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
-function projectContext(
-  projectId: string | undefined,
-  projects: ReturnType<typeof useBoard.getState>["projects"],
-  fallbackLabel?: string,
-): KernelConversationContextProjection | null {
-  if (!projectId) return null;
-  const project = projects.find((candidate) => (
-    candidate.id === projectId || candidate.slug === projectId
-  ));
-  return {
-    projectId,
-    projectName: project?.name ?? fallbackLabel ?? projectId,
-    projectKind: project?.kind ?? "folder",
-    ...(project?.repository ? { repositoryLabel: project.repository } : {}),
-    status: project || fallbackLabel ? "ready" : "unavailable",
-  };
-}
 
 // react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing workspace coordinates the canonical Chat controller, composer, credential disclosure and shared routes; this change only removes live-share callbacks. Splitting it belongs in a focused refactor.
 export function CanonicalChatWorkspace({
@@ -107,6 +98,7 @@ export function CanonicalChatWorkspace({
   sharedHeaderContainer,
   onSharedChatMetadata,
   draftRequest,
+  onDraftConsumed,
   projectLabel,
   active,
   live = active,
@@ -128,6 +120,7 @@ export function CanonicalChatWorkspace({
   sharedHeaderContainer?: HTMLElement | null;
   onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
+  onDraftConsumed?: (id: number) => void;
   projectLabel?: string;
   active: boolean;
   live?: boolean;
@@ -164,6 +157,9 @@ export function CanonicalChatWorkspace({
   const projects = useBoard((state) => state.projects);
   const fileNavigation = useChatFileNavigation();
   const chromeHost = useSurfaceChromeHost();
+  const botHeaderContainer = useContext(BotHeaderContext);
+  const reportBotHeaderBinding = useContext(BotHeaderBindingContext);
+  const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
@@ -172,10 +168,8 @@ export function CanonicalChatWorkspace({
     api: api ?? null,
     active: live && !explicitSharedRoute,
   });
-  const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallbackCatalog), [fallbackCatalog]);
-  const providerCatalog = catalog ?? (
-    liveCatalog.status === "ready" || liveCatalog.status === "error" ? liveCatalog.catalog : unavailableCatalog
-  );
+  const providerCatalog = catalog ?? liveCatalog.catalog;
+  const providerCatalogLoading = !catalog && liveCatalog.status === "loading";
   const onCredentialInvalidation = useCallback((event: CanonicalChatInvalidation) => {
     if (event.type !== "chat.changed"
       || (event.eventType !== "chat.updated" && event.eventType !== "chat.deleted")) return;
@@ -199,12 +193,25 @@ export function CanonicalChatWorkspace({
     eventSource,
     onInvalidation: onCredentialInvalidation,
   });
+  const [botEventRevision, setBotEventRevision] = useState(0);
+  useEffect(() => {
+    if (!live || !eventSource) return;
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === controller.activeChatId
+        && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
+        setBotEventRevision((revision) => revision + 1);
+      }
+    });
+    return () => subscription.dispose();
+  }, [live, eventSource, controller.activeChatId]);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
   );
   const routedComposerChatId = externalNavigation
     ? initialChatId ?? controller.activeChatId
     : controller.activeChatId ?? initialChatId;
+  const draftRetentionIdentity = useConnection(state => state.status === "signed-in" && state.userId
+    ? desktopComposerDraftIdentity(state) : undefined);
   const {
     text: draft,
     revision: draftRevision,
@@ -217,8 +224,10 @@ export function CanonicalChatWorkspace({
     setDraftProjectId,
     prepareNewChatDraft,
     removeChatDraft,
+    seedChatDraft,
   } = useChatComposerDrafts({
     clientIdentity: client,
+    retentionIdentity: draftRetentionIdentity,
     chatId: routedComposerChatId,
     projectId,
     conversation: globalView === "conversation",
@@ -241,19 +250,14 @@ export function CanonicalChatWorkspace({
   const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
-  const consumedDraftRequest = useRef<number | null>(null);
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const submissionSequence = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
-  useEffect(() => {
-    if (!draftRequest || consumedDraftRequest.current === draftRequest.id) return;
-    consumedDraftRequest.current = draftRequest.id;
-    prepareNewChatDraft(chatAgentComposerDraft(draftRequest));
-    setGlobalView("draft");
-    setLocalComposerFocusRequestId((requestId) => requestId + 1);
-  }, [draftRequest, prepareNewChatDraft]);
+  useChatAgentDraftRequest({ request: draftRequest, eligible: active && !initialChatId && initialView !== "conversation" && !explicitSharedRoute,
+    prepare: prepareNewChatDraft, showDraft: () => setGlobalView("draft"),
+    focus: () => setLocalComposerFocusRequestId((requestId) => requestId + 1), onConsumed: onDraftConsumed });
   const runtimeSummary = useCodingAgentWorkspace((state) => state.summary);
   const runtimeStatus = useCodingAgentWorkspace((state) => state.status);
   const composerFocusRequestId = useCodingAgentWorkspace((state) => state.composerFocusRequestId);
@@ -263,14 +267,23 @@ export function CanonicalChatWorkspace({
     refreshRuntimeSummary,
     api ?? null,
   );
-  const { selection, onSelectionChange } = useCanonicalComposerSelection({
+  const { selection: providerSelection, onSelectionChange } = useCanonicalComposerSelection({
     catalog: providerCatalog,
-    catalogReady: Boolean(catalog || liveCatalog.status === "ready" || liveCatalog.status === "error"),
+    catalogReady: Boolean(catalog || liveCatalog.hasTrustedCatalog || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
     chatId: controller.detail?.record.chat.id ?? null,
     currentSelection: controller.detail?.record.chat.currentSelection,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
+  const botBinding = useDirectBotBinding(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
+  const directBotId = botBinding.agentId;
+  useEffect(() => {
+    if (explicitSharedRoute || !routedComposerChatId || !reportBotHeaderBinding) return;
+    return reportBotHeaderBinding({ chatId: routedComposerChatId, client, status: botBinding.status, agentId: directBotId });
+  }, [explicitSharedRoute, routedComposerChatId, client, reportBotHeaderBinding, botBinding.status, directBotId]);
+  const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error";
+  const selection = botIdentityUnknown ? null : directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : providerSelection;
+  const selectionAvailable = !botIdentityUnknown && Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, mentionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -314,7 +327,6 @@ export function CanonicalChatWorkspace({
     ) return;
     previousRoute.current = { initialChatId, initialView, projectId };
     if (initialView === "draft") reportedChatId.current = initialChatId ?? null;
-    if (projectId !== null) return;
     setGlobalView(initialView ?? (initialChatId ? "conversation" : "index"));
   }, [initialChatId, initialView, projectId]);
 
@@ -346,8 +358,9 @@ export function CanonicalChatWorkspace({
     onActiveChatChanged?.(record.chat.id, record.chat.title);
   }, [controller.activeChatId, controller.detail?.record, initialChatId, initialView, onActiveChatChanged]);
 
+  const composerProjectId = controller.detail ? controller.detail.record.projectId ?? null : draftProjectId;
   const context = projectContext(
-    controller.detail?.record.projectId ?? draftProjectId ?? projectId ?? undefined,
+    composerProjectId ?? undefined,
     projects,
     projectLabel,
   );
@@ -411,8 +424,7 @@ export function CanonicalChatWorkspace({
     action.kind === "retry" || action.kind === "approval"
   ), []);
   const activeProjectSlug = projects.find((project) => (
-    project.id === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
-    || project.slug === (controller.detail?.record.projectId ?? draftProjectId ?? projectId)
+    project.id === composerProjectId || project.slug === composerProjectId
   ))?.slug;
   const resourceSearch = useCallback(async (resourceQuery: string) => {
     const results = await Promise.allSettled([
@@ -474,7 +486,8 @@ export function CanonicalChatWorkspace({
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       !selection
-      || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
+      || (!directBotId && providerCatalogLoading)
+      || !selectionAvailable
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
     ) return;
@@ -527,7 +540,7 @@ export function CanonicalChatWorkspace({
       };
       const admitted = attempt?.operation === "queue"
         ? await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted)
-        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId, acknowledgeAccepted);
+        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId, acknowledgeAccepted);
       if (!admitted || !isCurrentOwner()) return;
       if ("record" in admitted) {
         reportedChatId.current = admitted.record.chat.id;
@@ -551,7 +564,8 @@ export function CanonicalChatWorkspace({
       (!activeRun && !editingQueuedTurn && !mentionResources.length)
       || !controller.detail
       || !selection
-      || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
+      || (!directBotId && providerCatalogLoading)
+      || !selectionAvailable
       || composerAction
       || uploadingAttachments
       || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
@@ -644,7 +658,7 @@ export function CanonicalChatWorkspace({
   };
 
   const steerQueuedTurn = async (queuedTurnId: string) => {
-    if (queuePendingAction || editingQueuedTurn || !canSteerActiveRun || !activeRun) return;
+    if (botIdentityUnknown || queuePendingAction || editingQueuedTurn || !canSteerActiveRun || !activeRun) return;
     const queuedTurn = serverQueuedTurns.find((turn) => turn.id === queuedTurnId);
     if (!queuedTurn) return;
     setQueuePendingAction({ queuedTurnId, action: "steer" });
@@ -656,7 +670,7 @@ export function CanonicalChatWorkspace({
   };
 
   const editQueuedTurn = (queuedTurnId: string) => {
-    if (queuePendingAction || composerAction || uploadingAttachments || composerHasInput) return;
+    if (botIdentityUnknown || queuePendingAction || composerAction || uploadingAttachments || composerHasInput) return;
     const queuedTurn = queuedTurns.find((turn) => turn.id === queuedTurnId);
     if (!queuedTurn) return;
     const text = queuedTurn.parts
@@ -675,6 +689,7 @@ export function CanonicalChatWorkspace({
     controller.startNewChat();
     reportedChatId.current = null;
     onActiveChatChanged?.(null);
+    botMention.clearNotice();
     prepareNewChatDraft();
     setGlobalView("draft");
     setLocalComposerFocusRequestId((requestId) => requestId + 1);
@@ -691,8 +706,24 @@ export function CanonicalChatWorkspace({
     setGlobalView("conversation");
   };
 
+  const botMention = useBotDraftNavigation({ client: client.agents, scope: draftScope, revision: draftRevision, chatId: routedComposerChatId, projectId, sourceHasAttachments: attachments.items.length > 0, seed: seedChatDraft, open: selectChat,
+    restoreNewDraft: () => { controller.startNewChat(); reportedChatId.current = null; onActiveChatChanged?.(null); setGlobalView("draft"); },
+  });
+
   const composer = (
     <>
+      <QueuedTurnsPanel
+        turns={queuedTurns}
+        disabled={Boolean(editingQueuedTurn) || composerAction !== null || uploadingAttachments}
+        canSteer={!botIdentityUnknown && canSteerActiveRun} canEdit={!botIdentityUnknown}
+        pendingAction={queuePendingAction}
+        editingQueuedTurnId={editingQueuedTurn?.id ?? null}
+        onSteer={(queuedTurnId) => void steerQueuedTurn(queuedTurnId)}
+        onEdit={editQueuedTurn}
+        onReorder={(queuedTurnIds, movedQueuedTurnId) => void reorderQueuedTurns(queuedTurnIds, movedQueuedTurnId)}
+        onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
+      />
+      <CanonicalChatIdentityGate unknown={botIdentityUnknown} loading={botBinding.loading} retry={botBinding.retry} onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}><>
       <input
         ref={fileInputRef}
         type="file"
@@ -704,35 +735,28 @@ export function CanonicalChatWorkspace({
           event.currentTarget.value = "";
         }}
       />
-      <QueuedTurnsPanel
-        turns={queuedTurns}
-        disabled={Boolean(editingQueuedTurn) || composerAction !== null || uploadingAttachments}
-        canSteer={canSteerActiveRun}
-        pendingAction={queuePendingAction}
-        editingQueuedTurnId={editingQueuedTurn?.id ?? null}
-        onSteer={(queuedTurnId) => void steerQueuedTurn(queuedTurnId)}
-        onEdit={editQueuedTurn}
-        onReorder={(queuedTurnIds, movedQueuedTurnId) => void reorderQueuedTurns(queuedTurnIds, movedQueuedTurnId)}
-        onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
-      />
+
       <SharedChatComposer
         value={draft}
         onChange={setDraft}
         draftScopeKey={routedComposerChatId ?? `new:${projectId ?? "global"}`}
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
+        onAgentMention={botMention.select}
         onSubmit={(submission) => void (
           editingQueuedTurn || activeRun ? submitQueueAction(submission) : submit(submission)
         )}
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
-        disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
-        canSubmit={Boolean(canonicalComposerSelectionIsAvailable(providerCatalog, selection) && !uploadingAttachments && (
+        disabled={controller.status === "loading" || uploadingAttachments}
+        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
-        onProviderPickerOpen={catalog ? undefined : liveCatalog.refresh}
+        automaticRouting={Boolean(directBotId)}
+        botControls={directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={client.agents} catalog={providerCatalog} catalogLoading={providerCatalogLoading} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} zIndex={DESKTOP_Z_INDEX.popover} disabled={uploadingAttachments} refreshKey={botEventRevision} onChanged={() => setBotEventRevision(value => value + 1)}/> : undefined}
+        providerCatalogLoading={!directBotId && providerCatalogLoading}
         selection={selection}
         onSelectionChange={onSelectionChange}
         onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
@@ -787,13 +811,20 @@ export function CanonicalChatWorkspace({
         layout={workspaceLayout === "narrow" ? "narrow" : "default"}
       />
       {editingQueuedTurn ? <QueuedTurnEditContext turn={editingQueuedTurn} /> : null}
+      {botMention.pending ? <p role="status" className="px-3 text-xs">Opening bot Chat…</p> : null}
+      {botMention.error ? <p role="alert" className="px-3 text-xs">{botMention.error}</p> : null}
       <ChatMentionControls client={client.agents} resources={mentionResources} permissionMode={selection?.permissionMode ?? "supervised"}
         confirmed={mentionPermission.confirmed} onConfirm={mentionPermission.confirm} />
+      </></CanonicalChatIdentityGate>
     </>
   );
 
+  const sharingChatId = controller.detail?.record.chat.id;
+  const chatSharingAction = api && !chromeHost && sharingChatId ? <ChatSharingButton key={sharingChatId} api={api}
+    chatId={sharingChatId} copyText={copyText} /> : null;
+
   return (
-    <div
+    <BotModelRecoveryProvider agentId={directBotId} client={client.agents} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh}><div
       ref={workspaceRef}
       className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${workspaceLayout === "narrow" ? "flex-col" : "flex-row"}`}
       data-slot="canonical-chat-workspace"
@@ -888,13 +919,14 @@ export function CanonicalChatWorkspace({
         </div>
       </aside>)}
       <SharedChatSurface
+        ref={setBotDetailsContainer}
         ariaLabel={projectId ? "Project Chat" : "Global Chat"}
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
         aria-hidden={inspectorExclusive || undefined}
         inert={inspectorExclusive || undefined}
         hidden={inspectorExclusive}
         className={cn(
-          "relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+          "matrix-bot-chat-layout @container/bot-chat relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
           inspectorExclusive ? "hidden" : "flex",
         )}
         {...attachments.paneProps}
@@ -912,6 +944,7 @@ export function CanonicalChatWorkspace({
             </div>
           )
         ) : <>
+        {botMention.recovery ? <BotDraftRecoveryPanel onReturn={botMention.returnToOriginalDraft}/> : null}
         {submissionError || controller.error ? (
           <div role="alert" className={cn("mx-auto mt-3 w-[calc(100%-2.5rem)] rounded-lg border px-3 py-2 text-sm", CHAT_CONTENT_WIDTH_CLASS)} style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
             {submissionError ?? controller.error}
@@ -919,8 +952,11 @@ export function CanonicalChatWorkspace({
         ) : null}
         {controller.detail && globalView === "conversation" ? (
           <>
-            {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id}
-              copyText={copyText} /> : null}
+            {!directBotId ? chatSharingAction : null}
+            <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
+              client={client.agents} directBotId={directBotId} detailsContainer={botDetailsContainer} headerContainer={botHeaderContainer}
+              headerActions={chatSharingAction}
+              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
@@ -972,7 +1008,7 @@ export function CanonicalChatWorkspace({
             Loading chat…
           </div>
         ) : (
-          <CanonicalNewChatContent projectId={projectId} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
+          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
         )}
         </>}
       </SharedChatSurface>
@@ -1002,6 +1038,6 @@ export function CanonicalChatWorkspace({
           }}
         />
       ) : null}
-    </div>
+    </div></BotModelRecoveryProvider>
   );
 }

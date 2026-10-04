@@ -157,7 +157,7 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
     "authentication_required",
     "multiple_profiles_unsupported",
   ]).optional(),
-  connectionState: z.enum(["ready", "credit_required", "unavailable"]).optional(),
+  connectionState: z.enum(["ready", "credit_required", "credit_reserved", "unavailable"]).optional(),
   workspaceRequirement: z.enum(["none", "project_optional", "project_required"]),
   catalogRevision: canonicalReferenceId(160),
   models: z.array(CanonicalModelDescriptorSchema).max(64),

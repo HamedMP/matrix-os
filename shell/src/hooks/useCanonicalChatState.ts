@@ -42,6 +42,7 @@ function requestId(): string {
 
 function conversationMeta(record: CanonicalChatRecord) {
   return {
+    canonicalRecord: record,
     readState: record.readState,
     id: record.chat.id,
     title: record.chat.title,
@@ -97,6 +98,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   const [eventConnectionState, setEventConnectionState] = useState<CanonicalChatEventConnectionState>(
     eventSource.connectionState(),
   );
+  const [botEventRevision, setBotEventRevision] = useState(0);
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
   const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
@@ -239,6 +241,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     ));
     let listTimer: number | undefined;
     const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === activeChatId
+        && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
+        setBotEventRevision((revision) => revision + 1);
+      }
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setRecords((current) => current.map((item) => item.chat.id === record.chat.id
@@ -480,6 +486,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   }, []);
 
   const switchConversation = useCallback((chatId: string) => {
+    activeChatIdRef.current = chatId;
+    detailRef.current = null;
     detailRequestGeneration.current += 1;
     setActiveChatId(chatId);
     setDetail(null);
@@ -514,12 +522,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
 
   const abortCurrent = useCallback(() => {
     const current = detailRef.current;
-    if (!current?.record.activeRun) return;
-    void client.cancelRun(current.record.chat.id, current.record.activeRun.runId, requestId())
-      .then(() => loadDetail(current.record.chat.id))
+    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current) return;
+    const chatId = current.record.chat.id;
+    void client.cancelRun(chatId, current.record.activeRun.runId, requestId())
+      .then(() => { if (activeChatIdRef.current === chatId) return loadDetail(chatId); })
       .catch((error: unknown) => {
         console.warn("[canonical-chat] Shell cancellation failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError("The run could not be stopped. Try again.");
+        if (activeChatIdRef.current === chatId) setSafeError("The run could not be stopped. Try again.");
       });
   }, [client, loadDetail]);
 
@@ -658,10 +667,12 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     messages,
     sessionId: activeChatId,
     busy: submitting || detailLoading || Boolean(detail?.record.activeRun),
+    activeRunId: detail && detail.record.chat.id === activeChatId ? detail.record.activeRun?.runId : undefined,
     currentTool: null,
     connected,
     queue: [],
     agentClient: client.agents,
+    botEventRevision,
     queuedTurns: detail?.queuedTurns ?? [],
     cancelQueuedTurn,
     providerSelection: activeRecord?.chat.currentSelection,

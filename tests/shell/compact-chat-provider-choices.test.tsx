@@ -6,10 +6,13 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CompactChatProviderChoices } from "../../packages/ui/src/compact-chat-provider-choices.js";
 import type { CanonicalProviderChoice } from "../../packages/ui/src/canonical-provider-choice.js";
+import { deriveCanonicalProviderChoices } from "../../packages/ui/src/canonical-provider-choice.js";
+import { managedChatInstances, managedPiChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 
 const matrix: CanonicalProviderChoice = {
-  instanceId: "kernel_matrix_included", driverKind: "kernel", harnessLabel: "Matrix AI",
+  instanceId: "matrix_pi_default", driverKind: "matrix_pi", harnessLabel: "Matrix AI",
   modelId: "claude-sonnet-5", modelLabel: "Claude Sonnet 5", interactionMode: "default",
   interactionModes: ["default"], permissionMode: "supervised", permissionModes: ["supervised"],
   options: [], selectedOptions: [], supportsFileAttachments: true,
@@ -25,13 +28,13 @@ const support = {
 const catalog: CanonicalProviderCatalog = {
   revision: "two-pane-fixture",
   drivers: [
-    { kind: "kernel", displayName: "Matrix AI", adapterVersion: "1", capabilityClass: "system_agent" },
+    { kind: "matrix_pi", displayName: "Matrix AI", adapterVersion: "1", capabilityClass: "system_agent" },
     { kind: "pi", displayName: "Pi", adapterVersion: "1", capabilityClass: "coding_agent" },
     { kind: "opencode", displayName: "OpenCode", adapterVersion: "1", capabilityClass: "coding_agent" },
   ],
   instances: [
     {
-      id: matrix.instanceId, driverKind: "kernel", displayName: matrix.harnessLabel,
+      id: matrix.instanceId, driverKind: "matrix_pi", displayName: matrix.harnessLabel,
       availability: "available", workspaceRequirement: "none", catalogRevision: "two-pane-fixture",
       models: [{ id: matrix.modelId, displayName: matrix.modelLabel, availability: "available", capabilities: [], supportsVision: false, supportsToolUse: true }],
       options: [], skills: [], commands: [], setupActions: [], supports: support,
@@ -53,24 +56,54 @@ const catalog: CanonicalProviderCatalog = {
 };
 
 describe("compact shared Chat choices", () => {
+  it("hides the retired SDK route while preserving managed selection and historical locking", () => {
+    const snapshot = makeAiProviderSnapshot();
+    const managedCatalog: CanonicalProviderCatalog = {
+      revision: "managed-pi-and-kernel",
+      drivers: [
+        { kind: "kernel", displayName: "Claude SDK", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+        { kind: "matrix_pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+      ],
+      instances: [...managedChatInstances(snapshot, []), ...managedPiChatInstances(snapshot)]
+        .map((instance) => ({ ...instance, catalogRevision: "managed-pi-and-kernel" })),
+    };
+    const choices = deriveCanonicalProviderChoices(managedCatalog);
+    const selectedPi = choices.find((choice) => choice.instanceId === "matrix_pi_default")!;
+    const selectedKernel = { instanceId: "kernel_matrix_included", modelId: "claude-sonnet-5" };
+    const select = vi.fn();
+    const view = render(<CompactChatProviderChoices catalog={managedCatalog} choices={choices} selected={selectedPi} onSelect={select} />);
+    expect(screen.getAllByRole("button", { name: "Matrix AI agent, Available" })).toHaveLength(1);
+    const piOption = screen.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" });
+    expect(piOption).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(piOption);
+    expect(select).toHaveBeenCalledWith(selectedPi);
+    expect(select.mock.calls[0]![0].instanceId).toBe("matrix_pi_default");
+    view.rerender(<CompactChatProviderChoices catalog={managedCatalog} choices={choices} selected={selectedKernel}
+      lockedInstanceId="kernel_matrix_included" onSelect={select} />);
+    expect(screen.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" })).toBeDisabled();
+    expect(screen.queryByRole("option", { name: /Claude SDK/ })).toBeNull();
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select).toHaveBeenLastCalledWith(selectedPi);
+  });
+
   it("shows Matrix AI at the top level and selects its actual Pi execution route", () => {
     const select = vi.fn();
-    const managed = { ...pi, modelId: "cloudflare:@cf/zai-org/glm-5.3-flash", modelLabel: "GLM Flash", connectionLabel: "Matrix AI" };
-    const managedCatalog = { ...catalog, instances: catalog.instances.filter(instance => instance.driverKind !== "kernel")
-      .map(instance => instance.id === pi.instanceId ? { ...instance, connectionLabel: "Matrix AI", models: [{ ...instance.models[0]!, id: managed.modelId, displayName: managed.modelLabel }] } : instance) };
+    const managed = { ...matrix, modelId: "cloudflare:@cf/zai-org/glm-5.3-flash", modelLabel: "GLM Flash", connectionLabel: "Matrix AI" };
+    const managedCatalog = { ...catalog, instances: catalog.instances
+      .map(instance => instance.id === matrix.instanceId ? { ...instance, connectionLabel: "Matrix AI", models: [{ ...instance.models[0]!, id: managed.modelId, displayName: managed.modelLabel }] } : instance) };
     render(<CompactChatProviderChoices catalog={managedCatalog} choices={[managed]} selected={managed} onSelect={select}
       renderDriverIcon={kind => <span data-testid={`glyph-${kind}`} />} />);
     const entry = screen.getByRole("button", { name: "Matrix AI agent, Available" });
     expect(entry).toBeVisible();
     expect(within(entry).getByTestId("glyph-kernel")).toBeVisible();
     fireEvent.click(entry);
-    fireEvent.click(screen.getByRole("option", { name: "GLM Flash via Pi · Work · Matrix AI" }));
+    fireEvent.click(screen.getByRole("option", { name: "GLM Flash via Matrix AI" }));
     expect(select).toHaveBeenCalledWith(managed);
-    expect(select.mock.calls[0]![0].instanceId).toBe("pi_work");
+    expect(select.mock.calls[0]![0].instanceId).toBe("matrix_pi_default");
   });
   it("keeps an unavailable Matrix AI entry browsable without inventing a selectable route", () => {
     const select = vi.fn();
-    const ownCatalog = { ...catalog, instances: catalog.instances.filter(instance => instance.driverKind !== "kernel") };
+    const ownCatalog = { ...catalog, instances: catalog.instances.filter(instance => instance.id !== matrix.instanceId) };
     render(<CompactChatProviderChoices catalog={ownCatalog} choices={[pi]} selected={pi} onSelect={select} />);
     const entry = screen.getByRole("button", { name: "Matrix AI agent, Unavailable" });
     expect(entry).toBeEnabled();
@@ -80,7 +113,7 @@ describe("compact shared Chat choices", () => {
     expect(select).not.toHaveBeenCalled();
   });
   it("shows the server's managed credit state without offering an unavailable model", () => {
-    const funded = { ...catalog.instances[1]!, connectionLabel: "Matrix AI", connectionState: "credit_required" as const,
+    const funded = { ...catalog.instances[0]!, connectionLabel: "Matrix AI", connectionState: "credit_required" as const,
       availability: "unavailable" as const, models: [], defaultSelection: undefined };
     render(<CompactChatProviderChoices catalog={{ ...catalog, instances: [funded] }} choices={[]} selected={null} onSelect={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Matrix AI credit required" }));
@@ -89,15 +122,15 @@ describe("compact shared Chat choices", () => {
   });
   it("keeps resumed chats locked to the underlying managed instance", () => {
     const select = vi.fn();
-    const managed = { ...pi, connectionLabel: "Matrix AI" };
-    const managedCatalog = { ...catalog, instances: catalog.instances.map(instance => instance.id === pi.instanceId
-      ? { ...instance, connectionLabel: "Matrix AI" } : instance) };
-    render(<CompactChatProviderChoices catalog={managedCatalog} choices={[managed, matrix]} selected={managed}
-      lockedInstanceId={pi.instanceId} onSelect={select} />);
-    fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Available" }));
-    expect(screen.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("option", { name: "Claude Sonnet 5 via Pi · Work · Matrix AI" }));
-    expect(select).toHaveBeenCalledWith(managed);
+    render(<CompactChatProviderChoices catalog={catalog} choices={[matrix, pi]} selected={matrix}
+      lockedInstanceId={matrix.instanceId} onSelect={select} />);
+    fireEvent.click(screen.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" }));
+    expect(select).toHaveBeenCalledExactlyOnceWith(matrix);
+    const ownedPi = screen.getByRole("button", { name: "Pi · Work agent, Available" });
+    expect(ownedPi).toBeDisabled();
+    fireEvent.click(ownedPi);
+    expect(screen.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" })).toBeVisible();
+    expect(select).toHaveBeenCalledTimes(1);
   });
   it("keeps a locally configured Codex choice selectable with qualified copy", () => {
     vi.useFakeTimers();
@@ -254,6 +287,13 @@ describe("provider setup affordances", () => {
     style.textContent = `:root { --accent: rgb(20, 60, 40); --text-on-accent: rgb(250, 250, 245); }
 ${readFileSync("packages/ui/src/compact-chat-provider-choices.css", "utf8")}`;
     document.head.append(style);
+    // jsdom keyframe rules incorrectly reuse a sibling's computed :disabled
+    // style. These assertions exercise static colors/dimming, so omit animation
+    // rules from the test stylesheet while retaining every presentation rule.
+    const sheet = style.sheet!;
+    for (let index = sheet.cssRules.length - 1; index >= 0; index -= 1) {
+      if (sheet.cssRules[index]!.type === CSSRule.KEYFRAMES_RULE) sheet.deleteRule(index);
+    }
     return () => style.remove();
   }
 

@@ -65,7 +65,8 @@ export function createWhatsAppRoutes(deps: {
   });
   function failure(c: import('hono').Context, error: unknown) {
     if (error instanceof Error && error.name === 'BodyLimitError') return c.json({ error: 'Request too large' }, 413);
-    if (error instanceof WhatsAppRepositoryError) return c.json({ error: 'Could not connect. Request a fresh link and try again.' }, error.code === 'capacity' ? 503 : error.code === 'conflict' ? 409 : 403);
+    if (error instanceof WhatsAppRepositoryError && error.code === 'capacity') return c.json({ error: 'Connection is busy. Please retry this step shortly.' }, 503);
+    if (error instanceof WhatsAppRepositoryError) return c.json({ error: 'Could not connect. Request a fresh link and try again.' }, error.code === 'conflict' ? 409 : 403);
     log(error); return c.json({ error: 'Connection unavailable' }, 503);
   }
   async function inputBody(c: import('hono').Context): Promise<unknown> {

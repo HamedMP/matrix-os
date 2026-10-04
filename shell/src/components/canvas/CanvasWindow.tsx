@@ -486,6 +486,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               messages={chatState.messages}
               sessionId={chatState.sessionId}
               busy={chatState.busy}
+              activeRunId={chatState.activeRunId}
+              onAbortCurrent={chatState.abortCurrent}
               connected={chatState.connected}
               conversations={chatState.conversations}
               onNewChat={chatState.newChat}
@@ -493,7 +495,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               activeConversationTitle={chatState.activeConversationTitle}
               onRenameConversation={chatState.renameConversation}
               onSubmit={chatState.submitMessage}
-              agentClient={chatState.agentClient} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn}
+              agentClient={chatState.agentClient} botEventRevision={chatState.botEventRevision} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn}
               onSubmitApproval={chatState.submitApproval}
               onSubmitInput={chatState.submitInput}
               providerSelection={chatState.providerSelection}

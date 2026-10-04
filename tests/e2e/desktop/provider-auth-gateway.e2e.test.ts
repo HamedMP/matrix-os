@@ -23,7 +23,7 @@ describe("provider authentication gateway fixture", () => {
     const unauthenticated = await load();
     expect(unauthenticated.accounts[0]?.authState).toBe("unauthenticated");
     expect(unauthenticated.accessSources[0]?.readiness.action).toBe("open_terminal");
-    expect(unauthenticated.supportedActions).toEqual(["start_login"]);
+    expect(unauthenticated.supportedActions).toEqual(["start_login", "set_harness_enabled"]);
 
     const connect = ProviderSettingsMutationResponseSchema.parse(await fetch(
       `${gateway.url}/api/ai/provider-settings/actions?includeCapabilities=true`,
@@ -50,7 +50,7 @@ describe("provider authentication gateway fixture", () => {
     const authenticated = await load();
     expect(authenticated.accounts[0]?.authState).toBe("authenticated");
     expect(authenticated.accessSources[0]?.readiness.action).toBe("none");
-    expect(authenticated.supportedActions).toEqual(["logout_account"]);
+    expect(authenticated.supportedActions).toEqual(["logout_account", "set_harness_enabled"]);
 
     const disconnect = ProviderSettingsMutationResponseSchema.parse(await fetch(
       `${gateway.url}/api/ai/provider-settings/actions?includeCapabilities=true`,
@@ -67,7 +67,7 @@ describe("provider authentication gateway fixture", () => {
     ).then((response) => response.json()));
     expect(disconnect.kind).toBe("snapshot");
     expect(disconnect.snapshot.accounts[0]?.authState).toBe("unauthenticated");
-    expect(disconnect.snapshot.supportedActions).toEqual(["start_login"]);
+    expect(disconnect.snapshot.supportedActions).toEqual(["start_login", "set_harness_enabled"]);
     expect(gateway.commands).toHaveLength(1);
   });
 });
