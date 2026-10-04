@@ -84,6 +84,7 @@ it("keeps browser login, cancellation, completion and selected-agent disconnect 
     const disconnect = page.getByRole("button", { name: "Disconnect", exact: true });
     await disconnect.waitFor();
     const claudeRow = page.locator(".matrix-ap-rail-item").filter({ hasText: "Claude" }).first();
+    await page.getByRole("button", { name: /^Claude.*Connected/ }).waitFor();
     expect(await claudeRow.getAttribute("aria-expanded")).toBe("true");
     expect(await claudeRow.textContent()).toContain("Connected");
     expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed"]);
@@ -93,6 +94,7 @@ it("keeps browser login, cancellation, completion and selected-agent disconnect 
     await disconnect.click();
     await page.getByRole("dialog", { name: "Disconnect Claude?", exact: true }).getByRole("button", { name: "Disconnect", exact: true }).click();
     await accountChoice.waitFor();
+    await page.getByRole("button", { name: /^Claude.*Not connected/ }).waitFor();
     expect(await claudeRow.textContent()).toContain("Not connected");
     expect(gateway.workflowEvents.at(-1)).toBe("agent-disabled");
     // Fixture HTTP state independently proves Disconnect did not log out the account.
