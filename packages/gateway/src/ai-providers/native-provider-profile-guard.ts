@@ -1,3 +1,5 @@
+import { ProviderWorkflowError } from "./provider-workflows.js";
+import { createNativeProviderWriterLease } from "./native-provider-writer-lease.js";
 import { join } from 'node:path';
 import { z } from 'zod/v4';
 import { ProviderConnectionAttemptSchema } from '@matrix-os/contracts';
@@ -5,10 +7,12 @@ import { readBoundedJsonFileWithIdentity } from '../bounded-json-file.js';
 import { readSavedProviderSettingsConfiguration } from './provider-settings-persistence.js';
 import { ProviderSettingsStoreError } from './provider-settings-errors.js';
 
+/** Saver proves rejection preceded any native writer or profile mutation. */
+export class NativeProviderWriteNotStartedError extends ProviderWorkflowError { constructor() { super('unavailable'); } }
 export type NativeProviderProfile = 'codex' | 'claude';
-type Admission = { kind: 'write' } | { kind: 'login'; recoveryKey: string; matchesLegacyReceipt?: (key: string, payloadHash: string) => boolean };
+type Admission = { kind: 'write'; durable?: boolean } | { kind: 'login'; recoveryKey: string; matchesLegacyReceipt?: (key: string, payloadHash: string) => boolean };
 export interface NativeProviderProfileGuard {
-  acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void>;
+  acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void | Promise<void>>;
   run<T>(profile: NativeProviderProfile, admission: Admission, operation: () => Promise<T>): Promise<T>;
 }
 const ReceiptDocument = z.object({ version: z.literal(1), receipts: z.array(z.object({ key: z.string().min(1).max(128).optional(), payloadHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), recoveryHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), superseded: z.boolean().optional(), archivedSessionName: z.string().min(1).max(128).optional(), attempt: ProviderConnectionAttemptSchema }).passthrough()).max(256) }).strict();
@@ -25,8 +29,10 @@ export function createNativeProviderProfileGuard(options: {
   };
 }): NativeProviderProfileGuard {
   if (!options.homePath || !options.registry?.get || !options.registry.observeAgentLiveness) throw new Error('Native profile admission dependencies required');
+  const leases = createNativeProviderWriterLease(options.homePath);
   const slots = { codex: { queued: 0 }, claude: { queued: 0 } };
   async function assertAvailable(profile: NativeProviderProfile, admission: Admission) {
+    await leases.assertAvailable(profile);
     const documents = await Promise.all(['login-receipts.json', 'login-recovery.json'].map(async name => {
       const document = await readBoundedJsonFileWithIdentity(join(options.homePath, 'system/ai-providers', name), 1024 * 1024);
       return document ? ReceiptDocument.parse(document.value).receipts : [];
@@ -66,20 +72,31 @@ export function createNativeProviderProfileGuard(options: {
       throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
     }
   }
-  async function acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void> {
+  async function acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void | Promise<void>> {
     const slot = slots[profile];
     if (!slot || slot.queued > 0) throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
     slot.queued = 1;
-    try { await assertAvailable(profile, admission); }
+    let releaseLease: (() => Promise<void>) | undefined;
+    try { await assertAvailable(profile, admission); if (admission.kind === "write" && admission.durable) releaseLease = await leases.acquire(profile); }
     catch (error) { slot.queued = 0; throw error; }
     let released = false;
-    return () => { if (!released) { released = true; slot.queued = 0; } };
+    return () => {
+      if (released) return;
+      if (!releaseLease) { released = true; slot.queued = 0; return; }
+      return releaseLease().then(() => { released = true; slot.queued = 0; });
+    };
   }
   return {
     acquire,
     async run<T>(profile: NativeProviderProfile, admission: Admission, operation: () => Promise<T>): Promise<T> {
-      const release = await acquire(profile, admission);
-      try { return await operation(); } finally { release(); }
+      const release = await acquire(profile, admission.kind === "write" ? { ...admission, durable: true } : admission);
+      try { const result = await operation(); await release(); return result; }
+      catch (error) {
+        // Direct writer failure is not evidence of drain. Preserve its durable
+        // admission; terminal-backed login still uses registry liveness.
+        if (admission.kind !== 'write' || error instanceof NativeProviderWriteNotStartedError) await release();
+        throw error;
+      }
     },
   };
 }

@@ -31,7 +31,7 @@ function lifecycleDriver(input: {
     return { driverId: "claude_code", harness: "claude" };
   }
   if (input.driverId === "codex" && input.providerId === "openai"
-    && (input.authMethod === "terminal" || input.authMethod === "oauth")) {
+    && (input.authMethod === "terminal" || input.authMethod === "oauth" || input.authMethod === "api_key")) {
     return { driverId: "codex", harness: "codex" };
   }
   return null;

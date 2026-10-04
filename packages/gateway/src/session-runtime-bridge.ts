@@ -49,7 +49,7 @@ type ProviderLoginRuntime = Pick<TerminalRuntimeSocketClient,
   "listWorkspaces" | "ensureWorkspace" | "createTab" | "renameTab" | "terminateTab">
   & Partial<Pick<TerminalRuntimeSocketClient, "getCommandState" | "archiveEndedTab">>;
 
-type NamedTerminal = { name: string };
+type NamedTerminal = { name: string; agent?: AgentKind };
 
 function providerLoginRegistryError(code: "session_not_found" | "session_exists", message: string): Error {
   return Object.assign(new Error(message), { code });
@@ -89,6 +89,11 @@ export function createProviderLoginTerminalRegistry(runtime: ProviderLoginRuntim
   }
 
   return {
+    async listProfileSessions(): Promise<NamedTerminal[]> {
+      return (await runtime.listWorkspaces()).flatMap(workspace => workspace.tabs.filter(tab =>
+        /^(?:provider-workflow-native-(?:codex|claude)-(?:install|uninstall)-|provider-auth-|provider-login-(?:codex|claude)-)/.test(tab.name))
+        .map(tab => ({ name: tab.name, ...(tab.agent ? { agent: tab.agent.providerId as AgentKind } : {}) })));
+    },
     /** Resolve only the exact server-created tab, without creating or adopting another terminal. */
     async resolveTerminalRef(identity: string): Promise<TerminalRef> {
       const [workspaceId, tabId, extra] = identity.split(":");
@@ -124,7 +129,8 @@ export function createProviderLoginTerminalRegistry(runtime: ProviderLoginRuntim
     },
 
     async get(name: string): Promise<NamedTerminal> {
-      return { name: (await find(name)).name };
+      const tab = await find(name);
+      return { name: tab.name, ...(tab.agent ? { agent: tab.agent.providerId as AgentKind } : {}) };
     },
 
     async delete(name: string, options: { force?: boolean } = {}): Promise<void> {
