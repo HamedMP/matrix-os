@@ -1,6 +1,8 @@
 .matrix-agents-providers {
   --matrix-ap-surface: var(--ap-surface, var(--bg-surface, var(--card)));
   --matrix-ap-sunken: var(--ap-sunken, var(--bg-sunken, var(--muted)));
+  --matrix-ap-dialog-scrim: var(--ap-dialog-scrim, var(--overlay-dim, rgba(0, 0, 0, 0.55)));
+  --matrix-ap-dialog-shadow: var(--ap-dialog-shadow, var(--shadow-3, 0 18px 48px rgba(0, 0, 0, 0.6)));
   --matrix-ap-overlay: var(--ap-overlay, var(--bg-overlay, var(--background)));
   --matrix-ap-text: var(--ap-text, var(--text-primary, var(--foreground)));
   --matrix-ap-muted: var(--ap-muted, var(--text-secondary, var(--muted-foreground)));
@@ -128,7 +130,7 @@
 .matrix-ap-agent-logo img { display: block; height: 20px; object-fit: contain; width: 20px; }
 .matrix-ap-connection { margin-bottom: 16px; }
 .matrix-ap-connection-options { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.matrix-ap-connection-choice { background: var(--matrix-ap-surface); border: 1px solid var(--matrix-ap-border); border-radius: 9px; color: var(--matrix-ap-text); cursor: pointer; display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 12px; text-align: left; }
+.matrix-ap-connection-choice { position: relative; background: var(--matrix-ap-surface); border: 1px solid var(--matrix-ap-border); border-radius: 9px; color: var(--matrix-ap-text); cursor: pointer; display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 12px; text-align: left; }
 .matrix-ap-connection-choice strong { font-size: 13px; }
 .matrix-ap-connection-choice span { color: var(--matrix-ap-muted); font-size: 11px; }
 .matrix-ap-connection-choice[aria-pressed="true"] { background: var(--matrix-ap-accent-muted); border-color: var(--matrix-ap-accent); }
@@ -245,8 +247,8 @@
   min-height: 30px;
   padding: 6px 10px;
 }
-.matrix-ap-button:hover:not(:disabled) { background: var(--matrix-ap-sunken); }
-.matrix-ap-button-primary { background: var(--matrix-ap-accent); border-color: var(--matrix-ap-accent); color: var(--ap-on-accent, var(--matrix-ap-surface)); }
+.matrix-ap-button:hover:not(:disabled) { background: var(--matrix-ap-sunken); color: var(--matrix-ap-text); }
+.matrix-ap-button-primary { background: var(--matrix-ap-accent); border-color: var(--matrix-ap-accent); color: var(--ap-on-accent, var(--text-on-accent, var(--primary-foreground, var(--matrix-ap-surface)))); }
 .matrix-ap-button-danger { background: var(--matrix-ap-danger); border-color: var(--matrix-ap-danger); color: var(--ap-on-danger, var(--matrix-ap-surface)); }
 .matrix-ap-button:disabled,
 .matrix-ap-link-button:disabled,
@@ -288,8 +290,8 @@
 .matrix-ap-empty-state { align-items: center; display: flex; flex-direction: column; gap: 7px; justify-content: center; min-height: 140px; text-align: center; }
 .matrix-ap-empty-state span { color: var(--matrix-ap-muted); font-size: 12px; }
 
-.matrix-ap-dialog-backdrop { align-items: center; background: color-mix(in srgb, var(--matrix-ap-text) 28%, transparent); display: flex; inset: 0; justify-content: center; padding: 20px; position: fixed; z-index: var(--ap-dialog-z, 1000); }
-.matrix-ap-dialog { background: var(--matrix-ap-overlay); border: 1px solid var(--matrix-ap-border); border-radius: 14px; box-shadow: 0 18px 48px color-mix(in srgb, var(--matrix-ap-text) 20%, transparent); max-height: min(720px, 86vh); max-width: 600px; overflow: auto; padding: 18px; width: min(600px, 94vw); }
+.matrix-ap-dialog-backdrop { align-items: center; background: var(--matrix-ap-dialog-scrim); display: flex; inset: 0; justify-content: center; padding: 20px; position: fixed; z-index: var(--ap-dialog-z, 1000); }
+.matrix-ap-dialog { background: var(--matrix-ap-overlay); border: 1px solid var(--matrix-ap-border); border-radius: 14px; box-shadow: var(--matrix-ap-dialog-shadow); max-height: min(720px, 86vh); max-width: 600px; overflow: auto; padding: 18px; width: min(600px, 94vw); }
 .matrix-ap-dialog-head { margin-bottom: 16px; }
 .matrix-ap-dialog-head h3 { font-size: 19px; letter-spacing: -0.025em; margin: 0; }
 .matrix-ap-dialog-actions { gap: 8px; justify-content: flex-end; margin-top: 18px; }
@@ -356,3 +358,51 @@
 .matrix-chat-connection-recovery p { margin: 0; }
 .matrix-chat-connection-recovery button { min-height: 32px; padding: 4px 10px; font-size: 12px; }
 .matrix-chat-connection-recovery .matrix-chat-provider-attempt { gap: 8px; margin: 0; }
+
+/* Shared foreground connection workflow controls. */
+.matrix-ap-workflow h3, .matrix-ap-connected h3 { font-size: 12px; font-weight: 500; margin: 14px 0 8px; }
+.matrix-ap-workflow-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.matrix-ap-key-form { display: grid; gap: 10px; margin-top: 16px; max-width: 520px; }
+.matrix-ap-key-form input[aria-invalid="true"] { border-color: var(--matrix-ap-danger); }
+.matrix-ap-device-login { margin: 16px 0; }
+.matrix-ap-device-code { display: flex; align-items: center; gap: 12px; padding: 12px; margin: 12px 0; background: var(--matrix-ap-sunken); border: 1px solid var(--matrix-ap-border); border-radius: 10px; }
+.matrix-ap-device-code code { font-size: 20px; letter-spacing: .08em; }
+.matrix-ap-operation-logs { background: var(--matrix-ap-sunken); border-radius: 10px; padding: 12px; margin-top: 12px; font-size: 12px; }
+.matrix-ap-operation-logs ol { padding-left: 18px; }
+.matrix-ap-uninstall-choice { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; margin-top: 18px; font-size: 13px; }
+.matrix-ap-uninstall-choice span { grid-column: 2; color: var(--matrix-ap-muted); font-size: 12px; }
+.matrix-ap-install progress { width: 100%; accent-color: var(--matrix-ap-accent); height: 6px; }
+.matrix-ap-connection-choice .matrix-ap-method-check { position: absolute; right: 12px; top: 12px; color: var(--matrix-ap-accent); font-size: 14px; }
+
+.matrix-ap-method-card { flex-direction: row; align-items: flex-start; justify-content: flex-start; gap: 12px; }
+.matrix-ap-method-copy { display: flex; flex-direction: column; gap: 4px; }
+.matrix-ap-method-copy > span { font-size: 12px; color: var(--matrix-ap-muted); }
+
+/* Keep each filled action's foreground/background paired. A neutral hover must
+   never repaint sign-in, install, save, or destructive actions behind their
+   inverse label. The same palette remains visible on keyboard focus. */
+.matrix-ap-button-primary:hover:not(:disabled),
+.matrix-ap-button-primary:active:not(:disabled) {
+  background: var(--matrix-ap-accent);
+  color: var(--ap-on-accent, var(--text-on-accent, var(--primary-foreground, var(--matrix-ap-surface))));
+}
+.matrix-ap-button-danger:hover:not(:disabled),
+.matrix-ap-button-danger:active:not(:disabled) {
+  background: var(--matrix-ap-danger);
+  color: var(--ap-on-danger, var(--matrix-ap-surface));
+}
+.matrix-ap-gateway .matrix-ap-button-primary:hover:not(:disabled),
+.matrix-ap-gateway .matrix-ap-button-primary:active:not(:disabled) {
+  background: var(--matrix-ap-text);
+  color: var(--matrix-ap-overlay);
+}
+.matrix-ap-gateway .matrix-ap-button-danger {
+  background: var(--matrix-ap-danger);
+  color: var(--ap-on-danger, var(--matrix-ap-surface));
+}
+.matrix-agents-providers .matrix-ap-button :where(span, strong, svg),
+.matrix-agents-providers .matrix-ap-link-button :where(span, strong, svg) { color: inherit; }
+.matrix-ap-link-button:hover:not(:disabled):not(.matrix-ap-danger-text) { color: var(--matrix-ap-text); }
+.matrix-ap-link-button:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+.matrix-ap-connection-choice:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--matrix-ap-sunken); }
+.matrix-ap-method-icon { flex: 0 0 auto; display: flex; align-items: center; padding-top: 1px; }

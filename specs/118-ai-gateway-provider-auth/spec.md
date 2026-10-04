@@ -532,3 +532,45 @@ foreground installs pin the verified native adapter version 1.0.0.
 Concurrent release calls share one ownership check and unlink. A failed unlink
 preserves admission and permits release retry; an already completed admission
 cannot remove a newer writer marker.
+
+Shared foreground workflow foundation uses the same bounded, capability-negotiated
+client in Web Desktop, Web Canvas, and Electron Desktop. Authorization codes and
+API keys stay transient in the mounted exact harness/transport lifetime, outside
+generic Settings mutation receipts. A runtime/client switch clears previous
+capabilities, operation references and row status before exposing the new scope.
+Owner-only 403 is an action denial, while transport 401 retains the existing
+session-expiry behavior. While a replacement workflow is active, account changes
+and Disconnect are unavailable; supported cancellation remains available and
+settled workflows restore those account actions. A successful native connection enables the exact route
+server-side; capability reads and refresh alone never enable a saved agent.
+
+This boundary mounts foreground workflows through a narrow existing-view slot
+for negotiated harness capabilities. Unsupported drivers retain current Settings
+controls; grouped presentation, full connected cards, allowance bars and billing
+dialog composition follow in separate layers. `HarnessWorkflowPanel` retains one
+foreground state machine for method selection, native polling, key/code delivery
+and cancellation. Its larger size is intentional for this extraction; subsequent
+refactoring should first extract the disconnect confirmation and pure method
+rendering without splitting lifetime/generation ownership across controllers.
+
+Negotiated Pi/OpenCode foreground login retains Matrix AI, saved model and access
+source controls inside closed Advanced configuration. Supported terminal-only
+login remains an explicit fallback there, never an automatic normal login path.
+Status reads retry transient outages with bounded backoff until receipt expiry;
+authorization denial, cancellation, terminal receipts and scope changes stop
+recovery. A failed cancellation does not resend cancellation or resume reads
+automatically; an explicit successful status check can rearm bounded polling for
+the same still-active receipt. Expiry stops polling without inventing server cleanup or terminal state.
+Web authorization opens a same-origin blank handle, immediately severs its opener
+and sets a no-referrer document policy before trusted navigation. A blocked or
+unisolatable popup returns failure. `noopener`-requested opens cannot be detected
+by their null return alone (WHATWG Window.open / MDN Window.open).
+
+A restored active terminal-only login can reopen its exact server receipt session
+inside Advanced configuration without creating another login. This continuation
+requires advertised Terminal support and no inline adapter; settled, cancelled,
+expired, denied and unadvertised login receipts never expose that fallback.
+
+Guided saved-Off connections expose an explicit Connect saved connection action without reauthentication or an Enable toggle. The action refreshes the current scope and verifies writable permission, server action support, unchanged selected account/source/route/configuration and current credential observation before enabling; refresh or rendering alone never restores Off. Pending guided authentication disables conflicting Advanced configuration controls while retaining cancellation. Web workflow authorization denial is classified from HTTP 401/403 even when its body is plain text.
+
+Saved reconnection admission is bound to the mounted runtime/workflow client, not refresh-function identity. Same-runtime parent renders may recreate inline refresh callbacks; changing workflow scope during the pending observation invalidates the old request.
