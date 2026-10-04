@@ -1,5 +1,6 @@
 import { createServer, request, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect } from "node:net";
+import { createWorkflowSocketRegistry } from "./workflow-socket-registry";
 import {
   AiCreditHistoryQuerySchema, AiCreditHistoryResponseSchema, ProviderSettingsMutationSchema, ProviderSettingsSnapshotSchema,
   ProviderWorkflowCapabilitiesSchema, ProviderWorkflowKeySchema, ProviderWorkflowLogsSchema,
@@ -136,20 +137,18 @@ export async function startAgentsProvidersWorkflowGateway(options: { now?: () =>
       forward.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); }); req.pipe(forward);
     } catch (error) { console.warn("[workflow-fixture] request rejected:", error instanceof Error ? error.name : typeof error); if (!res.headersSent) json(res, { error: "Invalid fixture request" }, 400); else res.end(); }
   });
-  const sockets = new Set<import("node:net").Socket>();
+  const sockets = createWorkflowSocketRegistry();
   server.on("upgrade", (req, socket, head) => {
-    if (sockets.size >= 64) { socket.destroy(); return; }
     const target = connect(Number(new URL(upstream.url).port), "127.0.0.1", () => {
       target.write(`${req.method} ${req.url} HTTP/1.1\r\n${Object.entries(req.headers).map(([key,value]) => `${key}: ${value}`).join("\r\n")}\r\n\r\n`);
       if (head.length) target.write(head); target.pipe(socket); socket.pipe(target);
     });
-    sockets.add(target); target.on("close", () => sockets.delete(target));
-    target.on("error", () => socket.destroy()); socket.on("error", () => target.destroy()); socket.on("close", () => target.destroy());
+    sockets.add(socket, target);
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   return {
     url: `http://127.0.0.1:${(server.address() as {port:number}).port}`, events,
     expireLogin() { const operation = [...operations.values()].findLast(item => item.kind === "login"); if (!operation) throw new Error("No fixture login"); operation.state = "expired"; operation.safeFailure = "expired"; },
-    async close() { operations.clear(); for (const socket of sockets) socket.destroy(); sockets.clear(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await upstream.close(); },
+    async close() { operations.clear(); sockets.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await upstream.close(); },
   };
 }

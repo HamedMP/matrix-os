@@ -4,7 +4,7 @@ This ledger separates source checks, synthetic workflows, and real provider acce
 
 | Gate | Status |
 | --- | --- |
-| Broad UI and synthetic fixture unit regressions | 184 passed on 80abc8be87; see checkpoint |
+| Broad UI and synthetic fixture unit regressions | 188 passed over 6aebe54105 with fixture cleanup repair; see checkpoint |
 | Strict changed-test and shared UI/Electron/Web types | Passed on 7f4f293adc |
 | Scoped lint, pattern and diff checks | Passed; zero pattern violations, five warnings |
 | Canonical production Web build and Electron build | Exact grouped head 123424fef5 built and published |
@@ -46,3 +46,9 @@ Interim regression-layer checks on parent `293dee1627`: 24 unit/fixture tests pa
 After final parent reconciliation, the same 24 unit/fixture regressions and strict owned-test types passed on evidence head `e5d4e1d870` over grouped parent `fae5f6cdee`, with the corrected typed checkout expectation. These are local source checks only; no production builds, browser/native automation or current live acceptance occurred.
 
 Review-follow-up checks over grouped parent `f7cbc4c843`: 30 unit/fixture tests passed in four suites; strict owned-test types and scoped lint passed. Regression probes reproduced receipt retention and temporary-capture cleanup/opacity defects before the fixes. Synthetic receipt storage now expires old records, reclaims settled records under pressure, protects live records, and binds replay to the same request. Default temporary captures are removed, caller-supplied evidence is retained, and CI selects the Settings auth, grouped workflow and button contrast sources with a matching upload directory. The contrast source measures complete group opacity and does not claim WCAG minimums for disabled controls. No browser/native E2E or live acceptance was executed for this follow-up.
+
+## Fixture transport cleanup follow-up
+
+Greptile identified that missing close events could retain upgraded proxy connections indefinitely. The fixture now tracks at most 64 paired transports, sweeps dead or ended transports before admission and every five seconds, expires idle pairs after thirty minutes, and refreshes activity in either direction. TCP keepalive supports transport liveness without injecting WebSocket frames. Shutdown clears the sweep timer and drains both ends. This lifetime belongs only to the synthetic fixture and exceeds its fifteen-minute CI job. Four direct regressions failed against the old registry and passed after the repair. The combined source check passed 188 tests in 13 suites over evidence head `6aebe54105`; strict owned fixture types, scoped lint, and diff checks passed. Remote E2E and latest-head review/CI remain required.
+
+Scoped immutable Preview bundle `v2026.10.04-pr2127-37178342413-1-ad7956d` from grouped source `ad7956df86` installed successfully. Gateway, shell and sync services were active and local health passed. Its complete source tree is identical to mechanically restacked grouped head `343c93448e`, but installed artifact provenance remains `ad7956df86`. The matching Electron build exists; its live interaction acceptance is still pending. Main Computer, credentials and funding were not changed.
