@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { RetainedHarnessAction } from "./RetainedHarnessAction.js";
 import { AccountsPanel } from "./AccountsPanel.js";
+import { AccountLifecycleActions } from "./AccountLifecycleActions.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
@@ -255,6 +256,12 @@ export function AgentsProvidersView({
                   entry={catalog ?? { harness: harness.harness as "pi" | "opencode" | "hermes" | "openclaw", displayName: harness.displayName, installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_unavailable" }}
                   disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} /> : null}
                 {!guided ? <>{connected ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}</> : null}
+                {!guided && (!workflowClient || workflowPermission === "available")
+                  && supports("set_harness_enabled") && (harness.configuredEnabled ?? harness.enabled) === false
+                  && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source) ?
+                  <button type="button" className="matrix-ap-button"
+                    disabled={mutationsDisabled || workflowPermission === "forbidden" || !onRefreshForConnection}
+                    onClick={() => void enablement.connectSaved(harness)}>Connect saved connection</button> : null}
                 {!guided && (harness.configuredEnabled ?? harness.enabled) && supports("set_harness_enabled") ?
                   <RetainedHarnessAction scopeKey={`${harness.harness}:${harness.id}:disconnect`} scopeOwner={workflowClient} label="Disconnect" disabled={mutationsDisabled || workflowPermission === "forbidden"}
                     action={() => onMutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false })}
@@ -294,7 +301,14 @@ export function AgentsProvidersView({
                         onMutate={onMutate} onRefresh={refreshSettings} />
                     </> : undefined}
                     renderConnection={connected ? connectionCard : undefined}
+                    renderAccountActions={(operationDisabled) => <AccountLifecycleActions
+                      accounts={snapshot.accounts.filter(item => harness.accountIds.includes(item.id))}
+                      snapshot={snapshot} harnessId={harness.id} scopeOwner={workflowClient}
+                      disabled={operationDisabled || workflowPermission === "forbidden"}
+                      canLogout={supports("logout_account")} canRemove={supports("remove_account")} canReassign={supports("reassign_account")}
+                      onMutate={onMutate} onRefresh={refreshSettings} />}
                     onConnectSaved={supports("set_harness_enabled") && (harness.configuredEnabled ?? harness.enabled) === false && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source) ? () => enablement.connectSaved(harness) : undefined}
+                    connectSavedDisabled={workflowPermission === "forbidden" || !onRefreshForConnection}
                     source={source}
                     harness={harness}
                     capability={

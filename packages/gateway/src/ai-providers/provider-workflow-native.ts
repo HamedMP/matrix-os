@@ -4,6 +4,7 @@ import type { createOpenCodeSettingsConnection } from "./opencode-settings-auth.
 import type { createClaudeSettingsLogin } from "./provider-workflow-browser.js";
 import type { createCodexSettingsLogin } from "./provider-workflow-codex-login.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
+import type { ProviderKeyVerifier } from "./provider-workflow-key.js";
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID, createHash } from 'node:crypto';
@@ -41,7 +42,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
     available: boolean;
     run(action: 'cancel-install', harness: 'hermes' | 'openclaw'): Promise<void>;
   };
-  verifyKeys?: Partial<Record<'codex' | 'claude' | 'opencode' | 'pi' | 'hermes' | 'openclaw', NonNullable<ProviderWorkflowAdapter['verifyKey']>>>;
+  verifyKeys?: Partial<Record<'codex' | 'claude' | 'opencode' | 'pi' | 'hermes' | 'openclaw', ProviderKeyVerifier>>;
 }): Promise<ProviderWorkflowAdapter[]> {
   if (!options.store || !options.terminal)
     throw new Error('Native workflow dependencies required');
@@ -106,6 +107,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
       apiKeyProviders: opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [],
       install: (!!packageName || system && hostControl.available) && harness.installState !== 'installed', uninstall: !!packageName && managed || system && hostControl.available,
       ...(opencodeCapability.apiKey && settingsConnection ? { verifyKey: settingsConnection.verifyKey } : keyAdapter ? { async verifyKey(key) {
+        if (keyAdapter.connect) return keyAdapter.connect(key, () => enableConnectedHarness(harness.id, `key-connect-${randomUUID()}`));
         await keyAdapter(key);
         await enableConnectedHarness(harness.id, `key-connect-${randomUUID()}`);
       } } : {}),
