@@ -523,7 +523,9 @@
 .matrix-ap-gateway .matrix-ap-credit-row { padding: 24px; min-height: 112px; }
 .matrix-ap-model-inventory { padding: 18px 24px 8px; }
 .matrix-ap-gateway-footer { padding: 14px 24px; background: var(--matrix-ap-sunken); }
-.matrix-ap-gateway .matrix-ap-button { min-height: 32px; border: 0; background: color-mix(in srgb, var(--matrix-ap-text) 5%, transparent); }
+.matrix-ap-gateway .matrix-ap-button { min-height: 32px; border: 0; }
+/* Filled actions keep their paired background and inverse label in every state. */
+.matrix-ap-gateway .matrix-ap-button:where(:not(.matrix-ap-button-primary, .matrix-ap-button-danger)) { background: color-mix(in srgb, var(--matrix-ap-text) 5%, transparent); }
 .matrix-ap-gateway .matrix-ap-button-primary { color: var(--matrix-ap-overlay); background: var(--matrix-ap-text); }
 @media (max-width: 520px) { .matrix-ap-agent-details { padding-inline: 12px; } .matrix-ap-connection-options { grid-template-columns: 1fr; } .matrix-ap-rail-item { gap: 10px; padding-inline: 12px; } }
 .matrix-ap-agent-lettermark { font-size: 12px; font-weight: 600; color: var(--matrix-ap-text); }
