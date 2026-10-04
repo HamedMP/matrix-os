@@ -59,7 +59,8 @@ describe("provider setup presentation", () => {
   it("keeps Matrix AI first with unsupported checkout explained even without any agents", () => {
     const value = snapshot();
     value.harnesses = [];
-    const { onMutate } = setup(value);
+    const onAddCredit = vi.fn();
+    const { onRefresh, onMutate } = setup(value, { onAddCredit });
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Setup needed")).toBeVisible();
     expect(within(gateway).getByText("Credit unavailable")).toBeVisible();

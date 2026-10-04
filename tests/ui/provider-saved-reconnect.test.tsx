@@ -48,11 +48,15 @@ it.each([false, true])("accepts callback churn but rejects a new workflow scope 
   const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "hermes", harness: "hermes", displayName: "Hermes", installState: "installed", loginMethods: ["existing_codex"], apiKeyProviders: [], install: false, uninstall: false, logs: false }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
   const props = { snapshot, selectedHarnessId: "hermes", onSelectHarness: vi.fn(), onRefresh: vi.fn(), onMutate: mutate, onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit: vi.fn() };
   const view = render(<AgentsProvidersView {...props} onRefreshForConnection={refresh} workflowClient={client as never} />);
+  const row = screen.getByRole("button", { name: /^Hermes/ });
+  if (row.getAttribute("aria-expanded") !== "true") fireEvent.click(row);
   fireEvent.click(await screen.findByRole("button", { name: "Connect saved connection" }));
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   // Web parent renders recreate this closure while the same runtime request is pending.
   view.rerender(<AgentsProvidersView {...props} onRefreshForConnection={changeScope ? refresh : () => pending} workflowClient={(changeScope ? { ...client } : client) as never} />);
   await act(async () => { resolve(fixture()); });
+  const currentRow = screen.getByRole("button", { name: /^Hermes/ });
+  if (currentRow.getAttribute("aria-expanded") !== "true") fireEvent.click(currentRow);
   await waitFor(() => expect(screen.getByRole("button", { name: "Connect saved connection" })).toBeEnabled());
   if (changeScope) expect(mutate).not.toHaveBeenCalled();
   else expect(mutate).toHaveBeenCalledExactlyOnceWith({ type: "set_harness_enabled", harnessInstanceId: "hermes", enabled: true });
