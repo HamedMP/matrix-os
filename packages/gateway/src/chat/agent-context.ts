@@ -48,8 +48,11 @@ export function transcript(messages: CanonicalChatMessage[], limit: number): { t
     });
   const text = lines.join("\n\n");
   const bytes = Buffer.from(text);
+  let offset = Math.max(0, bytes.length - limit);
+  // Start at a UTF-8 code point boundary without inventing replacement characters.
+  while (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80) offset += 1;
   return {
-    text: bytes.length > limit ? bytes.subarray(-limit).toString("utf8").replace(/^\uFFFD/u, "") : text,
+    text: bytes.length > limit ? bytes.subarray(offset).toString("utf8") : text,
     truncated: bytes.length > limit,
   };
 }
