@@ -11,6 +11,7 @@ import {
 } from "./project-membership-transition.js";
 import { jsonb, OPERATION_RETENTION_MS, parseJson, PRESET_POLICY_VERSION } from "./repository-shared.js";
 import type { ChatOutboxEvent } from "../chat/records.js";
+import { publishProjectChatRoutes } from "./project-chat-routes.js";
 
 const MAX_RECOVERY_BATCH = 100;
 const DEFAULT_RECOVERY_TIMEOUT_MS = 30_000;
@@ -677,6 +678,8 @@ export function createProjectTransitionJournal(options: {
             created_at: now(),
           }).execute();
         }
+        // Members open the project's Chats through routes published beside the project.
+        await publishProjectChatRoutes(trx, { projectScopeId: scope.id, now: now() });
         await trx.insertInto("collaboration_audit").values({
           scope_id: scope.id,
           actor_id: row.requested_by,

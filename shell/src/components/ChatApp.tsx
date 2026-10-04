@@ -129,6 +129,7 @@ function writeHermesSetup(channels: string[]) {
 interface ChatAppProps {
   collaborationView?: ChatCollaborationView;
   onOpenSharedChat?: (scopeId: string) => void;
+  onOpenSharedProject?: (scopeId: string) => void;
   onOpenSharedHome?: () => void;
   filterUnreadOnly?: boolean;
   onUnreadFilterChange?: (value: boolean) => void;
@@ -178,7 +179,7 @@ export function ChatApp(props: ChatAppProps) {
 }
 
 function ChatAppContent({
-  collaborationView, onOpenSharedChat, onOpenSharedHome,
+  collaborationView, onOpenSharedChat, onOpenSharedProject, onOpenSharedHome,
   filterUnreadOnly, onUnreadFilterChange,
   active = true, readState, displayedThroughSeq = 0, onUpdateReadState,
   messages,
@@ -625,7 +626,7 @@ function ChatAppContent({
         )}
 
         {collaborationView ? (
-          <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat}
+          <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat} onOpenProject={onOpenSharedProject}
             onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
         {botDraftNavigation.recovery ? <BotDraftRecoveryPanel onReturn={botDraftNavigation.returnToOriginalDraft}/> : null}

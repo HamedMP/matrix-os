@@ -476,6 +476,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
             <ChatApp
                 collaborationView={chatState.collaborationView}
                 onOpenSharedChat={chatState.openSharedChat}
+                onOpenSharedProject={chatState.openSharedProject}
                 onOpenSharedHome={chatState.openSharedHome}
                 filterUnreadOnly={chatState.unreadOnly}
                 onUnreadFilterChange={chatState.setUnreadOnly}
