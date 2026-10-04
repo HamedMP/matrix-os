@@ -1,6 +1,5 @@
 import { buildPreviewTerminalAccess } from "./preview-terminal-access.js";
 import { createConnection, type Socket } from 'node:net';
-import type { Duplex } from 'node:stream';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
 import type Dockerode from 'dockerode';
@@ -46,6 +45,7 @@ import {
 } from './session-routing-websocket.js';
 import { resolveContainerEndpoint } from './container-endpoint.js';
 import { describeError } from './platform-route-utils.js';
+import { isRejectingWebSocketUpgrade, rejectWebSocketUpgrade, type WebSocketUpgradeRejectionStatus } from './websocket-upgrade-rejection.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { isCollaborationWebSocketCandidate, parseRelaySocketPath } from './collaboration/relay.js';
@@ -58,38 +58,6 @@ interface PlatformWebSocketEnv {
   GEMINI_API_KEY?: string;
   EDGE_ROUTER_SECRET?: string;
   [key: string]: string | undefined;
-}
-
-const UPGRADE_REJECTION_STATUS_TEXT = {
-  400: 'Bad Request',
-  401: 'Unauthorized',
-  403: 'Forbidden',
-  404: 'Not Found',
-  502: 'Bad Gateway',
-  503: 'Service Unavailable',
-} as const;
-export type WebSocketUpgradeRejectionStatus = keyof typeof UPGRADE_REJECTION_STATUS_TEXT;
-
-/**
- * Refuses an upgrade with a bodyless HTTP status, then closes. Cloud Run treats an upgrade whose
- * connection closes without any response as an instance failure and stops routing new requests
- * to that instance, so a bare `destroy()` here lets any client take a platform instance out of
- * service. Use it for every refusal made before the upstream has answered.
- */
-export function rejectWebSocketUpgrade(socket: Duplex, status: WebSocketUpgradeRejectionStatus): void {
-  if (socket.destroyed) return;
-  if (!socket.writable) {
-    socket.destroy();
-    return;
-  }
-  socket.once('error', (err: unknown) => {
-    console.warn('[platform] websocket upgrade rejection write failed:', describeError(err));
-    socket.destroy();
-  });
-  socket.end(
-    `HTTP/1.1 ${status} ${UPGRADE_REJECTION_STATUS_TEXT[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
-    () => socket.destroy(),
-  );
 }
 
 export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
@@ -142,6 +110,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     // carries a WebSocket stream and must be closed bare; before that, every refusal is an HTTP status.
     let upstreamResponded = false;
     const refuse = (status: WebSocketUpgradeRejectionStatus): void => {
+      if (isRejectingWebSocketUpgrade(socket)) return;
       if (upstreamResponded) socket.destroy();
       else rejectWebSocketUpgrade(socket, status);
     };

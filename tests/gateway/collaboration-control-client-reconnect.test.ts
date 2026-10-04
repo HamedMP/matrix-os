@@ -248,6 +248,27 @@ describe("collaboration control client reconnects", () => {
     client.fence();
   });
 
+  it("waits at least the Retry-After of a throttled periodic registration before the next one", async () => {
+    const { client, registrations } = harness({
+      streams: () => "healthy",
+      responses: [
+        registrationResponse,
+        () => new Response("busy", { status: 429, headers: { "retry-after": "300" } }),
+        registrationResponse,
+      ],
+      random: () => 0,
+    });
+    await client.start();
+    // random 0: the periodic interval is 5 min x 0.8 = 4 min, below the 5 min the platform asked for.
+    await vi.advanceTimersByTimeAsync(240_000);
+    expect(registrations).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(300_000 - 1);
+    expect(registrations).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(registrations).toHaveLength(3);
+    client.fence();
+  });
+
   it("honors a delta-seconds Retry-After on 429 and 503 as a one-shot floor for the next reconnect", async () => {
     const { client, registrations } = harness({
       streams: () => "healthy",

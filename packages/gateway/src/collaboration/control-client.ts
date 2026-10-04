@@ -361,18 +361,28 @@ export class CollaborationControlClient {
     this.scheduleReregister();
   }
 
-  /** Self-rescheduling jittered re-registration; never installed or re-armed behind the fence. */
-  private scheduleReregister(): void {
+  /**
+   * Self-rescheduling jittered re-registration; never installed or re-armed behind the fence.
+   * A registration refused with a Retry-After floors the next attempt.
+   */
+  private scheduleReregister(retryAfterMs?: number): void {
     if (this.closed) return;
     const factor = 1 - REREGISTER_JITTER_RATIO + 2 * REREGISTER_JITTER_RATIO * this.jitter();
+    let delay = REREGISTER_INTERVAL_MS * factor;
+    // A throttled re-registration waits at least as long as the platform asked, spread like a reconnect floor.
+    if (retryAfterMs !== undefined) {
+      delay = Math.max(delay, retryAfterMs + Math.min(retryAfterMs * RETRY_AFTER_JITTER_RATIO, MAX_BACKOFF_MS) * this.jitter());
+    }
     this.registerTimer = setTimeout(() => {
       this.registerTimer = undefined;
+      let nextFloorMs: number | undefined;
       this.register().catch((error: unknown) => {
+        if (error instanceof RegistrationRejectedError) nextFloorMs = error.retryAfterMs;
         console.warn("[collaboration-control-client] re-registration failed", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => {
-        this.scheduleReregister();
+        this.scheduleReregister(nextFloorMs);
       });
-    }, Math.round(REREGISTER_INTERVAL_MS * factor));
+    }, Math.round(delay));
     this.registerTimer.unref?.();
   }
 

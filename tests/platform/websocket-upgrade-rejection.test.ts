@@ -11,7 +11,10 @@ import type { IncomingMessage, Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlatformDB } from "../../packages/platform/src/db.js";
 import { insertUserMachine } from "../../packages/platform/src/db.js";
-import { registerPlatformWebSocketUpgradeHandler, rejectWebSocketUpgrade } from "../../packages/platform/src/platform-websocket-upgrade.js";
+import { registerPlatformWebSocketUpgradeHandler } from "../../packages/platform/src/platform-websocket-upgrade.js";
+import { rejectWebSocketUpgrade } from "../../packages/platform/src/websocket-upgrade-rejection.js";
+import { createCollaborationControlUpgradeHandler } from "../../packages/platform/src/collaboration/control-upgrade.js";
+import { handleInternalGeminiLiveProxyUpgrade } from "../../packages/platform/src/gemini-live-proxy.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import { JWT_SECRET, setupProxyRoutingTest, cleanupProxyRoutingTest } from "./proxy-routing-test-utils.js";
 
@@ -45,7 +48,8 @@ class ClientSocket extends EventEmitter {
   end(value?: string, callback?: () => void) {
     if (value !== undefined) this.ended.push(value);
     this.writable = false;
-    queueMicrotask(() => callback?.());
+    // A real socket reports the flush on a later turn, after the refusing code has returned.
+    setImmediate(() => callback?.());
     return this;
   }
   pipe() { return this; }
@@ -128,6 +132,27 @@ describe("platform WebSocket upgrade refusals", () => {
     await vi.waitFor(() => expect(socket.destroyed).toBe(true));
   });
 
+  // An upstream that fails before answering emits `error` and then `close`; both refuse. The second
+  // refusal must not destroy the client socket before the first response has been flushed.
+  it("flushes one 502 when the home connection errors and then closes before answering", async () => {
+    await seedRunningMachine();
+    const socket = await upgrade(listen(), {
+      url: "/ws", headers: { host: "app.matrix-os.com", upgrade: "websocket", authorization: `Bearer ${await ownerToken()}` },
+    });
+    await vi.waitFor(() => expect(tls.upstreams.at(-1)?.writes.length).toBeGreaterThan(0));
+    const upstream = tls.upstreams.at(-1)!;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      upstream.emit("error", new Error("ECONNRESET"));
+      upstream.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+    expect(socket.ended).toEqual(["HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"]);
+    expect(socket.destroyed).toBe(false);
+    await vi.waitFor(() => expect(socket.destroyed).toBe(true));
+  });
+
   it("closes an established relay without writing an HTTP response", async () => {
     await seedRunningMachine();
     const socket = await upgrade(listen(), {
@@ -157,5 +182,46 @@ describe("rejectWebSocketUpgrade", () => {
     const socket = new ClientSocket();
     rejectWebSocketUpgrade(socket as never, 503);
     expect(socket.ended).toEqual(["HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"]);
+  });
+});
+
+describe("rejectWebSocketUpgrade idempotence", () => {
+  it("ignores a second refusal while the first response is flushing", async () => {
+    const socket = new ClientSocket();
+    rejectWebSocketUpgrade(socket as never, 401);
+    rejectWebSocketUpgrade(socket as never, 503);
+    expect(socket.ended).toHaveLength(1);
+    expect(socket.destroyed).toBe(false);
+    await vi.waitFor(() => expect(socket.destroyed).toBe(true));
+  });
+});
+
+describe("other upgrade refusals flush their status before closing", () => {
+  it("answers a control upgrade without runtime credentials with 401 and waits for the flush", async () => {
+    const handler = createCollaborationControlUpgradeHandler({ stream: {} as never, authenticateRuntime: async () => null });
+    const socket = new ClientSocket();
+    try {
+      await expect(handler.handleUpgrade(
+        { url: "/internal/collaboration/control?ticket=abc", headers: {} } as unknown as IncomingMessage,
+        socket as never,
+        Buffer.alloc(0),
+      )).resolves.toBe(true);
+    } finally {
+      handler.close();
+    }
+    expect(statusLine(socket)).toBe("HTTP/1.1 401 Unauthorized");
+    expect(socket.destroyed).toBe(false);
+    await vi.waitFor(() => expect(socket.destroyed).toBe(true));
+  });
+
+  it("answers an internal Gemini Live upgrade without a configured key with 503 and waits for the flush", async () => {
+    const socket = new ClientSocket();
+    await expect(handleInternalGeminiLiveProxyUpgrade({
+      req: { url: "/internal/containers/alice/gemini-live", headers: {} } as unknown as IncomingMessage,
+      socket: socket as never, head: Buffer.alloc(0), db, platformSecret: "secret", geminiApiKey: "",
+    })).resolves.toBe(true);
+    expect(statusLine(socket)).toBe("HTTP/1.1 503 Service Unavailable");
+    expect(socket.destroyed).toBe(false);
+    await vi.waitFor(() => expect(socket.destroyed).toBe(true));
   });
 });

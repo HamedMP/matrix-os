@@ -15,6 +15,7 @@ import { z } from "zod/v4";
 import type { CollaborationControlStream } from "./control-stream.js";
 import { logicalRuntimeIdFor } from "./runtime-identity.js";
 import type { AuthenticatedRuntime } from "./direct-routes.js";
+import { rejectWebSocketUpgrade } from "../websocket-upgrade-rejection.js";
 
 export const COLLABORATION_CONTROL_PATH = "/internal/collaboration/control";
 /** The one-use upgrade ticket, validated at the route boundary before the stream sees it. */
@@ -69,7 +70,7 @@ export function createCollaborationControlUpgradeHandler(options: {
       if (!isCollaborationControlUpgradePath(rawPath)) return false;
       const admitted = await admit(req, rawPath, options);
       if (!admitted) {
-        reject(socket, 401);
+        rejectWebSocketUpgrade(socket, 401);
         return true;
       }
       server.handleUpgrade(req, socket, head, (ws: WebSocket) => {
@@ -159,10 +160,6 @@ async function admit(
   return logical;
 }
 
-function reject(socket: Socket, status: number): void {
-  socket.write(`HTTP/1.1 ${status} ${status === 401 ? "Unauthorized" : "Service Unavailable"}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-  socket.destroy();
-}
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
