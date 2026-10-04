@@ -24,9 +24,9 @@ it('kills and reaps a child with a failed stdin before removing its staging dire
     await new Promise(resolve => setImmediate(resolve));
     expect(child.kill).toHaveBeenCalledWith('SIGKILL');
     expect(settled).toBe(false);
-    expect((await readdir(home)).some(name => name.startsWith('.codex-key-'))).toBe(true);
+    expect((await readdir(join(home, '.codex'))).some(name => name.startsWith('.matrix-key-'))).toBe(true);
     child.emit('close', null);
     expect(await result).toBeInstanceOf(Error);
-    expect((await readdir(home)).filter(name => name.startsWith('.codex-key-'))).toEqual([]);
+    expect((await readdir(join(home, '.codex'))).filter(name => name.startsWith('.matrix-key-'))).toEqual([]);
   } finally { child.emit('close', null); await rm(home, { recursive: true, force: true }); }
 });

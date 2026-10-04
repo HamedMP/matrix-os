@@ -14,6 +14,22 @@ function fixture(): ProviderSettingsSnapshot {
     modelProviders: [{ id: "openai-codex", displayName: "ChatGPT", models: [{ id: "openai-codex:test", displayName: "Test", enabled: true }] }], gatewayPolicy: null, configurationHarnessKinds: ["hermes"], supportedActions: ["set_harness_enabled"], access: { mode: "writable" }, refreshedAt: "2026-01-01T00:00:08Z",
   } as unknown as ProviderSettingsSnapshot;
 }
+it("disables guided saved reconnect when the required scoped refresh is unavailable", async () => {
+  const mutate = vi.fn().mockResolvedValue(true), refresh = vi.fn().mockResolvedValue(fixture());
+  const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "hermes", harness: "hermes", displayName: "Hermes", installState: "installed", loginMethods: ["existing_codex"], apiKeyProviders: [], install: false, uninstall: false, logs: false }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
+  const props = { snapshot: fixture(), selectedHarnessId: "hermes", onSelectHarness: vi.fn(), onRefresh: vi.fn(), onMutate: mutate, onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit: vi.fn(), workflowClient: client as never };
+  const view = render(<AgentsProvidersView {...props} />);
+  const row = screen.getByRole("button", { name: /^Hermes/ });
+  if (row.getAttribute("aria-expanded") !== "true") fireEvent.click(row);
+  const connect = await screen.findByRole("button", { name: "Connect saved connection" });
+  expect(connect).toBeDisabled(); fireEvent.click(connect);
+  expect(mutate).not.toHaveBeenCalled(); expect(client.start).not.toHaveBeenCalled();
+  view.rerender(<AgentsProvidersView {...props} onRefreshForConnection={refresh} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Connect saved connection" })).toBeEnabled());
+  view.rerender(<AgentsProvidersView {...props} />);
+  expect(screen.getByRole("button", { name: "Connect saved connection" })).toBeDisabled();
+  expect(refresh).not.toHaveBeenCalled();
+});
 it.each(["unchanged", "route", "source", "account", "readonly", "credential", "capability", "configured_source", "expired", "future"])("reconnects a saved Off connection only after fresh exact validation (%s)", async change => {
   const initial = fixture(); const fresh = fixture();
   if (change === "route") fresh.harnesses[0]!.route.modelId = "other";

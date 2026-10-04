@@ -66,7 +66,9 @@ export function useHarnessEnablement(input: {
         // The explicit mutation revalidates current credentials server-side.
       }
       if (generation !== lifetime.current || latestScope.current !== expectedScope) return;
-      await input.mutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: !currentlyEnabled });
+      if (await input.mutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: !currentlyEnabled }) === false) {
+        throw new Error("Change rejected");
+      }
     } catch (caught) {
       console.warn("[provider-settings] Enable check failed:", caught instanceof Error ? caught.name : typeof caught);
       if (generation === lifetime.current) setError("Changes were not saved. Refresh and try again.");
