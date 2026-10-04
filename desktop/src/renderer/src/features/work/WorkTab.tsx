@@ -206,6 +206,7 @@ export default function WorkTab(props: ComponentProps<typeof WorkTabContent>) {
   return <ChatAgentsWorkspace><WorkTabContent {...props} /></ChatAgentsWorkspace>;
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing Work surface coordinates routes, the rail, hosted Chat chrome and inspectors; this change only removes the live-share suspension wiring. Splitting it belongs in a focused refactor.
 function WorkTabContent({
   tabId,
   route,
