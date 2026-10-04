@@ -5,12 +5,28 @@
  * on registration is honored as the floor for the next attempt.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CollaborationControlClient } from "../../packages/gateway/src/collaboration/control-client.js";
+import { CollaborationControlClient, parseRetryAfterMs } from "../../packages/gateway/src/collaboration/control-client.js";
 
 const machineId = "11111111-1111-4111-8111-111111111111";
 const runtimeId = `vps:${machineId}`;
 const logicalRuntimeId = `vps-${machineId}`;
 const keepalive = JSON.stringify({ protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 1 });
+const invalidFrame = "{\"protocolVersion\":1}";
+function denialFrame(): string {
+  const fencedAt = new Date(Date.now());
+  return JSON.stringify({
+    protocolVersion: 2,
+    type: "denial",
+    denial: {
+      organizationId: "org_reconnect_1",
+      actorId: "user_collaboration_editor",
+      generation: 2,
+      fencedAt: fencedAt.toISOString(),
+      ackDeadline: new Date(fencedAt.getTime() + 25_000).toISOString(),
+      state: "pending",
+    },
+  });
+}
 
 function registrationResponse(): Response {
   return new Response(JSON.stringify({
@@ -22,7 +38,13 @@ function registrationResponse(): Response {
   }), { status: 200, headers: { "content-type": "application/json" } });
 }
 
-type StreamMode = "fail" | "healthy" | "invalid";
+/**
+ * fail: upgrade rejected. healthy: one keepalive, then stays open. invalid: a refused first frame.
+ * flap: one keepalive, then the platform closes it a second later (e.g. 1008).
+ * poison: one keepalive, then a frame the client always refuses a second later.
+ * slow_denial: a denial whose grant cleanup is still in flight when the platform closes the stream.
+ */
+type StreamMode = "fail" | "healthy" | "invalid" | "flap" | "poison" | "slow_denial";
 
 interface Harness {
   client: CollaborationControlClient;
@@ -35,18 +57,22 @@ interface Harness {
   acks: unknown[];
   /** Closes the most recent stream from the platform side (e.g. a routine 1012 rotation). */
   dropLatest(): void;
+  /** Delivers a raw frame on the most recent stream. */
+  sendLatest(raw: string): void;
 }
 
 function harness(input: {
   streams?: StreamMode[] | ((index: number) => StreamMode);
   responses?: Array<() => Response>;
   random?: () => number;
+  capabilities?: { endActorGrants(input: { organizationId: string; actorId: string }): Promise<unknown> };
 }): Harness {
   const registrations: number[] = [];
   const connects: number[] = [];
   const closes: number[] = [];
   const acks: unknown[] = [];
   let latestClose: (() => void) | undefined;
+  let latestMessage: ((raw: string) => void) | undefined;
   const modeFor = (index: number): StreamMode => {
     if (typeof input.streams === "function") return input.streams(index);
     return input.streams?.[index] ?? "healthy";
@@ -59,6 +85,7 @@ function harness(input: {
     serviceToken: "s".repeat(40),
     identity: { keyId: "home-key-1", publicKey: "k".repeat(43) },
     sessions: { revoke: () => undefined },
+    ...(input.capabilities ? { capabilities: input.capabilities as never } : {}),
     fetchImpl: (async () => {
       const index = registrations.length;
       registrations.push(Date.now());
@@ -79,17 +106,26 @@ function harness(input: {
         }, 0);
       };
       latestClose = close;
+      latestMessage = onMessage;
       // Like a rejected upgrade (HTTP 401) or a delivered frame: observed after the socket object exists.
       setTimeout(() => {
         if (mode === "fail") close();
-        else onMessage(mode === "healthy" ? keepalive : "{\"protocolVersion\":1}");
+        else if (mode === "invalid") onMessage(invalidFrame);
+        else if (mode === "slow_denial") onMessage(denialFrame());
+        else onMessage(keepalive);
       }, 0);
+      if (mode === "flap" || mode === "slow_denial") setTimeout(close, 1_000);
+      if (mode === "poison") setTimeout(() => onMessage(invalidFrame), 1_000);
       return { send: (value: string) => { acks.push(JSON.parse(value) as unknown); }, close };
     },
     random: input.random,
     startTimers: true,
   });
-  return { client, registrations, connects, closes, acks, dropLatest: () => latestClose?.() };
+  return {
+    client, registrations, connects, closes, acks,
+    dropLatest: () => latestClose?.(),
+    sendLatest: (raw) => latestMessage?.(raw),
+  };
 }
 
 function gaps(times: number[]): number[] {
@@ -162,7 +198,8 @@ describe("collaboration control client reconnects", () => {
   ])("bounds the healthy-stream reconnect delay to 0.5s..5s (random %s -> %sms)", async (random, expected) => {
     const { client, registrations, closes, dropLatest } = harness({ streams: ["healthy", "healthy"], random: () => random });
     await client.start();
-    await vi.advanceTimersByTimeAsync(1_000);
+    // Past the 30s minimum lifetime that makes a closed stream count as healthy.
+    await vi.advanceTimersByTimeAsync(31_000);
     dropLatest();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(registrations).toHaveLength(2);
@@ -222,37 +259,152 @@ describe("collaboration control client reconnects", () => {
       random: () => 1,
     });
     await client.start();
-    await vi.advanceTimersByTimeAsync(119_999);
+    // The floor is spread by up to a fifth of itself: 120s + 24s at the top of the jitter range.
+    await vi.advanceTimersByTimeAsync(143_999);
     expect(registrations).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(registrations).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(20_000);
-    // 120s (Retry-After over the 1s base), 7s (Retry-After over the 2s base), then the plain 4s base.
-    expect(gaps(registrations)).toEqual([120_000, 7_000, 4_000]);
+    // 144s (spread 120s floor over the 1s base), 8.4s (spread 7s floor over the 2s base), then the plain 4s base.
+    expect(gaps(registrations)).toEqual([144_000, 8_400, 4_000]);
     // The raw response body never reaches the logs.
     const logged = vi.mocked(console.warn).mock.calls.flat().map(String).join("\n");
     expect(logged).not.toContain("upstream provider quota detail");
     client.fence();
   });
 
-  it.each([
-    ["Wed, 21 Oct 2026 07:28:00 GMT", 429, 1_000],
-    ["soon", 503, 1_000],
-    ["-5", 429, 1_000],
-    ["1.5", 429, 1_000],
-    ["0", 429, 1_000],
-    ["999999", 503, 300_000],
-    ["30", 500, 1_000],
-  ])("treats Retry-After %j on HTTP %s as a %sms floor", async (header, status, expected) => {
+  it("spreads a Retry-After floor at the bottom of the jitter range exactly onto the floor", async () => {
     const { client, registrations } = harness({
       streams: () => "healthy",
-      responses: [() => new Response("x", { status, headers: { "retry-after": header } })],
+      responses: [
+        () => new Response("x", { status: 429, headers: { "retry-after": "120" } }),
+        () => new Response("x", { status: 503, headers: { "retry-after": "7" } }),
+        () => new Response("x", { status: 500 }),
+      ],
+      random: () => 0,
+    });
+    await client.start();
+    await vi.advanceTimersByTimeAsync(200_000);
+    // Floors 120s and 7s, then the 2s base at random 0 (500, 1000, 2000 are the unfloored delays).
+    expect(gaps(registrations).slice(0, 3)).toEqual([120_000, 7_000, 2_000]);
+    client.fence();
+  });
+
+  it("caps the Retry-After spread at the maximum backoff", async () => {
+    const { client, registrations, connects } = harness({
+      streams: () => "healthy",
+      responses: [() => new Response("x", { status: 503, headers: { "retry-after": "999999" } })],
       random: () => 1,
     });
     await client.start();
     await vi.advanceTimersByTimeAsync(400_000);
-    expect(registrations.length).toBeGreaterThanOrEqual(2);
-    expect(registrations[1]! - registrations[0]!).toBe(expected);
+    // 300s clamp + min(60s, 60s) spread, measured to the reconnect's control connect.
+    expect(connects[0]! - registrations[0]!).toBe(360_000);
+    client.fence();
+  });
+
+  // Random 0 makes the unfloored first delay 500ms, so a header that is wrongly accepted
+  // (even at the 1s minimum) produces a distinguishable delay.
+  it.each([
+    ["Wed, 21 Oct 2026 07:28:00 GMT", 429, 500],
+    ["soon", 503, 500],
+    ["-5", 429, 500],
+    ["1.5", 429, 500],
+    ["", 503, 500],
+    ["0", 429, 1_000],
+    ["30", 429, 30_000],
+    ["999999", 503, 300_000],
+    ["30", 500, 500],
+    ["30", 403, 500],
+  ])("treats Retry-After %j on HTTP %s as a %sms first delay", async (header, status, expected) => {
+    const { client, registrations, connects } = harness({
+      streams: () => "healthy",
+      responses: [() => new Response("x", { status, headers: { "retry-after": header } })],
+      random: () => 0,
+    });
+    await client.start();
+    await vi.advanceTimersByTimeAsync(400_000);
+    // Measured to the first control connect: the periodic re-registration (4 min at random 0) registers but never connects.
+    expect(connects.length).toBeGreaterThanOrEqual(1);
+    expect(connects[0]! - registrations[0]!).toBe(expected);
+    client.fence();
+  });
+
+  describe("parseRetryAfterMs", () => {
+    it.each([
+      [null, undefined],
+      ["", undefined],
+      ["   ", undefined],
+      ["0", 1_000],
+      ["1", 1_000],
+      ["30", 30_000],
+      [" 30 ", 30_000],
+      ["300", 300_000],
+      ["999999", 300_000],
+      ["1.5", undefined],
+      ["-5", undefined],
+      ["+5", undefined],
+      ["1e3", undefined],
+      ["soon", undefined],
+      ["12345678901", undefined],
+      ["Wed, 21 Oct 2026 07:28:00 GMT", undefined],
+    ])("parses %j as %s", (value, expected) => {
+      expect(parseRetryAfterMs(value)).toBe(expected);
+    });
+  });
+
+  it("backs off exponentially when every stream applies one frame and the platform closes it right after", async () => {
+    const { client, registrations, closes } = harness({ streams: () => "flap", random: () => 1 });
+    await client.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    // Each stream applied a keepalive but lived 1s, far short of the 30s that proves it healthy.
+    // Before the fix each close was a "healthy_close" (0.5s..5s, backoff reset) forever.
+    expect(reconnectDelays(closes, registrations).slice(0, 5)).toEqual([1_000, 2_000, 4_000, 8_000, 16_000]);
+    client.fence();
+  });
+
+  it("backs off exponentially when every stream applies a keepalive and then a frame the client refuses", async () => {
+    const { client, registrations, closes } = harness({ streams: () => "poison", random: () => 1 });
+    await client.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    // The client terminated each stream itself: a failure, never a healthy close.
+    expect(reconnectDelays(closes, registrations).slice(0, 5)).toEqual([1_000, 2_000, 4_000, 8_000, 16_000]);
+    client.fence();
+  });
+
+  it("treats a long-lived stream the client terminates as a failure from the reset base", async () => {
+    const { client, registrations, closes, sendLatest } = harness({
+      streams: ["fail", "fail", "fail", "healthy", "fail", "fail"],
+      random: () => 1,
+    });
+    await client.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reconnectDelays(closes, registrations)).toEqual([1_000, 2_000, 4_000]);
+    // Healthy for well past the minimum lifetime, then a frame the client refuses.
+    await vi.advanceTimersByTimeAsync(60_000);
+    sendLatest(invalidFrame);
+    await vi.advanceTimersByTimeAsync(10_000);
+    // Proven stream resets the base, but its self-termination is a failure (1s at random 1), not the 5s healthy window.
+    expect(reconnectDelays(closes, registrations).slice(3, 6)).toEqual([1_000, 2_000, 4_000]);
+    client.fence();
+  });
+
+  it("does not let a frame that finishes after its stream closed reset a newer failure sequence", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { client, registrations, closes } = harness({
+      streams: (index) => (index === 0 ? "slow_denial" : "fail"),
+      random: () => 1,
+      capabilities: { endActorGrants: () => gate },
+    });
+    await client.start();
+    // Stream 0 closes at ~1s with its denial still applying: failure, 1s delay. Then 2s.
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(reconnectDelays(closes, registrations)).toEqual([1_000]);
+    // The stale denial completes while the failure sequence is underway.
+    release?.();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reconnectDelays(closes, registrations).slice(0, 4)).toEqual([1_000, 2_000, 4_000, 8_000]);
     client.fence();
   });
 
