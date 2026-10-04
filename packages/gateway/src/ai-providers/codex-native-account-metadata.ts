@@ -175,25 +175,51 @@ export function createCodexNativeAccountMetadataReader(input: {
             const first = AccountSchema.safeParse(account); const last = AccountSchema.safeParse(message.result);
             if (message.error || !first.success || !last.success || JSON.stringify(first.data) !== JSON.stringify(last.data)) { finish(); return; }
             const observedAccount = account; const observedOffset = sequenceOffset;
+            const finalAccountObservedAt = (input.now ?? (() => new Date()))();
             void (async () => {
               const finalCredentialProof = fileBackend ? await readCredentialFileProof() : null;
               if (finishing || observedAccount !== account || observedOffset !== sequenceOffset) return;
               if (credentialProof !== finalCredentialProof) { finish(); return; }
-              const value = normalizeCodexNativeAccountMetadata(observedAccount, quota, (input.now ?? (() => new Date()))());
+              const value = normalizeCodexNativeAccountMetadata(observedAccount, quota, finalAccountObservedAt);
+              if (value?.usage?.resetsAt && Date.parse(value.usage.resetsAt) <= (input.now ?? (() => new Date()))().getTime()) delete value.usage;
               const principal = first.data.account;
               if (value && (principal?.type === "apiKey" || principal?.type === "chatgpt" && (principal.id || credentialProof))) {
                 const proof = JSON.stringify({ principal, ...(credentialProof ? { credentialProof } : {}) });
                 principals.set(value, proof);
                 bindNativeAccountMetadata(value, async () => {
-                  // Public reads never call a bound verifier, so waiting here
-                  // cannot cycle. A cooldown read has its own private proof check.
-                  if (pending) {
-                    const observed = await pending;
-                    if (!observed || principals.get(observed) !== proof) return false;
+                  const requestedAt = (input.now ?? (() => new Date()))().getTime();
+                  if (!freshAt(value, requestedAt)) {
+                    if (cached === value) cached = null;
+                    return false;
                   }
-                  if (!freshAt(value, (input.now ?? (() => new Date()))().getTime())) return false;
-                  const valid = await verifyProof(proof)
-                    && freshAt(value, (input.now ?? (() => new Date()))().getTime());
+                  const inFlightIdentity = verification;
+                  let valid: boolean;
+                  if (inFlightIdentity) {
+                    const current = await inFlightIdentity;
+                    valid = current !== null && principals.get(current) === proof
+                      && freshAt(current, (input.now ?? (() => new Date()))().getTime());
+                    // Cleanup can keep a pre-request observation in flight.
+                    // Only identity sampled after this request can coalesce.
+                    if (valid && Date.parse(current!.checkedAt) < requestedAt) valid = await verifyProof(proof);
+                  } else {
+                    // Public reads do not call bound verifiers: no wait cycle.
+                    // A full quota read is not itself the final identity proof.
+                    if (pending) {
+                      const observed = await pending;
+                      if (!observed || principals.get(observed) !== proof) return false;
+                    }
+                    valid = await verifyProof(proof);
+                  }
+                  // File authority was explicitly established by config/read.
+                  // Recheck private file proof after the shared RPC handoff.
+                  if (valid && credentialProof) {
+                    try { valid = await readCredentialFileProof() === credentialProof; }
+                    catch (error: unknown) {
+                      if (cached === value) cached = null;
+                      throw error;
+                    }
+                  }
+                  valid = valid && freshAt(value, (input.now ?? (() => new Date()))().getTime());
                   if (!valid && cached === value) cached = null;
                   return valid;
                 });

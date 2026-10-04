@@ -37,7 +37,7 @@ describe("native Codex account metadata", () => {
   it("rejects unsafe identity instead of echoing arbitrary native strings", () => {
     expect(normalizeCodexNativeAccountMetadata({ account: { type: "chatgpt", email: "/private/secret" } }, limits, now)).toBeNull();
   });
-  function fixture(changed = false, quotaFails = false, accountResult: unknown = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }, omitId?: number, backend?: string, quotaResult: unknown = limits) {
+  function fixture(changed = false, quotaFails = false, accountResult: unknown = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }, omitId?: number, backend?: string, quotaResult: unknown = limits, responseDelayMs = 0) {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => { queueMicrotask(() => child.emit("close")); return true; }) });
     const methods: unknown[] = [];
     child.stdin.on("data", chunk => {
@@ -46,12 +46,14 @@ describe("native Codex account metadata", () => {
       const result = request.method === "config/read" ? { config: { cli_auth_credentials_store: backend } } : request.id >= 5 && retry
         ? request.method === "account/rateLimits/read" ? retry.limits : request.id === 7 ? retry.finalAccount ?? retry.account : retry.account
         : request.id === 1 ? {} : request.method === "account/rateLimits/read" ? quotaResult : changed && request.id === 4 ? { account: { type: "chatgpt", email: "other@example.test" } } : accountResult;
-      queueMicrotask(() => {
+      const respond = () => {
         if (notification === "initial" && request.id === 2 || notification === "during_quota" && request.method === "account/rateLimits/read" || notification === "late_initial" && request.id === 3)
           child.stdout.write(JSON.stringify({ method: "account/updated", params: { authMode: "chatgpt", planType: "plus" } }) + "\n");
         child.stdout.write(JSON.stringify(request.id === 3 && quotaFails ? { id: 3, error: { message: "private-token" } } : { id: request.id, result }) + "\n");
         if (notification === "late_initial" && request.id === 3) child.stdout.write(JSON.stringify({ id: 4, result: accountResult }) + "\n");
-      });
+      };
+      if (responseDelayMs) setTimeout(respond, responseDelayMs);
+      else queueMicrotask(respond);
     });
     const spawnProcess = vi.fn(() => child as never);
     return { child, methods, spawnProcess };
@@ -89,7 +91,7 @@ describe("native Codex account metadata", () => {
     const value = await reader();
     expect(await verifyNativeAccountMetadata(value)).toBe(value);
     expect(value?.usage?.usedBasisPoints).toBe(2500);
-    expect(readCredentialFileProof).toHaveBeenCalledTimes(6);
+    expect(readCredentialFileProof).toHaveBeenCalledTimes(7);
     expect(current.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" }));
     expect(JSON.stringify(value)).not.toContain("private-proof");
   });
@@ -189,7 +191,55 @@ describe("native Codex account metadata", () => {
     children.slice(1).forEach(child => expect(child.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" })));
     expect(JSON.stringify(first)).not.toContain("private-profile-proof");
   });
-  it.each([false, true])("waits for overlapping cooldown read then independently verifies identity (changed=%s)", async changed => {
+  it('timestamps identity at final RPC receipt rather than later private file work', async () => {
+    let clock = now; let calls = 0;
+    const f = fixture(false, false, account, undefined, undefined, undefined, 'file');
+    const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => clock, spawnProcess: f.spawnProcess,
+      readCredentialFileProof: async () => { if (++calls === 3) clock = new Date(now.getTime() + 500); return 'original-private-proof'; } });
+    expect(await reader()).toMatchObject({ checkedAt: now.toISOString(), staleAfter: new Date(now.getTime() + 30_000).toISOString() });
+  });
+  it("finishes a slow successful overlapping identity check within the unchanged final budget", async () => {
+    try {
+      const native = { account: { ...account.account, id: 'private-principal' } };
+      const first = fixture(false, false, native);
+      const slow = () => {
+        const f = fixture(false, false, native, undefined, undefined, undefined, undefined, limits, 975);
+        f.child.kill.mockImplementation(() => { setTimeout(() => f.child.emit('close'), 200); return true; });
+        return f;
+      };
+      const current = slow(); const redundant = slow();
+      const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess).mockImplementationOnce(redundant.spawnProcess);
+      const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => now, spawnProcess, readCredentialFileProof: async () => null });
+      const value = await reader();
+      vi.useFakeTimers();
+      const cooldown = reader();
+      const final = verifyNativeAccountMetadata(value);
+      await vi.advanceTimersByTimeAsync(8300);
+      expect(await cooldown).toBe(value); expect(await final).toBe(value);
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      expect(current.methods).not.toContainEqual(expect.objectContaining({ method: 'account/rateLimits/read' }));
+    } finally { vi.useRealTimers(); }
+  });
+  it.each([false, true])('requires a fresh keyring RPC when prior identity is only awaiting cleanup (changed=%s)', async changed => {
+    let clock = now;
+    let release!: () => void; let sampled!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const cleanup = new Promise<void>(resolve => { sampled = resolve; });
+    const native = { account: { ...account.account, id: 'original-private-principal' } };
+    const first = fixture(false, false, native, undefined, undefined, undefined, 'keyring');
+    const current = fixture(false, false, native, undefined, undefined, undefined, 'keyring');
+    current.child.kill.mockImplementation(() => { sampled(); void gate.then(() => current.child.emit('close')); return true; });
+    const fresh = fixture(false, false, changed ? { account: { ...account.account, id: 'replacement-private-principal' } } : native, undefined, undefined, undefined, 'keyring');
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess).mockImplementationOnce(fresh.spawnProcess);
+    const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => clock, spawnProcess, readCredentialFileProof: async () => null });
+    const value = await reader(); const cooldown = reader(); await cleanup;
+    clock = new Date(now.getTime() + 1);
+    const final = verifyNativeAccountMetadata(value); release();
+    expect(await cooldown).toBe(value); expect(await final).toBe(changed ? null : value);
+    expect(spawnProcess).toHaveBeenCalledTimes(3);
+    expect(fresh.methods).not.toContainEqual(expect.objectContaining({ method: 'account/rateLimits/read' }));
+  });
+  it.each([false, true])("coalesces overlapping identity verification with final file-proof handoff (changed=%s)", async changed => {
     let calls = 0;
     let release!: () => void;
     let started!: () => void;
@@ -208,7 +258,7 @@ describe("native Codex account metadata", () => {
     const final = verifyNativeAccountMetadata(value); release();
     expect(await cooldown).toBe(value);
     expect(await final).toBe(changed ? null : value);
-    expect(spawnProcess).toHaveBeenCalledTimes(3);
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
     children.slice(1).forEach(child => expect(child.methods).not.toContainEqual(expect.objectContaining({ method: 'account/rateLimits/read' })));
     expect(JSON.stringify(value)).not.toContain('private-proof');
   });
@@ -268,6 +318,20 @@ describe("native Codex account metadata", () => {
     const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => clock, spawnProcess });
     expect(await reader()).not.toBeNull(); expect(await reader()).toBeNull();
     expect(spawnProcess).toHaveBeenCalledTimes(2);
+  });
+  it('invalidates file proof failure at the final handoff without retaining identity', async () => {
+    let calls = 0;
+    const first = fixture(false, false, account, undefined, undefined, undefined, 'file');
+    const current = fixture(false, false, account, undefined, undefined, undefined, 'file');
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => now, spawnProcess,
+        readCredentialFileProof: async () => { if (++calls === 7) throw new Error('private-handoff-failure'); return 'original-private-proof'; } });
+      const value = await reader(); expect(await verifyNativeAccountMetadata(value)).toBeNull();
+      expect(await reader()).toBeNull(); expect(spawnProcess).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain('private-handoff-failure');
+    } finally { warning.mockRestore(); }
   });
   it("invalidates retained evidence when private verification throws without exposing details", async () => {
     let calls = 0;
