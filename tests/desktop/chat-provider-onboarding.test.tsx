@@ -49,15 +49,10 @@ describe("canonical native empty Chat connection wiring", () => {
     const scroll = retry.closest<HTMLElement>('[data-slot="chat-starter-scroll"], [data-slot="chat-project-draft-scroll"]');
     expect(scroll).not.toBeNull();
     expect(scroll).toHaveClass("min-h-0", "overflow-y-auto");
-    if (projectId === null) {
-      expect(scroll).toHaveClass("items-start");
-      expect(scroll?.querySelector('[data-slot="chat-starter-stack"]')).toHaveClass("my-auto");
-      expect(scroll?.contains(screen.getByRole("textbox", { name: "Start a chat" }))).toBe(false);
-    } else {
-      expect(scroll).toHaveClass("flex-col");
-      expect(scroll?.contains(screen.getByRole("textbox", { name: "Start a chat" }))).toBe(false);
-      expect(screen.queryByRole("button", { name: "Explore and understand code" })).not.toBeInTheDocument();
-    }
+    expect(scroll).toHaveClass("items-start");
+    expect(scroll?.querySelector('[data-slot="chat-starter-stack"]')).toHaveClass("my-auto");
+    expect(scroll?.contains(screen.getByRole("textbox", { name: "Start a chat" }))).toBe(false);
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
   });
   it("opens the server-issued Settings login in Terminal on the selected runtime", async () => {
