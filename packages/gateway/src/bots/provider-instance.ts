@@ -1,3 +1,4 @@
+import { MANAGED_PI_INSTANCE_ID } from "./route-resolver.js";
 /**
  * The `matrix_bot` provider instance (spec 536). It is added only to the
  * catalog the chat orchestrator admits turns against, never to the catalog
@@ -58,7 +59,7 @@ export function withBotProviderInstance(
       // checks. Bot routing reads Provider V3 at dispatch, not ordinary harness settings.
       if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
         if (selection.model !== MATRIX_BOT_MODEL) {
-          const base = await catalog.getCatalog(principal);
+          const base = await catalog.getCatalog(principal, { ...selection, instanceId: MANAGED_PI_INSTANCE_ID });
           const managed = base.instances.find((instance) => instance.id === "matrix_pi_default");
           const chosen = managed?.models.find((model) => model.id === selection.model && model.availability === "available");
           const instance = botInstance(base.revision, selection.model);
@@ -70,7 +71,7 @@ export function withBotProviderInstance(
         const revision = "matrix_bot_v1";
         return { revision, drivers: [MATRIX_BOT_DRIVER], instances: [botInstance(revision)] };
       }
-      const base = await catalog.getCatalog(principal);
+      const base = selection ? await catalog.getCatalog(principal, selection) : await catalog.getCatalog(principal);
       if (base.instances.some((instance) => instance.id === MATRIX_BOT_INSTANCE_ID)) return base;
       return {
         ...base,

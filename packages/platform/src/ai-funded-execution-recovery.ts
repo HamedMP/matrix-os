@@ -1,20 +1,17 @@
 import {
   FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS,
-  FundedAiAuthorizationResponseSchema,
+  FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD,
+  FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN,
   FundedAiExecutionRecoveryRequestSchema,
   FundedAiExecutionRecoveryResponseSchema,
   type FundedAiExecutionRecoveryRequest,
   type FundedAiIdentity,
 } from "@matrix-os/contracts";
 import { sql } from "kysely";
-import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 
-const AuditSchema = z.object({
-  request: FundedAiExecutionRecoveryRequestSchema,
-  response: FundedAiExecutionRecoveryResponseSchema,
-}).strict();
+import { readFundedRecoveryAudit, readFundedUsageAuthorization } from "./ai-funded-recovery-audit.js";
 
 /** Operator-only recovery, independently fenced from financial settlement. */
 export function createFundedExecutionRecovery(options: { db: PlatformDB; now: () => Date }) {
@@ -25,7 +22,7 @@ export function createFundedExecutionRecovery(options: { db: PlatformDB; now: ()
     await options.db.ready;
     return options.db.transaction(async (trx) => {
       // Same namespace/order as admission: concurrent support and Relay replicas
-      // cannot release two unknown obligations or open two execution slots.
+      // serialize the bounded unknown set and cannot open two live execution slots.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`
         .execute(trx.executor);
       const machine = await trx.executor.selectFrom("user_machines")
@@ -42,16 +39,12 @@ export function createFundedExecutionRecovery(options: { db: PlatformDB; now: ()
       if (!reservation) throw new AiFundedPolicyError("unauthorized");
       if (reservation.request_id !== request.expectedRequestId || reservation.started_at !== request.expectedStartedAt
         || reservation.expires_at !== request.expectedExpiresAt) throw new AiFundedPolicyError("idempotency_conflict");
-      const captured = FundedAiAuthorizationResponseSchema.parse(JSON.parse(reservation.authorization_response));
-      if (captured.reservation.billingMode !== "usage" || captured.reservation.reservationId !== request.reservationId
-        || captured.reservation.requestId !== request.expectedRequestId || captured.identity.tokenId !== request.tokenId
-        || captured.identity.ownerId !== identity.ownerId || captured.identity.machineId !== identity.machineId
-        || captured.identity.runtimeSlot !== identity.runtimeSlot
-        || captured.reservation.maxCostMicrousd !== request.maximumLiabilityMicrousd) {
+      const captured = readFundedUsageAuthorization(reservation);
+      if (captured.reservation.maxCostMicrousd !== request.maximumLiabilityMicrousd) {
         throw new AiFundedPolicyError("idempotency_conflict");
       }
       if (reservation.execution_admission_release !== null) {
-        const audit = AuditSchema.parse(JSON.parse(reservation.execution_admission_release));
+        const audit = readFundedRecoveryAudit(reservation);
         if (JSON.stringify(audit.request) !== JSON.stringify(request)) throw new AiFundedPolicyError("idempotency_conflict");
         return audit.response;
       }
@@ -65,22 +58,35 @@ export function createFundedExecutionRecovery(options: { db: PlatformDB; now: ()
         || Date.parse(request.localRunEndedAt) + 60_000 > checked.getTime()) {
         throw new AiFundedPolicyError("rate_limited");
       }
-      const unknown = await trx.executor.selectFrom("ai_funded_usage_reservations").select("reservation_id")
+      const unknown = await trx.executor.selectFrom("ai_funded_usage_reservations").selectAll()
         .where("owner_id", "=", identity.ownerId).where("execution_admission_release", "is not", null)
-        .where("actual_microusd", "is", null).limit(1).executeTakeFirst();
+        .where("actual_microusd", "is", null).limit(FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN + 1).execute();
+      let liability = request.maximumLiabilityMicrousd;
+      const occupied: number[] = [];
+      for (const row of unknown) {
+        const audit = readFundedRecoveryAudit(row);
+        if (row.status !== "in_flight" || ![0, 1].includes(row.execution_recovery_slot)
+          || occupied.includes(row.execution_recovery_slot)) throw new AiFundedPolicyError("idempotency_conflict");
+        occupied.push(row.execution_recovery_slot);
+        liability += audit.request.maximumLiabilityMicrousd;
+      }
       const otherLive = await trx.executor.selectFrom("ai_funded_usage_reservations").select("reservation_id")
         .where("owner_id", "=", identity.ownerId).where("reservation_id", "!=", request.reservationId)
         .where("execution_admission_release", "is", null)
         .where("status", "in", ["reserved", "starting", "in_flight", "settling"])
         .limit(1).executeTakeFirst();
-      if (unknown || otherLive) throw new AiFundedPolicyError("rate_limited");
+      if (unknown.length >= FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN
+        || liability > FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD || otherLive) {
+        throw new AiFundedPolicyError("rate_limited");
+      }
+      const recoverySlot: 0 | 1 = occupied.includes(0) ? 1 : 0;
       const response = FundedAiExecutionRecoveryResponseSchema.parse({
         contractVersion: 1, executionAdmissionReleased: true, usageKnown: false,
         reservedMicrousd: Number(reservation.reserved_microusd),
         maximumLiabilityMicrousd: request.maximumLiabilityMicrousd, releasedAt: checked.toISOString(),
       });
       const updated = await trx.executor.updateTable("ai_funded_usage_reservations")
-        .set({ execution_admission_release: JSON.stringify({ request, response }) })
+        .set({ execution_admission_release: JSON.stringify({ request, response }), execution_recovery_slot: recoverySlot })
         .where("reservation_id", "=", request.reservationId).where("token_id", "=", request.tokenId)
         .where("owner_id", "=", identity.ownerId).where("status", "=", "in_flight")
         .where("actual_microusd", "is", null).where("execution_admission_release", "is", null)

@@ -84,6 +84,7 @@ it("bypasses fresh lifecycle reuse for explicit refresh and immediately retries 
   act(() => result.current.refresh());
   await waitFor(() => expect(result.current.status).toBe("error"));
   expect(get).toHaveBeenCalledTimes(2);
+  expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
   act(foregroundEvents);
   await waitFor(() => expect(result.current.status).toBe("ready"));
   expect(get).toHaveBeenCalledTimes(3);

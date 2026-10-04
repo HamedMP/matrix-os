@@ -66,7 +66,7 @@ describe("merged platform schema upgrade", () => {
       await expect(runPlatformMigration(db, migratePlatformSchema, {
         revision: PLATFORM_SCHEMA_REVISION,
       })).resolves.toBeUndefined();
-      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(12);
+      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(13);
       const marker = await sql<{ generation: number; fingerprint: string }>`
         SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'core'
       `.execute(db);
@@ -122,9 +122,8 @@ describe("merged platform schema upgrade", () => {
       expect(recoveryIndexes.rows.map((row) => row.indexname)).toEqual([
         "idx_ai_funded_unknown_admission_owner", "idx_ai_funded_usage_active_owner",
       ]);
-      for (const index of recoveryIndexes.rows) {
-        expect(index.indexdef).toMatch(/CREATE UNIQUE INDEX .* USING btree \(owner_id\)/);
-      }
+      expect(recoveryIndexes.rows[0].indexdef).toMatch(/USING btree \(owner_id, execution_recovery_slot\)/);
+      expect(recoveryIndexes.rows[1].indexdef).toMatch(/USING btree \(owner_id\)/);
       expect(recoveryIndexes.rows[0].indexdef)
         .toMatch(/WHERE .*execution_admission_release IS NOT NULL.*actual_microusd IS NULL/);
       expect(recoveryIndexes.rows[1].indexdef)

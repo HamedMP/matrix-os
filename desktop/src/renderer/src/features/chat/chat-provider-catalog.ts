@@ -66,6 +66,7 @@ export function useChatProviderCatalog(
   }>(() => ({ catalog: fallback, status: api && active ? "loading" : "fallback", identityKey, generation: catalogGeneration, api }));
 
   const trustedCatalogRef = useRef<{ api: Pick<ApiClient, "get">; catalog: CanonicalProviderCatalog; identityKey: string; generation: number; fetchedAt: number | null } | null>(null);
+  const observedScopeRef = useRef<{ api: Pick<ApiClient, "get">; identityKey: string; generation: number } | null>(null);
   const refreshRef = useRef<() => void>(() => undefined);
   const refresh = useCallback(() => refreshRef.current(), []);
 
@@ -88,6 +89,10 @@ export function useChatProviderCatalog(
         cancelled = true;
       };
     }
+    const previousScope = observedScopeRef.current;
+    const settingsChanged = previousScope?.api === api && previousScope.identityKey === identityKey
+      && previousScope.generation !== catalogGeneration;
+    observedScopeRef.current = { api, identityKey, generation: catalogGeneration };
     if (!lastTrustedCatalog) trustedCatalogRef.current = null;
     const retainedCatalog = lastTrustedCatalog;
     setState((current) => ({
@@ -100,7 +105,7 @@ export function useChatProviderCatalog(
       return desktopProviderIdentityKey(current) === identityKey
         && current.providerCatalogGeneration === catalogGeneration;
     };
-    const update = (lifecycleOnly = false) => {
+    const update = (lifecycleOnly = false, forceRefresh = false) => {
       // Restoring a window often emits both focus and visibility. Join its
       // current read or reuse recent successful discovery in this exact scope.
       // Explicit post-change refresh always starts a fresh read.
@@ -111,7 +116,10 @@ export function useChatProviderCatalog(
       const request = ++requestSequence;
       setState({ catalog: lastTrustedCatalog ?? presentationRef.current.unavailableCatalog,
         identityKey, generation: catalogGeneration, api, status: "loading" });
-      void fetchCanonicalProviderCatalog(api, true).then((catalog) => {
+      // Normal discovery already observes current funding and saved Settings.
+      // Force only after an explicit change: invalidating every native CLI
+      // inventory here adds a second full scan before the same catalog read.
+      void fetchCanonicalProviderCatalog(api, forceRefresh).then((catalog) => {
         if (!cancelled && request === requestSequence && isCurrentScope()) {
           lastTrustedCatalog = catalog;
           lastTrustedAt = Date.now();
@@ -133,8 +141,8 @@ export function useChatProviderCatalog(
         }
       }).finally(() => { inFlight -= 1; });
     };
-    refreshRef.current = update;
-    update();
+    refreshRef.current = () => update(false, true);
+    update(false, settingsChanged);
     const refresh = () => update(true);
     window.addEventListener("focus", refresh);
     const visibility = () => {

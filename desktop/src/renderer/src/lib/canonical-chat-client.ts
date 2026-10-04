@@ -392,6 +392,8 @@ export function createCanonicalChatClient(
         const response = CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
           chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`),
           request,
+          // Fresh funded observation has a 14s server deadline; allow bounded transport margin.
+          { timeoutMs: 30_000 },
         ));
         if (analytics) {
           trackEvent({

@@ -788,6 +788,11 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings", displayName: "Codex" });
     expect(catalog.instances.find((instance) => instance.id === "claude_code_default"))
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings", displayName: "Claude" });
+    for (const selection of [{ instanceId: "codex_default", model: "gpt-5.4" }, { instanceId: "claude_code_default", model: "opus" }]) {
+      const scoped = await service.getCatalog(principal, selection);
+      expect(scoped.instances).toEqual([expect.objectContaining({ availability: "unavailable", unavailabilityReason: "disabled_in_settings" })]);
+      expect(validateChatProviderSelection({ catalog: scoped, selection }).ok).toBe(false);
+    }
   });
 
   it("keeps a Codex route admitted for a user attempt while qualifying its local-only status", async () => {

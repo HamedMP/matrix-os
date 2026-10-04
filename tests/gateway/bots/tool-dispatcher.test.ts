@@ -131,6 +131,18 @@ describe("bot provider instance", () => {
     instances: [],
   };
 
+  it("preserves scoped discovery for ordinary and concrete managed Bot selections", async () => {
+    const getCatalog = vi.fn(async () => served);
+    const admission = withBotProviderInstance({ getCatalog });
+    const principal = { userId: OWNER } as never;
+    const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+    await admission.getCatalog(principal, selection);
+    expect(getCatalog).toHaveBeenCalledWith(principal, selection);
+    getCatalog.mockClear();
+    await admission.getCatalog(principal, { ...selection, instanceId: "matrix_bot_default" });
+    expect(getCatalog).toHaveBeenCalledWith(principal, selection);
+  });
+
   it("exists only in the orchestrator's admission catalog, once", async () => {
     const getCatalog = vi.fn(async () => served);
     const admission = withBotProviderInstance({ getCatalog });

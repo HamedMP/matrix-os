@@ -37,6 +37,16 @@ function api(overrides: Partial<ApiClient> = {}): ApiClient {
 }
 
 describe("canonical Chat client", () => {
+  it("allows the bounded funded observation deadline only for turn admission", async () => {
+    const input = { clientRequestId: "req_slow_admission", baseRevision: 0,
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      parts: [{ type: "text" as const, text: "hello" }], interactionMode: "default", permissionMode: "supervised" };
+    const post = vi.fn(async () => admissionResponse(input));
+    const client = createCanonicalChatClient(api({ post }));
+    await client.admitTurn(record.chat.id, input);
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("/turns"), input, { timeoutMs: 30_000 });
+  });
+
   it("requests bounded owner-only credential metadata and one value at a time", async () => {
     const occurrence = { id: "cred_00000000000000000000000000000001", messageId: "msg_one", offset: 5, length: 21, revealed: false };
     const get = vi.fn(async (path: string) => path.includes("/value")
@@ -396,7 +406,7 @@ describe("canonical Chat client", () => {
       decision: "approve_for_session",
     });
 
-    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&readStateVersion=1", turnInput);
+    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&readStateVersion=1", turnInput, { timeoutMs: 30_000 });
     expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/cancel?readStateVersion=1", {
       clientRequestId: "req_client_cancel",
     });
@@ -548,7 +558,7 @@ describe("canonical Chat client", () => {
 
     await client.admitTurn(record.chat.id, turnInput);
 
-    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&readStateVersion=1", turnInput);
+    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&readStateVersion=1", turnInput, { timeoutMs: 30_000 });
   });
 });
 

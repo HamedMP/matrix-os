@@ -238,7 +238,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     }
   }
 
-  async #drivers(): Promise<AiProviderSnapshotV3["drivers"]> {
+  async #drivers(managedMatrixOnly = false): Promise<AiProviderSnapshotV3["drivers"]> {
     const kernel = AiProviderDriverViewSchema.parse({
       id: "kernel",
       displayName: "Claude SDK",
@@ -248,7 +248,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       capabilities: [...KERNEL_CAPABILITIES],
       setupActions: [],
     });
-    if (!this.#driverInventory) return [kernel];
+    if (managedMatrixOnly || !this.#driverInventory) return [kernel];
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -336,31 +336,32 @@ export class AiProviderService implements AiProviderSnapshotReader {
 
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
     options.signal?.throwIfAborted();
+    const managedMatrixOnly = options.admissionScope === "managed_matrix";
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
     const [drivers, funded, apiKeyReadiness, profileReadiness, nativeHarnessCatalog] = await Promise.all([
-      this.#drivers(),
+      this.#drivers(managedMatrixOnly),
       !options.suppressFundedProbes && credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
         : undefined,
-      this.#resolveOwnerReadiness(
+      managedMatrixOnly ? readinessForObservation(credentials.ownerApiKey.state, "api_key", now) : this.#resolveOwnerReadiness(
         "owner_anthropic_key", credentials.ownerApiKey.state, "api_key", now, options.refresh === true, options.ownerKeyPreflight, options.signal,
       ),
-      this.#resolveOwnerReadiness(
+      managedMatrixOnly ? readinessForObservation(credentials.ownerProfile.state, "profile", now) : this.#resolveOwnerReadiness(
         "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
       ),
-      this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true) : undefined,
+      !managedMatrixOnly && this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true) : undefined,
     ]);
     options.signal?.throwIfAborted();
     // Native discovery can consume more than the local credential probe's
     // five-second TTL. Collect the bounded observation after metadata settles;
     // preserve its original timestamps rather than extending stale evidence.
-    const codexLocalObservation = await this.#readCodexLocalObservation();
+    const codexLocalObservation = managedMatrixOnly ? undefined : await this.#readCodexLocalObservation();
     options.signal?.throwIfAborted();
-    const codexNativeKey = await this.#codexNativeKeyReadiness?.();
+    const codexNativeKey = managedMatrixOnly ? undefined : await this.#codexNativeKeyReadiness?.();
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     // Driver health and CLI login are local observations. Neither proves the
     // selected OpenAI account or model can complete a remote request.
