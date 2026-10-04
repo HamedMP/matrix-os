@@ -7,9 +7,9 @@ This ledger separates source checks, synthetic workflows, and real provider acce
 | Broad UI and synthetic fixture unit regressions | 200 passed in fourteen suites over 6b8c185604; see checkpoint |
 | Strict changed-test and shared UI/Electron/Web types | Passed on 7f4f293adc |
 | Scoped lint, pattern and diff checks | Passed; zero pattern violations, five warnings |
-| Canonical production Web build and Electron build | Exact grouped source ad7956df86 built and published |
+| Canonical production Web build and Electron build | Exact grouped source 085c748055 built and published |
 | Actual Electron synthetic workflow interactions | Isolated Claude login/code/disconnect/reconnect passed on ca6ca34039; latest remote CI pending |
-| Matching immutable Preview VPS and Electron client | ad7956df86 identities matched, health and real interactions passed |
+| Matching immutable Preview VPS and Electron client | 085c748055 identities matched, health and real interactions passed |
 | Real supported provider login/account/allowance | Existing Codex reconnect/account/allowance passed; real Claude unavailable |
 | Real Matrix Sonnet/GLM reply and settled usage | Pending separate inference acceptance |
 | Web Canvas/Web Desktop parity | Electron presentation switch smoke passed; independent browser parity pending |
@@ -62,3 +62,11 @@ Full evidence CI `37179528376` passed all four unit shards, then reproduced eigh
 Grouped CI `37178718931` separately reported zero refresh calls in the saved reconnect route test. Three controlled outside-act route runs did not reproduce that exact failure. The test now controls delayed capability completion, asserts no refresh/mutation before it resolves, flushes completion inside `act`, and waits for an enabled control before clicking. All twelve exact-validation and callback/scope assertions remain, including refresh-once and mutation/start safety checks. This is test synchronization, not an established product diagnosis. Ninety-nine local UI regressions passed in four suites. The recorded live acceptance above remains on `ad7956df86`; the newer palette repair still requires current rendered CI and final matching-artifact acceptance.
 
 The final local combined check on evidence source `6b8c185604` over grouped `3a483540c2` passed 200 tests in fourteen suites, adding saved reconnect coverage to the native metadata, UI, receipt and socket cleanup checks. These local checks do not turn either failed remote run into a green gate.
+
+## Current matching Preview and Electron checkpoint
+
+Grouped source `085c748055f25d24b0fd06c15ab4a70de53524f4` built and published immutable bundle `v2026.10.04-pr2127-37185950775-1-085c748` in successful workflow `37185950775`, without promoting a channel. The existing scoped Preview installed that exact version; installed source identity matched, gateway/shell/sync were active, local health passed, and the updater finished without an error marker. Its Electron production client is built from the same source. Private provenance retains artifact hashes and screenshots.
+
+Actual Electron Desktop acceptance passed existing Codex disconnect with uninstall unchecked, saved reconnect without manual refresh, automatic account/plan restoration and current allowance (33% used, 67% remaining). Explicit refresh preserved the expanded card. History and credit dialogs dimmed the background without a white glow and returned focus to their triggers on Escape. Disconnect cancellation returned focus and kept the connection. OpenClaw displayed Not installed and its Install entry; no installation was performed. This Preview remains unfunded; no payment, grant, broader access or Main Computer update occurred.
+
+Full evidence CI `37182780068` passed all four unit shards, eight-theme contrast and required native provider Settings regressions on earlier source `db928e580e`. The inline fixture and native login gate were moved upstream so the grouped PR itself tests current Settings behavior. Subsequent grouped CI `37185169792` passed the unit shards but the native test sampled the disconnect row while it still showed Connecting. Test-only commit `fac917cdd7` waits for final Connected/Not connected row state, keeping credential-retention, fixture HTTP state, zero-Terminal-command and disclosure assertions unchanged. Focused strict types passed; fresh exact-head native execution and final main reconciliation remain required. The shipped product files are unchanged by these two test waits.
