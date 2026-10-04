@@ -343,7 +343,7 @@ Canonical presentation labels are not principal proof. Each optional observation
 has a private, observation-lifetime verification callback in a WeakMap. Codex
 uses the same selected `CODEX_HOME` and official read-only app-server protocol;
 its final verification reads account identity only, with `refreshToken: false`
-and no quota request. Exact ChatGPT type, native ID, email and plan must still
+and no quota request. Exact ChatGPT type, email and plan, plus native ID when provided, must still
 match. Missing ChatGPT native ID drops optional identity. API-key observations verify
 only the current API-key authentication class and contain no principal claim,
 email, plan or allowance; they never inherit ChatGPT metadata. Hermes verifies
@@ -361,3 +361,17 @@ or reusing unverified identity from a previous native profile. Canonical
 connection/readiness remains authoritative. Safe profile-aware caching is not
 delivered here; repeated owner GET/usage presentation still requires Electron
 Desktop acceptance before claiming complete UX validation.
+
+Codex app-server account/read may expose no native principal ID. For that approved
+protocol shape, a private credential-file proof can bind the observation only
+after the same app-server confirms effective cli_auth_credentials_store=file.
+Tentative private proof is captured before process startup, then compared again
+after effective config observation before the first account request; process
+startup cannot bind cached old-account data to replacement credentials.
+The selected explicit CODEX_HOME or HOME/.codex is bounded, owner/trust checked
+and no-follow read; opaque per-reader proof stays in private verification state.
+Proof equality is required before/after the complete account/quota sequence and
+again on the fresh paired Settings observation. Same presentation with changed
+credentials is rejected. Unknown, auto or keyring storage never borrows a stale
+auth.json; missing proof fails closed. Existing genuine native-ID binding and
+API-key class-only projection remain supported without borrowing allowance.

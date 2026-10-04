@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -34,13 +37,13 @@ describe("native Codex account metadata", () => {
   it("rejects unsafe identity instead of echoing arbitrary native strings", () => {
     expect(normalizeCodexNativeAccountMetadata({ account: { type: "chatgpt", email: "/private/secret" } }, limits, now)).toBeNull();
   });
-  function fixture(changed = false, quotaFails = false, accountResult: unknown = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }, omitId?: number) {
+  function fixture(changed = false, quotaFails = false, accountResult: unknown = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }, omitId?: number, backend?: string) {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => { queueMicrotask(() => child.emit("close")); return true; }) });
     const methods: unknown[] = [];
     child.stdin.on("data", chunk => {
       const request = JSON.parse(chunk.toString()); methods.push(request);
       if (!request.id || request.id === omitId) return;
-      const result = request.id >= 5 && retry
+      const result = request.method === "config/read" ? { config: { cli_auth_credentials_store: backend } } : request.id >= 5 && retry
         ? request.method === "account/rateLimits/read" ? retry.limits : request.id === 7 ? retry.finalAccount ?? retry.account : retry.account
         : request.id === 1 ? {} : request.method === "account/rateLimits/read" ? limits : changed && request.id === 4 ? { account: { type: "chatgpt", email: "other@example.test" } } : accountResult;
       queueMicrotask(() => {
@@ -53,6 +56,67 @@ describe("native Codex account metadata", () => {
     const spawnProcess = vi.fn(() => child as never);
     return { child, methods, spawnProcess };
   }
+  it("projects the official missing-id reply using the actual bounded file proof", async () => {
+    const home = await mkdtemp(join(tmpdir(), "codex-reader-file-"));
+    try {
+      await mkdir(join(home, ".codex"), { mode: 0o700 });
+      await writeFile(join(home, ".codex/auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "private-fixture-access", refresh_token: "private-fixture-refresh" } }), { mode: 0o600 });
+      const first = fixture(false, false, account, undefined, undefined, undefined, "file");
+      const current = fixture(false, false, account, undefined, undefined, undefined, "file");
+      const value = await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: home, environment: { HOME: home }, now: () => now,
+        spawnProcess: vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess) })();
+      expect(await verifyNativeAccountMetadata(value)).toBe(value);
+      expect(value?.connectionDetails?.planName).toBe("ChatGPT Plus");
+      expect(value?.usage?.usedBasisPoints).toBe(2500);
+      expect(first.methods).toContainEqual({ id: 8, method: "config/read", params: { includeLayers: false, cwd: home } });
+      expect(JSON.stringify(value)).not.toMatch(/private-fixture|credentialProof|digest/);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+  it("rejects a same-presentation credential switch between spawn and effective config observation", async () => {
+    let proof = "spawn-principal";
+    const f = fixture(false, false, account, undefined, undefined, undefined, "file");
+    const spawnProcess = vi.fn(() => { proof = "replacement-principal"; return f.spawnProcess(); });
+    const value = await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess,
+      readCredentialFileProof: async () => proof })();
+    expect(value).toBeNull();
+  });
+  it("binds the official missing-id ChatGPT reply to a file-backed private credential proof", async () => {
+    const first = fixture(false, false, account, undefined, undefined, undefined, "file");
+    const current = fixture(false, false, account, undefined, undefined, undefined, "file");
+    const readCredentialFileProof = vi.fn(async () => "private-proof-credential");
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess);
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home", CODEX_HOME: "/selected/profile" }, now: () => now, spawnProcess, readCredentialFileProof });
+    const value = await reader();
+    expect(await verifyNativeAccountMetadata(value)).toBe(value);
+    expect(value?.usage?.usedBasisPoints).toBe(2500);
+    expect(readCredentialFileProof).toHaveBeenCalledTimes(6);
+    expect(current.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" }));
+    expect(JSON.stringify(value)).not.toContain("private-proof");
+  });
+  it("rejects same-presentation credentials switched after the full metadata read", async () => {
+    let proof = "old-private-credential";
+    const first = fixture(false, false, account, undefined, undefined, undefined, "file");
+    const current = fixture(false, false, account, undefined, undefined, undefined, "file");
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now,
+      spawnProcess: vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess), readCredentialFileProof: async () => proof });
+    const value = await reader();
+    expect(value?.usage).toBeDefined(); proof = "replacement-private-credential";
+    expect(await verifyNativeAccountMetadata(value)).toBeNull();
+  });
+  it("drops a credential switch during quota even when account labels remain identical", async () => {
+    let calls = 0;
+    const f = fixture(false, false, account, undefined, undefined, undefined, "file");
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess,
+      readCredentialFileProof: async () => ++calls <= 2 ? "old" : "new" });
+    expect(await reader()).toBeNull();
+  });
+  it.each(["keyring", "auto", undefined])("never borrows a stale file when effective backend is %s", async backend => {
+    const f = fixture(false, false, account, undefined, undefined, undefined, backend);
+    const readCredentialFileProof = vi.fn(async () => "stale-file-proof");
+    const value = await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess, readCredentialFileProof })();
+    expect(await verifyNativeAccountMetadata(value)).toBeNull();
+    expect(readCredentialFileProof).toHaveBeenCalledTimes(1);
+  });
   it("verifies the exact selected native principal after the metadata helper exits, without quota or token refresh", async () => {
     const first = fixture(false, false, { account: { ...account.account, id: "private-old-id" } });
     const current = fixture(false, false, { account: { ...account.account, id: "private-new-id" } });

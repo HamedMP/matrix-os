@@ -1,3 +1,4 @@
+import { createCodexCredentialFileProofReader } from "./codex-credential-file-proof.js";
 import { bindNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { z } from "zod/v4";
@@ -53,8 +54,10 @@ type SpawnProcess = (command: string, args: readonly string[], options: SpawnOpt
 export function createCodexNativeAccountMetadataReader(input: {
   executable: string; cwd: string; environment: Record<string, string>; now?: () => Date;
   timeoutMs?: number; terminateGraceMs?: number; spawnProcess?: SpawnProcess;
+  readCredentialFileProof?: () => Promise<string | null>;
 }): () => Promise<CodexNativeAccountMetadata | null> {
   if (!input.environment.HOME || input.environment.HOME !== input.cwd) throw new Error("Native account runtime scope is required");
+  const readCredentialFileProof = input.readCredentialFileProof ?? createCodexCredentialFileProofReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME });
   let pending: Promise<CodexNativeAccountMetadata | null> | null = null;
   let blockedUntilExit = false;
   let lastStartedAt = -Infinity;
@@ -66,6 +69,9 @@ export function createCodexNativeAccountMetadataReader(input: {
     const waitMs = Math.max(0, 5000 - (startedAt - lastStartedAt));
     if (!identityOnly && waitMs > 0) return null;
     if (!identityOnly) lastStartedAt = (input.now ?? (() => new Date()))().getTime();
+    // Tentative evidence precedes process startup: the app-server can cache
+    // account state at spawn. It becomes usable only after effective file authority.
+    const tentativeCredentialProof = await readCredentialFileProof();
     const child = (input.spawnProcess ?? spawn)(input.executable, ["app-server", "--stdio"], {
       cwd: input.cwd, env: Object.fromEntries(Object.entries(input.environment).filter(([key]) => ["HOME", "CODEX_HOME", "MATRIX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR", "MATRIX_NODE_PREFIX"].includes(key))), stdio: "pipe",
     });
@@ -73,6 +79,8 @@ export function createCodexNativeAccountMetadataReader(input: {
     return await new Promise(resolve => {
       let buffer = "";
       let bytes = 0;
+      let credentialProof: string | null = null;
+      let fileBackend = false;
       let account: unknown;
       let accountObservedAt: Date | undefined;
       let quota: unknown;
@@ -130,7 +138,18 @@ export function createCodexNativeAccountMetadataReader(input: {
           if (message.id === 1) {
             if (message.error) { finish(); return; }
             child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
-            send(2, "account/read", { refreshToken: false });
+            send(8, "config/read", { includeLayers: false, cwd: input.cwd });
+          } else if (message.id === 8) {
+            const config = z.object({ config: z.object({ cli_auth_credentials_store: z.unknown().optional() }) }).safeParse(message.result);
+            fileBackend = !message.error && config.success && config.data.config.cli_auth_credentials_store === "file";
+            void (async () => {
+              credentialProof = fileBackend ? await readCredentialFileProof() : null;
+              if (fileBackend && credentialProof !== tentativeCredentialProof) { finish(); return; }
+              send(2, "account/read", { refreshToken: false });
+            })().catch((error: unknown) => {
+              console.warn("[provider-settings] Codex private observation unavailable:", error instanceof Error ? error.name : "UnknownError");
+              finish();
+            });
           } else if (message.id === 2 + sequenceOffset) {
             account = message.result;
             accountObservedAt = (input.now ?? (() => new Date()))();
@@ -143,19 +162,28 @@ export function createCodexNativeAccountMetadataReader(input: {
           } else if (message.id === 4 + sequenceOffset) {
             const first = AccountSchema.safeParse(account); const last = AccountSchema.safeParse(message.result);
             if (message.error || !first.success || !last.success || JSON.stringify(first.data) !== JSON.stringify(last.data)) { finish(); return; }
-            const value = normalizeCodexNativeAccountMetadata(account, quota, (input.now ?? (() => new Date()))());
-            const principal = first.data.account;
-            if (value && (principal?.type === "apiKey" || (principal?.type === "chatgpt" && principal.id))) {
-              const proof = JSON.stringify(principal);
-              principals.set(value, proof);
-              bindNativeAccountMetadata(value, async () => {
-                if (pending) return false;
-                if (!verification) verification = read(true).finally(() => { verification = null; });
-                const current = await verification;
-                return current !== null && principals.get(current) === proof;
-              });
-            }
-            finish(value);
+            const observedAccount = account; const observedOffset = sequenceOffset;
+            void (async () => {
+              const finalCredentialProof = fileBackend ? await readCredentialFileProof() : null;
+              if (finishing || observedAccount !== account || observedOffset !== sequenceOffset) return;
+              if (credentialProof !== finalCredentialProof) { finish(); return; }
+              const value = normalizeCodexNativeAccountMetadata(observedAccount, quota, (input.now ?? (() => new Date()))());
+              const principal = first.data.account;
+              if (value && (principal?.type === "apiKey" || principal?.type === "chatgpt" && (principal.id || credentialProof))) {
+                const proof = JSON.stringify({ principal, ...(credentialProof ? { credentialProof } : {}) });
+                principals.set(value, proof);
+                bindNativeAccountMetadata(value, async () => {
+                  if (pending) return false;
+                  if (!verification) verification = read(true).finally(() => { verification = null; });
+                  const current = await verification;
+                  return current !== null && principals.get(current) === proof;
+                });
+              }
+              finish(value);
+            })().catch((error: unknown) => {
+              console.warn("[provider-settings] Codex private observation unavailable:", error instanceof Error ? error.name : "UnknownError");
+              finish();
+            });
           }
         }
       });
