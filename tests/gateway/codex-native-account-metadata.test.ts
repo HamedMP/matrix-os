@@ -189,6 +189,50 @@ describe("native Codex account metadata", () => {
     children.slice(1).forEach(child => expect(child.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" })));
     expect(JSON.stringify(first)).not.toContain("private-profile-proof");
   });
+  it.each([false, true])("waits for overlapping cooldown read then independently verifies identity (changed=%s)", async changed => {
+    let calls = 0;
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const children = Array.from({ length: 3 }, () => fixture(false, false, account, undefined, undefined, undefined, "file"));
+    const spawnProcess = vi.fn(); children.forEach(child => spawnProcess.mockImplementationOnce(child.spawnProcess));
+    const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => now, spawnProcess,
+      readCredentialFileProof: async () => {
+        const call = ++calls;
+        if (call === 4) { started(); await gate; }
+        return changed && call >= 7 ? 'replacement-private-proof' : 'original-private-proof';
+      } });
+    const value = await reader();
+    const cooldown = reader(); await entered;
+    const final = verifyNativeAccountMetadata(value); release();
+    expect(await cooldown).toBe(value);
+    expect(await final).toBe(changed ? null : value);
+    expect(spawnProcess).toHaveBeenCalledTimes(3);
+    children.slice(1).forEach(child => expect(child.methods).not.toContainEqual(expect.objectContaining({ method: 'account/rateLimits/read' })));
+    expect(JSON.stringify(value)).not.toContain('private-proof');
+  });
+  it.each(['expired', 'changed'] as const)("does not revive %s evidence after an overlapping cooldown read fails", async reason => {
+    let clock = now;
+    let calls = 0;
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const children = Array.from({ length: 2 }, () => fixture(false, false, account, undefined, undefined, undefined, 'file'));
+    const spawnProcess = vi.fn(); children.forEach(child => spawnProcess.mockImplementationOnce(child.spawnProcess));
+    const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => clock, spawnProcess,
+      readCredentialFileProof: async () => {
+        const call = ++calls;
+        if (call === 4) { started(); await gate; if (reason === 'expired') clock = new Date(now.getTime() + 30_000); }
+        return reason === 'changed' && call >= 4 ? 'replacement-private-proof' : 'original-private-proof';
+      } });
+    const value = await reader(); const cooldown = reader(); await entered;
+    const final = verifyNativeAccountMetadata(value); release();
+    expect(await cooldown).toBeNull(); expect(await final).toBeNull();
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
+    expect(children[1]!.methods).not.toContainEqual(expect.objectContaining({ method: 'account/rateLimits/read' }));
+  });
   it("invalidates cooldown reuse on same-presentation credential replacement", async () => {
     let proof = "old-private-proof";
     const children = [fixture(false, false, account, undefined, undefined, undefined, "file"), fixture(false, false, account, undefined, undefined, undefined, "file")];

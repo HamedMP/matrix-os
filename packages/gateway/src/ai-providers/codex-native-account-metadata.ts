@@ -185,8 +185,15 @@ export function createCodexNativeAccountMetadataReader(input: {
                 const proof = JSON.stringify({ principal, ...(credentialProof ? { credentialProof } : {}) });
                 principals.set(value, proof);
                 bindNativeAccountMetadata(value, async () => {
-                  if (pending) return false;
-                  const valid = await verifyProof(proof);
+                  // Public reads never call a bound verifier, so waiting here
+                  // cannot cycle. A cooldown read has its own private proof check.
+                  if (pending) {
+                    const observed = await pending;
+                    if (!observed || principals.get(observed) !== proof) return false;
+                  }
+                  if (!freshAt(value, (input.now ?? (() => new Date()))().getTime())) return false;
+                  const valid = await verifyProof(proof)
+                    && freshAt(value, (input.now ?? (() => new Date()))().getTime());
                   if (!valid && cached === value) cached = null;
                   return valid;
                 });
