@@ -90,3 +90,46 @@ it("keeps an idempotent receipt bound to its request until expiry", async () => 
     expect((await (await start()).json()).id).not.toBe(first.id);
   } finally { await gateway.close(); }
 });
+
+it("inline Claude start replays the original current receipt and rejects conflicting keys", async () => {
+  const gateway = await startProviderAuthGateway({ inlineClaude: true });
+  const post = (path: string, body: object) => fetch(`${gateway.url}/api/ai/provider-settings/workflows${path}`, { method: "POST", signal: AbortSignal.timeout(5000), headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const start = { harnessInstanceId: "claude_harness", kind: "login", method: "browser", idempotencyKey: "claude-retry" };
+  try {
+    const first = await (await post("", start)).json();
+    const retry = await post("", start);
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual(first);
+    expect((await post("", { ...start, method: "terminal" })).status).toBe(409);
+    await post(`/${first.id}/cancel`, {});
+    expect(await (await post("", start)).json()).toMatchObject({ id: first.id, state: "cancelled", authorizationUrl: null });
+    const next = { ...start, idempotencyKey: "claude-complete" };
+    const second = await (await post("", next)).json();
+    await post(`/${second.id}/code`, { code: "synthetic-fixture-code" });
+    expect(await (await post("", next)).json()).toMatchObject({ id: second.id, state: "succeeded", authorizationUrl: null });
+    expect(await (await post("", start)).json()).toMatchObject({ id: first.id, state: "cancelled" });
+    expect(gateway.workflowEvents.filter(event => event === "browser-login")).toHaveLength(2);
+  } finally { await gateway.close(); }
+});
+
+it("inline Claude bounds start receipts and retains the live receipt under capacity pressure", async () => {
+  const gateway = await startProviderAuthGateway({ inlineClaude: true });
+  const post = (path: string, body: object) => fetch(`${gateway.url}/api/ai/provider-settings/workflows${path}`, { method: "POST", signal: AbortSignal.timeout(5000), headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const start = (index: number) => ({ harnessInstanceId: "claude_harness", kind: "login", method: "browser", idempotencyKey: `claude-cap-${index}` });
+  try {
+    let firstId = "";
+    for (let index = 0; index < 33; index++) {
+      const response = await post("", start(index));
+      expect(response.status).toBe(200);
+      const receipt = await response.json();
+      if (!index) firstId = receipt.id;
+      if (index < 32) await post(`/${receipt.id}/cancel`, {});
+      else {
+        expect((await post("", start(0))).status).toBe(400);
+        expect(await (await post("", start(index))).json()).toMatchObject({ id: receipt.id, state: "running" });
+        await post(`/${receipt.id}/cancel`, {});
+      }
+    }
+    expect((await (await post("", start(0))).json()).id).not.toBe(firstId);
+  } finally { await gateway.close(); }
+});
