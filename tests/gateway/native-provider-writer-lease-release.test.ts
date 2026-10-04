@@ -59,7 +59,7 @@ afterEach(async () => {
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'writer-release-')); roots.push(root);
   const home = join(root, 'home'); await mkdir(home); homes.push(home);
-  control.marker = join(privateRoot(home), 'native-writers/codex.json');
+  control.marker = join(privateRoot(await realpath(home)), 'native-writers/codex.json');
   return createNativeProviderWriterLease(home);
 }
 it('coalesces concurrent release so a late unlink cannot delete a newly admitted writer', async () => {
@@ -210,4 +210,40 @@ it('rejects an untrusted lexical ancestor even when a symlink resolves to a trus
   const alias = join(shared, 'alias'); await symlink(trusted, alias);
   await expect(createNativeProviderWriterLease(join(alias, 'home')).acquire('codex')).rejects.toThrow('lifecycle_unavailable');
   await expect(access(join(trusted, '.matrix-private'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('uses one writer marker for the real owner home and a trusted differently named alias', async () => {
+  const lease = await fixture();
+  const home = homes[homes.length - 1]!;
+  const alias = join(dirname(home), 'owner-alias'); await symlink(home, alias);
+  const aliased = createNativeProviderWriterLease(alias);
+  const release = await lease.acquire('codex');
+  try {
+    await expect(aliased.assertAvailable('codex')).rejects.toThrow('lifecycle_unavailable');
+    await expect(aliased.acquire('codex')).rejects.toThrow('lifecycle_unavailable');
+  } finally { await release(); }
+  const aliasRelease = await aliased.acquire('codex');
+  try { await expect(lease.acquire('codex')).rejects.toThrow('lifecycle_unavailable'); }
+  finally { await aliasRelease(); }
+  await expect(access(join(dirname(home), '.matrix-private/owner-alias'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it('fails closed with a safe error for an unresolved owner home', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'writer-missing-home-')); roots.push(root);
+  const home = join(root, 'private-owner-path');
+  await expect(createNativeProviderWriterLease(home).acquire('codex')).rejects.toThrow('lifecycle_unavailable');
+  await expect(access(join(root, '.matrix-private'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+it('retains admission when its alias is retargeted before release', async () => {
+  const lease = await fixture();
+  const home = homes[homes.length - 1]!;
+  const otherHome = join(dirname(home), 'other-home'); await mkdir(otherHome);
+  const alias = join(dirname(home), 'changing-alias'); await symlink(home, alias);
+  const aliased = createNativeProviderWriterLease(alias);
+  const release = await aliased.acquire('codex');
+  await rm(alias); await symlink(otherHome, alias);
+  await expect(release()).rejects.toThrow('lifecycle_unavailable');
+  await expect(lease.assertAvailable('codex')).rejects.toThrow('lifecycle_unavailable');
+  await expect(access(join(dirname(home), '.matrix-private/other-home'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await rm(alias); await symlink(home, alias); await release();
+  await lease.assertAvailable('codex');
 });

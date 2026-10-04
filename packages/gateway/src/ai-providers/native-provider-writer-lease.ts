@@ -6,29 +6,32 @@ import { ProviderSettingsStoreError } from './provider-settings-errors.js';
 const unavailable = () => new ProviderSettingsStoreError('lifecycle_unavailable', 503);
 export function createNativeProviderWriterLease(homePath: string) {
   const home = resolve(homePath);
-  const directory = join(dirname(home), '.matrix-private', basename(home), 'native-writers');
-  const path = (profile: 'codex' | 'claude') => join(directory, `${profile}.json`);
   async function trustedParent() {
     const uid = process.getuid?.();
     if (uid === undefined) throw unavailable();
-    const parent = await realpath(dirname(home));
+    let canonicalHome: string;
+    try { canonicalHome = await realpath(home); }
+    catch (error) { console.warn('[provider-settings] Owner home unavailable:', error instanceof Error ? error.name : 'UnknownError'); throw unavailable(); }
+    const parent = dirname(canonicalHome);
     // Check lexical ancestors too: resolving an alias must not hide a shared,
     // replaceable directory above it. Root/current-UID symlinks are trusted.
-    for (const start of [dirname(home), parent]) {
+    for (const start of [home, canonicalHome]) {
       for (let ancestor = start; ; ancestor = dirname(ancestor)) {
-        const info = await lstat(ancestor);
+        let info;
+        try { info = await lstat(ancestor); }
+        catch (error) { console.warn('[provider-settings] Owner ancestor unavailable:', error instanceof Error ? error.name : 'UnknownError'); throw unavailable(); }
         const stickyRoot = info.uid === 0 && (info.mode & 0o1000) !== 0;
         if ((!info.isDirectory() && !info.isSymbolicLink()) || ![0, uid].includes(info.uid)
           || !info.isSymbolicLink() && (info.mode & 0o022) !== 0 && !stickyRoot) throw unavailable();
         if (dirname(ancestor) === ancestor) break;
       }
     }
-    return { parent, uid };
+    return { parent, canonicalHome, uid };
   }
   async function prepare(create: boolean) {
     const trusted = await trustedParent();
     let parent = trusted.parent;
-    for (const name of ['.matrix-private', basename(home), 'native-writers']) {
+    for (const name of ['.matrix-private', basename(trusted.canonicalHome), 'native-writers']) {
       parent = join(parent, name);
       if (create) {
         try { await mkdir(parent, { mode: 0o700 }); }
@@ -39,18 +42,18 @@ export function createNativeProviderWriterLease(homePath: string) {
       let info;
       try { info = await lstat(parent); }
       catch (error) {
-        if (!create && error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT') return trusted.uid;
+        if (!create && error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT') return { uid: trusted.uid, directory: join(trusted.parent, '.matrix-private', basename(trusted.canonicalHome), 'native-writers') };
         throw unavailable();
       }
       if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== trusted.uid
         || (info.mode & 0o777) !== 0o700) throw unavailable();
     }
-    return trusted.uid;
+    return { uid: trusted.uid, directory: join(trusted.parent, '.matrix-private', basename(trusted.canonicalHome), 'native-writers') };
   }
   return {
     async assertAvailable(profile: 'codex' | 'claude') {
-      await prepare(false);
-      try { await lstat(path(profile)); }
+      const { directory } = await prepare(false);
+      try { await lstat(join(directory, `${profile}.json`)); }
       catch (error) {
         if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT') return;
         throw unavailable();
@@ -59,8 +62,8 @@ export function createNativeProviderWriterLease(homePath: string) {
       throw unavailable();
     },
     async acquire(profile: 'codex' | 'claude'): Promise<() => Promise<void>> {
-      const uid = await prepare(true);
-      const marker = path(profile);
+      const { uid, directory } = await prepare(true);
+      const marker = join(directory, `${profile}.json`);
       let file;
       try { file = await open(marker, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
       catch (error) { console.warn('[provider-settings] Native writer admission unavailable:', error instanceof Error ? error.name : 'UnknownError'); throw unavailable(); }
@@ -74,7 +77,8 @@ export function createNativeProviderWriterLease(homePath: string) {
         try { await file.close(); }
         catch (closeError) { console.warn('[provider-settings] Admission descriptor close failed:', closeError instanceof Error ? closeError.name : 'UnknownError'); }
         try {
-          await prepare(false);
+          const checked = await prepare(false);
+          if (checked.directory !== directory) throw unavailable();
           const current = await lstat(marker);
           if (!current.isFile() || current.isSymbolicLink() || current.uid !== uid
             || identity && (current.dev !== identity.dev || current.ino !== identity.ino)) throw unavailable();
@@ -90,7 +94,8 @@ export function createNativeProviderWriterLease(homePath: string) {
         // Every observer of this admission shares one identity check/unlink.
         // A failed drain remains fenced, but may be retried after it settles.
         releasing ??= (async () => {
-          await prepare(false);
+          const checked = await prepare(false);
+          if (checked.directory !== directory) throw unavailable();
           const current = await lstat(marker);
           if (!current.isFile() || current.isSymbolicLink() || current.dev !== admittedIdentity.dev || current.ino !== admittedIdentity.ino) throw unavailable();
           await unlink(marker); released = true;

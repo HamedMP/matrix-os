@@ -450,6 +450,10 @@ real authorization acceptance remain pending in the native/browser layer.
 The adapter-independent writer lease stores only process/profile admission in a
 runtime-private sibling directory outside the synced owner home. Exclusive,
 symlink-safe acquisition prevents a second process from claiming the same profile.
+The actual owner home is resolved at the filesystem boundary; trusted aliases of
+that home share one canonical private marker path. Lexical and canonical trust
+checks remain mandatory, and retargeting an alias cannot release another home's
+marker. An unresolved home fails closed with a safe lifecycle error.
 Release coalesces concurrent ownership checks and unlinks: an older cleanup must
 never remove a replacement writer's marker. A failed unlink remains fenced and
 permits an explicit cleanup retry. No timeout or gateway death clears admission.
