@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderHarnessInstance } from "@matrix-os/contracts";
 import { HarnessRail, HarnessIcon } from "../../packages/ui/src/agents-providers/HarnessRail";
 afterEach(cleanup);
-const agent = { id: "hermes", harness: "hermes", displayName: "Hermes", installState: "installed", authState: "unknown", enabled: false, configuredEnabled: true, connectivity: "unknown", accessSourceId: null, localObservation: { state: "present_unverified", checkedAt: "2026-01-01T00:00:00Z", staleAfter: "2026-01-01T00:00:05Z" } } as ProviderHarnessInstance;
+const agent = { id: "hermes", harness: "hermes", displayName: "Hermes", installState: "installed", authState: "unknown", enabled: false, configuredEnabled: true, connectivity: "unknown", accessSourceId: null, localObservation: { state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 60000).toISOString() } } as ProviderHarnessInstance;
 const props = { harnesses: [agent], sources: [], selectedId: "hermes", disabled: false, canEnable: () => true, onSelect: vi.fn(), onEnable: vi.fn(), renderDetails: () => <div>Connection details</div> };
 it("shows credential connection separately from inference readiness and removes Enable", () => {
   render(<HarnessRail {...props} />);

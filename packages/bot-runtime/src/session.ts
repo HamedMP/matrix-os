@@ -14,6 +14,7 @@ const TOOL_PAYLOAD_CAPS = [32 * 1024, 8 * 1024, 2 * 1024, 512] as const;
 const MIN_KEPT_CHARS = 512;
 /** Headroom so the encoded save always fits the session cap. */
 const STORAGE_TARGET_BYTES = SESSION_MAX_BYTES - 16 * 1024;
+const SUMMARY_PREFIX = "Summary of the earlier conversation, for context only:\n\n";
 const DROPPED_HISTORY_NOTE = "[Earlier conversation was removed to fit saved history.]";
 const encoder = new TextEncoder();
 
@@ -267,12 +268,26 @@ export function planCompaction(messages: readonly AgentMessage[], keepRecentUser
   return { head: messages.slice(0, headEnd), older: messages.slice(headEnd, cut), recent: messages.slice(cut) };
 }
 
+/** Discard derived context, never the canonical Chat transcript or ordinary saved turns. */
+export function withoutDerivedSummaries(messages: readonly AgentMessage[]): AgentMessage[] {
+  const firstTurn = messages.findIndex((message) => message.role !== "system");
+  return messages.filter((message, index) => {
+    if (message.role !== "user") return true;
+    if ("matrixBotSessionKind" in message && message.matrixBotSessionKind === "summary") return false;
+    // Older bundles put an untagged summary first, after the system prompt.
+    // A later person message quoting that envelope is still an ordinary turn.
+    return index !== firstTurn || typeof message.content !== "string" || !message.content.startsWith(SUMMARY_PREFIX);
+  });
+}
+
 export function summaryMessage(summary: string, timestamp: number): AgentMessage {
-  return {
-    role: "user",
-    content: `Summary of the earlier conversation, for context only:\n\n${summary}`,
+  const message = {
+    role: "user" as const,
+    content: `${SUMMARY_PREFIX}${summary}`,
     timestamp,
+    matrixBotSessionKind: "summary" as const,
   };
+  return message;
 }
 
 /** Plain-text transcript of messages to summarize; images and raw tool payloads are elided. */

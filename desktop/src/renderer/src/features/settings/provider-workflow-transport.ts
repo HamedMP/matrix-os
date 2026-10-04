@@ -19,6 +19,7 @@ export function createDesktopProviderWorkflowClient(api: ApiClient, isIdentityCu
     } catch (error) {
       if (!isIdentityCurrent() || input.signal.aborted) throw unavailable();
       throw new ProviderWorkflowClientError(error instanceof AppError && error.detail === "forbidden" ? "forbidden"
+        : error instanceof AppError && error.category === "unauthorized" ? "unauthorized"
         : error instanceof AppError && error.detail === "rejected" ? "rejected" : "unavailable");
     }
     if (!isIdentityCurrent() || input.signal.aborted) throw unavailable();

@@ -26,7 +26,7 @@ describe("specialized harness Settings connections", () => {
       }],
     };
     const onMutate = vi.fn();
-    render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId={`harness_${kind}`} onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={onMutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
+    render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId={`harness_${kind}`} onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={onMutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()} />);
     fireEvent.click(screen.getByRole("button",{name:new RegExp(`^${kind}`)}));
     expect(screen.queryByRole("switch", { name: `Enable ${kind}` })).not.toBeInTheDocument();
     expect(screen.queryByText("Enable this agent")).not.toBeInTheDocument();

@@ -60,7 +60,7 @@ function fixture(delayMs: number | null, overrides: NodeJS.ProcessEnv = {}) {
   relays.push(relay);
   const app = new Hono(); relay.register(app);
   function request(callerSignal?: AbortSignal) {
-    return Promise.resolve(app.request("/v1/chat/completions", {
+    return app.request("/v1/chat/completions", {
       method: "POST", signal: callerSignal,
       headers: { authorization: `Bearer ${CREDENTIAL}`, "content-type": "application/json" },
       body: JSON.stringify({ model: MODEL, max_tokens: 256, messages: [
@@ -69,7 +69,7 @@ function fixture(delayMs: number | null, overrides: NodeJS.ProcessEnv = {}) {
           function: { name: "get_profile", arguments: "{}" } }] },
         { role: "tool", tool_call_id: "tool_1", content: "Synthetic profile result" },
       ] }),
-    }));
+    });
   }
   function expectSingleDispatch() {
     expect(control.check).toHaveBeenCalledTimes(1);

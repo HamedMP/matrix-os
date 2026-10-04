@@ -18,6 +18,7 @@ it.each([false, true])("shows each offered model once while an unavailable route
     onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} onUseGateway={vi.fn()} />);
   expect(screen.getAllByText("Claude Sonnet 5")).toHaveLength(1);
   expect(screen.getByText("Claude Sonnet 5")).toBeVisible();
+  expect(screen.getByText("Tools")).toBeVisible();
   expect(screen.getByText("GLM 5.3 Flash")).toBeVisible();
   expect(screen.queryByText("No models are enabled for this computer.")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Use Matrix/ })).not.toBeInTheDocument();

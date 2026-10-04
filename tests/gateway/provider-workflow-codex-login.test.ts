@@ -81,7 +81,7 @@ it("does not confirm cancellation or release the profile when the native child c
   expect(onSuccess).not.toHaveBeenCalled();
   expect(publish).not.toHaveBeenCalledWith(expect.objectContaining({ state: "succeeded" }));
   child.emit("close", 1);
-  expect(release).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
   await expect(running.cancel()).resolves.toBeUndefined();
   expect(release).toHaveBeenCalledOnce();
 });

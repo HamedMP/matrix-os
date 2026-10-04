@@ -76,3 +76,10 @@ describe("Electron provider workflow transport", () => {
     expect(openExternal).toHaveBeenCalledWith("https://auth.openai.com/codex/device");
   });
 });
+
+it('retains real API session expiry on 401 rather than classifying it as owner denial', async () => {
+  const onUnauthorized = vi.fn();
+  const api = createApiClient({ baseUrl: 'https://matrix.invalid', getRuntimeSlot: () => 'primary', onUnauthorized, fetchFn: async () => Response.json({ error: { code: 'unauthorized', message: 'private' } }, { status: 401 }) });
+  await expect(createDesktopProviderWorkflowClient(api, () => true).capabilities(new AbortController().signal)).rejects.toMatchObject({ reason: 'unauthorized', message: 'Provider action is unavailable.' });
+  expect(onUnauthorized).toHaveBeenCalledOnce();
+});

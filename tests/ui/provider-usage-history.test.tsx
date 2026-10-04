@@ -112,3 +112,38 @@ it("restores focus to the opener and ignores a late response after transport cha
   expect(opener).toHaveFocus();
   opener.remove();
 });
+
+it("clears already loaded private history and its cursor before a replacement loader settles", async () => {
+  const oldLoad = vi.fn().mockResolvedValue({ entries: [{ occurredAt: "2026-10-01T00:00:00Z", kind: "usage", amountMicrousd: -1, modelId: "old-private-account" }], nextCursor: "a".repeat(32) });
+  const newLoad = vi.fn<(cursor: string | null, signal: AbortSignal) => Promise<AiCreditHistoryResponse>>(() => new Promise<AiCreditHistoryResponse>(() => {}));
+  const view = render(<UsageHistoryDialog load={oldLoad} onClose={vi.fn()} />);
+  await screen.findByText("old-private-account");
+  view.rerender(<UsageHistoryDialog load={newLoad} onClose={vi.fn()} />);
+  expect(screen.queryByText("old-private-account")).not.toBeInTheDocument();
+  expect(screen.queryByText("1 activity")).not.toBeInTheDocument();
+  expect(newLoad.mock.calls[0]?.[0]).toBeNull();
+});
+
+it("retries initial and pagination failures with the exact opaque cursor while keeping bounded activity", async () => {
+  const cursor = "b".repeat(32);
+  const entry = {occurredAt: "2026-10-01T00:00:00Z", kind: "adjustment", amountMicrousd: 1, modelId: null};
+  const load = vi.fn().mockRejectedValueOnce(new Error("private initial error"))
+    .mockResolvedValueOnce({entries: [entry], nextCursor: cursor})
+    .mockRejectedValueOnce(new Error("private page error"))
+    .mockResolvedValueOnce({entries: Array.from({length: 500}, () => ({...entry, amountMicrousd: 0})), nextCursor: "c".repeat(32)});
+  render(<UsageHistoryDialog load={load} onClose={vi.fn()} />);
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", {name: "Try again"}));
+  await screen.findByText("$0.000001");
+  fireEvent.click(screen.getByRole("button", {name: "Load more"}));
+  await screen.findByRole("alert");
+  expect(screen.getByText("$0.000001")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", {name: "Try again"}));
+  await screen.findByText("500 activities · Showing the latest 500");
+  expect(load.mock.calls.map(call => call[0])).toEqual([null, null, cursor, cursor]);
+  expect(screen.queryByRole("button", {name: "Load more"})).toBeNull();
+  expect(screen.getAllByText("$0.00")).toHaveLength(499);
+  expect(screen.queryByText("All activity loaded")).toBeNull();
+  expect(screen.getByText("Activity limit reached")).toBeVisible();
+  expect(document.body.textContent).not.toContain("private page error");
+});

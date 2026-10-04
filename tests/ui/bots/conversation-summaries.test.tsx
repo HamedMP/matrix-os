@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { ChatAgentListResponse } from '@matrix-os/contracts';
+import { saved } from '../../desktop/chat-agents-fixture.js';
 import { useBotConversationSummaries } from '../../../packages/ui/src/chat-agents/bots/use-bot-conversation-summaries.js';
 import type { ChatAgentClient } from '../../../packages/ui/src/chat-agents/client.js';
 afterEach(cleanup);
@@ -29,11 +31,11 @@ it('does not treat failed bindings as ordinary chats or keep stale approvals',as
  expect(result.current.error).not.toContain('private');
 });
 it('clears prior runtime identity synchronously and ignores stale lookups',async()=>{
- const old=fixture(); let finish!: (value:any)=>void;
+ const old=fixture(); let finish!: (value:ChatAgentListResponse)=>void;
  vi.mocked(old.list).mockImplementation(()=>new Promise(resolve=>{finish=resolve}));
  const next=fixture(); const {result,rerender}=renderHook(({client})=>useBotConversationSummaries(client,[]),{initialProps:{client:old}});
  rerender({client:next}); expect(result.current.conversations).toEqual([]);
- await act(async()=>finish({enabled:true,agents:[{id:'old_bot',name:'Old',recipeRef:{}}]}));
+ await act(async()=>finish({enabled:true,agents:[{...saved,id:'old_bot',name:'Old',recipeRef:{recipeId:'writer',version:'1'}}]}));
  await waitFor(()=>expect(result.current.loading).toBe(false));
  expect(result.current.conversations.every(item=>item.agentId==='bot_one')).toBe(true);
  expect(old.bots!.directChat).not.toHaveBeenCalled(); expect(old.bots!.directBot).not.toHaveBeenCalled();
@@ -51,7 +53,7 @@ it('classifies a Bot beyond the old 200-record boundary with bounded concurrency
 it('retains verified ordinary identities and Bot reminders when a new Chat arrives during refresh', async () => {
  const client=fixture(); const {result,rerender}=renderHook(({ids})=>useBotConversationSummaries(client,ids),{initialProps:{ids:['chat_regular','chat_old']}});
  await waitFor(()=>expect(result.current.loading).toBe(false));
- let finish!: (value:any)=>void;
+ let finish!: (value:ChatAgentListResponse)=>void;
  vi.mocked(client.list).mockImplementation(()=>new Promise(resolve=>{finish=resolve}));
  rerender({ids:['chat_regular','chat_old','chat_new']});
  expect(result.current.loading).toBe(true);

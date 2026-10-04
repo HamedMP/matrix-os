@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { checkoutUnavailablePresentation } from "./checkout-unavailable-presentation.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
 import type {
@@ -121,6 +122,16 @@ export function GatewayPanel({
   const [creditBusy, setCreditBusy] = useState(false);
   const [creditError, setCreditError] = useState(false);
   const [creditRequestId, setCreditRequestId] = useState("");
+  // Scope identity prevents an old machine's checkout from settling a new dialog.
+  const checkoutScope = useRef<{ sourceId: string | undefined; submit: typeof onAddCredit } | null>({ sourceId: source?.id, submit: onAddCredit });
+  if (checkoutScope.current?.sourceId !== source?.id || checkoutScope.current?.submit !== onAddCredit) {
+    checkoutScope.current = { sourceId: source?.id, submit: onAddCredit };
+    setCreditDialogOpen(false); setCreditBusy(false); setCreditError(false); setCreditRequestId("");
+  }
+  useEffect(() => {
+    if (!checkoutScope.current) checkoutScope.current = { sourceId: source?.id, submit: onAddCredit };
+    return () => { checkoutScope.current = null; };
+  }, [onAddCredit, source?.id]);
   useEffect(() => {
     setBudgetUsd(budget === null ? "" : String(budget / 1_000_000));
   }, [budget]);
@@ -145,11 +156,12 @@ export function GatewayPanel({
       source.usage.state === "current" &&
       (ready || creditRequired),
   );
+  const checkoutUnavailable = checkoutUnavailablePresentation(source, policy, canAddCredit);
   const creditDialog = useRef<HTMLElement | null>(null);
   const closeCreditDialog = () => { if (!creditBusy) setCreditDialogOpen(false); };
   useDialogFocus(creditDialog, creditDialogOpen, closeCreditDialog);
   useGettingStartedBlocker(creditDialogOpen);
-  useEffect(() => { setCreditDialogOpen(false); }, [source?.id]);
+
   const status = !source || !policy ? "Setup needed" : ready ? "Ready" : creditReserved ? "Credit reserved" : creditRequired ? "Credit needed"
     : source.readiness.state === "ready" ? "Unavailable" : titleCase(source.readiness.state);
 
@@ -169,19 +181,21 @@ export function GatewayPanel({
 
   const submitCredit = async () => {
     if (creditBusy || !source || !checkoutAvailable || disabled) return;
+    const requestScope = checkoutScope.current;
+    if (!requestScope) return;
     setCreditBusy(true);
     setCreditError(false);
     try {
       await onAddCredit(source.id, creditPackage, creditRequestId);
-      setCreditDialogOpen(false);
+      if (checkoutScope.current === requestScope) setCreditDialogOpen(false);
     } catch (error) {
       console.warn(
         "[provider-settings] Credit checkout failed:",
         error instanceof Error ? error.name : typeof error,
       );
-      setCreditError(true);
+      if (checkoutScope.current === requestScope) setCreditError(true);
     } finally {
-      setCreditBusy(false);
+      if (checkoutScope.current === requestScope) setCreditBusy(false);
     }
   };
 
@@ -506,7 +520,7 @@ export function GatewayPanel({
             </fieldset> : null}
             {!checkoutAvailable ? (
               <div className="matrix-ap-credit-unavailable" role="status">
-                <p>Credit purchases are unavailable on this computer right now.</p>
+                <p>{checkoutUnavailable.message}</p>
               </div>
             ) : null}
             {creditError ? (
@@ -516,7 +530,7 @@ export function GatewayPanel({
             ) : null}
             </div>
             <footer className="matrix-ap-dialog-actions matrix-ap-credit-actions">
-              {!checkoutAvailable ? <button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button> : null}
+              {!checkoutAvailable && checkoutUnavailable.refreshable ? <button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button> : null}
               <button
                 type="button"
                 className="matrix-ap-button"

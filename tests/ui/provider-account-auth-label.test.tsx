@@ -32,6 +32,7 @@ it.each([
       id: "codex",
       harness: "codex",
       displayName: "Codex",
+      installState: "installed", enabled: true, authState: "authenticated",
       loginMethods: [],
       accountIds: ["account"],
       accessSourceId: source.id,

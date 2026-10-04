@@ -55,12 +55,13 @@ export function createBotSessionsRepository(db: BotExecutor) {
     /**
      * Saves a transcript at `baseRevision`: 0 creates it, any other value must
      * match the stored revision. Returns the new revision. A save that carries
-     * a compaction point also clears the recompaction flag.
+     * a compaction point or invalidation acknowledgement also clears the flag.
      */
     async save(input: BotSessionKey & {
       baseRevision: number;
       messages: readonly Record<string, unknown>[];
       compactedThroughSeq?: number;
+      recompactionHandled?: true;
       tokenEstimate: number;
       runtimeVersions: Record<string, string>;
       now: string;
@@ -99,6 +100,8 @@ export function createBotSessionsRepository(db: BotExecutor) {
           runtime_versions: runtimeVersions,
           revision: sql<number>`revision + 1`,
           updated_at: input.now,
+          // Only the revision-checked save can acknowledge discarded derived summaries.
+          ...(input.recompactionHandled ? { needs_recompaction: false } : {}),
           // A save that carries a compaction point replaces the summary, so it clears the flag.
           ...(input.compactedThroughSeq !== undefined
             ? { compacted_through_seq: input.compactedThroughSeq, needs_recompaction: false }
@@ -114,13 +117,13 @@ export function createBotSessionsRepository(db: BotExecutor) {
     /**
      * Flags every transcript of a bot for regeneration, e.g. after a memory
      * item is forgotten. The revision advances, so a worker holding an older
-     * copy cannot save over the flag; it must reload and see it.
+     * copy cannot save over the flag; it must reload and see it. Every forget
+     * advances the revision, even while an earlier invalidation is pending.
      */
     async markNeedsRecompaction(input: { ownerId: string; botId: string; now: string }, executor: BotExecutor = db): Promise<number> {
       const rows = await executor.updateTable("bot_agent_sessions")
         .set({ needs_recompaction: true, revision: sql<number>`revision + 1`, updated_at: input.now })
         .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
-        .where("needs_recompaction", "=", false)
         .returning("session_id")
         .execute();
       return rows.length;

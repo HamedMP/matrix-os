@@ -22,8 +22,9 @@ const MAX_CONNECTIONS = 256;
 
 export type BotIntegrationErrorCode = "unavailable" | "ambiguous" | "missing" | "invalid" | "denied";
 
+/** effectUnknown is set only after a non-read service call enters transport. */
 export class BotIntegrationError extends Error {
-  constructor(readonly code: BotIntegrationErrorCode) {
+  constructor(readonly code: BotIntegrationErrorCode, readonly effectUnknown = false) {
     super(`Integration request failed: ${code}`);
     this.name = "BotIntegrationError";
   }
@@ -111,16 +112,26 @@ async function readJson(response: Response, maxBytes: number, signal: AbortSigna
 }
 
 export function createBotIntegrationClient(transport: BotIntegrationTransport) {
-  async function send<T>(ownerId: string, request: Omit<Parameters<BotIntegrationTransport>[1], "signal">, timeoutMs: number, parse: (response: Response, signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  async function send<T>(ownerId: string, request: Omit<Parameters<BotIntegrationTransport>[1], "signal">, timeoutMs: number, parse: (response: Response, signal: AbortSignal) => Promise<T>, signal?: AbortSignal, mayHaveEffect = false): Promise<T> {
     const bounded = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]);
+    // Cancellation before entering the transport proves no service action was sent.
+    if (bounded.aborted) throw new BotIntegrationError("unavailable");
     let response: Response;
     try {
       response = await transport(ownerId, { ...request, signal: bounded });
     } catch (error: unknown) {
       console.warn("[bots] integration request failed:", error instanceof Error ? error.name : "UnknownError");
-      throw new BotIntegrationError("unavailable");
+      // Once transport is entered, a lost response cannot prove a write/send failed.
+      throw new BotIntegrationError("unavailable", mayHaveEffect);
     }
-    return parse(response, bounded);
+    try {
+      return await parse(response, bounded);
+    } catch (error: unknown) {
+      // The route's allowlisted 400/401/403/404/409 refusals precede the service
+      // action. Server failures or an unreadable success result are uncertain.
+      if (error instanceof BotIntegrationError && error.code !== "unavailable") throw error;
+      throw new BotIntegrationError("unavailable", mayHaveEffect);
+    }
   }
 
   return {
@@ -169,7 +180,7 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
         const result = CallResultSchema.safeParse(await readJson(response, MAX_CALL_BYTES, bounded));
         if (!result.success) throw new BotIntegrationError("unavailable");
         return { data: result.data.data, ...(result.data.summary !== undefined ? { summary: result.data.summary } : {}) };
-      }, signal);
+      }, signal, !input.read);
     },
   };
 }

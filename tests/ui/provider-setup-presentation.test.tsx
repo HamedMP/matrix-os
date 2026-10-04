@@ -60,17 +60,19 @@ describe("provider setup presentation", () => {
     const value = snapshot();
     value.harnesses = [];
     const onAddCredit = vi.fn();
-    const {onRefresh, onMutate} = setup(value, {onAddCredit});
+    const { onRefresh, onMutate } = setup(value, { onAddCredit });
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Setup needed")).toBeVisible();
-    expect(within(gateway).queryByText(/not available on this computer yet/i)).not.toBeInTheDocument();
-    expect(within(gateway).getByRole("button", { name: "Buy credit" })).toBeEnabled();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(within(gateway).getByText("Credit unavailable")).toBeVisible();
+    fireEvent.click(within(gateway).getByRole("button", { name: "Buy credit" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Purchase availability has not been confirmed for this computer.");
+    expect(screen.queryByRole("button", { name: "Continue to checkout" })).not.toBeInTheDocument();
+    expect(onMutate).not.toHaveBeenCalled();
     expect(within(gateway).queryByText(/\$0/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
     fireEvent.click(within(gateway).getByRole("button", {name: "Buy credit"}));
     const dialog = screen.getByRole("dialog", {name: "Add Matrix AI credit"});
-    expect(within(dialog).getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+    expect(within(dialog).getByText("Purchase availability has not been confirmed for this computer. Refresh to check again.")).toBeVisible();
     expect(within(dialog).queryByRole("button", {name: "Continue to checkout"})).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", {name: "Check again"}));
     expect(onRefresh).toHaveBeenCalledOnce();
@@ -85,8 +87,8 @@ describe("provider setup presentation", () => {
     expect(row.querySelector("img")).toHaveAttribute("src", "/agent-logos/pi-coding-agent.png");
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(gateway.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Display name")).not.toBeInTheDocument();
+    expect(screen.getByText("Advanced configuration").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByLabelText("Display name")).not.toBeVisible();
     fireEvent.click(row);
     expect(row).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(row);
@@ -98,8 +100,8 @@ describe("provider setup presentation", () => {
     setup();
     expect(screen.queryByRole("combobox", { name: "Paid through" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Model provider" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Choose the model" })).not.toBeInTheDocument();
+    expect(screen.getByText("Advanced configuration").closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByRole("heading", { name: "Choose the model" })).not.toBeVisible();
   });
 
   it("provides a retry for absent gateway setup without inventing a use action", () => {
@@ -114,10 +116,10 @@ describe("provider setup presentation", () => {
   it("connects an eligible agent through an exact canonical Matrix AI route", () => {
     const { onMutate } = setup(fundedSnapshot());
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
-    fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
-    expect(within(gateway).getByText("$1.00")).toBeVisible();
+    expect(within(gateway).getByText("Credit unavailable")).toBeVisible();
     expect(within(gateway).getByText("Sonnet")).toBeVisible();
     expect(within(gateway).queryByRole("textbox", { name: "Monthly budget in USD" })).not.toBeInTheDocument();
+    fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
     fireEvent.click(within(gateway).getByRole("button", { name: "Use Matrix AI" }));
     expect(onMutate).toHaveBeenCalledWith({ type: "set_route", harnessInstanceId: "pi",
       route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" }, accessSourceId: "matrix_included", accountId: null,
@@ -210,6 +212,7 @@ describe("provider setup presentation", () => {
 
   it("keeps exactly one visible Terminal setup action for a missing agent", async () => {
     const value = snapshot();
+    value.harnessCatalog = [{ harness: "pi", displayName: "Pi", installState: "missing", available: true, runnable: false, setupAction: "install", safeReason: "not_installed" }];
     value.harnesses[0]!.installState = "missing";
     const onSetupHarness = vi.fn().mockResolvedValue(true);
     setup(value, { onSetupHarness });
@@ -231,14 +234,14 @@ describe("provider setup presentation", () => {
     Object.assign(value, { supportedActions: ["set_route", "select_access_source", "add_harness"] });
     value.harnessCatalog = [{ harness: kind, displayName: kind, installState: "installed", available: true, runnable: true, setupAction: "none", safeReason: null }];
     setup(value);
-    render(<HarnessEditor snapshot={value} harness={value.harnesses[0]!} disabled={false}
+    const retained = render(<HarnessEditor snapshot={value} harness={value.harnesses[0]!} disabled={false}
       canUpdate={false} canSetRoute={true} canSelectSource={true} canSelectAccount={false}
       onMutate={vi.fn()} onRefresh={vi.fn()} />);
-    fireEvent.click(screen.getByText("Advanced settings"));
-    const access = screen.getByRole("combobox", { name: "Paid through" });
+    fireEvent.click(within(retained.container).getByText("Advanced settings"));
+    const access = within(retained.container).getByRole("combobox", { name: "Paid through" });
     expect(within(access).getByRole("option", { name: "My API key" })).toBeInTheDocument();
     expect(within(access).queryByRole("option", { name: "Matrix AI" })).not.toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: `${kind} configuration` })).getByText(/Matrix AI funding is not supported for this agent yet/)).toBeVisible();
+    expect(within(within(retained.container).getByRole("region", { name: `${kind} configuration` })).getByText(/Matrix AI funding is not supported for this agent yet/)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
     const dialog = screen.getByRole("dialog", { name: "Add agent" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
@@ -256,11 +259,11 @@ describe("provider setup presentation", () => {
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(screen.getByRole("button", { name: new RegExp(`${kind}.*Not connected`) })).toBeVisible();
     expect(within(gateway).queryByText(`Selected for ${kind}`)).not.toBeInTheDocument();
-    render(<HarnessEditor snapshot={value} harness={value.harnesses[0]!} disabled={false}
+    const retained = render(<HarnessEditor snapshot={value} harness={value.harnesses[0]!} disabled={false}
       canUpdate={false} canSetRoute={true} canSelectSource={true} canSelectAccount={false}
       onMutate={vi.fn()} onRefresh={vi.fn()} />);
-    fireEvent.click(screen.getByText("Advanced settings"));
-    expect(screen.getByText("Choose a supported connection", { selector: "strong" })).toBeVisible();
+    fireEvent.click(within(retained.container).getByText("Advanced settings"));
+    expect(within(retained.container).getByText("Choose a supported connection", { selector: "strong" })).toBeVisible();
     expect(screen.queryByText("This agent uses Matrix AI. No provider account is required.")).not.toBeInTheDocument();
   });
 

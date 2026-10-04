@@ -24,19 +24,6 @@ function exactInteger(value: unknown): number {
   return parsed;
 }
 
-export function eligiblePromotionalCredit(
-  grant: { grant_entry_id: string; remaining_microusd: unknown; expires_at: string | null },
-  protectedMicrousd: number,
-  checkedAt: string,
-  namespace: "general" | "speech_monthly" = "general",
-): number {
-  const available = exactInteger(grant.remaining_microusd) - protectedMicrousd;
-  if (available < 0) throw new Error("Funded AI promotional allocation invariant violated");
-  const speech = grant.grant_entry_id.startsWith("speech-monthly:");
-  if (speech !== (namespace === "speech_monthly") || (grant.expires_at !== null && grant.expires_at <= checkedAt)) return 0;
-  return available;
-}
-
 export async function activePromotionalProtection(
   executor: PlatformDB["executor"],
   identity: FundedAiRuntimeIdentity,

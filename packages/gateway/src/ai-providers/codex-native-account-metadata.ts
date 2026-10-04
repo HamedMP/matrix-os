@@ -1,3 +1,5 @@
+import { createCodexCredentialFileProofReader } from "./codex-credential-file-proof.js";
+import { bindNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { z } from "zod/v4";
 import type { ProviderAccessSource, ProviderAccount } from "@matrix-os/contracts";
@@ -48,21 +50,40 @@ export function normalizeCodexNativeAccountMetadata(accountRaw: unknown, limitsR
 
 type SpawnProcess = (command: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
 
-/** Runtime-bound, uncached reader: account is re-read after quota to reject account switches. */
+/** Runtime-bound reader: quota reads are rate-limited; reuse requires fresh private identity proof. */
 export function createCodexNativeAccountMetadataReader(input: {
   executable: string; cwd: string; environment: Record<string, string>; now?: () => Date;
   timeoutMs?: number; terminateGraceMs?: number; spawnProcess?: SpawnProcess;
+  readCredentialFileProof?: () => Promise<string | null>;
 }): () => Promise<CodexNativeAccountMetadata | null> {
   if (!input.environment.HOME || input.environment.HOME !== input.cwd) throw new Error("Native account runtime scope is required");
+  const readCredentialFileProof = input.readCredentialFileProof ?? createCodexCredentialFileProofReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME });
   let pending: Promise<CodexNativeAccountMetadata | null> | null = null;
+  let cached: CodexNativeAccountMetadata | null = null;
   let blockedUntilExit = false;
   let lastStartedAt = -Infinity;
-  const read = async (): Promise<CodexNativeAccountMetadata | null> => {
-    if (blockedUntilExit) return null;
+  let verification: Promise<CodexNativeAccountMetadata | null> | null = null;
+  const principals = new WeakMap<CodexNativeAccountMetadata, string>();
+  const freshAt = (value: CodexNativeAccountMetadata, time: number): boolean =>
+    Date.parse(value.checkedAt) <= time && Date.parse(value.staleAfter) > time
+    && (!value.usage?.resetsAt || Date.parse(value.usage.resetsAt) > time);
+  const verifyProof = async (proof: string): Promise<boolean> => {
+    if (!verification) verification = read(true).catch((error: unknown) => {
+      cached = null;
+      throw error;
+    }).finally(() => { verification = null; });
+    const current = await verification;
+    return current !== null && principals.get(current) === proof;
+  };
+  const read = async (identityOnly = false): Promise<CodexNativeAccountMetadata | null> => {
+    if (blockedUntilExit || (!identityOnly && verification)) return null;
     const startedAt = (input.now ?? (() => new Date()))().getTime();
     const waitMs = Math.max(0, 5000 - (startedAt - lastStartedAt));
-    if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
-    lastStartedAt = (input.now ?? (() => new Date()))().getTime();
+    if (!identityOnly && waitMs > 0) return null;
+    if (!identityOnly) lastStartedAt = (input.now ?? (() => new Date()))().getTime();
+    // Tentative evidence precedes process startup: the app-server can cache
+    // account state at spawn. It becomes usable only after effective file authority.
+    const tentativeCredentialProof = await readCredentialFileProof();
     const child = (input.spawnProcess ?? spawn)(input.executable, ["app-server", "--stdio"], {
       cwd: input.cwd, env: Object.fromEntries(Object.entries(input.environment).filter(([key]) => ["HOME", "CODEX_HOME", "MATRIX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR", "MATRIX_NODE_PREFIX"].includes(key))), stdio: "pipe",
     });
@@ -70,6 +91,8 @@ export function createCodexNativeAccountMetadataReader(input: {
     return await new Promise(resolve => {
       let buffer = "";
       let bytes = 0;
+      let credentialProof: string | null = null;
+      let fileBackend = false;
       let account: unknown;
       let accountObservedAt: Date | undefined;
       let quota: unknown;
@@ -96,7 +119,7 @@ export function createCodexNativeAccountMetadataReader(input: {
           termination.unref();
         }, grace); termination.unref();
       };
-      const timeout = setTimeout(() => finish(accountObservedAt ? normalizeCodexNativeAccountMetadata(account, undefined, accountObservedAt) : null), Math.max(1, Math.min(input.timeoutMs ?? 4000, 5000))); timeout.unref();
+      const timeout = setTimeout(() => finish(), Math.max(1, Math.min(input.timeoutMs ?? 4000, 5000))); timeout.unref();
       const send = (id: number, method: string, params: unknown) => { if (!finishing) child.stdin.write(JSON.stringify({ id, method, params }) + "\n"); };
       child.once("error", () => finish());
       const onExit = () => { blockedUntilExit = false; settle(); };
@@ -127,12 +150,23 @@ export function createCodexNativeAccountMetadataReader(input: {
           if (message.id === 1) {
             if (message.error) { finish(); return; }
             child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
-            send(2, "account/read", { refreshToken: false });
+            send(8, "config/read", { includeLayers: false, cwd: input.cwd });
+          } else if (message.id === 8) {
+            const config = z.object({ config: z.object({ cli_auth_credentials_store: z.unknown().optional() }) }).safeParse(message.result);
+            fileBackend = !message.error && config.success && config.data.config.cli_auth_credentials_store === "file";
+            void (async () => {
+              credentialProof = fileBackend ? await readCredentialFileProof() : null;
+              if (fileBackend && credentialProof !== tentativeCredentialProof) { finish(); return; }
+              send(2, "account/read", { refreshToken: false });
+            })().catch((error: unknown) => {
+              console.warn("[provider-settings] Codex private observation unavailable:", error instanceof Error ? error.name : "UnknownError");
+              finish();
+            });
           } else if (message.id === 2 + sequenceOffset) {
             account = message.result;
             accountObservedAt = (input.now ?? (() => new Date()))();
             if (message.error || !normalizeCodexNativeAccountMetadata(account, undefined, (input.now ?? (() => new Date()))())) { finish(); return; }
-            const kind = AccountSchema.parse(account).account?.type;
+            const kind = identityOnly ? "apiKey" : AccountSchema.parse(account).account?.type;
             send((kind === "apiKey" ? 4 : 3) + sequenceOffset, kind === "apiKey" ? "account/read" : "account/rateLimits/read", kind === "apiKey" ? { refreshToken: false } : {});
           } else if (message.id === 3 + sequenceOffset) {
             quota = message.error ? undefined : message.result;
@@ -140,7 +174,61 @@ export function createCodexNativeAccountMetadataReader(input: {
           } else if (message.id === 4 + sequenceOffset) {
             const first = AccountSchema.safeParse(account); const last = AccountSchema.safeParse(message.result);
             if (message.error || !first.success || !last.success || JSON.stringify(first.data) !== JSON.stringify(last.data)) { finish(); return; }
-            finish(normalizeCodexNativeAccountMetadata(account, quota, (input.now ?? (() => new Date()))()));
+            const observedAccount = account; const observedOffset = sequenceOffset;
+            const finalAccountObservedAt = (input.now ?? (() => new Date()))();
+            void (async () => {
+              const finalCredentialProof = fileBackend ? await readCredentialFileProof() : null;
+              if (finishing || observedAccount !== account || observedOffset !== sequenceOffset) return;
+              if (credentialProof !== finalCredentialProof) { finish(); return; }
+              const value = normalizeCodexNativeAccountMetadata(observedAccount, quota, finalAccountObservedAt);
+              if (value?.usage?.resetsAt && Date.parse(value.usage.resetsAt) <= (input.now ?? (() => new Date()))().getTime()) delete value.usage;
+              const principal = first.data.account;
+              if (value && (principal?.type === "apiKey" || principal?.type === "chatgpt" && (principal.id || credentialProof))) {
+                const proof = JSON.stringify({ principal, ...(credentialProof ? { credentialProof } : {}) });
+                principals.set(value, proof);
+                bindNativeAccountMetadata(value, async () => {
+                  const requestedAt = (input.now ?? (() => new Date()))().getTime();
+                  if (!freshAt(value, requestedAt)) {
+                    if (cached === value) cached = null;
+                    return false;
+                  }
+                  const inFlightIdentity = verification;
+                  let valid: boolean;
+                  if (inFlightIdentity) {
+                    const current = await inFlightIdentity;
+                    valid = current !== null && principals.get(current) === proof
+                      && freshAt(current, (input.now ?? (() => new Date()))().getTime());
+                    // Cleanup can keep a pre-request observation in flight.
+                    // Only identity sampled after this request can coalesce.
+                    if (valid && Date.parse(current!.checkedAt) <= requestedAt) valid = await verifyProof(proof);
+                  } else {
+                    // Public reads do not call bound verifiers: no wait cycle.
+                    // A full quota read is not itself the final identity proof.
+                    if (pending) {
+                      const observed = await pending;
+                      if (!observed || principals.get(observed) !== proof) return false;
+                    }
+                    valid = await verifyProof(proof);
+                  }
+                  // File authority was explicitly established by config/read.
+                  // Recheck private file proof after the shared RPC handoff.
+                  if (valid && credentialProof) {
+                    try { valid = await readCredentialFileProof() === credentialProof; }
+                    catch (error: unknown) {
+                      if (cached === value) cached = null;
+                      throw error;
+                    }
+                  }
+                  valid = valid && freshAt(value, (input.now ?? (() => new Date()))().getTime());
+                  if (!valid && cached === value) cached = null;
+                  return valid;
+                });
+              }
+              finish(value);
+            })().catch((error: unknown) => {
+              console.warn("[provider-settings] Codex private observation unavailable:", error instanceof Error ? error.name : "UnknownError");
+              finish();
+            });
           }
         }
       });
@@ -148,7 +236,24 @@ export function createCodexNativeAccountMetadataReader(input: {
     });
   };
   return () => {
-    if (!pending) pending = read().catch((error: unknown) => { console.warn("[provider-settings] Native account metadata unavailable:", error instanceof Error ? error.name : "UnknownError"); return null; }).finally(() => { pending = null; });
+    if (!pending) pending = (async () => {
+      const time = (input.now ?? (() => new Date()))().getTime();
+      if (time - lastStartedAt < 5000) {
+        const value = cached;
+        const proof = value && principals.get(value);
+        if (value && proof && freshAt(value, time) && await verifyProof(proof)
+          && freshAt(value, (input.now ?? (() => new Date()))().getTime())) return value;
+        cached = null;
+        return null;
+      }
+      const value = await read();
+      cached = value && principals.has(value) ? value : null;
+      return value;
+    })().catch((error: unknown) => {
+      cached = null;
+      console.warn("[provider-settings] Native account metadata unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }).finally(() => { pending = null; });
     return pending;
   };
 }

@@ -13,6 +13,9 @@ export function createAiCreditHistoryHandler(options: {
 }): Handler {
   return async (c) => {
     c.header("Cache-Control", "private, no-store");
+    c.header("CDN-Cache-Control", "no-store");
+    c.header("Cloudflare-CDN-Cache-Control", "no-store");
+    c.header("Vary", "Authorization", { append: true });
     const ownerId = await options.resolveClerkUserId(c);
     if (!ownerId) return c.json({ error: "Unauthorized" }, 401);
     const queries = c.req.queries();
@@ -37,10 +40,9 @@ export function createAiCreditHistoryHandler(options: {
         .onRef("r.owner_id", "=", "l.owner_id").onRef("r.machine_id", "=", "l.machine_id")
         .onRef("r.runtime_slot", "=", "l.runtime_slot").on("r.status", "=", "settled"))
         .select(["l.created_at", "l.kind", "l.amount_microusd", "r.model_id", "r.resolved_model", marker.as("cursor")]);
-      if (anchor) page = page.where((eb) => eb.or([
-        eb("l.created_at", "<", anchor.created_at),
-        eb.and([eb("l.created_at", "=", anchor.created_at), eb("l.entry_id", "<", anchor.entry_id)]),
-      ]));
+      // Both keys are NOT NULL. Row comparison preserves the DESC keyset
+      // boundary and lets Postgres seek directly into the scoped ordering index.
+      if (anchor) page = page.where(sql<boolean>`(l.created_at, l.entry_id) < (${anchor.created_at}, ${anchor.entry_id})`);
       const rows = await page.orderBy("l.created_at", "desc").orderBy("l.entry_id", "desc")
         .limit(parsed.data.limit + 1).execute();
       const visible = rows.slice(0, parsed.data.limit);

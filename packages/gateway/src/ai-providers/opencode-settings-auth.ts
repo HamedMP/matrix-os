@@ -156,8 +156,12 @@ export function createOpenCodeSettingsConnection(options: {
     },
     async start(input: Parameters<ProviderWorkflowAdapter["start"]>[0]) {
       if (input.request.kind !== "login" || input.request.method !== "device_code") throw new ProviderWorkflowError("unavailable");
-      const session = await openSession(); let stopped = false; let timer: ReturnType<typeof setTimeout> | undefined;
-      const cancel = async () => { stopped = true; if (timer) clearTimeout(timer); await session.close(); };
+      const opening: { session?: Promise<OpenCodeAuthSession> } = {};
+      input.registerCleanup(async () => { if (opening.session) await (await opening.session).close(); });
+      opening.session = openSession();
+      const session = await opening.session; let completionTask: Promise<void> | undefined; let stopped = false; let timer: ReturnType<typeof setTimeout> | undefined;
+      const cancel = async () => { if (completionTask) await completionTask.catch(error => console.warn("[provider-workflow] OpenCode completion failed:", error instanceof Error ? error.name : "UnknownError")); else stopped = true; if (timer) clearTimeout(timer); await session.close(); };
+      input.registerCleanup(cancel);
       try {
         const { index } = await discover(session);
         if (index < 0) throw new ProviderWorkflowError("unavailable");
@@ -178,10 +182,14 @@ export function createOpenCodeSettingsConnection(options: {
             // The native callback saves the profile before returning true. The
             // canonical route writer rechecks the exact native source/model;
             // avoid buffering /provider's unrelated, potentially huge catalog.
-            await options.enableConnected(input.request.harnessInstanceId, `opencode-connect-${createHash("sha256").update(input.request.idempotencyKey).digest("hex")}`);
-            await session.close();
-            if (!stopped) input.publish({ state: "succeeded", safeFailure: null });
+            completionTask = (async () => {
+              await options.enableConnected(input.request.harnessInstanceId, `opencode-connect-${createHash("sha256").update(input.request.idempotencyKey).digest("hex")}`);
+              await session.close();
+              input.publish({ state: "succeeded", safeFailure: null });
+            })();
+            await completionTask;
           } catch (error) {
+            await session.close();
             if (!stopped) { console.warn("[provider-workflow] OpenCode connection unavailable:", error instanceof Error ? error.name : "UnknownError"); input.publish({ state: "failed", safeFailure: error instanceof ProviderWorkflowError && error.code === "rejected" ? "rejected" : "unavailable" }); }
           } finally { await cancel(); }
         })().catch(error => console.warn("[provider-workflow] OpenCode cleanup unavailable:", error instanceof Error ? error.name : "UnknownError"));

@@ -7,7 +7,7 @@ export function useDialogFocus(
   onClose: () => void,
 ) {
   const close = useRef(onClose);
-  close.current = onClose;
+  useEffect(() => { close.current = onClose; }, [onClose]);
   useEffect(() => {
     if (!open || !ref.current) return;
     const previous =

@@ -1,3 +1,4 @@
+import { verifyNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
@@ -23,6 +24,7 @@ import {
   ProviderSettingsConfigurationSchema,
   readProviderSecrets,
   readProviderSettingsConfiguration,
+  readSavedProviderSettingsConfiguration,
   writeProviderJsonAtomic,
   type ProviderSettingsConfiguration,
 } from "./provider-settings-persistence.js";
@@ -106,6 +108,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #genericModelCatalog?: GenericHarnessModelCatalogReader;
   readonly #readRuntimeRecovery: (refresh: boolean) => Promise<void>;
   #writeTail: Promise<void> = Promise.resolve();
+  #mutationGeneration = 0;
 
   constructor(options: ProviderSettingsStoreOptions) {
     if (!options.homePath) throw new Error("Provider settings home path is required");
@@ -242,29 +245,61 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   }
 
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<ProviderSettingsSnapshot> {
-    return await this.#serialize(async () => {
-      await this.#readRuntimeRecovery(options.refresh === true);
-      const refresh = options.refresh === true;
-      const metadataRead = options.includeNativeAccountMetadata === true
-        ? Promise.all([this.#nativeAccountMetadata?.(), this.#hermesAccountMetadata?.()]) : Promise.resolve([]);
-      const inventory = this.#canonical(refresh, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
-      // Begin these bounded observations inside the serialized read, not behind
-      // inventory. Never share results across mutations or authorize from them alone.
-      const [canonical, enrichment] = await Promise.all([
-        inventory,
-        readProviderSettingsEnrichment({
+    const refresh = options.refresh === true;
+    await this.#serialize(() => this.#readRuntimeRecovery(refresh));
+    // All inventory, funding, catalog and native probes run outside mutation
+    // admission. Only configuration reconciliation and the final cheap fence
+    // serialize with writes. A raced read retries once without optional metadata.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      // A writer increments its generation before native logout/save finishes.
+      // Sample only after prior admissions drain, never in the middle of one.
+      const generation = await this.#serialize(async () => this.#mutationGeneration);
+      const read = async () => {
+        const inventory = this.#canonical(refresh && attempt === 0, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
+        const [canonical, enrichment] = await Promise.all([inventory, readProviderSettingsEnrichment({
           canonical: inventory, fundingSummary: options.suppressFundedProbes === true ? undefined : this.#fundingSummary,
-          genericModelCatalog: this.#genericModelCatalog, refresh,
-          catalogFailureHarnesses: ["pi", "opencode"],
-        }),
-      ]);
-      const [metadata, hermesMetadata] = await metadataRead;
-      return await this.#project(canonical, await this.#configuration(canonical, enrichment), refresh, enrichment, metadata, hermesMetadata);
-    });
+          genericModelCatalog: this.#genericModelCatalog, refresh: refresh && attempt === 0, catalogFailureHarnesses: ["pi", "opencode"],
+        })]);
+        return { canonical, enrichment };
+      };
+      let captured = await read();
+      let config = await this.#serialize(async () => generation === this.#mutationGeneration
+        ? this.#configuration(captured.canonical, captured.enrichment) : null);
+      if (!config) continue;
+      let metadata: CodexNativeAccountMetadata | null = null;
+      let hermesMetadata: CodexNativeAccountMetadata | null = null;
+      if (options.includeNativeAccountMetadata && attempt === 0) {
+        const installed = (id: string) => captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
+        const [codex, hermes] = await Promise.all([
+          installed("codex") ? this.#nativeAccountMetadata?.() : undefined,
+          installed("hermes") ? this.#hermesAccountMetadata?.() : undefined,
+        ]);
+        // Null/cooldown is already unavailable; do not run another full probe.
+        if (codex || hermes) {
+          captured = await read();
+          [metadata, hermesMetadata] = await Promise.all([
+            verifyNativeAccountMetadata(codex), verifyNativeAccountMetadata(hermes),
+          ]);
+          config = await this.#serialize(async () => generation === this.#mutationGeneration
+            ? this.#configuration(captured.canonical, captured.enrichment) : null);
+          if (!config) continue;
+        }
+      }
+      options.signal?.throwIfAborted();
+      const snapshot = await this.#project(captured.canonical, config, refresh, captured.enrichment, metadata, hermesMetadata);
+      const accepted = await this.#serialize(async () => {
+        options.signal?.throwIfAborted();
+        const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
+        return generation === this.#mutationGeneration && saved?.revision === config.revision;
+      });
+      if (accepted) return snapshot;
+    }
+    throw new ProviderSettingsStoreError("projection_unavailable", 503);
   }
 
   async setAccountSecret(accountId: string, value: string): Promise<void> {
     await this.#serialize(async () => {
+      this.#mutationGeneration += 1;
       const canonical = await this.#canonical();
       if (!canonical.accounts.some((account) => account.id === accountId)) {
         throw new ProviderSettingsStoreError("not_found", 404);
@@ -414,6 +449,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     const parsed = ProviderSettingsMutationSchema.safeParse(input);
     if (!parsed.success) throw new ProviderSettingsStoreError("invalid_request", 400);
     return await this.#serialize(async () => {
+      this.#mutationGeneration += 1;
       let canonical = await this.#canonical();
       const enrichment = await readProviderSettingsEnrichment({ canonical, fundingSummary: this.#fundingSummary,
         genericModelCatalog: this.#genericModelCatalog, refresh: false, catalogFailureHarnesses: ["pi", "opencode"] });

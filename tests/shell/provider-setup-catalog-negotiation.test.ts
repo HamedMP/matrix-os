@@ -10,7 +10,7 @@ describe("Settings catalog connection-label negotiation", () => {
     const fetcher = vi.fn(async () => Response.json({ revision: "revision", drivers: [], instances: [] }));
     vi.stubGlobal("fetch", fetcher);
     expect(await openWebProviderAgentSetup("pi", vi.fn())).toBe(false);
-    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeSettingsSetupActions=true"), expect.any(Object));
+    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true"), expect.any(Object));
     expect(fetcher).toHaveBeenCalledOnce();
   });
   it.each(["identity_switch", "terminal_failure"])("does not report setup as opened after %s", async scenario => {

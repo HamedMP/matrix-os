@@ -1,4 +1,4 @@
-import type { NativeProviderProfileGuard, NativeProviderProfile } from "./native-provider-profile-guard.js";
+import { NativeProviderWriteNotStartedError, type NativeProviderProfileGuard, type NativeProviderProfile } from "./native-provider-profile-guard.js";
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { mkdtemp, mkdir, lstat, readFile, rename, rm, chmod } from 'node:fs/promises';
@@ -18,6 +18,10 @@ export function createProviderKeyVerifier(options: {
   const verify = async (input: ProviderWorkflowKey): Promise<void> => {
     if (input.providerId !== options.providerId)
       throw new ProviderWorkflowError('rejected');
+    if (options.profileGuard && options.profile) {
+      const release = await options.profileGuard.acquire(options.profile, { kind: "write" });
+      await release();
+    }
     const url = { openai: 'https://api.openai.com/v1/models', anthropic: 'https://api.anthropic.com/v1/models', openrouter: 'https://openrouter.ai/api/v1/key' }[options.providerId];
     try {
       const response = await (options.fetchFn ?? fetch)(url, { redirect: 'error', signal: AbortSignal.timeout(10000), headers: options.providerId === 'anthropic' ? { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01' } : { Authorization: `Bearer ${input.apiKey}` } });
@@ -32,10 +36,12 @@ export function createProviderKeyVerifier(options: {
       console.warn('[provider-workflow] Key probe unavailable:', error instanceof Error ? error.name : 'UnknownError');
       throw new ProviderWorkflowError('unavailable');
     }
-    await options.save(input.apiKey);
+    // Validation has no native write side effects; only the selected saver
+    // acquires durable profile admission.
+    if (options.profileGuard && options.profile) await options.profileGuard.run(options.profile, { kind: "write" }, () => options.save(input.apiKey));
+    else await options.save(input.apiKey);
   };
-  return (input: ProviderWorkflowKey) => options.profileGuard && options.profile
-    ? options.profileGuard.run(options.profile, { kind: "write" }, () => verify(input)) : verify(input);
+  return verify;
 }
 /** Codex officially supports stdin for --with-api-key; argv/environment never contain the supplied secret. */
 export function createCodexKeySaver(options: {
@@ -47,7 +53,7 @@ export function createCodexKeySaver(options: {
   return async (key: string): Promise<void> => {
     const destination = join(homePath, '.codex');
     if (process.env.CODEX_HOME && resolve(process.env.CODEX_HOME) !== destination)
-      throw new ProviderWorkflowError('unavailable');
+      throw new NativeProviderWriteNotStartedError();
     await mkdir(destination, { recursive: true, mode: 0o700 });
     const metadata = await lstat(destination);
     if (!metadata.isDirectory() || metadata.isSymbolicLink())

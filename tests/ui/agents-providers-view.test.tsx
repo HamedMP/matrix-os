@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import { AccountsPanel } from "../../packages/ui/src/agents-providers/AccountsPanel";
-import { HarnessEditor } from "../../packages/ui/src/agents-providers/HarnessEditor";
 import React from "react";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -249,6 +247,7 @@ function snapshot(): ProviderSettingsSnapshot {
     },
   } as ProviderSettingsSnapshot;
   Object.assign(value, {
+    configurationHarnessKinds: ["hermes", "opencode", "pi", "openclaw"],
     supportedActions: [
       "add_harness", "update_harness", "set_harness_enabled", "set_route",
       "select_account", "select_access_source", "start_login", "logout_account",
@@ -289,25 +288,11 @@ function setup(overrides: Partial<React.ComponentProps<typeof AgentsProvidersVie
     onAddCredit: vi.fn(),
     ...overrides,
   };
-  const selectedHarness = props.snapshot.harnesses.find(item => item.id === props.selectedHarnessId) ?? props.snapshot.harnesses[0]!;
-  const supports = (action: string) => props.snapshot.supportedActions?.includes(action as never) ?? false;
-  const generic = (props.snapshot.configurationHarnessKinds ?? ["hermes", "opencode", "pi", "openclaw"]).includes(selectedHarness.harness);
-  const disabled = props.busy === true || props.snapshot.access?.mode === "read_only";
-  // Retained components are tested explicitly, never mounted by the Settings view.
-  const result = render(<><AgentsProvidersView {...props} />{retainedControls ? <>
-    <HarnessEditor snapshot={props.snapshot} harness={selectedHarness} disabled={disabled}
-      canUpdate={generic && supports("update_harness")} canSetRoute={generic && supports("set_route")}
-      canSelectSource={generic && supports("select_access_source")} canSelectAccount={generic && supports("select_account")}
-      onMutate={props.onMutate} onRefresh={props.onRefresh} />
-    <AccountsPanel harness={selectedHarness} accounts={props.snapshot.accounts.filter(account => selectedHarness.accountIds.includes(account.id))}
-      sources={props.snapshot.accessSources} allHarnesses={props.snapshot.harnesses} gatewayPolicy={props.snapshot.gatewayPolicy}
-      attempt={props.connectionAttempt?.action.kind !== "open_terminal" ? props.connectionAttempt ?? null : null}
-      disabled={disabled} canLogin={false} canLogout={supports("logout_account")} canRemove={supports("remove_account")}
-      canReassign={supports("reassign_account")} onMutate={props.onMutate} onRefresh={props.onRefresh}
-      onOpenTerminal={props.onOpenTerminal} onOpenBrowser={props.onOpenBrowser} onSetupHarness={props.onSetupHarness} />
-  </> : null}</>);
+  const result = render(<AgentsProvidersView {...props} />);
   const selected = props.snapshot.harnesses.find(item=>item.id===props.selectedHarnessId) ?? props.snapshot.harnesses[0];
   if (selected) { const row=result.container.querySelector<HTMLButtonElement>(`button[aria-controls="matrix-ap-details-${selected.id}"]`); if(row)fireEvent.click(row); }
+  const advanced = screen.queryByText("Advanced configuration");
+  if (retainedControls && advanced) fireEvent.click(advanced);
   if (vi.isMockFunction(props.onSelectHarness)) props.onSelectHarness.mockClear();
   return { ...result, props, onMutate };
 }
@@ -343,7 +328,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     expect(screen.queryByText("Authenticated · Oauth")).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5_001));
-    expect(screen.getAllByText("Connected").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Codex.*Not connected/ })).toBeVisible();
     expect(screen.queryByText(/Local login found; access not verified/)).not.toBeInTheDocument();
     next.harnesses[0]!.enabled = false;
     next.harnesses[0]!.configuredEnabled = false;
@@ -366,7 +351,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5001));
     expect(screen.queryByText("Local login found; access not verified")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Connected").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: new RegExp(`${harness}.*Not connected`) })).toBeVisible();
   });
   it("shows saved enabled intent separately from unavailable access and permits disabling it", () => {
     const next = snapshot();
@@ -449,13 +434,13 @@ describe("AgentsProvidersView", () => {
     expect(readFileSync("desktop/electron.vite.config.ts", "utf8")).toContain('publicDir: resolve(__dirname, "../shell/public")');
   });
 
-  it("does not start legacy Terminal login when Settings workflows are unavailable", async () => {
+  it("keeps advertised legacy Terminal login collapsed and never starts it automatically", async () => {
     const next = snapshot();
     next.harnesses[1]!.accountIds = [];
     next.harnesses[1]!.authState = "unauthenticated";
     const onMutate = vi.fn().mockResolvedValue(true);
     setup({ snapshot: next, selectedHarnessId: "harness_claude", onMutate });
-    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).not.toBeVisible();
     expect(onMutate).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Recommended · Terminal" })).not.toBeInTheDocument();
   });
@@ -656,8 +641,8 @@ describe("AgentsProvidersView", () => {
     const rail = screen.getByRole("region", { name: "Installed agents" });
     expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
     expect(within(rail).getByRole("button", { name: /Hermes.*Connected/ })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.queryByRole("region", { name: "Hermes configuration" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Hermes configuration" })).not.toBeVisible();
+    expect(screen.getByText("Advanced configuration").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByRole("heading", { name: "Connection" })).toBeVisible();
   });
 
@@ -859,7 +844,7 @@ describe("AgentsProvidersView", () => {
     expect(within(personal).getByRole("progressbar", { name: "Personal remaining allowance" })).toHaveAttribute("value", "7500");
     expect(within(work).getByText("$0.13 observed")).toBeVisible();
     fireEvent.click(within(personal).getByRole("button", { name: "Log out Personal" }));
-    expect(within(work).queryByRole("button", { name: "Log in Work" })).not.toBeInTheDocument();
+    expect(within(work).getByRole("button", { name: "Log in Work" })).toBeDisabled();
     await waitFor(() => expect(within(work).getByRole("button", { name: "Remove Work" })).toBeEnabled());
     fireEvent.click(within(work).getByRole("button", { name: "Remove Work" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
@@ -924,7 +909,7 @@ describe("AgentsProvidersView", () => {
     const onOpenTerminal = vi.fn();
     const onOpenBrowser = vi.fn();
     const { rerender } = setup({ connectionAttempt: terminalAttempt, onOpenTerminal, onOpenBrowser });
-    expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue in Terminal" })).not.toBeVisible();
     expect(onOpenTerminal).not.toHaveBeenCalled();
 
     const browserAttempt: ProviderConnectionAttempt = {
@@ -934,7 +919,7 @@ describe("AgentsProvidersView", () => {
       action: { kind: "open_browser", authorizationPath: "/api/ai/providers/login-attempts/attempt_browser/authorize" },
     };
     rerender(<AgentsProvidersView {...setupProps(snapshot(), { connectionAttempt: browserAttempt, onOpenTerminal, onOpenBrowser })} />);
-    expect(screen.queryByRole("button", { name: "Continue in browser" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue in browser" })).not.toBeVisible();
     expect(onOpenBrowser).not.toHaveBeenCalled();
   });
 
@@ -997,8 +982,9 @@ describe("AgentsProvidersView", () => {
     };
     rerender(<AgentsProvidersView {...props} snapshot={unavailable} />);
     expect(screen.getByRole("dialog", { name: "Add Matrix AI credit" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Continue to checkout" })).not.toBeInTheDocument();
-    expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+    expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
+    expect(screen.getByText("This funding source is unavailable for credit purchases. Contact support if the problem continues.")).toBeVisible();
+    expect(props.onAddCredit).not.toHaveBeenCalled();
     rerender(<AgentsProvidersView {...props} snapshot={current} />);
     expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeEnabled();
   });
@@ -1065,12 +1051,15 @@ describe("AgentsProvidersView", () => {
         "select_account", "select_access_source", "set_gateway_budget", "set_gateway_allowlist",
       ],
     });
-    setup({ snapshot: limited });
+    const { props } = setup({ snapshot: limited });
 
     expect(screen.queryByRole("button", { name: "+ Add account" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Log out Personal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove Personal" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Buy credit" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", {name: "Buy credit"}));
+    expect(screen.getByText("Your current access does not allow credit purchases. Ask this computer’s owner to buy credit.")).toBeVisible();
+    expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
+    expect(props.onAddCredit).not.toHaveBeenCalled();
   });
 
   it("renders platform-authoritative gateway policy as read-only", () => {

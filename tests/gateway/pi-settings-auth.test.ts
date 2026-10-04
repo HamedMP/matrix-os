@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPiSettingsConnection, PI_SETTINGS_AUTH_WORKER } from "../../packages/gateway/src/ai-providers/pi-settings-auth.js";
 import type { OpenCodeProcess } from "../../packages/gateway/src/coding-agents/opencode-provider.js";
 function native(autoComplete = true) {
-  const children: Array<EventEmitter & OpenCodeProcess & { stdin: { end: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn> } }> = [];
+  const children: Array<EventEmitter & OpenCodeProcess & { stdout: EventEmitter; stderr: EventEmitter; stdin: { end: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn> } }> = [];
   const spawn = vi.fn((_command: string, args: string[]) => {
     const child = new EventEmitter() as typeof children[number]; child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
     child.stdin = { end: vi.fn(), on: vi.fn() };
@@ -30,7 +30,7 @@ describe("Pi sanctioned Settings auth", () => {
   it("uses only public SDK callbacks and enables the exact native OAuth route after confirmed child exit", async () => {
     const n = native(); const enableConnected = vi.fn(); const publish = vi.fn();
     const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected });
-    await connection.start({ request, publish }); await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null }));
+    await connection.start({ registerCleanup: () => {},  request, publish }); await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null }));
     expect(publish).toHaveBeenCalledWith({ deviceCode: "TEST-CODE", authorizationUrl: "https://auth.openai.com/codex/device" });
     expect(enableConnected).toHaveBeenCalledWith("pi", "openai-codex", expect.stringMatching(/^pi-connect-[a-f0-9]{64}$/));
     expect(PI_SETTINGS_AUTH_WORKER).toContain('runtime.login(mode==="key"?"openai":"openai-codex"'); expect(PI_SETTINGS_AUTH_WORKER).not.toContain("readFile"); await connection.close();
@@ -38,19 +38,19 @@ describe("Pi sanctioned Settings auth", () => {
   it("cancels and drains the native process without enabling or publishing success", async () => {
     const n = native(false); const enableConnected = vi.fn(); const publish = vi.fn();
     const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected });
-    const active = await connection.start({ request, publish }); await active.cancel();
+    const active = await connection.start({ registerCleanup: () => {},  request, publish }); await active.cancel();
     expect(n.children[0]!.kill).toHaveBeenCalledWith("SIGTERM"); expect(enableConnected).not.toHaveBeenCalled(); expect(publish).not.toHaveBeenCalledWith(expect.objectContaining({ state: "succeeded" })); await connection.close();
   });
   it("shutdown awaits child termination and blocks future native sessions", async () => {
     const n = native(false); const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected: vi.fn() });
-    await connection.start({ request, publish: vi.fn() }); await connection.close(); expect(n.children[0]!.kill).toHaveBeenCalledWith("SIGTERM"); await expect(connection.start({ request, publish: vi.fn() })).rejects.toThrow("unavailable");
+    await connection.start({ registerCleanup: () => {},  request, publish: vi.fn() }); await connection.close(); expect(n.children[0]!.kill).toHaveBeenCalledWith("SIGTERM"); await expect(connection.start({ registerCleanup: () => {},  request, publish: vi.fn() })).rejects.toThrow("unavailable");
   });
   it("handles a native failure without leaking output or enabling the route", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const n = native(false); const enableConnected = vi.fn(); const publish = vi.fn();
     const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected });
     try {
-      await connection.start({ request, publish });
+      await connection.start({ registerCleanup: () => {},  request, publish });
       n.children[0]!.stderr.emit("data", Buffer.from("credential-private-error"));
       n.children[0]!.stdout.emit("data", Buffer.from('{"type":"failed"}\n'));
       await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: "failed", safeFailure: "unavailable" }));
@@ -105,7 +105,19 @@ it("bounds an unfinished device flow and publishes expiry only after process cle
   try {
     const n = native(false); const publish = vi.fn(); const enableConnected = vi.fn();
     const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected });
-    await connection.start({ request, publish }); await vi.advanceTimersByTimeAsync(600001);
+    await connection.start({ registerCleanup: () => {},  request, publish }); await vi.advanceTimersByTimeAsync(600001);
     expect(n.children[0]!.kill).toHaveBeenCalledWith("SIGTERM"); expect(publish).toHaveBeenCalledWith({ state: "expired", safeFailure: "expired" }); expect(enableConnected).not.toHaveBeenCalled(); await connection.close();
   } finally { vi.useRealTimers(); }
+});
+it('waits for an already committing connection before cancellation returns', async () => {
+  const n = native(); let finish!: () => void;
+  const gate = new Promise<void>(resolve => { finish = resolve; });
+  const enableConnected = vi.fn(() => gate); const publish = vi.fn();
+  const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected });
+  const running = await connection.start({ registerCleanup: () => {}, request, publish });
+  await vi.waitFor(() => expect(enableConnected).toHaveBeenCalledOnce());
+  const cancelling = running.cancel();
+  expect(await Promise.race([cancelling.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 20))])).toBe(false);
+  finish(); await cancelling;
+  expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }); await connection.close();
 });

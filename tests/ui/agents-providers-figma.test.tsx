@@ -479,7 +479,7 @@ it("restores Buy credit without starting unsupported checkout and allows refresh
   render(<GatewayPanel source={null} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={onAddCredit} onRefresh={onRefresh} />);
   fireEvent.click(screen.getByRole("button", {name: "Buy credit"}));
   const dialog = screen.getByRole("dialog", {name: "Add Matrix AI credit"});
-  expect(within(dialog).getByText("Credit purchases are unavailable on this computer right now.")).toBeInTheDocument();
+  expect(within(dialog).getByText("Purchase availability has not been confirmed for this computer. Refresh to check again.")).toBeInTheDocument();
   expect(within(dialog).queryByRole("button", {name: "Continue to checkout"})).not.toBeInTheDocument();
   expect(within(dialog).queryByRole("radio")).not.toBeInTheDocument();
   expect(within(dialog).getByRole("button", {name: "Close"})).toBeEnabled();

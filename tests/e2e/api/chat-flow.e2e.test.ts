@@ -3,7 +3,7 @@ import type { KernelConfig, KernelEvent } from "@matrix-os/kernel";
 import { startTestGateway, type TestGateway } from "../fixtures/gateway.js";
 import { connectWs } from "../fixtures/ws-client.js";
 
-const OWNER_API_KEY = "synthetic-e2e-owner-key";
+const OWNER_API_KEY = "e2e-owner-key-not-a-live-credential";
 
 describe("E2E: Chat message roundtrip", () => {
   let gw: TestGateway;
@@ -201,8 +201,8 @@ describe("E2E: Per-message kernel selection", () => {
 
   beforeAll(async () => {
     gw = await startTestGateway({
-      // The injected SDK fixture explicitly opts into synthetic owner credentials.
-      mockOwnerCredentials: true,
+      // The mocked SDK dispatcher still requires an explicit owner-local credential.
+      config: { kernel: { anthropicApiKey: OWNER_API_KEY } },
       spawnFn: async function* (_message, config) {
         observedConfigs.push(config);
         yield { type: "init", sessionId: "override-session" } as KernelEvent;

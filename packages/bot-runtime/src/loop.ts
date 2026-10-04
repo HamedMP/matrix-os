@@ -1,6 +1,6 @@
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { normalizeContext, type Api, type ImageContent, type Model, type Provider } from "@earendil-works/pi-ai";
-import type { BotRunCommand, BotRunOutcome, BotToolErrorCode } from "@matrix-os/contracts";
+import type { BotRunCommand, BotRunOutcome, BotSessionSnapshot, BotToolErrorCode } from "@matrix-os/contracts";
 import { BotBrokerError, type BotBrokerClient } from "./broker-client.js";
 import { createEventProjector } from "./events.js";
 import { BROKER_PLACEHOLDER_KEY, createBridgeModel } from "./providers.js";
@@ -12,6 +12,7 @@ import {
   fitForStorage,
   fitsWithToolPayloadCaps,
   needsCompaction,
+  withoutDerivedSummaries,
   withoutImages,
 } from "./session.js";
 import { capabilityForToolName, createBotTools, type BotToolsState } from "./tools.js";
@@ -67,12 +68,15 @@ function failureCodeOf(error: unknown, context: string): BotToolErrorCode {
 export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome> {
   const { command, broker } = input;
   const now = input.now ?? Date.now;
-  let snapshot: { revision: number; messages: readonly Record<string, unknown>[] };
+  let snapshot: BotSessionSnapshot;
   let history: AgentMessage[];
   try {
     snapshot = await broker.loadSession();
     // Leading prompt/tool system messages are rebuilt from this run's revision.
     history = decodeSession(snapshot.messages).filter((message) => message.role !== "system");
+    // Never summarize an invalidated summary: its original source turns may
+    // already be compacted away, so discard derived context before inference.
+    if (snapshot.needsRecompaction) history = withoutDerivedSummaries(history);
   } catch (error: unknown) {
     return outcome(command, { status: "failed", failureCode: failureCodeOf(error, "session load"), toolActions: 0 });
   }
@@ -218,7 +222,11 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     if (!fitsWithToolPayloadCaps(messages)) {
       messages = await compactSession({ messages, now, summarize, keepRecentUserTurns: 1 });
     }
-    const saved = await broker.saveSession({ baseRevision: snapshot.revision, messages: encodeSession(fitForStorage(messages, undefined, now, { allowDroppingTurns: input.signal?.aborted !== true })) });
+    const saved = await broker.saveSession({
+      baseRevision: snapshot.revision,
+      ...(snapshot.needsRecompaction ? { recompactionHandled: true as const } : {}),
+      messages: encodeSession(fitForStorage(messages, undefined, now, { allowDroppingTurns: input.signal?.aborted !== true })),
+    });
     return outcome(command, { ...status, sessionRevision: saved.revision, toolActions });
   } catch (error: unknown) {
     const failureCode = failureCodeOf(error, "session save");

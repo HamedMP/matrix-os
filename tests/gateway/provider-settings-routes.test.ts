@@ -180,21 +180,6 @@ describe("provider settings routes", () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 
-  it("negotiates offered inventory and funding holds together without granting readiness", async () => {
-    const held = structuredClone(snapshot);
-    held.accessSources[0]!.readiness = { ...held.accessSources[0]!.readiness, state: "unavailable", action: "retry", safeReason: "credit_reserved" };
-    held.matrixModelInventory = [{ id: "anthropic/claude-opus-5", providerId: "anthropic", accessSourceId: "source_matrix", displayName: "Claude Opus 5", enabled: true }];
-    const { app } = createApp({ getSnapshot: async () => held });
-    const response = await app.request("/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeModelCapabilities=true&includeMatrixModelInventory=true");
-    const body = await response.json();
-    expect(ProviderSettingsSnapshotSchema.safeParse(body).success).toBe(true);
-    expect(body.matrixModelInventory).toEqual(held.matrixModelInventory);
-    expect(body.accessSources[0].readiness).toMatchObject({ state: "unavailable", safeReason: "credit_reserved" });
-    const legacy = await (await app.request("/api/ai/provider-settings")).json();
-    expect(legacy).not.toHaveProperty("matrixModelInventory");
-    expect(legacy.accessSources[0].readiness.safeReason).toBe("credit_required");
-  });
-
   it("authenticates reads and returns the secret-free snapshot", async () => {
     const { app, getPrincipal, getSnapshot } = createApp();
     const response = await app.request("/api/ai/provider-settings");

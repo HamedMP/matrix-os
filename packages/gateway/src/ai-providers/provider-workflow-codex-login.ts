@@ -13,28 +13,29 @@ const DeviceResponse = z.object({ type: z.literal("chatgptDeviceCode"), loginId:
  */
 export function createCodexSettingsLogin(options: {
   command: string; args?: string[]; cwd: string; env: Record<string, string>;
-  acquire: () => Promise<() => void>;
+  acquire: () => Promise<() => void | Promise<void>>;
 }) {
-  return async ({ publish, onSuccess }: { publish: Publish; onSuccess: () => Promise<void> }) => {
+  return async ({ publish, onSuccess, registerCleanup }: { publish: Publish; onSuccess: () => Promise<void>; registerCleanup?: (cancel: () => Promise<void>) => void }) => {
     const release = await options.acquire();
-    let released = false;
-    const releaseProfile = () => { if (!released) { released = true; release(); } };
-    let child: ReturnType<typeof spawn>;
+    let releaseTask: Promise<void> | undefined;
+    const releaseProfile = () => releaseTask ??= Promise.resolve().then(release);
+    let child: ReturnType<typeof spawn> | undefined;
+    registerCleanup?.(async () => { if (!child) { await releaseProfile(); return; } await stop(); });
     try { child = spawn(options.command, options.args ?? ["app-server", "--stdio"], {
       cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
-    }); } catch (error) { releaseProfile(); throw error; }
+    }); } catch (error) { await releaseProfile(); throw error; }
     let buffer = "", bytes = 0, loginId: string | null = null;
     let cancelled = false, completed = false, closed = false, settled = false;
     let finishTask: Promise<boolean> | undefined, stopTask: Promise<void> | undefined;
     let signalClose!: () => void;
     const closePromise = new Promise<void>(resolve => { signalClose = resolve; });
     const send = (id: number, method: string, params: unknown) => {
-      if (!closed) child.stdin!.write(JSON.stringify({ id, method, params }) + "\n");
+      if (!closed) child!.stdin!.write(JSON.stringify({ id, method, params }) + "\n");
     };
     const reap = async () => {
       if (closed) return;
-      child.kill("SIGTERM");
-      const force = setTimeout(() => child.kill("SIGKILL"), 1000); force.unref();
+      child!.kill("SIGTERM");
+      const force = setTimeout(() => child!.kill("SIGKILL"), 1000); force.unref();
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try { await Promise.race([closePromise, new Promise<never>((_, reject) => {
         timeout = setTimeout(() => reject(new ProviderWorkflowError("unavailable")), 5000); timeout.unref();
@@ -45,14 +46,14 @@ export function createCodexSettingsLogin(options: {
       settled = true; clearTimeout(deadline); clearTimeout(startup);
       finishTask = (async () => {
         try {
-          await reap(); releaseProfile();
+          await reap(); await releaseProfile();
           if (cancelled) return true;
           if (!success) throw new ProviderWorkflowError("unavailable");
           await onSuccess(); publish({ state: "succeeded", safeFailure: null });
           return true;
         } catch (error) {
           console.warn("[provider-workflow] Codex connection unavailable:", error instanceof Error ? error.name : "UnknownError");
-          if (!cancelled) publish({ state: "failed", safeFailure: "unavailable" });
+          if (!cancelled) publish(closed ? { state: "failed", safeFailure: "unavailable" } : { safeFailure: "unavailable" });
           return false;
         }
       })();
@@ -64,7 +65,7 @@ export function createCodexSettingsLogin(options: {
       cancelled = true; clearTimeout(deadline); clearTimeout(startup);
       stopTask = (async () => {
         // A failed cleanup remains retryable, without reopening native login.
-        if (settled) { await reap(); releaseProfile(); return; }
+        if (settled) { await reap(); await releaseProfile(); return; }
         // Request native cancellation first; give it an acknowledgement before
         // reaping. Killing the scoped server also drops its active login.
         if (loginId && !closed) {
@@ -86,12 +87,12 @@ export function createCodexSettingsLogin(options: {
         publish({ safeFailure: "unavailable" });
       });
     }, 600000); deadline.unref();
-    child.stdin!.on("error", () => { void finish(false); });
-    child.on("error", () => { void finish(false); });
-    child.on("close", () => { closed = true; buffer = ""; releaseProfile(); signalClose(); if (!settled) void finish(completed); });
-    child.stderr!.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) void finish(false); });
-    child.stdout!.setEncoding("utf8");
-    child.stdout!.on("data", (chunk: string) => {
+    child!.stdin!.on("error", () => { void finish(false); });
+    child!.on("error", () => { void finish(false); });
+    child!.on("close", () => { closed = true; buffer = ""; signalClose(); void releaseProfile().catch(error => console.warn("[provider-workflow] Codex lease release unavailable:", error instanceof Error ? error.name : "UnknownError")); if (!settled) void finish(completed); });
+    child!.stderr!.on("data", (chunk: Buffer) => { bytes += chunk.length; if (bytes > 65536) void finish(false); });
+    child!.stdout!.setEncoding("utf8");
+    child!.stdout!.on("data", (chunk: string) => {
       if (settled) return;
       bytes += Buffer.byteLength(chunk); if (bytes > 65536) { void finish(false); return; }
       buffer += chunk;
@@ -106,7 +107,7 @@ export function createCodexSettingsLogin(options: {
         if (!message || typeof message !== "object" || Array.isArray(message)) { void finish(false); return; }
         if (message.id === 1) {
           if (message.error) { void finish(false); return; }
-          child.stdin!.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
+          child!.stdin!.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
           send(2, "account/login/start", { type: "chatgptDeviceCode" });
         } else if (message.id === 2) {
           const parsed = DeviceResponse.safeParse(message.result);

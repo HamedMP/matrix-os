@@ -1,4 +1,3 @@
-import { projectChatBalance } from "./ai-funded-chat-balance.js";
 import { sql } from "kysely";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
@@ -75,7 +74,7 @@ export async function readCheckoutFundingSnapshot(input: {
       ...row, month_period_start: currentPeriod, month_spent_microusd: 0, month_reserved_microusd: 0,
     };
     return {
-      funding: fundingSummary(await projectChatBalance(trx.executor, identity, balance, checkedAt), monthlyBudgetMicrousd, checkedAt),
+      funding: fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
       policy: {
         enabled: enabled && allowedModelIds.length > 0,
         globalRevision: row.global_revision,

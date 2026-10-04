@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -6,8 +6,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startAgentsProvidersWorkflowGateway } from "./fixtures/agents-providers-workflows";
 
+import { createEvidenceDirectory } from "./fixtures/evidence-directory";
+
 const root = resolve(__dirname, "../../..");
-const evidence = join(root, "specs/543-agents-providers-settings/evidence/electron-fixture");
+// Fresh captures never overwrite historical committed evidence.
+let captures: ReturnType<typeof createEvidenceDirectory> | undefined;
+let evidence: string;
 const hasBuild = existsSync(join(root, "desktop/out/main/index.js"));
 if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasBuild) throw new Error("Required Electron Desktop build is missing");
 const suite = hasBuild ? describe : describe.skip;
@@ -19,7 +23,8 @@ let profile: string;
 
 suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)", () => {
   beforeAll(async () => {
-    mkdirSync(evidence, { recursive: true });
+    captures = createEvidenceDirectory(process.env.MATRIX_SETTINGS_EVIDENCE_DIR);
+    evidence = captures.path;
     gateway = await startAgentsProvidersWorkflowGateway();
     profile = mkdtempSync(join(tmpdir(), "matrix-settings-figma-"));
     app = await _electron.launch({ executablePath, args: [join(root, "desktop/out/main/index.js")],
@@ -36,9 +41,9 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
     try { await page.getByRole("region", { name: "General agents", exact: true }).waitFor({ timeout: 10_000 }); }
-    catch (error) { await page.screenshot({ path: join(evidence, "setup-failure.png") }); console.warn("[figma-e2e] setup state:", await page.locator("body").innerText()); throw error; }
+    catch (error) { await page.screenshot({ path: join(evidence, "agents-providers-figma-setup-failure.png") }); console.warn("[figma-e2e] setup state:", await page.locator("body").innerText()); throw error; }
   }, 60_000);
-  afterAll(async () => { await app?.close(); await gateway?.close(); if (profile) rmSync(profile, { recursive: true, force: true }); });
+  afterAll(async () => { try { await app?.close(); } finally { try { await gateway?.close(); } finally { if (profile) rmSync(profile, { recursive: true, force: true }); captures?.cleanup(); } } });
 
   async function capture(name: string) { await page.screenshot({ path: join(evidence, `${name}.png`) }); }
   const feature = () => page.locator(".matrix-agents-providers");
@@ -92,7 +97,7 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     await row.click();
     const collapsed = await page.locator(`[id="${id}"]`).evaluate(body => ({
       height: body.getBoundingClientRect().height,
-      inert: body.inert,
+      inert: (body as HTMLElement).inert,
       transition: getComputedStyle(body).transitionDuration,
     }));
     expect(collapsed.height).toBe(0);
@@ -122,6 +127,16 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       await feature().getByRole("button", { name: "Usage history", exact: true }).click();
       const history = page.getByRole("dialog", { name: "Usage history", exact: true });
       await history.getByRole("button", { name: "Load more", exact: true }).waitFor();
+      const scrim = await history.evaluate(dialog => {
+        const backdrop = dialog.closest(".matrix-ap-dialog-backdrop");
+        if (!backdrop) throw new Error("Missing system dialog backdrop");
+        return getComputedStyle(backdrop).backgroundColor;
+      });
+      const channels = scrim.match(/[\d.]+/g)?.map(Number) ?? [];
+      expect(channels.length).toBeGreaterThanOrEqual(3);
+      expect(channels.slice(0, 3).every(channel => channel < 128)).toBe(true);
+      if (channels.length > 3) expect(channels[3]).toBeGreaterThan(0);
+
       expect(await history.locator("tbody tr").count()).toBe(1);
       await history.getByRole("button", { name: "Load more", exact: true }).click();
       await history.locator("tbody tr").filter({ hasText: "Credit" }).waitFor();
@@ -206,6 +221,6 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       await hermes.getByRole("button", { name: "Cancel", exact: true }).click();
       await hermes.getByRole("button", { name: "Install", exact: true }).waitFor();
       expect(gateway.events.filter(event => event === "cancel")).toHaveLength(2);
-    } catch (error) { await capture("failure"); throw error; }
+    } catch (error) { await capture("agents-providers-figma-failure"); throw error; }
   }, 90_000);
 });

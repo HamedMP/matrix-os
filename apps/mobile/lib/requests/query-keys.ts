@@ -14,9 +14,6 @@ export const mobileQueryKeys = {
     computerKey,
     chatId,
   ] as const,
-  botNavigation: (userId: string, gatewayUrl: string) => [
-    "native-bot-navigation", userId, gatewayUrl,
-  ] as const,
   botChat: (userId: string, gatewayUrl: string, chatId: string) => [
     "native-bot-chat", userId, gatewayUrl, chatId,
   ] as const,

@@ -1,6 +1,6 @@
 # Chat and Bot redesign with Project navigation
 
-Status: implementation in progress; the first UI delivery was rejected in Human Review on 2026-10-03. User additionally requires reference to current Matrix AI Gateway changes and matching Preview testing after implementation.
+Status: implementation and review corrections complete; main integration and final landing validation in progress. The user authorized Greptile 5/5, green required CI and merge after matching Preview/Electron Desktop acceptance.
 
 Current review scope override (2026-10-03): the user excludes further Mobile and documentation work. Complete the sixteen corrections and the fourteen follow-up corrections, with exact-source Preview/Electron Desktop acceptance. Preserve already completed shared fixes; additional Mobile or public-docs work is not a gate for this correction delivery.
 
@@ -31,34 +31,34 @@ Backend rules inspected on the active unmerged #2117 head `d687fc468cdcf29db9aca
 | R9 | Bot Chat/details/editor | Align persistent identity, activity/results, instructions and existing editable fields/actions with design. Preserve supported managed model edits and immutable recipe runtime; show runtime/model/source truthfully. No new switching/schedule/pause/archive behavior. |
 | R10 | Approval and attention | Existing scoped effect preview/details/allow-deny controls remain in Bot Chat. Pending Bot approval also appears as a Needs you reminder that opens the same Bot Chat, without adding an ordinary Chat entry. Derive reminder state from actual unresolved approvals and remove stale reminders when resolved/refreshed. |
 | R11 | Existing shared discovery | Restyle current authorized sharing/search results, resource/actor badges and filters. Preserve access checks and existing scope; add no new invitation engine or terminal-wide search backend. |
-| R12 | Bot-specific selector/context | At Bot conversation start, show current Automatic and available managed Matrix AI models without exposing the owned execution runtime with authoritative availability/reasons/source. Exclude unsupported Hermes/native Pi/coding routes for recipe Bots. If resolved source is unavailable, display Automatic without guessing. Remove the standalone Add context button and eligibility hint from composer presentation; preserve current authorized references and backend funding/routing semantics. |
+| R12 | Bot-specific selector/context | At Bot conversation start, show current Automatic and available managed Matrix AI models without exposing the owned execution runtime with authoritative availability/reasons/source. Exclude unsupported Hermes/native Pi/coding routes for recipe Bots. Only the exact supported legacy sentinel displays Automatic. A saved missing or unavailable route retains its identity and truthful unavailable state; never silently coerce it to Automatic. Remove the standalone Add context button and eligibility hint from composer presentation; preserve current authorized references and backend funding/routing semantics. |
 
 ## Scope and constraints
 
-This release is UI/navigation only: shared frontend presentation, state derivation, client orchestration and existing API wiring. Add no backend channels/adapters, funding-policy changes, integrations, schedules or engines. Preserve existing template names/coding Agent configurations and all owner history without migration/consolidation. Do not change runtime/auth/grants through UI labels or mentions.
+This release primarily changes UI/navigation: shared frontend presentation, state derivation, client orchestration and existing API wiring. Add no backend channels, funding-policy changes, integrations, schedules or engines. The user additionally authorized the narrow existing Codex submitted-answer continuation repair and one-observation catalog readiness fix; their owner/run/delivery and funding boundaries remain unchanged. Preserve existing template names/coding Agent configurations and all owner history without migration/consolidation. Do not change runtime/auth/grants through UI labels or mentions.
 
 Reuse canonical contracts and shared state derivation across Web Desktop, Web Canvas and Electron Desktop. Retain previously completed Mobile behavior; additional Mobile work is excluded by the current review scope. Include loading/empty/disabled/error/reconnect states, draft handoff races, active streaming and existing approval continuations.
 
 ## Dependencies and delivery constraints
 
-Snapshot from 2026-10-02; re-query live state/heads before integration:
+Current integration snapshot (2026-10-04); refresh main before final merge:
 
-- ENG-49 / #2048: In Progress; OPEN Draft `bab5658e4c`, based on #2022. Reuse direct Pi Chat entry, editor route preservation, tools and confirmed-memory fixes.
-- #2022: OPEN Draft on #2015; #2015: OPEN on earlier Bot authority work. Audit lower stack dependencies before choosing a base. These are unmerged work, not main features.
-- ENG-107 / #2117: In Progress; OPEN Draft `c5c32de453`, based on `codex/matrix-ai-pi-routing`. Reuse managed choices and source policy; its latest Bot presentation hides internal runtime details while retaining model/funding state. Backend inspection at d687 remains applicable; do not duplicate the backend work.
-- ENG-65 owns Agents & Providers Settings; keep this change scoped to the Chat/Bot selector and presentation. ENG-93 owns new recurring execution, excluded here.
+- Matrix AI #2117 is merged into main; its managed Pi, model, owner, MCP and funding contracts are upstream authority.
+- Agents & providers Settings and its predecessor stack through #2127/#2160 are merged into main. Preserve their current native account, connection workflow and usage presentation rather than replaying the older integrated Settings snapshot.
+- Reconcile the existing Chat/Bot/Project PR against main starting at `4747239c899f1c3c2fd65aab1689176a063da297`. Retain task-owned changes from mixed merge commits and the validated submitted-answer continuation/catalog snapshot fixes; do not downgrade upstream SDK, schemas, runtime or financial behavior.
+- ENG-65 owns Settings; ENG-93 owns new recurring execution, excluded here.
 
 ## Validation and acceptance delivery
 
 Tests first for navigation/classification/state changes, followed by focused shared UI/renderer suites and affected typechecks/builds. Validate one runnable exact revision in Electron Desktop; use matching Preview VPS for integration with the existing Bot dependency stack. Verify retained history/artifacts/memory/grants, @Bot draft prefill without sending/overwriting, correct rail order/sticky header, Project center with retained dropdown and truthful description semantics, real approval reminder lifecycle and truthful picker/context restrictions. Cover affected shared Web/Canvas behavior with explicit evidence; no further Mobile work is required. Prior PR QA does not establish acceptance for this revision.
 
-Deliver focused Conventional Commit PR(s) with one primary English Linear issue per implementation PR after duplicate search, retain the earlier public documentation PR without further documentation work in this correction scope. Stop at Human Review before Greptile/merge; no production/fleet rollout. The user approved the final scope and implementation is active.
+Deliver focused Conventional Commit PR(s) with one primary English Linear issue per implementation PR after duplicate search, retain the earlier public documentation PR without further documentation work in this correction scope. Human Review corrections are authorized. The user approved proceeding through fresh exact-head Greptile 5/5, green required CI, matching packaged Electron/Preview validation and merge. No production/fleet rollout.
 
 ## Deferred scope and risks
 
 New Hermes/personal-subscription Pi channels, cross-runtime switching, Company Drive on Pi/Hermes, scratch/trial/first-run engines, meeting/daily schedulers, new sharing/search endpoints, new lifecycle semantics, broad Settings redesign and cross-provider memory import are deferred. No auto-merge of dependencies or owner-data cleanup.
 
-Technical risks are active unmerged dependency heads, legacy Bot identity/draft compatibility and limited Figma token extraction. Resolve version/base/visual details during implementation preparation without widening the approved UI behavior; escalate any unavoidable backend expansion before changing scope. Rollback removes presentation changes while preserving bindings and owner data.
+Technical risks are reconciliation of squash-landed dependency history, legacy Bot identity/draft compatibility and limited Figma token extraction. Resolve version/base/visual details during implementation preparation without widening the approved UI behavior; escalate any unavoidable backend expansion before changing scope. Rollback removes presentation changes while preserving bindings and owner data.
 
 ## Human Review acceptance additions (2026-10-03)
 
@@ -85,3 +85,10 @@ Acceptance includes windowed and maximized Electron pixels, refresh/send list co
 - A bound Bot canonical model_unavailable failure has one compact in-place recovery notice with Choose model, Check availability and existing Agents & providers actions. No repeated bare terminal status strips and no duplicate giant failure card. Preserve task history in Details; never automatically retry, purchase, fund or widen authority.
 - Repeat genuine request-user-input in the final matching Electron/Preview revision: unresolved question appears in Needs you, navigation preserves it, submission resumes the same Chat and completion moves it to Done. Existing old-head preflight is not final-head acceptance.
 - A Preview with disabled Matrix AI and no eligible owner source cannot establish successful Bot inference. Record that actual limitation separately from UI/recovery acceptance without changing funding policy.
+
+## Final Project welcome and creation contracts
+
+- Project compose opens ordinary New Chat with that Project context, shared official Matrix logo and four example prompts. Project name opens its overview; disclosure expands its existing Chats. No navigation action sends or creates an empty persisted Chat.
+- Example selection fills and focuses the current retained draft, keeps Project context and never sends automatically. Actual Bot avatars stay rabbits; Project overview and existing conversations do not add the ordinary welcome.
+- The Personal Daily Brief top action is an explicit recipe-creation shortcut using the same setup/model dialog as other templates. Cancel creates nothing; Create bot deliberately creates a persistent Bot. Existing cards retain consistent full-width editing and preserve legacy definitions/history.
+- After dependency reconciliation, previous source/runtime tests are historical evidence only. Final submitted-answer acceptance must produce a continued final reply in the original Chat/run; visible Answer submitted alone is insufficient.

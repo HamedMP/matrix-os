@@ -518,3 +518,45 @@ unchanged financial/source state; replay fencing; one-unknown cap; actual indepe
 PostgreSQL pools with one live execution; and late settlement preserving the newer
 slot. No automatic timeout unlock, fake exact charge, grant, or paid upstream call
 belongs to this support API.
+
+
+## Managed GLM reasoning and receipt contract
+
+1. **Scope:** the credential-free Pi bridge describes its models as non-reasoning
+   and sends streaming GLM tool requests without `reasoning_effort`. GLM cannot
+   disable reasoning; omission selects the provider maximum. Normalize that
+   omission at the existing managed GLM request boundary. This does not change
+   owner-connected coding routes or Anthropic requests.
+2. **Signature:** `serializeFundedOpenAiRequest(value: unknown)` validates the
+   sole allowlisted managed GLM model before authorization and returns its bounded
+   request and upstream JSON. No new endpoint, credential or configuration is added.
+3. **Contract:** `reasoning_effort` accepts `low`, `high`, or `max`; omission sends
+   `low`. Explicit supported effort remains unchanged. Preserve tool definitions,
+   tool choice, messages, streaming, final-aggregate usage, output bounds and
+   `store:false`. Funded generation requests explicitly collect metadata with
+   `cf-aig-collect-log:true`, suppress payloads with
+   `cf-aig-collect-log-payload:false`, and retain `cf-aig-zdr:true`. Only existing
+   server-produced pseudonymous metadata is forwarded. Count/readiness/evaluation
+   collection behavior remains unchanged. Gateway-wide settings remain separate.
+4. **Validation:** `none`, `minimal`, `medium`, `xhigh`, null and non-string effort
+   fail before control-plane admission. The existing bounded first-response and
+   complete-response deadlines and caller cancellation remain. Unknown usage after
+   timeout cannot become zero or a confirmed charge; exact receipts remain required.
+5. **Cases:** an ordinary GLM tool turn sends low; a deliberate high/max request
+   preserves that value; unsupported OpenAI aliases reject rather than silently
+   selecting maximum reasoning. Metadata logging cannot recreate historical logs
+   or prove that a delayed provider response will complete.
+6. **Tests:** capture the actual pinned Pi SDK request through its Unix bridge and
+   EOF broker into the funded serializer for text and tool turns. Assert low,
+   unchanged tools/auto choice/output bound, one dispatch and completed SDK result.
+   Test explicit supported/invalid efforts and refusal before admission. Inspect
+   actual Anthropic and Workers AI generation headers for metadata collection,
+   payload suppression, pseudonymous identity, credential isolation and unchanged
+   count/readiness behavior. Run existing usage, rejection, timeout/cancel and
+   normalization suites. Live model acceptance remains independent evidence.
+7. **Wrong/correct:** do not treat Pi's off flag as upstream disabled reasoning or
+   fix latency by retrying a potentially charged request. Send an explicit
+   model-supported bounded effort and preserve unknown financial liability.
+
+Provider semantics: [Cloudflare GLM5.3Flash](https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/).
+Metadata-only override: [AI Gateway logging](https://developers.cloudflare.com/ai-gateway/observability/logging/).

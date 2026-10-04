@@ -8,7 +8,7 @@ afterEach(cleanup);
 function record(id:string,projectId:string):CanonicalChatRecord{return {chat:{id,title:id,createdAt:"2026-10-03T00:00:00Z",updatedAt:"2026-10-03T00:00:00Z"},projectId} as CanonicalChatRecord;}
 it("loads current and legacy Project associations without relying on newest global chats and fences client changes",async()=>{
  const stable=record("chat_stable","project_alpha"),legacy=record("chat_old","alpha");
- const client={list:vi.fn(async(input:any)=>({items:input.projectId === "alpha" ? [legacy] : [stable]}))} as unknown as CanonicalChatClient;
+ const client={list:vi.fn(async(input:Parameters<CanonicalChatClient["list"]>[0])=>({items:input?.projectId === "alpha" ? [legacy] : [stable]}))} as unknown as CanonicalChatClient;
  const project={id:"project_alpha",slug:"alpha",name:"Alpha",kind:"folder" as const};
  const {result,rerender}=renderHook(({client})=>useProjectLandingChats(project,client),{initialProps:{client}});
  await waitFor(()=>expect(result.current.chats).toHaveLength(2));

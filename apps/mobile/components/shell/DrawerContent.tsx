@@ -25,9 +25,6 @@ import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
 import { Icon, IconButton, Spacer, Text, type IconData } from "@/components/ui";
 import type { ProjectSummary } from "@/lib/requests";
-import { NativeBotAgents } from "./NativeBotAgents";
-import { NativeBotAttention } from "./NativeBotAttention";
-import type { NativeBotConversationSummary } from "@/lib/requests/bot-navigation";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
 
 const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
@@ -44,8 +41,6 @@ interface DrawerContentProps extends DrawerContentComponentProps {
   pendingInvitationCount?: number;
   recentChats: CanonicalChatRecord[];
   recentChatsLoading: boolean;
-  botConversations?: NativeBotConversationSummary[];
-  botStatusUnavailable?: boolean;
   projects: ProjectSummary[];
   activeSessionId: string | null;
   onSelectConversation: (id: string) => void;
@@ -59,8 +54,6 @@ export function DrawerContent({
   pendingInvitationCount = 0,
   recentChats,
   recentChatsLoading,
-  botConversations = [],
-  botStatusUnavailable = false,
   projects,
   activeSessionId,
   onSelectConversation,
@@ -147,8 +140,6 @@ export function DrawerContent({
           );
         })}
 
-        <NativeBotAgents bots={botConversations} activeChatId={isOnChatScreen ? activeSessionId : null} onOpen={openChat} />
-
         {projects.length > 0 ? (
           <>
             <Spacer size="xl" />
@@ -234,7 +225,6 @@ export function DrawerContent({
         ) : null}
 
         <Spacer size="xl" />
-        <NativeBotAttention bots={botConversations} unavailable={botStatusUnavailable} onOpen={openChat} />
         <View style={styles.padded}>
           <Text size="overline" tone="subtle">Recents</Text>
         </View>

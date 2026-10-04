@@ -12,7 +12,7 @@ import { resolve } from 'node:path';
 import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3 } from '@matrix-os/contracts';
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 import type { ProviderSettingsStoreWriter } from './provider-settings-store.js';
-import { ProviderWorkflowError, type ProviderWorkflowAdapter } from './provider-workflows.js';
+import { ProviderWorkflowError, ProviderWorkflowNotStartedError, type ProviderWorkflowAdapter } from './provider-workflows.js';
 /** Extract only the known device flow. Raw terminal output never leaves this adapter. */
 export function extractProviderDeviceCode(raw: string): {
   authorizationUrl: string;
@@ -109,24 +109,41 @@ export async function createNativeProviderWorkflowAdapters(options: {
         await keyAdapter(key);
         await enableConnectedHarness(harness.id, `key-connect-${randomUUID()}`);
       } } : {}),
-      async start({ request, publish }) {
+      async start({ request, publish, registerCleanup }) {
         if (request.kind === 'login' && request.method === 'device_code' && harness.harness === 'codex') {
-          if (!canLogin || !options.codexSettingsLogin) throw new ProviderWorkflowError('unavailable');
-          return options.codexSettingsLogin({ publish, onSuccess: async () => {
-            const fresh = await options.store.getSnapshot({ refresh: true });
+          if (!canLogin || !options.codexSettingsLogin) throw new ProviderWorkflowNotStartedError();
+          return options.codexSettingsLogin({ publish, registerCleanup, onSuccess: async () => {
+            const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true });
             const exact = fresh.harnesses.find(row => row.id === harness.id);
-            if (!exact || exact.authState !== 'authenticated') throw new ProviderWorkflowError('unavailable');
-            await enableConnectedHarness(harness.id, `connect-${createHash('sha256').update(request.idempotencyKey).digest('hex')}`);
+            // Native consent and account identity are separate from the
+            // harness's execution readiness. Accept only this route's exact
+            // authenticated account; local credential presence is insufficient.
+            const account = fresh.accounts?.find(row => row.id === exact?.selectedAccountId);
+            const source = fresh.accessSources?.find(row => row.id === exact?.accessSourceId);
+            const authenticatedAccount = !!account && account.authState === 'authenticated'
+              && account.accessSourceId === exact?.accessSourceId
+              && account.providerId === exact?.route.providerId
+              && source?.accountId === account.id && source.providerId === account.providerId;
+            if (!exact || exact.harness !== harness.harness || fresh.access.mode !== 'writable'
+              || !(exact.authState === 'authenticated' || authenticatedAccount))
+              throw new ProviderWorkflowError('unavailable');
+            if (!exact.enabled) {
+              // Use the same validated snapshot revision so an account/route
+              // change cannot be enabled by a second, unvalidated read.
+              await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: exact.id,
+                enabled: true, expectedRevision: fresh.revision,
+                idempotencyKey: `connect-${createHash('sha256').update(request.idempotencyKey).digest('hex')}` });
+            }
           } });
         }
         if (request.kind === 'login' && ['pi', 'opencode'].includes(harness.harness)) {
           const loginConnection = harness.harness === "pi" ? options.piConnection : options.opencodeConnection;
-          if (!opencodeCapability.login || !loginConnection) throw new ProviderWorkflowError('unavailable');
-          return loginConnection.start({ request, publish });
+          if (!opencodeCapability.login || !loginConnection) throw new ProviderWorkflowNotStartedError();
+          return loginConnection.start({ request, publish, registerCleanup });
         }
         if (request.kind === 'login' && request.method === 'browser') {
-          if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowError('unavailable');
-          return options.claudeBrowserLogin({ publish, onSuccess: async () => {
+          if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
+          return options.claudeBrowserLogin({ publish, registerCleanup, onSuccess: async () => {
             const fresh = await options.store.getSnapshot({ refresh: true });
             const exact = fresh.harnesses.find(row => row.id === harness.id);
             if (!exact || !(exact.authState === 'authenticated' || exact.localObservation?.state === 'present_unverified'))
@@ -135,7 +152,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           } });
         }
         if (request.kind === 'login' && request.method === 'existing_codex') {
-          if (!canReuseCodex || !options.hermesCodexReuse) throw new ProviderWorkflowError('unavailable');
+          if (!canReuseCodex || !options.hermesCodexReuse) throw new ProviderWorkflowNotStartedError();
           const reuse = async () => {
             await options.hermesCodexReuse!();
             const fresh = await options.store.getSnapshot({ refresh: true });
@@ -159,15 +176,27 @@ export async function createNativeProviderWorkflowAdapters(options: {
           publish({ state: 'succeeded', safeFailure: null });
           return { cancel: async () => {} };
         }
-        let releaseProfile: (() => void) | undefined;
-        if (request.kind !== "login" && options.profileGuard && (harness.harness === "codex" || harness.harness === "claude")) releaseProfile = await options.profileGuard.acquire(harness.harness, { kind: "write" });
-        let ref: TerminalRef;
+        let releaseProfile: (() => void | Promise<void>) | undefined;
+        if (request.kind !== "login" && options.profileGuard && (harness.harness === "codex" || harness.harness === "claude")) releaseProfile = await options.profileGuard.acquire(harness.harness, { kind: "write", durable: true });
+        let ref: TerminalRef | undefined;
+        let uncertainName: string | undefined;
+        let launchMayExist = false;
+        registerCleanup(async () => {
+          if (!launchMayExist) { await releaseProfile?.(); return; }
+          if (!ref && uncertainName) {
+            const tab = (await options.terminal.listWorkspaces()).flatMap(w => w.tabs).find(t => t.name === uncertainName);
+            if (tab) { ref = { workspaceId: tab.workspaceId, tabId: tab.id }; incarnation = tab.incarnation; }
+          }
+          if (!ref) throw new ProviderWorkflowError("unavailable");
+          await options.terminal.terminateTab(ref!, incarnation); await releaseProfile?.();
+        });
         let incarnation: string | undefined;
         if (request.kind === 'login') {
           const fresh = await options.store.getSnapshot();
           const current = fresh.harnesses.find(row => row.id === harness.id);
           if (!current || current.harness !== harness.harness)
             throw new ProviderWorkflowError('unavailable');
+          launchMayExist = true;
           const result = await options.store.mutate({ type: 'start_login', harnessInstanceId: harness.id, accountId: current.selectedAccountId, method: 'terminal', expectedRevision: fresh.revision, idempotencyKey: request.idempotencyKey });
           if (result.kind !== 'login_attempt' || result.attempt.action.kind !== 'open_terminal')
             throw new ProviderWorkflowError('unavailable');
@@ -180,33 +209,34 @@ export async function createNativeProviderWorkflowAdapters(options: {
             incarnation = matching.incarnation;
           }
           catch (error) {
-            await options.terminal.terminateTab(ref, incarnation);
+            await options.terminal.terminateTab(ref!, incarnation);
             throw error;
           }
         }
         else {
           let launchRequested = false;
           const tabName = `provider-workflow-native-${harness.harness}-${request.kind}-${randomUUID().slice(0, 8)}`;
+          uncertainName = tabName;
           try {
             if (!(packageName || system && hostControl.available) || request.kind === 'uninstall' && !(managed || system && hostControl.available))
               throw new ProviderWorkflowError('unavailable');
             const workspace = await options.terminal.ensureWorkspace();
-            const versioned = harness.harness === 'codex' ? CODEX_VERIFIED_NPM_PACKAGE : `${packageName}@latest`;
+            const versioned = harness.harness === 'codex' ? CODEX_VERIFIED_NPM_PACKAGE : harness.harness === 'pi' ? `${packageName}@1.0.0` : `${packageName}@latest`;
             const command = system ? `sudo -n /opt/matrix/bin/matrix-agent-runtime-control ${request.kind} ${harness.harness}` : `${quote(`${prefix}/bin/npm`)} ${request.kind === 'install' ? 'install' : 'uninstall'} -g --prefix ${quote(prefix)} ${request.kind === 'uninstall' || harness.harness === 'pi' ? '--ignore-scripts ' : ''}${quote(request.kind === 'install' ? versioned : packageName!)}`;
-            launchRequested = true;
+            launchRequested = true; launchMayExist = true;
             const tab = await options.terminal.createTab(workspace.id, { name: tabName, cwd: '', ...(harness.harness === 'codex' || harness.harness === 'claude' ? { agent: { providerId: harness.harness } } : {}), command: ['sh', '-lc', command] });
             ref = { workspaceId: tab.workspaceId, tabId: tab.id };
             incarnation = tab.incarnation;
           } catch (error) {
             // A launch RPC failure may follow a successful native launch. Keep
             // its lease until restart rechecks durable runtime session liveness.
-            if (!launchRequested) releaseProfile?.();
+            if (!launchRequested) await releaseProfile?.();
             else {
               try {
                 const launched = (await options.terminal.listWorkspaces()).flatMap(workspace => workspace.tabs).find(tab => tab.name === tabName);
                 if (launched) {
                   await options.terminal.terminateTab({ workspaceId: launched.workspaceId, tabId: launched.id }, launched.incarnation);
-                  releaseProfile?.();
+                  await releaseProfile?.();
                 }
               } catch (cleanupError) {
                 console.warn('[provider-workflow] Ambiguous launch cleanup unavailable:', cleanupError instanceof Error ? cleanupError.name : 'UnknownError');
@@ -234,7 +264,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
               failures.push(error);
             }
           try {
-            await options.terminal.terminateTab(ref, incarnation);
+            await options.terminal.terminateTab(ref!, incarnation);
           }
           catch (error) {
             failures.push(error);
@@ -246,10 +276,11 @@ export async function createNativeProviderWorkflowAdapters(options: {
             catch (error) {
               failures.push(error);
             }
-          if (!failures.length) releaseProfile?.();
+          if (!failures.length) await releaseProfile?.();
           if (failures.length)
             throw new ProviderWorkflowError('unavailable');
         };
+        registerCleanup(async () => { await terminate(); if (finishTask) await finishTask; });
         const failStream = async () => {
           if (stopped || cancelling)
             return;
@@ -274,7 +305,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
         const finish = async (exitCode: number | null) => {
           if (stopped || cancelling)
             return;
-          releaseProfile?.();
+          await releaseProfile?.();
           stopped = true;
           if (timer)
             clearTimeout(timer);
@@ -299,7 +330,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           }
         };
         try {
-          stream = options.terminal.attach({ ref, expectedIncarnation: incarnation, viewerId: `workflow-${randomUUID()}`, mode: 'soft', size: { cols: 100, rows: 30 },
+          stream = options.terminal.attach({ ref: ref!, expectedIncarnation: incarnation, viewerId: `workflow-${randomUUID()}`, mode: 'soft', size: { cols: 100, rows: 30 },
             onFrame(frame) {
               if (stopped)
                 return;
@@ -344,7 +375,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           timer = setTimeout(expire, 600000);
           timer.unref();
         }
-        return { terminalSessionId: `${ref.workspaceId}:${ref.tabId}`, async cancel() {
+        return { terminalSessionId: `${ref!.workspaceId}:${ref!.tabId}`, async cancel() {
             if (finishTask) { await finishTask; return; }
             cancelling = true;
             try {
@@ -375,4 +406,12 @@ async function nativeHostControl() {
       console.warn('[provider-workflow] Host control unavailable:', error instanceof Error ? error.name : 'UnknownError');
   }
   return { available, async run(action: 'cancel-install', harness: 'hermes' | 'openclaw') { await promisify(execFile)('sudo', ['-n', path, action, harness], { timeout: 30000, maxBuffer: 4096, encoding: 'utf8', windowsHide: true }); } };
+}
+
+/** Keep independent native drains running even when one writer cannot be reaped. */
+export async function closeNativeProviderWorkflowConnections(close: readonly (() => Promise<void>)[]): Promise<void> {
+  await Promise.all(close.map(async drain => {
+    try { await drain(); }
+    catch (error) { console.warn('[provider-workflow] Native shutdown drain unavailable:', error instanceof Error ? error.name : 'UnknownError'); }
+  }));
 }

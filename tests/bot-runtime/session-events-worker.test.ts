@@ -49,7 +49,7 @@ describe("bot session codec and compaction", () => {
     const messages = [user("a"), user("b"), user("c"), user("d"), user("e"), user("f")];
     const summarize = vi.fn(async () => "The person wants Acme briefs.");
     const compacted = await compactSession({ messages, summarize, now: () => 99 });
-    expect(compacted[0]).toMatchObject({ role: "user", timestamp: 99, content: expect.stringContaining("The person wants Acme briefs.") });
+    expect(compacted[0]).toMatchObject({ role: "user", matrixBotSessionKind: "summary", timestamp: 99, content: expect.stringContaining("The person wants Acme briefs.") });
     expect(compacted.slice(1).map((message) => (message as { content: string }).content)).toEqual(["c", "d", "e", "f"]);
     expect(summarize).toHaveBeenCalledWith("Person: a\nPerson: b");
     await expect(compactSession({ messages, summarize: async () => "   ", now: () => 99 })).resolves.toEqual(messages);
@@ -313,7 +313,7 @@ describe("bot worker commands", () => {
     const brokerFor = vi.fn(() => ({
       loadRun: vi.fn(async () => { await loaded; return spec; }),
       readImageChunk: vi.fn(),
-      loadSession: vi.fn(async () => ({ revision: 0, messages: [] })),
+      loadSession: vi.fn(async () => ({ revision: 0, needsRecompaction: false, messages: [] })),
       saveSession: vi.fn(async () => ({ revision: 1 })),
       tool: vi.fn(),
       event: vi.fn(async () => {}),

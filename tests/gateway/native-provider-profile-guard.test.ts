@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { createNativeProviderProfileGuard } from '../../packages/gateway/src/ai-providers/native-provider-profile-guard.js';
-let home = '';
-afterEach(async () => { if (home) await rm(home, { recursive: true, force: true }); });
-async function fixture() { home = await mkdtemp(join(tmpdir(), 'profile-guard-')); await mkdir(join(home, 'system/ai-providers'), { recursive: true }); }
+let home = ''; let root = '';
+afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
+async function fixture() { root = await mkdtemp(join(tmpdir(), 'profile-guard-')); home = join(root, 'home'); await mkdir(join(home, 'system/ai-providers'), { recursive: true }); }
 describe('shared native profile admission', () => {
   it('blocks historical expired-but-live login after restart, permits exact recovery replay, releases only after stopped', async () => {
     await fixture(); let state: 'running' | 'stopped' | 'unknown' = 'running';

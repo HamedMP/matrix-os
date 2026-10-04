@@ -39,12 +39,3 @@ it("refreshes the active bot snapshot when its chat changes or a full refresh ar
     queryKey: mobileQueryKeys.botChat("owner", "https://example.test/vm/test", "chat_bot"),
   });
 });
-
-it("refreshes drawer Bot classification on changes to an inactive Bot", () => {
-  render(<CanonicalChatSessionProvider><SelectChat /></CanonicalChatSessionProvider>);
-  mockInvalidateQueries.mockClear();
-  act(() => emitEvent?.({ type: "chat.changed", chatId: "chat_other_bot", cursor: 3 }));
-  expect(mockInvalidateQueries).toHaveBeenCalledWith({
-    queryKey: ["native-bot-navigation", "owner", "https://example.test/vm/test"],
-  });
-});

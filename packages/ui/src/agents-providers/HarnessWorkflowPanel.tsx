@@ -8,6 +8,7 @@ import type {
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { ConnectionMethodCard } from "./ConnectionMethodCard.js";
 import { hasConfiguredConnection } from "./harness-connection.js";
+import { useWorkflowPolling } from "./use-workflow-polling.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient } from "./types.js";
 
@@ -29,11 +30,13 @@ export function HarnessWorkflowPanel({
   onRefresh,
   onOpenTerminal,
   onOpenAuthorizationUrl,
+  onConnectSaved,
   onDisconnect,
   onStateChange,
   operationId = null,
   onOperationId,
   renderConnection,
+  advancedConfiguration,
   connectRequest = 0,
 }: {
   harness: Pick<
@@ -47,6 +50,7 @@ export function HarnessWorkflowPanel({
   onRefresh: () => void;
   onOpenTerminal: (reference: string) => void;
   onOpenAuthorizationUrl?: (url: string) => void;
+  onConnectSaved?: () => Promise<void>;
   onDisconnect?: () => Promise<boolean | void>;
   onSetupHarness?: (
     harness: ProviderHarnessInstance["harness"],
@@ -55,6 +59,7 @@ export function HarnessWorkflowPanel({
   operationId?: string | null;
   onOperationId?: (id: string | null) => void;
   renderConnection?: (changeAccountAction: ReactNode) => ReactNode;
+  advancedConfiguration?: ReactNode;
   connectRequest?: number;
 }) {
   const [operation, setOperation] = useState<ProviderWorkflow | null>(null);
@@ -67,6 +72,8 @@ export function HarnessWorkflowPanel({
   const [apiKey, setApiKey] = useState("");
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const connected = hasConfiguredConnection(harness, source);
+  const previousConnection = useRef(connected);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [uninstall, setUninstall] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -106,6 +113,7 @@ export function HarnessWorkflowPanel({
     setOperation(null);
     setPending(false);
     setFailure(null);
+    previousConnection.current = connected;
     setDisconnectOpen(false);
     setUninstall(false);
     setCopied(false);
@@ -185,11 +193,11 @@ export function HarnessWorkflowPanel({
       if (live(controller)) setPending(false);
     }
   };
-  const start = (kind: "login" | "install" | "uninstall") =>
+  const start = (kind: "login" | "install" | "uninstall", terminal = false) =>
     run(async (signal) => {
       const loginMethod =
         kind === "login"
-          ? capability.loginMethods.includes("browser")
+          ? terminal ? "terminal" : capability.loginMethods.includes("browser")
             ? "browser"
             : capability.loginMethods.includes("existing_codex")
             ? "existing_codex"
@@ -225,11 +233,25 @@ export function HarnessWorkflowPanel({
         }
         if (
           result.terminalSessionId &&
-          (kind !== "login")
+          (kind !== "login" || loginMethod === "terminal")
         )
           onOpenTerminal(result.terminalSessionId);
       }
     });
+  useEffect(() => {
+    // A failed receipt can outlive a successfully completed native login. Only
+    // reconcile a newly confirmed connection; a failed replacement of an
+    // already connected account must remain visible.
+    if (pending || active(operation)) return;
+    if (connected && !previousConnection.current && operation?.kind === "login"
+      && (operation.state === "failed" || operation.state === "expired")) {
+      setOperation(null);
+      setFailure(null);
+      setMethod(null);
+      onOperationId?.(null);
+    }
+    previousConnection.current = connected;
+  }, [connected, pending, operation, onOperationId]);
   useEffect(() => {
     onStateChange?.(
       disconnectOpen ? null : pending || active(operation)
@@ -245,44 +267,20 @@ export function HarnessWorkflowPanel({
           : null,
     );
   }, [pending, operation, failure, disconnectOpen]);
-  useEffect(() => {
-    if (!active(operation)) return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const next = await client.get(operation!.id, controller.signal);
-        if (controller.signal.aborted) return;
-        if (
-          next.id !== operation!.id ||
-          next.harnessInstanceId !== harness.id ||
-          next.kind !== operation!.kind
-        )
-          throw new Error("workflow scope mismatch");
-        setOperation(next);
-        setNow(Date.now());
-        if (next.state === "succeeded") {
-          onOperationId?.(null);
-          setMethod(null);
-          setApiKey("");
-          onRefresh();
-        } else if (active(next)) timer = setTimeout(poll, 2000);
-      } catch (caught) {
-        if (!controller.signal.aborted) {
-          console.warn(
-            "[provider-settings] Workflow status failed:",
-            caught instanceof Error ? caught.name : typeof caught,
-          );
-          setFailure("Connection status is unavailable. Check again.");
-        }
+  const { stop: stopPolling, restart: restartPolling } = useWorkflowPolling({ operation, client, harnessId: harness.id,
+    onFailure: () => setFailure("Connection status is unavailable. Check again."),
+    onUpdate: next => {
+      setOperation(next);
+      setFailure(null);
+      setNow(Date.now());
+      if (next.state === "succeeded") {
+        onOperationId?.(null);
+        setMethod(null);
+        setApiKey("");
+        onRefresh();
       }
-    };
-    timer = setTimeout(poll, 2000);
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [operation?.id, operation?.state, client]);
+    },
+  });
   useEffect(() => {
     if (!active(operation)) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -294,7 +292,6 @@ export function HarnessWorkflowPanel({
     ? Math.max(0, Math.ceil((Date.parse(operation.expiresAt) - now) / 1000))
     : 0;
   const connecting = active(operation);
-  const connected = hasConfiguredConnection(harness, source);
   const reuseCodex = capability.loginMethods.includes("existing_codex");
   const browserLogin = capability.loginMethods.includes("browser") && !!client.submitCode;
   const inlineLogin = capability.loginMethods.includes("device_code") || reuseCodex || browserLogin;
@@ -323,7 +320,7 @@ export function HarnessWorkflowPanel({
       <button
         type="button"
         className="matrix-ap-button"
-        disabled={disabled || pending}
+        disabled={disabled || pending || connecting}
         onClick={() =>
           setMethod(inlineLogin ? "account" : "key")
         }
@@ -340,11 +337,30 @@ export function HarnessWorkflowPanel({
       aria-busy={pending}
     >
       {harness.installState === "installed" && connected ? renderConnection?.(changeAccountAction) : null}
+      {onConnectSaved && !connected ? <button type="button" className="matrix-ap-button"
+        disabled={disabled || pending || connecting} onClick={() => void run(onConnectSaved)}>Connect saved connection</button> : null}
       {harness.installState === "installed" && !connected
         && !inlineLogin && capability.apiKeyProviders.length === 0 ? (
         <p className="matrix-ap-help" role="status">
           Connection in Settings is unavailable for this agent on this computer.
         </p>
+      ) : null}
+      {advancedConfiguration || (capability.loginMethods.includes("terminal") && !inlineLogin) ? (
+        <details className="matrix-ap-advanced">
+          <summary>Advanced configuration</summary>
+          {harness.installState === "installed" && capability.loginMethods.includes("terminal") && !inlineLogin ? (
+            <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting}
+              onClick={() => void start("login", true)}>Sign in in Terminal</button>
+          ) : null}
+          {harness.installState === "installed" && capability.loginMethods.includes("terminal") && !inlineLogin
+            && connecting && !failure && operation?.kind === "login" && operation.terminalSessionId ? (
+            <button type="button" className="matrix-ap-button" disabled={disabled || pending}
+              onClick={() => void run(async () => { onOpenTerminal(operation.terminalSessionId!); })}>
+              Continue in Terminal
+            </button>
+          ) : null}
+          <fieldset disabled={disabled || pending || connecting} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{advancedConfiguration}</fieldset>
+        </details>
       ) : null}
       {failure ? (
         <p role="alert" className="matrix-ap-notice" data-tone="danger">
@@ -622,11 +638,14 @@ export function HarnessWorkflowPanel({
                 const next = await client.get(operation!.id, signal);
                 if (
                   next.id !== operation!.id ||
-                  next.harnessInstanceId !== harness.id
+                  next.harnessInstanceId !== harness.id ||
+                  next.kind !== operation!.kind
                 )
                   throw new Error("workflow scope mismatch");
                 if (!signal.aborted) {
                   setOperation(next);
+                  setFailure(null);
+                  if (active(next)) restartPolling();
                   if (next.state === "succeeded") onRefresh();
                 }
               })
@@ -642,6 +661,7 @@ export function HarnessWorkflowPanel({
             disabled={pending || disabled}
             onClick={() =>
               void run(async (signal) => {
+                stopPolling();
                 const result = await client.cancel(operation!.id, signal);
                 if (
                   result.id !== operation!.id ||
@@ -679,7 +699,7 @@ export function HarnessWorkflowPanel({
           <button
             type="button"
             className="matrix-ap-link-button"
-            disabled={disabled || pending || !onDisconnect}
+            disabled={disabled || pending || connecting || !onDisconnect}
             onClick={() => {
               setDisconnectOpen(true);
               setUninstall(false);

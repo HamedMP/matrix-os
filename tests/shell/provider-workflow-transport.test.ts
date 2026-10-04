@@ -60,6 +60,10 @@ describe("web provider workflow transport", () => {
       vi.useRealTimers();
     }
   });
+  it.each([[401, "unauthorized"], [403, "forbidden"]] as const)("classifies plain-text HTTP %s independently of response JSON", async (status, reason) => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("Access denied", { status }));
+    await expect(createWebProviderWorkflowClient({ fetcher }).capabilities(new AbortController().signal)).rejects.toMatchObject({ reason });
+  });
   it("binds workflows to the captured gateway with caller cancellation and no cache", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json([]));
     const caller = new AbortController();
@@ -71,7 +75,7 @@ describe("web provider workflow transport", () => {
   });
   it("rejects late history after identity changes", async () => {
     let current = true;
-    const fetcher = vi.fn(async () => { current = false; return Response.json(page); });
+    const fetcher = vi.fn<typeof fetch>(async () => { current = false; return Response.json(page); });
     await expect(loadWebAiCreditHistory({ runtimeSlot: "pr-123", cursor: null, signal: new AbortController().signal,
       fetcher, isIdentityCurrent: () => current })).rejects.toThrow();
     expect(fetcher.mock.calls[0][0]).toBe("/billing/ai-credit/history?runtimeSlot=pr-123&limit=20");
@@ -86,8 +90,33 @@ describe("web provider workflow transport", () => {
   it("only opens allowlisted native authorization URLs", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     expect(openWebProviderWorkflowAuthorization("https://evil.example/sign-in")).toBe(false);
-    expect(openWebProviderWorkflowAuthorization("https://auth.openai.com/codex/device")).toBe(true);
+    expect(openWebProviderWorkflowAuthorization("https://auth.openai.com/codex/device")).toBe(false);
     expect(open).toHaveBeenCalledOnce();
-    expect(open).toHaveBeenCalledWith("https://auth.openai.com/codex/device", "_blank", "noopener,noreferrer");
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
   });
+  it("severs the blank popup opener and applies no-referrer before external navigation", () => {
+    const doc = document.implementation.createHTMLDocument();
+    const popup = { opener: window, document: doc, location: { replace: vi.fn(() => {
+      expect(popup.opener).toBeNull();
+      expect(doc.querySelector('meta[name="referrer"]')?.getAttribute("content")).toBe("no-referrer");
+    }) }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    expect(openWebProviderWorkflowAuthorization("https://auth.openai.com/codex/device")).toBe(true);
+    expect(popup.location.replace).toHaveBeenCalledOnce();
+  });
+
+  it("never navigates externally when opener isolation fails", () => {
+    const popup = { opener: window, location: { replace: vi.fn() }, close: vi.fn() };
+    Object.defineProperty(popup, "opener", { set() { throw new Error("denied"); } });
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    expect(openWebProviderWorkflowAuthorization("https://auth.openai.com/codex/device")).toBe(false);
+    expect(popup.location.replace).not.toHaveBeenCalled();
+    expect(popup.close).toHaveBeenCalledOnce();
+  });
+  it.each([401, 403])("does not classify HTTP %s denial as a retryable outage", async status => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ error: { code: "unknown" } }, { status }));
+    await expect(createWebProviderWorkflowClient({ fetcher }).capabilities(new AbortController().signal))
+      .rejects.toMatchObject({ reason: status === 401 ? "unauthorized" : "forbidden" });
+  });
+
 });

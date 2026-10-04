@@ -270,6 +270,9 @@ export function createBotIntegrationTools(deps: {
         return text(result.summary ? `${result.summary}\n\n${shown}` : shown);
       } catch (error: unknown) {
         if (!(error instanceof BotIntegrationError)) throw error;
+        // Preserve post-dispatch uncertainty for the broker's effect_unknown
+        // checkpoint. BotBrokerActionError is reserved for definite refusals.
+        if (error.effectUnknown) throw error;
         if (signal?.aborted) throw new BotBrokerActionError("timeout");
         if (error.code === "denied") throw new BotBrokerActionError("denied");
         if (error.code === "missing") throw new BotBrokerActionError("not_granted");

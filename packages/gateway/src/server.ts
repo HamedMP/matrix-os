@@ -166,7 +166,7 @@ import { registerProviderWorkflowRuntime } from "./server/provider-workflow-runt
 import { createClaudeSettingsLogin } from "./ai-providers/provider-workflow-browser.js";
 import { createCodexSettingsLogin } from "./ai-providers/provider-workflow-codex-login.js";
 import { createHermesCodexReuse } from "./ai-providers/provider-workflow-hermes.js";
-import { createNativeProviderWorkflowAdapters } from "./ai-providers/provider-workflow-native.js";
+import { createNativeProviderWorkflowAdapters, closeNativeProviderWorkflowConnections } from "./ai-providers/provider-workflow-native.js";
 import { createCodexKeySaver, createProviderKeyVerifier } from "./ai-providers/provider-workflow-key.js";
 import { createCodexNativeKeyReadinessReader } from "./ai-providers/codex-native-key-readiness.js";
 import { createReviewStore } from "./review-store.js";
@@ -1474,7 +1474,7 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     hermesNativeAccountMetadataReader: createHermesNativeAccountMetadataReader({ homePath }),
     ...(codexExecutable ? { codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({
-      executable: codexExecutable, cwd: homePath, environment: buildSettingsAccountEnvironment(homePath),
+      executable: codexExecutable, cwd: homePath, environment: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) },
     }) } : {}),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
@@ -1712,9 +1712,9 @@ export async function createGateway(config: GatewayConfig) {
     createAdapters: () => createNativeProviderWorkflowAdapters({
       store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
       hermesCodexReuse: createHermesCodexReuse({ homePath }),
-      claudeBrowserLogin: createClaudeSettingsLogin({ command: "claude", cwd: homePath, env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("claude", { kind: "write" }) }),
+      claudeBrowserLogin: createClaudeSettingsLogin({ command: "claude", cwd: homePath, env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("claude", { kind: "write", durable: true }) }),
       codexSettingsLogin: createCodexSettingsLogin({ command: join(process.env.MATRIX_NODE_PREFIX ?? "/opt/matrix/runtime/node", "bin/codex"), cwd: homePath,
-        env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("codex", { kind: "write" }) }),
+        env: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) }, acquire: () => nativeProviderProfileGuard.acquire("codex", { kind: "write", durable: true }) }),
       opencodeConnection: opencodeSettingsConnection,
       piConnection: piSettingsConnection,
       openclawConnection: openclawSettingsConnection,
@@ -1911,10 +1911,12 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await localChatImportLifecycle.close();
-      await providerWorkflowLifecycle.close();
-      await opencodeSettingsConnection.close();
-      await piSettingsConnection.close();
-      await openclawSettingsConnection.close();
+      await closeNativeProviderWorkflowConnections([
+        () => providerWorkflowLifecycle.close(),
+        () => opencodeSettingsConnection.close(),
+        () => piSettingsConnection.close(),
+        () => openclawSettingsConnection.close(),
+      ]);
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;

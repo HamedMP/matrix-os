@@ -69,17 +69,23 @@ describe("bot broker client", () => {
 
   it("loads and saves sessions with revision results", async () => {
     const { socketPath } = broker((frame) => JSON.stringify(frame.action === "bot.session.load"
-      ? { version: 1, requestId: REQUEST_ID, ok: true, result: { revision: 4, messages: [{ role: "user", content: "hi", timestamp: 1 }] } }
+      ? { version: 1, requestId: REQUEST_ID, ok: true, result: { revision: 4, needsRecompaction: false, messages: [{ role: "user", content: "hi", timestamp: 1 }] } }
       : { version: 1, requestId: REQUEST_ID, ok: true, result: { revision: 5 } }));
     const broker1 = client(socketPath);
-    await expect(broker1.loadSession()).resolves.toEqual({ revision: 4, messages: [{ role: "user", content: "hi", timestamp: 1 }] });
+    await expect(broker1.loadSession()).resolves.toEqual({ revision: 4, needsRecompaction: false, messages: [{ role: "user", content: "hi", timestamp: 1 }] });
     await expect(broker1.saveSession({ baseRevision: 4, messages: [] })).resolves.toEqual({ revision: 5 });
+  });
+
+  it("fails closed when a session reply omits invalidation metadata", async () => {
+    const { socketPath } = broker(() => JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true,
+      result: { revision: 4, messages: [] } }));
+    await expect(client(socketPath).loadSession()).rejects.toMatchObject({ code: "unavailable" });
   });
 
   it("carries a whole session larger than the shared 256 KiB request cap in both directions", async () => {
     const large = [{ role: "user", content: "x".repeat(400 * 1024), timestamp: 1 }];
     const { socketPath, frames } = broker((frame) => JSON.stringify(frame.action === "bot.session.load"
-      ? { version: 1, requestId: REQUEST_ID, ok: true, result: { revision: 4, messages: large } }
+      ? { version: 1, requestId: REQUEST_ID, ok: true, result: { revision: 4, needsRecompaction: false, messages: large } }
       : { version: 1, requestId: REQUEST_ID, ok: true, result: { revision: 5 } }));
     const broker1 = client(socketPath);
     await expect(broker1.loadSession()).resolves.toMatchObject({ revision: 4 });

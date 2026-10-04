@@ -13,8 +13,13 @@ import {
 } from "@matrix-os/scope-runtime/broker-protocol";
 import { z } from "zod/v4";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
-import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
-import { resolveBotBrokerCredentials } from "./broker-credentials.js";
+import { FundedAiCredentialError, type MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import {
+  buildKernelCredentialLaunch,
+  type KernelCredentialAccessSourceId,
+  type KernelCredentialLaunch,
+  type KernelFundingContext,
+} from "../kernel-credentials.js";
 import { createCodexOwnerIdentityResolver, type ResolveCodexOwnerIdentity } from "../collaboration/codex-owner-identity.js";
 import { forwardCodexBotInference } from "./codex-inference.js";
 import type { BotInferenceAuthorization } from "./credentials.js";
@@ -47,11 +52,31 @@ export interface BotInferenceDependencies {
   runSignal?: AbortSignal;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
-  resolveCredentials?: typeof resolveBotBrokerCredentials;
+  resolveCredentials?: typeof buildKernelCredentialLaunch;
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   fetchImpl?: typeof fetch;
   /** Canonical owner/run/workspace authority is rechecked after funded queue waits. */
   revalidateBinding?: (binding: PiRuntimeBinding) => Promise<boolean>;
+}
+
+/** Funding belongs to this gateway broker, never the isolated Pi worker or SDK. */
+async function resolveInferenceCredentials(
+  accessSourceId: KernelCredentialAccessSourceId,
+  funding: KernelFundingContext,
+  lifecycle: AbortSignal,
+  deps: BotInferenceDependencies,
+): Promise<KernelCredentialLaunch> {
+  if (deps.resolveCredentials) {
+    return deps.resolveCredentials(deps.homePath, process.env, accessSourceId, deps.fundedCredentialProvider, funding);
+  }
+  if (accessSourceId !== "matrix_included") {
+    return buildKernelCredentialLaunch(deps.homePath, process.env, accessSourceId, deps.fundedCredentialProvider, funding);
+  }
+  if (!deps.fundedCredentialProvider?.enabled) throw new FundedAiCredentialError();
+  const lease = await deps.fundedCredentialProvider.getCredential({ requestClass: funding.requestClass, signal: lifecycle });
+  if (!lease.token || !lease.relayBaseUrl) throw new FundedAiCredentialError();
+  // Do not inherit ambient or saved owner credentials into the funded request.
+  return { env: { ANTHROPIC_AUTH_TOKEN: lease.token, ANTHROPIC_BASE_URL: lease.relayBaseUrl } };
 }
 
 function failure(
@@ -117,14 +142,11 @@ export async function forwardBotInference(
         fetchImpl,
       });
     }
-    const resolveCredentials = deps.resolveCredentials ?? resolveBotBrokerCredentials;
-    const launch = await resolveCredentials(
-      deps.homePath,
-      process.env,
+    const launch = await resolveInferenceCredentials(
       accessSourceId,
-      deps.fundedCredentialProvider,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
       lifecycle,
+      deps,
     );
     const env = launch.env;
     if (lifecycle.aborted) return failure(request.requestId, "action_denied");

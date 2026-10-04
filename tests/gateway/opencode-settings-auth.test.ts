@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { openOpenCodeAuthSession, createOpenCodeSettingsConnection, enableOpenCodeConnectedRoute } from "../../packages/gateway/src/ai-providers/opencode-settings-auth.js";
-import type { OpenCodeProcess } from "../../packages/gateway/src/coding-agents/opencode-provider.js";
+import type { OpenCodeSpawnFn, OpenCodeProcess } from "../../packages/gateway/src/coding-agents/opencode-provider.js";
 
 function native() {
-  const child = new EventEmitter() as EventEmitter & OpenCodeProcess;
+  const child = new EventEmitter() as EventEmitter & OpenCodeProcess & { stdout: EventEmitter; stderr: EventEmitter };
   child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
   child.kill = vi.fn(() => { queueMicrotask(() => child.emit("exit", 0)); return true; });
-  const spawn = vi.fn(() => { queueMicrotask(() => child.stdout.emit("data", Buffer.from("opencode server listening on http://127.0.0.1:43001\n"))); return child; });
+  const spawn = vi.fn<OpenCodeSpawnFn>(() => { queueMicrotask(() => child.stdout.emit("data", Buffer.from("opencode server listening on http://127.0.0.1:43001\n"))); return child; });
   return { child, spawn };
 }
 const methods = { openai: [{ type: "oauth", label: "ChatGPT Pro/Plus (browser)" }, { type: "oauth", label: "ChatGPT Pro/Plus (headless)" }, { type: "api", label: "Manually enter API Key" }] };
@@ -46,7 +46,7 @@ describe("OpenCode Settings native auth transport", () => {
   it("publishes only device URL/code and enables only after native callback and canonical route confirmation", async () => {
     const session = mockSession(); const enableConnected = vi.fn(); const publish = vi.fn();
     const connection = createOpenCodeSettingsConnection({ session: async () => session, enableConnected });
-    await connection.start({ request, publish });
+    await connection.start({ registerCleanup: () => {},  request, publish });
     await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null }));
     expect(publish).toHaveBeenCalledWith({ authorizationUrl: "https://auth.openai.com/codex/device", deviceCode: "TEST-CODE" });
     expect(session.request).toHaveBeenCalledWith("/provider/openai/oauth/authorize", "POST", { method: 1 });
@@ -55,13 +55,13 @@ describe("OpenCode Settings native auth transport", () => {
   it.each(["https://evil.test/codex/device", "https://auth.openai.com/codex/device?key=secret", "http://127.0.0.1:1455/"])("rejects non-device authorization %s", async url => {
     const session = mockSession({ "/provider/openai/oauth/authorize": { url, method: "auto", instructions: "Enter code: TEST-CODE" } }); const publish = vi.fn();
     const connection = createOpenCodeSettingsConnection({ session: async () => session, enableConnected: vi.fn() });
-    await expect(connection.start({ request, publish })).rejects.toThrow("unavailable"); expect(publish).not.toHaveBeenCalled(); expect(session.close).toHaveBeenCalled();
+    await expect(connection.start({ registerCleanup: () => {},  request, publish })).rejects.toThrow("unavailable"); expect(publish).not.toHaveBeenCalled(); expect(session.close).toHaveBeenCalled();
   });
   it("does not enable when cancelled while the CLI callback is pending", async () => {
     const session = mockSession(); let finish!: (value: boolean) => void;
     session.request.mockImplementation(async path => path.endsWith("callback") ? new Promise<boolean>(resolve => { finish = resolve; }) : path.endsWith("authorize") ? { url: "https://auth.openai.com/codex/device", method: "auto", instructions: "Enter code: TEST-CODE" } : path.endsWith("health") ? { healthy: true, version: "1.18.34" } : methods);
     const enableConnected = vi.fn(); const connection = createOpenCodeSettingsConnection({ session: async () => session, enableConnected });
-    const active = await connection.start({ request, publish: vi.fn() }); await active.cancel(); finish(true); await new Promise(resolve => setTimeout(resolve, 0));
+    const active = await connection.start({ registerCleanup: () => {},  request, publish: vi.fn() }); await active.cancel(); finish(true); await new Promise(resolve => setTimeout(resolve, 0));
     expect(enableConnected).not.toHaveBeenCalled();
   });
   it("validates a key before handing it to the native PUT auth API and enabling", async () => {
@@ -112,17 +112,28 @@ it("fails closed without a supported exact native source/model and preserves own
 });
 it("wires discovered OpenCode methods to the direct Settings adapter without creating Terminal tabs", async () => {
   const { createNativeProviderWorkflowAdapters } = await import("../../packages/gateway/src/ai-providers/provider-workflow-native.js");
-  const connection = { capabilities: vi.fn().mockResolvedValue({ login: true, apiKey: true }), start: vi.fn().mockResolvedValue({ cancel: vi.fn() }), verifyKey: vi.fn() };
+  const connection = { close: vi.fn(async () => {}), capabilities: vi.fn().mockResolvedValue({ login: true, apiKey: true }), start: vi.fn().mockResolvedValue({ cancel: vi.fn() }), verifyKey: vi.fn() };
   const terminal = { createTab: vi.fn() };
   const store = { getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" }, harnesses: [{ id: "opencode", harness: "opencode", displayName: "OpenCode", installState: "installed", loginMethods: ["terminal"] }] }) };
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: store as never, terminal: terminal as never, hostControl: { available: false, run: vi.fn() }, opencodeConnection: connection });
   expect(adapter!.loginMethods).toEqual(["device_code"]); expect(adapter!.apiKeyProviders).toEqual(["openai"]);
-  const publish = vi.fn(); await adapter!.start({ request, publish }); expect(connection.start).toHaveBeenCalledWith({ request, publish }); expect(terminal.createTab).not.toHaveBeenCalled();
+  const publish = vi.fn(); await adapter!.start({ registerCleanup: () => {},  request, publish }); expect(connection.start).toHaveBeenCalledWith({ request, publish, registerCleanup: expect.any(Function) }); expect(terminal.createTab).not.toHaveBeenCalled();
 });
 it("keeps unsupported OpenCode protocol capabilities closed without guessing a Terminal auth fallback", async () => {
   const { createNativeProviderWorkflowAdapters } = await import("../../packages/gateway/src/ai-providers/provider-workflow-native.js");
-  const connection = { capabilities: vi.fn().mockRejectedValue(new Error("protocol mismatch")), start: vi.fn(), verifyKey: vi.fn() };
+  const connection = { close: vi.fn(async () => {}), capabilities: vi.fn().mockRejectedValue(new Error("protocol mismatch")), start: vi.fn(), verifyKey: vi.fn() };
   const store = { getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" }, harnesses: [{ id: "opencode", harness: "opencode", displayName: "OpenCode", installState: "installed", loginMethods: ["terminal"] }] }) };
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: store as never, terminal: {} as never, hostControl: { available: false, run: vi.fn() }, opencodeConnection: connection });
   expect(adapter!.loginMethods).toEqual([]); expect(adapter!.apiKeyProviders).toEqual([]); expect(adapter!.verifyKey).toBeUndefined();
+});
+it('drains an already committing route writer before cancellation settles', async () => {
+  let finish!: () => void; const gate = new Promise<void>(resolve => { finish = resolve; });
+  const enableConnected = vi.fn(() => gate); const publish = vi.fn();
+  const connection = createOpenCodeSettingsConnection({ session: async () => mockSession(), enableConnected });
+  const running = await connection.start({ registerCleanup: () => {}, request, publish });
+  await vi.waitFor(() => expect(enableConnected).toHaveBeenCalledOnce());
+  const cancelling = running.cancel();
+  expect(await Promise.race([cancelling.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 20))])).toBe(false);
+  finish(); await cancelling;
+  expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }); await connection.close();
 });

@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
+import type { ChatAgent, ChatAgentListResponse } from '@matrix-os/contracts';
+import type { ChatAgentClient } from '../../../packages/ui/src/chat-agents/client.js';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { BotChatPanel } from '../../../packages/ui/src/chat-agents/bots/BotChatPanel.js';
@@ -25,8 +27,8 @@ it('ignores an edit response after leaving that Bot',async()=>{
  const {BotEditDialog}=await import('../../../packages/ui/src/chat-agents/bots/BotEditDialog.js');
  HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
  HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
- let finish!:(value:any)=>void;
- const c=clientFixture();c.update.mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+ let finish!:(value:ChatAgent)=>void;
+ const c=clientFixture();vi.mocked(c as ChatAgentClient).update.mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
  const onSaved=vi.fn(),onClose=vi.fn();
  const bot={...saved,recipeRef:{recipeId:'writer',version:'1'}};
  const view=render(<BotEditDialog agent={bot} client={c} onSaved={onSaved} onClose={onClose}/>);
@@ -48,7 +50,7 @@ it('disables retained catalog choices during refresh and keeps a saved revision 
  expect((screen.getByRole('combobox',{name:'Bot model'}) as HTMLSelectElement).disabled).toBe(true);
  fireEvent.change(screen.getByRole('combobox',{name:'Bot model'}),{target:{value:JSON.stringify(['matrix_pi_default',base.models[0]!.id])}});
  expect(c.update).not.toHaveBeenCalled();
- let finish!:(value:any)=>void;c.list.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+ let finish!:(value:ChatAgentListResponse)=>void;vi.mocked(c as ChatAgentClient).list.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
  view.rerender(<BotChatPanel chatId='chat_bot' client={c} catalog={catalog} refreshKey={1}/>);
  await waitFor(()=>expect(finish).toBeTypeOf('function'));
  fireEvent.change(screen.getByRole('combobox',{name:'Bot model'}),{target:{value:JSON.stringify(['matrix_pi_default',base.models[0]!.id])}});

@@ -30,3 +30,7 @@ Contract model-choice tests, actual Bot details rendering, matrix-model-selectio
 ## 7. Wrong vs Correct
 
 Wrong: every non-Pi selection is Automatic. Correct: only the exact supported sentinel is Automatic; other identities stay visible and retain their own availability semantics. Do not claim configured selection as proof of the admitted run model.
+
+## Catalog refresh integration
+
+`ChatProviderCatalogService.refresh(principal, readOptions)` invalidates the existing inventories then projects exactly one `aiProviderSource.getSnapshot({ refresh: true })` result within that call. `getCatalog` uses one nonrefresh observation. Preserve the freshly authenticated owner/funding/native metadata projection; no shared cached admission authority and no second sequential funded read that can replace a successful receipt with unavailable state. Keep current upstream provider-instance/schema/SDK/funding behavior when reconciling dependency merges. Regression: `chat-provider-catalog-refresh.test.ts` asserts one source read per call and the returned current ready model without relaxed admission.

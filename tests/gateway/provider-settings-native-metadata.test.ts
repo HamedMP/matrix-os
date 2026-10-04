@@ -1,3 +1,4 @@
+import { bindNativeAccountMetadata, verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { describe, expect, it, vi } from 'vitest';
 import { ProviderAccountSchema } from '@matrix-os/contracts';
 import { createProviderSettingsRoutes } from '../../packages/gateway/src/ai-providers/provider-settings-routes.js';
@@ -6,13 +7,26 @@ import { initialProviderSettingsConfiguration } from '../../packages/gateway/src
 import { providerSettingsCanonicalFixture, PROVIDER_SETTINGS_NOW as now } from './provider-settings-test-support.js';
 import { normalizeCodexNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
 const metadata = normalizeCodexNativeAccountMetadata({ account: { type: 'chatgpt', email: 'owner@example.test', planType: 'pro' } }, { rateLimits: { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: Math.floor(now.getTime() / 1000) + 3600 } } }, now)!;
+function codexFixture() {
+  const canonical = providerSettingsCanonicalFixture();
+  const unknown = { state: 'unknown' as const, checkedAt: null, staleAfter: null, action: 'retry' as const, safeReason: 'unknown' as const };
+  canonical.drivers.push({ ...canonical.drivers[1]!, id: 'codex', displayName: 'Codex' });
+  canonical.accessSources.push({ ...canonical.accessSources[1]!, id: 'owner_openai_profile', vendor: 'openai', accountLabel: 'Codex', eligibleModelIds: ['codex-model'], ...unknown,
+    localObservation: { state: 'present_unverified', checkedAt: now.toISOString(), staleAfter: new Date(now.getTime() + 5000).toISOString() } });
+  canonical.accounts.push({ ...canonical.accounts[0]!, id: 'owner_openai', vendor: 'openai', accountLabel: 'Codex', ...unknown });
+  canonical.instances.push({ ...canonical.instances[1]!, id: 'codex_owner', driverId: 'codex', accountId: 'owner_openai', accessSourceId: 'owner_openai_profile', vendor: 'openai', readiness: unknown, modelIds: ['codex-model'], defaultModelId: 'codex-model' });
+  canonical.models.push({ ...canonical.models[0]!, id: 'codex-model', vendor: 'openai', eligibleAccessSourceIds: ['owner_openai_profile'] });
+  return { canonical, config: initialProviderSettingsConfiguration(canonical) };
+}
 describe('owner native account enrichment', () => {
   it('only trusted runtime owner reads request account metadata, regardless of query fields', async () => {
     const canonical = providerSettingsCanonicalFixture();
     const snapshot = await projectProviderSettings({ canonical, config: initialProviderSettingsConfiguration(canonical), now, supportedActions: [] });
     const getSnapshot = vi.fn(async () => structuredClone(snapshot));
     const owner = createProviderSettingsRoutes({ store: { getSnapshot, mutate: vi.fn() }, getPrincipal: () => ({ userId: 'owner' }), canReadNativeAccountMetadata: () => true });
-    expect((await owner.request('/provider-settings')).status).toBe(200);
+    const response = await owner.request('/provider-settings');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     expect(getSnapshot).toHaveBeenLastCalledWith({ refresh: false, includeNativeAccountMetadata: true });
     const collaborator = createProviderSettingsRoutes({ store: { getSnapshot, mutate: vi.fn() }, getPrincipal: () => ({ userId: 'collaborator' }), canReadNativeAccountMetadata: () => false });
     expect((await collaborator.request('/provider-settings?includeNativeAccountMetadata=true')).status).toBe(200);
@@ -42,15 +56,7 @@ describe('owner native account enrichment', () => {
     expect(getSnapshot).toHaveBeenLastCalledWith({ refresh: false });
   });
   it('enriches exact Codex identity and allowance without claiming inference readiness', async () => {
-    const canonical = providerSettingsCanonicalFixture();
-    const original = canonical.accessSources[1]!;
-    canonical.accessSources.push({ ...original, id: 'owner_openai_profile', vendor: 'openai', accountLabel: 'Codex', state: 'unknown', action: 'retry', safeReason: 'unknown' });
-    canonical.accounts.push({ ...canonical.accounts[0]!, id: 'owner_openai', vendor: 'openai', accountLabel: 'Codex', state: 'unknown', action: 'retry', safeReason: 'unknown' });
-    canonical.instances.push({ ...canonical.instances[1]!, id: 'codex_owner', accountId: 'owner_openai', accessSourceId: 'owner_openai_profile', vendor: 'openai' });
-    canonical.models.push({ ...canonical.models[0]!, id: 'codex-model', vendor: 'openai' });
-    canonical.accessSources.at(-1)!.eligibleModelIds = ['codex-model'];
-    canonical.instances.at(-1)!.modelIds = ['codex-model'];
-    const config = initialProviderSettingsConfiguration(canonical);
+    const { canonical, config } = codexFixture();
     const after = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(after.accounts.find(account => account.id === 'owner_openai')?.displayName).toBe('owner@example.test');
     expect(after.accounts.find(account => account.id === 'owner_openai')?.connectionDetails).toEqual({ email: 'owner@example.test', planName: 'ChatGPT Pro' });
@@ -58,6 +64,71 @@ describe('owner native account enrichment', () => {
     const expired = await projectProviderSettings({ canonical, config, now: new Date(now.getTime() + 31_000), supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(expired.accounts.find(account => account.id === 'owner_openai')?.displayName).toBe('Codex');
     expect(expired.accounts.find(account => account.id === 'owner_openai')?.connectionDetails).toBeUndefined();
+  });
+  it('projects verified native credential connection beyond the short local scan without making inference ready', async () => {
+    const { canonical, config } = codexFixture();
+    const verified = await verifyNativeAccountMetadata(bindNativeAccountMetadata({ ...metadata }, async () => true));
+    const snapshot = await projectProviderSettings({ canonical, config, now: new Date(now.getTime() + 6000), supportedActions: [], codexNativeAccountMetadata: verified });
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')).toMatchObject({ authState: 'authenticated', enabled: true, configuredEnabled: true, connectivity: 'unknown', selectedAccountId: 'owner_openai', accessSourceId: 'owner_openai_profile' });
+    expect(snapshot.accessSources.find(s => s.id === 'owner_openai_profile')?.readiness.state).toBe('unknown');
+  });
+  it('keeps an explicitly disabled Codex disabled with verified credentials', async () => {
+    const { canonical, config } = codexFixture(); config.harnesses.find(h => h.harness === 'codex')!.enabled = false;
+    const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')).toMatchObject({ authState: 'authenticated', enabled: false, configuredEnabled: false });
+  });
+  it.each(['route', 'account', 'source', 'driver'])('never transfers native connection proof across a mismatched %s', async mismatch => {
+    const { canonical, config } = codexFixture(); const stored = config.harnesses.find(h => h.harness === 'codex')!;
+    if (mismatch === 'route') stored.route = { kind: 'fixed', providerId: 'anthropic', modelId: 'claude-sonnet-5' };
+    if (mismatch === 'account') stored.selectedAccountId = 'owner_anthropic';
+    if (mismatch === 'source') stored.accessSourceId = 'owner_anthropic_profile';
+    if (mismatch === 'driver') canonical.drivers.find(d => d.id === 'codex')!.installState = 'missing';
+    const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
+    const harness = snapshot.harnesses.find(h => h.harness === 'codex')!;
+    expect(harness.authState).not.toBe('authenticated');
+  });
+  it('does not enrich a profile attributed only to another canonical driver', async () => {
+    const { canonical, config } = codexFixture(); canonical.instances.find(i => i.id === 'codex_owner')!.driverId = 'kernel';
+    const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
+    expect(snapshot.accounts.find(a => a.id === 'owner_openai')?.displayName).toBe('Codex');
+    expect(snapshot.accounts.find(a => a.id === 'owner_openai')?.connectionDetails).toBeUndefined();
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')?.authState).toBe('unknown');
+  });
+  it.each(['expired', 'future', 'rejected'])('keeps %s native metadata from authorizing a row', async state => {
+    const { canonical, config } = codexFixture();
+    const candidate = state === 'rejected' ? null : { ...metadata, ...(state === 'expired' ? { staleAfter: now.toISOString() } : { checkedAt: new Date(now.getTime() + 1000).toISOString() }) };
+    const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: candidate });
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')?.authState).toBe('unknown');
+    expect(snapshot.accounts.find(a => a.id === 'owner_openai')?.connectionDetails).toBeUndefined();
+  });
+  it('projects API-key connection class without subscription identity or allowance', async () => {
+    const { canonical, config } = codexFixture();
+    const key = normalizeCodexNativeAccountMetadata({ account: { type: 'apiKey' } }, undefined, now)!;
+    const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: key });
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')?.authState).toBe('unknown');
+    expect(snapshot.accounts.find(a => a.id === 'owner_openai')).toMatchObject({ displayName: 'API key', authMethod: 'api_key', authState: 'unknown' });
+    expect(snapshot.accounts.find(a => a.id === 'owner_openai')?.connectionDetails).toBeUndefined();
+    expect(snapshot.accessSources.find(s => s.id === 'owner_openai_profile')?.usage.kind).not.toBe('subscription_allowance');
+  });
+  it.each([
+    ['unknown', 'unknown'], ['invalid', 'failed'], ['expired', 'expired'],
+    ['auth_required', 'unauthenticated'], ['ready', 'authenticated'],
+  ] as const)('preserves canonical %s key validity despite native API-key class', async (state, expected) => {
+    const { canonical, config } = codexFixture();
+    const source = canonical.accessSources.find(s => s.id === 'owner_openai_profile')!;
+    const account = canonical.accounts.find(a => a.id === 'owner_openai')!;
+    const checkedAt = now.toISOString();
+    const staleAfter = new Date(now.getTime() + 60_000).toISOString();
+    Object.assign(source, { state, checkedAt, staleAfter, action: state === 'ready' ? 'none' : 'retry' });
+    Object.assign(account, { state, checkedAt, staleAfter, authMethod: 'api_key' });
+    const key = normalizeCodexNativeAccountMetadata({ account: { type: 'apiKey' } }, undefined, now)!;
+    const before = await projectProviderSettings({ canonical, config, now, supportedActions: [] });
+    const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: key });
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')?.authState).toBe(expected);
+    expect(snapshot.accounts.find(a => a.id === 'owner_openai')).toMatchObject({ authState: expected, lastCheckedAt: checkedAt, displayName: 'API key', authMethod: 'api_key' });
+    expect(snapshot.accessSources.find(s => s.id === source.id)?.readiness).toEqual(before.accessSources.find(s => s.id === source.id)?.readiness);
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')?.enabled).toBe(before.harnesses.find(h => h.harness === 'codex')?.enabled);
+    expect(snapshot.accessSources.find(s => s.id === source.id)?.usage.kind).not.toBe('subscription_allowance');
   });
   it('Hermes projects its own exact native metadata without borrowing standalone Codex', async () => {
     const canonical = providerSettingsCanonicalFixture();

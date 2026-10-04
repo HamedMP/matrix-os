@@ -7,8 +7,8 @@
  * Capabilities without a tool yet are refused as `not_granted`.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { link, lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { BOT_ARTIFACT_MAX_BYTES, type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
 import { BotAdmissionError } from "./admission.js";
@@ -29,6 +29,8 @@ const MAX_TEXT_PART_CHARS = 60 * 1024;
  * artifact paths cannot name it.
  */
 export const BOT_SAVE_STAGING = ".bot-save";
+/** One server-owned namespace covers Chat and project roots, including crash leftovers. */
+export const MANAGED_SAVE_STAGING = ".managed-chat-save";
 const TEMP_NAME = /^[a-f0-9-]{36}\.tmp$/;
 const TEMP_TTL_MS = 15 * 60_000;
 const MAX_SWEEP_ENTRIES = 256;
@@ -67,6 +69,11 @@ function isCode(error: unknown, ...codes: string[]): boolean {
   return error instanceof Error && "code" in error && codes.includes((error as NodeJS.ErrnoException).code ?? "");
 }
 
+function isPrivateStaging(info: Stats): boolean {
+  return info.isDirectory() && !info.isSymbolicLink() && (info.mode & 0o077) === 0
+    && (typeof process.getuid !== "function" || info.uid === process.getuid());
+}
+
 function segments(relPath: string): string[] {
   const parts = relPath.split("/");
   if (parts.length === 0 || parts.length > 16 || !parts.every((part) => SEGMENT.test(part)) || parts[0] === BOT_SAVE_STAGING) {
@@ -96,11 +103,11 @@ async function directoryFor(root: string, parts: readonly string[], create: bool
  * Removes staged saves a process left when it stopped mid-save. Processes a
  * bounded number per pass, resuming on the next pass without following links.
  */
-async function sweepStaging(directory: string, now: number): Promise<void> {
+async function sweepStaging(directory: string, now: number, privateDirectory = false): Promise<void> {
   let entries;
   try {
     const info = await lstat(directory);
-    if (!info.isDirectory() || info.isSymbolicLink()) return;
+    if (!info.isDirectory() || info.isSymbolicLink() || (privateDirectory && !isPrivateStaging(info))) return;
     entries = await opendir(directory);
   } catch (error: unknown) {
     if (isCode(error, "ENOENT", "ENOTDIR")) return;
@@ -130,11 +137,19 @@ async function sweepStaging(directory: string, now: number): Promise<void> {
 }
 
 /**
- * The recurring cleanup: every bot workspace's staging directory, a bounded
- * number of workspaces per pass, continuing from the next entry on later
- * passes. Links are never followed.
+ * The recurring cleanup covers the server-owned managed Chat staging directory
+ * and every bot workspace. Each scan is bounded, continuing from the next entry
+ * on later passes. Staged links and linked staging directories are skipped.
  */
 export async function sweepBotWorkspaceSaves(homePath: string, now = Date.now()): Promise<void> {
+  try {
+    const homeInfo = await lstat(homePath);
+    if (!homeInfo.isDirectory() || homeInfo.isSymbolicLink()) return;
+  } catch (error: unknown) {
+    if (isCode(error, "ENOENT", "ENOTDIR")) return;
+    throw error;
+  }
+  await sweepStaging(join(homePath, MANAGED_SAVE_STAGING), now, true);
   const root = join(homePath, "bots");
   let workspaces;
   try {
@@ -155,6 +170,12 @@ export async function sweepBotWorkspaceSaves(homePath: string, now = Date.now())
     await sweepStaging(join(root, entry.name, BOT_SAVE_STAGING), now);
   }
   rememberScanOffset(root, seen > MAX_SWEPT_WORKSPACES && skipped === offset ? offset + MAX_SWEPT_WORKSPACES : 0);
+}
+
+async function removeStagedSave(temp: string): Promise<void> {
+  await unlink(temp).catch((cleanup: unknown) => {
+    if (!isCode(cleanup, "ENOENT")) console.warn("[bots] failed save cleanup failed:", cleanup instanceof Error ? cleanup.name : "UnknownError");
+  });
 }
 
 function textResult(text: string): BotToolResult {
@@ -202,46 +223,63 @@ export function createBotToolDispatcher(deps: {
     const root = await workspace(binding);
     const directory = await directoryFor(root, parts, true);
     const target = join(directory, parts.at(-1)!);
-    if (isManagedPiBinding(binding)) {
-      // Canonical Chat currently authorizes exclusive creates. No staged temp file
-      // survives a crash, and a failed write retains an unknown-effect checkpoint.
-      let file;
-      try { file = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o640); }
-      catch (error: unknown) { if (isCode(error, "EEXIST", "ELOOP")) throw new BotBrokerActionError("invalid_arguments"); throw error; }
-      try { await file.writeFile(request.args.content, "utf8"); } finally { await file.close(); }
-      return textResult(`Saved ${request.args.relPath} (${Buffer.byteLength(request.args.content, "utf8")} bytes).`);
+    const managed = isManagedPiBinding(binding);
+    if (!managed) {
+      try {
+        const existing = await lstat(target);
+        if (!existing.isFile() || existing.isSymbolicLink()) throw new BotBrokerActionError("invalid_arguments");
+      } catch (error: unknown) {
+        if (error instanceof BotBrokerActionError) throw error;
+        if (!isCode(error, "ENOENT")) throw error;
+      }
+    }
+    const staging = join(managed ? deps.homePath : root, managed ? MANAGED_SAVE_STAGING : BOT_SAVE_STAGING);
+    if (managed) {
+      const homeInfo = await lstat(deps.homePath);
+      if (!homeInfo.isDirectory() || homeInfo.isSymbolicLink()) throw new BotBrokerActionError("unavailable");
     }
     try {
-      const existing = await lstat(target);
-      if (!existing.isFile() || existing.isSymbolicLink()) throw new BotBrokerActionError("invalid_arguments");
-    } catch (error: unknown) {
-      if (error instanceof BotBrokerActionError) throw error;
-      if (!isCode(error, "ENOENT")) throw error;
-    }
-    const staging = join(root, BOT_SAVE_STAGING);
-    try {
-      await mkdir(staging, { mode: 0o750 });
+      await mkdir(staging, { mode: managed ? 0o700 : 0o750 });
     } catch (error: unknown) {
       if (!isCode(error, "EEXIST")) throw error;
     }
     const stagingInfo = await lstat(staging);
-    if (!stagingInfo.isDirectory() || stagingInfo.isSymbolicLink()) throw new BotBrokerActionError("unavailable");
-    await sweepStaging(staging, Date.now());
+    if (!stagingInfo.isDirectory() || stagingInfo.isSymbolicLink() || (managed && !isPrivateStaging(stagingInfo))) {
+      throw new BotBrokerActionError("unavailable");
+    }
+    await sweepStaging(staging, Date.now(), managed);
     const temp = join(staging, `${randomUUID()}.tmp`);
     const file = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o640);
     try {
       try {
         await file.writeFile(request.args.content, "utf8");
+        if (managed) await file.sync();
       } finally {
         await file.close();
       }
-      await rename(temp, target);
+      if (managed) {
+        // Revalidate authority/root after staging, before the first owner-visible effect.
+        if (await workspace(binding) !== root || await directoryFor(root, parts, false) !== directory) {
+          throw new BotBrokerActionError("stale_generation");
+        }
+        // link is an atomic exclusive publication: existing files/links always win.
+        // Never remove the target on error: publication may have happened before a
+        // lost acknowledgement. Its bytes are complete; the broker retains uncertainty.
+        try { await link(temp, target); }
+        catch (error: unknown) {
+          if (isCode(error, "EEXIST", "ELOOP")) throw new BotBrokerActionError("invalid_arguments");
+          throw error;
+        }
+        const parent = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+        try { await parent.sync(); } finally { await parent.close(); }
+      } else {
+        await rename(temp, target);
+      }
     } catch (error: unknown) {
-      await unlink(temp).catch((cleanup: unknown) => {
-        if (!isCode(cleanup, "ENOENT")) console.warn("[bots] failed save cleanup failed:", cleanup instanceof Error ? cleanup.name : "UnknownError");
-      });
+      await removeStagedSave(temp);
       throw error;
     }
+    if (managed) await removeStagedSave(temp);
     return textResult(`Saved ${request.args.relPath} (${Buffer.byteLength(request.args.content, "utf8")} bytes).`);
   }
 

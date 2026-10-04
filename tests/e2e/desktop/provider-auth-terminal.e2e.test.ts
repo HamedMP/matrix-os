@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -6,8 +6,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startProviderAuthGateway } from "./fixtures/provider-auth-gateway";
 
+import { createEvidenceDirectory } from "./fixtures/evidence-directory";
+
 const root = resolve(__dirname, "../../..");
-const output = join(root, "output/playwright/om-255");
+let captures: ReturnType<typeof createEvidenceDirectory> | undefined;
+let output: string;
 const hasDesktopBuild = existsSync(join(root, "desktop/out/main/index.js"));
 if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
   throw new Error("Required Desktop E2E build is missing");
@@ -21,7 +24,8 @@ let profile: string;
 
 suite("Electron Desktop provider authentication Settings", () => {
 beforeAll(async () => {
-  mkdirSync(output, { recursive: true });
+  captures = createEvidenceDirectory(process.env.MATRIX_SETTINGS_EVIDENCE_DIR);
+    output = captures.path;
   gateway = await startProviderAuthGateway({ inlineClaude: true });
   profile = mkdtempSync(join(tmpdir(), "matrix-om255-"));
   app = await _electron.launch({ executablePath,
@@ -37,16 +41,19 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await gateway?.close();
-  if (profile) rmSync(profile, { recursive: true, force: true });
+  try { await app?.close(); } finally {
+    try { await gateway?.close(); } finally {
+      if (profile) rmSync(profile, { recursive: true, force: true });
+      captures?.cleanup();
+    }
+  }
 });
 
 async function settings() {
   await page.getByRole("button", { name: "Open account menu", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
-  const claude = page.locator(".matrix-ap-rail-item").filter({ hasText: "Claude" }).first();
+  const claude = page.getByRole("button", { name: /^Claude/ });
   if (await claude.getAttribute("aria-expanded") !== "true") await claude.click();
 }
 
@@ -77,15 +84,19 @@ it("keeps browser login, cancellation, completion and selected-agent disconnect 
     const disconnect = page.getByRole("button", { name: "Disconnect", exact: true });
     await disconnect.waitFor();
     const claudeRow = page.locator(".matrix-ap-rail-item").filter({ hasText: "Claude" }).first();
+    await page.getByRole("button", { name: /^Claude.*Connected/ }).waitFor();
     expect(await claudeRow.getAttribute("aria-expanded")).toBe("true");
     expect(await claudeRow.textContent()).toContain("Connected");
-    expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed"]);
+    expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed", "agent-enabled"]);
+    const connected = await (await fetch(`${gateway.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(5000) })).json();
+    expect(connected.harnesses[0]).toMatchObject({ enabled: true, configuredEnabled: true, authState: "authenticated" });
     await terminal.waitFor({ state: "hidden" });
     expect(gateway.commands).toHaveLength(0);
     await page.screenshot({ path: join(output, "settings-browser-connected.png") });
     await disconnect.click();
     await page.getByRole("dialog", { name: "Disconnect Claude?", exact: true }).getByRole("button", { name: "Disconnect", exact: true }).click();
     await accountChoice.waitFor();
+    await page.getByRole("button", { name: /^Claude.*Not connected/ }).waitFor();
     expect(await claudeRow.textContent()).toContain("Not connected");
     expect(gateway.workflowEvents.at(-1)).toBe("agent-disabled");
     // Fixture HTTP state independently proves Disconnect did not log out the account.
@@ -96,7 +107,7 @@ it("keeps browser login, cancellation, completion and selected-agent disconnect 
     expect(gateway.commands).toHaveLength(0);
     await page.screenshot({ path: join(output, "settings-browser-disconnected.png") });
   } catch (error) {
-    await page.screenshot({ path: join(output, "failure.png") });
+    await page.screenshot({ path: join(output, "provider-auth-terminal-failure.png") });
     throw error;
   }
 }, 60_000);

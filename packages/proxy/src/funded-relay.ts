@@ -492,9 +492,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const generationUrl = isOpenAi
       ? workersAiTarget(config.gatewayBaseUrl).url
       : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`;
+    // Retain pseudonymous generation receipts even when gateway collection is
+    // disabled. Payload suppression/ZDR remain set; counting and probes keep
+    // their existing headers.
+    const generationHeaders = new Headers(upstreamHeaders);
+    generationHeaders.set("cf-aig-collect-log", "true");
     const generationInit: RequestInit = {
       method: "POST",
-      headers: upstreamHeaders,
+      headers: generationHeaders,
       body: requestBody,
       redirect: "error",
       signal: generationSignal,

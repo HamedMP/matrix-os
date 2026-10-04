@@ -96,3 +96,23 @@ it("keeps signed Preview collaborators authenticated while denying every owner w
     expect(createAdapters).toHaveBeenCalledOnce();
   } finally { await lifecycle.close(); }
 });
+
+
+it("keeps an empty delivered adapter registry honest and bounded by owner authority", async () => {
+  const app = new Hono();
+  const lifecycle = await registerProviderWorkflowRuntime({
+    app, ownerId: "owner", getPrincipal: () => ({ userId: "owner" }),
+    createAdapters: async () => [],
+  });
+  try {
+    const capabilities = await app.request("/api/ai/provider-settings/workflows/capabilities");
+    expect(capabilities.status).toBe(200);
+    expect(await capabilities.json()).toEqual([]);
+    const login = await app.request("/api/ai/provider-settings/workflows", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ harnessInstanceId: "codex", kind: "login", method: "device_code", idempotencyKey: "empty-adapter" }),
+    });
+    expect(login.status).toBe(503);
+  } finally { await lifecycle.close(); }
+  expect((await app.request("/api/ai/provider-settings/workflows/capabilities")).status).toBe(503);
+});

@@ -36,7 +36,9 @@ export function createChatProviderRoutes(options: {
         ? { includeSettingsSetupActions: true } : undefined;
       const catalog = query.data.refresh === "true"
         ? await options.catalog.refresh(principal, ...(readOptions ? [readOptions] : []))
-        : await (readOptions ? options.catalog.getCatalog(principal, undefined, readOptions) : options.catalog.getCatalog(principal));
+        : readOptions
+          ? await options.catalog.getCatalog(principal, undefined, readOptions)
+          : await options.catalog.getCatalog(principal);
       // Older clients validate instances strictly. Presentation additions must be
       // negotiated on the wire, without modifying the authoritative admission catalog.
       return context.json({

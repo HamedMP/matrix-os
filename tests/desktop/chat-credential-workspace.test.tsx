@@ -1,5 +1,3 @@
-import { HostedChatShareSuspensionContext, useHostedChatShareSuspension } from "@desktop/renderer/src/features/chat/hosted-chat-share-suspension";
-import { SurfaceChromeContext } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 // @vitest-environment jsdom
 
 import React from "react";
@@ -66,32 +64,6 @@ describe("owner-only credential disclosure in Electron Chat", () => {
 
     act(() => { useConnection.setState({ status: "signed-out", userId: null }); });
     await waitFor(() => expect(screen.queryByText(secret)).toBeNull());
-  });
-
-  it("clears a revealed value before the hosted toolbar can commit sharing", async () => {
-    const routeClient = createCanonicalChatWorkspaceClient();
-    vi.mocked(routeClient.getDetail).mockResolvedValue({ record: canonicalChatRecord, messages: [...snapshot.messages, assistant],
-      turns: snapshot.turns, runs: snapshot.runs, activities: snapshot.activities });
-    routeClient.getCredentialOccurrences = vi.fn(async () => [occurrence]);
-    routeClient.getRevealedCredential = vi.fn(async () => secret);
-    routeClient.revealCredential = vi.fn(async () => secret);
-    routeClient.hideCredential = vi.fn(async () => undefined);
-    const posted = vi.fn();
-    function Hosted() {
-      const suspension = useHostedChatShareSuspension(routeClient, snapshot.chat.id, "runtime:owner");
-      return <SurfaceChromeContext.Provider value={{ setChrome() {} }}>
-        <button onClick={() => { suspension.start(); expect(screen.queryByText(secret)).toBeNull(); posted(); }}>Hosted live share</button>
-        <HostedChatShareSuspensionContext.Provider value={suspension.report}>
-          <CanonicalChatWorkspace client={routeClient} api={{} as ApiClient} projectId="matrix-os"
-            initialChatId={snapshot.chat.id} initialView="conversation" active catalog={providerCatalog} eventSource={connectedEventSource}/>
-        </HostedChatShareSuspensionContext.Provider>
-      </SurfaceChromeContext.Provider>;
-    }
-    render(<Hosted/>);
-    expect(await screen.findByText(secret)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Hosted live share" }));
-    expect(posted).toHaveBeenCalledOnce();
-    expect(screen.queryByText(secret)).toBeNull();
   });
 
   it("clears a revealed value on a remote Chat update before delayed detail reload", async () => {

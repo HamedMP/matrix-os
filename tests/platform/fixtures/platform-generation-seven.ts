@@ -6,6 +6,9 @@ import { migratePlatformSchema, type PlatformMigrationExecutor } from "../../../
  * predecessor in a disposable test DB; never run this fixture on a live DB. */
 export async function migrateGenerationSeven(db: PlatformMigrationExecutor): Promise<void> {
   await migratePlatformSchema(db);
+  // Credit history indexes arrived in generation 12, not this predecessor.
+  await sql`DROP INDEX idx_ai_funded_ledger_history_cursor`.execute(db);
+  await sql`DROP INDEX idx_ai_funded_ledger_history_page`.execute(db);
   await sql`DROP TABLE ai_funded_priority_claims`.execute(db);
   await sql`ALTER TABLE ai_runtime_credentials DROP COLUMN request_class`.execute(db);
   await sql`ALTER TABLE ai_funded_runtime_policies DROP COLUMN next_background_issue_at`.execute(db);

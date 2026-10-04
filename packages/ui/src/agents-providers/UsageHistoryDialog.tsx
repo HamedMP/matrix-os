@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AiCreditHistoryEntry,
   AiCreditHistoryResponse,
@@ -43,11 +43,15 @@ export function UsageHistoryDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [stateLoader, setStateLoader] = useState(() => load);
+  if (stateLoader !== load) {
+    setStateLoader(() => load); setEntries([]); setCursor(null); setLoaded(false); setError(false);
+  }
   const scope = useRef<AbortController | null>(null);
   const dialog = useRef<HTMLElement | null>(null);
   const pending = useRef(false);
   useDialogFocus(dialog, true, onClose);
-  const request = async (next: string | null, controller: AbortController) => {
+  const request = useCallback(async (next: string | null, controller: AbortController) => {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);
@@ -76,7 +80,7 @@ export function UsageHistoryDialog({
         setBusy(false);
       }
     }
-  };
+  }, [load]);
   useEffect(() => {
     const controller = new AbortController();
     scope.current = controller;
@@ -86,7 +90,7 @@ export function UsageHistoryDialog({
       controller.abort();
       scope.current = null;
     };
-  }, [load]);
+  }, [load, request]);
   return (
     <div className="matrix-ap-dialog-backdrop">
       <section
@@ -211,7 +215,7 @@ export function UsageHistoryDialog({
               {busy ? "Loading…" : error ? "Try again" : "Load more"}
             </button>
           ) : loaded ? (
-            <span className="matrix-ap-help">All activity loaded</span>
+            <span className="matrix-ap-help">{cursor ? "Activity limit reached" : "All activity loaded"}</span>
           ) : null}
         </footer>
       </section>

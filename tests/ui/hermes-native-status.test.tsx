@@ -15,12 +15,12 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 it("shows unknown as a check connection action, not a failed check", () => {
   show(harness); expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
 });
-it("retains historical native local evidence after expiry without promoting authentication", () => {
+it("expires native connection presentation without promoting canonical authentication", () => {
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-26T00:00:00Z"));
   show({ ...harness, localObservation: { state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now()+5000).toISOString() } });
   expect(screen.getByRole("button", { name: /Hermes.*Connected/ })).toBeVisible();
   act(() => vi.advanceTimersByTime(5001));
-  expect(screen.getByRole("button", { name: /Hermes.*Connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Hermes.*Not connected/ })).toBeVisible();
 });
 it.each(["failed", "expired"] as const)("preserves explicit %s over local positive evidence", (authState) => {
   show({ ...harness, authState, localObservation: { state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now()+5000).toISOString() } });

@@ -18,7 +18,7 @@ async function socketServer() {
     routeFrame: async (raw) => {
       const frame = raw as { requestId: string; action: string };
       return frame.action === "bot.session.load"
-        ? { version: 1, requestId: frame.requestId, ok: true, result: { revision: 0, messages: [] } }
+        ? { version: 1, requestId: frame.requestId, ok: true, result: { revision: 0, needsRecompaction: false, messages: [] } }
         : { version: 1, requestId: frame.requestId, ok: true, status: 200, headers: {}, body: "data: READY\n\n" };
     },
   });
@@ -32,7 +32,7 @@ describe("Pi clients against the production broker socket protocol", () => {
     const socketPath = await socketServer();
     const client = createBotBrokerClient({ socketPath, runtimeHandle: `runtime_${"a".repeat(32)}`,
       executionGeneration: "3", runId: "run_abc", timeoutMs: 500 });
-    await expect(client.loadSession()).resolves.toEqual({ revision: 0, messages: [] });
+    await expect(client.loadSession()).resolves.toEqual({ revision: 0, needsRecompaction: false, messages: [] });
   });
 
   it("returns inference bytes over the same half-closed socket protocol", async () => {

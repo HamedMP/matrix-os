@@ -79,7 +79,11 @@ export function gatewayCreditLines(source: ProviderAccessSource): { primary: str
   if (source.usage.kind !== "managed_credit") {
     return { primary: "Credit unavailable", secondary: source.usage.kind === "unavailable" ? titleCase(source.usage.reason) : null, stale: false };
   }
-  return { primary: money(source.usage.credit.remainingBalanceMicrousd, source.usage.currency), secondary: null, stale: source.usage.state === "stale" };
+  const balance = source.usage.credit.remainingBalanceMicrousd;
+  const display = balance > 0 && balance < 10_000
+    ? new Intl.NumberFormat("en-US", { style: "currency", currency: source.usage.currency, minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(balance / 1_000_000)
+    : money(balance, source.usage.currency);
+  return { primary: display, secondary: null, stale: source.usage.state === "stale" };
 }
 
 export function selectedHarness(snapshot: ProviderSettingsSnapshot, id: string | null): ProviderHarnessInstance | null {

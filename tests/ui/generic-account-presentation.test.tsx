@@ -14,7 +14,7 @@ describe("harness-owned account presentation", () => {
     const selected = { ...snapshot.harnesses[0]!, accountIds: [] };
     const source = snapshot.accessSources.find((candidate) => candidate.id === selected.accessSourceId)!;
     source.usage = { kind: "subscription_allowance", authority: "provider_allowance", state: "current",
-      scope: "account", usedBasisPoints, resetsAt: null, asOf: ACCOUNT_PRESENTATION_NOW };
+      scope: "account", usedBasisPoints, resetsAt: null, asOf: ACCOUNT_PRESENTATION_NOW.toISOString() };
     render(<AccountsPanel harness={selected} accounts={[]} sources={snapshot.accessSources} allHarnesses={snapshot.harnesses}
       gatewayPolicy={null} attempt={null} disabled={false} canLogin={false} canLogout={false} canRemove={false} canReassign={false}
       onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
@@ -48,7 +48,7 @@ describe("harness-owned account presentation", () => {
     expect(screen.queryByText("No account connected.")).not.toBeInTheDocument();
     const card = within(screen.getByTestId(`native-account-${selected.id}`));
     expect(card.getByText(`${harness} account`)).toBeVisible();
-    expect(card.getByText("Connected")).toBeVisible();
+    expect(card.getByText("Not connected")).toBeVisible();
     expect(card.getByText("Usage unavailable")).toBeVisible();
     expect(screen.queryByText(/in Terminal/)).not.toBeInTheDocument();
     expect(selected.accessSourceId).toBeNull();

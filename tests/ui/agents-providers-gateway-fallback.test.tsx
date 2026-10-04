@@ -136,6 +136,7 @@ describe("Matrix source fallback for native Pi setup", () => {
       expect(within(gateway).getByText("Ready")).toBeVisible();
       const connection = screen.getByRole("group", { name: "Pi connection" });
       expect(within(connection).getByRole("button", { name: /Use Matrix AI/ })).toBeEnabled();
+      // No login capability or saved credential target is advertised here.
       expect(within(connection).getByRole("button", { name: /Own account/ })).toBeDisabled();
       expect(next.harnesses[1]!.route.modelId).toBe(sonnet);
       expect(next.harnesses[1]).toEqual(originalPi);

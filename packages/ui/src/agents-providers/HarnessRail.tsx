@@ -1,3 +1,5 @@
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
+import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { ProviderAccordion } from "./ProviderAccordion.js";
 import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
 import type { ReactNode } from "react";
@@ -87,6 +89,7 @@ export function HarnessRail({
   onEnable: (harness: ProviderHarnessInstance) => void;
   renderDetails: (harness: ProviderHarnessInstance) => ReactNode;
 }) {
+  useLocalObservationExpiry([...sources.map(item => item.localObservation?.staleAfter), ...harnesses.map(item => item.localObservation?.staleAfter)]);
   return (
     <section className="matrix-ap-agent-groups" aria-label="Installed agents">
       {(["Coding agents", "General agents"] as const).map((group) => {
@@ -174,7 +177,7 @@ export function HarnessRail({
               const harness = item.instance!;
               const source = resolveHarnessConnection(harness, accounts, sources).source;
               const status =
-                installationWorkflowStatus(harness.installState, statusOverride?.[harness.id]) ?? rowStatus(harness, source);
+                resolvedWorkflowRowStatus(harness, source, statusOverride?.[harness.id]);
               const detailsId = `matrix-ap-details-${harness.id}`;
               return (
                 <div key={harness.id} className="matrix-ap-agent-row">

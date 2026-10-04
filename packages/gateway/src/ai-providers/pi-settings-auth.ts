@@ -76,11 +76,13 @@ export function createPiSettingsConnection(options: {
   let shutdown = false;
   let cached: { expiresAt: number; supported: boolean } | undefined;
   let probing: Promise<{ login: boolean; apiKey: boolean }> | undefined;
-  async function run(mode: "probe" | "oauth" | "key", publish: (record: z.infer<typeof recordSchema>) => void, key?: string) {
+  async function run(mode: "probe" | "oauth" | "key", publish: (record: z.infer<typeof recordSchema>) => void, key?: string, registerCleanup?: (cancel: () => Promise<void>) => void) {
     if (shutdown || children.size >= 2) throw new ProviderWorkflowError("unavailable");
     const config = await options.discover();
     if (shutdown || children.size >= 2) throw new ProviderWorkflowError("unavailable");
     const launch = options.spawn ?? ((command, args, opts) => spawnIsolatedProviderProcess(command, args, { ...opts, stdio: ["pipe", "pipe", "pipe"] }));
+    const cleanup: { close?: () => Promise<void> } = {};
+    registerCleanup?.(async () => { if (!cleanup.close) throw new ProviderWorkflowError("unavailable"); await cleanup.close(); });
     const child: OpenCodeProcess = launch(config.node, ["--input-type=module", "--eval", PI_SETTINGS_AUTH_WORKER, config.entry, mode], { cwd: config.cwd, env: config.env });
     let bytes = 0; let buffer = ""; let exited = false; let completed = false; let expired = false;
     let resolveDone!: () => void; let rejectDone!: (error: unknown) => void;
@@ -104,6 +106,7 @@ export function createPiSettingsConnection(options: {
       finally { clearTimeout(timer); }
       if (!exited) throw new ProviderWorkflowError("unavailable");
     })();
+    cleanup.close = close;
     children.set(child, close);
     const timer = setTimeout(() => { expired = true; void close().catch(error => console.warn("[provider-workflow] Pi cleanup unavailable:", error instanceof Error ? error.name : "UnknownError")); }, mode === "oauth" ? 600000 : 10000); timer.unref?.();
     const fail = () => { rejectDone(new ProviderWorkflowError("unavailable")); void close().catch(error => console.warn("[provider-workflow] Pi cleanup unavailable:", error instanceof Error ? error.name : "UnknownError")); };
@@ -139,14 +142,19 @@ export function createPiSettingsConnection(options: {
         try { await task.done; cached = { supported, expiresAt: Date.now() + 15000 }; return { login: supported, apiKey: supported }; } finally { await task.close(); } })();
       try { return await probing; } finally { probing = undefined; }
     },
-    async start({ request, publish }: Parameters<ProviderWorkflowAdapter["start"]>[0]) {
+    async start({ request, publish, registerCleanup }: Parameters<ProviderWorkflowAdapter["start"]>[0]) {
       if (request.kind !== "login" || request.method !== "device_code") throw new ProviderWorkflowError("unavailable");
       let cancelled = false;
-      const task = await run("oauth", record => { if (!cancelled && record.type === "device_code") publish({ deviceCode: record.code, authorizationUrl: record.url }); });
-      void task.done.then(async () => { if (!cancelled && !shutdown) await options.enableConnected(request.harnessInstanceId, "openai-codex", `pi-connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}`);
-        if (!cancelled && !shutdown) publish({ state: "succeeded", safeFailure: null });
-      }).catch(error => { if (!cancelled && !shutdown) { console.warn("[provider-workflow] Pi connection unavailable:", error instanceof Error ? error.name : "UnknownError"); publish({ state: task.expired ? "expired" : "failed", safeFailure: task.expired ? "expired" : "unavailable" }); } });
-      return { async cancel() { cancelled = true; await task.close(); } };
+      let completionTask: Promise<void> | undefined;
+      const task = await run("oauth", record => { if (!cancelled && record.type === "device_code") publish({ deviceCode: record.code, authorizationUrl: record.url }); }, undefined, registerCleanup);
+      void task.done.then(async () => { if (!cancelled && !shutdown) {
+          completionTask = (async () => { await options.enableConnected(request.harnessInstanceId, "openai-codex", `pi-connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}`); publish({ state: "succeeded", safeFailure: null }); })();
+          await completionTask;
+        }
+      }).catch(async error => { await task.close(); if (!cancelled && !shutdown) { console.warn("[provider-workflow] Pi connection unavailable:", error instanceof Error ? error.name : "UnknownError"); publish({ state: task.expired ? "expired" : "failed", safeFailure: task.expired ? "expired" : "unavailable" }); } }).catch(error => { console.warn("[provider-workflow] Pi cleanup unavailable:", error instanceof Error ? error.name : "UnknownError"); publish({ safeFailure: "unavailable" }); });
+      const cancel = async () => { if (completionTask) await completionTask.catch(error => console.warn("[provider-workflow] Pi completion failed:", error instanceof Error ? error.name : "UnknownError")); else cancelled = true; await task.close(); };
+      registerCleanup(cancel);
+      return { cancel };
     },
     async verifyKey(input: Parameters<NonNullable<ProviderWorkflowAdapter["verifyKey"]>>[0]) {
       if (input.providerId !== "openai") throw new ProviderWorkflowError("rejected");

@@ -9,10 +9,10 @@ const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 async function fixture(imported: boolean, fails = false) {
   const root = await mkdtemp(join(tmpdir(), "matrix-hermes-workflow-test-")); directories.push(root);
-  const module = join(root, "hermes_cli"); await mkdir(module);
-  await writeFile(join(module, "__init__.py"), "");
-  await writeFile(join(module, "auth_codex.py"), 'def _codex_base_url():\n    return "https://chatgpt.com/backend-api/codex"\n');
-  await writeFile(join(module, "auth.py"), `
+  const modulePath = join(root, "hermes_cli"); await mkdir(modulePath);
+  await writeFile(join(modulePath, "__init__.py"), "");
+  await writeFile(join(modulePath, "auth_codex.py"), 'def _codex_base_url():\n    return "https://chatgpt.com/backend-api/codex"\n');
+  await writeFile(join(modulePath, "auth.py"), `
 def _import_codex_cli_tokens():
     print("fixture-secret-native-output")
     return ${imported ? '{"access_token": "fixture-secret", "refresh_token": "fixture-refresh"}' : 'None'}

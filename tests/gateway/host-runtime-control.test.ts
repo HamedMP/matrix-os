@@ -132,7 +132,7 @@ it("reasserts uninstall opt-out after a concurrent installer clears it before lo
   cleanupPaths.push(path);
   const home = join(path, "owner");
   await mkdir(join(home, ".local/bin"), {recursive: true});
-  await writeFile(join(home, ".local/bin/hermes"), "fixture launcher");
+  await writeFile(join(home, ".local/bin/hermes"), `#!/usr/bin/env bash\nunset PYTHONPATH\nunset PYTHONHOME\nexec "${home}/.hermes/hermes-agent/venv/bin/python" "${home}/.hermes/hermes-agent/hermes" "$@"\n`);
   await mkdir(join(home, ".hermes"));
   await writeFile(join(home, ".hermes/auth.json"), "synthetic owner credentials");
   const source = await readFile("distro/customer-vps/host-bin/matrix-agent-runtime-control", "utf8");

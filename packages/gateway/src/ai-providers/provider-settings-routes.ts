@@ -148,6 +148,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
   });
 
   app.get("/provider-settings", async (context) => {
+    context.header("Cache-Control", "private, no-store");
     const authError = authorize(context, options);
     if (authError) return authError;
     const refresh = RefreshQuerySchema.safeParse(context.req.query("refresh"));

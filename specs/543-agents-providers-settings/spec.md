@@ -1,6 +1,6 @@
 # Agents & Providers Settings
 
-Status: implementation in progress. User approved the reviewed Trellis plan on October 1, 2026.
+Status: reconstructed implementation; final combined exact-head acceptance remains pending. Historical fixture receipts are not current acceptance.
 
 ## Product behavior
 
@@ -11,15 +11,15 @@ The visual reference is [Settings canvas 1112:2178](https://www.figma.com/design
 | Control | Authority and outcome |
 | --- | --- |
 | Refresh | Re-read current owner/computer capabilities and canonical provider snapshot |
-| Matrix AI balance/models | Existing funded ledger summary and executable model inventory |
+| Matrix AI balance/models | Authoritative spendable ledger balance and policy-authorized display-only model inventory |
 | Usage history | Bounded owner/computer ledger projection; unknown model stays unknown |
 | Buy credit | Existing scoped, idempotent credit checkout; no automatic payment |
 | Connect / Change account / Reconnect | Explicit supported native login or validated key submission |
 | Device code / Copy / sign-in / Cancel | Foreground expiring operation; allowlisted URL and actual cancellation |
 | Key Connect / retry / Back | Transient masked input; validate before saving, retain prior credential on failure |
 | Install / Cancel | Fixed managed harness executable operation, real phase and canonical Terminal visibility |
-| View logs | Bounded sanitized operation evidence, never arbitrary native output or secrets |
-| Disconnect | Native logout with dependency checks; existing chats/projects/settings preserved |
+| View logs | Only when advertised; bounded sanitized operation evidence, never arbitrary native output or secrets |
+| Disconnect | Disable only the selected Matrix agent; preserve native credentials, other agents and owner data |
 | Also uninstall | Separately authorized managed executable removal, never saved instance removal or home deletion |
 
 ## Architecture and compatibility
@@ -67,256 +67,33 @@ Workflow bodies are limited to 8 KiB, operations to 64 retained entries and four
 
 GET responses are private/no-store. New DELETE endpoints are mutations and require bodyLimit. All external calls have timeouts. Server-generated URLs and command targets are allowlisted; no user-controlled destinations. In-memory registries have cap/TTL and shutdown cleanup. Cancellation and scope changes reject late completion; a failed cancellation cannot appear successful.
 
+## Final presentation and compatibility
+
+- Use shipped real OpenCode, Hermes, Pi and OpenClaw artwork; this overrides the Figma lettermarks. Resolve assets for Web VM/runtime routes and packaged Electron.
+- Installed agents use Connected / Not connected from the exact configured credential/source semantics; inference readiness remains separate. Confirmed Not installed is red, while unknown installation remains Checking installation.
+- Use one identically sized project chevron, natural-height/opacity disclosure motion around 200 ms, reversible interrupted transitions and reduced-motion support. Visited bodies remain mounted; collapsed controls are inert and focus returns without scrolling.
+- Preserve the open agent through inventory identity reconciliation and asynchronous metadata/status updates. Runtime/owner transport changes reset private drafts, status and operation references. Connect request counters are bounded and preserve other visited rows.
+- Current canonical Connected wins over historical failed/expired receipts. Active replacement Connecting remains higher priority. Change account and Disconnect are disabled during replacement; cancellation/retry remains available and settled workflows restore actions.
+- No manual Enable control exists. Explicit successful Connect enables only its validated current route. Background refresh/discovery never reactivates saved Off. Compatible account/source/model/route actions and server-advertised Terminal fallback remain in collapsed Advanced configuration, without duplicate primary setup cards.
+- Connected cards resolve account identity from the selected account or exact selected source; ambiguous or unrelated accounts cannot supply identity/quota. Show actual available plan/email and authoritative usage/reset. Missing usage is unavailable, not zero. Remaining rounded meters subtract used capacity from full capacity.
+- Buy credit remains visible. Necessary unavailable purchase explanation belongs inside its modal, deriving only typed policy/permission/funding observations. Policy restrictions offer administrator/support guidance; refresh is useful only for unconfirmed/transient observations. This never changes purchase policy or grants credit.
+- Spendable balance uses authoritative remaining microUSD, excluding reserved credit. Positive sub-cent amounts retain enough precision to avoid showing zero or rounding up to a cent. History preserves signed microUSD precision, bounded pages and opaque cursors.
+- Dialog background uses system dark scrim/shadow tokens, without white glow. All button foreground/background pairs remain legible through hover/focus/active states; focus trapping and shell overlay ordering remain shared.
+
+## Scope fences
+
+Loaded history clears before a different loader/runtime can render. Abort and exact request/loader identity prevent late old pages or errors from entering the new dialog. Opening history retains its exact current loader. Checkout submission is scoped to source and callback identity; harmless snapshot updates preserve that callback, while real scope changes invalidate old success, failure and finally effects. No late settlement may close, unlock or mutate a new dialog.
+
+Owner-only optional native account enrichment is negotiated separately from old strict snapshot shapes. Default, opt-out, non-owner and mutation replies omit private enrichment. Private principal proof is never serialized, logged or displayed; current native proof and coherent canonical/funding observations must agree before metadata is attached. Unknown allowance cannot fabricate subscription access. Real HTTP401 expires the Matrix session; HTTP403 owner denial preserves it.
+
+Display-only Matrix inventory/capability badges do not establish model admission. Exact policy, funding, selected model/runtime and canonical readiness still govern execution. Matrix-owned Pi integration must preserve immutable Chat bindings and unknown-usage holds. Sonnet/GLM discovery, admission, marker replies and authoritative settlement are separate outcomes.
+
 ## Validation and delivery
 
-Tests first for grouped semantic state, native login/key failures, cancellation/retry, safe uninstall, owner/runtime switches, dependency preservation, compatibility, pagination/redaction and renderer wiring. Run focused tests and typechecks, pattern checks, canonical production shell and Electron builds. Backend changes require a matching immutable Preview VPS and Electron Desktop; frontend-only acceptance still requires Electron Desktop. Record exact client and backend heads and demonstrate fresh/reopened Chat, reload/presentation switches and Settings workflows.
+Feature-layer tests cover native protocol/key failure, guard lifetime, cancellation/uninstall, owner/runtime changes, metadata privacy, checkout/history scope and grouped semantics. The final regression layer adds combined account/card/disclosure composition and synthetic Electron workflow fixtures. Computed button palette checks run in Chromium and are not native acceptance; synthetic Electron fixtures do not establish real OAuth, subscription, paid checkout or model execution.
 
-Deliver three English implementation PRs stacked as backend/contracts, shared workflow components/transports, and grouped UI/acceptance, each linked to the primary issue. This keeps each review layer within the repository size limits. Deploy the top layer for complete exact-head acceptance, plus an isolated Preview Platform revision for ledger history. Deliver a separate public documentation PR in FinnaAI/matrix-os-site/content/docs. Public docs contain no private account/runtime identifiers. Stop at a runnable Human Review environment; request Greptile only after user approval. No production/fleet deployment, channel promotion, payment or primary-computer credential mutation is part of acceptance.
+Record exact combined source head, client app/build hashes, immutable Preview runtime identity and each actual result. Backend changes require matching Preview VPS plus Electron Desktop; frontend-only acceptance also requires Electron Desktop. Exercise Web Canvas/Web Desktop parity and record Native Mobile management as unavailable where no surface exists. New and resumed Chats retain exact bindings. Claude simulation must be labelled simulation if no subscription is available.
 
-## Discovery record
+Historical October1 captures and validation reports refer to an older uncommitted implementation and synthetic gateway. They remain archived provenance only. New captures use a distinct output directory and cannot silently replace historical tracked screenshots. No latest combined acceptance is claimed by this spec.
 
-Native adapter details are established with bounded disposable spikes and tests before committing to their final contract. Record unavailable native capabilities explicitly and return any material visible scope change for review. Never ship fabricated state or hide an unmet designed workflow.
-
-The actual Codex CLI 0.153.4 isolated-save spike confirmed `login --with-api-key` plus file credential storage writes the synthetic key in `auth_mode: apikey`, without a token object. The temporary directory was removed. This verifies native file format and save behavior; it is separate from valid live-key or subscription acceptance.
-
-## Authenticated workflow denial
-
-### 1. Scope / Trigger
-
-An authenticated Preview collaborator can enter a runtime without owning its native provider credentials. Capability discovery must not terminate that valid Matrix session when owner permission is missing.
-
-### 2. Signatures
-
-All `/api/ai/provider-settings/workflows` capabilities, status, logs, start, key and cancel routes use `getPrincipal(context): { userId: string } | null` plus the configured service `ownerId`.
-
-### 3. Contracts
-
-Missing principal returns HTTP401 with safe `unauthorized`; a valid principal whose `userId` differs from `ownerId` returns HTTP403 with safe `forbidden`. The owner-only boundary applies before adapters, operation receipts or native credentials are accessed. HTTP403 must not invoke Electron `auth:session-expired`; capability discovery may fall back to the existing supported Settings controls. No database, credential or environment identity is rewritten to impersonate the owner.
-
-### 4. Validation & Error Matrix
-
-| Principal | Runtime owner match | Outcome |
-| --- | --- | --- |
-| Missing/invalid | N/A | 401; reauthentication required |
-| Valid | No | 403; session retained, no adapter/native action |
-| Valid | Yes | Existing validated workflow behavior |
-
-### 5. Good/Base/Bad Cases
-
-Good: owner capability lookup continues normally. Base: signed collaborator receives403 and can continue using permitted runtime features. Bad: returning401 for that collaborator signs the user out even though authentication succeeded.
-
-### 6. Tests Required
-
-Exercise real auth middleware, request principal and workflow registration for signed owner, signed collaborator and absent authentication. Assert all workflow endpoints deny the collaborator with403 and zero adapter calls. Assert missing authentication remains401. Cover the renderer API response boundary so403 does not invoke session expiry and401 does.
-
-### 7. Wrong vs Correct
-
-Wrong: `if (actor !== owner) throw new ProviderWorkflowError('unauthorized')` (HTTP401). Correct: distinguish authenticated `forbidden` (HTTP403) from a missing principal (HTTP401), retaining owner-only credential access.
-
-## Earlier capability-unavailable and enablement repair
-
-Historical implementation record: the 2026-10-02 requirements below supersede its visible Enable control, lettermarks, and Terminal login handoff.
-
-### 1. Scope / Trigger
-
-A valid runtime session can lack guided credential-workflow permissions. The
-compact approved connection presentation must survive that failure. An installed
-Hermes with no eligible account cannot switch the system runtime through Enable.
-
-### 2. Signatures
-
-`providerEnablementBlockReason(harness, sources, now): string | null` derives
-canonical prerequisites. Workflow transports distinguish `forbidden` from
-`unavailable` without exposing raw response messages. Settings setup catalog
-reads explicitly negotiate `includeSettingsSetupActions=true` to retain original
-server-issued setup commands for disabled executable harnesses; ordinary Chat
-catalog reads keep those commands absent. The flag is a bounded boolean query
-parameter and duplicate values are rejected.
-
-### 3. Contracts
-
-Catalog-only rows use presentation IDs only; install/connect handoff uses the
-authoritative catalog entry and advertised action. Guided credential writes stay
-owner-only. Legacy configuration remains a secondary disclosure, including when
-capabilities are unavailable. Figma SVG assets are stored unchanged; the designed
-OC/Pi/H/Cl marks are Settings-specific text layers. Web artwork must preserve the
-explicit VM and runtime slot in the current document URL; packaged Electron
-artwork resolves beside its renderer index. Root-shell assets must not substitute
-for an explicit Preview runtime. Invalid runtime values never enter asset paths.
-
-### 4. Validation & Error Matrix
-
-Do not allow On for uninstalled or unsupported credential routes. Preserve Off
-even if credentials disappear. Disabling the last installed system harness must
-persist explicit Off without requiring an alternate installation; keep native
-configuration intact and block new canonical Chat runs. If an eligible alternate
-system harness exists, retain the existing runtime-switch behavior. Native Claude/Codex preferences keep their existing
-contract. Exact saved Hermes source-null payload is schema-valid; the route maps
-the store's invalid route to the safe public `invalid_request` HTTP 400.
-
-
-| State | Presentation / mutation |
-| --- | --- |
-| Owner workflow denial | Valid session retained; unavailable methods explained |
-| Missing guided capabilities | Compact chooser and catalog remain visible |
-| Hermes account missing | Connect-first hint; On disabled; no invalid mutation |
-| Mutation rejected | Confirmed route, revision and selected agent retained |
-
-### 5. Good/Base/Bad Cases
-
-Good: an authorized Terminal setup action remains available while its agent is
-Off. Base: capability denial retains the compact chooser and a safe permission
-explanation. Bad: missing credentials submit an invalid enable mutation, or a
-workflow failure exposes the full legacy editor as the default connection UI.
-
-### 6. Tests Required
-
-Red/green regressions cover capability-unavailable Codex chooser, missing OpenClaw
-catalog row, source-null Hermes enable prerequisite, typed workflow denial and
-failed-save retention/retry. `provider-settings-last-system-harness-off.test.ts`
-asserts Hermes-only Off, store restart, idempotent retry, Chat admission denial and
-explicit re-enable without changing native provider/model configuration. Real route/store regression asserts public HTTP 400
-and zero runtime changes for the captured payload. Artwork regressions cover
-all four Settings SVGs, VM/runtime query and canonical path scopes, root Web,
-packaged Electron, and invalid scope values. Live acceptance must confirm nonzero
-image naturalWidth on the deployed Preview, not only inspect the generated URL.
-
-### 7. Wrong vs Correct
-
-Correct: display Connect Codex choices with an explicit unavailable method and a
-real advertised Terminal action. Incorrect: expose the legacy editor by default
-or manufacture a workflow operation ID. Correct: explain Hermes's connection
-prerequisite. Incorrect: change backend authorization or label an unconfigured
-agent connected to make Enable succeed.
-
-
-## Hermes native provider-switch inventory
-
-### 1. Scope / Trigger
-
-Native `hermes model` can briefly report a newly selected `openai-codex` provider with the previous provider's selected model. Do not turn that transient selection into Codex inventory or a generated Matrix route. The official Hermes setup flow may offer to import an existing Codex login; it is distinct from restricted child credential isolation.
-
-### 2. Signatures
-
-`parseModelIds(rawModels, currentModel, requireListedSelection)` enforces listed selections for the built-in `openai-codex` provider. No API or credential-storage signature changes.
-
-### 3. Contracts
-
-A selected Codex model must belong to the native provider's advertised validated model IDs. Preserve a valid advertised selection at the front of the bounded inventory, including beyond the initial 128-model slice. Provider-owned path-like model IDs remain valid when actually advertised. Native authentication observation alone does not establish a coherent runnable route. Preserve saved owner routes and explicit Off; recovering an existing unavailable route requires an explicit supported model selection.
-
-### 4. Validation & Error Matrix
-
-| Native state | Projection |
-| --- | --- |
-| Codex selected model advertised | Bounded inventory and native observation retain the model |
-| Codex selected model unlisted | Do not invent that model or a runnable generated default |
-| Other provider selected model unlisted | Existing compatibility behavior remains |
-| Saved owner route no longer eligible | Preserve it and expose unavailable model selection |
-
-### 5. Good/Base/Bad Cases
-
-Good: advertised `gpt-5.6-sol` initializes the correct native route. Base: a saved unavailable route remains recoverable through Settings. Bad: unlisted `anthropic/claude-opus-4.6` becomes `openai-codex:anthropic/claude-opus-4.6` and enables a generated default.
-
-### 6. Tests Required
-
-`tests/gateway/hermes-native-provider-switch.test.ts` asserts unlisted cross-provider models produce no native observation, advertised path-like IDs remain eligible, selected models survive inventory truncation, and transient then coherent observations initialize only the supported generated route. Live acceptance separately proves the imported login, explicit model selection, Hermes-selected Chat response, reloaded conversation and Off/On persistence on the exact installed bundle.
-
-### 7. Wrong vs Correct
-
-Wrong: prepend every selected model before native Codex projection. Correct: require membership in the advertised validated inventory before emitting the Codex selected model and native observation. Do not rewrite saved owner routes to conceal mismatches.
-
-
-## Earlier explicit enable after a delayed native observation
-
-Historical implementation record: explicit refresh/enable guards remain internal compatibility behavior; the 2026-10-02 UI exposes Connect and no Enable switch.
-
-### 1. Scope / Trigger
-
-Native observations can expire while a Settings response travels to Electron Desktop. Do not require users to hit a five-second window between Check again and Enable.
-
-### 2. Signatures
-
-The shared explicit enable action uses the existing scoped `refreshForConnection` callback before its existing harness mutation. No backend endpoint, native observation TTL or credential permission changes.
-
-### 3. Contracts
-
-An otherwise coherent installed native route may expose an explicit refresh-and-enable action when its observation is stale. Await a fresh snapshot, verify the same runtime/actor, harness, access source, account, provider and model plus writable capability and advertised model inventory, then submit On. Off remains immediate and never requires connection refresh. No background refresh may automatically enable an agent.
-
-### 4. Validation & Error Matrix
-
-| Condition | Outcome |
-| --- | --- |
-| Unchanged writable route and fresh native observation | Submit explicit On |
-| Scope, route, source, account or model changed | No enable mutation |
-| Read-only capability, missing inventory or refresh failure | Keep Off and safe recoverable state |
-| Explicit Off | Existing immediate disable mutation |
-
-### 5. Good/Base/Bad Cases
-
-Good: the user clicks Enable after a slow response, the action refreshes and enables the unchanged route. Base: a failed refresh keeps Off. Bad: lengthen the native TTL, enable from expired data, or apply the earlier click to a newly selected runtime or route.
-
-### 6. Tests Required
-
-Delayed native responses remain explicitly recoverable. Scope, route, account, source, capability and model inventory changes reject On with zero enable mutations. Off bypasses refresh. Electron live acceptance covers Off, refreshed persistence, explicit On, fresh Chat and resumed Chat.
-
-### 7. Wrong vs Correct
-
-Wrong: disable Enable solely because a matching native observation expired in transit. Correct: make explicit On obtain and validate fresh scoped evidence before mutation, preserving backend freshness checks and explicit user intent.
-
-## Superseding human review requirements — 2026-10-02
-
-The owner's seven review corrections supersede older row-status, Enable UI and primary Terminal-login requirements recorded above.
-
-1. Use shipped real OpenCode, Hermes, Pi and OpenClaw artwork; this explicitly overrides Figma lettermarks.
-2. Present Connected / Not connected for installed agents based on configured account/credential connection. Do not expose local-login/unverified prose as row status. Keep inference readiness checks independent; Connected does not fabricate a successful model call.
-3. Not installed uses the same yellow warning treatment as Not connected. Operation progress remains truthful.
-4. Use one project-sized chevron for both accordion directions, with a stable hit target and dimensions.
-5. Remove the Enable toggle. A deliberate successful Connect operation enables that exact agent with current scope/revision checks. Refresh, login discovery and capability changes never silently enable saved routes. Preserve accordion and scroll position across asynchronous updates.
-6. Perform normal supported sign-in and API-key setup in Settings. External provider consent may open the browser, while code, progress and completion remain in Settings. Terminal is optional advanced tooling, not the primary login fallback. Unsupported methods are explicit until a real adapter exists.
-7. Display actual scoped account identity and authoritative usage/reset when available. Missing/unsupported data must remain honest, never a fabricated zero. Hermes must project its supported existing Codex connection without returning credentials.
-
-Acceptance requires exact-head Preview VPS and Electron Desktop, current runtime/account provenance, visual proof and real connection/account/usage readback. Owner-only credential authority remains unchanged; collaborator access does not grant guided login authority. Human Review remains pending.
-
-### Codex native sign-in and account preservation
-
-Settings device login uses the supported native app-server `account/login/start`
-with `chatgptDeviceCode`, not the CLI login command that clears existing auth
-before consent. Native device URL/code and matching login completion drive the
-Settings operation. `account/login/cancel` and bounded process reaping cancel only
-that attempt; existing account credentials remain owned by the native runtime.
-No raw credentials are read or transferred by the Settings adapter. A missing
-native adapter must fail closed rather than silently use the destructive CLI
-flow. Successful native completion enables only the exact current agent.
-
-Cancellation cannot be acknowledged until the native process is reaped. A failed
-cleanup retains its profile guard, supports retry and releases the guard once on
-observed exit. Code/URL validation, output bounds, startup and consent deadlines
-apply to the native protocol. Tests cover cancellation with an existing account,
-another login's completion, unsafe URLs/codes and an unreapable process.
-
-Initial native account notifications may precede or follow the first identity
-response. One late notification invalidates the entire in-flight metadata
-sequence and starts a fresh identity/quota/identity sequence with new RPC IDs in
-the same process. Old replies are discarded, final principal equality remains
-required and repeated invalidation fails closed within the original deadline.
-
-## Provider accordion motion and contextual feedback — 2026-10-02
-
-Provider rows share expand/collapse behavior across Web Desktop, Web Canvas and Electron Desktop. Animate natural body height and restrained opacity for200ms using project easing, rotate the same chevron, and skip transitions under prefers-reduced-motion. Once opened, retain the body so transient connection fields and workflow progress survive close/reopen; closed controls must be inert and excluded from accessibility. Reversing a toggle must reverse from the current interpolated state without timers, fixed maximum heights or delayed workflow changes. Initial hydration/restoration must not replay expansion.
-
-Do not render persistent workspace-restriction, credit-purchases-unavailable or owner-only connection prose in the designed overview/chooser. Keep authoritative policy/auth checks and disabled actions; expose contextual explanations on relevant controls and preserve actual operation errors. Removal of explanatory prose never grants collaborators credential authority.
-
-Pi's official registry latest is1.0.0 as verified2026-10-02. Main was updated only at its managed runtime prefix through the official package; CLI version and Settings native capability discovery were independently read back. New installation paths already use @earendil-works/pi-coding-agent@latest. Existing auth/config/session paths remain untouched; no fleet auto-update.
-
-Retained panel workflow progress is keyed independently per harness. Opening an idle provider must not clear another row’s Connecting status. Completion/cancellation clears only that exact row; switching runtime resets the scoped progress collection. Regression: start Codex login, open Hermes, confirm Codex remains Connecting, return and cancel the same operation.
-
-Matrix AI Available models is an offered inventory derived from fresh authoritative platform policy and exact canonical Matrix access-source/model membership. It aggregates eligible Matrix sources independently of serving health and displays each provider/model once across included and add-on funding sources; retired, owner-only, expired-policy and unauthorized models stay absent. This display-only inventory never grants execution, enables an agent, or changes saved route/allowlist. Health, budgets and route admission remain fail-closed. Historical Settings clients receive the original contract shape; current clients explicitly negotiate the optional inventory field.
-
-
-## Matrix inference integration acceptance
-
-The Settings UI and owned Pi execution stack must ship together without losing negotiated owner-only account metadata, model capabilities, Matrix inventory or reserved-credit semantics. Inventory shows authorized models; only fresh policy, funded receipt, active pinned runtime profile and exact route authorize execution. Keep Jev and Sonnet/GLM price reviews independent. Never convert a held reservation into an executable route or discard historical unknown usage.
-
-The approved grouped rows, real artwork, Settings sign-in, automatic enablement after explicit Connect, animated panels, removed repeated notices and remaining-allowance meter remain required. A combined candidate must retain old-client schema negotiation and native account/history data.
-
-Actual acceptance requires separate new Sonnet and GLM Chats through the managed Matrix Pi instance, completed marker replies, exact immutable selections and authoritative settled usage. Verify the matching Electron Desktop and separately attested host, Relay and Platform versions. Scoped Main deployment is user-authorized; no budget, expiry, owner/access, ledger-release or fleet/channel change follows from this authorization. Preserve a rollback to the previously installed Settings bundle and runtime origins.
+Deliver bounded stacked PRs with latest-head Greptile5/5 and required CI green, plus a separate public documentation PR in the private site repository. Coordinator owns runnable Human Review and any explicitly authorized scoped deployment. This spec authorizes no new payments, grants, access changes, primary-account credential changes or fleet/channel promotion.

@@ -11,7 +11,7 @@ import type {
   CanonicalProviderDriverDescriptor,
   CanonicalProviderInstanceDescriptor,
 } from "@matrix-os/contracts";
-import type { ChatProviderCatalogService, ChatProviderCatalogReadOptions } from "../chat/provider-catalog.js";
+import type { ChatProviderCatalogService } from "../chat/provider-catalog.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_MODEL } from "./selection.js";
 
@@ -53,12 +53,12 @@ export function withBotProviderInstance(
   catalog: Pick<ChatProviderCatalogService, "getCatalog">,
 ): Pick<ChatProviderCatalogService, "getCatalog"> {
   return {
-    async getCatalog(principal: RequestPrincipal, selection?: CanonicalChatModelSelection, readOptions?: ChatProviderCatalogReadOptions): Promise<CanonicalProviderCatalog> {
+    async getCatalog(principal: RequestPrincipal, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
       // Admission passes the server-prepared selection only after owner/bot Chat
       // checks. Bot routing reads Provider V3 at dispatch, not ordinary harness settings.
       if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
         if (selection.model !== MATRIX_BOT_MODEL) {
-          const base = await catalog.getCatalog(principal, undefined, readOptions);
+          const base = await catalog.getCatalog(principal);
           const managed = base.instances.find((instance) => instance.id === "matrix_pi_default");
           const chosen = managed?.models.find((model) => model.id === selection.model && model.availability === "available");
           const instance = botInstance(base.revision, selection.model);
@@ -70,7 +70,7 @@ export function withBotProviderInstance(
         const revision = "matrix_bot_v1";
         return { revision, drivers: [MATRIX_BOT_DRIVER], instances: [botInstance(revision)] };
       }
-      const base = await catalog.getCatalog(principal, undefined, readOptions);
+      const base = await catalog.getCatalog(principal);
       if (base.instances.some((instance) => instance.id === MATRIX_BOT_INSTANCE_ID)) return base;
       return {
         ...base,
