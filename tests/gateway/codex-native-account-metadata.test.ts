@@ -37,7 +37,7 @@ describe("native Codex account metadata", () => {
   it("rejects unsafe identity instead of echoing arbitrary native strings", () => {
     expect(normalizeCodexNativeAccountMetadata({ account: { type: "chatgpt", email: "/private/secret" } }, limits, now)).toBeNull();
   });
-  function fixture(changed = false, quotaFails = false, accountResult: unknown = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }, omitId?: number, backend?: string) {
+  function fixture(changed = false, quotaFails = false, accountResult: unknown = account, notification?: "initial" | "during_quota" | "late_initial", retry?: { account: unknown; limits: unknown; finalAccount?: unknown }, omitId?: number, backend?: string, quotaResult: unknown = limits) {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => { queueMicrotask(() => child.emit("close")); return true; }) });
     const methods: unknown[] = [];
     child.stdin.on("data", chunk => {
@@ -45,7 +45,7 @@ describe("native Codex account metadata", () => {
       if (!request.id || request.id === omitId) return;
       const result = request.method === "config/read" ? { config: { cli_auth_credentials_store: backend } } : request.id >= 5 && retry
         ? request.method === "account/rateLimits/read" ? retry.limits : request.id === 7 ? retry.finalAccount ?? retry.account : retry.account
-        : request.id === 1 ? {} : request.method === "account/rateLimits/read" ? limits : changed && request.id === 4 ? { account: { type: "chatgpt", email: "other@example.test" } } : accountResult;
+        : request.id === 1 ? {} : request.method === "account/rateLimits/read" ? quotaResult : changed && request.id === 4 ? { account: { type: "chatgpt", email: "other@example.test" } } : accountResult;
       queueMicrotask(() => {
         if (notification === "initial" && request.id === 2 || notification === "during_quota" && request.method === "account/rateLimits/read" || notification === "late_initial" && request.id === 3)
           child.stdout.write(JSON.stringify({ method: "account/updated", params: { authMode: "chatgpt", planType: "plus" } }) + "\n");
@@ -174,6 +174,87 @@ describe("native Codex account metadata", () => {
     const f = fixture(false, false, account, undefined, undefined, omitId);
     const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, timeoutMs: 10, now: () => now, spawnProcess: f.spawnProcess });
     expect(await reader()).toBeNull();
+  });
+  it("keeps rapid disable/enable reads coherent via fresh private identity-only verification", async () => {
+    const children = Array.from({ length: 4 }, () => fixture(false, false, account, undefined, undefined, undefined, "file"));
+    const spawnProcess = vi.fn(); children.forEach(child => spawnProcess.mockImplementationOnce(child.spawnProcess));
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess, readCredentialFileProof: async () => "private-profile-proof" });
+    const first = await reader();
+    const [disabled, duplicate] = await Promise.all([reader(), reader()]);
+    expect(disabled).toBe(first); expect(duplicate).toBe(first);
+    expect(await verifyNativeAccountMetadata(disabled)).toBe(first);
+    expect(await reader()).toBe(first);
+    expect(first?.usage?.usedBasisPoints).toBe(2500);
+    expect(spawnProcess).toHaveBeenCalledTimes(4);
+    children.slice(1).forEach(child => expect(child.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" })));
+    expect(JSON.stringify(first)).not.toContain("private-profile-proof");
+  });
+  it("invalidates cooldown reuse on same-presentation credential replacement", async () => {
+    let proof = "old-private-proof";
+    const children = [fixture(false, false, account, undefined, undefined, undefined, "file"), fixture(false, false, account, undefined, undefined, undefined, "file")];
+    const spawnProcess = vi.fn(); children.forEach(child => spawnProcess.mockImplementationOnce(child.spawnProcess));
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess, readCredentialFileProof: async () => proof });
+    await reader(); proof = "new-private-proof";
+    expect(await reader()).toBeNull(); expect(await reader()).toBeNull();
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
+  });
+  it("does not reuse metadata from a future clock", async () => {
+    let clock = now;
+    const f = fixture(false, false, { account: { ...account.account, id: "private-principal" } });
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => clock, spawnProcess: f.spawnProcess });
+    await reader(); clock = new Date(now.getTime() - 1);
+    expect(await reader()).toBeNull(); expect(f.spawnProcess).toHaveBeenCalledOnce();
+  });
+  it("drops cooldown quota once its original allowance reset is reached", async () => {
+    let clock = now;
+    const quota = { rateLimits: { primary: { ...limits.rateLimits.primary, resetsAt: Math.floor(now.getTime() / 1000) + 1 } } };
+    const f = fixture(false, false, { account: { ...account.account, id: "private-principal" } }, undefined, undefined, undefined, undefined, quota);
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => clock, spawnProcess: f.spawnProcess });
+    const value = await reader(); expect(value?.usage?.resetsAt).toBe(new Date(now.getTime() + 1000).toISOString());
+    clock = new Date(now.getTime() + 1000);
+    expect(await reader()).toBeNull(); expect(f.spawnProcess).toHaveBeenCalledOnce();
+  });
+  it("drops an observation whose quota resets while cooldown verification waits", async () => {
+    let clock = now;
+    const quota = { rateLimits: { primary: { ...limits.rateLimits.primary, resetsAt: Math.floor(now.getTime() / 1000) + 1 } } };
+    const native = { account: { ...account.account, id: 'private-principal' } };
+    const first = fixture(false, false, native, undefined, undefined, undefined, undefined, quota);
+    const current = fixture(false, false, native);
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(() => { clock = new Date(now.getTime() + 1000); return current.spawnProcess(); });
+    const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => clock, spawnProcess });
+    expect(await reader()).not.toBeNull(); expect(await reader()).toBeNull();
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
+  });
+  it("invalidates retained evidence when private verification throws without exposing details", async () => {
+    let calls = 0;
+    const f = fixture(false, false, account, undefined, undefined, undefined, "file");
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess: f.spawnProcess,
+        readCredentialFileProof: async () => { if (++calls > 3) throw new Error('private-credential-details'); return 'private-proof'; } });
+      const value = await reader(); expect(await verifyNativeAccountMetadata(value)).toBeNull();
+      expect(await reader()).toBeNull(); expect(f.spawnProcess).toHaveBeenCalledOnce();
+      expect(JSON.stringify(warning.mock.calls)).not.toContain('private-credential-details');
+    } finally { warning.mockRestore(); }
+  });
+  it("discards a prior observation after a failed new full read", async () => {
+    let clock = now;
+    const first = fixture(false, false, { account: { ...account.account, id: "private-principal" } });
+    const failed = fixture(false, false, { account: null });
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(failed.spawnProcess);
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => clock, spawnProcess });
+    expect(await reader()).not.toBeNull(); clock = new Date(now.getTime() + 5000);
+    expect(await reader()).toBeNull(); expect(await reader()).toBeNull();
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
+  });
+  it("revalidates only API-key class during cooldown without borrowing identity or quota", async () => {
+    const first = fixture(false, false, { account: { type: "apiKey" } });
+    const current = fixture(false, false, { account: { type: "apiKey" } });
+    const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess);
+    const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, spawnProcess });
+    const value = await reader(); expect(await reader()).toBe(value);
+    expect(value?.authMethod).toBe('api_key'); expect(value?.usage).toBeUndefined(); expect(value?.connectionDetails).toBeUndefined();
+    for (const f of [first, current]) expect(f.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" }));
   });
   it("returns unavailable during cooldown instead of delaying another read", async () => {
     const f = fixture();

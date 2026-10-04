@@ -50,7 +50,7 @@ export function normalizeCodexNativeAccountMetadata(accountRaw: unknown, limitsR
 
 type SpawnProcess = (command: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
 
-/** Runtime-bound, uncached reader: account is re-read after quota to reject account switches. */
+/** Runtime-bound reader: quota reads are rate-limited; reuse requires fresh private identity proof. */
 export function createCodexNativeAccountMetadataReader(input: {
   executable: string; cwd: string; environment: Record<string, string>; now?: () => Date;
   timeoutMs?: number; terminateGraceMs?: number; spawnProcess?: SpawnProcess;
@@ -59,10 +59,22 @@ export function createCodexNativeAccountMetadataReader(input: {
   if (!input.environment.HOME || input.environment.HOME !== input.cwd) throw new Error("Native account runtime scope is required");
   const readCredentialFileProof = input.readCredentialFileProof ?? createCodexCredentialFileProofReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME });
   let pending: Promise<CodexNativeAccountMetadata | null> | null = null;
+  let cached: CodexNativeAccountMetadata | null = null;
   let blockedUntilExit = false;
   let lastStartedAt = -Infinity;
   let verification: Promise<CodexNativeAccountMetadata | null> | null = null;
   const principals = new WeakMap<CodexNativeAccountMetadata, string>();
+  const freshAt = (value: CodexNativeAccountMetadata, time: number): boolean =>
+    Date.parse(value.checkedAt) <= time && Date.parse(value.staleAfter) > time
+    && (!value.usage?.resetsAt || Date.parse(value.usage.resetsAt) > time);
+  const verifyProof = async (proof: string): Promise<boolean> => {
+    if (!verification) verification = read(true).catch((error: unknown) => {
+      cached = null;
+      throw error;
+    }).finally(() => { verification = null; });
+    const current = await verification;
+    return current !== null && principals.get(current) === proof;
+  };
   const read = async (identityOnly = false): Promise<CodexNativeAccountMetadata | null> => {
     if (blockedUntilExit || (!identityOnly && verification)) return null;
     const startedAt = (input.now ?? (() => new Date()))().getTime();
@@ -174,9 +186,9 @@ export function createCodexNativeAccountMetadataReader(input: {
                 principals.set(value, proof);
                 bindNativeAccountMetadata(value, async () => {
                   if (pending) return false;
-                  if (!verification) verification = read(true).finally(() => { verification = null; });
-                  const current = await verification;
-                  return current !== null && principals.get(current) === proof;
+                  const valid = await verifyProof(proof);
+                  if (!valid && cached === value) cached = null;
+                  return valid;
                 });
               }
               finish(value);
@@ -191,7 +203,24 @@ export function createCodexNativeAccountMetadataReader(input: {
     });
   };
   return () => {
-    if (!pending) pending = read().catch((error: unknown) => { console.warn("[provider-settings] Native account metadata unavailable:", error instanceof Error ? error.name : "UnknownError"); return null; }).finally(() => { pending = null; });
+    if (!pending) pending = (async () => {
+      const time = (input.now ?? (() => new Date()))().getTime();
+      if (time - lastStartedAt < 5000) {
+        const value = cached;
+        const proof = value && principals.get(value);
+        if (value && proof && freshAt(value, time) && await verifyProof(proof)
+          && freshAt(value, (input.now ?? (() => new Date()))().getTime())) return value;
+        cached = null;
+        return null;
+      }
+      const value = await read();
+      cached = value && principals.has(value) ? value : null;
+      return value;
+    })().catch((error: unknown) => {
+      cached = null;
+      console.warn("[provider-settings] Native account metadata unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }).finally(() => { pending = null; });
     return pending;
   };
 }

@@ -391,3 +391,11 @@ not key validity. It must preserve canonical unknown, rejected, expired and
 auth-required authentication states and their verification timestamps. Only
 canonical provider-ready evidence may authenticate a key; the native class
 observation cannot change source readiness, execution policy or enablement.
+
+Within the five-second Codex quota-read interval, rapid Settings disable/enable
+responses may reuse one runtime-bound observation only while its original
+metadata and quota reset remain fresh. Every reuse re-reads the approved native
+identity with private principal/file proof; final paired-snapshot verification
+still runs independently. Concurrent reads coalesce, quota reads remain rate
+limited, and changed/missing proof, failed reads or expired observations discard
+the single-slot cache. Reuse does not extend timestamps or confer API-key validity.
