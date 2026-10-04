@@ -4,7 +4,7 @@ This ledger separates source checks, synthetic workflows, and real provider acce
 
 | Gate | Status |
 | --- | --- |
-| Broad UI and synthetic fixture unit regressions | 188 passed over 6aebe54105 with fixture cleanup repair; see checkpoint |
+| Broad UI and synthetic fixture unit regressions | 200 passed in fourteen suites over 6b8c185604; see checkpoint |
 | Strict changed-test and shared UI/Electron/Web types | Passed on 7f4f293adc |
 | Scoped lint, pattern and diff checks | Passed; zero pattern violations, five warnings |
 | Canonical production Web build and Electron build | Exact grouped source ad7956df86 built and published |
@@ -54,3 +54,11 @@ Greptile identified that missing close events could retain upgraded proxy connec
 Scoped immutable Preview bundle `v2026.10.04-pr2127-37178342413-1-ad7956d` from grouped source `ad7956df86` installed successfully. Gateway, shell and sync services were active and local health passed. Its complete source tree is identical to mechanically restacked grouped head `343c93448e`, but installed artifact provenance remains `ad7956df86`.
 
 The matching Electron client completed real saved Codex disconnect/reconnect, automatic Connected/account/plan restoration without a manual refresh, and current allowance with a rounded remaining meter. Cold restart retained the connection and identity; explicit refresh updated allowance from 30% used to 31% used, with 69% remaining. Electron Desktop/Canvas presentation switches retained the connection and account. Missing OpenClaw used the real icon and red Not installed state, and expanded to its installation action without performing an install. Usage history and Buy credit opened the scoped unfunded/unavailable states with dark system modals; closing restored trigger focus. No purchase, grant or new credentials were submitted. Private receipts retain exact app/artifact/runtime provenance without exposing owner data. These interactions do not establish funded Matrix inference, real Claude subscription access, independent browser parity, latest remote E2E or final main landing. Main Computer, credentials and funding were not changed.
+
+## Rendered contrast and reconnect test follow-up
+
+Full evidence CI `37179528376` passed all four unit shards, then reproduced eight theme failures in the general rendered contrast suite. In each theme, the gateway danger button lost its paired background in normal/focus states because a later neutral button rule won the cascade. Grouped commit `3a483540c2` confines that neutral paint to unfilled actions; the existing browser contrast suite remains the verification gate, with unchanged thresholds and disabled-state measurement.
+
+Grouped CI `37178718931` separately reported zero refresh calls in the saved reconnect route test. Three controlled outside-act route runs did not reproduce that exact failure. The test now controls delayed capability completion, asserts no refresh/mutation before it resolves, flushes completion inside `act`, and waits for an enabled control before clicking. All twelve exact-validation and callback/scope assertions remain, including refresh-once and mutation/start safety checks. This is test synchronization, not an established product diagnosis. Ninety-nine local UI regressions passed in four suites. The recorded live acceptance above remains on `ad7956df86`; the newer palette repair still requires current rendered CI and final matching-artifact acceptance.
+
+The final local combined check on evidence source `6b8c185604` over grouped `3a483540c2` passed 200 tests in fourteen suites, adding saved reconnect coverage to the native metadata, UI, receipt and socket cleanup checks. These local checks do not turn either failed remote run into a green gate.
