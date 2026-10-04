@@ -1003,8 +1003,9 @@ describe("AgentsProvidersView", () => {
       action: "retry", safeReason: "provider_unavailable",
     };
     rerender(<AgentsProvidersView {...props} snapshot={unavailable} />);
-    expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+    expect(screen.getByText("This funding source is unavailable for credit purchases. Contact support if the problem continues.")).toBeVisible();
     expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
+    expect(props.onAddCredit).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", {name: "Cancel"}));
     rerender(<AgentsProvidersView {...props} snapshot={current} />);
     expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull();
@@ -1072,14 +1073,15 @@ describe("AgentsProvidersView", () => {
         "select_account", "select_access_source", "set_gateway_budget", "set_gateway_allowlist",
       ],
     });
-    setup({ snapshot: limited });
+    const { props } = setup({ snapshot: limited });
 
     expect(screen.queryByRole("button", { name: "+ Add account" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Log out Personal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove Personal" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", {name: "Buy credit"}));
-    expect(screen.getByText("Credit purchases are unavailable on this computer right now.")).toBeVisible();
+    expect(screen.getByText("Your current access does not allow credit purchases. Ask this computer’s owner to buy credit.")).toBeVisible();
     expect(screen.queryByRole("button", {name: "Continue to checkout"})).toBeNull();
+    expect(props.onAddCredit).not.toHaveBeenCalled();
   });
 
   it("renders platform-authoritative gateway policy as read-only", () => {
