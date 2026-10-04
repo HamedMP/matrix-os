@@ -59,7 +59,12 @@ jobs:
       PLATFORM_CONCURRENCY: '500'
       PLATFORM_CPU: '2'
       PLATFORM_MEMORY: '2Gi'
-      PLATFORM_PRODUCTION_MIN_INSTANCES: '2'
+      # Production runs a fixed instance count (Cloud Run manual scaling). On scale-in the
+      # autoscaler deprioritizes instances: they stop receiving new requests but stay up, holding a
+      # max-instance slot, until their open streams end, which is up to the request timeout. With
+      # many long-lived streams those instances accumulated until no slot was left. A fixed count
+      # never deprioritizes an instance. Raise it when stream or CPU load approaches capacity.
+      PLATFORM_MANUAL_INSTANCE_COUNT: '10'
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
       WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}
@@ -1102,7 +1107,7 @@ jobs:
           set -euo pipefail
           min_instances=0
           if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
-            min_instances="$PLATFORM_PRODUCTION_MIN_INSTANCES"
+            min_instances=1
           fi
           deploy_json="$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
@@ -1134,11 +1139,6 @@ jobs:
           actual_max_instances="$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/maxScale"] // empty')"
           if [ "$actual_max_instances" != "$PLATFORM_MAX_INSTANCES" ]; then
             echo "production revision maximum instances is $actual_max_instances, expected $PLATFORM_MAX_INSTANCES" >&2
-            exit 1
-          fi
-          actual_min_instances="$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/minScale"] // empty')"
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && [ "$actual_min_instances" != "$PLATFORM_PRODUCTION_MIN_INSTANCES" ]; then
-            echo "production revision minimum instances is $actual_min_instances, expected $PLATFORM_PRODUCTION_MIN_INSTANCES" >&2
             exit 1
           fi
           actual_concurrency="$(printf '%s\n' "$revision_json" | jq -r '.spec.containerConcurrency // empty')"
@@ -1260,6 +1260,13 @@ jobs:
             echo "No production-role revision found" >&2
             exit 1
           fi
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+            # Changing the scaling mode does not create a revision; the fixed count follows traffic.
+            gcloud run services update "$CLOUD_RUN_SERVICE" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --scaling "$PLATFORM_MANUAL_INSTANCE_COUNT"
+          fi
           gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
@@ -1276,6 +1283,12 @@ jobs:
           production_percent="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName == env.PRODUCTION_REVISION) | .percent) // empty' | head -1)"
           if [ "$production_percent" != "100" ]; then
             echo "Production revision ${PRODUCTION_REVISION} does not have 100% traffic." >&2
+            exit 1
+          fi
+          scaling_mode="$(printf '%s\n' "$service_json" | jq -r '.metadata.annotations["run.googleapis.com/scalingMode"] // empty')"
+          manual_instance_count="$(printf '%s\n' "$service_json" | jq -r '.metadata.annotations["run.googleapis.com/manualInstanceCount"] // empty')"
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && { [ "$scaling_mode" != "manual" ] || [ "$manual_instance_count" != "$PLATFORM_MANUAL_INSTANCE_COUNT" ]; }; then
+            echo "Service scaling is mode=$scaling_mode count=$manual_instance_count, expected manual $PLATFORM_MANUAL_INSTANCE_COUNT" >&2
             exit 1
           fi
           stale_revision="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName != env.PRODUCTION_REVISION and (.percent // 0) > 0) | "\(.revisionName)=\(.percent)") // empty' | head -1)"
