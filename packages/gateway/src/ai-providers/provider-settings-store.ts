@@ -251,7 +251,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     // admission. Only configuration reconciliation and the final cheap fence
     // serialize with writes. A raced read retries once without optional metadata.
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const generation = this.#mutationGeneration;
+      // A writer increments its generation before native logout/save finishes.
+      // Sample only after prior admissions drain, never in the middle of one.
+      const generation = await this.#serialize(async () => this.#mutationGeneration);
       const read = async () => {
         const inventory = this.#canonical(refresh && attempt === 0, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
         const [canonical, enrichment] = await Promise.all([inventory, readProviderSettingsEnrichment({

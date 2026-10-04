@@ -335,7 +335,7 @@ Native principal verification follows that complete fresh epoch. These bounded
 reads establish point-in-time observations, not an atomic transaction across
 external native profiles and platform policy.
 Null/cooldown metadata does not cause a second canonical pipeline. Configuration
-reconciliation and a final persisted-revision/mutation-generation fence serialize
+reconciliation, a generation sample after prior writer admissions drain, and a final persisted-revision/mutation-generation fence serialize
 with writes; a raced read retries once without optional metadata, then fails
 closed if it cannot publish a coherent snapshot.
 
