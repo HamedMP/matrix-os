@@ -41,7 +41,7 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
     try { await page.getByRole("region", { name: "General agents", exact: true }).waitFor({ timeout: 10_000 }); }
-    catch (error) { await page.screenshot({ path: join(evidence, "setup-failure.png") }); console.warn("[figma-e2e] setup state:", await page.locator("body").innerText()); throw error; }
+    catch (error) { await page.screenshot({ path: join(evidence, "agents-providers-figma-setup-failure.png") }); console.warn("[figma-e2e] setup state:", await page.locator("body").innerText()); throw error; }
   }, 60_000);
   afterAll(async () => { try { await app?.close(); } finally { try { await gateway?.close(); } finally { if (profile) rmSync(profile, { recursive: true, force: true }); captures?.cleanup(); } } });
 
@@ -221,6 +221,6 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       await hermes.getByRole("button", { name: "Cancel", exact: true }).click();
       await hermes.getByRole("button", { name: "Install", exact: true }).waitFor();
       expect(gateway.events.filter(event => event === "cancel")).toHaveLength(2);
-    } catch (error) { await capture("failure"); throw error; }
+    } catch (error) { await capture("agents-providers-figma-failure"); throw error; }
   }, 90_000);
 });

@@ -16,6 +16,22 @@ it("cleans owned captures on failure and preserves caller-owned evidence", () =>
     expect(existsSync(join(external, "failure.png"))).toBe(true);
   } finally { rmSync(external, { recursive: true, force: true }); }
 });
+it("retains distinct failure diagnostics from both Electron suites in the shared CI directory", () => {
+  const terminal = readFileSync(new URL("../e2e/desktop/provider-auth-terminal.e2e.test.ts", import.meta.url), "utf8");
+  const figma = readFileSync(new URL("../e2e/desktop/agents-providers-figma.e2e.test.ts", import.meta.url), "utf8");
+  const terminalName = /catch \(error\) \{\s*await page\.screenshot\(\{ path: join\(output, "([^"]+)"\)/.exec(terminal)?.[1];
+  const figmaName = /catch \(error\) \{ await capture\("([^"]+)"\)/.exec(figma)?.[1];
+  expect(terminalName).toBeDefined();
+  expect(figmaName).toBeDefined();
+  const names = [terminalName!, `${figmaName}.png`];
+  const external = mkdtempSync(join(tmpdir(), "matrix-evidence-contract-"));
+  try {
+    const captures = createEvidenceDirectory(external);
+    names.forEach((name, index) => writeFileSync(join(captures.path, name), `synthetic-suite-${index}`));
+    captures.cleanup();
+    names.forEach((name, index) => expect(readFileSync(join(external, name), "utf8")).toBe(`synthetic-suite-${index}`));
+  } finally { rmSync(external, { recursive: true, force: true }); }
+});
 it("CI runs all provider Settings regressions and retains their captures at the uploaded path", () => {
   const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   const section = ci.slice(ci.indexOf("- name: Run required Electron Desktop provider Settings regressions"), ci.indexOf("- name: Run required MAT-335"));
