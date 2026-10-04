@@ -77,7 +77,7 @@ it("keeps owner-only connections disabled without persistent prose and recovers 
 });
 it("renders the connected card from source observation without a disabled connect chooser", () => {
   const p = props();
-  const observed = { state: "present_unverified", observedAt: "2026-10-03T00:00:00Z", staleAfter: "2099-10-03T00:00:00Z" };
+  const observed = { state: "present_unverified", checkedAt: "2026-10-03T00:00:00Z", staleAfter: "2099-10-03T00:00:00Z" };
   p.snapshot.harnesses[0]!.selectedAccountId = "owner";
   p.snapshot.harnesses[0]!.accountIds = ["owner"];
   p.snapshot.accounts = [{ id: "owner", accessSourceId: "native", displayName: "owner@example.com", authState: "unknown", authMethod: "terminal", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } }] as never;
@@ -143,10 +143,11 @@ it("disconnects the exact agent without depending on canonical account selection
   p.snapshot.accessSources = [{ id: "native", accountId: "owner", eligibleModelIds: [], readiness: { state: "ready" }, usage: { kind: "unavailable", reason: "unknown" } }] as never;
   const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["openai"], install: false, uninstall: false, logs: true }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
   render(<AgentsProvidersView {...p} workflowClient={client as never} />);
+  // Wait for guided capabilities before retaining a control from the rendered row.
+  await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
   const disconnect = await screen.findByRole("button", { name: "Disconnect" });
   expect(disconnect).toBeEnabled();
-  await act(async () => {});
   fireEvent.click(disconnect);
   const confirmation = screen.getByRole("dialog");
   fireEvent.click(confirmation.querySelector("button.matrix-ap-button-danger")!);
@@ -160,6 +161,8 @@ it("disconnects only the selected Matrix agent and keeps failed disconnects conn
   p.onMutate.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
   const client = { capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: ["openai"], install: false, uninstall: false, logs: false }]), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), logs: vi.fn(), submitKey: vi.fn() };
   const { rerender } = render(<AgentsProvidersView {...p} workflowClient={client as never} />);
+  // Wait for guided capabilities before retaining a control from the rendered row.
+  await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
   const disconnect = await screen.findByRole("button", { name: "Disconnect" });
   expect(disconnect).toBeEnabled();
