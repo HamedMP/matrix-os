@@ -1,3 +1,6 @@
+import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
+import { createCodexNativeAccountMetadataReader } from "./ai-providers/codex-native-account-metadata.js";
+import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from "./agent-launcher.js";
 import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
@@ -1454,6 +1457,10 @@ export async function createGateway(config: GatewayConfig) {
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
   providerSettingsStore = new ProviderSettingsStore({
     homePath,
+    hermesNativeAccountMetadataReader: createHermesNativeAccountMetadataReader({ homePath }),
+    ...(codexExecutable ? { codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({
+      executable: codexExecutable, cwd: homePath, environment: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) },
+    }) } : {}),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
