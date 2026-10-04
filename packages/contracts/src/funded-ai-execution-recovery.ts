@@ -3,6 +3,8 @@ import { IsoTimestampSchema } from "#contract-primitives";
 
 /** Support accepts uncertain upstream liability; this never attests a charge. */
 export const FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD = 500_000;
+/** Maximum owner-wide actual-null audited obligations, independently of live work. */
+export const FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN = 2;
 // Relay permits at most 15 minutes, independent of its configured shorter limit.
 export const FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS = 16 * 60_000;
 const Reference = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);

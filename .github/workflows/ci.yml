@@ -493,7 +493,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          bun run test -- tests/platform/ai-funded-usage-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+          bun run test -- tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts --maxWorkers=1 --no-file-parallelism
 
   docs-contract:
     name: Docs Contract Tests

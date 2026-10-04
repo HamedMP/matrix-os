@@ -494,16 +494,29 @@ Under the existing owner advisory transaction lock, the transition stores one
 immutable `execution_admission_release` audit record. It leaves financial status
 `in_flight`, actual cost null, every balance/monthly reserve/source allocation,
 and debit ledger unchanged. Exact replay returns the recorded result; conflicting
-replay rejects. At most ONE audited still-unknown obligation per owner is allowed,
-enforced by both transaction checks and a partial unique PostgreSQL index.
-Other live executions prevent recovery. Ordinary authorization/start cannot replay
-an audited request into another inference dispatch.
+replay rejects. At most TWO audited still-unknown obligations per owner are allowed.
+Their combined saved provider `maxCostMicrousd` ceilings, including the candidate,
+must not exceed 500,000 microusd; reserved balances are not liability ceilings.
+The owner-locked transition validates previous unresolved audit/authorization
+records and fails closed on corrupt, mismatched, excessive or missing evidence.
+A non-null `execution_recovery_slot` constrained to 0 or 1 defaults to 0. The
+partial unique `idx_ai_funded_unknown_admission_owner` index covers owner and slot
+for audited actual-null rows, retaining durable count enforcement. Exact settlement
+makes that slot reusable while preserving the old immutable audit. The sum bound
+is enforced under the owner advisory lock; it does not bound later live inference
+or establish actual testing spend. Other live executions prevent recovery.
+Ordinary authorization/start cannot replay an audited request into another dispatch.
 
 The durable `idx_ai_funded_usage_active_owner` index retains its name and excludes
 only audited execution releases. A transactional replacement preserves uniqueness
-through migration; older instances retain conservative admission checks and skip
+through migration after validating existing unresolved audits; malformed or
+inconsistent persisted proof aborts the whole upgrade. The composed core schema
+uses generation 13, advancing beyond generation 11 and the independently allocated
+generation 12 credit-history and bounded-recovery branches. Preserve both history
+indexes and existing recovery slots/audits during the additive upgrade. Older recovery-aware
+instances retain conservative admission checks and skip
 newer schema generations. Old code may block new execution beside an audited
-unknown obligation, so a runtime rollback can reduce availability. Older binaries
+unknown obligation, so a runtime rollback can reduce availability. Older pre-recovery binaries
 do not implement the audit-aware authorization/start replay fences: schema
 compatibility alone does not prove dispatch safety on rollback. Keep a recovered
 owner's funded control-plane routing on recovery-aware binaries until exact
@@ -514,7 +527,7 @@ settlement remains once-only and cannot remove a newer execution slot.
 
 Required evidence: rejected ordinary/Relay/runtime auth and oversized/malformed
 bodies; exact identity, expiry/lifetime, non-usage and terminal-evidence refusal;
-unchanged financial/source state; replay fencing; one-unknown cap; actual independent
+unchanged financial/source state; replay fencing; two-unknown count and aggregate ceiling; actual independent
 PostgreSQL pools with one live execution; and late settlement preserving the newer
 slot. No automatic timeout unlock, fake exact charge, grant, or paid upstream call
 belongs to this support API.
@@ -560,3 +573,51 @@ belongs to this support API.
 
 Provider semantics: [Cloudflare GLM5.3Flash](https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/).
 Metadata-only override: [AI Gateway logging](https://developers.cloudflare.com/ai-gateway/observability/logging/).
+
+## Selected-provider turn admission
+
+Turn, queued-turn and Bot catalog wrappers must forward the effective selected
+instance/model. A concrete saved Matrix Bot model resolves to the canonical
+managed Pi instance for discovery; automatic server routing keeps its own policy.
+Catalog projection discovers only the selected provider. Managed Matrix admission
+must not await unrelated CLI, system-runtime, owner-key health or native-account
+metadata observations; selected coding providers retain their existing Settings
+and credential observations.
+Full picker/Settings discovery retains its complete inventory and existing
+metadata verification behavior. Scoped catalogs carry their own deterministic
+revision; this revision is metadata, never execution authority.
+
+The managed Matrix read hint is trusted server-only state, never a renderer
+parameter or saved configuration. Every admission rechecks selected credentials,
+funding/policy, saved model eligibility, capability requirements and owner intent.
+No settled authorization cache may replace these checks. Partial Settings reads
+must neither initialize nor reconcile a persisted configuration document. They
+share the existing mutation generation and cheap configuration/revision fences;
+a raced owner write invalidates the observation. Missing configuration may use a
+nonpersistent default only while a final fence confirms continued absence.
+
+Electron turn admission has a bounded 30-second transport deadline to cover the
+existing 14-second funded observation and transport margin. General JSON requests
+retain their 10-second deadline; caller cancellation remains effective. Timeout
+keeps the draft, and admission idempotency remains keyed by the client request.
+Tests must cover held unrelated inventories/Settings observers, real mutation
+ordering, revoked funding/disabled settings/model denial, Bot/queue forwarding,
+full-picker compatibility and the operation-specific native deadline.
+
+
+### Provider discovery versus forced inventory refresh
+
+Electron Chat bootstrap and stale foreground revalidation use an ordinary full
+catalog read. It still observes current funding/policy and saved Settings, but
+does not force an unrelated native CLI inventory invalidation and preliminary
+scan before reading that catalog. An explicit refresh or accepted Settings
+generation change in the same identity/API scope retains forced discovery.
+Picker open/reopen only reuses the current scoped observation, including joining
+a pending read; it must not trigger another read. Display reuse is never turn
+authorization: selected-route admission remains fresh on every send.
+
+Tests distinguish bootstrap/stale foreground reads from explicit and Settings
+refreshes, preserve identity/generation fences and failed-read behavior, and
+cover concurrent lifecycle events while a read is pending. Live acceptance must
+record the exact native package and Main host version; a backend 200 received
+after the renderer deadline does not count as successful model discovery.

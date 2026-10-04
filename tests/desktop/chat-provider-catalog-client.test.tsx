@@ -109,7 +109,7 @@ describe("Desktop canonical Provider catalog client", () => {
     await expect(fetchCanonicalProviderCatalog(api)).rejects.toThrow();
   });
 
-  it("revalidates stale discovery only while the Chat surface is in the foreground", async () => {
+  it("reads current discovery without forcing unrelated CLI probes on bootstrap and stale foreground events", async () => {
     const refreshedCatalog = { ...emptyCatalog, revision: "catalog_refreshed" };
     const api = apiReturning(refreshedCatalog);
     function CatalogProbe({ active }: { active: boolean }) {
@@ -124,19 +124,19 @@ describe("Desktop canonical Provider catalog client", () => {
 
     view.rerender(<CatalogProbe active />);
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1));
-    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
+    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
     expect(await screen.findByText("ready:catalog_refreshed")).not.toBeNull();
 
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
     act(() => window.dispatchEvent(new Event("focus")));
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
-    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
+    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
     await screen.findByText("ready:catalog_refreshed");
 
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
     act(() => document.dispatchEvent(new Event("visibilitychange")));
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
-    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
+    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", { timeoutMs: 15_000 });
 
     view.rerender(<CatalogProbe active={false} />);
     act(() => window.dispatchEvent(new Event("focus")));
