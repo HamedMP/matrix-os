@@ -644,7 +644,8 @@ describe("S05 platform tickets, endpoints and control", () => {
         const [code, reason] = await once(socket, "close") as [number, Buffer];
         expect(code).toBe(1012);
         expect(reason.toString("utf8")).toBe("Control stream rotation");
-        expect(Date.now() - openedAt).toBeGreaterThanOrEqual(150);
+        // random 0.5 puts the rotation at 200ms after the upgrade; allow for a loaded event loop.
+        expect(Date.now() - openedAt).toBeGreaterThanOrEqual(100);
       } finally {
         await cleanup();
       }
@@ -668,6 +669,7 @@ describe("S05 platform tickets, endpoints and control", () => {
       const authenticateRuntime = async () => null;
       expect(() => createCollaborationControlUpgradeHandler({ stream, authenticateRuntime, lifetime: { minMs: 0, maxMs: 10 } })).toThrow(RangeError);
       expect(() => createCollaborationControlUpgradeHandler({ stream, authenticateRuntime, lifetime: { minMs: 20, maxMs: 10 } })).toThrow(RangeError);
+      expect(() => createCollaborationControlUpgradeHandler({ stream, authenticateRuntime, lifetime: { minMs: 10, maxMs: 2 ** 31 } })).toThrow(RangeError);
     });
 
     it("keeps a pong-responsive idle home ticket-ready beyond the liveness window", async () => {

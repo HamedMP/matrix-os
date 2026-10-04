@@ -29,6 +29,8 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
  */
 export const CONTROL_SOCKET_LIFETIME_MS = { minMs: 10 * 60_000, maxMs: 15 * 60_000 } as const;
 const CONTROL_SOCKET_ROTATION_CODE = 1012;
+/** Largest delay `setTimeout` honours; anything above fires immediately. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 export function isCollaborationControlUpgradePath(rawPath: string): boolean {
   if (rawPath.length > MAX_RAW_PATH_LENGTH || /[\r\n]/.test(rawPath)) return false;
@@ -51,10 +53,15 @@ export function createCollaborationControlUpgradeHandler(options: {
   close(): void;
 } {
   const lifetime = options.lifetime ?? CONTROL_SOCKET_LIFETIME_MS;
-  if (!(Number.isFinite(lifetime.minMs) && Number.isFinite(lifetime.maxMs) && lifetime.minMs > 0 && lifetime.maxMs >= lifetime.minMs)) {
-    throw new RangeError("Control socket lifetime must be positive with minMs <= maxMs");
+  if (!(Number.isFinite(lifetime.minMs) && Number.isFinite(lifetime.maxMs) && lifetime.minMs > 0
+    && lifetime.maxMs >= lifetime.minMs && lifetime.maxMs <= MAX_TIMER_DELAY_MS)) {
+    throw new RangeError("Control socket lifetime must be positive with minMs <= maxMs <= the timer limit");
   }
   const random = options.random ?? Math.random;
+  const jitter = (): number => {
+    const value = random();
+    return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.5;
+  };
   const server = new WebSocketServer({ noServer: true, maxPayload: COLLABORATION_DIRECT_LIMITS.wsFrameBytes, perMessageDeflate: false });
   return {
     async handleUpgrade(req, socket, head) {
@@ -89,7 +96,7 @@ export function createCollaborationControlUpgradeHandler(options: {
         heartbeat.unref?.();
         const rotation = setTimeout(() => {
           ws.close(CONTROL_SOCKET_ROTATION_CODE, "Control stream rotation");
-        }, lifetime.minMs + Math.floor(random() * (lifetime.maxMs - lifetime.minMs)));
+        }, lifetime.minMs + Math.floor(jitter() * (lifetime.maxMs - lifetime.minMs)));
         rotation.unref?.();
         ws.on("pong", () => {
           alive = true;
