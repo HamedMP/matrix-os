@@ -199,6 +199,7 @@ describe("native Codex account metadata", () => {
     expect(await reader()).toMatchObject({ checkedAt: now.toISOString(), staleAfter: new Date(now.getTime() + 30_000).toISOString() });
   });
   it("finishes a slow successful overlapping identity check within the unchanged final budget", async () => {
+    const clockStartedAt = Date.now();
     try {
       const native = { account: { ...account.account, id: 'private-principal' } };
       const first = fixture(false, false, native);
@@ -209,7 +210,7 @@ describe("native Codex account metadata", () => {
       };
       const current = slow(); const redundant = slow();
       const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess).mockImplementationOnce(redundant.spawnProcess);
-      const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => now, spawnProcess, readCredentialFileProof: async () => null });
+      const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => new Date(now.getTime() + Date.now() - clockStartedAt), spawnProcess, readCredentialFileProof: async () => null });
       const value = await reader();
       vi.useFakeTimers();
       const cooldown = reader();
@@ -220,7 +221,7 @@ describe("native Codex account metadata", () => {
       expect(current.methods).not.toContainEqual(expect.objectContaining({ method: 'account/rateLimits/read' }));
     } finally { vi.useRealTimers(); }
   });
-  it.each([false, true])('requires a fresh keyring RPC when prior identity is only awaiting cleanup (changed=%s)', async changed => {
+  it.each([[false, false], [true, false], [false, true], [true, true]] as const)('requires fresh keyring RPC for pre-entry cleanup (changed=%s, same-ms=%s)', async (changed, sameMillisecond) => {
     let clock = now;
     let release!: () => void; let sampled!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -233,13 +234,14 @@ describe("native Codex account metadata", () => {
     const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess).mockImplementationOnce(fresh.spawnProcess);
     const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => clock, spawnProcess, readCredentialFileProof: async () => null });
     const value = await reader(); const cooldown = reader(); await cleanup;
-    clock = new Date(now.getTime() + 1);
+    if (!sameMillisecond) clock = new Date(now.getTime() + 1);
     const final = verifyNativeAccountMetadata(value); release();
     expect(await cooldown).toBe(value); expect(await final).toBe(changed ? null : value);
     expect(spawnProcess).toHaveBeenCalledTimes(3);
     expect(fresh.methods).not.toContainEqual(expect.objectContaining({ method: 'account/rateLimits/read' }));
   });
   it.each([false, true])("coalesces overlapping identity verification with final file-proof handoff (changed=%s)", async changed => {
+    let clock = now;
     let calls = 0;
     let release!: () => void;
     let started!: () => void;
@@ -247,10 +249,10 @@ describe("native Codex account metadata", () => {
     const entered = new Promise<void>(resolve => { started = resolve; });
     const children = Array.from({ length: 3 }, () => fixture(false, false, account, undefined, undefined, undefined, "file"));
     const spawnProcess = vi.fn(); children.forEach(child => spawnProcess.mockImplementationOnce(child.spawnProcess));
-    const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => now, spawnProcess,
+    const reader = createCodexNativeAccountMetadataReader({ executable: 'codex', cwd: '/runtime/home', environment: { HOME: '/runtime/home' }, now: () => clock, spawnProcess,
       readCredentialFileProof: async () => {
         const call = ++calls;
-        if (call === 4) { started(); await gate; }
+        if (call === 4) { started(); await gate; clock = new Date(now.getTime() + 1); }
         return changed && call >= 7 ? 'replacement-private-proof' : 'original-private-proof';
       } });
     const value = await reader();

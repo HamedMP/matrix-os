@@ -200,7 +200,7 @@ export function createCodexNativeAccountMetadataReader(input: {
                       && freshAt(current, (input.now ?? (() => new Date()))().getTime());
                     // Cleanup can keep a pre-request observation in flight.
                     // Only identity sampled after this request can coalesce.
-                    if (valid && Date.parse(current!.checkedAt) < requestedAt) valid = await verifyProof(proof);
+                    if (valid && Date.parse(current!.checkedAt) <= requestedAt) valid = await verifyProof(proof);
                   } else {
                     // Public reads do not call bound verifiers: no wait cycle.
                     // A full quota read is not itself the final identity proof.
