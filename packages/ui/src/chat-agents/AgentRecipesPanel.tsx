@@ -52,10 +52,10 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
     setBotSelection(matrixBotModelSelection(selectableModels[0]));
   }
   const botSelection = chosenBotSelection ?? null;
-  const botModelAvailable = !botSelection || isAutomaticBotSelection(botSelection) || selectableModels.some((choice) =>
-    choice.instanceId === botSelection?.instanceId && choice.modelId === botSelection.model);
+  const botModelAvailable = Boolean(botSelection && (isAutomaticBotSelection(botSelection) || selectableModels.some((choice) =>
+    choice.instanceId === botSelection.instanceId && choice.modelId === botSelection.model)));
   const createBot = async (recipe: BotRecipeSummary, name = recipe.name) => {
-    if (!onInstantiateBot || !onOpenBotChat || botPending || !botModelAvailable || catalogLoading) return;
+    if (!onInstantiateBot || !onOpenBotChat || botPending || !botSelection || !botModelAvailable || catalogLoading) return;
     const key = `${recipe.recipeId}@${recipe.version}:${JSON.stringify(botSelection)}:${name}`;
     if (botAttempt.current?.key !== key) {
       const bytes = new Uint8Array(16);
@@ -67,8 +67,8 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
     try {
       const ref = { recipeId: recipe.recipeId, version: recipe.version };
       const chatId = await (name !== recipe.name
-        ? onInstantiateBot(ref, botAttempt.current.requestId, botSelection ?? undefined, name)
-        : botSelection ? onInstantiateBot(ref, botAttempt.current.requestId, botSelection) : onInstantiateBot(ref, botAttempt.current.requestId));
+        ? onInstantiateBot(ref, botAttempt.current.requestId, botSelection, name)
+        : onInstantiateBot(ref, botAttempt.current.requestId, botSelection));
       if (!mounted.current) return;
       await onOpenBotChat(chatId);
       if (!mounted.current) return;

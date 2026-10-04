@@ -57,11 +57,11 @@ function DailyBriefCreation({ recipe, client, models, catalog, catalogLoading, o
   const opening = useRef(false), generation = useRef(0);
   const attempt = useRef<{ key: string; requestId: string } | null>(null);
   useEffect(() => () => { generation.current += 1; opening.current = false; }, [client]);
-  const available = !selection || isAutomaticBotSelection(selection) || matrixBotSelectableModelChoices(models, catalog)
-    .some(choice => choice.instanceId === selection.instanceId && choice.modelId === selection.model);
+  const available = Boolean(selection && (isAutomaticBotSelection(selection) || matrixBotSelectableModelChoices(models, catalog)
+    .some(choice => choice.instanceId === selection.instanceId && choice.modelId === selection.model)));
   const create = async (name: string) => {
-    if (!client.bots || opening.current || !available || catalogLoading) return;
-    const fields = { recipe: { recipeId: recipe.recipeId, version: recipe.version }, name, ...(selection ? { selection } : {}) };
+    if (!client.bots || opening.current || !selection || !available || catalogLoading) return;
+    const fields = { recipe: { recipeId: recipe.recipeId, version: recipe.version }, name, selection };
     const key = JSON.stringify(fields);
     if (attempt.current?.key !== key) attempt.current = { key, requestId: requestId() };
     const currentGeneration = generation.current, current = () => generation.current === currentGeneration;

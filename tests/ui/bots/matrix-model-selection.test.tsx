@@ -239,10 +239,10 @@ it("does not default or create from retained choices after fresh catalog funding
   const create = vi.fn();
   render(<AgentRecipesPanel botRecipes={[recipe]} matrixModels={[model]} catalog={catalog} onInstantiateBot={create} onOpenBotChat={vi.fn()}/>);
   fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
-  expect((screen.getByRole("combobox", { name: "Bot model" }) as HTMLSelectElement).value).toBe("");
+  expect((screen.getByRole("combobox", { name: "Bot model" }) as HTMLSelectElement).value).toBe("unselected");
   expect((screen.getByRole("option", { name: /Credit reserved/ }) as HTMLOptionElement).disabled).toBe(true);
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: JSON.stringify([model.instanceId, model.modelId]) } });
-  expect((screen.getByRole("combobox", { name: "Bot model" }) as HTMLSelectElement).value).toBe("");
+  expect((screen.getByRole("combobox", { name: "Bot model" }) as HTMLSelectElement).value).toBe("unselected");
   expect(create).not.toHaveBeenCalled();
 });
 

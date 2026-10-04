@@ -92,3 +92,9 @@ Acceptance includes windowed and maximized Electron pixels, refresh/send list co
 - Example selection fills and focuses the current retained draft, keeps Project context and never sends automatically. Actual Bot avatars stay rabbits; Project overview and existing conversations do not add the ordinary welcome.
 - The Personal Daily Brief top action is an explicit recipe-creation shortcut using the same setup/model dialog as other templates. Cancel creates nothing; Create bot deliberately creates a persistent Bot. Existing cards retain consistent full-width editing and preserve legacy definitions/history.
 - After dependency reconciliation, previous source/runtime tests are historical evidence only. Final submitted-answer acceptance must produce a continued final reply in the original Chat/run; visible Answer submitted alone is insufficient.
+
+## Landing review regressions
+
+- New recipe and Daily Brief creation require an explicit non-null model selection; every create payload includes it. Deliberate supported Automatic is allowed, while missing intent and loading catalogs cannot submit. Existing saved routes retain their identity.
+- Library metadata failures must preserve ordinary Chats whose authenticated binding resolves to null. Failed unknown bindings remain unresolved; known Bots remain separate with a fallback name when metadata is unavailable.
+- Repeated sidebar/header consumers share bounded authenticated-client summary reads with a common concurrency budget. Cache identity separately from current approval attention so focus/polling does not repeatedly resolve the entire historical Chat list; event/focus refreshes coalesce without losing a newer refresh.

@@ -268,8 +268,11 @@ describe("WorkTab rail integration", () => {
     HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
     HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
     fireEvent.click(create);
+    fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
-    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/chat-agents/instantiate", expect.objectContaining({
+      selection: { instanceId: "matrix_bot_default", model: "auto" },
+    })));
     await waitFor(() => expect(activeWorkTab()?.chatId).toBe("chat_bot_created"));
     expect(activeWorkTab()?.chatView).toBe("conversation");
   });

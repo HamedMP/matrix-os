@@ -22,8 +22,8 @@ export function matrixBotModelSelection(choice: CanonicalProviderChoice): Canoni
     ...(choice.selectedOptions.length ? { options: choice.selectedOptions } : {}) };
 }
 
-export function MatrixBotModelField({ id, label = "Model", selection, models, catalog, catalogLoading = false, pending, allowAutomatic = true, preservedSelection, onSetup, onRefreshCatalog, onChange }: {
-  preservedSelection?: CanonicalChatModelSelection; allowAutomatic?: boolean; onSetup?: () => void; onRefreshCatalog?: () => void;
+export function MatrixBotModelField({ id, label = "Model", selection, models, catalog, catalogLoading = false, pending, allowAutomatic = true, requireSelection = false, preservedSelection, onSetup, onRefreshCatalog, onChange }: {
+  preservedSelection?: CanonicalChatModelSelection; allowAutomatic?: boolean; requireSelection?: boolean; onSetup?: () => void; onRefreshCatalog?: () => void;
   id?: string; label?: string; selection: CanonicalChatModelSelection | null;
   models: readonly CanonicalProviderChoice[]; pending: boolean;
   catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
@@ -31,7 +31,7 @@ export function MatrixBotModelField({ id, label = "Model", selection, models, ca
 }) {
   const rows = catalog ? deriveChatPickerModelRows(catalog, matrixBotModelChoices(models)).filter(isManagedPiBotRoute) : [];
   const choices = matrixBotSelectableModelChoices(models, catalog);
-  const automatic = allowAutomatic && (!selection || isAutomaticBotSelection(selection));
+  const automatic = allowAutomatic && ((!selection && !requireSelection) || isAutomaticBotSelection(selection));
   const legacy = preservedSelection && preservedSelection.instanceId !== MATRIX_PI_CHAT_INSTANCE_ID && !isAutomaticBotSelection(preservedSelection)
     ? preservedSelection : undefined;
   const legacyKey = legacy ? JSON.stringify([legacy.instanceId, legacy.model]) : undefined;
@@ -41,7 +41,7 @@ export function MatrixBotModelField({ id, label = "Model", selection, models, ca
   const legacyAvailable = Boolean(legacyChoice && (catalog === undefined || legacyInstance?.availability === "available" && legacyModel?.availability === "available"));
   const legacyLabel = canonicalProviderModelRouteLabel(legacyInstance, legacyModel?.displayName ?? legacyChoice?.modelLabel ?? legacy?.model ?? "")
     + (legacyInstance ? "" : legacyChoice ? ` · ${legacyChoice.harnessLabel}` : "") + ` · Saved route${legacyAvailable ? "" : " · unavailable"}`;
-  const key = automatic || !selection ? "" : JSON.stringify([selection.instanceId, selection.model]);
+  const key = requireSelection && !selection ? "unselected" : automatic || !selection ? "" : JSON.stringify([selection.instanceId, selection.model]);
   const legacySelected = Boolean(legacy && selection && JSON.stringify(selection) === JSON.stringify(legacy));
   const available = automatic || legacySelected && legacyAvailable || choices.some((choice) => choice.instanceId === selection?.instanceId && choice.modelId === selection.model);
   const blockedRows = rows.filter(row => !row.choice);
@@ -60,7 +60,8 @@ export function MatrixBotModelField({ id, label = "Model", selection, models, ca
         const choice = choices.find((candidate) => JSON.stringify([candidate.instanceId, candidate.modelId]) === event.target.value);
         if (choice) onChange(matrixBotModelSelection(choice));
       }}>
-        {allowAutomatic ? <option value="">Automatic · managed by this computer</option> : !selection ? <option value="" disabled>Choose a Matrix AI model</option> : null}
+        {requireSelection && !selection ? <option value="unselected" disabled>Choose a bot model</option> : null}
+        {allowAutomatic ? <option value="">Automatic · managed by this computer</option> : !selection && !requireSelection ? <option value="" disabled>Choose a Matrix AI model</option> : null}
         {legacy ? <option value={legacyKey} disabled={!legacyAvailable}>{legacyLabel}</option> : null}
         {selection && !available && !savedRow && !legacySelected ? <option value={key} disabled>{selection?.model} · unavailable</option> : null}
         {choices.map((choice) => <option key={`${choice.instanceId}:${choice.modelId}`} value={JSON.stringify([choice.instanceId, choice.modelId])}>
@@ -72,7 +73,7 @@ export function MatrixBotModelField({ id, label = "Model", selection, models, ca
     </label>
     {legacySelected ? <p className="text-xs" style={chatAgentMutedStyle}>This agent keeps its saved route until you choose a Matrix AI model.</p> : null}
     {catalogLoading ? <p role="status" className="text-xs" style={chatAgentMutedStyle}>Loading available bot models…</p> : null}
-    {!available && !legacySelected && (reserved || !noModels) ? <p className="text-xs" style={chatAgentMutedStyle}>{reserved ? "Your credit is reserved while usage is confirmed."
+    {selection && !available && !legacySelected && (reserved || !noModels) ? <p className="text-xs" style={chatAgentMutedStyle}>{reserved ? "Your credit is reserved while usage is confirmed."
       : "This saved Matrix AI model is unavailable. Choose another model or check Agents & providers."}</p> : null}
     {noModels ? <div className="grid gap-2 text-xs" style={chatAgentMutedStyle}>
       <p>No Matrix AI models available. {unavailableReason === "Available" ? "Check Agents & providers." : `${unavailableReason}.`}</p>

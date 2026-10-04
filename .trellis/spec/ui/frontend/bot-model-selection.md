@@ -10,7 +10,7 @@ Use `isAutomaticBotSelection(selection)` for the exact legacy sentinel; `managed
 
 ## 3. Contracts
 
-Concrete Matrix AI is instance `matrix_pi_default` with its canonical catalog model ID. Automatic requires `matrix_bot_default/auto` without options. Undefined means loading; bound null means unavailable. An omitted new-recipe selection retains its existing backend creation default, not evidence of an effective Matrix model.
+Concrete Matrix AI is instance `matrix_pi_default` with its canonical catalog model ID. Automatic requires `matrix_bot_default/auto` without options. Undefined means loading; bound null means unavailable. The frontend must never omit a new-recipe selection. Missing creation intent displays a placeholder and blocks submission; choosing the exact Automatic sentinel is deliberate intent and submits that sentinel. Existing saved selections remain unchanged until an explicit edit.
 
 ## 4. Validation & Error Matrix
 
@@ -34,3 +34,9 @@ Wrong: every non-Pi selection is Automatic. Correct: only the exact supported se
 ## Catalog refresh integration
 
 `ChatProviderCatalogService.refresh(principal, readOptions)` invalidates the existing inventories then projects exactly one `aiProviderSource.getSnapshot({ refresh: true })` result within that call. `getCatalog` uses one nonrefresh observation. Preserve the freshly authenticated owner/funding/native metadata projection; no shared cached admission authority and no second sequential funded read that can replace a successful receipt with unavailable state. Keep current upstream provider-instance/schema/SDK/funding behavior when reconciling dependency merges. Regression: `chat-provider-catalog-refresh.test.ts` asserts one source read per call and the returned current ready model without relaxed admission.
+
+## Creation intent and summary reads
+
+Recipe setup and Personal Daily Brief require a non-null choice after catalog loading settles; create requests always contain that selection. A ready concrete choice may initialize once. An unavailable catalog cannot imply Automatic, but the user may deliberately choose the supported Automatic route, whose execution availability is checked on send. Native form submission must obey the same pending/disabled guard as the visible button. Creation placeholders must not show saved-route errors.
+
+Bot library metadata failure must not classify every ordinary Chat as unresolved. Per-Chat authenticated bindings decide identity independently; verified null remains ordinary, a positive binding remains a Bot with a fallback name, and a failed unknown binding stays hidden until verified. Summary reads coalesce across consumers of the same authenticated client, use bounded caches and shared concurrency, and separate long-lived identity lookup from short-lived approval attention. Client replacement fences owner/runtime/auth state; cancellation of one consumer does not cancel another consumer’s shared read.
