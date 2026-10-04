@@ -632,6 +632,7 @@ function MobileAppFrame({
       <ChatApp
         collaborationView={chat.collaborationView}
         onOpenSharedChat={chat.openSharedChat}
+        onOpenSharedProject={chat.openSharedProject}
         onOpenSharedHome={chat.openSharedHome}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
@@ -642,6 +643,8 @@ function MobileAppFrame({
         messages={chat.messages}
         sessionId={chat.sessionId}
         busy={chat.busy}
+        activeRunId={chat.activeRunId}
+        onAbortCurrent={chat.abortCurrent}
         connected={chat.connected}
         conversations={chat.conversations}
         onNewChat={() => void chat.newChat()}
@@ -649,7 +652,7 @@ function MobileAppFrame({
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
+              agentClient={chat.agentClient} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
         onSubmitApproval={chat.submitApproval}
         onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}

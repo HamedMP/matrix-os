@@ -2,6 +2,7 @@ import { CollaborationDirectoryEventSchema } from "@matrix-os/contracts";
 import type { Kysely, Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
+import { PROJECT_CHAT_ROUTE_EVENT } from "./project-chat-routes.js";
 
 const BATCH_SIZE = 25;
 const MAX_ATTEMPTS = 20;
@@ -24,6 +25,8 @@ interface ClaimedDirectoryEvent {
   /** S06: `organization` when an active organization-wide grant exists; read inside the same claim transaction. */
   audience: "organization" | null;
   organizationGrantId: string | null;
+  /** A shared project's Chat route names its project; read inside the claim transaction. */
+  parentScopeId: string | null;
   attempt: number;
 }
 
@@ -97,6 +100,7 @@ export class CollaborationDirectoryOutbox {
         ...(organizationId ? { organizationId } : {}),
         ...(audience ? { audience } : {}),
         ...(event.organizationGrantId ? { organizationGrantId: event.organizationGrantId } : {}),
+        ...(event.parentScopeId ? { parentScopeId: event.parentScopeId } : {}),
         authorityGeneration: event.authorityGeneration,
         metadataRevision: event.metadataRevision,
         recipients: event.recipientEntries.map((recipient) => ({
@@ -153,7 +157,10 @@ export class CollaborationDirectoryOutbox {
           "outbox.attempts",
           "scope.owner_id",
           "scope.organization_id",
+          "scope.parent_scope_id",
+          "scope.membership_mode",
           "event.revision",
+          "event.event_type",
           (eb) => eb.selectFrom("collaboration_grants as grant").select("grant.id")
               .whereRef("grant.scope_id", "=", "outbox.scope_id")
               .whereRef("grant.organization_id", "=", "scope.organization_id")
@@ -202,7 +209,13 @@ export class CollaborationDirectoryOutbox {
             .execute();
           continue;
         }
-        if (row.discovery_state === "invited" || row.discovery_state === "accepted") {
+        // Only the route event names the parent: older events of a Chat that later joined a
+        // project keep describing its direct share. A project Chat is reached through its project's
+        // members only, so a grant left from its direct share never travels with its route.
+        const parentScopeId = row.event_type === PROJECT_CHAT_ROUTE_EVENT && row.membership_mode === "inherited"
+          ? row.parent_scope_id : null;
+        // A project Chat's route event carries no recipients; member grants live on the project.
+        if (!parentScopeId && (row.discovery_state === "invited" || row.discovery_state === "accepted")) {
           recipientEntries = await withPendingMemberGrants(trx, row.scope_id, recipientEntries, row.discovery_state, now);
         }
         claimed.push({
@@ -215,8 +228,9 @@ export class CollaborationDirectoryOutbox {
           recipientEntries,
           discoveryState: row.discovery_state,
           organizationId: row.organization_id ?? null,
-          audience: row.organization_grant_id ? "organization" : null,
-          organizationGrantId: row.organization_grant_id ?? null,
+          audience: row.organization_grant_id && !parentScopeId ? "organization" : null,
+          organizationGrantId: parentScopeId ? null : row.organization_grant_id ?? null,
+          parentScopeId,
           attempt,
         });
       }

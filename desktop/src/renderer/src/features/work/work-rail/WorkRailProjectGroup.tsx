@@ -1,6 +1,8 @@
+import { RailCollapse } from "./RailCollapse";
+import { WorkRailOrderItem } from "./WorkRailOrderItem";
 import { useRef } from "react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { Folder, FolderOpen, PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2 } from "@renderer/lib/hugeicons";
+import { ChevronRight, Folder, FolderOpen, PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2 } from "@renderer/lib/hugeicons";
 import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
 import { ProjectEditDialog } from "./ProjectActionDialogs";
 import { useProjectActions } from "./use-project-actions";
@@ -17,6 +19,7 @@ export function WorkRailProjectGroup({
   activeChatId,
   pinning,
   onToggle,
+  onSelect,
   onNewChat,
   onDeleteProject,
   onSelectChat,
@@ -31,6 +34,8 @@ export function WorkRailProjectGroup({
   onDeleteChat,
   sharing = null,
   onShareProject,
+  moveItems,
+  movingChatId,
 }: {
   group: WorkRailProjectGroupModel;
   expanded: boolean;
@@ -38,6 +43,7 @@ export function WorkRailProjectGroup({
   activeChatId?: string;
   pinning: Record<string, boolean>;
   onToggle: () => void;
+  onSelect?: (project: Project) => void;
   onNewChat: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project: Project) => void;
@@ -52,6 +58,8 @@ export function WorkRailProjectGroup({
   onDeleteChat: (record: CanonicalChatRecord) => void;
   sharing?: DesktopProjectSharingContext | null;
   onShareProject?: (project: Project) => void;
+  moveItems?: (record: CanonicalChatRecord) => {label: string; disabled?: boolean; onSelect: () => void}[];
+  movingChatId?: string | null;
 }) {
   const actionButtonRef = useRef<HTMLButtonElement>(null);
   const actions = useProjectActions(group.project);
@@ -66,13 +74,18 @@ export function WorkRailProjectGroup({
     <div>
       <ProjectActionsMenu items={items}>
         <div className="group/project relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]">
+          <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${group.name} chats`} aria-expanded={expanded}
+            className="grid w-5 self-stretch shrink-0 place-items-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            onClick={onToggle}>
+            <ChevronRight size={12} aria-hidden className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
+          </button>
           <button
             type="button"
             aria-label={group.name}
-            aria-expanded={expanded}
+            aria-current={activeProjectSlug === group.slug && !activeChatId ? "page" : undefined}
             className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
             style={{ color: activeProjectSlug === group.slug ? "var(--text-primary)" : "var(--text-secondary)" }}
-            onClick={onToggle}
+            onClick={() => onSelect?.(group.project)}
           >
             {expanded
               ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: activeProjectSlug === group.slug ? "var(--accent)" : "var(--text-tertiary)" }} />
@@ -95,12 +108,12 @@ export function WorkRailProjectGroup({
       </ProjectActionsMenu>
       {actions.error && actions.dialog !== "edit" ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}
       {actions.dialog === "edit" ? <ProjectEditDialog returnFocusRef={actionButtonRef} project={group.project} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
-      {expanded ? (
-        <div className="flex flex-col gap-0.5 pl-5">
+      <RailCollapse expanded={expanded} className="flex flex-col gap-0.5">
           {group.chats.map((record) => (
-            <WorkRailChatRow
-              key={record.chat.id}
+            <WorkRailOrderItem key={record.chat.id} id={record.chat.id} kind="chat" group={`project:${group.id}`}><WorkRailChatRow
               record={record}
+              moveItems={moveItems?.(record)}
+              moving={movingChatId === record.chat.id}
               placement="project"
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}
@@ -115,10 +128,9 @@ export function WorkRailProjectGroup({
               onSelect={() => onSelectChat(record, group.project)}
               onPin={() => onPinChat(record)}
               onDelete={() => onDeleteChat(record)}
-            />
+            /></WorkRailOrderItem>
           ))}
-        </div>
-      ) : null}
+      </RailCollapse>
     </div>
   );
 }

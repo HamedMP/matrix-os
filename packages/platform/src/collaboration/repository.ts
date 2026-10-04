@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import type { CollaborationDirectoryKind, CollaborationPlatformDatabase } from "./database.js";
 import { lockLegacyDirectoryIngestion } from "./legacy-ingestion-lock.js";
 
@@ -31,6 +31,8 @@ export interface DirectoryEventInput {
   organizationId?: string;
   audience?: "members" | "organization";
   organizationGrantId?: string;
+  /** A shared project's Chat route: same home, owner and organization as the project, no recipients of its own. */
+  parentScopeId?: string;
   authorityGeneration: number;
   metadataRevision: number;
   recipients: Array<{
@@ -63,6 +65,27 @@ export interface CollaborationOrganizationShareEntry {
   authorityGeneration: number;
   organizationId: string;
   grantId: string;
+}
+
+/**
+ * A project Chat may only be routed beside its own shared project: the same home, owner and
+ * organization. The parent row is locked so a concurrent project change cannot slip between the
+ * check and the write.
+ */
+async function requireProjectChatParent(
+  trx: Transaction<CollaborationPlatformDatabase>,
+  input: DirectoryEventInput,
+): Promise<void> {
+  const parent = await trx.selectFrom("collaboration_directory")
+    .select(["kind", "runtime_id", "owner_id", "organization_id", "parent_scope_id"])
+    .where("scope_id", "=", input.parentScopeId!)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!parent || parent.kind !== "project" || parent.parent_scope_id !== null
+    || parent.runtime_id !== input.runtimeId || parent.owner_id !== input.ownerId
+    || !input.organizationId || parent.organization_id !== input.organizationId) {
+    throw new PlatformCollaborationRepositoryError("conflict", "Project Chat parent is unavailable");
+  }
 }
 
 export class PlatformCollaborationRepository {
@@ -104,6 +127,12 @@ export class PlatformCollaborationRepository {
         throw new PlatformCollaborationRepositoryError("conflict", "Directory authority changed without transition");
       }
       if (existing && Number(existing.metadata_revision) >= input.metadataRevision) return;
+      // A project Chat stays under its project. A directly shared Chat may join a project once,
+      // when the owner shares the project that contains it.
+      if (existing?.parent_scope_id && existing.parent_scope_id !== input.parentScopeId) {
+        throw new PlatformCollaborationRepositoryError("conflict", "Directory parent changed without transition");
+      }
+      if (input.parentScopeId) await requireProjectChatParent(trx, input);
 
       // The pre-read cannot fence a concurrent event: FOR UPDATE locks nothing while the row is
       // still absent, so two first-writers both pass the guard above and the loser's unconditional
@@ -117,6 +146,7 @@ export class PlatformCollaborationRepository {
         organization_id: input.organizationId ?? null,
         audience: input.audience ?? null,
         organization_grant_id: input.audience === "organization" ? input.organizationGrantId ?? null : null,
+        parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
@@ -126,6 +156,7 @@ export class PlatformCollaborationRepository {
         ...(input.organizationId ? { organization_id: input.organizationId } : {}),
         audience: input.audience ?? null,
         organization_grant_id: input.audience === "organization" ? input.organizationGrantId ?? null : null,
+        parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
@@ -135,6 +166,10 @@ export class PlatformCollaborationRepository {
         .executeTakeFirst();
       // No row returned means the DO UPDATE was fenced by a newer revision: the whole event is stale.
       if (!applied) return;
+      // A project Chat has no recipients of its own; any left from a direct share no longer apply.
+      if (input.parentScopeId) {
+        await trx.deleteFrom("collaboration_user_index").where("scope_id", "=", input.scopeId).execute();
+      }
 
       for (const recipient of input.recipients) {
         // The grant pointer only means something while the grant is pending for this actor.
@@ -169,10 +204,12 @@ export class PlatformCollaborationRepository {
     organizationId: string | null;
     audience: "members" | "organization" | null;
     organizationGrantId: string | null;
+    /** Set for a shared project's Chat; its tickets follow the parent project's membership. */
+    parentScopeId: string | null;
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_directory")
-      .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "audience", "organization_grant_id", "authority_generation"])
+      .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "audience", "organization_grant_id", "parent_scope_id", "authority_generation"])
       .where("scope_id", "=", scopeId)
       .executeTakeFirst();
     return row ? {
@@ -183,6 +220,7 @@ export class PlatformCollaborationRepository {
       organizationId: row.organization_id ?? null,
       audience: row.audience,
       organizationGrantId: row.organization_grant_id,
+      parentScopeId: row.parent_scope_id ?? null,
       authorityGeneration: Number(row.authority_generation),
     } : null;
   }

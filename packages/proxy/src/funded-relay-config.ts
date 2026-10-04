@@ -1,10 +1,13 @@
+import { readFundedPricingReviews, type FundedPricingReviews } from "./funded-pricing-review.js";
+
 import { readJevPricingReview, type JevPricingReview } from "./jev-pricing-review.js";
 const DEFAULT_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_RESPONSE_LIMIT_BYTES = 32 * 1024 * 1024;
 const DEFAULT_CONTROL_RESPONSE_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_PLATFORM_TIMEOUT_MS = 5_000;
 const DEFAULT_COUNT_TOKENS_TIMEOUT_MS = 10_000;
-const DEFAULT_FIRST_RESPONSE_TIMEOUT_MS = 10_000;
+// Tool continuations can take longer than readiness probes to start generation.
+const DEFAULT_FIRST_RESPONSE_TIMEOUT_MS = 30_000;
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_GLOBAL_CONCURRENCY = 64;
 const DEFAULT_GLOBAL_RATE_LIMIT = 180;
@@ -25,6 +28,7 @@ export interface FundedRelayConfig {
   gatewayBaseUrl: string;
   gatewayToken: string;
   jevMaxCostMicrousd: number;
+  pricingReviews?: FundedPricingReviews;
   jevPricingReview?: Readonly<JevPricingReview>;
   reservationMode: "cloudflare-count" | "usage";
   workersAiToken?: string;
@@ -176,6 +180,7 @@ export function resolveFundedRelayConfig(
   return {
     gatewayBaseUrl,
     gatewayToken,
+    pricingReviews: readFundedPricingReviews(env),
     jevPricingReview: readJevPricingReview(env),
     jevMaxCostMicrousd: readInteger(
       env, "MATRIX_JEV_MAX_COST_MICROUSD", DEFAULT_JEV_MAX_COST_MICROUSD, 1, 1_000_000,

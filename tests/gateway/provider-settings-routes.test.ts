@@ -161,6 +161,25 @@ describe("provider settings routes", () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 
+  it("negotiates offered inventory independently of historical model metadata", async () => {
+    const offered = [{ id: "anthropic/claude-opus-5", providerId: "anthropic", accessSourceId: "source_matrix", displayName: "Claude Opus 5", enabled: true }];
+    const modernSnapshot = { ...snapshot, matrixModelInventory: offered };
+    const { app, mutate } = createApp({ getSnapshot: async () => modernSnapshot,
+      mutate: async () => ({ kind: "snapshot", snapshot: modernSnapshot }) });
+    for (const query of ["", "?includeModelCapabilities=true", "?includeCapabilities=true"]) {
+      expect(await (await app.request(`/api/ai/provider-settings${query}`)).json()).not.toHaveProperty("matrixModelInventory");
+    }
+    const modern = await (await app.request("/api/ai/provider-settings?includeMatrixModelInventory=true")).json();
+    expect(modern.matrixModelInventory).toEqual(offered);
+    expect(ProviderSettingsSnapshotSchema.safeParse(modern).success).toBe(true);
+    const request = { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "set_harness_enabled", harnessInstanceId: "harness_pi", enabled: true, expectedRevision: 0, idempotencyKey: "inventory" }) };
+    expect((await (await app.request("/api/ai/provider-settings/actions?includeMatrixModelInventory=true", request)).json()).snapshot.matrixModelInventory).toEqual(offered);
+    mutate.mockClear();
+    expect((await app.request("/api/ai/provider-settings/actions?includeMatrixModelInventory=maybe", request)).status).toBe(400);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
   it("authenticates reads and returns the secret-free snapshot", async () => {
     const { app, getPrincipal, getSnapshot } = createApp();
     const response = await app.request("/api/ai/provider-settings");
@@ -344,5 +363,40 @@ describe("provider settings routes", () => {
     expect(await failedResponse.json()).toEqual({
       error: { code: "provider_settings_unavailable", message: "Provider settings are unavailable." },
     });
+  });
+});
+
+
+describe("provider Settings reserved-credit negotiation", () => {
+  it.each([false, true])("negotiates enum additions on GET, POST and DELETE: %s", async include => {
+    const held = structuredClone(snapshot);
+    Object.assign(held.accessSources[0]!.readiness, { state: "unavailable", action: "retry", safeReason: "credit_reserved" });
+    const f = createApp({ getSnapshot: async () => held, mutate: async () => ({ snapshot: held, kind: "snapshot" }) });
+    const query = `?includeCapabilities=true${include ? "&includeFundingState=true" : ""}`;
+    const mutations = [
+      { path: "/api/ai/provider-settings", method: "GET", body: undefined },
+      { path: "/api/ai/provider-settings/actions", method: "POST", body: {
+        type: "set_gateway_budget", expectedRevision: 0, idempotencyKey: "reserved_state", monthlyBudgetMicrousd: 10_000_000 } },
+      { path: "/api/ai/provider-settings/accounts/account1", method: "DELETE", body: {
+        expectedRevision: 0, idempotencyKey: "reserved_delete", dependencyGuard: {
+          activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 }, confirmation: "remove_account" } },
+    ];
+    for (const mutation of mutations) {
+      const response = await f.app.request(mutation.path + query, { method: mutation.method,
+        ...(mutation.body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(mutation.body) } : {}) });
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect((body.snapshot ?? body).accessSources[0].readiness.safeReason).toBe(include ? "credit_reserved" : "credit_required");
+      expect(held.accessSources[0]!.readiness.safeReason).toBe("credit_reserved");
+    }
+  });
+  it("rejects invalid funding capability", async () => {
+    const f = createApp();
+    for (const [path, method] of [["/api/ai/provider-settings", "GET"], ["/api/ai/provider-settings/actions", "POST"],
+      ["/api/ai/provider-settings/accounts/account1", "DELETE"]]) {
+      expect((await f.app.request(`${path}?includeFundingState=yes`, { method })).status).toBe(400);
+    }
+    expect(f.getSnapshot).not.toHaveBeenCalled();
+    expect(f.mutate).not.toHaveBeenCalled();
   });
 });

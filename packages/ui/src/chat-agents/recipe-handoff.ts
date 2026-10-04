@@ -1,6 +1,16 @@
 import { agentInspirations, type AgentInspiration } from "./agent-inspirations.generated.js";
 import { matrixRecipes } from "./matrix-recipes.generated.js";
 
+/** IDs of the server-backed M1 launch set; versions are always read from the gateway. */
+export const LAUNCH_BOT_RECIPE_IDS = [
+  "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book",
+  "event-request-desk", "writing-bot", "echo", "spend-review",
+] as const;
+
+export function isLaunchBotRecipeId(id: string): boolean {
+  return LAUNCH_BOT_RECIPE_IDS.some((candidate) => candidate === id);
+}
+
 export function buildAgentRecipePrompt(recipe: AgentInspiration) {
   const capabilities = recipe.skills.slice(0, 5).join(", ");
   const integrations = recipe.integrations.slice(0, 5).join(", ");

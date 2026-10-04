@@ -11,9 +11,7 @@ import {
   type Updateable,
 } from 'kysely';
 import pg from 'pg';
-import { runPlatformMigration } from './migration-runner.js';
-import { PLATFORM_SCHEMA_REVISION } from './database/migration-revision.js';
-import { migratePlatformSchema } from './database/migrate.js';
+import { runPlatformStartupMigrations } from './database/run-migrations.js';
 import { parseStringArray } from './database/json.js';
 import { mapUserMachine, type UserMachineProvisioningClass } from './database/user-machine-records.js';
 import { z } from 'zod/v4';
@@ -119,6 +117,7 @@ export interface AiFundedRuntimePoliciesTable {
   monthly_budget_microusd: number;
   expires_at: string | null;
   next_issue_at: string;
+  next_background_issue_at: Generated<string>;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -135,9 +134,22 @@ export interface AiRuntimeCredentialsTable {
   issued_at: string;
   expires_at: string;
   revoked_at: string | null;
+  request_class: Generated<"interactive" | "background">;
+}
+
+export interface AiFundedPriorityClaimsTable {
+  owner_id: string;
+  machine_id: string;
+  runtime_slot: string;
+  claim_key: Generated<string>;
+  billing_mode: "usage" | "hold";
+  created_at: string;
+  expires_at: string;
 }
 
 export interface AiFundedUsageReservationsTable {
+  execution_admission_release: Generated<string | null>;
+  execution_recovery_slot: Generated<0 | 1>;
   reservation_id: string;
   request_id: string;
   payload_hash: string;
@@ -780,6 +792,7 @@ export interface PlatformDatabase {
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
+  ai_funded_priority_claims: AiFundedPriorityClaimsTable;
   ai_funded_usage_reservations: AiFundedUsageReservationsTable;
   ai_funded_reservation_promotional_allocations: AiFundedReservationPromotionalAllocationsTable;
   ai_funded_credit_ledger: AiFundedCreditLedgerTable;
@@ -1269,17 +1282,6 @@ function wrapDb(
   return wrapped;
 }
 
-async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
-  await runPlatformMigration(db, migrateSchema, {
-    revision: PLATFORM_SCHEMA_REVISION,
-    deadlockAttempts: 12,
-  });
-}
-
-async function migrateSchema(db: Executor): Promise<void> {
-  await migratePlatformSchema(db);
-}
-
 export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_PLATFORM_DB_URL ?? ''): PlatformDB {
   if (typeof opts === 'string' && !opts) {
     throw new Error('Platform Postgres URL is required: set PLATFORM_DATABASE_URL or POSTGRES_URL');
@@ -1296,7 +1298,7 @@ export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_P
       })()
     : new Kysely<PlatformDatabase>({ dialect: opts.dialect as never });
 
-  const ready = migrate(kysely);
+  const ready = runPlatformStartupMigrations(kysely);
   return wrapDb(kysely, kysely, ready, async () => {
     await kysely.destroy();
     try {

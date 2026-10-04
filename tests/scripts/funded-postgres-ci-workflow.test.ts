@@ -20,6 +20,7 @@ describe("funded settlement real PostgreSQL CI", () => {
     const command = job?.steps?.find(step => step.name === "Verify funded settlement on PostgreSQL")?.run;
     expect(command).toContain('${MATRIX_TEST_POSTGRES_URL:?');
     expect(command).toContain("tests/platform/ai-funded-usage-postgres.test.ts");
+    expect(command).toContain("tests/platform/ai-funded-recovery-migration.test.ts");
     expect(command).toContain("--maxWorkers=1");
     expect(workflow().jobs["ci-results"]?.needs).toContain("funded-postgres");
   });

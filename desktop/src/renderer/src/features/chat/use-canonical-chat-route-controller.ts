@@ -389,7 +389,9 @@ export function useCanonicalChatRouteController({
   const moveProject = useCallback(async (targetProjectId: string | null) => {
     if (!detail) return null;
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const selectedChatId = detail.record.chat.id;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
+      && activeChatIdRef.current === selectedChatId);
     try {
       const record = await client.updateProject(detail.record.chat.id, {
         baseRevision: detail.record.chat.revision,
@@ -408,8 +410,8 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] project move failed:", diagnosticErrorKind(error));
       if (!isCurrentScope()) return null;
-      setError("The Chat could not be moved. Refresh and try again.");
       await loadDetail(detail.record.chat.id);
+      if (isCurrentScope()) setError("The Chat could not be moved. Refresh and try again.");
       return null;
     }
   }, [client, detail, loadDetail, updateDetail]);

@@ -165,8 +165,18 @@ async function readBoundedResponse(response: Response, signal: AbortSignal): Pro
 
 export async function sendWhatsAppText(config: WhatsAppConfig, to: string, text: string, fetchImpl: typeof fetch = fetch): Promise<string> {
   if (!isWhatsAppSenderAllowed(config, to) || !boundedString.min(1).safeParse(text).success) throw new WhatsAppSendError(false);
+  return sendWhatsAppMessage(config, to, { type: "text", text: { preview_url: false, body: text } }, fetchImpl, 10_000);
+}
+
+export type WhatsAppProcessingReaction = "👀" | "✅" | "❌";
+export async function sendWhatsAppReaction(config: WhatsAppConfig, to: string, id: string, emoji: WhatsAppProcessingReaction, fetchImpl: typeof fetch = fetch): Promise<string> {
+  if (!isWhatsAppSenderAllowed(config, to) || !messageId.safeParse(id).success || !["👀", "✅", "❌"].includes(emoji)) throw new WhatsAppSendError(false);
+  return sendWhatsAppMessage(config, to, { type: "reaction", reaction: { message_id: id, emoji } }, fetchImpl, 1500);
+}
+
+async function sendWhatsAppMessage(config: WhatsAppConfig, to: string, payload: Record<string, unknown>, fetchImpl: typeof fetch, timeoutMs: number): Promise<string> {
   // No retries: a connection failure may happen after the provider accepted it.
-  const signal = AbortSignal.timeout(10_000);
+  const signal = AbortSignal.timeout(timeoutMs);
   try {
     const response = await fetchImpl(`https://graph.facebook.com/${config.graphVersion}/${config.phoneNumberId}/messages`, {
       method: "POST", redirect: "error", signal,
@@ -174,7 +184,7 @@ export async function sendWhatsAppText(config: WhatsAppConfig, to: string, text:
       body: JSON.stringify({
         messaging_product: "whatsapp", recipient_type: "individual",
         ...(WhatsAppBsuidSchema.safeParse(to).success ? { recipient: to } : { to }),
-        type: "text", text: { preview_url: false, body: text },
+        ...payload,
       }),
     });
     if (!response.ok) {

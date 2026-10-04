@@ -14,11 +14,14 @@ const COLLABORATION_LAYERS = { dialog: SHELL_Z_INDEX.appDialog, popover: SHELL_Z
 export function ShellChatCollaboration({
   view,
   onOpenChat,
+  onOpenProject,
   onSessionMetadata,
   headerContainer,
 }: {
   view: ChatCollaborationView;
   onOpenChat?: (scopeId: string) => void;
+  /** Opens a shared project in this Chats app; never a standalone page. */
+  onOpenProject?: (scopeId: string) => void;
   onSessionMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
 }) {
@@ -53,7 +56,9 @@ export function ShellChatCollaboration({
         onOpenChat?.(scopeId);
       }}
       openTerminal={(scopeId) => router.push(`/shared/terminal/${encodeURIComponent(scopeId)}`)}
-      openProject={(scopeId) => router.push(`/shared/project/${encodeURIComponent(scopeId)}`)}
+      openProject={(scopeId) => {
+        onOpenProject?.(scopeId);
+      }}
     />
   </div>;
 }

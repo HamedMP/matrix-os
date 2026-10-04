@@ -22,13 +22,14 @@ const repo = { cleanup: vi.fn(), lease: vi.fn(), getConnectionBySender: vi.fn(),
   checkpoint: vi.fn(), retry: vi.fn(), bindChat: vi.fn(), startLink: vi.fn() };
 const agent = { start: vi.fn(), poll: vi.fn() };
 const send = vi.fn();
+const react = vi.fn(async () => {});
 const logError = vi.fn();
 let now: number;
 let service: ReturnType<typeof createWhatsAppService>;
 type ServiceDependencies = Parameters<typeof createWhatsAppService>[0];
 function compose(options: Partial<ServiceDependencies> = {}) {
   service = createWhatsAppService({ config, repository: repo as unknown as ServiceDependencies['repository'],
-    agent, now: () => now, send, logError, ...options });
+    agent, now: () => now, send, react, logError, ...options });
   return service;
 }
 function job(payload: Record<string, unknown>, options: Partial<WhatsAppJob> = {}): WhatsAppJob {
@@ -138,6 +139,43 @@ describe('WhatsApp delivery boundaries', () => {
     const body = JSON.parse(fetcher.mock.calls[0]![1].body);
     expect(body.recipient).toBe('SE.opaque'); expect(body.to).toBeUndefined();
   });
+  it('retains the signed allowlisted phone for test-number delivery without changing account identity', async () => {
+    repo.getConnectionBySender.mockResolvedValue(null);
+    await service.ingest([{ id: 'paired', sender: 'SE.opaque', phone: sender, type: 'text', timestamp: now / 1000, text: 'Hello' }]);
+    expect(repo.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sender: 'SE.opaque', payload: expect.objectContaining({ phone: sender }) }));
+    await process({ ...incoming('Hello', false), phone: sender }, { sender: 'SE.opaque' });
+    expect(repo.startLink).toHaveBeenCalledWith('SE.opaque', 'wamid.message', now + 60_000, sender);
+    expect(send).toHaveBeenCalledWith(sender, expect.stringContaining('/whatsapp/connect'));
+    expect(repo.checkpoint).toHaveBeenCalledWith('wamid.message', 'fence_1', expect.objectContaining({ phone: sender }));
+  });
+  it('uses the proven phone for verification and completed agent replies', async () => {
+    await process({ kind: 'verification', owner, tokenHash: 'a'.repeat(64), text: '123456', phone: sender }, { sender: 'SE.opaque' });
+    expect(send).toHaveBeenCalledWith(sender, '123456');
+    agent.poll.mockResolvedValue({ state: 'complete', text: 'Done' });
+    await process({ ...run(), phone: sender }, { sender: 'SE.opaque' });
+    expect(send).toHaveBeenCalledWith(sender, 'Done');
+  });
+  it('preserves phone delivery through an admitted agent run and its completed poll', async () => {
+    await service.ingest([{ id: 'paired-run', sender: 'SE.opaque', phone: sender, type: 'text', timestamp: now / 1000, text: 'Do work' }]);
+    const admission = repo.enqueue.mock.calls[0]![0];
+    const value = await process(admission.payload, { sender: admission.sender });
+    expect(value.sender).toBe('SE.opaque');
+    expect(value.payload).toMatchObject({ kind: 'run', phone: sender });
+    expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({ sender: 'SE.opaque' }), expect.any(Function), expect.any(Function));
+    agent.poll.mockResolvedValue({ state: 'complete', text: 'Completed work' });
+    await process(value.payload, { sender: value.sender });
+    expect(send).toHaveBeenCalledWith(sender, 'Completed work');
+  });
+  it('forwards the signed phone on immediate STOP admission', async () => {
+    await service.ingest([{ id: 'paired-stop', sender: 'SE.opaque', phone: sender, type: 'text', timestamp: now / 1000, text: 'STOP' }]);
+    expect(repo.stop).toHaveBeenCalledWith('SE.opaque', 'paired-stop', now + 86_400_000, now, sender);
+    expect(repo.enqueue).not.toHaveBeenCalled();
+  });
+  it('does not route replies to an unallowlisted phone', async () => {
+    await process({ kind: 'reply', text: 'Private result', phone: '46709999999' }, { sender: 'SE.opaque' });
+    expect(send).not.toHaveBeenCalled();
+    expect(repo.finish).toHaveBeenCalledWith('wamid.message', 'fence_1', 'failed');
+  });
 });
 
 describe('WhatsApp agent checkpoint and retry lifecycle', () => {
@@ -192,7 +230,7 @@ describe('WhatsApp agent checkpoint and retry lifecycle', () => {
     'keeps persisted progress through %s failure without restarting the agent', async (failure) => {
       const { db } = await createTestPlatformDb();
       const durable = createWhatsAppRepository(db, config.encryptionKey, () => now);
-      const runtime = createWhatsAppService({ config, repository: durable, agent, send, logError, now: () => now });
+      const runtime = createWhatsAppService({ config, repository: durable, agent, send, react, logError, now: () => now });
       const spies: Array<{ mockRestore(): void }> = [];
       try {
         await sql`INSERT INTO whatsapp_connections(id,owner,sender,machine_id,chat_id,consent_version,created_at)
@@ -273,7 +311,8 @@ describe('WhatsApp agent checkpoint and retry lifecycle', () => {
     repo.checkpoint.mockResolvedValue(false); await process(incoming('Do work')); expect(agent.start).not.toHaveBeenCalled();
   });
   it('does not retry an admitted run when checkpoint persistence lost its fence', async () => {
-    repo.checkpoint.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    // Own the reaction and admission fences, then lose the run checkpoint.
+    repo.checkpoint.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     await process(incoming()); expect(repo.bindChat).toHaveBeenCalledOnce(); expect(repo.retry).not.toHaveBeenCalled();
   });
   it.each([undefined, -1, 2, 4])('bounds agent failures and returns safe recovery after exhaustion: %s', async (failures) => {

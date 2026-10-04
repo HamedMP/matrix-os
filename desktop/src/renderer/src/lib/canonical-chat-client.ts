@@ -225,7 +225,9 @@ export function createCanonicalChatClient(
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
     agents: createChatAgentClient((path, method, body) => method === "GET" ? transport.get(path)
-      : method === "POST" ? transport.post(path, body) : transport.patch(path, body)),
+      : method === "POST" ? transport.post(path, body)
+        : method === "DELETE" ? transport.delete(path)
+          : transport.patch(path, body)),
     async list(input = {}) {
       const parsed = CanonicalChatListInputSchema.parse(input);
       const response = await api.get(withQuery("/api/chats", {
@@ -390,6 +392,8 @@ export function createCanonicalChatClient(
         const response = CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
           chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`),
           request,
+          // Fresh funded observation has a 14s server deadline; allow bounded transport margin.
+          { timeoutMs: 30_000 },
         ));
         if (analytics) {
           trackEvent({

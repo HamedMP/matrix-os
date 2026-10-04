@@ -252,6 +252,22 @@ export class ProviderSettingsController {
           if (!this.disposed) this.update({ error: LOGIN_ACTION_ERROR });
         }
       }
+      if (applied && parsed.data.snapshot.accounts.length > 0) {
+        // Mutations keep the historical schema. Re-read negotiated owner details
+        // without a full discovery refresh or replacing a newer operation.
+        try {
+          const enriched = ProviderSettingsSnapshotSchema.safeParse(await this.options.transport.getSnapshot(request.signal, { refresh: false }));
+          if (enriched.success && enriched.data.revision >= parsed.data.snapshot.revision) {
+            const recoveryError = this.state.error;
+            if (this.applySnapshot(enriched.data, { operationId }) && recoveryError !== null) {
+              this.update({ error: recoveryError });
+            }
+          }
+        } catch (error) {
+          console.warn("[provider-settings] Account details refresh failed:", error instanceof Error ? error.name : typeof error);
+          // The mutation is already confirmed; metadata failure is not its failure.
+        }
+      }
       return applied;
     } catch (error) {
       if (this.disposed) return false;

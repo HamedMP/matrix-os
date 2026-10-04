@@ -43,12 +43,12 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
     }
     const model = c.req.query("model");
     if (model !== FUNDED_GLM_FLASH && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
-    const priceValidThrough = fundedModelPriceValidThrough(model);
-    if (!priceValidThrough || !isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))())) {
+    const priceValidThrough = fundedModelPriceValidThrough(model, config.pricingReviews);
+    if (!priceValidThrough || !isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))(), config.pricingReviews)) {
       return c.json({ ready: false }, 503);
     }
     const probed = await probeFundedModel(config, model, options.fetchFn);
-    const ready = probed && isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))());
+    const ready = probed && isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))(), config.pricingReviews);
     return c.json(ready ? { ready: true, priceValidThrough } : { ready: false }, ready ? 200 : 503);
   });
   relay.register(app);

@@ -34,7 +34,7 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     await secondDb.ready;
     clock = new Date("2026-09-10T12:00:00Z");
     const options = { credentialHashSecret: "h".repeat(32), now: () => new Date(clock),
-      reservationTtlMs: 30_000, inFlightTtlMs: 60_000 };
+      reservationTtlMs: 30_000, inFlightTtlMs: 60_000, credentialTtlMs: 3_600_000 };
     first = createAiFundedPolicyRepository({ ...options, db });
     second = createAiFundedPolicyRepository({ ...options, db: secondDb });
     await first.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
@@ -109,6 +109,147 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     await expect(second.authorize({ credential: credentials[1], requestId: "after_exact_settlement",
       modelId, maxCostMicrousd: 100, billingMode: "usage" }))
       .resolves.toMatchObject({ authorized: true });
+  });
+
+  it("serializes audited recovery and preserves one live execution across independent pools", async () => {
+    const authorization = await first.authorize({ credential: credentials[0], requestId: "recover_unknown",
+      modelId, maxCostMicrousd: 100, billingMode: "usage" });
+    const key = { reservationId: authorization.reservation.reservationId, tokenId: tokenIds[0] };
+    await first.startReservation(key);
+    const row = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    clock = new Date(clock.getTime() + 20 * 60_000);
+    const recovery = { ...key, expectedOwnerId: identities[0].ownerId,
+      expectedRequestId: "recover_unknown", expectedStartedAt: row.started_at!, expectedExpiresAt: row.expires_at,
+      maximumLiabilityMicrousd: 100, localRunId: "run_old", localRunState: "failed" as const,
+      localRunEndedAt: new Date(Date.parse(row.started_at!) + 10_000).toISOString(),
+      evidenceRef: "support:observed-terminal-run", reviewer: "operator:qa", acceptUnknownUpstreamLiability: true as const };
+    const recovered = await Promise.all([first.releaseExecutionAdmission(identities[0], recovery),
+      second.releaseExecutionAdmission(identities[0], recovery)]);
+    expect(recovered[0]).toEqual(recovered[1]);
+    expect(await first.getFundingSummary(identities[0])).toMatchObject({ reservedMicrousd: 100, settledThisMonthMicrousd: 0 });
+    const fresh = await Promise.all(identities.map((identity) => first.issueRuntimeCredential(identity)));
+    const attempts = await Promise.allSettled([
+      first.authorize({ credential: fresh[0].credential.token, requestId: "recovered_first", modelId, maxCostMicrousd: 100, billingMode: "usage" }),
+      second.authorize({ credential: fresh[1].credential.token, requestId: "recovered_second", modelId, maxCostMicrousd: 100, billingMode: "usage" }),
+    ]);
+    expect(attempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "rate_limited" } });
+    const live = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("execution_admission_release", "is", null).where("status", "in", ["reserved", "starting", "in_flight", "settling"]).execute();
+    expect(live).toHaveLength(1);
+    // Prove the durable constraints independently of application advisory locks.
+    await expect(secondDb.executor.insertInto("ai_funded_usage_reservations").values({
+      ...live[0], reservation_id: "forbidden_second_execution", request_id: "forbidden_second_execution",
+    }).execute()).rejects.toMatchObject({ code: "23505", constraint: "idx_ai_funded_usage_active_owner" });
+    const audited = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    await expect(secondDb.executor.insertInto("ai_funded_usage_reservations").values({
+      ...audited, reservation_id: "forbidden_second_unknown", request_id: "forbidden_second_unknown",
+    }).execute()).rejects.toMatchObject({ code: "23505", constraint: "idx_ai_funded_unknown_admission_owner" });
+    await first.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 40 });
+    await expect(second.authorize({ credential: fresh[0].credential.token, requestId: "still_live", modelId,
+      maxCostMicrousd: 100, billingMode: "usage" })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select(["status", "actual_microusd"])
+      .where("reservation_id", "=", live[0].reservation_id).executeTakeFirstOrThrow())
+      .toEqual({ status: "reserved", actual_microusd: null });
+    const indexes = await admin.query("SELECT indexname FROM pg_indexes WHERE schemaname=$1 AND tablename='ai_funded_usage_reservations'", [schema]);
+    expect(indexes.rows.map((value: { indexname: string }) => value.indexname)).toContain("idx_ai_funded_usage_active_owner");
+    expect(indexes.rows.map((value: { indexname: string }) => value.indexname)).toContain("idx_ai_funded_unknown_admission_owner");
+  });
+
+  it("keeps two durable unknown slots, concurrent replay and late settlement independent of new work", async () => {
+    const recover = async (requestId: string) => {
+      const auth = await first.authorize({ credential: credentials[0], requestId, modelId,
+        maxCostMicrousd: 100, billingMode: "usage" });
+      const key = { reservationId: auth.reservation.reservationId, tokenId: tokenIds[0] };
+      await first.startReservation(key);
+      const row = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+        .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+      clock = new Date(clock.getTime() + 20 * 60_000);
+      const request = { ...key, expectedOwnerId: identities[0].ownerId, expectedRequestId: requestId,
+        expectedStartedAt: row.started_at!, expectedExpiresAt: row.expires_at,
+        maximumLiabilityMicrousd: 100, localRunId: `run_${requestId}`, localRunState: "failed" as const,
+        localRunEndedAt: new Date(Date.parse(row.started_at!) + 10_000).toISOString(),
+        evidenceRef: "support:observed-run", reviewer: "operator:qa", acceptUnknownUpstreamLiability: true as const };
+      return { key, request };
+    };
+    const firstOld = await recover("first_old");
+    await first.releaseExecutionAdmission(identities[0], firstOld.request);
+    const secondOld = await recover("second_old");
+    const snapshot = async () => ({
+      balances: await db.executor.selectFrom("ai_funded_runtime_balances").selectAll().orderBy("machine_id").execute(),
+      grants: await db.executor.selectFrom("ai_funded_promotional_grant_balances").selectAll().execute(),
+      allocations: await db.executor.selectFrom("ai_funded_reservation_promotional_allocations").selectAll().execute(),
+      ledger: await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().orderBy("entry_id").execute(),
+    });
+    const before = await snapshot();
+    const releases = await Promise.all([first.releaseExecutionAdmission(identities[0], secondOld.request),
+      second.releaseExecutionAdmission(identities[0], secondOld.request)]);
+    expect(releases[0]).toEqual(releases[1]);
+    expect(await snapshot()).toEqual(before);
+    const unknowns = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("execution_admission_release", "is not", null).orderBy("execution_recovery_slot").execute();
+    expect(unknowns.map((row) => row.execution_recovery_slot)).toEqual([0, 1]);
+    for (const row of unknowns) {
+      await expect(secondDb.executor.insertInto("ai_funded_usage_reservations").values({
+        ...row, reservation_id: `duplicate_${row.execution_recovery_slot}`, request_id: `duplicate_${row.execution_recovery_slot}`,
+      }).execute()).rejects.toMatchObject({ code: "23505", constraint: "idx_ai_funded_unknown_admission_owner" });
+    }
+    for (const invalid of [null, -1, 2]) {
+      await expect(admin.query(`INSERT INTO "${schema}".ai_funded_usage_reservations
+        SELECT (jsonb_populate_record(NULL::"${schema}".ai_funded_usage_reservations,
+          to_jsonb(r) || jsonb_build_object('reservation_id', $1::text, 'request_id', $1::text,
+            'execution_recovery_slot', $2::smallint))).* FROM "${schema}".ai_funded_usage_reservations r
+        WHERE reservation_id=$3`, [`invalid_${invalid}`, invalid, firstOld.key.reservationId]))
+        .rejects.toMatchObject({ code: invalid === null ? "23502" : "23514" });
+    }
+    // Recovery and authorization contend across independent clients. Whichever
+    // acquires the owner lock first, exactly one new live generation is admitted.
+    const race = await Promise.allSettled([
+      second.releaseExecutionAdmission(identities[0], secondOld.request),
+      first.authorize({ credential: credentials[1], requestId: "live_after_two", modelId,
+        maxCostMicrousd: 100, billingMode: "usage" }),
+    ]);
+    expect(race.every((result) => result.status === "fulfilled")).toBe(true);
+    const live = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("request_id", "=", "live_after_two").executeTakeFirstOrThrow();
+    await first.startReservation({ reservationId: live.reservation_id, tokenId: live.token_id });
+    const liveBefore = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", live.reservation_id).executeTakeFirstOrThrow();
+    const settlement = { ...firstOld.key, mode: "exact" as const, actualCostMicrousd: 40 };
+    const settled = await Promise.all([first.finalizeReservation(settlement), second.finalizeReservation(settlement)]);
+    expect(settled[0]).toEqual(settled[1]);
+    await second.finalizeReservation({ ...secondOld.key, mode: "exact", actualCostMicrousd: 30 });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("reservation_id", "=", live.reservation_id).executeTakeFirstOrThrow()).toEqual(liveBefore);
+    await expect(first.authorize({ credential: credentials[0], requestId: "still_blocked_by_live", modelId,
+      maxCostMicrousd: 100, billingMode: "usage" })).rejects.toMatchObject({ code: "rate_limited", reason: "slot_busy" });
+    expect(await first.getFundingSummary(identities[0])).toMatchObject({ reservedMicrousd: 0, settledThisMonthMicrousd: 70 });
+    expect(await first.getFundingSummary(identities[1])).toMatchObject({ reservedMicrousd: 100 });
+    expect(await first.releaseExecutionAdmission(identities[0], firstOld.request)).toMatchObject({ usageKnown: false });
+    await expect(first.startReservation(firstOld.key)).rejects.toMatchObject({ code: "reservation_closed" });
+    clock = new Date(clock.getTime() + 20 * 60_000);
+    const nextRecovery = { ...secondOld.request, reservationId: live.reservation_id, tokenId: live.token_id,
+      expectedRequestId: live.request_id, expectedStartedAt: liveBefore.started_at!, expectedExpiresAt: liveBefore.expires_at,
+      localRunEndedAt: new Date(Date.parse(liveBefore.started_at!) + 10_000).toISOString() };
+    const fresh = (await first.issueRuntimeCredential(identities[0])).credential;
+    const reuseRace = await Promise.allSettled([
+      second.releaseExecutionAdmission(identities[1], nextRecovery),
+      first.authorize({ credential: fresh.token, requestId: "after_reused_slot", modelId,
+        maxCostMicrousd: 100, billingMode: "usage" }),
+    ]);
+    expect(reuseRace[0].status).toBe("fulfilled");
+    if (reuseRace[1].status === "rejected") {
+      expect(reuseRace[1].reason).toMatchObject({ code: "rate_limited", reason: "slot_busy" });
+      await first.authorize({ credential: fresh.token, requestId: "after_reused_slot", modelId,
+        maxCostMicrousd: 100, billingMode: "usage" });
+    }
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select("reservation_id")
+      .where("execution_admission_release", "is", null).where("status", "in", ["reserved", "starting", "in_flight", "settling"]).execute()).toHaveLength(1);
+    expect((await db.executor.selectFrom("ai_funded_usage_reservations").select("execution_recovery_slot")
+      .where("reservation_id", "=", live.reservation_id).executeTakeFirstOrThrow()).execution_recovery_slot).toBe(0);
+    expect(await first.releaseExecutionAdmission(identities[0], firstOld.request)).toMatchObject({ usageKnown: false });
   });
 
   it("replays matching no-dispatch zero settlement across independent pools without releasing twice", async () => {

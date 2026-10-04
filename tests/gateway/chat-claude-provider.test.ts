@@ -1,9 +1,11 @@
+import { ownerSdkAdapterFixture } from "./owner-sdk-home-test-support.js";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import type { CustomMcpApprovalClient } from "../../packages/gateway/src/chat/custom-mcp-approval-client.js";
+
+const createClaudeChatProviderAdapter = ownerSdkAdapterFixture();
 
 class FakeStream extends EventEmitter {}
 
@@ -787,7 +789,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     });
   });
 
-  it("uses the rotating funded credential and its shorter run deadline", async () => {
+  it("honors an injected trusted credential resolver and its shorter run deadline", async () => {
     const stdout = new FakeStream();
     const stderr = new FakeStream();
     const process = new EventEmitter() as EventEmitter & {

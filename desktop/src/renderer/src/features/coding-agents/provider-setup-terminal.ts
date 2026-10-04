@@ -1,3 +1,4 @@
+import { MATRIX_PI_CHAT_INSTANCE_ID } from "@matrix-os/contracts";
 import type {
   AgentProviderSummary,
   CanonicalProviderInstanceDescriptor,
@@ -114,9 +115,12 @@ export async function executeCatalogProviderSetupAction(input: {
     return false;
   }
   if (input.action.kind === "open_settings") {
-    // Retired system-harness model setup actions must not redirect to the
-    // coding-agent account surface. The explicit Settings gear remains available.
-    if (!["pi", "opencode", "codex", "claude_code"].includes(input.instance.driverKind)) return false;
+    const managedMatrixSettings = input.action.id === "matrix_ai_settings"
+      && ((input.instance.driverKind === "matrix_pi" && input.instance.id === MATRIX_PI_CHAT_INSTANCE_ID)
+        || (input.instance.driverKind === "kernel" && input.instance.id === "kernel_matrix_included"));
+    // Retired system-harness model setup actions remain blocked. Only the
+    // catalog-owned Matrix AI settings action may open its managed account surface.
+    if (!managedMatrixSettings && !["pi", "opencode", "codex", "claude_code"].includes(input.instance.driverKind)) return false;
     openProviderSettings();
     return true;
   }

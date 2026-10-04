@@ -5,6 +5,7 @@ import { useFileWatcherPattern } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
 
 interface ConversationMeta {
+  canonicalRecord?: import("@matrix-os/contracts").CanonicalChatRecord;
   id: string;
   preview: string;
   messageCount: number;

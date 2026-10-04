@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import {
+  FundedAiClaimKeySchema,
   FundedAiPolicyCheckRequestSchema,
   JEV_MODEL_ID,
   type FundedAiIdentity,
@@ -9,6 +10,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { isFundedProxyApiKey } from "./auth.js";
 import { AdmissionController, type AdmissionLease } from "./funded-relay-admission.js";
+import { refundFundedCapacityAttempt } from "./funded-relay-capacity.js";
 import { COUNT_TOKENS_BODY_LIMIT_BYTES, type FundedRelayConfig } from "./funded-relay-config.js";
 import {
   cloudflareJevTarget,
@@ -17,7 +19,7 @@ import {
   serializeFundedJevEvaluationRequest,
 } from "./funded-relay-evaluation.js";
 import { JEV_READINESS_PATH, jevProbeControlAuthorized, fixedJevProbeRequest, assertJevProbeSettlement } from "./funded-relay-jev-probe.js";
-import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
+import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
 import {
@@ -31,6 +33,7 @@ import {
   serializeFundedRequest,
   type FundedRequest,
 } from "./funded-relay-request.js";
+import { classifyFundedUpstreamRejection } from "./funded-relay-rejection.js";
 import { SettlementRetryQueue } from "./funded-relay-settlement-queue.js";
 import { boundedBody, safeUpstreamHeaders } from "./funded-relay-stream.js";
 import { createFundedUsageTracker, type FundedFinalization } from "./funded-relay-usage.js";
@@ -133,6 +136,29 @@ function errorResponse(
   return c.json({ type: "error", error: { type, message } }, status);
 }
 
+/** Gateway turn identity for interactive priority ordering; invalid values are ignored, never forwarded upstream. */
+function fundedClaimKey(c: Context): string | undefined {
+  const parsed = FundedAiClaimKeySchema.safeParse(c.req.header("x-matrix-funded-claim-key"));
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** A 429 that should not be retried soon: per-minute windows and provider throttling. */
+function rateLimited(c: Context): Response {
+  return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+}
+
+/**
+ * A concurrency refusal before any upstream call or after releasing the
+ * reservation untouched. The slot frees when another request finishes, so the
+ * reason header tells the gateway a short retry is safe and cannot duplicate
+ * work. Per-minute rate limits and upstream provider 429s never carry it.
+ */
+function capacityLimited(c: Context): Response {
+  const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+  response.headers.set("x-matrix-funded-reason", "slot_busy");
+  return response;
+}
+
 function jevNotStarted(response: Response): Response {
   response.headers.set("x-matrix-jev-dispatch", "not-started");
   return response;
@@ -145,7 +171,10 @@ function controlPlaneError(c: Context, error: unknown): Response {
       return errorResponse(c, 403, "permission_error", "Matrix-funded AI is unavailable");
     }
     if (error.status === 429) {
-      return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+      const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+      // Waiting-state hint for the gateway; correctness never depends on it.
+      if (error.priorityReason) response.headers.set("x-matrix-funded-reason", error.priorityReason);
+      return response;
     }
   }
   const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -248,15 +277,18 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   async function releaseBeforeStart(
     reservationId: string,
     tokenId: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
-      await platform.release(
+      const released = await platform.release(
         { reservationId, tokenId, reason: "pre_upstream_failure" },
         AbortSignal.timeout(config.platformTimeoutMs),
       );
+      return released.reservationId === reservationId && released.tokenId === tokenId
+        && released.status === "released" && released.reason === "pre_upstream_failure";
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI pre-start release failed", { errorName });
+      return false;
     }
   }
 
@@ -334,8 +366,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       return controlPlaneError(c, error);
     }
     const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
-    if (!admission.admitRuntime(runtimeRef)) {
-      return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+    const runtimeAttempt = admission.beginRuntimeAttempt(runtimeRef);
+    if (!runtimeAttempt) {
+      return rateLimited(c);
     }
     const requestId = requestIdFactory();
     const upstreamHeaders = cloudflareHeaders({
@@ -374,8 +407,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (state.lifetimeSignal.aborted || (error instanceof DOMException && error.name === "TimeoutError")) {
         return errorResponse(c, 504, "timeout_error", "AI access timed out");
       }
+      // Provider throttling on token counting is not an owner slot wait.
       if (error instanceof FundedControlPlaneError && error.status === 429) {
-        return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+        return rateLimited(c);
       }
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI token counting failed", { errorName });
@@ -389,6 +423,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         inputTokens,
         maxOutputTokens: parsedBody.max_tokens!,
         now: now(),
+        pricingReviews: config.pricingReviews,
       });
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -399,14 +434,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
 
     let authorization: Awaited<ReturnType<FundedPlatformClient["authorize"]>>;
     try {
+      const claimKey = fundedClaimKey(c);
       authorization = await platform.authorize({
         credential,
         requestId,
         modelId: model.canonicalModelId,
         maxCostMicrousd,
         ...(config.reservationMode === "usage" ? { billingMode: "usage" as const } : {}),
+        ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
+      refundFundedCapacityAttempt(runtimeAttempt, error);
       return controlPlaneError(c, error);
     }
     const reservation = authorization.reservation;
@@ -418,10 +456,19 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
+    // Authorization can cross the operator review deadline. Release its
+    // untouched reservation before start rather than dispatching stale pricing.
+    if (!isFundedModelPriceCurrent(model.canonicalModelId, now(), config.pricingReviews)) {
+      await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+      return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+    }
     const acquiredLease = admission.acquireResources(runtimeRef);
     if (!acquiredLease) {
-      await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
-      return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+      if (!await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId)) {
+        return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+      }
+      runtimeAttempt.refund();
+      return capacityLimited(c);
     }
     let resourceReleased = false;
     const resourceLease: AdmissionLease = {
@@ -454,13 +501,19 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const generationUrl = isOpenAi
       ? workersAiTarget(config.gatewayBaseUrl).url
       : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`;
+    // Retain pseudonymous generation receipts even when gateway collection is
+    // disabled. Payload suppression/ZDR remain set; counting and probes keep
+    // their existing headers.
+    const generationHeaders = new Headers(upstreamHeaders);
+    generationHeaders.set("cf-aig-collect-log", "true");
     const generationInit: RequestInit = {
       method: "POST",
-      headers: upstreamHeaders,
+      headers: generationHeaders,
       body: requestBody,
       redirect: "error",
       signal: generationSignal,
     };
+    let dispatched = false;
     try {
       const started = await platform.start(
         { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
@@ -470,13 +523,16 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         || started.requestId !== requestId || started.tokenId !== authorization.identity.tokenId) {
         throw new Error("Funded AI start response did not match its reservation");
       }
+      dispatched = true;
       const fetched = await fetchImpl(generationUrl, generationInit);
       const upstream = isOpenAi && fetched.ok
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
-        enqueueFinalization({ mode: "conservative" });
-        await upstream.body?.cancel("upstream rejected request");
+        enqueueFinalization(await classifyFundedUpstreamRejection({
+          upstream, canonicalModelId: model.canonicalModelId,
+          requestPath: c.req.path, signal: state.lifetimeSignal,
+        }));
         resourceLease.release();
         state.resourceLease = null;
         if (upstream.status === 429) {
@@ -516,10 +572,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       return new Response(responseBody, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
     } catch (error) {
       clearTimeout(firstResponseTimer);
-      if (error instanceof FundedControlPlaneError) {
-        await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+      if (!dispatched && error instanceof FundedControlPlaneError) {
+        const released = await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
         resourceLease.release();
         state.resourceLease = null;
+        if (!released) return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+        refundFundedCapacityAttempt(runtimeAttempt, error);
         return controlPlaneError(c, error);
       }
       enqueueFinalization({ mode: "conservative" });
@@ -778,8 +836,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         }
         const globalLease = admission.acquireGlobal();
         if (!globalLease) {
-          const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
-          return c.req.path === EVALUATE_PATH ? jevNotStarted(response) : response;
+          if (c.req.path === EVALUATE_PATH) {
+            return jevNotStarted(errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited"));
+          }
+          return admission.globalRefusalReason() === "busy" ? capacityLimited(c) : rateLimited(c);
         }
         const controller = new AbortController();
         activeRequests.add(controller);

@@ -1,6 +1,7 @@
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { PlatformDB } from '../db.js';
+import { WhatsAppPhoneSchema } from './config.js';
 import { compareWhatsAppCode, hashWhatsAppCode, decryptWhatsAppPayload, encryptWhatsAppPayload, hashWhatsAppSecret, whatsappEncryptionKey } from './crypto.js';
 import {
   WHATSAPP_AGENT_CONSENT_VERSION,
@@ -149,7 +150,8 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
       }
     });
   }
-  async function stop(sender: string, messageId: string, expiresAt: number, messageTimestampMs: number): Promise<boolean> {
+  async function stop(sender: string, messageId: string, expiresAt: number, messageTimestampMs: number, phone?: string): Promise<boolean> {
+    if (phone !== undefined && !WhatsAppPhoneSchema.safeParse(phone).success) throw new WhatsAppRepositoryError('invalid_input');
     validateSender(sender); validateId(messageId);
     return transaction(async (trx) => {
       const time = now();
@@ -177,7 +179,7 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
       }
       try {
         await insertJob(trx, { id: ackId, sender, expiresAt,
-          payload: { kind: 'reply', text: 'WhatsApp disconnected. Your Matrix Chat is still available in Matrix.' } }, time);
+          payload: { kind: 'reply', ...(phone ? { phone } : {}), text: 'WhatsApp disconnected. Your Matrix Chat is still available in Matrix.' } }, time);
       } catch (error) {
         // Queue admission raises this typed capacity error before attempting
         // its INSERT. A full delivery queue must not undo STOP revocation.
@@ -192,8 +194,9 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
       return true;
     });
   }
-  async function startLink(sender: string, requestId: string, replyDeadline?: number): Promise<{ token: string }> {
+  async function startLink(sender: string, requestId: string, replyDeadline?: number, phone?: string): Promise<{ token: string }> {
     validateSender(sender); validateId(requestId);
+    if (phone !== undefined && !WhatsAppPhoneSchema.safeParse(phone).success) throw new WhatsAppRepositoryError('invalid_input');
     return transaction(async (trx) => {
       const time = now();
       if (replyDeadline !== undefined && (!Number.isSafeInteger(replyDeadline) || replyDeadline <= time || replyDeadline > time + DAY_MS)) {
@@ -214,7 +217,7 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
       const token = randomBytes(32).toString('base64url');
       const inserted = await trx.insertInto('whatsapp_link_challenges').values({
         token_hash: hashWhatsAppSecret(token), request_id: requestId, sender,
-        token_cipher: encryptWhatsAppPayload({ token }, key), owner: null, code_hash: null,
+        token_cipher: encryptWhatsAppPayload({ token, replyDeadline: replyDeadline ?? time + DAY_MS, ...(phone ? { phone } : {}) }, key), owner: null, code_hash: null,
         attempts: 0, state: 'open', created_at: time, expires_at: Math.min(time + 10 * 60_000, replyDeadline ?? time + DAY_MS),
       }).onConflict((oc) => oc.column('request_id').doNothing()).returning('token_hash').executeTakeFirst();
       if (!inserted) {
@@ -236,6 +239,8 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
         .where((eb) => eb.or([eb('owner', '=', owner), eb('sender', '=', challenge.sender)])).execute();
       if (conflicting.some((row) => row.owner !== owner || row.sender !== challenge.sender)) throw new WhatsAppRepositoryError('invalid_link');
       if (challenge.state === 'open') {
+        const proof = decryptWhatsAppPayload(challenge.token_cipher, key);
+        const phone = WhatsAppPhoneSchema.optional().parse(proof.phone);
         const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
         const claimed = await trx.updateTable('whatsapp_link_challenges').set({ state: 'claimed', owner, code_hash: hashWhatsAppCode(code, key) })
           .where('token_hash', '=', hash).where('state', '=', 'open').where('owner', 'is', null).returning('token_hash').executeTakeFirst();
@@ -248,7 +253,7 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
         }
         await insertJob(trx, {
           id: `verification:${hash}`, sender: challenge.sender,
-          payload: { kind: 'verification', owner, tokenHash: hash, text: `Your Matrix connection code is ${code}. Enter it in Matrix. Never share this code.` },
+          payload: { kind: 'verification', owner, tokenHash: hash, ...(phone ? { phone } : {}), text: `Your Matrix connection code is ${code}. Enter it in Matrix. Never share this code.` },
           expiresAt: challenge.expires_at,
         }, time);
       }
@@ -274,13 +279,27 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
         .onConflict((oc) => oc.doNothing()).execute();
       const persisted = await trx.selectFrom('whatsapp_connections').selectAll().where('owner', '=', owner).executeTakeFirst();
       if (!persisted || persisted.sender !== challenge.sender) throw new WhatsAppRepositoryError('invalid_link');
+      const proof = decryptWhatsAppPayload(challenge.token_cipher, key);
+      const phone = WhatsAppPhoneSchema.optional().parse(proof.phone);
+      // Older proofs did not retain the original reply deadline. Fail closed
+      // at their challenge expiry rather than guessing a longer Meta window.
+      const replyDeadline = proof.replyDeadline ?? challenge.expires_at;
+      if (typeof replyDeadline !== 'number' || !Number.isSafeInteger(replyDeadline) ||
+        replyDeadline < challenge.expires_at || replyDeadline > challenge.created_at + DAY_MS) {
+        throw new WhatsAppRepositoryError('invalid_link');
+      }
       const consumed = await trx.updateTable('whatsapp_link_challenges').set({ state: 'consumed', code_hash: null, token_cipher: '' }).where('token_hash', '=', hash)
         .where('state', '=', 'claimed').where('owner', '=', owner).where('attempts', '<', 5).where('expires_at', '>', time).returning('token_hash').executeTakeFirst();
       if (!consumed) throw new WhatsAppRepositoryError('invalid_link');
       await trx.updateTable('whatsapp_jobs').set({ state: 'revoked', payload: null, fence: null, lease_expires_at: null, finished_at: time })
         .where('id', '=', `verification:${hash}`).where('state', 'in', ACTIVE).execute();
-      const row = await trx.selectFrom('whatsapp_connections').selectAll().where('owner', '=', owner).executeTakeFirstOrThrow();
-      return connection(row);
+      // Commit the acknowledgement with the verified association. Worker delivery
+      // survives request-process restarts and rechecks consent before sending.
+      await insertJob(trx, { id: `connected:${hash}`, sender: challenge.sender, expiresAt: Math.min(time + 10 * 60_000, replyDeadline),
+        payload: { kind: 'reply', owner, connectionId: persisted.id, ...(phone ? { phone } : {}),
+          text: 'Your Matrix account is connected to WhatsApp. Send a message to talk to your Matrix agent. Send STOP to disconnect.' },
+      }, time);
+      return connection(persisted);
     });
     if (!result) throw new WhatsAppRepositoryError('invalid_link');
     return result;

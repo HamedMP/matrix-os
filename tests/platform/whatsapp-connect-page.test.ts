@@ -27,6 +27,23 @@ function page(initiallyConnected: boolean) {
 }
 
 describe('WhatsApp connection response recovery', () => {
+  it('preserves the code and link with retry guidance when confirmation is busy', async () => {
+    const { window, el, fetch } = page(false);
+    const original = fetch.getMockImplementation()!;
+    fetch.mockImplementation(async (path, options) => path.endsWith('/confirm')
+      ? { ok: false, status: 503, json: async () => ({ error: 'private database diagnostic' }) }
+      : original(path, options));
+    await vi.waitFor(() => expect((el('claim') as HTMLButtonElement).hidden).toBe(false));
+    (el('claim') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect((el('confirm') as HTMLFormElement).hidden).toBe(false));
+    (el('code') as HTMLInputElement).value = '123456';
+    el('confirm').dispatchEvent(new window.Event('submit', { cancelable: true, bubbles: true }));
+    await vi.waitFor(() => expect(el('status').textContent).toBe('Connection is busy. Please retry this step shortly.'));
+    expect((el('confirm') as HTMLFormElement).hidden).toBe(false);
+    expect((el('code') as HTMLInputElement).value).toBe('123456');
+    expect(window.location.search).toContain('token=');
+    expect((el('claim') as HTMLButtonElement).disabled).toBe(false);
+  });
   it('shows authoritative linked state when confirmation commits but the reply is lost', async () => {
     const { window, el, fetch } = page(false);
     await vi.waitFor(() => expect((el('claim') as HTMLButtonElement).hidden).toBe(false));

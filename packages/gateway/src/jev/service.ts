@@ -83,6 +83,7 @@ export function createJevService(options: {
       let dispatched = false;
       try {
         const lease = await options.credentialProvider.getCredential({
+          requestClass: "background",
           minValidityMs: EVALUATION_TIMEOUT_MS + 5_000,
           signal: callerSignal,
         });

@@ -42,6 +42,7 @@ pnpm --filter '@matrix-os/brand' build
 pnpm --filter '@matrix-os/kernel' build
 pnpm --filter '@matrix-os/integrations-mcp' build
 pnpm --filter '@matrix-os/scope-runtime' build
+pnpm --filter '@matrix-os/bot-runtime' build
 pnpm --filter '@matrix-os/gateway' build
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"

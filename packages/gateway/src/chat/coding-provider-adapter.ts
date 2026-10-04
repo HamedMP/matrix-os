@@ -1,6 +1,7 @@
 import { sealToolOutput } from "../coding-agents/protected-tool-output.mjs";
 import { coarseToolOutputText } from "../coding-agents/codex-tool-output.mjs";
 import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
+import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
 import { boundedOperation } from "../bounded-operation.js";
@@ -694,5 +695,21 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       );
     },
   };
+  if (options.providerId === "codex" && options.nativeInputProvider?.deferInput) {
+    adapter.submitDeferredInput = async (input) => {
+      const active = activeSteerRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) throw new ChatSteerNotDeliveredError();
+      try {
+        await adapter.steer!(input);
+      } catch (error: unknown) {
+        if (error instanceof CodingAgentTurnError && ["thread_not_found", "thread_busy"].includes(error.code)) {
+          throw new ChatSteerNotDeliveredError();
+        }
+        if ((error instanceof CodingAgentTurnError && error.code === "turn_unavailable")
+          || (error instanceof Error && ["CodexControlRejectedError", "CodexControlUnavailableError"].includes(error.name))) throw new ChatInputNotDeliveredError();
+        throw error;
+      }
+    };
+  }
   return adapter;
 }
