@@ -8,6 +8,7 @@ import type {
   ProviderHarnessInstance,
   ProviderHarnessKind,
 } from "@matrix-os/contracts";
+import { hasConfiguredConnection } from "./harness-connection.js";
 import { RemovalDialog } from "./RemovalDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { titleCase, usageLines } from "./utils.js";
@@ -103,7 +104,7 @@ export function AccountsPanel({
   onRefresh?: () => void;
 }) {
   useLocalObservationExpiry(
-    sources.map((source) => source.localObservation?.staleAfter),
+    [harness.localObservation?.staleAfter, ...sources.map((source) => source.localObservation?.staleAfter)],
   );
   const [removeAccountId, setRemoveAccountId] = useState<string | null>(null);
   const removeAccount = accounts.find(
@@ -292,7 +293,7 @@ export function AccountsPanel({
           <>
             {selectedSource?.kind === "harness_profile" && selectedSource.localObservation?.state === "present_unverified" ? (
               <article className="matrix-ap-account" data-testid={`native-account-${harness.id}`}>
-                <div className="matrix-ap-account-main"><span className="matrix-ap-avatar" aria-hidden="true">{selectedSource.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{selectedSource.displayName}</strong><span>Connected</span></div></div>
+                <div className="matrix-ap-account-main"><span className="matrix-ap-avatar" aria-hidden="true">{selectedSource.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{selectedSource.displayName}</strong><span>{hasConfiguredConnection(harness, selectedSource) ? "Connected" : "Not connected"}</span></div></div>
                 <div className="matrix-ap-account-usage">
                   <strong>{usageLines(selectedSource.usage).primary}</strong>
                   <AllowanceMeter label={selectedSource.displayName} usage={selectedSource.usage} />
@@ -324,8 +325,7 @@ export function AccountsPanel({
             const ownsConnectionAction =
               selected ||
               (!harness.selectedAccountId && accounts[0]?.id === account.id);
-            const connected = account.authState === "authenticated" ||
-              source?.localObservation?.state === "present_unverified";
+            const connected = hasConfiguredConnection({ ...harness, authState: account.authState }, source);
             const status = connected ? "Connected" : "Not connected";
             const collapsed = guided && !connected && account.authState !== "expired";
             const card = (

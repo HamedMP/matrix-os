@@ -6,6 +6,7 @@ import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-con
 import { updateWorkflowRowStatus } from "./workflow-row-status.js";
 import { useEffect, useState, type ReactNode } from "react";
 import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { RetainedHarnessAction } from "./RetainedHarnessAction.js";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
@@ -232,6 +233,7 @@ export function AgentsProvidersView({
             const guided = Boolean(workflowClient && capability);
             const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
             const connected = hasConfiguredConnection(harness, source);
+            const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
@@ -251,10 +253,19 @@ export function AgentsProvidersView({
 
                 /> : null}
                 {!guided && harness.installState === "missing" && harness.harness !== "codex" && harness.harness !== "claude" ? <CatalogSetupPanel
-                  entry={{ harness: harness.harness, displayName: harness.displayName, installState: "missing", available: true, runnable: false, setupAction: "install", safeReason: "not_installed" }}
+                  entry={catalog ?? { harness: harness.harness as "pi" | "opencode" | "hermes" | "openclaw", displayName: harness.displayName, installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_unavailable" }}
                   disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} /> : null}
                 {!guided ? <>{connected ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}</> : null}
+                {!guided && (harness.configuredEnabled ?? harness.enabled) && supports("set_harness_enabled") ?
+                  <RetainedHarnessAction label="Disconnect" disabled={mutationsDisabled || workflowPermission === "forbidden"}
+                    action={() => onMutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false })}
+                    onSuccess={refreshSettings} /> : null}
                 {!guided && harness.installState === "installed" ? <details className="matrix-ap-advanced"><summary>Advanced configuration</summary>
+                  {(harness.harness === "pi" || harness.harness === "opencode") && catalog?.available && catalog.setupAction === "open_terminal"
+                    && !(supports("start_login") && harness.loginMethods.length > 0)
+                    && workflowPermission !== "forbidden" && onSetupHarness ?
+                    <RetainedHarnessAction label="Connect in Terminal" disabled={mutationsDisabled}
+                      action={() => onSetupHarness(harness.harness)} /> : null}
                   <HarnessEditor snapshot={snapshot} harness={harness} disabled={mutationsDisabled}
                     canUpdate={genericConfiguration && supports("update_harness")} canSetRoute={genericConfiguration && supports("set_route")}
                     canSelectSource={genericConfiguration && supports("select_access_source")} canSelectAccount={genericConfiguration && supports("select_account")}

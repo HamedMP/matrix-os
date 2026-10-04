@@ -211,6 +211,7 @@ describe("provider setup presentation", () => {
 
   it("keeps exactly one visible Terminal setup action for a missing agent", async () => {
     const value = snapshot();
+    value.harnessCatalog = [{ harness: "pi", displayName: "Pi", installState: "missing", available: true, runnable: false, setupAction: "install", safeReason: "not_installed" }];
     value.harnesses[0]!.installState = "missing";
     const onSetupHarness = vi.fn().mockResolvedValue(true);
     setup(value, { onSetupHarness });

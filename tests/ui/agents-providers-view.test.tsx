@@ -328,7 +328,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     expect(screen.queryByText("Authenticated · Oauth")).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5_001));
-    expect(screen.getAllByText("Connected").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Codex.*Not connected/ })).toBeVisible();
     expect(screen.queryByText(/Local login found; access not verified/)).not.toBeInTheDocument();
     next.harnesses[0]!.enabled = false;
     next.harnesses[0]!.configuredEnabled = false;
@@ -351,7 +351,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5001));
     expect(screen.queryByText("Local login found; access not verified")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Connected").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: new RegExp(`${harness}.*Not connected`) })).toBeVisible();
   });
   it("shows saved enabled intent separately from unavailable access and permits disabling it", () => {
     const next = snapshot();

@@ -602,3 +602,14 @@ Unsupported drivers retain only server-advertised legacy login methods there;
 owner denial never enables a fallback, and no login starts during rendering or
 refresh. Supported opaque Terminal/browser continuations stay explicit inside
 that disclosure. The grouped normal connection card remains singular.
+
+Non-guided saved agents retain Disconnect under advertised set_harness_enabled:
+it disables only the agent, preserving account credentials and saved routing.
+Failures retain the visible connection and present a safe retry. An explicit
+server catalog open_terminal action may launch Pi/OpenCode setup only inside
+Advanced configuration; callback presence alone and owner-denied access never
+create that capability. Saved missing rows use actual catalog install support,
+including runtime_not_supported, rather than synthesizing availability.
+Native connection labels share finite observation freshness and saved Off rules;
+observation expiry updates the row and account details without claiming known
+quota or remotely verified authentication from local login presence.
