@@ -9,6 +9,13 @@ if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   source /opt/matrix/bin/matrix-owner-env
   matrix_export_owner_env
 fi
+# An owner-requested uninstall remains authoritative across host upgrades.
+# Only the explicit host-control Install action clears this root-owned marker.
+if [ -e /var/lib/matrix-agent-runtime/disabled-hermes ] || [ -L /var/lib/matrix-agent-runtime/disabled-hermes ]; then
+  printf 'matrix-install-hermes: installation disabled by owner\n'
+  exit 0
+fi
+
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 HERMES_RELEASE="${HERMES_RELEASE:-v2026.9.21}"
 HERMES_COMMIT="${HERMES_COMMIT:-d337b736aa1e8ebecfab043842d13e4a2d2f48a3}"
