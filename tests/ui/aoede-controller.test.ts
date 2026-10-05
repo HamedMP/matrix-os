@@ -675,3 +675,18 @@ it('uses the same bound canonical Chat for typed messages while voice is unavail
   expect(createTurn).toHaveBeenCalledWith(binding.chatId, expect.objectContaining({ selection: selected, permissionMode: 'supervised', parts: [{ type: 'text', text: 'Build a timer' }] }));
   expect(h.media.startVoice).not.toHaveBeenCalled(); h.controller.dispose();
 });
+
+it.each([false, true])('releases native media before typed admission (end fails=%s)', async endFails => {
+  const selected = catalog.instances[0]!.defaultSelection!;
+  const h = harness(vi.fn(async () => ({ ...binding, selection: selected,
+    capability: { ...binding.capability, conversationMode: 'native_live' as const } })));
+  const order: string[] = [];
+  const createTurn = vi.fn(async () => { order.push('typed'); }); h.api.createTurn = createTurn;
+  await h.controller.open();
+  vi.mocked(h.media.getSnapshot).mockReturnValue({ ...h.media.getSnapshot(), phase: 'listening' } as never);
+  vi.mocked(h.media.end).mockImplementation(async () => { order.push('end'); if (endFails) throw new Error('cleanup failed'); });
+  expect(await h.controller.sendText('Test connection')).toBe(!endFails);
+  expect(order).toEqual(endFails ? ['end'] : ['end', 'typed']);
+  if (!endFails) expect(createTurn).toHaveBeenCalledWith(binding.chatId, expect.objectContaining({ permissionMode: 'supervised' }));
+  h.controller.dispose();
+});

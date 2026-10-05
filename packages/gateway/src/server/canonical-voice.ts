@@ -1,3 +1,4 @@
+import { nativeCompanionCanonicalDecision } from "../live-companion/canonical-decision.js";
 import { registerNativeCompanion } from "../live-companion/registration.js";
 import { createFundedNativeLiveAccess } from "../live-companion/funded-readiness.js";
 import { createCanonicalLivePort } from "../live-companion/task-broker.js";
@@ -69,6 +70,8 @@ export function registerCanonicalVoice(options: {
     const voicePlatformSpeechClient = createVoiceSessionPlatformSpeechClient(process.env);
     const native = registerNativeCompanion({ registry: voiceAdapters, connection: options.geminiLiveConnection, env: process.env,
       funded: process.env.NODE_ENV === "production" && process.env.MATRIX_AOEDE_NATIVE_LIVE === "1" ? createFundedNativeLiveAccess(process.env) : undefined });
+    const resolveVoiceDecision = (input: Parameters<typeof canonicalVoiceDecision>[0]) =>
+      native.requested && native.available ? nativeCompanionCanonicalDecision(input) : canonicalVoiceDecision(input);
     const voiceAdapterRegistration = native.requested ? { adapterId: native.available ? "gemini_live" : null, synthesisSource: undefined } : registerVoiceSessionMediaAdapters({
       registry: voiceAdapters,
       env: process.env,
@@ -164,7 +167,7 @@ export function registerCanonicalVoice(options: {
         const selection = (await chatRepository!.get(owner, chatId))?.chat.currentSelection;
         if (!selection) return undefined;
         const catalog = await voiceReadinessCatalog.getCatalog(principal, selection.instanceId);
-        return canonicalVoiceDecision({
+        return resolveVoiceDecision({
           selection,
           catalog,
           qualifiedPolicy: await qualifiedCanonicalPolicyFor(selection, catalog),
@@ -220,7 +223,7 @@ export function registerCanonicalVoice(options: {
               speechCapability ?? await voiceCapabilities.capabilities({
                 principalId: principal.userId, chatId: "aoede_bootstrap", surface,
               }),
-              canonicalVoiceDecision({
+              resolveVoiceDecision({
                 selection,
                 catalog,
                 surface,

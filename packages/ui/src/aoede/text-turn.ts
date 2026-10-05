@@ -8,6 +8,7 @@ interface TextContext { generation: number; chatId: string; revision: number; se
 export function createAoedeTextSender(deps: {
   context(): TextContext | null;
   catalog(): Promise<CanonicalProviderCatalog | null>;
+  prepare?(): Promise<boolean>;
   createTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<unknown>;
   refresh(): Promise<void>;
   fail(error: unknown): void;
@@ -16,14 +17,20 @@ export function createAoedeTextSender(deps: {
   let attempt: { context: TextContext; input: CanonicalCreateChatTurnRequest; text: string } | null = null;
   return async (value: string): Promise<boolean> => {
     const text = value.trim();
-    const context = deps.context();
-    if (!context || context.running || busy || !text || text.length > 8000) return false;
+    const opening = deps.context();
+    if (!opening || opening.running || busy || !text || text.length > 8000) return false;
+    let context: TextContext = opening;
     if (attempt && (attempt.context.generation !== context.generation || attempt.context.chatId !== context.chatId)) attempt = null;
     // An unknown outcome must be retried exactly; never reuse its id for edited text.
     if (attempt && attempt.text !== text) return false;
     busy = true;
     const current = () => { const live = deps.context(); return live?.generation === context.generation && live.chatId === context.chatId; };
     try {
+      const initial = context;
+      if (deps.prepare && !await deps.prepare()) return false;
+      const prepared = deps.context();
+      if (!prepared || prepared.running || prepared.generation !== initial.generation || prepared.chatId !== initial.chatId) return false;
+      context = prepared;
       if (!attempt) {
         const catalog = await deps.catalog();
         if (!current()) return false;

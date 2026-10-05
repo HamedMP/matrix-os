@@ -417,6 +417,14 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     } finally { action.busy = false; }
   };
   const sendText = createAoedeTextSender({
+    prepare: async () => {
+      // Native media never grants tools to its source Chat. Release that
+      // frozen owner before independently admitting a supervised typed run.
+      if (snapshot.binding?.capability.conversationMode !== "native_live" || !mediaLive()) return true;
+      if (!await endMedia()) return false;
+      await refresh();
+      return true;
+    },
     context: () => disposed || suspended || unavailable || newFlight || !snapshot.visible || !snapshot.binding || !detail || !api.createTurn ? null
       : { generation, chatId: snapshot.binding.chatId, revision: detail.record.chat.revision, selection: detail.record.chat.currentSelection ?? snapshot.binding.selection, running: Boolean(detail.record.activeRun) },
     catalog: () => controller.listProviders(), createTurn: (chatId, input) => api.createTurn!(chatId, input), refresh, fail,
