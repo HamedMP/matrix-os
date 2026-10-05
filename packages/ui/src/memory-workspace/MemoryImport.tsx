@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { SHELL_Z_INDEX } from "../shell-layering.js";
 import { z } from "zod/v4";
 import {
   parseMemoryImportBatch,
@@ -47,6 +48,7 @@ export function MemoryImport({
   onClose(): void;
   onImported(): Promise<void>;
 }) {
+  const [intentId] = useState(() => crypto.randomUUID());
   const [records, setRecords] = useState<MemoryImportSource[]>([]);
   const [included, setIncluded] = useState<string[]>([]);
   const [collections, setCollections] = useState<
@@ -155,7 +157,12 @@ export function MemoryImport({
       confirmedBatch.current = selected;
       setBatchLocked(true);
       setSelectionId(null);
-      await client.importSources(selected, memoryImportRequestId(selected));
+      const receipt = await client.importSources(
+        selected,
+        memoryImportRequestId(selected, intentId),
+      );
+      if (receipt.sources.length !== selected.length)
+        throw new Error("incomplete_import_receipt");
       if (live.current) await onImported();
     });
   }
@@ -177,14 +184,17 @@ export function MemoryImport({
         if (!open && !busy) onClose();
       }}
     >
-      <Dialog.Overlay className="mw-dialog-backdrop" />
+      <Dialog.Overlay
+        className="mw-dialog-backdrop"
+        style={{ zIndex: SHELL_Z_INDEX.appDialog }}
+      />
       <Dialog.Content
         className="mw-dialog"
         style={{
           position: "absolute",
           inset: "50% auto auto 50%",
           transform: "translate(-50%,-50%)",
-          zIndex: 21,
+          zIndex: SHELL_Z_INDEX.appDialog,
         }}
       >
         <Dialog.Title>Bring your knowledge together</Dialog.Title>

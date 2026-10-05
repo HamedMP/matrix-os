@@ -434,7 +434,6 @@
 .mw-dialog-backdrop {
   position: absolute;
   inset: 0;
-  z-index: 20;
   background: color-mix(in srgb, var(--mw-ink) 28%, transparent);
   display: flex;
   align-items: center;

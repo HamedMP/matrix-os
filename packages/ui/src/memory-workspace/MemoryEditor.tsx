@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { SHELL_Z_INDEX } from "../shell-layering.js";
 import type { MemorySource, MemoryWorkspaceClient } from "./model.js";
 import { safeMemoryMessage } from "./model.js";
 export function MemoryEditor({
@@ -90,14 +91,17 @@ export function MemoryEditor({
         if (!open && !busy) onClose();
       }}
     >
-      <Dialog.Overlay className="mw-dialog-backdrop" />
+      <Dialog.Overlay
+        className="mw-dialog-backdrop"
+        style={{ zIndex: SHELL_Z_INDEX.appDialog }}
+      />
       <Dialog.Content
         className="mw-dialog"
         style={{
           position: "absolute",
           inset: "50% auto auto 50%",
           transform: "translate(-50%,-50%)",
-          zIndex: 21,
+          zIndex: SHELL_Z_INDEX.appDialog,
         }}
       >
         <Dialog.Title>{committed ? "Edit note" : "New note"}</Dialog.Title>

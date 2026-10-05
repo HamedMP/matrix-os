@@ -14,9 +14,12 @@ const exportEnvelope = z
     warnings: z.array(z.string().max(500)).max(20).default([]),
   })
   .strict();
-/** Stable across lost responses, re-selection and dialog remounts; no private browser cache. */
-export function memoryImportRequestId(sources: MemoryImportSource[]): string {
-  return `import:${fingerprint(sources)}`;
+/** Replays the same selected batch within one explicit import intent. */
+export function memoryImportRequestId(
+  sources: MemoryImportSource[],
+  intentId: string,
+): string {
+  return `import:${fingerprint([intentId, sources])}`;
 }
 export function parseMemoryImportBatch(
   name: string,

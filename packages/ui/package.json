@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./collaboration-direct-client": "./src/collaboration/direct-client.ts",
     "./default-organization": "./src/collaboration/default-organization.ts",
+    "./shell-layering": "./src/shell-layering.ts",
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
