@@ -17,3 +17,5 @@ No raw audio, text, transcript, provider response, or credentials are persisted 
 Google API processing is explicitly selected for this Live test; this does not establish regional processing guarantees. Regional-restriction policies cannot be declared satisfied by an API key or hostname. Real speech finality and interrupted heard-word alignment remain qualification issue #2174.
 
 Composition entrypoints receive only calls to the extracted native-live module; its policy, admission, socket lifecycle and HTTP routes remain in focused files below 500 lines. Platform shutdown drains Live sockets and accounting before destroying the shared database. Tests cover eligibility, slot caps, expiry, budget conservation, sanitized setup, and actual bidirectional sockets. Update the public Aoede documentation in FinnaAI/matrix-os-site.
+
+The additive expense ledger uses an independent `native-live` migration scope and source fingerprint. A newer deployed core revision is preserved and does not suppress the Live ledger installation. The shared migration runner keeps the same advisory transaction lock across scopes, so concurrent startup cannot race DDL.

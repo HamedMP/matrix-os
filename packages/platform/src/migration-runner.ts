@@ -4,8 +4,9 @@ import { sql, type Kysely, type Transaction } from "kysely";
 export async function runPlatformMigration<Database>(
   db: Kysely<Database>,
   migrateSchema: (transaction: Transaction<Database>) => Promise<void>,
-  options: { revision?: { generation: number; fingerprint: string }; deadlockAttempts?: number } = {},
+  options: { scope?: 'core' | 'native-live'; revision?: { generation: number; fingerprint: string }; deadlockAttempts?: number } = {},
 ): Promise<void> {
+  const scope = options.scope ?? 'core';
   const maxAttempts = options.deadlockAttempts ?? 3;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
@@ -24,7 +25,7 @@ export async function runPlatformMigration<Database>(
             )
           `.execute(transaction);
           const applied = await sql<{ generation: number; fingerprint: string }>`
-            SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'core'
+            SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = ${scope}
           `.execute(transaction);
           const current = applied.rows[0];
           if (current && current.generation > options.revision.generation) return;
@@ -39,7 +40,7 @@ export async function runPlatformMigration<Database>(
         if (options.revision) {
           await sql`
             INSERT INTO platform_schema_revisions (scope, generation, fingerprint)
-            VALUES ('core', ${options.revision.generation}, ${options.revision.fingerprint})
+            VALUES (${scope}, ${options.revision.generation}, ${options.revision.fingerprint})
             ON CONFLICT (scope) DO UPDATE SET
               generation = EXCLUDED.generation,
               fingerprint = EXCLUDED.fingerprint,
