@@ -25,6 +25,7 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
+    NSAppleEventsUsageDescription: Matrix OS reads only the Notes folders, Mail mailboxes or calendars you select for a memory import preview.
     NSMicrophoneUsageDescription: Matrix OS uses the microphone only when you start voice input in Chat.
   notarize: true
 dmg:
