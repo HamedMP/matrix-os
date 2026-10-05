@@ -2,11 +2,11 @@ import { useMemo } from "react";
 import {
   MemoryWorkspace,
   createMemoryWorkspaceClient,
+  memoryContextChatReferences,
   type MemoryTransport,
 } from "@matrix-os/ui";
 import type {
   MemoryContextResult,
-  CanonicalChatResourceReference,
 } from "@matrix-os/contracts";
 import "@matrix-os/ui/memory-workspace.css";
 import { useConnection } from "../../stores/connection";
@@ -61,15 +61,7 @@ export default function DesktopMemoryWorkspace() {
     );
     if (desktopDriveDraftIdentity(useConnection.getState()) !== identity)
       return;
-    const references: CanonicalChatResourceReference[] = context.sources
-      .slice(0, 8)
-      .map((source) => ({
-        kind: "memory_source",
-        id: source.sourceId,
-        label: source.title.slice(0, 280),
-        revision: String(source.revision),
-      }));
-    if (!references.length) throw new Error("context_unavailable");
+    const references = memoryContextChatReferences(context);
     openDesktopMemoryChat(references, identity);
   }
   if (!client)

@@ -33,13 +33,16 @@ const reference = {
   label: "Private original",
   revision: "1",
 };
+const submit = vi.fn();
 afterEach(() => {
   cleanup();
   useCompanyDriveChatDraft.setState({ request: null });
+  submit.mockClear();
 });
 function MountedChat() {
   const [sessionId, setSession] = useState<string | undefined>("existing");
   const [sequence, setSequence] = useState(0);
+  const [active, setActive] = useState(true);
   const [draft, setDraft] = useState<
     (ChatAgentDraftRequest & { scope: string }) | null
   >(null);
@@ -52,6 +55,7 @@ function MountedChat() {
     return target;
   };
   const handoff = useWebChatDraftHandoff({
+    active,
     scope,
     sessionId,
     resources: composer.resources,
@@ -63,6 +67,9 @@ function MountedChat() {
         Finish opening new draft
       </button>
       <button onClick={() => setSession("existing")}>Open previous Chat</button>
+      <button onClick={() => { setSession("another"); setDraft(null); }}>Interrupt with another Chat</button>
+      <button onClick={() => setActive(false)}>Leave Chat</button>
+      <button onClick={() => setActive(true)}>Return to Chat</button>
       <ChatInput
         key={scope}
         scope={scope}
@@ -71,7 +78,7 @@ function MountedChat() {
         connected
         busy={false}
         attachmentsEnabled={false}
-        onSubmit={() => {}}
+        onSubmit={submit}
         draftRequest={!sessionId && draft?.scope === scope ? draft : null}
         onDraftConsumed={(id) => {
           handoff.acknowledge(id);
@@ -106,4 +113,22 @@ it("an already mounted Web composer receives memory only in the intended new dra
     "Keep this old draft",
   );
   expect(screen.queryByTitle("Private original")).toBeNull();
+});
+
+it("retries an interrupted handoff into a real composer without sending or changing the other draft", async () => {
+  render(<MountedChat />);
+  act(() => useCompanyDriveChatDraft.getState().openMemory([reference], identity));
+  fireEvent.click(screen.getByRole("button", { name: "Interrupt with another Chat" }));
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Another private draft" } });
+  expect(screen.queryByTitle("Private original")).toBeNull();
+  expect(useCompanyDriveChatDraft.getState().request).not.toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Leave Chat" }));
+  fireEvent.click(screen.getByRole("button", { name: "Return to Chat" }));
+  expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Another private draft");
+  fireEvent.click(screen.getByRole("button", { name: "Finish opening new draft" }));
+  await screen.findByTitle("Private original");
+  await waitFor(() => expect(useCompanyDriveChatDraft.getState().request).toBeNull());
+  expect(submit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Interrupt with another Chat" }));
+  expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Another private draft");
 });

@@ -107,3 +107,30 @@ it("keeps an intent pending while the target Chat surface is inactive", async ()
   rerender({ active: true });
   await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
 });
+
+it("retries an interrupted intent only after Chat reactivation and rejects its old acknowledgement", async () => {
+  const start = vi.fn()
+    .mockReturnValueOnce({ id: 1, scope: "new:1" })
+    .mockReturnValueOnce({ id: 2, scope: "new:2" });
+  useCompanyDriveChatDraft.getState().openMemory([reference], identity);
+  const request = useCompanyDriveChatDraft.getState().request;
+  const { result, rerender } = renderHook(
+    ({ active, scope, sessionId, resources }) => useWebChatDraftHandoff({
+      active, scope, sessionId, resources, startDraft: start,
+    }),
+    { initialProps: { active: true, scope: "new:1", sessionId: undefined as string | undefined, resources: [] as (typeof reference)[] } },
+  );
+  expect(start).toHaveBeenCalledTimes(1);
+  rerender({ active: true, scope: "previous", sessionId: "previous", resources: [] });
+  act(() => result.current.acknowledge(1));
+  expect(start).toHaveBeenCalledTimes(1);
+  expect(useCompanyDriveChatDraft.getState().request).toBe(request);
+  rerender({ active: false, scope: "previous", sessionId: "previous", resources: [] });
+  rerender({ active: true, scope: "previous", sessionId: "previous", resources: [] });
+  expect(start).toHaveBeenCalledTimes(2);
+  rerender({ active: true, scope: "new:2", sessionId: undefined, resources: [reference] });
+  act(() => result.current.acknowledge(1));
+  expect(useCompanyDriveChatDraft.getState().request).toBe(request);
+  act(() => result.current.acknowledge(2));
+  expect(useCompanyDriveChatDraft.getState().request).toBeNull();
+});

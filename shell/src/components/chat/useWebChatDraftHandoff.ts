@@ -41,28 +41,60 @@ export function useWebChatDraftHandoff({
   const request = useCompanyDriveChatDraft((state) => state.request);
   const [appliedId, setAppliedId] = useState<number | null>(null);
   const dispatched = useRef<string | null>(null);
+  const paused = useRef<string | null>(null);
   const pending = useRef<{
     request: Request;
     id: number;
     scope: string;
+    originScope: string;
+    entered: boolean;
   } | null>(null);
   useEffect(() => {
-    if (
-      !active ||
-      !request ||
-      useCompanyDriveChatDraft.getState().request !== request
-    )
+    if (!active || !request) {
+      pending.current = null;
+      dispatched.current = null;
+      paused.current = null;
+      setAppliedId(null);
       return;
+    }
+    if (useCompanyDriveChatDraft.getState().request !== request) return;
     if (!applicableCompanyDriveDraft(request, identity)) {
       useCompanyDriveChatDraft.getState().consume(request);
       pending.current = null;
+      dispatched.current = null;
+      paused.current = null;
       return;
     }
+    if (pending.current && pending.current.request !== request) {
+      pending.current = null;
+      dispatched.current = null;
+      paused.current = null;
+    }
+    const previous = pending.current;
+    if (previous?.scope === scope) previous.entered = true;
+    if (
+      previous && previous.scope !== scope &&
+      (previous.entered || previous.originScope !== scope)
+    ) {
+      // Navigation cancels this delivery, not the unconsumed owner intent.
+      pending.current = null;
+      dispatched.current = null;
+      paused.current = request.id;
+      setAppliedId(null);
+      return;
+    }
+    // Do not pull the owner back out of the conversation they just selected.
+    // Reactivating Chat or choosing a new draft permits another delivery.
+    if (paused.current === request.id && sessionId) return;
     if (dispatched.current === request.id) return;
+    paused.current = null;
     dispatched.current = request.id;
+    setAppliedId(null);
     const target = startDraft("", request.references ?? [request.reference]);
-    pending.current = { request, ...target };
-  }, [active, request, identity, startDraft]);
+    pending.current = {
+      request, ...target, originScope: scope, entered: target.scope === scope,
+    };
+  }, [active, request, identity, startDraft, scope, sessionId]);
   useEffect(() => {
     const target = pending.current;
     if (
