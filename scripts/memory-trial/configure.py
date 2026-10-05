@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Render protected local trial config and a secret-free comparison receipt."""
 import json
+import fcntl
+import hmac
 import os
 import pathlib
 import stat
@@ -145,11 +147,71 @@ def benchmark_receipt(env):
     }
 
 def write_exclusive(path, text):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
-    with os.fdopen(fd, 'w') as output:
-        # Installer umask 077 must not remove the intended service-group read bit.
-        os.fchmod(output.fileno(), 0o640)
-        output.write(text)
+    pending = path.with_name('.' + path.name + '.pending')
+    fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+    try:
+        with os.fdopen(fd, 'w') as output:
+            # Installer umask 077 must not remove the intended service-group read bit.
+            os.fchmod(output.fileno(), 0o640)
+            output.write(text)
+            output.flush()
+            os.fsync(output.fileno())
+        # Publish a complete inode atomically; link refuses an existing destination.
+        os.link(pending, path, follow_symlinks=False)
+    finally:
+        pending.unlink()
+
+def protected_file_info(source):
+    info = os.fstat(source.fileno())
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_mode & 0o037 or info.st_size > 262144):
+        raise ValueError('Existing trial configuration must be a protected operator-owned regular file')
+    return info
+
+def publish_configuration(root, outputs):
+    """Resume an interrupted install only when every existing published file matches."""
+    if set(outputs) != {'hindsight.env', 'ov.conf', 'configuration.receipt.json'}:
+        raise ValueError('Unexpected trial configuration output')
+    root_info = root.lstat()
+    if not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.geteuid() or root_info.st_mode & 0o022:
+        raise ValueError('Trial configuration root must be operator controlled')
+    lock_fd = os.open(root / '.configure.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    with os.fdopen(lock_fd, 'r+b') as lock:
+        protected_file_info(lock)
+        # A second installer fails immediately rather than interfering with staged files.
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        missing = []
+        for name, text in outputs.items():
+            expected = text.encode('utf8')
+            if len(expected) > 262144:
+                raise ValueError('Trial configuration output is oversized')
+            try:
+                fd = os.open(root / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            except FileNotFoundError:
+                missing.append(name)
+                continue
+            with os.fdopen(fd, 'rb') as source:
+                protected_file_info(source)
+                if not hmac.compare_digest(source.read(262145), expected):
+                    raise ValueError('Trial configuration differs; inspect it before changing models')
+        # At most three reserved staging files. Discard interrupted unpublished writes
+        # only after validating all existing configuration, under the installer lock.
+        for name in outputs:
+            pending = root / ('.' + name + '.pending')
+            try:
+                fd = os.open(pending, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            except FileNotFoundError:
+                continue
+            with os.fdopen(fd, 'rb') as source:
+                protected_file_info(source)
+            pending.unlink()
+        for name in missing:
+            write_exclusive(root / name, outputs[name])
+        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
 def main():
     if sys.argv[1:] != ['--private-owner-trial'] or os.geteuid() != 0:
@@ -167,11 +229,7 @@ def main():
         'ov.conf': json.dumps(viking, indent=2) + '\n',
         'configuration.receipt.json': json.dumps(receipt, indent=2) + '\n',
     }
-    for name in outputs:
-        if (ROOT / name).exists() or (ROOT / name).is_symlink():
-            raise ValueError('Trial configuration already exists; inspect it before changing models')
-    for name, text in outputs.items():
-        write_exclusive(ROOT / name, text)
+    publish_configuration(ROOT, outputs)
     print('Private trial engine configuration prepared.')
 
 if __name__ == '__main__':

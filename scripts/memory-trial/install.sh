@@ -16,7 +16,7 @@ install -d -m 0750 -o root -g matrix /etc/matrix/memory-trial
 install -d -m 0700 -o matrix -g matrix /var/lib/matrix-memory-trial /var/lib/matrix-memory-trial/cache
 # The operator must provision owner-local Postgres + pgvector and a protected operator.json first.
 [[ -f /etc/matrix/memory-trial/operator.json && ! -L /etc/matrix/memory-trial/operator.json ]] || { echo 'Prepare the protected operator configuration first.' >&2; exit 1; }
-if [[ ! -f /etc/matrix/memory-trial/hindsight.env || ! -f /etc/matrix/memory-trial/ov.conf ]]; then
+if [[ ! -f /etc/matrix/memory-trial/hindsight.env || ! -f /etc/matrix/memory-trial/ov.conf || ! -f /etc/matrix/memory-trial/configuration.receipt.json ]]; then
   timeout 30 python3 "$trial_script_dir/configure.py" --private-owner-trial
 fi
 # Repair group readability on retries without modifying protected configuration contents.

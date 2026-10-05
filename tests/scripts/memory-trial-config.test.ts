@@ -3,6 +3,9 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 const modulePath = resolve("scripts/memory-trial/configure.py");
+function exercisePublication(operation: string) {
+  return JSON.parse(execFileSync("python3", ["-B", "-c", `import importlib.util,json,os,pathlib,sys,tempfile\ns=importlib.util.spec_from_file_location('trial',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\nwith tempfile.TemporaryDirectory() as tmp:\n root=pathlib.Path(tmp)\n outputs={'hindsight.env':'synthetic-key-one','ov.conf':'synthetic-key-two','configuration.receipt.json':'synthetic-receipt'}\n ${operation.replaceAll("\n", "\n ")}`, modulePath], { timeout: 10000, encoding: "utf8" }));
+}
 function render(patch: Record<string, string | null> = {}, receipt = false) {
   return JSON.parse(
     execFileSync(
@@ -20,6 +23,28 @@ function render(patch: Record<string, string | null> = {}, receipt = false) {
   );
 }
 describe("native private memory trial configuration", () => {
+  it("resumes interrupted configuration without replacing a matching protected file", () => {
+    const result = exercisePublication(`m.write_exclusive(root/'hindsight.env',outputs['hindsight.env'])\noriginal=(root/'hindsight.env').stat().st_ino\nm.publish_configuration(root,outputs)\nprint(json.dumps({'sameInode':original==(root/'hindsight.env').stat().st_ino,'complete':all((root/name).read_text()==text for name,text in outputs.items())}))`);
+    expect(result).toEqual({ sameInode: true, complete: true });
+  });
+  it("rejects divergent or symlinked existing configuration before creating missing files", () => {
+    for (const setup of [`m.write_exclusive(root/'hindsight.env','different-existing-key')`, `(root/'unrelated').write_text('preserve');(root/'hindsight.env').symlink_to(root/'unrelated')`]) {
+      const result = exercisePublication(`${setup}\nrejected=False\ntry: m.publish_configuration(root,outputs)\nexcept (ValueError,OSError): rejected=True\nprint(json.dumps({'rejected':rejected,'missingUntouched':not (root/'ov.conf').exists(),'originalPreserved':(root/'hindsight.env').read_text() in ['different-existing-key','preserve']}))`);
+      expect(result).toEqual({ rejected: true, missingUntouched: true, originalPreserved: true });
+    }
+  });
+  it("recovers an interrupted staged write and never publishes partial content", () => {
+    const result = exercisePublication(`pending=root/'.hindsight.env.pending'\nm.write_exclusive(pending,'partial-staged-key')\nm.publish_configuration(root,outputs)\nprint(json.dumps({'complete':all((root/name).read_text()==text for name,text in outputs.items()),'pendingRemoved':not pending.exists()}))`);
+    expect(result).toEqual({ complete: true, pendingRemoved: true });
+  });
+  it("keeps failed publication invisible and removes its staged file before retry", () => {
+    const result = exercisePublication(`originalLink=m.os.link\ndef failLink(*args,**kwargs): raise OSError('synthetic interruption')\nm.os.link=failLink\ntry: m.write_exclusive(root/'hindsight.env',outputs['hindsight.env'])\nexcept OSError: pass\nm.os.link=originalLink\ninvisible=not (root/'hindsight.env').exists() and not (root/'.hindsight.env.pending').exists()\nm.publish_configuration(root,outputs)\nprint(json.dumps({'invisibleUntilComplete':invisible,'retrySucceeded':all((root/name).read_text()==text for name,text in outputs.items())}))`);
+    expect(result).toEqual({ invisibleUntilComplete: true, retrySucceeded: true });
+  });
+  it("refuses a concurrent installer without waiting or publishing files", () => {
+    const result = exercisePublication(`fd=os.open(root/'.configure.lock',os.O_RDWR|os.O_CREAT,0o600)\nm.fcntl.flock(fd,m.fcntl.LOCK_EX|m.fcntl.LOCK_NB)\nrejected=False\ntry: m.publish_configuration(root,outputs)\nexcept BlockingIOError: rejected=True\nos.close(fd)\nprint(json.dumps({'rejected':rejected,'unpublished':not (root/'hindsight.env').exists()}))`);
+    expect(result).toEqual({ rejected: true, unpublished: true });
+  });
   it("disables TLS probing only for the mandatory local trial database", () => {
     const [h] = render({ MATRIX_MEMORY_HINDSIGHT_DATABASE_URL: "postgresql://trial:synthetic@127.0.0.1/hindsight?application_name=trial" });
     const database = new URL(h.HINDSIGHT_API_DATABASE_URL);
