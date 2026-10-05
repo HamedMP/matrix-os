@@ -141,3 +141,8 @@ Agent support is evidence-based. Codex, Claude Code, OpenCode or Hermes may be n
 4. **Public docs PR** — separate `FinnaAI/matrix-os-site` documentation for permissions, funding, behavior and recovery.
 
 Jev Ultrafast, generic user-authored recipes, research routing and other decision workflows remain separate follow-up specs.
+
+
+## Recipe catalog compatibility (2026-10-05)
+
+The bound Jev Inbox Triage recipe remains discoverable in the shared recipe panel when the host provides its verified Jev creation handoff, including while the generic Bot catalog is loading. A generic read-only Inbox bot with the same recipe ID must not replace this entry. Hosts without the bound handoff may retain the generic Inbox bot. Creation continues to require a connected Gmail account and the existing explicit, unchecked-by-default labeling grant; catalog presentation must not widen permissions or migrate saved agents.

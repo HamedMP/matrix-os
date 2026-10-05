@@ -89,9 +89,13 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
   const fitsCategory = useCallback((recipe: AgentInspiration) => category === "All" || recipe.categories.includes(category), [category]);
   const botMode = !!onInstantiateBot;
   const launchIds = useMemo(() => Object.fromEntries(botRecipes.map((recipe) => [recipe.recipeId, true] as const)), [botRecipes]);
-  const visibleBotRecipes = botRecipes.filter((recipe) => (category === "All" || agentInspirations.some(idea => idea.id === recipe.recipeId && fitsCategory(idea))) && (!normalized || [recipe.name, recipe.description, recipe.output]
+  // The launch catalog reuses Jev's ID for a generic read-only Inbox bot.
+  // Prefer the bound Jev handoff when available: it verifies the Gmail account
+  // and saves the owner's explicit labeling grant before opening Chat.
+  const useBoundJev = !!onCreateJev;
+  const visibleBotRecipes = botRecipes.filter((recipe) => (!useBoundJev || recipe.recipeId !== jevRecipe.id) && (category === "All" || agentInspirations.some(idea => idea.id === recipe.recipeId && fitsCategory(idea))) && (!normalized || [recipe.name, recipe.description, recipe.output]
     .some((value) => value.toLocaleLowerCase().includes(normalized))));
-  const showJev = !botMode && !Object.hasOwn(launchIds, jevRecipe.id) && (!normalized || [jevRecipe.name, jevRecipe.description, jevRecipe.category,
+  const showJev = (useBoundJev || (!botMode && !Object.hasOwn(launchIds, jevRecipe.id))) && (!normalized || [jevRecipe.name, jevRecipe.description, jevRecipe.category,
     ...jevRecipe.skills, ...jevRecipe.integrations].some((value) => value.toLocaleLowerCase().includes(normalized)));
   const matches = useMemo(() => normalized ? agentInspirations.filter((recipe) =>
     fitsCategory(recipe) && (!botMode || !isLaunchBotRecipeId(recipe.id)) && !Object.hasOwn(launchIds, recipe.id) &&
