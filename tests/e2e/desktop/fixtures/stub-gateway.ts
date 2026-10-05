@@ -794,6 +794,14 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       return;
     }
 
+    // The fixture account is intentionally individual. A complete empty
+    // listing exercises Electron's authoritative no-organization state instead
+    // of leaving organization-only surfaces in their outage/loading fallback.
+    if (req.method === "GET" && path === "/api/organizations") {
+      json(res, 200, { complete: true, organizations: [] });
+      return;
+    }
+
     if (req.method === "GET" && path === "/api/conversations") {
       json(res, 200, [
         ...(createdHermesConversation ? [{
