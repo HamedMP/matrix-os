@@ -9,6 +9,32 @@ const dirs: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true }))); });
 async function temp() { const dir = await mkdtemp(join(tmpdir(), "matrix-memory-bench-test-")); dirs.push(dir); return dir; }
 describe("memory benchmark CLI lifecycle", () => {
+  it("retains completed runs and a truthful failure receipt when the aggregate limit is reached", async () => {
+    vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const dir = await temp();
+    expect(await main(["--baseline", "none", "--repeat", "2", "--distractors", "0", "--out", dir], { maxDataBytes: 1024 * 1024 })).toBe(2);
+    const [run] = await readdir(dir);
+    const reports = JSON.parse(await readFile(join(dir, run, "results.json"), "utf8"));
+    const failure = JSON.parse(await readFile(join(dir, run, "run-status.json"), "utf8"));
+    expect(reports).toHaveLength(1);
+    expect(failure).toMatchObject({ status: "incomplete", reason: "aggregate-report-limit", retainedRuns: 1, plannedRuns: 2 });
+    expect(await readFile(join(dir, run, "report.html"), "utf8")).toContain("Benchmark run incomplete");
+  });
+  it("retains completed reports when the dataset makes full artifacts exceed their cap", async () => {
+    vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const dir = await temp();
+    const sourceText = "x".repeat(100000);
+    const suite = createSuite({ distractors: 0 });
+    suite.cases = [{ id: "large-dataset", group: "large-dataset", steps: Array.from({ length: 50 }, (_, index) => ({ type: "ingest" as const, source: { id: `source-${index}`, scope: "personal", path: `notes/${index}.md`, text: sourceText, role: "document" as const, observedAt: "2026-01-01T00:00:00Z" }, expected: { action: "skip" as const, placements: [], retentionAllowed: true } })) }];
+    const path = join(dir, "dataset.json");
+    await writeFile(path, JSON.stringify(suite));
+    expect(await main(["--suite", path, "--baseline", "none", "--out", join(dir, "runs")], { maxDataBytes: 1024 * 1024, maxArtifactBytes: 4 * 1024 * 1024 + 65536 })).toBe(2);
+    const [run] = await readdir(join(dir, "runs"));
+    const retained = join(dir, "runs", run);
+    const reports = JSON.parse(await readFile(join(retained, "results.json"), "utf8"));
+    expect(reports[0].summary.admissionCount).toBe(50);
+    expect(JSON.parse(await readFile(join(retained, "run-status.json"), "utf8"))).toMatchObject({ reason: "artifact-limit", omittedArtifacts: ["suite.json", "comparisons.json", "report.html evidence explorer"] });
+  });
   it("gates the evaluated custom adapter while retaining comparison controls", async () => {
     vi.spyOn(process.stdout, "write").mockReturnValue(true);
     const dir = await temp();

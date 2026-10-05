@@ -7,6 +7,23 @@ import { suiteSchema, LIMITS } from "../../packages/kernel/src/memory-evaluation
 const suite = createSuite({ distractors: 20, seed: 7 });
 
 describe("memory evaluation replay", () => {
+  it("aborts capped case collections and drains instead of evicting scored sources", async () => {
+    const input = structuredClone({ ...suite, cases: [suite.cases[0]] });
+    const ingest = input.cases[0].steps[0];
+    if (ingest.type !== "ingest") throw new Error("fixture");
+    input.cases[0].steps.splice(1, 0, { ...structuredClone(ingest), source: { ...ingest.source, id: "second", path: "second.md" } });
+    const report = await runBenchmark(input, () => createBaseline("none"), { collectionLimit: 1 });
+    expect(report.passed).toBe(false);
+    expect(report.cases[0].operations.at(-1)?.error).toBe("collection-limit");
+    expect(report.cases[0].queries).toHaveLength(0);
+    const baseline = createBaseline("raw-lexical", { collectionLimit: 1 });
+    await baseline.ingest(ingest.source, AbortSignal.timeout(1000));
+    await expect(baseline.ingest({ ...ingest.source, id: "second" }, AbortSignal.timeout(1000))).rejects.toThrow(/collection limit/);
+    const query = input.cases[0].steps.at(-1);
+    if (query?.type !== "query") throw new Error("fixture");
+    await expect(baseline.retrieve(query.query, AbortSignal.timeout(1000))).rejects.toThrow(/closed/);
+    await baseline.close();
+  });
   it("retains only extracted candidates, not unrelated text from the original message", async () => {
     const baseline = createBaseline("matrix-local");
     const text = "Unrelated launch code ORANGE.\nI prefer green tea.";
