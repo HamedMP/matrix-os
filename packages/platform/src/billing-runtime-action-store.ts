@@ -1,3 +1,4 @@
+import { getAccountDeletionAdmission, withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { PlatformDB } from './db.js';
@@ -73,37 +74,39 @@ export async function enqueueBillingRuntimeAction(
     createdAt: string;
   },
 ): Promise<BillingRuntimeActionRecord | undefined> {
-  await db.ready;
-  const id = randomUUID();
-  const result = await sql<BillingRuntimeActionRow>`
-    INSERT INTO billing_runtime_actions (
-      id, machine_id, stripe_subscription_id, action, reason, status,
-      execute_after, attempts, created_at, updated_at
-    )
-    SELECT
-      ${id}, machine.machine_id, ${input.stripeSubscriptionId}, ${input.action},
-      ${input.reason}, 'queued', ${input.executeAfter}, 0, ${input.createdAt}, ${input.createdAt}
-    FROM (
-      SELECT machine_id
-      FROM user_machines
-      WHERE clerk_user_id = ${input.clerkUserId}
-        AND runtime_slot = ${input.runtimeSlot}
-        AND provisioning_class = 'customer'
-        AND deleted_at IS NULL
-      ORDER BY provisioned_at DESC
-      LIMIT 1
-    ) AS machine
-    ON CONFLICT (machine_id, action) WHERE status IN ('queued', 'running')
-    DO UPDATE SET
-      execute_after = LEAST(billing_runtime_actions.execute_after, EXCLUDED.execute_after),
-      stripe_subscription_id = EXCLUDED.stripe_subscription_id,
-      reason = EXCLUDED.reason,
-      cancel_requested_at = NULL,
-      updated_at = EXCLUDED.updated_at
-    RETURNING *
-  `.execute(db.executor);
-  const row = result.rows[0];
-  return row ? mapBillingRuntimeAction(row) : undefined;
+  return withAccountDeletionOwnerLock(db, input.clerkUserId, async (trx, admission) => {
+    if (!admission.newWorkAllowed) return undefined;
+    const id = randomUUID();
+    const result = await sql<BillingRuntimeActionRow>`
+      INSERT INTO billing_runtime_actions (
+        id, machine_id, stripe_subscription_id, action, reason, status,
+        execute_after, attempts, created_at, updated_at
+      )
+      SELECT
+        ${id}, machine.machine_id, ${input.stripeSubscriptionId}, ${input.action},
+        ${input.reason}, 'queued', ${input.executeAfter}, 0, ${input.createdAt}, ${input.createdAt}
+      FROM (
+        SELECT machine_id
+        FROM user_machines
+        WHERE clerk_user_id = ${input.clerkUserId}
+          AND runtime_slot = ${input.runtimeSlot}
+          AND provisioning_class = 'customer'
+          AND deleted_at IS NULL
+        ORDER BY provisioned_at DESC
+        LIMIT 1
+      ) AS machine
+      ON CONFLICT (machine_id, action) WHERE status IN ('queued', 'running')
+      DO UPDATE SET
+        execute_after = LEAST(billing_runtime_actions.execute_after, EXCLUDED.execute_after),
+        stripe_subscription_id = EXCLUDED.stripe_subscription_id,
+        reason = EXCLUDED.reason,
+        cancel_requested_at = NULL,
+        updated_at = EXCLUDED.updated_at
+      RETURNING *
+    `.execute(trx.executor);
+    const row = result.rows[0];
+    return row ? mapBillingRuntimeAction(row) : undefined;
+  });
 }
 
 export async function cancelQueuedBillingRuntimeActions(
@@ -179,12 +182,13 @@ export async function isBillingRuntimeActionRunnable(
   await db.ready;
   const row = await db.executor
     .selectFrom('billing_runtime_actions')
-    .select('id')
+    .innerJoin('user_machines', 'user_machines.machine_id', 'billing_runtime_actions.machine_id')
+    .select('user_machines.clerk_user_id')
     .where('id', '=', id)
-    .where('status', '=', 'running')
+    .where('billing_runtime_actions.status', '=', 'running')
     .where('cancel_requested_at', 'is', null)
     .executeTakeFirst();
-  return Boolean(row);
+  return row ? (await getAccountDeletionAdmission(db, row.clerk_user_id)).newWorkAllowed : false;
 }
 
 export async function listBillingRuntimeActions(

@@ -1,4 +1,5 @@
 import type { PlatformDB } from './db.js';
+import { getAccountDeletionAdmission } from './account-deletion/admission.js';
 import { deriveEntitlementAccess, EntitlementStatusSchema, type EntitlementAccessDecision } from './profile-routing.js';
 import { getRuntimeAccessDecision, type BillingEntitlement, type RuntimeAccessDecision } from './billing.js';
 import { resolveEffectiveBillingEntitlementForSlot } from './billing-entitlement-resolver.js';
@@ -42,6 +43,22 @@ export async function getRuntimeEntitlementDecisionForUser(
   provisioningClass?: string,
   now = new Date(),
 ): Promise<EntitlementAccessDecision> {
+  const deletion = await getAccountDeletionAdmission(db, clerkUserId, env, now);
+  if (deletion.runtimeAccess !== 'normal') {
+    const existing = deletion.runtimeAccess === 'grace'
+      ? await db.executor.selectFrom('user_machines').select('machine_id')
+        .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null)
+        .where('activation_state', '=', 'authorized').where('status', 'in', ['running', 'recovering'])
+        .where('provisioned_at', '<=', deletion.scheduledAt!)
+        .$if(Boolean(runtimeSlot), (query) => query.where('runtime_slot', '=', runtimeSlot!))
+        .executeTakeFirst()
+      : undefined;
+    return {
+      status: existing ? 'active' : 'disabled', runtimeProxyAllowed: Boolean(existing),
+      ownerDataPreserved: true, ownerDataExportable: true,
+      remediation: existing ? null : 'Account deletion is pending.',
+    };
+  }
   // Preview and Private Preview machines are platform-funded and bounded by their own quotas.
   if (provisioningClass === 'preview' || provisioningClass === 'private-preview') {
     return {
