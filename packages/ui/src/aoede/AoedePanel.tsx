@@ -22,6 +22,7 @@ export interface AoedePanelProps {
   conversationKey?: string;
   surface?: "web_canvas" | "web_desktop" | "electron_desktop";
   canSendText?: boolean;
+  canOpenConversation?: boolean;
   scopeLabel: string;
   focusRevision?: number;
   status: AoedeStatus;
@@ -64,7 +65,7 @@ export interface AoedePanelProps {
 
 /** Presentation only. The host owns focus restoration, light dismissal, media and canonical work. */
 export function AoedePanel({
-  title = "Aoede", presentation, conversationKey, surface, canSendText, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions,
+  title = "Aoede", presentation, conversationKey, surface, canSendText, canOpenConversation, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions,
   capability, canCancel, error, children, commands, settings, subscribeInputLevel, renderResponse,
 }: AoedePanelProps) {
   const id = useId();
@@ -188,7 +189,7 @@ export function AoedePanel({
             if (event.detail === 0) { if (hold.current) release(); else begin({}); }
           }}>Push to talk</Button> : null;
   if ((presentation === "halo" || capability?.conversationMode === "native_live") && typeof document !== "undefined") {
-    return createPortal(<AoedeLivePanel key={conversationKey} pushToTalkControl={pushToTalkControl} {...{ presentation, surface, canSendText, title, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions, capability, canCancel, error, children, commands: { ...commands, dismiss: afterRelease(commands.dismiss), end: afterRelease(commands.end), pause: afterRelease(commands.pause), newConversation: afterRelease(commands.newConversation) }, settings, subscribeInputLevel, renderResponse }} />, document.body);
+    return createPortal(<AoedeLivePanel key={conversationKey} pushToTalkControl={pushToTalkControl} {...{ presentation, surface, canSendText, canOpenConversation, title, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions, capability, canCancel, error, children, commands: { ...commands, dismiss: afterRelease(commands.dismiss), end: afterRelease(commands.end), pause: afterRelease(commands.pause), newConversation: afterRelease(commands.newConversation) }, settings, subscribeInputLevel, renderResponse }} />, document.body);
   }
   return (
     <section className="matrix-aoede" aria-labelledby={`${id}-title`} data-state={status}>

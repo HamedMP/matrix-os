@@ -41,6 +41,13 @@ function setup(overrides: Partial<AoedePanelProps> = {}) {
 }
 
 describe("AoedePanel standalone presentation", () => {
+  it("does not show an active voice session during bootstrap", () => {
+    setup({ presentation: "halo", capability: undefined, status: "connecting", canOpenConversation: false });
+    expect(screen.getByText("Connecting to your workspace…")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Mute" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand conversation" })).toBeDisabled();
+    expect(document.querySelector(".matrix-aoede-live__halo")).toBeNull();
+  });
   it.each([undefined, { ...capability, status: "unavailable" as const }])("retains the compact halo presentation when readiness is missing or unavailable", readiness => {
     setup({ presentation: "halo", surface: "electron_desktop", capability: readiness, status: "failed",
       error: { code: "provider_unavailable", retryable: true, recovery: "retry_connection" } });

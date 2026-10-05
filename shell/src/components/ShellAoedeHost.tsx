@@ -267,6 +267,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
             conversationKey={snapshot.binding?.chatId}
             surface={controller.surface()}
             canSendText={controller.canSendText()}
+            canOpenConversation={Boolean(snapshot.binding)}
             focusRevision={snapshot.focusRevision}
             scopeLabel={snapshot.binding?.scope.label ?? "Workspace"}
             status={snapshot.status}

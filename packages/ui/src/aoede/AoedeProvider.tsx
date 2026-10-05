@@ -51,7 +51,7 @@ export function AoedeAssistant() {
   return <div ref={focusTarget} role="dialog" aria-modal="false" aria-label="Aoede assistant" tabIndex={-1} onKeyDown={event => {
     if (event.key === "Escape") { event.stopPropagation(); void controller.dismiss(); }
   }}>
-    <AoedePanel presentation={controller.presentation} conversationKey={snapshot.binding?.chatId} surface={controller.surface()} canSendText={controller.canSendText()} scopeLabel={snapshot.binding?.scope.label ?? "Workspace"} status={snapshot.status} focusRevision={snapshot.focusRevision}
+    <AoedePanel presentation={controller.presentation} conversationKey={snapshot.binding?.chatId} surface={controller.surface()} canSendText={controller.canSendText()} canOpenConversation={Boolean(snapshot.binding)} scopeLabel={snapshot.binding?.scope.label ?? "Workspace"} status={snapshot.status} focusRevision={snapshot.focusRevision}
       microphoneActive={snapshot.microphoneActive} turnMode={snapshot.turnMode} captions={snapshot.canonical.captions}
       capability={snapshot.binding?.capability} error={snapshot.error ?? undefined}
       canCancel={snapshot.canonical.canCancel}

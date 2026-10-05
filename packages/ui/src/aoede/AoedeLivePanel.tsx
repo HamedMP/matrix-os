@@ -25,7 +25,7 @@ export function AoedeLivePanel(props: AoedePanelProps & { pushToTalkControl?: Re
   const conversation = useRef<HTMLElement>(null);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => { conversation.current?.focus(); }, [props.focusRevision]);
-  const active = !["idle", "ended", "failed"].includes(props.status);
+  const active = Boolean(props.capability) && !["idle", "ended", "failed"].includes(props.status);
   const ready = props.capability?.status === "available" && props.capability.turnModes.includes(props.turnMode);
   const style = { zIndex: (props.surface ?? props.capability?.surface) === "electron_desktop" ? DESKTOP_Z_INDEX.voiceCompanion : SHELL_Z_INDEX.voiceCompanion,
     "--live-forest": desktopPalette.forest, "--live-paper": desktopPalette.paper,
@@ -58,7 +58,7 @@ export function AoedeLivePanel(props: AoedePanelProps & { pushToTalkControl?: Re
         <strong>Matrix</strong>
         <button type="button" aria-label="More options" aria-expanded={more} onClick={() => setMore(v => !v)}>···</button>
         <button type="button" aria-label="Dismiss Aoede" onClick={props.commands.dismiss}><img src={minusIcon} alt="" /></button>
-        <button type="button" aria-label="Expand conversation" disabled={!props.commands.viewHistory} onClick={props.commands.viewHistory}><img src={expandIcon} alt="" /></button>
+        <button type="button" aria-label="Expand conversation" disabled={!props.commands.viewHistory || props.canOpenConversation === false} onClick={props.commands.viewHistory}><img src={expandIcon} alt="" /></button>
       </header>
       <div className="matrix-aoede-live__body">
         <div className="matrix-aoede-live__meta"><span role="status">{props.capability || active ? AOEDE_STATUS_LABELS[props.status] : props.status === "failed" ? "Connection unavailable" : "Connecting"}</span><span>{boundedAoedeText(props.scopeLabel, 160)}</span></div>
