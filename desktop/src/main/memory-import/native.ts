@@ -5,7 +5,43 @@ import { open } from "node:fs/promises";
 import { basename } from "node:path";
 import { createMemoryImportService } from "./service";
 import { MEMORY_IMPORT_SCRIPT } from "./native-script";
-import type { MemoryImportProvider } from "../../shared/memory-import-ipc";
+import {
+  MemoryImportBatchSchema,
+  type MemoryImportProvider,
+  type MemoryImportBatch,
+} from "../../shared/memory-import-ipc";
+import { z } from "zod/v4";
+const mailPreviewSchema = z.object({
+  records: MemoryImportBatchSchema.shape.records,
+  warnings: MemoryImportBatchSchema.shape.warnings,
+}).strict();
+/** Validate bounded source bodies before hashing; never use mutable mailbox or app item IDs when Message-ID exists. */
+export function normalizeNativeMailPreview(input: unknown): MemoryImportBatch {
+  const value = mailPreviewSchema.parse(input);
+  if (value.records.some(r => r.kind !== "email") ||
+      value.records.reduce((n, r) => n + r.content.length, 0) > 1000000)
+    throw Error("Invalid mail preview");
+  const records: MemoryImportBatch["records"] = [];
+  let duplicate = false;
+  for (const record of value.records) {
+    const fingerprint = createHash("sha256").update(JSON.stringify([
+      record.externalId, record.title, record.metadata?.sender ?? "",
+      record.metadata?.recipient ?? "", record.content,
+    ])).digest("hex");
+    const externalId = `mail:payload:${fingerprint}`;
+    if (records.some(existing => existing.externalId === externalId)) {
+      duplicate = true;
+      continue;
+    }
+    records.push({ ...record, externalId });
+  }
+  const warnings = [...value.warnings];
+  if (duplicate) {
+    if (warnings.length === 20) warnings[19] = "Duplicate message copies were omitted. Some other import warnings are not shown.";
+    else warnings.push("Duplicate message copies were omitted.");
+  }
+  return MemoryImportBatchSchema.parse({ records, warnings });
+}
 export async function readMemoryExport(path: string) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -66,7 +102,8 @@ export function runNativeMemoryRead(
           return;
         }
         try {
-          resolve(JSON.parse(stdout));
+          const value: unknown = JSON.parse(stdout);
+          resolve(provider === "mail" && action === "preview" ? normalizeNativeMailPreview(value) : value);
         } catch {
           reject(
             Object.assign(new Error("Native source response invalid"), {

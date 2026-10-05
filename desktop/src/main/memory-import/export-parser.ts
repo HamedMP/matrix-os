@@ -60,6 +60,22 @@ function parseIcs(content: string, sourceIdentity: string): MemoryImportBatch {
     .replace(/\r\n/g, "\n")
     .replace(/\n[ \t]/g, "")
     .split("\n");
+  // X-WR-RELCALID is calendar identity, not a mutable display name. Only
+  // accept it at VCALENDAR scope, never from an event or nested component.
+  let depth = 0;
+  let calendarId: string | undefined;
+  for (const line of lines) {
+    if (line.startsWith("BEGIN:")) depth++;
+    else if (line.startsWith("END:")) depth--;
+    else if (depth === 1 && line.startsWith("X-WR-RELCALID:")) {
+      const id = line.slice("X-WR-RELCALID:".length).trim();
+      if (id) {
+        if (calendarId && calendarId !== id) throw Error("Conflicting calendar identities");
+        calendarId = id;
+      }
+    }
+  }
+  const namespace = calendarId ? `calendar-id:${calendarId}` : sourceIdentity;
   const records: MemoryImportRecord[] = [];
   let fields: Record<
     string,
@@ -97,7 +113,7 @@ function parseIcs(content: string, sourceIdentity: string): MemoryImportBatch {
         fields.UID.value, recurrence?.params ?? "", recurrence?.value ?? "",
       ]);
       records.push({
-        externalId: `calendar:export:${hash(sourceIdentity)}:${hash(eventIdentity)}`,
+        externalId: `calendar:export:${hash(namespace)}:${hash(eventIdentity)}`,
         title: unescapeIcs(fields.SUMMARY?.value ?? "Calendar event"),
         content: [
           fields.SUMMARY?.value ?? "Calendar event",
@@ -143,6 +159,7 @@ function parseIcs(content: string, sourceIdentity: string): MemoryImportBatch {
     records,
     warnings: [
       "Recurring events are imported as definitions; individual occurrences are not expanded. Calendar alarms and attachments are omitted.",
+      ...(!calendarId ? ["This export has no stable calendar identifier. Importing it from another path creates separate sources; reuse the same file path for updates."] : []),
     ],
   };
 }

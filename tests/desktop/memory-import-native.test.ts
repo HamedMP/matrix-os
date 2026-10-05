@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readMemoryExport } from "../../desktop/src/main/memory-import/native";
+import { readMemoryExport, normalizeNativeMailPreview } from "../../desktop/src/main/memory-import/native";
 import { MEMORY_IMPORT_SCRIPT } from "../../desktop/src/main/memory-import/native-script";
 let folder: string | undefined;
 afterEach(async () => {
@@ -40,7 +40,7 @@ describe("supported read-only macOS automation", () => {
     const run = new Function("Application", `${MEMORY_IMPORT_SCRIPT}; return run;`)(() => app);
     const preview = () => {
       const inventory = JSON.parse(run([JSON.stringify({ provider: "mail", action: "inventory", input: {} })]));
-      return JSON.parse(run([JSON.stringify({ provider: "mail", action: "preview", input: { collectionIds: [inventory.collections[0].id], limit: 10 } })])).records[0];
+      return normalizeNativeMailPreview(JSON.parse(run([JSON.stringify({ provider: "mail", action: "preview", input: { collectionIds: [inventory.collections[0].id], limit: 10 } })]))).records[0];
     };
     const original = preview();
     mailboxName = "Archive";
@@ -48,6 +48,28 @@ describe("supported read-only macOS automation", () => {
     expect(preview().externalId).toBe(original.externalId);
     accountId = "account-two";
     expect(preview().externalId).not.toBe(original.externalId);
+  });
+  it("retains distinct messages sharing Message-ID and deduplicates only exact stable payload copies", () => {
+    let mailboxName = "Inbox", itemOffset = 0;
+    const message = (id: number, body: string, sender = "one@example.test") => ({ id: () => id + itemOffset, messageId: () => "<duplicate@example.test>", subject: () => "Synthetic", content: () => body, dateReceived: () => new Date("2026-10-05T00:00:00Z"), sender: () => sender });
+    const mailbox = { name: () => mailboxName, mailboxes: [], messages: [message(1, "First body"), message(2, "Different body"), message(3, "First body"), message(4, "First body", "other@example.test")] };
+    const app = { accounts: [{ id: () => "account-one", name: () => "Account", mailboxes: [mailbox] }], mailboxes: [] };
+    const run = new Function("Application", `${MEMORY_IMPORT_SCRIPT}; return run;`)(() => app);
+    const preview = () => {
+      const inventory = JSON.parse(run([JSON.stringify({ provider: "mail", action: "inventory", input: {} })]));
+      const raw = JSON.parse(run([JSON.stringify({ provider: "mail", action: "preview", input: { collectionIds: [inventory.collections[0].id], limit: 10 } })]));
+      expect(raw.records).toHaveLength(4);
+      return normalizeNativeMailPreview(raw);
+    };
+    const first = preview();
+    expect(first.records).toHaveLength(3);
+    expect(first.warnings).toContain("Duplicate message copies were omitted.");
+    expect(new Set(first.records.map(r => r.externalId)).size).toBe(3);
+    mailboxName = "Archive"; itemOffset = 99;
+    expect(preview().records.map(r => r.externalId)).toEqual(first.records.map(r => r.externalId));
+  });
+  it("rejects oversized native payloads before fingerprinting", () => {
+    expect(() => normalizeNativeMailPreview({ records: [{ externalId: "mail:one", title: "Synthetic", content: "x".repeat(65537), kind: "email", collection: "Inbox" }], warnings: [] })).toThrowError(expect.objectContaining({ name: "ZodError" }));
   });
   it("retains the bounded part of a large preview and warns instead of discarding everything", () => {
     let reads = 0;

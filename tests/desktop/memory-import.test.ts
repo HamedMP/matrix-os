@@ -257,6 +257,16 @@ describe("export import", () => {
     expect(parseMemoryExport("calendar.ics", content, "account-a/file-two").records[0].externalId).not.toBe(first.records[0].externalId);
     expect(parseMemoryExport("renamed.ics", content.replace("Review", "Updated"), "account-a/file-one").records[0].externalId).toBe(first.records[0].externalId);
   });
+  it("uses a stable exported calendar ID across paths and warns when only the file namespace is available", () => {
+    const event = "BEGIN:VEVENT\nUID:same-event\nSUMMARY:Synthetic\nDTSTART:20261005T100000Z\nEND:VEVENT";
+    const stable = `BEGIN:VCALENDAR\nX-WR-RELCALID:calendar-one\n${event}\nEND:VCALENDAR`;
+    const first = parseMemoryExport("first.ics", stable, "path-one");
+    const moved = parseMemoryExport("moved.ics", stable, "path-two");
+    expect(moved.records[0].externalId).toBe(first.records[0].externalId);
+    expect(parseMemoryExport("other.ics", stable.replace("calendar-one", "calendar-two"), "path-one").records[0].externalId).not.toBe(first.records[0].externalId);
+    const fallback = parseMemoryExport("first.ics", stable.replace("X-WR-RELCALID:calendar-one\n", ""), "path-one");
+    expect(fallback.warnings).toContain("This export has no stable calendar identifier. Importing it from another path creates separate sources; reuse the same file path for updates.");
+  });
   it("preserves calendar recurrence/timezone without fabricating UTC dates", () => {
     const p = parseMemoryExport(
       "events.ics",
