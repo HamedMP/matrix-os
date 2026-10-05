@@ -1,3 +1,4 @@
+import {BotTaskExecutorControl} from "./BotTaskExecutorControl.js";
 import { botModelRoutingLabel } from '@matrix-os/contracts';
 import type { BotAuthorityView, BotTaskSummary, CanonicalChatModelSelection, CanonicalProviderCatalog, ChatAgent } from '@matrix-os/contracts';
 import { deriveCanonicalProviderChoices } from '../../canonical-provider-choice.js';
@@ -15,7 +16,8 @@ export function BotDetailsPanel({ agent, agentId, authority, bots, catalog, cata
 }) {
   const models = catalog ? deriveCanonicalProviderChoices(catalog) : [];
   const modelDetails = <section className='grid gap-2'><h4 className='text-xs font-semibold'>Runs on</h4><p className='text-xs' style={chatAgentMutedStyle}>{botModelRoutingLabel(agent ? agent.selection : undefined, catalog)}</p>
-      {agent ? <MatrixBotModelField label='Bot model' selection={agent.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} pending={pending || !catalog} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} onChange={onModelChange}/> : <p role="status" className="text-xs" style={chatAgentMutedStyle}>Bot model is unavailable. <button type="button" className={chatAgentButtonClass} onClick={onChanged}>Retry bot details</button></p>}
+      {agent ? <MatrixBotModelField botClient={bots} label='Bot model' selection={agent.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} pending={pending || !catalog} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} onChange={onModelChange}/> : <p role="status" className="text-xs" style={chatAgentMutedStyle}>Bot model is unavailable. <button type="button" className={chatAgentButtonClass} onClick={onChanged}>Retry bot details</button></p>}
+      <BotTaskExecutorControl client={bots} agentId={agentId} pending={pending} onSetup={onSetup}/>
       <p className='text-xs leading-5' style={chatAgentMutedStyle}>Automatic uses the route configured on this computer. Matrix AI models use Matrix AI credit. App access still requires the bot’s permission.</p>
     </section>;
   return <aside aria-label='Bot details' className={`matrix-bot-details${hosted ? ' matrix-bot-details--hosted' : ''}`}>

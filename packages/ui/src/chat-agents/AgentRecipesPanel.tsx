@@ -1,3 +1,6 @@
+import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
+import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
+import type {BotClient} from "./bots/client.js";
 import { BotRecipeSetup } from "./bots/BotRecipeSetup.js";
 import { isAutomaticBotSelection, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
@@ -25,9 +28,9 @@ export const AGENT_RECIPE_COUNT = agentInspirations.length + 1;
 export const BOT_RECIPE_COUNT = agentInspirations.filter((recipe) => !isLaunchBotRecipeId(recipe.id)).length + LAUNCH_BOT_RECIPE_IDS.length;
 const EMPTY_BOT_RECIPES: BotRecipeSummary[] = [];
 
-export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
+export function AgentRecipesPanel({ onSetup, botClient, onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
   botRecipes = EMPTY_BOT_RECIPES, matrixModels = [], catalog, catalogLoading = false, onInstantiateBot, onOpenBotChat }: {
-  onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
+  onSetup?:()=>void; botClient?: BotClient; onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
   connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
   botRecipes?: BotRecipeSummary[]; matrixModels?: readonly CanonicalProviderChoice[];
   catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
@@ -45,7 +48,11 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
   const [botError, setBotError] = useState("");
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const botAttempt = useRef<{ key: string; requestId: string } | null>(null);
+  const transportScope=botClient ?? onInstantiateBot;
+  const owner=useRef({transportScope});
+  if(owner.current.transportScope !== transportScope) owner.current={transportScope};
+  const botAttempt = useRef<{ key: string; requestId: string; chatId?:string; executorAttempted?:boolean } | null>(null);
+  useEffect(() => {botAttempt.current=null; setBotPending(null); setBotError("");},[transportScope]);
   const selectableModels = matrixBotSelectableModelChoices(matrixModels, catalog);
   // Initialize the unsaved form once when its catalog arrives; later refreshes preserve intent.
   if (setupRecipe && chosenBotSelection === undefined && !catalogLoading && selectableModels[0]) {
@@ -54,10 +61,11 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
   const botSelection = chosenBotSelection ?? null;
   const botModelAvailable = Boolean(botSelection && (isAutomaticBotSelection(botSelection) || selectableModels.some((choice) =>
     choice.instanceId === botSelection.instanceId && choice.modelId === botSelection.model)));
-  const createBot = async (recipe: BotRecipeSummary, name = recipe.name) => {
+  const createBot = async (recipe: BotRecipeSummary, name = recipe.name, executor:BotExecutorSelection | null = null) => {
     if (!onInstantiateBot || !onOpenBotChat || botPending || !botSelection || !botModelAvailable || catalogLoading) return;
+    const scope=owner.current, current=()=>mounted.current && owner.current===scope;
     const key = `${recipe.recipeId}@${recipe.version}:${JSON.stringify(botSelection)}:${name}`;
-    if (botAttempt.current?.key !== key) {
+    if (!botAttempt.current?.chatId && botAttempt.current?.key !== key) {
       const bytes = new Uint8Array(16);
       globalThis.crypto.getRandomValues(bytes);
       botAttempt.current = { key, requestId: `req_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}` };
@@ -66,19 +74,22 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
     setBotError("");
     try {
       const ref = { recipeId: recipe.recipeId, version: recipe.version };
-      const chatId = await (name !== recipe.name
+      const chatId = botAttempt.current.chatId ?? await (name !== recipe.name
         ? onInstantiateBot(ref, botAttempt.current.requestId, botSelection, name)
         : onInstantiateBot(ref, botAttempt.current.requestId, botSelection));
-      if (!mounted.current) return;
+      if(!current()) return;
+      botAttempt.current.chatId = chatId;
+      if (executor || botAttempt.current.executorAttempted) {if (!botClient) throw new Error("Task execution unavailable"); botAttempt.current.executorAttempted=true; await configureCreatedExecutor(botClient,chatId,executor,current,true);}
+      if (!current()) return;
       await onOpenBotChat(chatId);
-      if (!mounted.current) return;
+      if (!current()) return;
       botAttempt.current = null;
       setSetupRecipe(null);
     } catch (error: unknown) {
       console.warn("[chat-agents] Bot creation failed:", error instanceof Error ? error.name : "UnknownError");
-      if (mounted.current) setBotError("Bot could not be created. Try again.");
+      if (current()) setBotError(botAttempt.current?.chatId ? "Your bot was created. Task setup could not complete. Retry to continue." : "Bot could not be created. Try again.");
     } finally {
-      if (mounted.current) setBotPending(null);
+      if (current()) setBotPending(null);
     }
   };
   const gmailAccounts = activeConnections("gmail", connections);
@@ -112,7 +123,7 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
       <input className={chatAgentInputClass} type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search templates" aria-label="Search recipes" />
     </label>
     <div className="flex flex-wrap gap-2" role="group" aria-label="Template categories">{categories.map(value => <button type="button" key={value} aria-pressed={category === value} className="matrix-chat-agent-category rounded-full border px-3 py-1 text-xs" onClick={() => setCategory(value)}>{value}</button>)}</div>
-    {setupRecipe ? <BotRecipeSetup key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} error={botError} onSelectionChange={selection => { setBotSelection(selection); setBotError(""); }} onCreate={name => { void createBot(setupRecipe, name); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
+    {setupRecipe ? <BotRecipeSetup onSetup={onSetup} botClient={botClient} creationRetained={!!botAttempt.current?.chatId} key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} error={botError} onSelectionChange={selection => { setBotSelection(selection); setBotError(""); }} onCreate={(name,executor) => { void createBot(setupRecipe, name,executor); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
     {botError && !setupRecipe ? <p role="alert" className="text-xs">{botError}</p> : null}
     {showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
       {shownBots.map((recipe) => <article key={`${recipe.recipeId}@${recipe.version}`} data-matrix-recipe={recipe.recipeId}
@@ -122,7 +133,7 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
             <p className="matrix-template-description mt-1 text-xs leading-5" style={chatAgentMutedStyle}>{recipe.description}</p></div></div>
         <p className="matrix-template-output text-xs" style={chatAgentMutedStyle} title={recipe.output}>{recipe.output}</p>
         <button type="button" aria-label={`Use ${recipe.name}`} disabled={!onInstantiateBot || !onOpenBotChat || !!botPending}
-          className={`${chatAgentButtonClass} matrix-template-action self-start`} onClick={() => { setBotSelection(undefined); setSetupRecipe(recipe); setBotError(""); }}>
+          className={`${chatAgentButtonClass} matrix-template-action self-start`} onClick={() => { botAttempt.current=null; setBotSelection(undefined); setSetupRecipe(recipe); setBotError(""); }}>
           {botPending?.startsWith(`${recipe.recipeId}@${recipe.version}:`) ? "Creating…" : "Set up bot"}</button>
       </article>)}
       {showJev ? <article data-matrix-recipe={jevRecipe.id} className="matrix-chat-agent-card matrix-chat-agent-recipe-card flex min-w-0 flex-col gap-3 rounded-xl border p-3">

@@ -1,3 +1,5 @@
+import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
+import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import { Dialog } from "../Dialog.js";
 import { BotEditorApps } from "./bots/BotEditorApps.js";
 import { isAutomaticBotSelection, matrixBotModelChoices, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
@@ -45,8 +47,8 @@ async function loadRecipeResources(client: ChatAgentClient) {
   };
 }
 
-function DailyBriefCreation({ recipe, client, models, catalog, catalogLoading, onOpen, onClose }: {
-  recipe: BotRecipeSummary; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
+function DailyBriefCreation({ onSetup, recipe, client, models, catalog, catalogLoading, onOpen, onClose }: {
+  onSetup?:()=>void; recipe: BotRecipeSummary; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   catalog: CanonicalProviderCatalog | null; catalogLoading: boolean; onOpen(chatId: string): void | Promise<void>; onClose(): void;
 }) {
   const [selection, setSelection] = useState<CanonicalChatModelSelection | null>(() => {
@@ -55,32 +57,35 @@ function DailyBriefCreation({ recipe, client, models, catalog, catalogLoading, o
   });
   const [pending, setPending] = useState(false), [error, setError] = useState("");
   const opening = useRef(false), generation = useRef(0);
-  const attempt = useRef<{ key: string; requestId: string } | null>(null);
-  useEffect(() => () => { generation.current += 1; opening.current = false; }, [client]);
+  const attempt = useRef<{ key: string; requestId: string; chatId?:string; executorAttempted?:boolean } | null>(null);
+  useEffect(() => {attempt.current=null; setPending(false); return () => { generation.current += 1; opening.current = false; };}, [client]);
   const available = Boolean(selection && (isAutomaticBotSelection(selection) || matrixBotSelectableModelChoices(models, catalog)
     .some(choice => choice.instanceId === selection.instanceId && choice.modelId === selection.model)));
-  const create = async (name: string) => {
+  const create = async (name: string, executor:BotExecutorSelection | null = null) => {
     if (!client.bots || opening.current || !selection || !available || catalogLoading) return;
     const fields = { recipe: { recipeId: recipe.recipeId, version: recipe.version }, name, selection };
     const key = JSON.stringify(fields);
-    if (attempt.current?.key !== key) attempt.current = { key, requestId: requestId() };
+    if (!attempt.current?.chatId && attempt.current?.key !== key) attempt.current = { key, requestId: requestId() };
     const currentGeneration = generation.current, current = () => generation.current === currentGeneration;
     opening.current = true; setPending(true); setError("");
     try {
-      const result = await client.bots.instantiate({ ...fields, clientRequestId: attempt.current.requestId });
+      const chatId = attempt.current.chatId ?? (await client.bots.instantiate({ ...fields, clientRequestId: attempt.current.requestId })).chatId;
+      if(!current()) return;
+      attempt.current.chatId=chatId;
+      if(executor || attempt.current.executorAttempted) {attempt.current.executorAttempted=true; await configureCreatedExecutor(client.bots,chatId,executor,current,true);}
       if (!current()) return;
-      await onOpen(result.chatId);
+      await onOpen(chatId);
       if (current()) onClose();
     } catch (failure: unknown) {
       console.warn("[chat-agents] Daily Brief creation failed:", failure instanceof Error ? failure.name : "UnknownError");
-      if (current()) setError("Bot could not be created. Try again.");
+      if (current()) setError(attempt.current?.chatId ? "Your bot was created. Task setup could not complete. Retry to continue." : "Bot could not be created. Try again.");
     } finally {
       if (current()) { opening.current = false; setPending(false); }
     }
   };
-  return <BotRecipeSetup recipe={recipe} selection={selection} models={models} catalog={catalog} catalogLoading={catalogLoading}
+  return <BotRecipeSetup onSetup={onSetup} botClient={client.bots} creationRetained={!!attempt.current?.chatId} recipe={recipe} selection={selection} models={models} catalog={catalog} catalogLoading={catalogLoading}
     pending={pending} createDisabled={!available || catalogLoading} error={error} onSelectionChange={value => { setSelection(value); setError(""); }}
-    onCreate={name => { void create(name); }} onClose={onClose} />;
+    onCreate={(name,executor) => { void create(name,executor); }} onClose={onClose} />;
 }
 
 function AgentLibraryBody({ state, client, models, edit, change, save, archive, back, retryRecipes, setup, openDailyBrief }: {
@@ -120,7 +125,7 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
         <div className="min-w-0 flex-1"><h3 className="text-base font-semibold">{state.editing === "new" ? "New agent" : "Edit agent"}</h3><p className="truncate text-xs" style={muted}>{state.draft.name}</p></div>
         <button type="button" className={button} aria-label="Close agent settings" disabled={state.pending} onClick={back}>×</button>
       </header>
-      <AgentEditor draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog} catalogLoading={state.loading}
+      <AgentEditor botClient={client.bots} draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog} catalogLoading={state.loading}
         recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
         connectionError={state.connectionError} change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRetryRecipe={retryRecipes} cancelLabel="Cancel" apps={state.editing !== "new" && state.editing.recipeRef ? <BotEditorApps key={state.editing.id} agentId={state.editing.id} client={client}/> : undefined} />
       {state.error ? <p role="alert" className="mt-3 text-xs">{state.error}</p> : null}
@@ -311,10 +316,10 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       <h2 ref={heading} tabIndex={-1} className="text-sm font-semibold outline-none">{title}</h2>
       {!hostedChrome ? <button type="button" aria-label="Close Agents" className={`${button} shrink-0`} disabled={state.pending} onClick={onClose}>×</button> : null}
     </header>
-    {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation recipe={dailyRecipe.recipe} client={client} models={matrixBotModelChoices(models)} catalog={state.catalog} catalogLoading={state.loading}
+    {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation onSetup={onSetup} recipe={dailyRecipe.recipe} client={client} models={matrixBotModelChoices(models)} catalog={state.catalog} catalogLoading={state.loading}
       onOpen={async chatId => { await onOpenBotChat(chatId); onClose(); }} onClose={() => setDailyRecipe(null)} /> : null}
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
-    {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
+    {recipes ? <AgentRecipesPanel onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
       matrixModels={matrixBotModelChoices(models)} catalog={state.catalog} catalogLoading={state.loading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}
       onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection, name) =>
         (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}), ...(name ? { name } : {}) })).chatId : undefined}

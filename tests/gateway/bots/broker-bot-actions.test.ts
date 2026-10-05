@@ -144,6 +144,16 @@ describe("bot broker actions", () => {
     expect(await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: "run_broker1" })).toHaveLength(1);
   });
 
+  it("shares the run action budget and checkpoints with nested native task calls", async () => {
+    const { actions, tools } = setup(); const signal = new AbortController().signal;
+    for (let index = 0; index < 59; index++) await actions.callTool(binding, { toolCallId: `native_${index}`, capability: "artifact.read", args: { relPath: "draft.txt" } }, signal);
+    expect(await actions.handleFrame(tool())).toMatchObject({ ok: true });
+    await expect(actions.callTool(binding, { toolCallId: "native_exhausted", capability: "artifact.read", args: { relPath: "draft.txt" } }, signal)).rejects.toThrow("budget_exhausted");
+    expect(tools.dispatch).toHaveBeenCalledTimes(60);
+    const checkpoints = await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: "run_broker1" });
+    expect(checkpoints).toHaveLength(60); expect(checkpoints.every(checkpoint => checkpoint.phase === "observed_complete")).toBe(true);
+  });
+
   it("records refusals as complete, and failures and timeouts as effect unknown", async () => {
     let mode: "refuse" | "throw" | "hang" = "refuse";
     const { actions } = setup({

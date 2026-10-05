@@ -15,6 +15,7 @@ export function createOpenClawSettingsConnection(options: {
   env: NodeJS.ProcessEnv;
   enableConnected: (harnessInstanceId: string, key: string) => Promise<void>;
   fetchFn?: typeof fetch;
+  enableProviderConnected?: (harnessInstanceId: string, provider: "openai" | "anthropic" | "openrouter", key: string) => Promise<void>;
 }) {
   if (!isAbsolute(options.command) || !isAbsolute(options.cwd)) throw new Error("Absolute native paths required");
   const env: NodeJS.ProcessEnv = { HOME: options.cwd, MATRIX_HOME: options.cwd, OPENCLAW_STATE_DIR: join(options.cwd, ".openclaw"), OPENCLAW_CONFIG_PATH: join(options.cwd, ".openclaw/openclaw.json") };
@@ -48,12 +49,12 @@ export function createOpenClawSettingsConnection(options: {
     }
     return probe;
   };
-  const save = async (key: string) => {
+  const save = async (key: string, provider = "openai") => {
     if (!(await capabilities()).apiKey) throw new ProviderWorkflowError("unavailable");
     if (busy || closed) throw new ProviderWorkflowError("unavailable");
     busy = true;
     await new Promise<void>((accept, reject) => {
-      const child = spawn(options.command, ["models", "auth", "paste-api-key", "--provider", "openai", "--profile-id", "openai:manual"], {
+      const child = spawn(options.command, ["models", "auth", "paste-api-key", "--provider", provider, "--profile-id", `${provider}:manual`], {
         cwd: options.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
       });
       activeChild = child;
@@ -72,9 +73,13 @@ export function createOpenClawSettingsConnection(options: {
       child.stdin.end(`${key}\n`);
     });
   };
-  const verify = createProviderKeyVerifier({ providerId: "openai", save, fetchFn: options.fetchFn });
+  const verify = async (input: import("@matrix-os/contracts").ProviderWorkflowKey) => {
+    if (input.providerId !== "openai" && !options.enableProviderConnected) throw new ProviderWorkflowError("unavailable");
+    await createProviderKeyVerifier({ providerId: input.providerId, save: key => save(key, input.providerId), fetchFn: options.fetchFn })(input);
+  };
   return {
     capabilities,
+    async apiKeyProviders() { return (await capabilities()).apiKey ? options.enableProviderConnected ? ["openai", "anthropic", "openrouter"] as const : ["openai"] as const : []; },
     close: async () => {
       closed = true;
       lifetime.abort();
@@ -88,7 +93,8 @@ export function createOpenClawSettingsConnection(options: {
       if (!(await capabilities()).apiKey) throw new ProviderWorkflowError("unavailable");
       await verify(input);
       if (closed) throw new ProviderWorkflowError("unavailable");
-      await options.enableConnected(input.harnessInstanceId, `openclaw-key-${randomUUID()}`);
+      if (options.enableProviderConnected) await options.enableProviderConnected(input.harnessInstanceId, input.providerId, `openclaw-key-${randomUUID()}`);
+      else await options.enableConnected(input.harnessInstanceId, `openclaw-key-${randomUUID()}`);
     },
   };
 }

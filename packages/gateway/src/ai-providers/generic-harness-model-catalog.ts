@@ -30,10 +30,10 @@ export interface GenericHarnessModelRoute {
 }
 
 export interface GenericHarnessModelCatalog {
-  nativeDefaults?: Partial<Record<"pi" | "opencode" | "hermes", string>>;
+  nativeDefaults?: Partial<Record<"pi" | "opencode" | "hermes" | "openclaw", string>>;
   providers: ProviderModelProvider[];
   accessSources: ProviderAccessSource[];
-  failures: Array<Extract<ProviderGenericHarnessKind, "pi" | "opencode" | "hermes">>;
+  failures: Array<Extract<ProviderGenericHarnessKind, "pi" | "opencode" | "hermes" | "openclaw">>;
 }
 
 type CodingHarness = Extract<ProviderGenericHarnessKind, "pi" | "opencode">;

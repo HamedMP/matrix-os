@@ -17,6 +17,8 @@ import { BotGrantError, type BotGrantService } from "./grants-service.js";
 import { BotAuthorityError, type BotAuthority } from "./authority.js";
 import type { BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotChatLookup } from "../chat/agent-context.js";
+import { createBotProviderConnectionRoutes } from './provider-connection-routes.js';
+import type { BotProviderConnectionsService } from './provider-connections.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -44,11 +46,13 @@ export function createBotRoutes(options: {
   memory?: Pick<BotMemoryService, "forget" | "confirm">;
   grants?: Pick<BotGrantService, "revoke">;
   authority?: Pick<BotAuthority, "view">;
+  providerConnections?: BotProviderConnectionsService;
   /** Admits the owner's answer as the next message; resolved at route registration. */
   admitContinuation?: BotContinuationAdmitter;
   getPrincipal(context: Context): RequestPrincipal;
 }): Hono {
   const routes = new Hono();
+  routes.route('/', createBotProviderConnectionRoutes({ service: options.providerConnections, getPrincipal: options.getPrincipal }));
   const limit = bodyLimit({
     maxSize: MAX_BODY_BYTES,
     onError: (context) => {

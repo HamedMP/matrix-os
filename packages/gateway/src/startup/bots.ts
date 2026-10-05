@@ -53,10 +53,13 @@ import { createBotIntegrationTools } from "../bots/integration-tools.js";
 import { createBotInteractionService, type BotInteractionService } from "../bots/interactions.js";
 import { createBotMemoryService, type BotMemoryService } from "../bots/memory-service.js";
 import { createBotModelRouteResolver } from "../bots/codex-route.js";
-import { createCodexOwnerIdentityResolver } from "../collaboration/codex-owner-identity.js";
 import { BotRuntimeRegistry } from "../bots/runtime-registry.js";
 import { createBotTaskOrchestrator } from "../bots/task-orchestrator.js";
 import { createBotToolDispatcher, sweepBotWorkspaceSaves } from "../bots/tool-dispatcher.js";
+import { createBotProviderConnections, type BotProviderConnectionsService } from '../bots/provider-connections.js';
+import { createClaudeTaskObserver } from '../bots/claude-task-observation.js';
+import { createNativeBotTasks } from '../bots/native-task-service.js';
+import type { NativeProviderProfileGuard } from '../ai-providers/native-provider-profile-guard.js';
 
 /** Passes before the first run is admitted; any rest is finished in the background. */
 const MAX_CHECKPOINT_RECONCILE_PASSES = 50;
@@ -102,6 +105,7 @@ export async function runConnectionReconciliationPass(
 }
 
 export interface BotServices {
+  providerConnections?: BotProviderConnectionsService;
   recipes: BotRecipeCatalog;
   instantiation: BotInstantiation;
   authority: BotAuthority;
@@ -122,6 +126,9 @@ export interface BotServices {
 }
 
 export async function startBots(options: {
+  runtimeOwnerId?: string | null;
+  computerId?: string | null;
+  nativeProfileGuard?: NativeProviderProfileGuard;
   homePath: string;
   repository: Pick<ChatRepository, "kysely" | "withTransaction">;
   agents: ChatAgentStore;
@@ -146,6 +153,11 @@ export async function startBots(options: {
     return undefined;
   }
   const recipes = createBotRecipeCatalog();
+  const providerConnections = createBotProviderConnections({ db, ownerId: options.runtimeOwnerId ?? '', computerId: options.computerId ?? '',
+    agentExists: async (ownerId, botId) => { const agent = await options.agents.get({ type: 'personal', ownerId }, botId); return Boolean(agent?.recipeRef && !agent.archived); },
+    observeClaude: options.nativeProfileGuard && options.host?.available ? createClaudeTaskObserver({ homePath: options.homePath, providers: options.providers })
+      : async () => ({ available: false, reason: 'unsupported_runtime' }),
+  });
   const bindings = createBotBindingsRepository(db);
   const instantiation = createBotInstantiation({
     db,
@@ -234,7 +246,7 @@ export async function startBots(options: {
   const host = options.host;
   if (!host?.available) {
     return {
-      recipes, instantiation, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler,
+      recipes, instantiation, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler, providerConnections,
       async close() {
         await stopConnections();
         await stopSweep();
@@ -282,8 +294,10 @@ export async function startBots(options: {
   saveSweepTimer.unref();
 
   const lifetime = new AbortController();
-  const resolveCodexIdentity = createCodexOwnerIdentityResolver({ homePath: options.homePath });
   const registry = new BotRuntimeRegistry();
+  let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
+  const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
+    registry, profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry });
   const managedCapabilities: import("@matrix-os/contracts").BotToolCapability[] = [
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
@@ -303,10 +317,16 @@ export async function startBots(options: {
     recipes,
     resolveRoute: createBotModelRouteResolver({
       providers: options.providers,
-      resolveCodexIdentity,
       lifetime: lifetime.signal,
       ...(process.env.MATRIX_BOT_CODEX_MODEL !== undefined ? { codexModel: process.env.MATRIX_BOT_CODEX_MODEL } : {}),
     }),
+    executorReady: async (ownerId, botId) => {
+      if (!options.runtimeOwnerId || !options.computerId) return false;
+      const selected = await providerConnections.execution(ownerId, botId);
+      if (!selected.connectionId) return false;
+      await providerConnections.admit(ownerId, botId, 'interactive');
+      return Boolean(nativeTasks);
+    },
     admission,
     registry,
     client: host.client,
@@ -328,6 +348,7 @@ export async function startBots(options: {
     events: { publish: (binding, event) => isManagedPiBinding(binding) ? managed.events.publish(binding, event) : orchestrator.eventSink.publish(binding, event) },
     tools: createBotToolDispatcher({
       homePath: options.homePath, managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory, ...(integrationTools ? { integrations: integrationTools } : {}),
+      ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
     }),
     inference: {
       homePath: options.homePath,
@@ -337,11 +358,11 @@ export async function startBots(options: {
         catch (error: unknown) { console.warn("[managed-pi] authority revalidation failed", error instanceof Error ? error.name : "UnknownError"); return false; }
       },
       lifetime: lifetime.signal,
-      resolveCodexIdentity,
       ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),
       ...(options.fundedAdmission ? { fundedAdmission: options.fundedAdmission } : {}),
     },
   });
+  brokerTool = actions.callTool;
   forgetRun = (runId) => actions.forgetRun(runId);
   const unregister = registerBotBroker(host, actions);
   const adapter = createMatrixBotChatProviderAdapter({
@@ -355,6 +376,7 @@ export async function startBots(options: {
     memory,
     grants,
     authority,
+    providerConnections,
     startConnectionReconciler,
     botChats,
     tasks,
@@ -369,6 +391,7 @@ export async function startBots(options: {
       await stopSweep();
       await reconciler.stop();
       lifetime.abort();
+      await nativeTasks?.close();
       await managed.close();
       unregister();
       registry.shutdown();

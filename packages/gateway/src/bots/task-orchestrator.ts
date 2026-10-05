@@ -94,6 +94,7 @@ export function createBotTaskOrchestrator(deps: {
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
   resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
+  executorReady?(ownerId: string, botId: string): Promise<boolean>;
   admission: Pick<PrivateBotAdmission, "admit" | "release">;
   registry: Pick<BotRuntimeRegistry, "lookupRun" | "cancelInference">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
@@ -225,6 +226,8 @@ export function createBotTaskOrchestrator(deps: {
       return settle(task, "blocked", "model_unavailable");
     }
     const capabilities = recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
+    try { if (await deps.executorReady?.(input.ownerId, botId)) capabilities.push('agent.task'); }
+    catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return settle(task, 'blocked', 'policy_denied'); }
     let memory: string[];
     try {
       memory = deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];

@@ -653,8 +653,9 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
+          MATRIX_PROVIDER_AUTH_ELECTRON: "1"
           MATRIX_SETTINGS_EVIDENCE_DIR: output/playwright/settings-providers
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts
 
       - name: Upload Desktop provider auth evidence
         if: always() && needs.changes.outputs.should_run == 'true'

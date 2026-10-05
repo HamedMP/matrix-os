@@ -1,3 +1,6 @@
+import {BotConnectionSelector} from "./BotConnectionSelector.js";
+import {useBotConnections} from "./use-bot-connections.js";
+import type {BotClient} from "./client.js";
 import { MATRIX_BOT_SELECTION, MATRIX_PI_CHAT_INSTANCE_ID, isAutomaticBotSelection, isManagedPiBotRoute, canonicalProviderModelRouteLabel, canonicalProviderFundingState, canonicalProviderAvailabilityReasonLabel, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { canonicalProviderUnavailableSelectionLabel, type CanonicalProviderChoice } from "../../canonical-provider-choice.js";
 import { deriveChatPickerModelRows } from "../../chat-picker-entries.js";
@@ -22,13 +25,14 @@ export function matrixBotModelSelection(choice: CanonicalProviderChoice): Canoni
     ...(choice.selectedOptions.length ? { options: choice.selectedOptions } : {}) };
 }
 
-export function MatrixBotModelField({ id, label = "Model", selection, models, catalog, catalogLoading = false, pending, allowAutomatic = true, requireSelection = false, preservedSelection, onSetup, onRefreshCatalog, onChange }: {
-  preservedSelection?: CanonicalChatModelSelection; allowAutomatic?: boolean; requireSelection?: boolean; onSetup?: () => void; onRefreshCatalog?: () => void;
+export function MatrixBotModelField({ botClient, id, label = "Model", selection, models, catalog, catalogLoading = false, pending, allowAutomatic = true, requireSelection = false, preservedSelection, onSetup, onRefreshCatalog, onChange }: {
+  botClient?: BotClient; preservedSelection?: CanonicalChatModelSelection; allowAutomatic?: boolean; requireSelection?: boolean; onSetup?: () => void; onRefreshCatalog?: () => void;
   id?: string; label?: string; selection: CanonicalChatModelSelection | null;
   models: readonly CanonicalProviderChoice[]; pending: boolean;
   catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
   onChange(selection: CanonicalChatModelSelection): void;
 }) {
+  const discovery = useBotConnections(botClient?.connections ? botClient as Required<Pick<BotClient,"connections">> : undefined);
   const rows = catalog ? deriveChatPickerModelRows(catalog, matrixBotModelChoices(models)).filter(isManagedPiBotRoute) : [];
   const choices = matrixBotSelectableModelChoices(models, catalog);
   const automatic = allowAutomatic && ((!selection && !requireSelection) || isAutomaticBotSelection(selection));
@@ -52,6 +56,7 @@ export function MatrixBotModelField({ id, label = "Model", selection, models, ca
   const unavailableReason = managedInstance ? canonicalProviderAvailabilityReasonLabel(managedInstance) : "Matrix AI unavailable";
   const noModels = !catalogLoading && choices.length === 0;
   return <div className="grid gap-1.5">
+    {botClient?.connections && (!selection || selection.instanceId === MATRIX_PI_CHAT_INSTANCE_ID || isAutomaticBotSelection(selection)) ? <BotConnectionSelector connections={discovery.connections} automatic={isAutomaticBotSelection(selection)} pending={pending} onSetup={onSetup}/> : null}
     <label className="grid gap-1.5 text-sm" htmlFor={id}>{label}
       <select id={id} className={chatAgentInputClass} value={key} disabled={pending || catalogLoading || (!allowAutomatic && noModels && !legacyAvailable)} onChange={(event) => {
         if (pending || catalogLoading) return;

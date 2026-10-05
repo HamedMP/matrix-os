@@ -46,7 +46,7 @@ describe('native workflow runtime wiring', () => {
     await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'failed', safeFailure: 'unavailable' }));
   });
   it('stops the host cgroup on both sides of exact foreground tab reaping', async () => {
-    const f = nativeFixture('hermes'); const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: true, run: async () => { f.order.push('host-cancel'); } } });
+    const f = nativeFixture('hermes'); const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, genericWriter: { acquire: async () => async () => {} } as never, hostControl: { available: true, run: async () => { f.order.push('host-cancel'); } } });
     expect(adapter!.install).toBe(true);
     const running = await adapter!.start({ registerCleanup: () => {},  request: { harnessInstanceId: 'harness_hermes', kind: 'install', idempotencyKey: 'install' }, publish: vi.fn() });
     await running.cancel(); expect(f.order).toEqual(['host-cancel', 'terminate', 'host-cancel']);
@@ -141,38 +141,20 @@ it('a verified key deliberately enables an Off harness, while rejected keys leav
   expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', enabled: true }));
 });
 
-it('Hermes uses the official owner-native Codex import with atomic exact route enablement', async () => {
-  const f = nativeFixture('hermes'); f.row.installState = 'installed';
-  const original = await f.store.getSnapshot();
-  Object.assign(f.row, { route: { kind: 'configurable', providerId: 'anthropic', modelId: 'previous' } });
-  Object.assign(original, { supportedActions: ['set_route', 'set_harness_enabled'], accessSources: [{ id: 'hermes-codex', kind: 'harness_profile', harness: 'hermes', providerId: 'openai-codex', localObservation: { state: 'present_unverified' }, eligibleModelIds: ['openai-codex:gpt-test'] }], modelProviders: [{ id: 'openai-codex', models: [{ id: 'openai-codex:gpt-test', enabled: true }] }] });
-  const reuse = vi.fn(); const publish = vi.fn();
-  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hermesCodexReuse: reuse, hostControl: { available: false, run: vi.fn() } });
-  expect(adapter!.loginMethods).toEqual(['existing_codex']);
-  await adapter!.start({ registerCleanup: () => {},  request: { harnessInstanceId: 'harness_hermes', kind: 'login', method: 'existing_codex', idempotencyKey: 'reuse' }, publish });
-  expect(reuse).toHaveBeenCalledOnce();
-  expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_route', harnessInstanceId: 'harness_hermes', accessSourceId: 'hermes-codex', enableHarness: true, expectedRevision: 0 }));
-  expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null });
-  expect(f.terminal.createTab).not.toHaveBeenCalled();
-});
-it('Hermes reuse fails safely without an eligible exact native route and does not enable', async () => {
-  const f = nativeFixture('hermes'); f.row.installState = 'installed';
-  Object.assign(await f.store.getSnapshot(), { accessSources: [], modelProviders: [] });
-  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hermesCodexReuse: vi.fn(), hostControl: { available: false, run: vi.fn() } });
-  await expect(adapter!.start({ registerCleanup: () => {},  request: { harnessInstanceId: 'harness_hermes', kind: 'login', method: 'existing_codex', idempotencyKey: 'missing' }, publish: vi.fn() })).rejects.toThrow('unavailable');
-  expect(f.store.mutate).not.toHaveBeenCalled();
-});
-
-it('advertises and delegates Pi Settings auth only after exact-runtime capability discovery', async () => {
-  const f = nativeFixture('pi'); f.row.installState = 'installed';
-  const piConnection = { capabilities: vi.fn().mockResolvedValue({ login: true, apiKey: true }), start: vi.fn().mockResolvedValue({ cancel: vi.fn() }), verifyKey: vi.fn(), close: vi.fn() };
-  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, piConnection, hostControl: { available: false, run: vi.fn() } });
-  expect(adapter!.loginMethods).toEqual(['device_code']); expect(adapter!.apiKeyProviders).toEqual(['openai']);
-  const input = { registerCleanup: () => {}, request: { harnessInstanceId: 'harness_pi', kind: 'login' as const, method: 'device_code' as const, idempotencyKey: 'pi-settings' }, publish: vi.fn() };
-  await adapter!.start(input); expect(piConnection.start).toHaveBeenCalledWith(input); expect(f.terminal.createTab).not.toHaveBeenCalled();
-  piConnection.capabilities.mockRejectedValueOnce(new Error('unsupported version'));
-  const [unsupported] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, piConnection, hostControl: { available: false, run: vi.fn() } });
-  expect(unsupported!.loginMethods).toEqual([]); expect(unsupported!.apiKeyProviders).toEqual([]);
+it.each(['pi', 'opencode', 'hermes', 'openclaw'] as const)('rejects unqualified %s legacy V1 subscription starts before native mutation', async kind => {
+  const f = nativeFixture(kind); f.row.installState = 'installed';
+  const connection = { capabilities: vi.fn().mockResolvedValue({ login: true, apiKey: true }), start: vi.fn(), verifyKey: vi.fn(), close: vi.fn() };
+  const reuse = vi.fn();
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+    piConnection: connection as never, opencodeConnection: connection as never, hermesConnection: connection as never,
+    openclawConnection: connection as never, hermesCodexReuse: reuse, hostControl: { available: false, run: vi.fn() } });
+  expect(adapter!.loginMethods).toEqual([]);
+  for (const method of ['device_code', 'existing_codex', 'terminal'] as const) {
+    await expect(adapter!.start({ registerCleanup: vi.fn(), request: { harnessInstanceId: f.row.id,
+      kind: 'login', method, idempotencyKey: `unqualified-${method}` }, publish: vi.fn() })).rejects.toThrow('unavailable');
+  }
+  expect(connection.start).not.toHaveBeenCalled(); expect(reuse).not.toHaveBeenCalled();
+  expect(f.store.mutate).not.toHaveBeenCalled(); expect(f.terminal.createTab).not.toHaveBeenCalled();
 });
 
 it('does not advertise OpenClaw key auth until installed, then uses supported Settings capability', async () => {
@@ -325,8 +307,103 @@ it.each(['codex', 'claude'] as const)('fences %s installers across processes bef
 
 it('installs the verified Pi Settings version rather than an unverified latest release', async () => {
   const f = nativeFixture('pi');
-  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, genericWriter: { acquire: async () => async () => {} } as never, hostControl: { available: false, run: vi.fn() } });
   const running = await adapter!.start({ registerCleanup: () => {}, request: { harnessInstanceId: f.row.id, kind: 'install', idempotencyKey: 'verified-pi' }, publish: vi.fn() });
   expect(vi.mocked(f.terminal.createTab).mock.calls[0]![1].command).toEqual(['sh', '-lc', expect.stringContaining("'@earendil-works/pi-coding-agent@1.0.0'")]);
   await running.cancel();
+});
+
+it('advertises explicit fixed-provider key options from a qualified native saver', async () => {
+  const f = nativeFixture('pi'); f.row.installState = 'installed';
+  const connection = { capabilities: async () => ({ login: true, apiKey: true }), apiKeyProviders: async () => ['openai','anthropic','openrouter'], verifyKey: vi.fn(), start: vi.fn(), close: vi.fn() };
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, piConnection: connection as never, hostControl: { available: false, run: vi.fn() } });
+  expect(adapter!.apiKeyProviders).toEqual(['openai', 'anthropic', 'openrouter']);
+  expect(adapter!.connectionOptions).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'anthropic_api_key', providerId: 'anthropic', authKind: 'api_key', availability: 'available' }),
+    expect.objectContaining({ id: 'openrouter_api_key', providerId: 'openrouter', authKind: 'api_key', availability: 'available' }),
+  ]));
+  expect(adapter!.connectionOptions!.filter(option => option.authKind === 'subscription' && option.availability === 'available')).toHaveLength(0);
+});
+
+
+it.each(['pi', 'opencode', 'hermes', 'openclaw'] as const)('shares %s install and key admission across restart and exact cleanup', async kind => {
+  const { mkdtemp, mkdir, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const { createGenericNativeWriter } = await import('../../packages/gateway/src/ai-providers/generic-native-writer.js');
+  const root = await mkdtemp(join(tmpdir(), 'generic-installer-')); const home = join(root, 'home'); await mkdir(home);
+  const f = nativeFixture(kind); const writer = createGenericNativeWriter(home);
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, genericWriter: writer,
+    hostControl: { available: true, run: vi.fn() } });
+  let cleanup!: () => Promise<void>;
+  const running = await adapter!.start({ registerCleanup: value => { cleanup = value; }, request: { harnessInstanceId: f.row.id,
+    kind: 'install', idempotencyKey: 'generic-install' }, publish: vi.fn() });
+  try {
+    const save = vi.fn(); await expect(createGenericNativeWriter(home).run(kind, save)).rejects.toThrow();
+    const [restarted] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+      genericWriter: createGenericNativeWriter(home), hostControl: { available: true, run: vi.fn() } });
+    await expect(restarted!.start({ registerCleanup: vi.fn(), request: { harnessInstanceId: f.row.id,
+      kind: 'uninstall', idempotencyKey: 'conflicting-uninstall' }, publish: vi.fn() })).rejects.toThrow();
+    expect(f.terminal.createTab).toHaveBeenCalledOnce(); expect(save).not.toHaveBeenCalled();
+    vi.mocked(f.terminal.terminateTab).mockRejectedValueOnce(new Error('unproven cleanup'));
+    await expect(cleanup()).rejects.toThrow();
+    await expect(createGenericNativeWriter(home).run(kind, save)).rejects.toThrow();
+    await running.cancel();
+    await expect(createGenericNativeWriter(home).run(kind, async () => 'safe next')).resolves.toBe('safe next');
+  } finally { await running.cancel(); await rm(root, { recursive: true, force: true }); }
+});
+
+it('retains generic install admission after a lost launch reply and releases prelaunch refusal', async () => {
+  const { mkdtemp, mkdir, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const { createGenericNativeWriter } = await import('../../packages/gateway/src/ai-providers/generic-native-writer.js');
+  const root = await mkdtemp(join(tmpdir(), 'generic-uncertain-installer-')); const home = join(root, 'home'); await mkdir(home);
+  const f = nativeFixture('pi'), writer = createGenericNativeWriter(home);
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, genericWriter: writer,
+    hostControl: { available: false, run: vi.fn() } });
+  const start = () => adapter!.start({ registerCleanup: vi.fn(), request: { harnessInstanceId: f.row.id,
+    kind: 'install', idempotencyKey: 'generic-uncertain' }, publish: vi.fn() });
+  try {
+    vi.mocked(f.terminal.ensureWorkspace).mockRejectedValueOnce(new Error('prelaunch'));
+    await expect(start()).rejects.toThrow('prelaunch');
+    await expect(createGenericNativeWriter(home).run('pi', async () => 'safe')).resolves.toBe('safe');
+    vi.mocked(f.terminal.createTab).mockRejectedValueOnce(new Error('lost launch reply'));
+    vi.mocked(f.terminal.listWorkspaces).mockResolvedValue([]);
+    await expect(start()).rejects.toThrow('lost launch reply');
+    await expect(createGenericNativeWriter(home).run('pi', vi.fn())).rejects.toThrow();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+it('keeps a generic host installer fenced when lost-reply cgroup cleanup fails', async () => {
+  const { mkdtemp, mkdir, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const { createGenericNativeWriter } = await import('../../packages/gateway/src/ai-providers/generic-native-writer.js');
+  const root = await mkdtemp(join(tmpdir(), 'generic-host-installer-')); const home = join(root, 'home'); await mkdir(home);
+  const f = nativeFixture('hermes'), writer = createGenericNativeWriter(home);
+  const run = vi.fn().mockRejectedValue(new Error('cgroup still active'));
+  vi.mocked(f.terminal.createTab).mockImplementationOnce(async (_workspace, input) => {
+    vi.mocked(f.terminal.listWorkspaces).mockResolvedValue([{ tabs: [{ ...ref, id: ref.tabId, name: input.name }] }] as never);
+    throw new Error('lost host launch reply');
+  });
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, genericWriter: writer,
+    hostControl: { available: true, run } });
+  let cleanup!: () => Promise<void>;
+  try {
+    await expect(adapter!.start({ registerCleanup: value => { cleanup = value; }, request: { harnessInstanceId: f.row.id,
+      kind: 'install', idempotencyKey: 'host-uncertain' }, publish: vi.fn() })).rejects.toThrow('lost host launch reply');
+    expect(run).toHaveBeenCalledTimes(2); expect(f.terminal.terminateTab).toHaveBeenCalledOnce();
+    await expect(createGenericNativeWriter(home).run('hermes', vi.fn())).rejects.toThrow();
+    await expect(cleanup()).rejects.toThrow();
+    run.mockResolvedValue(undefined); await cleanup();
+    await expect(createGenericNativeWriter(home).run('hermes', async () => 'drained')).resolves.toBe('drained');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it.each(['pi', 'opencode', 'hermes', 'openclaw'] as const)('fails closed for %s installation without a durable writer dependency', async kind => {
+  const f = nativeFixture(kind);
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+    hostControl: { available: true, run: vi.fn() } });
+  await expect(adapter!.start({ registerCleanup: vi.fn(), request: { harnessInstanceId: f.row.id,
+    kind: 'install', idempotencyKey: 'missing-writer' }, publish: vi.fn() })).rejects.toThrow('unavailable');
+  expect(f.terminal.ensureWorkspace).not.toHaveBeenCalled(); expect(f.terminal.createTab).not.toHaveBeenCalled();
 });

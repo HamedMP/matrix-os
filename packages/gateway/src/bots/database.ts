@@ -192,6 +192,14 @@ export interface BotSchemaMigrationsTable {
 }
 
 export interface BotDatabase {
+  bot_provider_authorizations: {
+    owner_id: string; computer_id: string; connection_id: 'claude_code_tasks'; fingerprint: string;
+    enabled: boolean; background: boolean; revision: number | string;
+  };
+  bot_execution_bindings: {
+    owner_id: string; computer_id: string; bot_id: string; connection_id: 'claude_code_tasks' | null;
+    model: string | null; grant_revision: number | string | null; native_session_id: string | null; revision: number | string;
+  };
   managed_pi_sessions: Omit<BotAgentSessionsTable, "bot_id">;
   managed_pi_tool_checkpoints: Omit<BotToolCheckpointsTable, "task_id"> & { chat_id: string };
   bot_schema_migrations: BotSchemaMigrationsTable;

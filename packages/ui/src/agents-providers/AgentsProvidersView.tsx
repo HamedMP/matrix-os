@@ -1,4 +1,5 @@
-import type { ProviderWorkflowCapability } from "@matrix-os/contracts";
+import {BotUseAuthorizationPanel} from "./BotUseAuthorizationPanel.js";
+import type { ProviderWorkflowUICapability } from "./types.js";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
@@ -50,7 +51,7 @@ export function AgentsProvidersView({
   onLoadUsageHistory,
 }: AgentsProvidersViewProps) {
   const [historyLoader, setHistoryLoader] = useState<AgentsProvidersViewProps["onLoadUsageHistory"]>(undefined);
-  const [workflowCapabilities, setWorkflowCapabilities] = useState<ProviderWorkflowCapability[]>([]);
+  const [workflowCapabilities, setWorkflowCapabilities] = useState<ProviderWorkflowUICapability[]>([]);
   const [operationIds, setOperationIds] = useState<Record<string, string>>({});
   const [workflowStatus, setWorkflowStatus] = useState<Record<string, string>>({});
   const [workflowPermission, setWorkflowPermission] = useState<"unknown" | "available" | "forbidden">("unknown");
@@ -79,7 +80,7 @@ export function AgentsProvidersView({
   const [addOpen, setAddOpen] = useState(false);
   const [connectRequests, setConnectRequests] = useState<Record<string, number>>({});
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
-  const [expandedRowKind, setExpandedRowKind] = useState<ProviderWorkflowCapability["harness"] | null>(null);
+  const [expandedRowKind, setExpandedRowKind] = useState<ProviderWorkflowUICapability["harness"] | null>(null);
   if (stateClient !== workflowClient) {
     setStateClient(workflowClient); setWorkflowCapabilities([]); setOperationIds({}); setWorkflowStatus({}); setHistoryLoader(undefined); setConnectRequests({}); setExpandedRowId(null); setExpandedRowKind(null); setWorkflowPermission("unknown");
   }
@@ -237,6 +238,7 @@ export function AgentsProvidersView({
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
+                {workflowClient?.botConnections && (harness.harness === "codex" || harness.harness === "claude") ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={snapshot.refreshedAt} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
                 {!guided ? <ConnectionChoices
                   snapshot={snapshot}
                   harness={harness}

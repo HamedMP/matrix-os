@@ -110,14 +110,16 @@ it("fails closed without a supported exact native source/model and preserves own
   const mutate = vi.fn();
   await expect(enableOpenCodeConnectedRoute({ getSnapshot: vi.fn().mockResolvedValue({ harnesses: [], accessSources: [], modelProviders: [] }), mutate } as never, "missing", "connect-missing")).rejects.toThrow("unavailable"); expect(mutate).not.toHaveBeenCalled();
 });
-it("wires discovered OpenCode methods to the direct Settings adapter without creating Terminal tabs", async () => {
+it("wires qualified OpenCode keys while rejecting legacy subscription starts without Terminal tabs", async () => {
   const { createNativeProviderWorkflowAdapters } = await import("../../packages/gateway/src/ai-providers/provider-workflow-native.js");
   const connection = { close: vi.fn(async () => {}), capabilities: vi.fn().mockResolvedValue({ login: true, apiKey: true }), start: vi.fn().mockResolvedValue({ cancel: vi.fn() }), verifyKey: vi.fn() };
   const terminal = { createTab: vi.fn() };
   const store = { getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" }, harnesses: [{ id: "opencode", harness: "opencode", displayName: "OpenCode", installState: "installed", loginMethods: ["terminal"] }] }) };
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: store as never, terminal: terminal as never, hostControl: { available: false, run: vi.fn() }, opencodeConnection: connection });
-  expect(adapter!.loginMethods).toEqual(["device_code"]); expect(adapter!.apiKeyProviders).toEqual(["openai"]);
-  const publish = vi.fn(); await adapter!.start({ registerCleanup: () => {},  request, publish }); expect(connection.start).toHaveBeenCalledWith({ request, publish, registerCleanup: expect.any(Function) }); expect(terminal.createTab).not.toHaveBeenCalled();
+  expect(adapter!.loginMethods).toEqual([]); expect(adapter!.apiKeyProviders).toEqual(["openai"]);
+  expect(adapter!.verifyKey).toBe(connection.verifyKey);
+  await expect(adapter!.start({ registerCleanup: vi.fn(), request, publish: vi.fn() })).rejects.toThrow("unavailable");
+  expect(connection.start).not.toHaveBeenCalled(); expect(terminal.createTab).not.toHaveBeenCalled();
 });
 it("keeps unsupported OpenCode protocol capabilities closed without guessing a Terminal auth fallback", async () => {
   const { createNativeProviderWorkflowAdapters } = await import("../../packages/gateway/src/ai-providers/provider-workflow-native.js");
@@ -136,4 +138,14 @@ it('drains an already committing route writer before cancellation settles', asyn
   expect(await Promise.race([cancelling.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 20))])).toBe(false);
   finish(); await cancelling;
   expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }); await connection.close();
+});
+
+it.each(["anthropic", "openrouter"] as const)("qualifies and persists %s only when the native API method exists", async providerId => {
+  const session = mockSession({ "/provider/auth": { ...methods, [providerId]: [{ type: "api", label: "API key" }] }, [`/auth/${providerId}`]: true });
+  const enableProviderConnected = vi.fn(); const connection = createOpenCodeSettingsConnection({ session: async () => session, enableConnected: vi.fn(), enableProviderConnected, fetch: vi.fn(async () => new Response(null, { status: 200 })) });
+  expect(await connection.apiKeyProviders()).toContain(providerId);
+  await connection.verifyKey({ harnessInstanceId: "opencode", providerId, apiKey: "test-secret" });
+  expect(session.request).toHaveBeenCalledWith(`/auth/${providerId}`, "PUT", { type: "api", key: "test-secret" });
+  expect(enableProviderConnected).toHaveBeenCalledWith("opencode", providerId, expect.any(String));
+  await connection.close();
 });

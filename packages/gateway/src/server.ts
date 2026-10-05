@@ -1,7 +1,5 @@
-import { discoverPiSettingsAuth, createPiSettingsConnection } from "./ai-providers/pi-settings-auth.js";
-import { createOpenClawSettingsConnection } from "./ai-providers/openclaw-settings-auth.js";
+import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
 import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
-import { openOpenCodeAuthSession, createOpenCodeSettingsConnection, enableOpenCodeConnectedRoute, enableNativeSettingsConnectedRoute } from "./ai-providers/opencode-settings-auth.js";
 import { createCodexNativeAccountMetadataReader } from "./ai-providers/codex-native-account-metadata.js";
 import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from "./agent-launcher.js";
 import { createNativeProviderProfileGuard } from "./ai-providers/native-provider-profile-guard.js";
@@ -162,12 +160,6 @@ import { createPreviewManager } from "./preview-manager.js";
 import { createProjectManager } from "./project-manager.js";
 import { createProvisioner } from "./provisioner.js";
 import { getOptionalRequestPrincipal, requireRequestPrincipal } from "./request-principal.js";
-import { registerProviderWorkflowRuntime } from "./server/provider-workflow-runtime.js";
-import { createClaudeSettingsLogin } from "./ai-providers/provider-workflow-browser.js";
-import { createCodexSettingsLogin } from "./ai-providers/provider-workflow-codex-login.js";
-import { createHermesCodexReuse } from "./ai-providers/provider-workflow-hermes.js";
-import { createNativeProviderWorkflowAdapters, closeNativeProviderWorkflowConnections } from "./ai-providers/provider-workflow-native.js";
-import { createCodexKeySaver, createProviderKeyVerifier } from "./ai-providers/provider-workflow-key.js";
 import { createCodexNativeKeyReadinessReader } from "./ai-providers/codex-native-key-readiness.js";
 import { createReviewStore } from "./review-store.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
@@ -1426,6 +1418,7 @@ export async function createGateway(config: GatewayConfig) {
     codexNativeKeyReadiness: createCodexNativeKeyReadinessReader({ homePath }),
     nativeHarnessCatalogReader: genericHarnessModelCatalog,
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
+    openclawRuntimeSource: agentRuntimeServices.source,
     homePath,
     healthProbe: createOwnerAnthropicKeyPreflight({ homePath }),
     fundedCredentialProvider,
@@ -1535,6 +1528,7 @@ export async function createGateway(config: GatewayConfig) {
     await chatAgents.bootstrap();
     botServices = await startBots({
       homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
+      runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
       providers: aiProviderService,
       managedMcp: managedPiMcpDependencies({ env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
         ownerId: process.env.MATRIX_USER_ID, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID }),
@@ -1692,35 +1686,11 @@ export async function createGateway(config: GatewayConfig) {
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
   const workflowStore = createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity);
-  const opencodeSettingsConnection = createOpenCodeSettingsConnection({
-    session: () => openOpenCodeAuthSession({ command: join(process.env.MATRIX_NODE_PREFIX ?? "/opt/matrix/runtime/node", "bin/opencode"), cwd: homePath, env: buildSettingsAccountEnvironment(homePath) }),
-    enableConnected: (id, key) => enableOpenCodeConnectedRoute(workflowStore, id, key),
-  });
-  const piSettingsConnection = createPiSettingsConnection({
-    discover: () => discoverPiSettingsAuth({ homePath, runtimePrefix: process.env.MATRIX_NODE_PREFIX, env: buildSettingsAccountEnvironment(homePath) }),
-    enableConnected: (id, provider, key) => enableNativeSettingsConnectedRoute(workflowStore, id, "pi", provider, key),
-  });
-  const openclawSettingsConnection = createOpenClawSettingsConnection({
-    command: join(process.env.MATRIX_NODE_PREFIX ?? "/opt/matrix/runtime/node", "bin/openclaw"), cwd: homePath,
-    env: { ...buildSettingsAccountEnvironment(homePath), OPENCLAW_STATE_DIR: join(homePath, ".openclaw"), OPENCLAW_CONFIG_PATH: join(homePath, ".openclaw/openclaw.json") },
-    enableConnected: (id, key) => enableNativeSettingsConnectedRoute(workflowStore, id, "openclaw", "openai", key),
-  });
-  const providerWorkflowLifecycle = await registerProviderWorkflowRuntime({
-    app,
+  const providerWorkflowLifecycle = await createNativeProviderWorkflowRuntime({
+    app, homePath, store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
     ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
     getPrincipal: getOptionalRequestPrincipal,
-    createAdapters: () => createNativeProviderWorkflowAdapters({
-      store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
-      hermesCodexReuse: createHermesCodexReuse({ homePath }),
-      claudeBrowserLogin: createClaudeSettingsLogin({ command: "claude", cwd: homePath, env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("claude", { kind: "write", durable: true }) }),
-      codexSettingsLogin: createCodexSettingsLogin({ command: join(process.env.MATRIX_NODE_PREFIX ?? "/opt/matrix/runtime/node", "bin/codex"), cwd: homePath,
-        env: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) }, acquire: () => nativeProviderProfileGuard.acquire("codex", { kind: "write", durable: true }) }),
-      opencodeConnection: opencodeSettingsConnection,
-      piConnection: piSettingsConnection,
-      openclawConnection: openclawSettingsConnection,
-      inventory: async () => (await aiProviderService.getSnapshot()).drivers,
-      verifyKeys: { codex: createProviderKeyVerifier({ providerId: "openai", profileGuard: nativeProviderProfileGuard, profile: "codex", save: createCodexKeySaver({ homePath }) }) },
-    }),
+    inventory: () => aiProviderService.getSnapshot(),
   });
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
@@ -1911,12 +1881,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await localChatImportLifecycle.close();
-      await closeNativeProviderWorkflowConnections([
-        () => providerWorkflowLifecycle.close(),
-        () => opencodeSettingsConnection.close(),
-        () => piSettingsConnection.close(),
-        () => openclawSettingsConnection.close(),
-      ]);
+      await providerWorkflowLifecycle.close();
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
