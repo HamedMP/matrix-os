@@ -1,7 +1,7 @@
 import { CollaborationDiscoveryItemSchema, type CollaborationProjectOverview } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { subscribeCollaborationDiscoveryChanged, type CollaborationDirectApi } from "@matrix-os/ui";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Folder, FolderOpen, MessageSquare, UsersIcon } from "@renderer/lib/hugeicons";
 import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../../lib/collaboration";
 import { useConnection } from "../../../stores/connection";
@@ -105,24 +105,38 @@ function useSharedProjects(): CollaborationProjectOverview[] {
  * Shared projects in the Work rail, shown like the member's own projects with one shared mark.
  * Owner actions (pin, edit, share, delete, new Chat) are absent; Chats open as shared Chat tabs.
  */
-export function SharedWorkRailProjects() {
+export function SharedWorkRailProjects({ revealScopeId }: {
+  revealScopeId?: string;
+} = {}) {
   const projects = useSharedProjects();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [dismissedRevealScopeId, setDismissedRevealScopeId] = useState<string>();
+  const scrolledRevealScopeId = useRef<string | undefined>(undefined);
   const activeSharedScope = useTabs((state) => state.tabs.find((tab) => tab.id === state.activeTabId)?.sharedScopeId);
   if (projects.length === 0) return null;
   return <>
     {projects.map((project) => {
-      const open = Boolean(expanded[project.scopeId]);
+      const revealOpen = revealScopeId === project.scopeId && dismissedRevealScopeId !== revealScopeId;
+      const open = Boolean(expanded[project.scopeId]) || revealOpen;
       const active = project.chats.some((chat) => chat.scopeId === activeSharedScope);
       return <div key={project.scopeId}>
         <div className="group/project relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]">
           <button
+            ref={(node) => {
+              if (node && revealOpen && scrolledRevealScopeId.current !== revealScopeId) {
+                scrolledRevealScopeId.current = revealScopeId;
+                node.scrollIntoView?.({ block: "nearest" });
+              }
+            }}
             type="button"
             aria-label={project.name}
             aria-expanded={open}
             className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
             style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
-            onClick={() => setExpanded((current) => ({ ...current, [project.scopeId]: !open }))}
+            onClick={() => {
+              if (revealOpen) setDismissedRevealScopeId(project.scopeId);
+              else setExpanded((current) => ({ ...current, [project.scopeId]: !open }));
+            }}
           >
             {open
               ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />

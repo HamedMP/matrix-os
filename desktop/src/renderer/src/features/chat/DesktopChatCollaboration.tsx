@@ -15,9 +15,11 @@ const COLLABORATION_LAYERS = {
 export default function DesktopChatCollaboration({
   hideAcceptedProjects = false,
   onOpenResource,
+  onOpenProject,
 }: {
   hideAcceptedProjects?: boolean;
   onOpenResource?: () => void;
+  onOpenProject?: (scopeId: string) => void;
 } = {}) {
   const actorId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
@@ -57,15 +59,21 @@ export default function DesktopChatCollaboration({
         onOpenResource?.();
       }}
       openProject={(scopeId) => {
-        if (hideAcceptedProjects) onOpenResource?.();
-        else setView({ kind: "project", scopeId });
+        if (hideAcceptedProjects) {
+          onOpenProject?.(scopeId);
+          onOpenResource?.();
+        } else setView({ kind: "project", scopeId });
       }}
       hideAcceptedProjects={hideAcceptedProjects} />
   </div>;
 }
 
 /** Shared discovery belongs to Chat chrome; it is not an independent desktop app surface. */
-export function DesktopSharedWithMeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function DesktopSharedWithMeDialog({ open, onClose, onOpenProject }: {
+  open: boolean;
+  onClose: () => void;
+  onOpenProject?: (scopeId: string) => void;
+}) {
   return <Dialog open={open} onClose={onClose} width={760} title="Shared with me" placement="center">
     {open ? <div className="relative flex h-[min(720px,calc(100vh-48px))] min-h-0 flex-col overflow-hidden">
       <button type="button" aria-label="Close Shared with me"
@@ -74,7 +82,7 @@ export function DesktopSharedWithMeDialog({ open, onClose }: { open: boolean; on
         <X size={16} aria-hidden />
       </button>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <DesktopChatCollaboration hideAcceptedProjects onOpenResource={onClose} />
+        <DesktopChatCollaboration hideAcceptedProjects onOpenResource={onClose} onOpenProject={onOpenProject} />
       </div>
     </div> : null}
   </Dialog>;
