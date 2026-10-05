@@ -40,6 +40,13 @@ function setup(overrides: Partial<AoedePanelProps> = {}) {
 }
 
 describe("AoedePanel standalone presentation", () => {
+  it.each([['web_canvas', 680], ['web_desktop', 680], ['electron_desktop', 49]] as const)("keeps %s native conversation below protected shell controls", (surface, expected) => {
+    setup({ capability: { ...capability, surface, conversationMode: "native_live" }, status: "listening" });
+    const layer = screen.getByRole("dialog", { name: "Aoede live conversation" }).parentElement!;
+    expect(Number(layer.style.zIndex)).toBe(expected);
+    expect(Number(layer.style.zIndex)).toBeLessThan(surface === 'electron_desktop' ? 50 : 700);
+  });
+
   it("shows live caption lanes and explicit voice controls while keeping context observers mounted", () => {
     const mounted = vi.fn();
     function Context() { React.useEffect(() => { mounted(); }, []); return <p>Canonical task context</p>; }

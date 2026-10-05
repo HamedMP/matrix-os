@@ -13,7 +13,8 @@
     "./aoede.css": "./src/aoede/aoede-panel.css",
     "./styles.css": "./src/styles.css",
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
-    "./chat-agents.css": "./src/chat-agents/chat-agents.css"
+    "./chat-agents.css": "./src/chat-agents/chat-agents.css",
+    "./shell-layering": "./src/shell-layering.ts"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",

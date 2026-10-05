@@ -1,5 +1,5 @@
 /* Native Live companion: shared Web Canvas, Web Desktop and Electron renderer. */
-.matrix-aoede-live { position: fixed; inset: 0; pointer-events: none; z-index: 10000; color: var(--live-paper); }
+.matrix-aoede-live { position: fixed; inset: 0; pointer-events: none; color: var(--live-paper); }
 .matrix-aoede-live__halo { position: absolute; inset: 0; border: 2px solid color-mix(in srgb, var(--live-gold) 65%, transparent); box-shadow: inset 0 0 42px color-mix(in srgb, var(--live-coral) 32%, transparent), inset 0 0 100px color-mix(in srgb, var(--live-blue) 12%, transparent); transition: opacity 180ms ease; }
 .matrix-aoede-live[data-state="paused"] .matrix-aoede-live__halo { opacity: .3; }
 .matrix-aoede-live__conversation { position: absolute; inset-inline: max(1rem, calc((100vw - 48rem) / 2)); bottom: max(6rem, env(safe-area-inset-bottom)); max-height: min(75vh, 42rem); overflow-y: auto; pointer-events: auto; background: color-mix(in srgb, var(--live-forest) 94%, transparent); border: 1px solid color-mix(in srgb, var(--live-gold) 25%, transparent); border-radius: 1.5rem; padding: 1.2rem 1.5rem; box-shadow: 0 12px 48px color-mix(in srgb, var(--live-forest) 50%, transparent); }

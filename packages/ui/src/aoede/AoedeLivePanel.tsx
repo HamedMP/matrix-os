@@ -2,6 +2,7 @@
 import "./aoede-live.css";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { desktopPalette, fonts } from "@matrix-os/brand/tokens";
+import { SHELL_Z_INDEX, DESKTOP_Z_INDEX } from "../shell-layering.js";
 import type { AoedePanelProps } from "./AoedePanel.js";
 import { aoedeErrorCopy, AOEDE_STATUS_LABELS } from "./presentation.js";
 
@@ -14,7 +15,7 @@ export function AoedeLivePanel(props: AoedePanelProps) {
   const conversation = useRef<HTMLElement>(null);
   useEffect(() => { conversation.current?.focus(); }, [props.focusRevision]);
   const active = !["idle", "ended", "failed"].includes(props.status);
-  const style = { "--live-forest": desktopPalette.forest, "--live-paper": desktopPalette.paper,
+  const style = { zIndex: props.capability?.surface === "electron_desktop" ? DESKTOP_Z_INDEX.voiceCompanion : SHELL_Z_INDEX.voiceCompanion, "--live-forest": desktopPalette.forest, "--live-paper": desktopPalette.paper,
     "--live-gold": desktopPalette.gold, "--live-coral": desktopPalette.coral, "--live-blue": desktopPalette.blue,
     "--live-serif": fonts.display } as CSSProperties;
   return <div data-aoede-live className="matrix-aoede-live" data-state={props.status} style={style}>
