@@ -1002,7 +1002,7 @@ export class ChatQueueRepository {
         createdAt: claimedAt,
         updatedAt: claimedAt,
       });
-      const context = await queuedRunContext(trx, queuedTurn, chat.title, Number(chat.message_count));
+      const context = await queuedRunContext(trx, queuedTurn, chat.title, Number(chat.message_count), !row.collaboration_scope_id && chat.collaboration === null);
       const run = CanonicalChatRunSchema.parse({
         id: runId,
         chatId,

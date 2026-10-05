@@ -197,6 +197,15 @@ export class ChatRunLifecycleRepository {
           AND agent_boundary.context_snapshot -> 'agent' IS NOT NULL
           AND agent_boundary.history_boundary_seq >= chat_runs.history_boundary_seq
       )`)
+      // Returning to a former root must not revive a session missing completed
+      // work performed in another root. Interrupted-checkpoint fallback remains.
+      .where(sql<boolean>`NOT EXISTS (
+        SELECT 1 FROM chat_runs AS root_boundary
+        WHERE root_boundary.chat_id = chat_runs.chat_id
+          AND root_boundary.status = 'completed'
+          AND root_boundary.history_boundary_seq > chat_runs.history_boundary_seq
+          AND root_boundary.execution_root_fingerprint IS DISTINCT FROM chat_runs.execution_root_fingerprint
+      )`)
       // A new user turn continues the native conversation even when its last
       // run failed. Explicit retry callers retain the completed-only boundary.
       .where("chat_runs.status", "in", input.includeInterrupted
