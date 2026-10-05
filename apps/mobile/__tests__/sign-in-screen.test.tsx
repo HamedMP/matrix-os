@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { Linking } from "react-native";
 
 const mockReplace = jest.fn();
 jest.mock("expo-router", () => ({
@@ -270,6 +271,21 @@ describe("SignInScreen email code flow", () => {
     fireEvent.press(screen.getByLabelText("Email me a code instead"));
 
     expect(await screen.findByText("Enter a valid Matrix OS URL.")).toBeTruthy();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Privacy Policy", "https://matrix-os.com/privacy"],
+    ["Terms of Service", "https://matrix-os.com/terms"],
+  ])("opens the %s from the consent line before signing in", (name, url) => {
+    // App Review needs the privacy policy reachable in-app without an account.
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    render(<SignInScreen />);
+
+    fireEvent.press(screen.getByRole("link", { name }));
+
+    expect(openUrl).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenCalledWith(url);
     expect(mockCreate).not.toHaveBeenCalled();
   });
 

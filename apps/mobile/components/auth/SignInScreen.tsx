@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { View, Text, Alert, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { View, Text, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -10,6 +10,7 @@ import { Image } from "expo-image";
 import { describeSignInFailure } from "@/lib/clerk-sign-in";
 import { SignInStepError, useEmailCodeSignIn } from "@/lib/use-email-code-sign-in";
 import { HostedSignInPanel } from "@/components/auth/HostedSignInPanel";
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, openLegalLink } from "@/lib/legal-links";
 import {
   HOSTED_GATEWAY_URL,
   getSelectedGatewayConnection,
@@ -227,12 +228,37 @@ export function SignInScreen() {
             onUseDifferentEmail={handleUseDifferentEmail}
           />
 
-          <Text style={styles.termsText}>
-            By continuing, you agree to our Terms of Service and Privacy Policy
-          </Text>
+          <View style={styles.terms}>
+            <Text style={styles.termsText}>By continuing, you agree to our</Text>
+            <View style={styles.termsLinks}>
+              <LegalLink label="Terms of Service" url={TERMS_OF_SERVICE_URL} />
+              <Text style={[styles.termsText, styles.termsJoiner]}>and</Text>
+              <LegalLink label="Privacy Policy" url={PRIVACY_POLICY_URL} />
+            </View>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+// Vertical slop lifts the 18pt line to a 44pt target; horizontal slop stays
+// under half the "and" gap so the two links never claim the same touch.
+const LEGAL_LINK_HIT_SLOP = { top: 13, bottom: 13, left: 8, right: 8 };
+
+// Pressables rather than nested <Text> spans: a 12pt inline span cannot carry a
+// hitSlop, and these links have to be comfortably tappable before sign-in.
+function LegalLink({ label, url }: { label: string; url: string }) {
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={label}
+      hitSlop={LEGAL_LINK_HIT_SLOP}
+      onPress={() => openLegalLink(url)}
+      style={({ pressed }) => (pressed ? styles.termsLinkPressed : null)}
+    >
+      <Text style={styles.termsLink}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -274,13 +300,36 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
     marginBottom: 12,
   },
+  terms: {
+    marginTop: 22,
+    paddingHorizontal: theme.v2.spacing.lg,
+    alignItems: "center",
+  },
+  termsLinks: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
   termsText: {
     fontFamily: theme.v2.fonts.body,
     fontSize: 12,
     color: theme.v2.appColors.muted,
     textAlign: "center",
-    marginTop: 22,
     lineHeight: 18,
-    paddingHorizontal: theme.v2.spacing.lg,
+  },
+  // A margin, not literal spaces: iOS trims a Text node's trailing whitespace,
+  // which leaves the gap after "and" narrower than the one before it.
+  termsJoiner: {
+    marginHorizontal: theme.v2.spacing.xs,
+  },
+  termsLink: {
+    fontFamily: theme.v2.fonts.medium,
+    fontSize: 12,
+    color: theme.v2.appColors.ink,
+    textDecorationLine: "underline",
+    lineHeight: 18,
+  },
+  termsLinkPressed: {
+    opacity: 0.6,
   },
 }));
