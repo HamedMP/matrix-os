@@ -105,26 +105,27 @@ function useSharedProjects(): CollaborationProjectOverview[] {
  * Shared projects in the Work rail, shown like the member's own projects with one shared mark.
  * Owner actions (pin, edit, share, delete, new Chat) are absent; Chats open as shared Chat tabs.
  */
-export function SharedWorkRailProjects({ revealScopeId }: {
-  revealScopeId?: string;
+export function SharedWorkRailProjects({ revealRequest }: {
+  revealRequest?: { scopeId: string; requestId: number };
 } = {}) {
   const projects = useSharedProjects();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [dismissedRevealScopeId, setDismissedRevealScopeId] = useState<string>();
-  const scrolledRevealScopeId = useRef<string | undefined>(undefined);
+  const [dismissedRevealRequestId, setDismissedRevealRequestId] = useState<number>();
+  const scrolledRevealRequestId = useRef<number | undefined>(undefined);
   const activeSharedScope = useTabs((state) => state.tabs.find((tab) => tab.id === state.activeTabId)?.sharedScopeId);
   if (projects.length === 0) return null;
   return <>
     {projects.map((project) => {
-      const revealOpen = revealScopeId === project.scopeId && dismissedRevealScopeId !== revealScopeId;
+      const revealOpen = revealRequest?.scopeId === project.scopeId
+        && dismissedRevealRequestId !== revealRequest.requestId;
       const open = Boolean(expanded[project.scopeId]) || revealOpen;
       const active = project.chats.some((chat) => chat.scopeId === activeSharedScope);
       return <div key={project.scopeId}>
         <div className="group/project relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]">
           <button
             ref={(node) => {
-              if (node && revealOpen && scrolledRevealScopeId.current !== revealScopeId) {
-                scrolledRevealScopeId.current = revealScopeId;
+              if (node && revealOpen && scrolledRevealRequestId.current !== revealRequest?.requestId) {
+                scrolledRevealRequestId.current = revealRequest?.requestId;
                 node.scrollIntoView?.({ block: "nearest" });
               }
             }}
@@ -134,7 +135,7 @@ export function SharedWorkRailProjects({ revealScopeId }: {
             className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
             style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
             onClick={() => {
-              if (revealOpen) setDismissedRevealScopeId(project.scopeId);
+              if (revealOpen) setDismissedRevealRequestId(revealRequest?.requestId);
               else setExpanded((current) => ({ ...current, [project.scopeId]: !open }));
             }}
           >

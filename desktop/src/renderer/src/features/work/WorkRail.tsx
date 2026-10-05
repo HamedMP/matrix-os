@@ -121,7 +121,10 @@ export function WorkRail({
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [sharedWithMeOpen, setSharedWithMeOpen] = useState(false);
-  const [sharedProjectRevealScopeId, setSharedProjectRevealScopeId] = useState<string>();
+  const [sharedProjectRevealRequest, setSharedProjectRevealRequest] = useState<{
+    scopeId: string;
+    requestId: number;
+  }>();
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
   const projectedChatTitlesRef = useRef(projectedChatTitles);
@@ -251,7 +254,10 @@ export function WorkRail({
   };
   const revealSharedProject = (scopeId: string) => {
     setSections((current) => current.projects ? current : { ...current, projects: true });
-    setSharedProjectRevealScopeId(scopeId);
+    setSharedProjectRevealRequest((current) => ({
+      scopeId,
+      requestId: (current?.requestId ?? 0) + 1,
+    }));
   };
 
   const updatePinned = (record: CanonicalChatRecord) => {
@@ -430,7 +436,7 @@ export function WorkRail({
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
         onOpenBotChat={onOpenBotChat ? (chatId) => { agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
-        revealSharedProjectScopeId={sharedProjectRevealScopeId}
+        revealSharedProjectRequest={sharedProjectRevealRequest}
         organizationDrives={<OrganizationDrivesRail active={active} chats={ordinaryRecords} client={client?.agents} onNewChat={onStartAgentChat} onSelectChat={onSelectChat} activeChatId={activeChatId} />} />
         {status === "loading" && records.length === 0 ? (
           <p role="status" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading chats…</p>
