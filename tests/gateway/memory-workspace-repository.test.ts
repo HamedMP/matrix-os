@@ -52,7 +52,7 @@ describe("memory repository", () => {
     expect(await repo.getSource("alice", s.id)).toBeNull();
     expect(
       (await repo.listJobs("alice")).filter((j) => j.operation === "delete"),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
   });
   it("leases jobs once, settles by lease token and recovers expiration", async () => {
     await repo.importSources("alice", request);
@@ -299,9 +299,11 @@ describe("memory retention and deletion", () => {
       repo.kysely,
     );
     await repo.prune();
-    expect((await repo.listJobs("alice")).every((j) => j.revision === 2)).toBe(
-      true,
-    );
+    expect(
+      (await repo.listJobs("alice"))
+        .filter((j) => j.operation === "upsert")
+        .every((j) => j.revision === 2),
+    ).toBe(true);
     expect(
       (await sql`SELECT * FROM memory_workspace_imports`.execute(repo.kysely))
         .rows,

@@ -22,6 +22,12 @@ function repository() {
     listSources: vi.fn(async () => [source]),
     listJobs: vi.fn(async () => []),
     recordComparison: vi.fn(async () => {}),
+    revalidateSearch: vi.fn(
+      async (
+        _owner: string,
+        results: import("@matrix-os/contracts").MemorySearchResult[],
+      ) => results,
+    ),
   };
 }
 describe("memory workspace service", () => {
@@ -231,4 +237,37 @@ describe("original memory excerpts", () => {
     expect(Buffer.byteLength(result.hits[0].text)).toBe(8000);
     expect(result.hits[0].text).not.toContain("�");
   });
+});
+
+it("does not return evidence deleted after materialization but before final validation", async () => {
+  const repo = repository();
+  const revalidateSearch = vi.fn(async (_owner, results) =>
+    results.map((result) => ({ ...result, hits: [] })),
+  );
+  const service = new MemoryWorkspaceService(
+    { ...repo, revalidateSearch },
+    {
+      hindsight: {
+        id: "hindsight",
+        upsert: vi.fn(),
+        delete: vi.fn(),
+        search: vi.fn(async () => [
+          {
+            sourceId: source.id,
+            revision: source.revision,
+            text: "captured",
+            provenance: "summary" as const,
+          },
+        ]),
+      },
+    },
+  );
+  expect(
+    (await service.search("alice", "question", "hindsight", 8)).hits,
+  ).toEqual([]);
+  expect(revalidateSearch).toHaveBeenCalledWith("alice", [
+    expect.objectContaining({
+      hits: [expect.objectContaining({ text: "captured" })],
+    }),
+  ]);
 });

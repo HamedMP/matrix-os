@@ -21,7 +21,12 @@ export interface MemoryEngineAdapter {
     source: MemorySource,
     signal: AbortSignal,
   ): Promise<void>;
-  delete(owner: string, sourceId: string, signal: AbortSignal): Promise<void>;
+  delete(
+    owner: string,
+    sourceId: string,
+    revision: number,
+    signal: AbortSignal,
+  ): Promise<void>;
   search(
     owner: string,
     query: string,
@@ -35,7 +40,7 @@ const hindsightRecall = z.object({
   results: z
     .array(
       z.object({
-        document_id: uuid.nullish(),
+        document_id: z.string().max(100).nullish(),
         text: z.string().max(200000),
         metadata: z.record(z.string(), z.string()).nullish(),
         scores: z.object({ final: z.number().finite().nullish() }).nullish(),
@@ -93,7 +98,7 @@ export function createMemoryEngines(
             items: [
               {
                 content: source.content,
-                document_id: source.id,
+                document_id: `${source.id}:r${source.revision}`,
                 context: `${source.kind}: ${source.collection}`,
                 timestamp: source.occurredAt ?? "unset",
                 metadata: {
@@ -111,7 +116,14 @@ export function createMemoryEngines(
           result,
         );
       },
-      async delete(owner, id, signal) {
+      async delete(owner, id, revision, signal) {
+        await request(
+          `${bank(owner)}/documents/${encodeURIComponent(`${id}:r${revision}`)}`,
+          { method: "DELETE" },
+          signal,
+          true,
+        );
+        // Installed trial sources used the bare UUID. New writes never use this ID.
         await request(
           `${bank(owner)}/documents/${encodeURIComponent(id)}`,
           { method: "DELETE" },
@@ -136,21 +148,31 @@ export function createMemoryEngines(
         return response.results
           .flatMap((r) => {
             const revision = Number(r.metadata?.matrix_revision);
-            return r.document_id &&
-              Number.isSafeInteger(revision) &&
-              revision > 0
-              ? [
-                  {
-                    sourceId: r.document_id,
-                    revision,
-                    text: r.text.slice(0, 8000),
-                    ...(r.scores?.final != null
-                      ? { score: r.scores.final }
-                      : {}),
-                    provenance: "summary" as const,
-                  },
-                ]
-              : [];
+            const match = r.document_id?.match(
+              /^([0-9a-f-]{36})(?::r([1-9][0-9]*))?$/i,
+            );
+            if (
+              !match ||
+              !uuid.safeParse(match[1]).success ||
+              !Number.isSafeInteger(revision) ||
+              revision < 1
+            )
+              return [];
+            if (match[2] && Number(match[2]) !== revision) return [];
+            if (
+              r.metadata?.matrix_source_id &&
+              r.metadata.matrix_source_id !== match[1]
+            )
+              return [];
+            return [
+              {
+                sourceId: match[1],
+                revision,
+                text: r.text.slice(0, 8000),
+                ...(r.scores?.final != null ? { score: r.scores.final } : {}),
+                provenance: "summary" as const,
+              },
+            ];
           })
           .slice(0, limit);
       },
@@ -164,9 +186,14 @@ export function createMemoryEngines(
     );
     const root = (owner: string) =>
       `viking://resources/matrix/${ownerNamespace(owner)}`;
-    async function remove(owner: string, id: string, signal: AbortSignal) {
+    async function remove(
+      owner: string,
+      id: string,
+      revision: number,
+      signal: AbortSignal,
+    ) {
       await request(
-        `/api/v1/fs?${new URLSearchParams({ uri: `${root(owner)}/${id}`, recursive: "true", wait: "true", timeout: "90" })}`,
+        `/api/v1/fs?${new URLSearchParams({ uri: `${root(owner)}/${id}/r${revision}`, recursive: "true", wait: "true", timeout: "90" })}`,
         { method: "DELETE" },
         signal,
         true,
@@ -175,7 +202,7 @@ export function createMemoryEngines(
     engines.openviking = {
       id: "openviking",
       async upsert(owner, source, signal) {
-        await remove(owner, source.id, signal);
+        await remove(owner, source.id, source.revision, signal);
         const form = new FormData();
         form.set(
           "file",

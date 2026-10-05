@@ -54,15 +54,30 @@ export class MemoryIngestionWorker {
             job.ownerId,
             job.sourceId,
           );
-          if (source && source.revision !== job.revision) {
-            success = true;
-          } else if (job.operation === "delete" || !source) {
-            await adapter.delete(job.ownerId, job.sourceId, signal);
-            success = true;
-          } else {
+          if (job.operation === "delete" || !source) {
+            // Cleanup is immutable-revision scoped, including after a source is restored.
+            await adapter.delete(
+              job.ownerId,
+              job.sourceId,
+              job.revision,
+              signal,
+            );
+          } else if (source.revision === job.revision) {
             await adapter.upsert(job.ownerId, source, signal);
-            success = true;
+            const current = await this.repository.getSource(
+              job.ownerId,
+              job.sourceId,
+            );
+            if (!current || current.revision !== job.revision) {
+              await adapter.delete(
+                job.ownerId,
+                job.sourceId,
+                job.revision,
+                signal,
+              );
+            }
           }
+          success = true;
         } catch (error) {
           console.warn(
             "[memory-workspace] Ingestion attempt failed",

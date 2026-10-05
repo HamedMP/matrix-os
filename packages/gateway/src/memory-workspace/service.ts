@@ -49,6 +49,10 @@ export interface MemoryServiceRepository {
     id: string,
     action: "retry" | "cancel",
   ): Promise<boolean>;
+  revalidateSearch(
+    owner: string,
+    results: MemorySearchResult[],
+  ): Promise<MemorySearchResult[]>;
   recordComparison?(
     owner: string,
     query: string,
@@ -164,6 +168,17 @@ export class MemoryWorkspaceService {
     engine: MemoryEngine,
     limit: number,
   ): Promise<MemorySearchResult> {
+    const result = await this.retrieve(owner, query, engine, limit);
+    if (result.status !== "ready") return result;
+    const [validated] = await this.repository.revalidateSearch(owner, [result]);
+    return validated;
+  }
+  private async retrieve(
+    owner: string,
+    query: string,
+    engine: MemoryEngine,
+    limit: number,
+  ): Promise<MemorySearchResult> {
     const started = performance.now();
     const adapter = this.engines[engine];
     if (!adapter)
@@ -227,14 +242,20 @@ export class MemoryWorkspaceService {
   }
   async compare(owner: string, query: string, limit: number) {
     const results = await Promise.all(
-      MEMORY_ENGINES.map((engine) => this.search(owner, query, engine, limit)),
+      MEMORY_ENGINES.map((engine) =>
+        this.retrieve(owner, query, engine, limit),
+      ),
     );
     const validated = await this.repository.recordComparison?.(
       owner,
       query,
       results,
     );
-    return { query, results: validated ?? results };
+    return {
+      query,
+      results:
+        validated ?? (await this.repository.revalidateSearch(owner, results)),
+    };
   }
   async resolveChat(
     owner: string,

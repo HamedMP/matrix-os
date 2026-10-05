@@ -1,11 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  Kysely,
-  PostgresDialect,
-  sql,
-  type Dialect,
-  type Transaction,
-} from "kysely";
+import { Kysely, PostgresDialect, sql, type Dialect } from "kysely";
 import pg from "pg";
 import {
   MEMORY_ENGINES,
@@ -21,6 +15,15 @@ import {
   type MemorySearchResult,
 } from "@matrix-os/contracts";
 import { bootstrapMemoryDatabase, type MemoryDatabase } from "./database.js";
+import {
+  lockMemoryOwner,
+  validateMemoryEvidence,
+  type MemoryDb,
+} from "./evidence.js";
+import {
+  enqueueRevisionCleanup,
+  reconcileRevisionCleanup,
+} from "./revision-cleanup.js";
 export class MemoryConflictError extends Error {
   constructor() {
     super("Memory revision conflict");
@@ -78,7 +81,7 @@ const job = (r: JobRow): MemoryJob => ({
   attempts: r.attempts,
   updatedAt: iso(r.updated_at),
 });
-type Db = Kysely<MemoryDatabase> | Transaction<MemoryDatabase>;
+type Db = MemoryDb;
 export class MemoryWorkspaceRepository {
   readonly kysely: Kysely<MemoryDatabase>;
   private ownsConnection: boolean;
@@ -108,22 +111,23 @@ export class MemoryWorkspaceRepository {
   async destroy() {
     if (this.ownsConnection) await this.kysely.destroy();
   }
-  private async lockOwner(db: Db, owner: string) {
-    await sql`INSERT INTO memory_workspace_owners(owner_id) VALUES(${owner}) ON CONFLICT DO NOTHING`.execute(
-      db,
-    );
-    await sql`SELECT owner_id FROM memory_workspace_owners WHERE owner_id=${owner} FOR UPDATE`.execute(
-      db,
-    );
-  }
   private async enqueue(db: Db, r: SourceRow, operation: "upsert" | "delete") {
-    await sql`UPDATE memory_workspace_jobs SET status='cancelled',updated_at=now() WHERE source_id=${r.id} AND status IN ('pending','failed')`.execute(
+    await sql`UPDATE memory_workspace_jobs SET status='cancelled',updated_at=now() WHERE source_id=${r.id} AND operation='upsert' AND status IN ('pending','failed')`.execute(
       db,
     );
-    for (const engine of MEMORY_ENGINES)
-      await sql`INSERT INTO memory_workspace_jobs(id,owner_id,source_id,engine,revision,operation,status) VALUES(${randomUUID()},${r.owner_id},${r.id},${engine},${r.revision},${operation},'pending') ON CONFLICT DO NOTHING`.execute(
+    if (operation === "upsert") {
+      for (const engine of MEMORY_ENGINES)
+        await sql`INSERT INTO memory_workspace_jobs(id,owner_id,source_id,engine,revision,operation,status) VALUES(${randomUUID()},${r.owner_id},${r.id},${engine},${r.revision},'upsert','pending') ON CONFLICT DO NOTHING`.execute(
+          db,
+        );
+    }
+    await enqueueRevisionCleanup(db, r);
+    if (r.revision > 1) {
+      // Queries can quote originals too; erase the owner's bounded comparison history.
+      await sql`DELETE FROM memory_workspace_comparisons WHERE owner_id=${r.owner_id}`.execute(
         db,
       );
+    }
   }
   private async hydrate(db: Db, rows: SourceRow[]): Promise<MemorySource[]> {
     if (!rows.length) return [];
@@ -207,40 +211,24 @@ export class MemoryWorkspaceRepository {
       collectionsTruncated: rows.length > 200,
     };
   }
+  async revalidateSearch(owner: string, results: MemorySearchResult[]) {
+    return this.kysely.transaction().execute(async (db) => {
+      await lockMemoryOwner(db, owner);
+      return (await validateMemoryEvidence(db, owner, results)).current;
+    });
+  }
   async recordComparison(
     owner: string,
     query: string,
     results: MemorySearchResult[],
   ): Promise<MemorySearchResult[]> {
     return this.kysely.transaction().execute(async (db) => {
-      await this.lockOwner(db, owner);
-      const sourceIds = [
-        ...new Set(
-          results.flatMap((result) => result.hits.map((hit) => hit.sourceId)),
-        ),
-      ];
-      const rows = sourceIds.length
-        ? (
-            await sql<{
-              id: string;
-              revision: number;
-            }>`SELECT id,revision FROM memory_workspace_sources WHERE owner_id=${owner} AND deleted_at IS NULL AND id IN (${sql.join(sourceIds)})`.execute(
-              db,
-            )
-          ).rows
-        : [];
-      let invalidated = false;
-      const current = results.map((result) => ({
-        ...result,
-        hits: result.hits.filter((hit) => {
-          const source = rows.find((row) => row.id === hit.sourceId);
-          const valid =
-            source?.revision === hit.citation.revision &&
-            hit.citation.sourceId === hit.sourceId;
-          if (!valid) invalidated = true;
-          return valid;
-        }),
-      }));
+      await lockMemoryOwner(db, owner);
+      const { current, invalidated } = await validateMemoryEvidence(
+        db,
+        owner,
+        results,
+      );
       // The query itself can quote deleted or corrected content. Skip the whole durable
       // history entry when evidence changed, while returning only currently valid hits.
       // Delete, revision writes and this revalidation share the same owner row lock.
@@ -276,7 +264,7 @@ export class MemoryWorkspaceRepository {
     const req = MemoryImportRequestSchema.parse(input);
     const digest = hash(req.sources);
     return this.kysely.transaction().execute(async (db) => {
-      await this.lockOwner(db, owner);
+      await lockMemoryOwner(db, owner);
       const existing = (
         await sql<{
           request_hash: string;
@@ -341,7 +329,7 @@ export class MemoryWorkspaceRepository {
   async patchSource(owner: string, id: string, input: MemorySourcePatch) {
     const req = MemorySourcePatchSchema.parse(input);
     return this.kysely.transaction().execute(async (db) => {
-      await this.lockOwner(db, owner);
+      await lockMemoryOwner(db, owner);
       if (req.content) {
         const quota = (
           await sql<{
@@ -368,7 +356,7 @@ export class MemoryWorkspaceRepository {
   }
   async deleteSource(owner: string, id: string) {
     return this.kysely.transaction().execute(async (db) => {
-      await this.lockOwner(db, owner);
+      await lockMemoryOwner(db, owner);
       const row = (
         await sql<SourceRow>`UPDATE memory_workspace_sources SET deleted_at=now(),updated_at=now(),content='',title='Deleted source',collection='Deleted',occurred_at=NULL,metadata='{}',revision=revision+1 WHERE owner_id=${owner} AND id=${id} AND deleted_at IS NULL RETURNING *`.execute(
           db,
@@ -393,7 +381,7 @@ export class MemoryWorkspaceRepository {
         db,
       );
       const r = (
-        await sql<JobRow>`SELECT j.* FROM memory_workspace_jobs j JOIN memory_workspace_sources s ON s.id=j.source_id WHERE j.engine=${engine} AND j.attempts<3 AND j.available_at<=now() AND (j.status='pending' OR (j.status='processing' AND j.lease_until<now())) AND NOT EXISTS(SELECT 1 FROM memory_workspace_jobs other WHERE other.source_id=j.source_id AND other.engine=j.engine AND other.id<>j.id AND other.status='processing' AND other.lease_until>=now()) ORDER BY j.updated_at LIMIT 1 FOR UPDATE OF s,j SKIP LOCKED`.execute(
+        await sql<JobRow>`SELECT j.* FROM memory_workspace_jobs j JOIN memory_workspace_sources s ON s.id=j.source_id WHERE j.engine=${engine} AND j.attempts<3 AND j.available_at<=now() AND (j.status='pending' OR (j.status='processing' AND j.lease_until<now())) AND NOT EXISTS(SELECT 1 FROM memory_workspace_jobs other WHERE other.source_id=j.source_id AND other.engine=j.engine AND other.id<>j.id AND other.status='processing' AND other.lease_until>=now()) ORDER BY j.updated_at,CASE WHEN j.operation='upsert' THEN 0 ELSE 1 END,j.revision DESC LIMIT 1 FOR UPDATE OF s,j SKIP LOCKED`.execute(
           db,
         )
       ).rows[0];
@@ -424,10 +412,7 @@ export class MemoryWorkspaceRepository {
   }
   async prune() {
     await this.kysely.transaction().execute(async (db) => {
-      // Current revision receipts stay available; only obsolete terminal jobs expire.
-      await sql`DELETE FROM memory_workspace_jobs j USING memory_workspace_sources s WHERE j.source_id=s.id AND j.revision<s.revision AND j.status IN ('ready','cancelled','failed') AND j.updated_at<now()-interval '7 days'`.execute(
-        db,
-      );
+      await reconcileRevisionCleanup(db);
       await sql`DELETE FROM memory_workspace_imports WHERE created_at<now()-interval '30 days'`.execute(
         db,
       );

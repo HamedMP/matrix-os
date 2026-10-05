@@ -33,10 +33,15 @@ function setup(source: unknown, operation = "upsert") {
   };
 }
 describe("memory worker", () => {
-  it("skips obsolete jobs, including deletion after restoring a source", async () => {
+  it("cleans only an obsolete revision even after restoring a source", async () => {
     const { repo, engine, worker } = setup({ revision: 2 }, "delete");
     await worker.tick();
-    expect(engine.delete).not.toHaveBeenCalled();
+    expect(engine.delete).toHaveBeenCalledWith(
+      "alice",
+      "s",
+      1,
+      expect.any(AbortSignal),
+    );
     expect(repo.finishJob).toHaveBeenCalledWith("j", "l", true);
   });
   it("propagates tombstones and records failures without blocking the other lane", async () => {
@@ -110,4 +115,33 @@ it("drains the other lane after one database claim fails", async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("cleans a late old upsert without deleting the restored revision", async () => {
+  const f = setup({ revision: 1 });
+  const documents = new Map<number, string>();
+  let complete!: () => void;
+  f.engine.upsert.mockImplementationOnce(async (_owner, source) => {
+    await new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    documents.set(source.revision, "old");
+  });
+  f.engine.delete.mockImplementationOnce(async (_owner, _id, revision) => {
+    documents.delete(revision);
+  });
+  const running = f.worker.tick();
+  while (!complete) await Promise.resolve();
+  f.repo.getSource.mockResolvedValue({ revision: 3 });
+  documents.set(3, "restored");
+  complete();
+  await running;
+  expect(documents.get(3)).toBe("restored");
+  expect(documents.has(1)).toBe(false);
+  expect(f.engine.delete).toHaveBeenCalledWith(
+    "alice",
+    "s",
+    1,
+    expect.any(AbortSignal),
+  );
 });

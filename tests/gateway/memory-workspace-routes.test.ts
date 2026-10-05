@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { createMemoryWorkspaceRoutes } from "../../packages/gateway/src/memory-workspace/routes.js";
 import { MemoryWorkspaceService } from "../../packages/gateway/src/memory-workspace/service.js";
 const repo = {
+  revalidateSearch: vi.fn(
+    async (
+      _owner: string,
+      results: import("@matrix-os/contracts").MemorySearchResult[],
+    ) => results,
+  ),
   listSources: vi.fn(async () => []),
   getSource: vi.fn(async () => null),
   listJobs: vi.fn(async () => []),

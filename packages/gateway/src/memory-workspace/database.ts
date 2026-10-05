@@ -40,6 +40,13 @@ export async function bootstrapMemoryDatabase(
  status TEXT NOT NULL CHECK(status IN ('pending','processing','ready','failed','cancelled')), attempts INTEGER NOT NULL DEFAULT 0,
  lease_token UUID, lease_until TIMESTAMPTZ, available_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  UNIQUE(source_id,engine,revision,operation))`.execute(trx);
+    // Previous deletion receipts used the tombstone revision. Backfill the last
+    // stored revision, leaving live legacy sources untouched and migration idempotent.
+    await sql`INSERT INTO memory_workspace_jobs(id,owner_id,source_id,engine,revision,operation,status)
+      SELECT gen_random_uuid(),s.owner_id,s.id,e.engine,s.revision-1,'delete','pending'
+      FROM memory_workspace_sources s CROSS JOIN (VALUES ('hindsight'),('openviking')) e(engine)
+      WHERE s.deleted_at IS NOT NULL AND s.revision>1
+      ON CONFLICT(source_id,engine,revision,operation) DO NOTHING`.execute(trx);
     await sql`CREATE INDEX IF NOT EXISTS memory_workspace_jobs_claim ON memory_workspace_jobs(engine,status,available_at)`.execute(
       trx,
     );
