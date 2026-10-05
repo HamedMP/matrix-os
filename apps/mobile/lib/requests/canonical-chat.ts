@@ -75,7 +75,7 @@ export function fetchChatDetail(
     url = buildGatewayRequestUrl(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}`,
-      { limit: String(CHAT_DETAIL_LIMIT) },
+      { limit: String(CHAT_DETAIL_LIMIT), fundingVersion: "1" },
     );
   } catch {
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
@@ -99,6 +99,7 @@ export async function admitChatTurn(
     url = buildGatewayRequestUrl(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}/turns`,
+      { fundingVersion: "1" },
     );
   } catch {
     throw new Error(CHAT_TURN_ERROR);
@@ -122,7 +123,7 @@ export function fetchChatProviderCatalog(
   let url: string;
   try {
     url = buildGatewayRequestUrl(computerGatewayUrl, "/api/chat-providers", {
-      includeConnectionLabels: "true", includeConnectionState: "true", includeFundingState: "true",
+      includeConnectionLabels: "true", includeConnectionState: "true", includeFundingState: "true", includeChatFunding: "true",
     });
   } catch {
     return Promise.reject(new Error(PROVIDER_CATALOG_ERROR));

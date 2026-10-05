@@ -211,7 +211,7 @@ export function createCanonicalChatEventSource(options: {
     },
     connect() {
       try {
-        streamUrl = buildGatewayRequestUrl(options.gatewayUrl, "/api/chats/events");
+        streamUrl = buildGatewayRequestUrl(options.gatewayUrl, "/api/chats/events", { fundingVersion: "1" });
         assertSecureTokenTransport(streamUrl);
       } catch (error: unknown) {
         console.warn(

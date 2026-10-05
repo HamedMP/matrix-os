@@ -17,6 +17,16 @@ function fixture(status: "failed" | "aborted", retry = false): CanonicalChatDeta
 }
 
 describe("terminal notice parity", () => {
+  it.each([
+    ["insufficient_credit", "There is not enough credit available for this Chat. Check Matrix AI credit in Settings or choose another connection."],
+    ["budget_exceeded", "The monthly AI budget has been reached. Check Matrix AI in Settings or choose another connection."],
+  ])("shows trusted %s with the same safe copy on Web and Native Mobile", (code, text) => {
+    const detail = fixture("failed");
+    detail.activities = [{ type: "run.error", runId: "run_first", sequence: 1,
+      error: { code, safeMessage: "PRIVATE UPSTREAM TEXT", retryable: false } }] as CanonicalChatDetailResponse["activities"];
+    expect(projectCanonicalTranscript(detail).map((message) => message.content)).toEqual(["Prompt 1", text, "Prompt 2"]);
+    expect(buildTranscript(detail).reverse().map((message) => message.text)).toEqual(["Prompt 1", text, "Prompt 2"]);
+  });
   it.each(["failed", "aborted"] as const)("shows safe %s outcome in the same turn on Web and Native Mobile", (status) => {
     const detail = fixture(status);
     const expected = [

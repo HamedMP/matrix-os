@@ -6,7 +6,7 @@ import "@testing-library/jest-dom/vitest";
 import type { ProviderAccessSource } from "@matrix-os/contracts";
 import { GatewayPanel } from "../../packages/ui/src/agents-providers/GatewayPanel";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 function heldSource(): ProviderAccessSource {
   return {
     id: "matrix_included", kind: "matrix_gateway", fundingKind: "matrix_included", providerId: "anthropic", accountId: null,
@@ -15,12 +15,14 @@ function heldSource(): ProviderAccessSource {
     usage: { kind: "managed_credit", authority: "matrix_ledger", state: "current", scope: "owner_entitlement", currency: "USD",
       usedMicrousd: 297_893, remainingMicrousd: 0, limitMicrousd: 5_100_000,
       periodStartedAt: "2026-10-01T00:00:00.000Z", resetsAt: null, asOf: "2026-10-02T08:48:00.000Z",
+      chatAvailability: { contractVersion: 1, asOf: "2026-10-02T08:48:00.000Z", eligibleBalanceMicrousd: 4_802_107, availableBalanceMicrousd: 0 },
       credit: { promotionalBalanceMicrousd: 4_802_107, addonBalanceMicrousd: 0, creditBalanceMicrousd: 4_802_107,
         reservedMicrousd: 4_802_107, remainingBalanceMicrousd: 0 },
       budget: { monthlyBudgetMicrousd: 5_100_000, settledThisMonthMicrousd: 297_893, reservedThisMonthMicrousd: 4_802_107, remainingBudgetMicrousd: 0 } },
   };
 }
 function show(source: ProviderAccessSource) {
+  vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime("2026-10-02T08:48:00.000Z");
   const onAddCredit = vi.fn(); const onRefresh = vi.fn(); const onUseGateway = vi.fn();
   render(<GatewayPanel source={source} policy={{ accessSourceId: source.id, allowedModelIds: ["claude-sonnet-5"], monthlyBudgetMicrousd: 5_100_000, topUpEnabled: false }}
     provider={{ id: "anthropic", displayName: "Anthropic", models: [{ id: "claude-sonnet-5", displayName: "Claude Sonnet 5", enabled: true }] }}
@@ -66,7 +68,7 @@ it("identifies a monthly budget reservation separately when its amount differs f
   fireEvent.click(screen.getByText("Advanced Matrix AI settings"));
   expect(screen.getByText("$4.80 monthly budget reserved")).toBeVisible();
   expect(screen.queryByText("$4.80 reserved")).toBeNull();
-  expect(screen.getByText("$4.80")).toBeVisible();
+  expect(screen.getByText("$0.00")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Use Matrix AI" })).toBeNull();
 });
 it("does not direct a credit-needed owner to an unavailable purchase action", () => {

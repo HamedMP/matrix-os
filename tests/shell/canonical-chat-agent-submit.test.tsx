@@ -97,7 +97,7 @@ it("keeps a new Chat draft selected until admission succeeds and reuses its crea
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
     if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [] });
-    if (url.endsWith("/api/chats?readStateVersion=1") && init?.method === "POST") {
+    if (url.endsWith("/api/chats?readStateVersion=1&fundingVersion=1") && init?.method === "POST") {
       createKeys.push(JSON.parse(init.body as string).clientRequestId);
       return Response.json(record);
     }
@@ -118,7 +118,7 @@ it("uses the shared automatic title without shortening the actual request", asyn
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
     if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [] });
-    if (url.endsWith("/api/chats?readStateVersion=1") && init?.method === "POST") {
+    if (url.endsWith("/api/chats?readStateVersion=1&fundingVersion=1") && init?.method === "POST") {
       creates.push(JSON.parse(init.body as string));
       return Response.json(record);
     }
