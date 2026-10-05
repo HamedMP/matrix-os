@@ -19,18 +19,19 @@ interface BotStatusState {
 }
 
 /**
- * What is known about whether a chat belongs to a bot:
+ * What is known about whether a chat belongs to a bot. What has been read
+ * decides, not how the latest read went: a chat does not stop being a bot's,
+ * or become one, because a later request failed.
  * - `bot`: it does, and its status is held.
  * - `ordinary`: the computer answered that it does not. That is fixed when a
  *   chat is created, so there is nothing further to read.
- * - `unsupported`: the computer has no bot-status route.
- * - `unknown`: not read yet, or the read failed.
+ * - `unsupported`: nothing is held and the computer has no bot-status route.
+ * - `unknown`: nothing is held because it was not read yet or the read failed.
  */
 export function botStatusKnowledge(state: BotStatusState | undefined): "bot" | "ordinary" | "unsupported" | "unknown" {
-  if (!state) return "unknown";
-  if (state.error instanceof BotStatusUnsupportedError) return "unsupported";
-  if (state.data) return "bot";
-  return state.data === null && !state.error ? "ordinary" : "unknown";
+  if (state?.data) return "bot";
+  if (state?.data === null) return "ordinary";
+  return state?.error instanceof BotStatusUnsupportedError ? "unsupported" : "unknown";
 }
 
 /** How soon to read a chat's bot status again, or false when there is nothing to keep fresh. */
@@ -53,12 +54,15 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
     },
     // Asking a computer without the route a second time gets the same answer.
     retry: (failures, error) => !(error instanceof BotStatusUnsupportedError) && failures < 1,
+    // An ordinary chat's answer never goes stale, so reopening it reads nothing.
+    staleTime: (current) => (botStatusKnowledge(current.state) === "ordinary" ? Infinity : 0),
     refetchInterval: (current) => botStatusRefetchInterval(current.state),
     refetchIntervalInBackground: false,
   });
-  // On a computer without the route every chat is shown as an ordinary one,
-  // not as a bot chat whose status failed to load.
-  const unsupported = query.data === undefined && query.error instanceof BotStatusUnsupportedError;
+  // A failed read is only worth reporting for a bot's chat, or one that might
+  // be: an ordinary chat, and any chat on a computer without the route, has no
+  // bot status to miss.
+  const knowledge = botStatusKnowledge(query);
   const requireAuth = async () => {
     const token = await getToken();
     if (!token || !chatId || !gatewayUrl || !query.data) throw new Error("Bot action unavailable. Try again.");
@@ -66,7 +70,7 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
   };
   return {
     snapshot: query.data ?? null,
-    isError: query.isError && !unsupported,
+    isError: query.isError && (knowledge === "bot" || knowledge === "unknown"),
     refresh: async () => {
       const result = await query.refetch();
       if (result.isError) throw new Error("Bot status could not be loaded. Try again.");

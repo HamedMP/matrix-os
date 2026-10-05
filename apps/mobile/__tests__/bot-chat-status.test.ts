@@ -15,24 +15,27 @@ describe("botStatusKnowledge", () => {
     expect(botStatusKnowledge({ data: undefined, error: failed })).toBe("unknown");
   });
 
-  it("is ordinary once the computer has answered that the chat has no bot", () => {
+  it("is ordinary once the computer has answered that the chat has no bot, whatever a later read does", () => {
     expect(botStatusKnowledge({ data: null, error: null })).toBe("ordinary");
+    expect(botStatusKnowledge({ data: null, error: failed })).toBe("ordinary");
+    expect(botStatusKnowledge({ data: null, error: new BotStatusUnsupportedError() })).toBe("ordinary");
   });
 
-  it("is bot while a snapshot is held", () => {
+  it("is bot while a snapshot is held, even when its route has gone missing for a moment", () => {
     expect(botStatusKnowledge({ data: snapshot, error: null })).toBe("bot");
     expect(botStatusKnowledge({ data: snapshot, error: failed })).toBe("bot");
+    expect(botStatusKnowledge({ data: snapshot, error: new BotStatusUnsupportedError() })).toBe("bot");
   });
 
-  it("is unsupported when the computer has no bot-status route", () => {
+  it("is unsupported when nothing is held and the computer has no bot-status route", () => {
     expect(botStatusKnowledge({ data: undefined, error: new BotStatusUnsupportedError() })).toBe("unsupported");
-    expect(botStatusKnowledge({ data: snapshot, error: new BotStatusUnsupportedError() })).toBe("unsupported");
   });
 });
 
 describe("botStatusRefetchInterval", () => {
   it("keeps a bot's status fresh every 15 seconds", () => {
     expect(botStatusRefetchInterval({ data: snapshot, error: null })).toBe(15_000);
+    expect(botStatusRefetchInterval({ data: snapshot, error: new BotStatusUnsupportedError() })).toBe(15_000);
   });
 
   it("keeps trying at that pace while the status has not been read", () => {
