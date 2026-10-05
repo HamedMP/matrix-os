@@ -16,11 +16,18 @@ export async function validateMemoryEvidence(
   owner: string,
   results: MemorySearchResult[],
 ) {
-  const ids = [
-    ...new Set(
-      results.flatMap((result) => result.hits.map((hit) => hit.sourceId)),
-    ),
-  ];
+  // Admission limits match two engine lanes and the public 20-hit query limit.
+  // No partial eviction: losing an ID would make evidence validation incorrect.
+  if (results.length > 2 || results.some((result) => result.hits.length > 20)) {
+    throw new RangeError("Memory evidence exceeds its bound");
+  }
+  // At most 40 entries; this request-local collection is released on return.
+  const ids: string[] = [];
+  for (const result of results) {
+    for (const hit of result.hits) {
+      if (!ids.includes(hit.sourceId)) ids.push(hit.sourceId);
+    }
+  }
   const rows = ids.length
     ? (
         await sql<{
