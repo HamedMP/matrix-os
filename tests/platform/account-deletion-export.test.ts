@@ -23,11 +23,12 @@ describe('account export downloads', () => {
 import { sql } from 'kysely';
 import { createTestPlatformDb } from './platform-db-test-helper.js';
 describe('portable account exports',()=>{
- it('traverses all pages of both owner storage prefixes and excludes reachability secrets',async()=>{
+ it('traverses all pages of every owner storage prefix and excludes reachability secrets',async()=>{
    const list=vi.fn(async(prefix:string,cursor?:string)=>{
      if(prefix==='matrixos-sync/user_a/'&&!cursor)return {keys:[prefix+'one'],nextCursor:'page2'};
      if(prefix==='matrixos-sync/user_a/'&&cursor==='page2')return {keys:[prefix+'two',prefix+'system/vps-meta.json'],nextCursor:null};
      if(prefix==='custom/user_a/'&&!cursor)return {keys:[prefix+'three'],nextCursor:null};
+     if(prefix==='matrixos-sync/v2/owners/user_a/runtimes/'&&!cursor)return {keys:[prefix+'studio/files/four'],nextCursor:null};
      throw Error('wrong page');
    });
    const sign=vi.fn(async(key:string)=>'https://storage.example.test/'+key);
@@ -35,8 +36,9 @@ describe('portable account exports',()=>{
    const a=await listAccountExportFiles(store,'user_a','custom');
    const b=await listAccountExportFiles(store,'user_a','custom',a.nextCursor!);
    const c=await listAccountExportFiles(store,'user_a','custom',b.nextCursor!);
-   expect([a,b,c].flatMap(page=>page.files.map(file=>file.path))).toEqual(['one','two','three']);
-   expect(c.nextCursor).toBeNull();expect(list.mock.calls).toEqual([['matrixos-sync/user_a/',undefined],['matrixos-sync/user_a/','page2'],['custom/user_a/',undefined]]);
+   const d=await listAccountExportFiles(store,'user_a','custom',c.nextCursor!);
+   expect([a,b,c,d].flatMap(page=>page.files.map(file=>file.path))).toEqual(['one','two','three','studio/files/four']);
+   expect(d.nextCursor).toBeNull();expect(list.mock.calls).toEqual([['matrixos-sync/user_a/',undefined],['matrixos-sync/user_a/','page2'],['custom/user_a/',undefined],['matrixos-sync/v2/owners/user_a/runtimes/',undefined]]);
    expect(sign).not.toHaveBeenCalledWith(expect.stringContaining('vps-meta'),expect.anything());
  });
  it('exports only the authenticated owner records without credentials or delivery payloads',async()=>{

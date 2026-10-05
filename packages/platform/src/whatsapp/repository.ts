@@ -70,7 +70,8 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
     pendingTransactions += 1;
     const result = transactionTail.then(async () => {
       await platform.ready;
-      return db.transaction().execute(async (trx) => {
+      return platform.transaction(async (scoped) => {
+        const trx = scoped.executor as unknown as DB;
         await sql`SELECT pg_advisory_xact_lock(5460001)`.execute(trx);
         return work(trx);
       });
@@ -329,7 +330,16 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
     });
   }
   async function enqueue(input: WhatsAppEnqueueInput): Promise<boolean> {
-    return transaction((trx) => insertJob(trx, input, now()));
+    return transaction(async (trx) => {
+      // An ingest snapshot taken before disconnect/deletion must not resurrect owner data.
+      if (typeof input.payload.owner === 'string' && typeof input.payload.connectionId === 'string') {
+        const current = await trx.selectFrom('whatsapp_connections').select('id')
+          .where('owner', '=', input.payload.owner).where('sender', '=', input.sender)
+          .where('id', '=', input.payload.connectionId).executeTakeFirst();
+        if (!current) return false;
+      }
+      return insertJob(trx, input, now());
+    });
   }
   async function lease(): Promise<WhatsAppJob | null> {
     let quarantined = false;

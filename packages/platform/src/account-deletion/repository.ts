@@ -8,6 +8,7 @@ const contextSchema = z.object({
   clerkUserId: z.string().min(1).max(128),
   appleRevocationUnknown: z.boolean().optional(),
   appleRevocationPrepared: z.boolean().optional(),
+  manualAppleRevocationRequired: z.boolean().optional(),
   appleTokens: z.array(z.object({ clientId: z.string().min(1).max(256), token: z.string().min(1).max(16384), tokenType: z.enum(['access_token', 'refresh_token']) })).max(16),
 });
 export function hashAccountDeletionOwner(owner: string, secret: string): string {

@@ -2,7 +2,6 @@ import { z } from 'zod/v4';
 import type { PlatformDB } from '../db.js';
 import { ownerStoragePrefixes, type AccountDeletionObjectStore } from './storage.js';
 
-const cursorSchema = z.object({ prefixIndex: z.number().int().min(0).max(1), continuation: z.string().max(2048).optional() }).strict();
 export interface AccountExportFiles {
   files: Array<{ path: string; kind: 'database' | 'file'; downloadUrl: string; expiresIn: number }>;
   nextCursor: string | null;
@@ -13,6 +12,8 @@ export async function listAccountExportFiles(store: AccountDeletionObjectStore, 
   cursor?: string): Promise<AccountExportFiles> {
   if (!store.getPresignedGetUrl) throw new Error('Account export unavailable');
   const prefixes = ownerStoragePrefixes(owner, root);
+  const cursorSchema = z.object({ prefixIndex: z.number().int().min(0).max(prefixes.length - 1),
+    continuation: z.string().max(2048).optional() }).strict();
   const selected = cursor ? cursorSchema.parse(JSON.parse(Buffer.from(z.string().max(4096).parse(cursor),'base64url').toString()))
     : { prefixIndex:0, continuation:undefined };
   const prefix = prefixes[selected.prefixIndex];

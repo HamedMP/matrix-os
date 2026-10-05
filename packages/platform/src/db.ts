@@ -11,6 +11,7 @@ import {
   type Updateable,
 } from 'kysely';
 import pg from 'pg';
+import { wrapPlatformDb } from './database/transaction-scope.js';
 import { runPlatformStartupMigrations } from './database/run-migrations.js';
 import { parseStringArray } from './database/json.js';
 import { mapUserMachine, type UserMachineProvisioningClass } from './database/user-machine-records.js';
@@ -1275,32 +1276,6 @@ export interface NewProviderDeletionQueueRecord {
   completedAt?: string | null;
 }
 
-function wrapDb(
-  kysely: Kysely<PlatformDatabase>,
-  executor: Executor,
-  ready: Promise<void>,
-  destroyFn: () => Promise<void>,
-  transactionScoped = false,
-): PlatformDB {
-  const wrapped: PlatformDB = {
-    kysely,
-    executor,
-    ready,
-    async transaction(fn) {
-      await ready;
-      if (transactionScoped) return fn(wrapped);
-      return kysely.transaction().execute((trx) =>
-        fn(wrapDb(kysely, trx, Promise.resolve(), destroyFn, true)),
-      );
-    },
-    // The root PlatformDB owns Kysely/the pool. A transaction-scoped wrapper
-    // may be passed through several repository layers, but must never close
-    // that shared resource.
-    destroy: transactionScoped ? async () => undefined : destroyFn,
-  };
-  return wrapped;
-}
-
 export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_PLATFORM_DB_URL ?? ''): PlatformDB {
   if (typeof opts === 'string' && !opts) {
     throw new Error('Platform Postgres URL is required: set PLATFORM_DATABASE_URL or POSTGRES_URL');
@@ -1318,7 +1293,7 @@ export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_P
     : new Kysely<PlatformDatabase>({ dialect: opts.dialect as never });
 
   const ready = runPlatformStartupMigrations(kysely);
-  return wrapDb(kysely, kysely, ready, async () => {
+  return wrapPlatformDb(kysely, kysely, ready, async () => {
     await kysely.destroy();
     try {
       await pool?.end();

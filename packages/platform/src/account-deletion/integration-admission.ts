@@ -2,7 +2,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { PlatformDB } from '../db.js';
 import { getAccountDeletionAdmission, withAccountDeletionOwnerLock } from './admission.js';
 
-/** Surface authentication resolves the Clerk owner. Mutation handlers must not reacquire this owner lock on a separate connection. */
+/** Surface authentication resolves the Clerk owner. Platform DB calls reuse the admitted transaction. */
 export function createAccountDeletionMutationGuard(options: {
   db: PlatformDB;
   resolveOwner: (context: Context) => string | null | undefined | Promise<string | null | undefined>;
@@ -27,6 +27,9 @@ export function createAccountDeletionMutationGuard(options: {
       return await withAccountDeletionOwnerLock(options.db, owner, async (_trx, admission) => {
         if (!admission.newWorkAllowed) return c.json({ error: 'Account deletion is pending' }, 409);
         await next();
+        // Hono captures handler exceptions into c.error. Preserve transaction rollback.
+        if (c.error) throw c.error;
+        if (c.res.status >= 500) throw new Error('Integration mutation failed');
       }, env);
     } catch (error: unknown) {
       console.error('[account-deletion] integration admission failed:', error instanceof Error ? error.name : typeof error);

@@ -2,16 +2,30 @@ import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import { getAccountDeletionPage } from '../../packages/platform/src/account-deletion/page.js';
 
-function fixture(status='processing', initialStatus?: Promise<unknown>) {
+function fixture(status='processing', initialStatus?: Promise<unknown>, responseError?: Error) {
  const elements=new Map<string,any>();
- const element=(id:string)=>{if(!elements.has(id))elements.set(id,{hidden:id==='account',disabled:false,checked:true,textContent:'',listeners:{},addEventListener(event:string,cb:()=>unknown){this.listeners[event]=cb;},replaceChildren(){},appendChild(){}});return elements.get(id);};
+ const element=(id:string)=>{if(!elements.has(id))elements.set(id,{hidden:id==='account'||id==='apple-revocation',disabled:false,checked:true,textContent:'',listeners:{},addEventListener(event:string,cb:()=>unknown){this.listeners[event]=cb;},replaceChildren(){},appendChild(){}});return elements.get(id);};
  const script=getAccountDeletionPage({nonce:'test',publishableKey:'pk_live_example'}).match(/<script nonce="test">([\s\S]*?)<\/script>/)![1];
- const fetch=vi.fn(async(path:string)=>({ok:true,json:async()=>path.includes('/export')?{downloads:[],nextCursor:'next',instructions:[]}:initialStatus??({status,completesBy:new Date().toISOString(),billingStopped:true})}));
+ const fetch=vi.fn(async(path:string)=>({ok:!responseError,json:async()=>{if(responseError)throw responseError;return path.includes('/export')?{downloads:[],nextCursor:'next',instructions:[]}:initialStatus??({status,completesBy:new Date().toISOString(),billingStopped:true});}}));
+ const warn=vi.fn();
  const Clerk={session:{getToken:async()=> 'token'},load:async()=>{}};
- runInNewContext(script,{document:{getElementById:element,createElement:()=>({click(){},remove(){}})},window:{Clerk},fetch,AbortSignal,URL,location:{origin:'https://app.matrix-os.com',assign(){}},Blob,console});
- return {element,fetch};
+ runInNewContext(script,{document:{getElementById:element,createElement:()=>({click(){},remove(){}})},window:{Clerk},fetch,AbortSignal,URL,location:{origin:'https://app.matrix-os.com',assign(){}},Blob,SyntaxError,console:{...console,warn}});
+ return {element,fetch,warn};
 }
 describe('deletion page lifecycle',()=>{
+ it('shows Apple removal instructions when automatic token revocation is unavailable',async()=>{
+   const {element}=fixture('scheduled',Promise.resolve({status:'scheduled',erasesAfter:'2026-10-10T12:00:00Z',billingStopped:true,manualAppleRevocationRequired:true}));
+   await vi.waitFor(()=>expect(element('account').hidden).toBe(false));
+   expect(element('apple-revocation').hidden).toBe(false);
+   expect(getAccountDeletionPage({nonce:'test'})).toContain('https://support.apple.com/102571');
+ });
+ it('reports malformed error responses without exposing response details',async()=>{
+   const {element,warn}=fixture('none',undefined,new SyntaxError('private response body'));
+   await vi.waitFor(()=>expect(element('error').textContent).toContain('could not be completed'));
+   expect(element('account').hidden).toBe(true);
+   expect(warn).toHaveBeenCalledWith('Unable to read account response.');
+   expect(element('error').textContent).not.toContain('private response body');
+ });
  it('keeps account actions hidden until the initial status is applied',async()=>{
    let resolveStatus!:(status:unknown)=>void;
    const initialStatus=new Promise(resolve=>{resolveStatus=resolve;});

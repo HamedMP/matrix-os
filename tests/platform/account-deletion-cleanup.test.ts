@@ -195,13 +195,15 @@ describe('production cleanup adapters', () => {
 });
 
 describe('cleanup fail closed and resume',()=> {
-  it('retains unknown Apple evidence after an upstream identity deletion',async()=> {
+  it('continues deletion with manual Apple revocation after an upstream identity deletion',async()=> {
     const db=await fixture();
     try {
       const adapters=createAccountDeletionAdapters({db,clerkSecretKey:'key',r2PrefixRoot:'matrixos-sync',fetch:async()=>new Response(null,{status:404})});
       const context=await adapters.prepare('user_owner',true);
       expect(context.appleRevocationUnknown).toBe(true);
-      await expect(adapters.apple(context)).rejects.toThrow('Apple credential recovery required');
+      expect(context.manualAppleRevocationRequired).toBe(true);
+      const prepared = await adapters.prepareAppleRevocation!(context);
+      await expect(adapters.apple(prepared)).resolves.toBeUndefined();
     } finally {await db.destroy();}
   });
   it('preserves unsettled response billing rather than deleting reconciliation evidence',async()=> {

@@ -14,7 +14,12 @@ export interface AccountDeletionObjectStore {
 export function ownerStoragePrefixes(owner: string, root: string): string[] {
   z.string().regex(/^user_[A-Za-z0-9_-]{1,150}$/).parse(owner);
   z.string().regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/).max(256).parse(root);
-  return [...new Set(['matrixos-sync', root])].map((prefix) => `${prefix}/${owner}/`);
+  // The canonical sync namespace stores every non-primary runtime below this
+  // owner boundary; include all slots, including already-deleted computers.
+  return [...new Set([
+    `matrixos-sync/${owner}/`, `${root}/${owner}/`,
+    `matrixos-sync/v2/owners/${owner}/runtimes/`,
+  ])];
 }
 /** Delete bounded batches from the start. A crash safely restarts without an in-memory inventory. */
 export async function eraseOwnerStorage(store: AccountDeletionObjectStore, owner: string, root: string): Promise<void> {

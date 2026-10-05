@@ -3,11 +3,14 @@ import type { PlatformDatabase } from '../db.js';
 import { AccountDeletionRepository, type DeletionJob } from './repository.js';
 import { ACCOUNT_DELETION_STEPS, type AccountDeletionAdapters, type AccountDeletionService, type AccountDeletionStatus } from './types.js';
 
-function publicStatus(job: DeletionJob | undefined): AccountDeletionStatus {
+function publicStatus(job: DeletionJob | undefined, repository: AccountDeletionRepository): AccountDeletionStatus {
+  const context = job?.encrypted_context ? repository.decrypt(job) : undefined;
+  const manualAppleRevocationRequired = context?.manualAppleRevocationRequired || context?.appleRevocationUnknown;
   const erasesAfter=job && job.status !== 'cancelled' ? job.due_at : null;
   return { status: job?.status ?? 'none', erasesAfter,
     completesBy:job?.completed_at ?? (erasesAfter ? new Date(Date.parse(erasesAfter)+86_400_000).toISOString() : null),
-    billingStopped: job?.billing_stopped ?? false };
+    billingStopped: job?.billing_stopped ?? false,
+    ...(manualAppleRevocationRequired ? { manualAppleRevocationRequired: true } : {}) };
 }
 
 export function createAccountDeletionService(options: {
@@ -77,10 +80,10 @@ export function createAccountDeletionService(options: {
         const job = await repository.claim(clerkUserId, leaseMs);
         if (job) await process(job, true);
       }
-      return publicStatus(await repository.get(clerkUserId));
+      return publicStatus(await repository.get(clerkUserId), repository);
     },
-    async get(clerkUserId) { return publicStatus(await repository.get(clerkUserId)); },
-    async cancel(clerkUserId) { return publicStatus(await repository.cancel(clerkUserId)); },
+    async get(clerkUserId) { return publicStatus(await repository.get(clerkUserId), repository); },
+    async cancel(clerkUserId) { return publicStatus(await repository.cancel(clerkUserId), repository); },
     async isBlocked(clerkUserId) {
       const job = await repository.get(clerkUserId);
       return !!job && job.status !== 'cancelled';

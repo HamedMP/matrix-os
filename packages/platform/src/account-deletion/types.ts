@@ -4,7 +4,13 @@ export const ACCOUNT_DELETION_GRACE_MS = 5 * 24 * 60 * 60 * 1000;
 export const ACCOUNT_DELETION_STEPS = ['billing', 'vps', 'integrations', 'apple', 'storage', 'data', 'clerk'] as const;
 export type AccountDeletionStep = typeof ACCOUNT_DELETION_STEPS[number];
 export interface AppleDeletionToken { clientId: string; token: string; tokenType: 'access_token' | 'refresh_token'; }
-export interface AccountDeletionContext { clerkUserId: string; appleTokens: AppleDeletionToken[]; appleRevocationUnknown?: boolean; appleRevocationPrepared?: boolean; }
+export interface AccountDeletionContext {
+  clerkUserId: string;
+  appleTokens: AppleDeletionToken[];
+  appleRevocationUnknown?: boolean;
+  appleRevocationPrepared?: boolean;
+  manualAppleRevocationRequired?: boolean;
+}
 export interface AccountDeletionAdapters {
   prepare(clerkUserId: string, identityDeleted?: boolean, transaction?: Transaction<PlatformDatabase>): Promise<AccountDeletionContext>;
   prepareAppleRevocation?(context: AccountDeletionContext): Promise<AccountDeletionContext>;
@@ -22,6 +28,8 @@ export interface AccountDeletionStatus {
   /** Completion target; provider retries can extend it. */
   completesBy: string | null;
   billingStopped: boolean;
+  /** Remove Apple authorization manually when a verifiable revocation grant is unavailable. */
+  manualAppleRevocationRequired?: boolean;
 }
 export interface AccountDeletionService {
   schedule(clerkUserId: string, identityDeleted?: boolean): Promise<AccountDeletionStatus>;

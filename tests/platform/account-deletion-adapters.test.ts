@@ -84,7 +84,9 @@ describe('account deletion object storage', () => {
       deleteObject: remove, abortOwnerMultipartUploads: vi.fn(async () => undefined) };
     await expect(eraseOwnerStorage(store, 'user_a', 'matrixos-sync')).rejects.toThrow('Storage ownership mismatch');
     expect(remove).not.toHaveBeenCalled();
-    expect(ownerStoragePrefixes('user_a', 'custom')).toEqual(['matrixos-sync/user_a/', 'custom/user_a/']);
+    expect(ownerStoragePrefixes('user_a', 'custom')).toEqual([
+      'matrixos-sync/user_a/', 'custom/user_a/', 'matrixos-sync/v2/owners/user_a/runtimes/',
+    ]);
   });
   it('restarts listing after bounded batches and waits for multipart abort', async () => {
     const events: string[] = [];
@@ -92,8 +94,8 @@ describe('account deletion object storage', () => {
     const store = { listObjects: async () => ({ keys: ++calls === 1 ? ['matrixos-sync/user_a/files/one'] : [], nextCursor: null }),
       deleteObject: async () => { events.push('delete'); }, abortOwnerMultipartUploads: async () => { events.push('abort'); } };
     await eraseOwnerStorage(store, 'user_a', 'matrixos-sync');
-    expect(events).toEqual(['abort', 'delete']);
-    expect(calls).toBe(2);
+    expect(events).toEqual(['abort', 'delete', 'abort']);
+    expect(calls).toBe(3);
   });
 });
 

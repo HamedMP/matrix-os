@@ -4,7 +4,7 @@ import { parseNullableProviderActionId, type PlatformDatabase, type PlatformDB }
 import type { CustomerVpsService } from '../customer-vps.js';
 import type { HetznerClient } from '../customer-vps-hetzner.js';
 import { CustomerVpsError } from '../customer-vps-errors.js';
-import { createAppleRevoker, verifyAppleTokenClientIds, assertAppleAccessTokensFresh, type AppleDeletionConfig } from './apple.js';
+import { createAppleRevoker, prepareClerkAppleRevocation, assertAppleDeletionConfig, type AppleDeletionConfig } from './apple.js';
 import { assertDeletionOwnershipSafe, eraseOwnerPlatformData, hasTable } from './cleanup-data.js';
 import { revokeOwnerMatrixCredentials } from './matrix.js';
 import { readNativeAppleCredential } from './native-apple.js';
@@ -68,21 +68,23 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
     await db.ready;
     await assertDeletionOwnershipSafe(transaction ? {...db,executor:transaction} : db, owner);
     const userValue = await clerk(`/users/${encodeURIComponent(owner)}`, 'GET', identityDeleted);
-    if (!userValue) return { clerkUserId: owner, appleTokens: [], appleRevocationUnknown: true };
+    if (!userValue) return { clerkUserId: owner, appleTokens: [], appleRevocationUnknown: true, manualAppleRevocationRequired: true };
     const user = userSchema.parse(userValue);
     await assertClerkOwnershipSafe(owner);
     if (!user.external_accounts.some((account) => ['oauth_apple','apple'].includes(account.provider))) {
       return { clerkUserId: owner, appleTokens: [] };
     }
     if (!options.apple) throw new Error('Apple revocation configuration unavailable');
+    await assertAppleDeletionConfig(options.apple);
     const nativeCredential=options.credentialSecret
       ? readNativeAppleCredential(user.private_metadata,owner,options.credentialSecret):null;
     if(user.private_metadata.matrix_native_apple_credential && !options.credentialSecret) throw new Error('Apple credential encryption unavailable');
     if(nativeCredential && nativeCredential.clientId!==options.apple.nativeClientId) throw new Error('Apple credential provenance mismatch');
     const tokens = await clerk(`/users/${encodeURIComponent(owner)}/oauth_access_tokens/oauth_apple`);
     if(nativeCredential && Array.isArray(tokens) && !tokens.length) return {clerkUserId:owner,appleTokens:[nativeCredential]};
-    return { clerkUserId: owner, appleTokens: [...(nativeCredential?[nativeCredential]:[]),...await verifyAppleTokenClientIds(tokens,
-      user.private_metadata.matrix_apple_token_client_ids ?? {}, options.apple, request)] };
+    const prepared = await prepareClerkAppleRevocation(tokens, user.private_metadata.matrix_apple_token_client_ids ?? {}, options.apple, request);
+    return { clerkUserId: owner, appleTokens: [...(nativeCredential ? [nativeCredential] : []), ...prepared.tokens],
+      ...(prepared.manualRevocationRequired ? { manualAppleRevocationRequired: true } : {}) };
   }
   return {
     prepare,
@@ -262,27 +264,38 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       await revokeVoiceNumbers(options, owner, request);
     },
     async prepareAppleRevocation(context) {
-      if (context.appleRevocationUnknown) throw new Error('Apple credential recovery required');
       if (context.appleRevocationPrepared) return context;
-      if (!context.appleTokens.length) return {...context,appleRevocationPrepared:true};
+      if (context.appleRevocationUnknown) {
+        // The Clerk identity is gone, so opaque access tokens cannot be refreshed.
+        // Apple TN3194 explicitly permits manual revocation while deletion proceeds.
+        return { ...context, appleTokens: context.appleTokens.filter((token) => token.tokenType === 'refresh_token'),
+          manualAppleRevocationRequired: true, appleRevocationPrepared: true };
+      }
+      if (!context.appleTokens.length) return { ...context, appleRevocationPrepared: true };
       if (!options.apple) throw new Error('Apple revocation configuration unavailable');
+      await assertAppleDeletionConfig(options.apple);
       const refreshTokens=context.appleTokens.filter((token)=>token.tokenType==='refresh_token');
       const accessTokens=context.appleTokens.filter((token)=>token.tokenType==='access_token'
         && !refreshTokens.some((refresh)=>refresh.clientId===token.clientId));
       let currentAccessTokens: AccountDeletionContext['appleTokens']=[];
+      let manualRequired = context.manualAppleRevocationRequired === true;
       if (accessTokens.length) {
-        const user=userSchema.parse(await clerk(`/users/${encodeURIComponent(context.clerkUserId)}`));
-        const current=await clerk(`/users/${encodeURIComponent(context.clerkUserId)}/oauth_access_tokens/oauth_apple`);
-        assertAppleAccessTokensFresh(current);
-        currentAccessTokens=await verifyAppleTokenClientIds(current,user.private_metadata.matrix_apple_token_client_ids??{},options.apple,request);
-        if (accessTokens.some((old)=>!currentAccessTokens.some((current)=>current.clientId===old.clientId))) {
-          throw new Error('Apple credential recovery required');
+        const userValue = await clerk(`/users/${encodeURIComponent(context.clerkUserId)}`, 'GET', true);
+        if (userValue === null) {
+          return { ...context, appleTokens: refreshTokens, manualAppleRevocationRequired: true, appleRevocationPrepared: true };
         }
+        const user=userSchema.parse(userValue);
+        const current=await clerk(`/users/${encodeURIComponent(context.clerkUserId)}/oauth_access_tokens/oauth_apple`);
+        const prepared = await prepareClerkAppleRevocation(current, user.private_metadata.matrix_apple_token_client_ids ?? {}, options.apple, request);
+        currentAccessTokens = prepared.tokens;
+        manualRequired ||= prepared.manualRevocationRequired || accessTokens.some((old) =>
+          !currentAccessTokens.some((current) => current.clientId === old.clientId));
       }
-      return {...context,appleRevocationPrepared:true,appleTokens:[...refreshTokens,...currentAccessTokens]};
+      return { ...context, appleRevocationPrepared: true, appleTokens: [...refreshTokens, ...currentAccessTokens],
+        ...(manualRequired ? { manualAppleRevocationRequired: true } : {}) };
     },
     async apple(context) {
-      if (context.appleRevocationUnknown) throw new Error('Apple credential recovery required');
+      if (context.appleRevocationUnknown && !context.manualAppleRevocationRequired) throw new Error('Apple revocation preparation required');
       if (context.appleTokens.some((token)=>token.tokenType==='access_token') && !context.appleRevocationPrepared) {
         throw new Error('Apple revocation preparation required');
       }
@@ -311,8 +324,15 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
 async function revokeWhatsApp(db: PlatformDB, owner: string): Promise<void> {
   if (!await hasTable(db,'whatsapp_connections')) return;
   await db.transaction(async (trx) => {
+    // Share the repository's mutation fence so sender ownership cannot change
+    // between locating the connection/challenge and removing its queued jobs.
+    await sql`SELECT pg_advisory_xact_lock(5460001)`.execute(trx.executor);
+    // Payloads are encrypted text. Current connections uniquely bind senders;
+    // challenge hashes bind exact verification/confirmation job IDs even when
+    // linking never finished or that sender now belongs to another account.
     await sql`DELETE FROM whatsapp_jobs WHERE sender IN (SELECT sender FROM whatsapp_connections WHERE owner=${owner})
-      OR (payload IS NOT NULL AND payload::jsonb ->> 'owner' = ${owner})`.execute(trx.executor);
+      OR id IN (SELECT 'verification:' || token_hash FROM whatsapp_link_challenges WHERE owner=${owner}
+        UNION ALL SELECT 'connected:' || token_hash FROM whatsapp_link_challenges WHERE owner=${owner})`.execute(trx.executor);
     await sql`DELETE FROM whatsapp_link_challenges WHERE owner=${owner}`.execute(trx.executor);
     await sql`DELETE FROM whatsapp_connections WHERE owner=${owner}`.execute(trx.executor);
   });
