@@ -219,3 +219,9 @@ export type { RailOrderPreference, RailSortMode } from "./chat/rail-order.js";
 export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js";
 export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
 export type { ProviderWorkflowClient } from "./agents-providers/types.js";
+
+export { MemoryWorkspace, type MemoryWorkspaceProps } from './memory-workspace/MemoryWorkspace.js';
+export { createMemoryWorkspaceClient, type MemoryTransport } from './memory-workspace/client.js';
+export { memoryContextChatReferences } from './memory-workspace/chat-references.js';
+export type { MemoryNativeImportAdapter } from './memory-workspace/MemoryImport.js';
+export type { MemoryWorkspaceClient, MemoryImportSource } from './memory-workspace/model.js';
