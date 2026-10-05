@@ -9,7 +9,7 @@ import type { AdmissionScore, Operation, QueryScore } from "./metrics.js";
 export interface QueryResult extends QueryScore {
   text: string; expectedIds: string[]; retrievedIds: string[];
   latencyMs: number; estimatedTokens: number; context: string; evidenceTruncated: boolean;
-  evidence: Array<{ sourceId: string; path: string; text: string; start: number; end: number }>;
+  evidence: Array<{ sourceId: string; path: string; text: string; start: number; end: number; truncated?: boolean }>;
 }
 export interface CaseResult {
   id: string; group: string; queries: QueryResult[]; admissions: AdmissionScore[]; operations: Operation[];
@@ -127,8 +127,9 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
             const evidence = valid.flatMap(hit => {
               const text = hit.text.slice(0, Math.min(LIMITS.evidenceHitChars, previewRemaining));
               previewRemaining -= text.length;
-              if (text.length < hit.text.length) evidenceTruncated = true;
-              return text ? [{ ...hit, text, end: hit.start + text.length, path: sources.get(hit.sourceId)!.path }] : [];
+              const truncated = text.length < hit.text.length;
+              if (truncated) evidenceTruncated = true;
+              return text ? [{ ...hit, text, truncated, end: hit.start + text.length, path: sources.get(hit.sourceId)!.path }] : [];
             });
             const context = (evidenceTruncated ? "[Evidence preview truncated; metrics use the full response.]\n" : "") + contextText(evidence);
             const query: QueryResult = { ...score, group: c.group, violations, text: step.query.text, expectedIds: step.expected.relevant,

@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, readdir, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
+import { randomBytes } from "node:crypto";
+import * as baselineModule from "../../scripts/memory-bench/baselines.js";
 import { main, parseArgs } from "../../scripts/memory-bench/cli.js";
 import { createSuite } from "../../packages/kernel/src/memory-evaluation/fixtures.js";
 
@@ -33,7 +36,33 @@ describe("memory benchmark CLI lifecycle", () => {
     const retained = join(dir, "runs", run);
     const reports = JSON.parse(await readFile(join(retained, "results.json"), "utf8"));
     expect(reports[0].summary.admissionCount).toBe(50);
-    expect(JSON.parse(await readFile(join(retained, "run-status.json"), "utf8"))).toMatchObject({ reason: "artifact-limit", omittedArtifacts: ["suite.json", "comparisons.json", "report.html evidence explorer"] });
+    const retainedSuite = JSON.parse(gunzipSync(await readFile(join(retained, "suite.json.gz"))).toString("utf8"));
+    expect(retainedSuite).toEqual(suite);
+    const replayOut = join(dir, "replay");
+    expect(await main(["--suite", join(retained, "suite.json.gz"), "--baseline", "none", "--out", replayOut])).toBe(0);
+    const [replayed] = await readdir(replayOut);
+    const replayReports = JSON.parse(await readFile(join(replayOut, replayed, "results.json"), "utf8"));
+    expect(replayReports[0].suite.sha256).toBe(reports[0].suite.sha256);
+    expect(JSON.parse(await readFile(join(retained, "run-status.json"), "utf8"))).toMatchObject({ reason: "artifact-limit", omittedArtifacts: ["comparisons.json", "report.html evidence explorer"] });
+  });
+  it("rejects an irreducible dataset before running adapters or creating artifacts", async () => {
+    const factory = vi.spyOn(baselineModule, "createBaseline");
+    const dir = await temp();
+    const suite = createSuite({ distractors: 0 });
+    const data = randomBytes(6 * 1024 * 1024).toString("base64");
+    suite.cases = [{ id: "large", group: "large", steps: Array.from({ length: Math.ceil(data.length / 70000) }, (_, index) => ({
+      type: "ingest" as const,
+      source: { id: `source-${index}`, scope: "personal", path: `notes/${index}.md`, text: data.slice(index * 70000, (index + 1) * 70000), role: "document" as const, observedAt: "2026-01-01T00:00:00Z" },
+      expected: { action: "skip" as const, placements: [], retentionAllowed: true },
+    })) }];
+    const input = join(dir, "dataset.json");
+    const out = join(dir, "runs");
+    await writeFile(input, JSON.stringify(suite));
+    await expect(main(["--suite", input, "--baseline", "none", "--out", out], {
+      maxDataBytes: 1024 * 1024, maxArtifactBytes: 4 * 1024 * 1024 + 65536,
+    })).rejects.toThrow("Dataset exceeds reserved artifact space");
+    expect(factory).not.toHaveBeenCalled();
+    expect(await readdir(dir)).toEqual(["dataset.json"]);
   });
   it("gates the evaluated custom adapter while retaining comparison controls", async () => {
     vi.spyOn(process.stdout, "write").mockReturnValue(true);

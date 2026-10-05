@@ -12,6 +12,7 @@ describe("memory benchmark CLI and explorer", () => {
     const report = await runBenchmark(createSuite({ distractors: 0 }), () => createBaseline("raw-lexical"));
     const query = report.cases[0].queries[0];
     query.evidenceTruncated = true;
+    Object.assign(query.evidence[0], { truncated: false });
     report.cases[0].queries.push({ ...query, evidenceTruncated: false });
     class Element {
       textContent = ""; value = ""; className = ""; disabled = false;
@@ -33,6 +34,11 @@ describe("memory benchmark CLI and explorer", () => {
     expect(elements.contextStatus.textContent).toContain("may omit text credited by the score");
     await elements.copy.events.click();
     expect(writeText).not.toHaveBeenCalled();
+    const intact = descendants(elements.detail).find(e => e.textContent === "Preview source excerpt")!;
+    intact.events.click();
+    expect(elements.copy.disabled).toBe(false);
+    await elements.copy.events.click();
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(query.evidence[0].text));
     const complete = descendants(elements.detail).find(e => e.textContent === "Preview complete retrieved context");
     expect(complete).toBeDefined();
     complete!.events.click();

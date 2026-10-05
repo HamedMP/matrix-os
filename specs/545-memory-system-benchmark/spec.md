@@ -64,3 +64,5 @@ An Obsidian-like Memory app should provide a file/category tree, search, graph/b
 ## Validation and delivery
 
 Tests first, then implementation. Contract/adversarial tests exercise reference isolation, exact spans, excluded retention, temporal cutoff, scope/deletion, timeout/cleanup, metrics and HTML escaping; CLI smoke runs cover exits and retained reports. Run focused strict typecheck and kernel build, plus pattern scans. Publish through a main-repository PR and a separate `FinnaAI/matrix-os-site` documentation PR. Do not deploy or merge until the existing review gates are satisfied.
+
+Artifact pressure preserves the scored traces and the entire suite as `suite.json.gz`; the CLI accepts this lossless file directly for replay. Dataset compression is reserved before any benchmark adapter runs. Inputs that cannot fit this reservation are rejected before evaluation, and incomplete runs omit only derived comparisons or the evidence explorer. Per-hit clipping flags allow intact standalone excerpts to be copied while clipped aggregate context remains blocked.

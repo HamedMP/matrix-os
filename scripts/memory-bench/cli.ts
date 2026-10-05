@@ -2,6 +2,10 @@ import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { gzip, gunzip } from "node:zlib";
+import { promisify } from "node:util";
+const gzipAsync = promisify(gzip);
+const gunzipAsync = promisify(gunzip);
 import { createSuite } from "../../packages/kernel/src/memory-evaluation/fixtures.js";
 import { suiteSchema, LIMITS } from "../../packages/kernel/src/memory-evaluation/contracts.js";
 import type { AdapterFactory, Suite } from "../../packages/kernel/src/memory-evaluation/contracts.js";
@@ -64,7 +68,29 @@ export async function main(args = process.argv.slice(2), limits: { maxDataBytes?
   if (opts.suite) {
     const info = await lstat(resolve(opts.suite));
     if (!info.isFile() || info.size > 128 * 1024 * 1024) throw new Error("Suite must be a regular JSON file under 128 MiB");
-    suite = suiteSchema.parse(JSON.parse(await readFile(resolve(opts.suite), "utf8")));
+    const bytes = await readFile(resolve(opts.suite));
+    const content = opts.suite.toLowerCase().endsWith(".gz")
+      ? await gunzipAsync(bytes, { maxOutputLength: 128 * 1024 * 1024 }) : bytes;
+    suite = suiteSchema.parse(JSON.parse(content.toString("utf8")));
+  }
+  // Leave room for pretty JSON, HTML escaping and the separately retained dataset.
+  const maxDataBytes = limits.maxDataBytes ?? LIMITS.artifactBytes / 16;
+  const maxArtifactBytes = limits.maxArtifactBytes ?? LIMITS.artifactBytes;
+  if (!Number.isInteger(maxDataBytes) || maxDataBytes < 1024 * 1024 || maxDataBytes > LIMITS.artifactBytes / 16
+    || !Number.isInteger(maxArtifactBytes) || maxArtifactBytes < 4 * maxDataBytes + 65536 || maxArtifactBytes > LIMITS.artifactBytes) throw new Error("Invalid artifact limits");
+  // Reserve a lossless dataset before running any adapter. Compression allows
+  // a large suite to survive when HTML/pretty JSON duplication hits the cap.
+  let compressedSuite: Buffer;
+  try {
+    compressedSuite = await gzipAsync(JSON.stringify(suite), { level: 1, maxOutputLength: maxArtifactBytes });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error("Dataset exceeds reserved artifact space; split the suite");
+    }
+    throw error;
+  }
+  if (compressedSuite.length + maxDataBytes + 65536 > maxArtifactBytes) {
+    throw new Error("Dataset exceeds reserved artifact space; split the suite");
   }
   const factories: Array<{ factory: AdapterFactory; baseline?: BaselineName }> = opts.noBaselines ? [] : opts.baseline.split(",").map((name) => ({ factory: () => createBaseline(name as BaselineName), baseline: name as BaselineName }));
   if (opts.adapter) {
@@ -77,11 +103,6 @@ export async function main(args = process.argv.slice(2), limits: { maxDataBytes?
   const reports: BenchmarkReport[] = [];
   const evaluated: BenchmarkReport[] = [];
   let reportBytes = 0;
-  // Leave room for pretty JSON, HTML escaping and the separately retained dataset.
-  const maxDataBytes = limits.maxDataBytes ?? LIMITS.artifactBytes / 16;
-  const maxArtifactBytes = limits.maxArtifactBytes ?? LIMITS.artifactBytes;
-  if (!Number.isInteger(maxDataBytes) || maxDataBytes < 1024 * 1024 || maxDataBytes > LIMITS.artifactBytes / 16
-    || !Number.isInteger(maxArtifactBytes) || maxArtifactBytes < 4 * maxDataBytes + 65536 || maxArtifactBytes > LIMITS.artifactBytes) throw new Error("Invalid artifact limits");
   const plannedRuns = factories.length * opts.repeat;
   let failure: RunFailure | undefined;
   runs: for (const { factory, baseline } of factories) {
@@ -103,16 +124,16 @@ export async function main(args = process.argv.slice(2), limits: { maxDataBytes?
       if (opts.adapter ? baseline === undefined : baseline !== "none") evaluated.push(report);
     }
   }
-  let artifacts: Record<string, string>;
+  let artifacts: Record<string, string | Uint8Array>;
   try { artifacts = buildArtifacts(reports, suite, maxArtifactBytes, failure); }
   catch (error) {
     if (!(error instanceof Error) || error.message !== "Benchmark artifact byte limit exceeded") throw error;
     failure = { status: "incomplete", reason: "artifact-limit", retainedRuns: reports.length, plannedRuns,
-      omittedArtifacts: ["suite.json", "comparisons.json", "report.html evidence explorer"] };
-    // Keep the scored traces unchanged. Dataset/HTML duplication may exceed the
-    // output cap even though the accumulated report data fits its separate cap.
+      omittedArtifacts: ["comparisons.json", "report.html evidence explorer"] };
+    // Keep scored traces and the full replayable suite; omit only derived views.
     artifacts = {
       "results.json": JSON.stringify(reports),
+      "suite.json.gz": compressedSuite,
       "run-status.json": JSON.stringify(failure, null, 2),
       "report.html": incompleteReportPage,
     };
