@@ -62,7 +62,10 @@ def configuration(env):
     key = env['MEMORY_TRIAL_OPENAI_API_KEY']
     llm_base, llm_key = extraction_access(env)
     hindsight = {
-        'HINDSIGHT_API_DATABASE_URL': env['MATRIX_MEMORY_HINDSIGHT_DATABASE_URL'],
+        # Loopback-only DB: avoid asyncpg probing protected owner-home TLS key files.
+        'HINDSIGHT_API_DATABASE_URL': urllib.parse.urlunparse(database._replace(query=urllib.parse.urlencode(
+            [(name, value) for name, value in urllib.parse.parse_qsl(database.query) if name != 'sslmode']
+            + [('sslmode', 'disable')]))),
         'HINDSIGHT_API_WORKER_ID': 'matrix-memory-trial',
         'HINDSIGHT_API_LLM_PROVIDER': 'openai',
         'HINDSIGHT_API_LLM_MODEL': env['MEMORY_TRIAL_LLM_MODEL'],

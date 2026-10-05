@@ -6,6 +6,8 @@ Pins checked against official PyPI on 2026-10-05: `hindsight-api-slim==0.10.2`, 
 
 Prerequisites: Linux/systemd, Python 3.11+, Python venv tooling, existing `matrix` service user, local Postgres 15+ with pgvector. Provision a separate database and least-privilege login for Hindsight using the existing operator Postgres provisioning path. Its database must exist with `CREATE EXTENSION vector` enabled. The setup refuses a remote database URL; it does not silently use pg0.
 
+The generated Hindsight connection uses `sslmode=disable` for this mandatory loopback database. This avoids asyncpg probing owner-home TLS key files while the service has `ProtectHome=true`; that service protection stays enabled. This local trial connection policy does not apply to remote databases or Matrix's production database routes.
+
 Configure the Matrix gateway on this same private runtime with `MEMORY_HINDSIGHT_URL=http://127.0.0.1:8888` and `MEMORY_OPENVIKING_URL=http://127.0.0.1:1933`. Leave engine API keys unset for these loopback-only trial services. The gateway must still enforce owner authorization before requests; neither URL is browser-controlled.
 
 Create `/etc/matrix/memory-trial/operator.json` as a root-owned regular file with mode `0600`. Do not paste this file into logs, PRs or browser payloads. Required keys:

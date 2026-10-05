@@ -20,6 +20,12 @@ function render(patch: Record<string, string | null> = {}, receipt = false) {
   );
 }
 describe("native private memory trial configuration", () => {
+  it("disables TLS probing only for the mandatory local trial database", () => {
+    const [h] = render({ MATRIX_MEMORY_HINDSIGHT_DATABASE_URL: "postgresql://trial:synthetic@127.0.0.1/hindsight?application_name=trial" });
+    const database = new URL(h.HINDSIGHT_API_DATABASE_URL);
+    expect(database.searchParams.get("sslmode")).toBe("disable");
+    expect(database.searchParams.get("application_name")).toBe("trial");
+  });
   it("creates service-readable configuration despite a restrictive installer umask", () => {
     const mode = execFileSync("python3", ["-B", "-c", `import importlib.util,os,pathlib,stat,sys,tempfile\ns=importlib.util.spec_from_file_location('trial',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\nwith tempfile.TemporaryDirectory() as root:\n os.umask(0o077)\n p=pathlib.Path(root)/'synthetic.conf'\n m.write_exclusive(p,'synthetic')\n print(oct(stat.S_IMODE(p.stat().st_mode)))`, modulePath], { timeout: 10000, encoding: "utf8" }).trim();
     expect(mode).toBe("0o640");
