@@ -22,6 +22,9 @@ export function createNativeLiveFunding(options: { db: PlatformDB; policy: Nativ
     identity,
     async available(handle: string) {
       const owner = await identity(handle);
+      const active = await options.db.executor.selectFrom("native_live_sessions").select("owner_id")
+        .where("status", "=", "active").limit(options.policy.maximumActiveSessions).execute();
+      if (active.length >= options.policy.maximumActiveSessions || active.some(s => s.owner_id === owner.ownerId)) return false;
       const spent = await options.db.executor.selectFrom("native_live_sessions")
         .select(sql<string>`COALESCE(SUM(accounted_microusd), 0)`.as("total"))
         .where("owner_id", "=", owner.ownerId).where("period_start", "=", period(now())).executeTakeFirstOrThrow();
@@ -39,8 +42,9 @@ export function createNativeLiveFunding(options: { db: PlatformDB; policy: Nativ
           .where("machine_id", "=", expected.machineId).forUpdate().executeTakeFirst();
         if (!machine || machine.clerk_user_id !== expected.ownerId || machine.runtime_slot !== expected.runtimeSlot
           || machine.status !== "running" || machine.activation_state !== "authorized" || machine.deleted_at !== null) throw new NativeLiveFundingError();
-        await trx.updateTable("native_live_sessions").set({ status: "closed", closed_at: checkedAt })
-          .where("status", "=", "active").where("expires_at", "<=", checkedAt).execute();
+        // Expiry ends media, but only the socket's awaited accounting drain
+        // releases admission. A crashed lease fails closed for reconciliation;
+        // elapsed time alone cannot prove accepted costs were recorded.
         const active = await trx.selectFrom("native_live_sessions").select("owner_id").where("status", "=", "active").limit(options.policy.maximumActiveSessions).execute();
         if (active.length >= options.policy.maximumActiveSessions || active.some(s => s.owner_id === expected.ownerId)) throw new NativeLiveFundingError();
         const spent = await trx.selectFrom("native_live_sessions")

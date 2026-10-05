@@ -143,10 +143,11 @@ export function createNativeLiveControl(options: {
           provider.on("message", (data, binary) => {
             if (closed) return;
             try {
-              if (binary || client.bufferedAmount > 256 * 1024) throw new Error("Invalid Live output");
+              if (binary) throw new Error("Invalid Live output");
               const frame = ProviderFrame.parse(JSON.parse(data.toString()));
               const usage = frame.usageMetadata;
               if (usage) schedule(async () => { if (!await funding.recordUsage(id, usage)) void close(); });
+              if (client.bufferedAmount > 256 * 1024) { void close(); return; }
               if (client.readyState === WebSocket.OPEN) client.send(data, { binary: false });
             } catch (error: unknown) { log(error); void close(); }
           });

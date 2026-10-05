@@ -22,7 +22,7 @@ beforeEach(async () => {
   await insertUserMachine(db, { machineId: "machine_alice", clerkUserId: "user_alice", handle: "alice", runtimeSlot: "alice-test",
     status: "running", imageVersion: "v1", activationState: "authorized", provisionedAt: new Date().toISOString() });
 });
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); await destroyTestPlatformDb(db); });
+afterEach(async () => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); await destroyTestPlatformDb(db); });
 describe("platform paid Live boundary", () => {
   it("leaves unrelated WebSockets to their existing handler even during shutdown", async () => {
     const control = createNativeLiveControl({ db, env, platformSecret: secret, entitled: async () => true });
@@ -128,5 +128,18 @@ describe("platform paid Live boundary", () => {
     expect(row.usage_events).toBe(3);
     expect(row.accounted_microusd).toBe(9_000_000);
     expect(row.platform_absorbed_overrun_microusd).toBe(7_000_000);
+  });
+  it("records provider usage before closing a client with excessive backpressure", async () => {
+    const { provider, connect, control } = await sockets();
+    provider.on("connection", socket => socket.on("message", () => {
+      vi.spyOn(WebSocket.prototype, "bufferedAmount", "get").mockReturnValue(256 * 1024 + 1);
+      socket.send(JSON.stringify({ usageMetadata: { promptTokenCount: 1_000_000, responseTokenCount: 0 } }));
+    }));
+    const client = connect(); await new Promise<void>(r => client.on("open", r));
+    const closed = new Promise<void>(r => client.on("close", () => r()));
+    client.send(JSON.stringify({ setup: { tools: [] } })); await closed; await control.shutdown();
+    const row = await db.executor.selectFrom("native_live_sessions").selectAll().executeTakeFirstOrThrow();
+    expect(row.accounted_microusd).toBe(3_000_000);
+    expect(row.platform_absorbed_overrun_microusd).toBe(1_000_000);
   });
 });

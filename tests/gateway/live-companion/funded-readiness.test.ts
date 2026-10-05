@@ -35,4 +35,17 @@ describe("funded native gateway readiness", () => {
     await expect(registry.default()!.start({ sessionId: "vs_test", principalId: "user_bob", chatId: "chat_test", memoryMode: "ordinary", turnMode: "hands_free", emit: vi.fn() })).rejects.toThrow();
     expect(allowed).toHaveBeenCalledWith("user_bob");
   });
+  it("rejects non-success, empty, malformed and oversized readiness responses", async () => {
+    for (const response of [new Response(null, { status: 503 }), new Response(null), new Response("invalid json"),
+      new Response(JSON.stringify({ available: true, ownerId: "user_alice" })),
+      new Response(" ".repeat(5000) + JSON.stringify({ available: false }))]) {
+      expect(await createFundedNativeLiveAccess(env, async () => response)!.allowed("user_alice")).toBe(false);
+    }
+  });
+  it("fails closed on incomplete or malformed machine-bound configuration", () => {
+    expect(createFundedNativeLiveAccess({})).toBeUndefined();
+    expect(createFundedNativeLiveAccess({ ...env, PLATFORM_INTERNAL_URL: "not-an-origin" })).toBeUndefined();
+    expect(createFundedNativeLiveAccess({ ...env, MATRIX_RUNTIME_SLOT: "pr-2172", MATRIX_PREVIEW_RUNTIME: "true", MATRIX_PLATFORM_SPEECH_ORIGIN: "https://pr-2172---matrix-platform-preview.example.com",
+      MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID: "user_alice", MATRIX_PLATFORM_SPEECH_OWNER_ID: "user_other", MATRIX_PLATFORM_SPEECH_MACHINE_ID: "machine_alice", MATRIX_PLATFORM_SPEECH_RUNTIME_SLOT: "pr-2172" })).toBeUndefined();
+  });
 });
