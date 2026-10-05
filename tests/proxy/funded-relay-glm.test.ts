@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/proxy/src/funded-relay.js";
-import { mapFundedModel, priceActualUsageMicrousd } from "../../packages/proxy/src/funded-relay-model.js";
+import { mapFundedModel, priceActualUsageMicrousd, isFundedModelPriceCurrent, fundedModelPriceValidThrough, estimateWorstCaseMicrousd } from "../../packages/proxy/src/funded-relay-model.js";
 import { createFundedUsageTracker } from "../../packages/proxy/src/funded-relay-usage.js";
 import type { FundedPlatformClient } from "../../packages/proxy/src/funded-relay-platform-client.js";
 
@@ -51,6 +51,17 @@ function platform() {
   };
 }
 describe("Cloudflare GLM usage relay", () => {
+  it("admits GLM through its October price review and expires afterward", () => {
+    const now = new Date("2026-10-05T12:00:00.000Z");
+    expect(isFundedModelPriceCurrent(MODEL, now)).toBe(true);
+    expect(fundedModelPriceValidThrough(MODEL)).toBe("2026-10-31T23:59:59.999Z");
+    expect(estimateWorstCaseMicrousd({ canonicalModelId: MODEL, inputTokens: 100,
+      maxOutputTokens: 20, now })).toMatchObject({ amountMicrousd: 30,
+      pricingVersion: "cloudflare-2026-10-05-glm-flash" });
+    expect(isFundedModelPriceCurrent(MODEL, new Date("2026-11-01T00:00:00.000Z"))).toBe(false);
+    expect(() => estimateWorstCaseMicrousd({ canonicalModelId: MODEL, inputTokens: 100,
+      maxOutputTokens: 20, now: new Date("2026-11-01T00:00:00.000Z") })).toThrow("expired");
+  });
   it("maps only the exact managed GLM ID and prices fractional cached tokens without rounding rates", () => {
     expect(mapFundedModel(MODEL)).toMatchObject({ nativeModelId: MODEL, canonicalModelId: MODEL });
     expect(() => mapFundedModel("@cf/unreviewed/model")).toThrow();

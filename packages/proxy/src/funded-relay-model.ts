@@ -34,11 +34,11 @@ const CURRENT_PRICING: FundedPricing = {
   cacheWrite5mRateHundredths: 250,
   cacheWrite1hRateHundredths: 400,
 };
-// Verified 2026-09-10: https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/
+// Reverified 2026-10-05: https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/
 const GLM_PRICING: FundedPricing = {
   canonicalModelId: FUNDED_GLM_FLASH,
-  version: "cloudflare-2026-09-10-glm-flash",
-  validThrough: "2026-09-30T23:59:59.999Z",
+  version: "cloudflare-2026-10-05-glm-flash",
+  validThrough: "2026-10-31T23:59:59.999Z",
   inputRateHundredths: 15, outputRateHundredths: 50, cacheReadRateHundredths: 3,
   cacheWrite5mRateHundredths: 15, cacheWrite1hRateHundredths: 15,
 };
@@ -59,6 +59,7 @@ export function isFundedModelPriceCurrent(modelId: string, now: Date): boolean {
 const SETTLEMENT_PRICING: Readonly<Record<string, FundedPricing>> = {
   "anthropic-2026-08-29": { ...CURRENT_PRICING, version: "anthropic-2026-08-29" },
   [CURRENT_PRICING.version]: CURRENT_PRICING,
+  "cloudflare-2026-09-10-glm-flash": { ...GLM_PRICING, version: "cloudflare-2026-09-10-glm-flash" },
   [GLM_PRICING.version]: GLM_PRICING,
 };
 
