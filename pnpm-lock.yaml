@@ -1066,6 +1066,9 @@ importers:
 
   packages/ui:
     dependencies:
+      '@matrix-os/brand':
+        specifier: workspace:*
+        version: link:../brand
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../contracts

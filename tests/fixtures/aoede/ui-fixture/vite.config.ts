@@ -27,6 +27,7 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     dedupe: ["react", "react-dom"],
     alias: [
+      { find: "@matrix-os/brand/tokens", replacement: path.join(repositoryRoot, "packages/brand/src/tokens.ts") },
       // Contract subpath exports map onto same-named source files.
       { find: /^@matrix-os\/contracts\/(.+)$/, replacement: `${contractsSrc}/$1` },
       { find: "@matrix-os/contracts", replacement: path.join(contractsSrc, "index.ts") },

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { SafeVoiceError, VoiceCapability } from "@matrix-os/contracts/voice-session";
+import { createPortal } from "react-dom";
+import { AoedeLivePanel } from "./AoedeLivePanel.js";
 import { Button } from "../Button.js";
 import {
   AOEDE_STATUS_LABELS, aoedeActionCopy, aoedeErrorCopy, aoedeReadinessCopy,
@@ -17,10 +19,11 @@ const TRANSCRIPT_STICKY_PX = 24;
 export interface AoedePanelProps {
   title?: string;
   scopeLabel: string;
+  focusRevision?: number;
   status: AoedeStatus;
   microphoneActive: boolean;
   turnMode: "hands_free" | "push_to_talk";
-  captions: { utterance?: string; response?: string; provisional?: boolean };
+  captions: { utterance?: string; response?: string; provisional?: boolean; interrupted?: boolean };
   capability?: VoiceCapability;
   /** Canonical run-cancellation support; when provided, the Cancel generation control is gated on it. */
   canCancel?: boolean;
@@ -56,7 +59,7 @@ export interface AoedePanelProps {
 
 /** Presentation only. The host owns focus restoration, light dismissal, media and canonical work. */
 export function AoedePanel({
-  title = "Aoede", scopeLabel, status, microphoneActive, turnMode, captions,
+  title = "Aoede", scopeLabel, focusRevision, status, microphoneActive, turnMode, captions,
   capability, canCancel, error, children, commands, settings, subscribeInputLevel, renderResponse,
 }: AoedePanelProps) {
   const id = useId();
@@ -154,6 +157,9 @@ export function AoedePanel({
   const showError = status === "failed" || Boolean(error);
   const transcriptEmpty = !utterance && !response && !children && !showError;
 
+  if (capability?.conversationMode === "native_live" && typeof document !== "undefined") {
+    return createPortal(<AoedeLivePanel {...{ title, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions, capability, canCancel, error, children, commands, settings, subscribeInputLevel, renderResponse }} />, document.body);
+  }
   return (
     <section className="matrix-aoede" aria-labelledby={`${id}-title`} data-state={status}>
       <header className="matrix-aoede__header">

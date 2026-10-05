@@ -15,6 +15,11 @@ import {
 } from "@matrix-os/contracts/voice-session";
 
 export interface VoiceSessionViewState {
+  companion?: {
+    captions: { utterance?: string; response?: string; provisional?: boolean; interrupted?: boolean };
+    tasks: Array<{ chatId: string; runId: string; state: string; label: string }>;
+    sources: Array<{ chatId: string; title: string; snippet: string }>;
+  };
   state: VoiceVisibleState;
   epoch: number;
   sequence: number;
@@ -229,6 +234,26 @@ export class VoiceSessionController {
         };
         break;
       }
+      case "companion.caption": {
+        const live = this.snapshot.companion ?? { captions: {}, tasks: [], sources: [] };
+        next = { ...this.snapshot, companion: { ...live, captions: { ...live.captions,
+          ...(frame.speaker === "user" ? { utterance: frame.text, provisional: !frame.final } : { response: frame.text, interrupted: frame.interrupted }),
+        } } };
+        break;
+      }
+      case "companion.task": {
+        const live = this.snapshot.companion ?? { captions: {}, tasks: [], sources: [] };
+        next = { ...this.snapshot, companion: { ...live, tasks: [...live.tasks.filter(t => t.chatId !== frame.chatId), { chatId: frame.chatId, runId: frame.runId, label: frame.label, state: frame.state }].slice(-3) } };
+        break;
+      }
+      case "companion.sources": {
+        const live = this.snapshot.companion ?? { captions: {}, tasks: [], sources: [] };
+        next = { ...this.snapshot, companion: { ...live, sources: frame.sources } };
+        break;
+      }
+      case "companion.capture.completed":
+        break;
+      case "companion.response.started":
       case "response.started": {
         this.activeResponse = {
           responseId: frame.responseId,

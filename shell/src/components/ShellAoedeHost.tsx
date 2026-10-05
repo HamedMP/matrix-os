@@ -211,7 +211,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
   // the panel while canonical work survives for reopen. Launcher presses are
   // reveal intents, not dismissal; the clicked control owns focus return.
   useEffect(() => {
-    if (!snapshot.visible) return;
+    if (!snapshot.visible || snapshot.binding?.capability.conversationMode === "native_live") return;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -223,7 +223,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [snapshot.visible, controller]);
+  }, [snapshot.visible, snapshot.binding?.capability.conversationMode, controller]);
 
   return (
     <>

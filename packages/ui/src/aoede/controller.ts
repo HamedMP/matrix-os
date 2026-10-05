@@ -23,7 +23,7 @@ export interface AoedeOwnerOptions {
   identityKey: string;
   baseUrl: string;
   fetcher?: typeof fetch;
-  surface: "web_canvas" | "web_desktop";
+  surface: "web_canvas" | "web_desktop" | "electron_desktop";
   projectId?: string;
   onOpenHistory?: (chatId: string) => void;
   onOpenResult?: (path: string) => void;
@@ -159,6 +159,12 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     if (path !== prefix && path !== `${prefix}.html` && !path.startsWith(`${prefix}/`)) return;
     options.onOpenNavigation?.({ ...(nav.kind === "close_app" ? { kind: nav.kind } : {}), app, path });
   };
+  const projectCurrent = () => {
+    const canonical = projectAoedeCanonical(detail);
+    const live = media?.getSnapshot().voice?.companion;
+    return live ? { ...canonical, captions: { ...canonical.captions, ...live.captions },
+      tasks: live.tasks.length ? live.tasks : canonical.tasks, sources: live.sources } : canonical;
+  };
   const acceptDetail = (value: CanonicalChatDetailResponse) => {
     if (value.record.chat.id !== snapshot.binding?.chatId || (detail && value.record.chat.revision < detail.record.chat.revision)) return;
     const navigations = (value.operations ?? []).filter(operation => operation.state === "succeeded" && operation.result?.navigation);
@@ -184,7 +190,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     const capability = snapshot.binding?.capability;
     const readinessError = capability?.status === "unavailable" ? capabilityUnavailableError(capability.reason) : null;
     const error = projectedMediaError(live) ?? readinessError;
-    patch({ canonical: projectAoedeCanonical(detail), boundProviderInstanceId: value.record.providerBinding?.instanceId ?? null,
+    patch({ canonical: projectCurrent(), boundProviderInstanceId: value.record.providerBinding?.instanceId ?? null,
       ...(recovered ? { error,
         ...(!error && snapshot.status === "failed" && !mediaLive() ? { status: live?.phase === "ended" ? "ended" as const : "idle" as const } : {}),
       } : {}) });
@@ -217,6 +223,10 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   };
   const attach = (binding: AoedeBootstrapResponse, epoch: number, reuseMedia = false) => {
     if (!current(epoch)) return;
+    if (binding.capability.conversationMode === "native_live" && snapshot.turnMode !== "hands_free") {
+      persistPrefs({ turnMode: "hands_free" });
+      patch({ turnMode: "hands_free" });
+    }
     if (!reuseMedia || !media) {
       const created = voiceFactory({ baseUrl: options.baseUrl, fetcher: options.fetcher, webSocketFactory: options.webSocketFactory,
         request: { turnMode: snapshot.turnMode, selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary",
@@ -244,7 +254,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       const provisional = voice?.provisionalTranscript?.text;
       patch({ status, microphoneActive: value.phase === "active" && !!voice && !voice.muted && (voice.turnMode !== "push_to_talk" || voice.pushToTalkActive),
         error: projectedMediaError(value) ?? requestError,
-        canonical: { ...projectAoedeCanonical(detail), ...(provisional ? { captions: { ...projectAoedeCanonical(detail).captions, utterance: boundedAoedeText(provisional), provisional: true } } : {}) } });
+        canonical: { ...projectCurrent(), ...(provisional ? { captions: { ...projectCurrent().captions, utterance: boundedAoedeText(provisional), provisional: true } } : {}) } });
     });
     source = api.events();
     source.subscribe(event => {
@@ -504,6 +514,10 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       if (!live?.pending || live.runId !== snapshot.canonical.runId || live.id !== view.id || JSON.stringify(live.questions) !== JSON.stringify(view.questions)) { void refresh(); return Promise.resolve(false); }
       return mutate(`input:${view.runId}:${view.requestId}`, (clientRequestId, chatId) => api.submitInput(chatId, view.runId, view.requestId, { ...answer, clientRequestId }));
     },
+    openLinkedChat(chatId: string) {
+      if (unavailable || disposed || suspended) return;
+      if (snapshot.canonical.tasks?.some(t => t.chatId === chatId) || snapshot.canonical.sources?.some(s => s.chatId === chatId)) options.onOpenHistory?.(chatId);
+    },
     viewHistory() { if (snapshot.binding && !unavailable) options.onOpenHistory?.(snapshot.binding.chatId); },
     openResult(path: string) { const safe = safeAoedeArtifactPath(path); if (safe && (snapshot.canonical.artifacts.some(item => item.path === safe) || snapshot.canonical.actionArtifacts.includes(safe))) options.onOpenResult?.(safe); },
     /** Canonical navigation into installed app windows; unsafe destinations never reach the host. */
@@ -612,7 +626,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
           outcome = response.cancellation;
           if (detail?.operations) {
             detail = { ...detail, operations: detail.operations.map((item) => item.id === response.operation.id ? response.operation : item) };
-            patch({ canonical: projectAoedeCanonical(detail) });
+            patch({ canonical: projectCurrent() });
           }
         })).then((ok) => {
           if (!ok || !current(epoch)) return null;

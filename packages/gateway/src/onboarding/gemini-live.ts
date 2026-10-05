@@ -1,4 +1,5 @@
 import { WebSocket } from "ws";
+import { z } from "zod/v4";
 import { EventEmitter } from "node:events";
 
 export const GEMINI_SYSTEM_INSTRUCTION = `You are Matrix OS — meeting someone new for the first time. Warm, genuine, curious. You want to know who just walked in before you tell them anything about this place.
@@ -157,63 +158,47 @@ export type GeminiEvent =
   | { type: "interrupted" }
   | { type: "error"; message: string };
 
-export function parseGeminiMessage(msg: Record<string, unknown>): GeminiEvent[] {
-  if ("setupComplete" in msg) return [{ type: "setup_complete" }];
+const TranscriptSchema = z.object({ text: z.string().max(8000) });
+const FunctionSchema = z.object({ id: z.string().max(128).optional(), name: z.string().min(1).max(128), args: z.record(z.string(), z.unknown()).optional() });
+const ProviderMessageSchema = z.object({
+  setupComplete: z.unknown().optional(),
+  toolCall: z.object({ functionCalls: z.array(FunctionSchema).max(8).optional() }).optional(),
+  serverContent: z.object({
+    modelTurn: z.object({ parts: z.array(z.object({
+      inlineData: z.object({ data: z.string().max(350_000), mimeType: z.string().max(160).optional() }).optional(),
+      functionCall: FunctionSchema.optional(),
+    })).max(32).optional() }).optional(),
+    outputTranscription: TranscriptSchema.optional(), inputTranscription: TranscriptSchema.optional(),
+    turnComplete: z.boolean().optional(), interrupted: z.boolean().optional(),
+  }).optional(),
+});
 
+export function parseGeminiMessage(raw: Record<string, unknown>): GeminiEvent[] {
+  const msg = ProviderMessageSchema.parse(raw);
+  if ("setupComplete" in raw) return [{ type: "setup_complete" }];
   const events: GeminiEvent[] = [];
-
-  // Current Gemini Live shape: function calls arrive as a top-level
-  // `toolCall.functionCalls[]` message, not embedded in serverContent.
-  // Older integrations parsed `serverContent.modelTurn.parts[].functionCall`
-  // which is the legacy shape — we still handle that below for
-  // backwards compatibility with whatever quirks the live API surfaces.
-  const topLevelToolCall = msg.toolCall as
-    | { functionCalls?: Array<{ id?: string; name: string; args?: Record<string, unknown> }> }
-    | undefined;
-  if (topLevelToolCall?.functionCalls) {
-    for (const fc of topLevelToolCall.functionCalls) {
-      events.push({ type: "tool_call", id: fc.id ?? "", name: fc.name, args: fc.args ?? {} });
-    }
+  const sc = msg.serverContent;
+  // Final source input must be observed before effects in the same frame.
+  if (sc?.inputTranscription) events.push({ type: "input_transcript", text: sc.inputTranscription.text });
+  if (sc?.interrupted) events.push({ type: "interrupted" });
+  for (const fc of msg.toolCall?.functionCalls ?? []) events.push({ type: "tool_call", id: fc.id ?? "", name: fc.name, args: fc.args ?? {} });
+  for (const part of sc?.modelTurn?.parts ?? []) {
+    if (part.inlineData?.data) events.push({ type: "audio", data: part.inlineData.data });
+    const fc = part.functionCall;
+    if (fc) events.push({ type: "tool_call", id: fc.id ?? "", name: fc.name, args: fc.args ?? {} });
   }
-
-  const sc = msg.serverContent as Record<string, unknown> | undefined;
-  if (!sc) return events;
-
-  if (sc.modelTurn) {
-    const turn = sc.modelTurn as { parts?: Array<Record<string, unknown>> };
-    for (const part of turn.parts ?? []) {
-      // Audio data
-      const inline = part.inlineData as { data: string } | undefined;
-      if (inline?.data) events.push({ type: "audio", data: inline.data });
-
-      // Tool/function calls
-      const fc = part.functionCall as { name: string; id?: string; args?: Record<string, unknown> } | undefined;
-      if (fc) events.push({ type: "tool_call", id: fc.id ?? "", name: fc.name, args: fc.args ?? {} });
-    }
-  }
-
-  // outputTranscription can arrive in the same message as modelTurn audio
-  if (sc.outputTranscription) {
-    const t = sc.outputTranscription as { text: string };
-    events.push({ type: "output_transcript", text: t.text });
-  }
-
-  if (sc.inputTranscription) {
-    const t = sc.inputTranscription as { text: string };
-    events.push({ type: "input_transcript", text: t.text });
-  }
-
-  if (sc.turnComplete) events.push({ type: "turn_complete" });
-  if (sc.interrupted) events.push({ type: "interrupted" });
-
+  if (sc?.outputTranscription) events.push({ type: "output_transcript", text: sc.outputTranscription.text });
+  if (sc?.turnComplete) events.push({ type: "turn_complete" });
   return events;
 }
 
 export interface GeminiLiveClient {
   connect(): Promise<void>;
   sendAudio(base64Pcm: string): void;
+  sendAudioStreamEnd?(): void;
+  restoreContext(turns: Array<{ role: "user" | "assistant"; text: string }>): void;
   sendText(text: string): void;
-  sendToolResponse(callId: string, result: Record<string, unknown>): void;
+  sendToolResponse(callId: string, result: Record<string, unknown>, name?: string): void;
   close(): void;
   on(event: string, handler: (...args: unknown[]) => void): void;
   off(event: string, handler: (...args: unknown[]) => void): void;
@@ -256,13 +241,15 @@ export function createGeminiLiveClient(
   const emitter = new EventEmitter();
   let ws: WebSocket | null = null;
   let transcript = "";
+  let connectionTimer: ReturnType<typeof setTimeout> | null = null;
+  const appendTranscript = (text: string) => { transcript = (transcript + text).slice(-32_000); };
 
   function connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       const target = buildGeminiLiveWebSocketTarget(connection);
-      ws = new WebSocket(target.url, { headers: target.headers });
+      ws = new WebSocket(target.url, { headers: target.headers, handshakeTimeout: 10_000, maxPayload: 512 * 1024 });
 
-      const timeout = setTimeout(() => {
+      const timeout = connectionTimer = setTimeout(() => {
         ws?.close();
         reject(new Error("Gemini Live connection timeout"));
       }, 10_000);
@@ -284,16 +271,18 @@ export function createGeminiLiveClient(
             }
 
             if (event.type === "input_transcript") {
-              transcript += `User: ${event.text}\n`;
+              appendTranscript(`User: ${event.text}\n`);
             }
             if (event.type === "output_transcript") {
-              transcript += `AI: ${event.text}\n`;
+              appendTranscript(`AI: ${event.text}\n`);
             }
 
             emitter.emit(event.type, event);
           }
         } catch (err) {
-          console.warn("[gemini-live] malformed message:", err instanceof Error ? err.message : String(err));
+          console.warn("[gemini-live] malformed message:", err instanceof Error ? err.name : "UnknownError");
+          emitter.emit("error", { type: "error", message: "Invalid provider frame" });
+          ws?.close();
         }
       });
 
@@ -304,6 +293,8 @@ export function createGeminiLiveClient(
       });
 
       ws.on("close", () => {
+        clearTimeout(timeout);
+        reject(new Error("Gemini Live connection closed"));
         emitter.emit("disconnected");
       });
     });
@@ -325,16 +316,29 @@ export function createGeminiLiveClient(
     }));
   }
 
-  function sendToolResponse(callId: string, result: Record<string, unknown>) {
+  function sendAudioStreamEnd() {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
+  }
+
+  function restoreContext(turns: Array<{ role: "user" | "assistant"; text: string }>) {
+    if (ws?.readyState !== WebSocket.OPEN || turns.length === 0) return;
+    const safe = z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(8000) }).strict()).max(20).parse(turns);
+    if (safe.reduce((bytes, turn) => bytes + Buffer.byteLength(turn.text), 0) > 16_000) throw new Error("Context limit exceeded");
+    ws.send(JSON.stringify({ clientContent: { turns: safe.map(turn => ({ role: turn.role === "assistant" ? "model" : "user", parts: [{ text: turn.text }] })), turnComplete: false } }));
+  }
+
+  function sendToolResponse(callId: string, result: Record<string, unknown>, name = "finish_onboarding") {
     if (ws?.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({
       toolResponse: {
-        functionResponses: [{ id: callId, response: result }],
+        functionResponses: [{ id: callId, name, response: result }],
       },
     }));
   }
 
   function close() {
+    if (connectionTimer) clearTimeout(connectionTimer);
+    connectionTimer = null;
     ws?.close();
     ws = null;
   }
@@ -342,6 +346,8 @@ export function createGeminiLiveClient(
   return {
     connect,
     sendAudio,
+    sendAudioStreamEnd,
+    restoreContext,
     sendText,
     sendToolResponse,
     close,

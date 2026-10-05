@@ -21,7 +21,7 @@ export const palette = {
 export const bootGradientColors = ["#647141", "#BED77B", "#F1C377", "#EAB6A7", "#C6D8E3", "#6D777D", "#647141"] as const;
 
 export const fonts = {
-  display: "var(--font-serif-display), 'Instrument Serif', Georgia, serif",
+  display: "var(--font-serif-display, 'Instrument Serif'), Georgia, serif",
   sans: "var(--font-instrument), 'Instrument Sans', system-ui, sans-serif",
   heading: "var(--font-bricolage), 'Bricolage Grotesque', sans-serif",
   ui: "var(--font-geist-sans), Geist, system-ui, sans-serif",

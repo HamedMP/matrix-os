@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGeminiLiveWebSocketTarget,
   hasGeminiLiveConnection,
+  parseGeminiMessage,
 } from "../../../packages/gateway/src/onboarding/gemini-live.js";
 
 describe("Gemini Live connection target", () => {
@@ -29,5 +30,17 @@ describe("Gemini Live connection target", () => {
   it("treats complete proxy config as a voice connection", () => {
     expect(hasGeminiLiveConnection({ proxy: { platformUrl: "http://platform", handle: "alice", token: "tok" } })).toBe(true);
     expect(hasGeminiLiveConnection({ proxy: { platformUrl: "http://platform", handle: "alice", token: "" } })).toBe(false);
+  });
+});
+
+describe("Gemini Live input boundary", () => {
+  it("emits source speech before a tool call in the same frame", () => {
+    const events = parseGeminiMessage({ serverContent: { inputTranscription: { text: "Build a tracker" } }, toolCall: { functionCalls: [{ id: "call_a", name: "delegate_task", args: { kind: "build_app", prompt: "ignored" } }] } });
+    expect(events[0]?.type).toBe("input_transcript");
+    expect(events[1]?.type).toBe("tool_call");
+  });
+  it("rejects malformed and oversized provider transcripts", () => {
+    expect(() => parseGeminiMessage({ serverContent: { inputTranscription: { text: 42 } } })).toThrow();
+    expect(() => parseGeminiMessage({ serverContent: { inputTranscription: { text: "x".repeat(8001) } } })).toThrow();
   });
 });

@@ -65,6 +65,11 @@ describe("VoiceSessionEngine lifecycle", () => {
     resetFrameSeq();
     rig = makeRig();
   });
+  it("allows only one active native voice session per owner across Chats", () => {
+    Object.assign(rig.adapter.capabilities, { conversationMode: "native_live" });
+    rig.engine.createSession({ principal: PRINCIPAL, chatId: CHAT_ID, request: makeCreateRequest() });
+    expect(() => rig.engine.createSession({ principal: PRINCIPAL, chatId: "chat_other", request: makeCreateRequest() })).toThrowError(VoiceSessionError);
+  });
 
   it("creates a connecting session with a one-time lease", () => {
     const created = rig.engine.createSession({

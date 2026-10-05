@@ -40,6 +40,23 @@ function setup(overrides: Partial<AoedePanelProps> = {}) {
 }
 
 describe("AoedePanel standalone presentation", () => {
+  it("shows live caption lanes and explicit voice controls while keeping context observers mounted", () => {
+    const mounted = vi.fn();
+    function Context() { React.useEffect(() => { mounted(); }, []); return <p>Canonical task context</p>; }
+    const { commands } = setup({ capability: { ...capability, conversationMode: "native_live" }, status: "speaking", microphoneActive: true,
+      captions: { utterance: "Please build a tracker", response: "I've accepted the task." }, children: <Context /> });
+    expect(screen.getByText("Please build a tracker")).toBeVisible();
+    expect(screen.getByText("I've accepted the task.")).toBeVisible();
+    expect(mounted).toHaveBeenCalledOnce();
+    expect(screen.getByText("Canonical task context")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Mute" })); expect(commands.pause).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "End voice" })); expect(commands.end).toHaveBeenCalledOnce();
+    expect(commands.cancelGeneration).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Context & tasks" }));
+    expect(screen.getByText("Canonical task context")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
+    expect(commands.newConversation).toHaveBeenCalledOnce();
+  });
   it("shows terminal readiness failure rather than an ongoing check after timeout", () => {
     setup({ status: "failed", capability: undefined,
       error: { code: "connection_failed", retryable: true, recovery: "retry_connection" } });

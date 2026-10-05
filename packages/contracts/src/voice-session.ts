@@ -138,6 +138,7 @@ export const VoiceOutputAudioFormatSchema = z.object({
 }).strict();
 
 export const VoiceCapabilitySchema = z.object({
+  conversationMode: z.enum(["canonical_turn", "native_live"]).optional(),
   contractVersion: z.literal(VOICE_SESSION_CONTRACT_VERSION),
   status: z.enum(["available", "degraded", "unavailable"]),
   surface: z.enum(["web_canvas", "web_desktop", "electron_desktop", "native_mobile"]),
@@ -336,6 +337,11 @@ export const VoiceClientFrameSchema = z.discriminatedUnion("type", [
 ]);
 
 export const VoiceServerFrameSchema = z.discriminatedUnion("type", [
+  z.object({ ...commonFrameShape, type: z.literal("companion.task"), chatId: VoiceCanonicalChatIdSchema, runId: VoiceCanonicalRunIdSchema, state: CanonicalOperationStateSchema, label: z.string().min(1).max(160) }).strict(),
+  z.object({ ...commonFrameShape, type: z.literal("companion.caption"), speaker: z.enum(["user", "assistant"]), turnId: z.string().regex(/^(?:vturn|vresp)_[A-Za-z0-9_-]{1,128}$/), text: VoiceTranscriptTextSchema, final: z.boolean(), interrupted: z.boolean() }).strict(),
+  z.object({ ...commonFrameShape, type: z.literal("companion.response.started"), responseId: VoiceResponseIdSchema }).strict(),
+  z.object({ ...commonFrameShape, type: z.literal("companion.capture.completed"), turnId: VoiceTurnIdSchema }).strict(),
+  z.object({ ...commonFrameShape, type: z.literal("companion.sources"), sources: z.array(z.object({ chatId: VoiceCanonicalChatIdSchema, title: z.string().min(1).max(160), snippet: z.string().max(1600) }).strict()).max(5) }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("session.state"), state: VoiceSessionStateSchema, reason: VoiceSessionStateReasonSchema.optional() }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("session.resumed"), state: VoiceSessionStateSchema, reason: VoiceSessionStateReasonSchema.optional() }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("transcript.provisional"), ...VoiceTranscriptProvisionalSchema.shape }).strict(),

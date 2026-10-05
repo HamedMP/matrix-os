@@ -6,6 +6,8 @@ import { AoedeSettings } from "./AoedeSettings.js";
 import { AoedeCanonicalCards } from "./AoedeCanonicalCards.js";
 
 const Context = createContext<AoedeController | null>(null);
+/** Launcher adapters may be mounted without an authenticated voice owner. */
+export function useOptionalAoedeController() { return useContext(Context); }
 /** Mount once above presentation/app switches. Identity/scope changes remount the owner. */
 export function AoedeProvider(props: AoedeProviderProps) {
   const identity = JSON.stringify([props.identityKey, props.baseUrl, props.projectId ?? null]);
@@ -44,12 +46,12 @@ export function useAoede() {
 export function AoedeAssistant() {
   const { controller, snapshot } = useAoede();
   const focusTarget = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (snapshot.visible) focusTarget.current?.focus(); }, [snapshot.visible, snapshot.focusRevision]);
+  useEffect(() => { if (snapshot.visible && snapshot.binding?.capability.conversationMode !== "native_live") focusTarget.current?.focus(); }, [snapshot.visible, snapshot.focusRevision, snapshot.binding?.capability.conversationMode]);
   if (!snapshot.visible) return null;
   return <div ref={focusTarget} role="dialog" aria-modal="false" aria-label="Aoede assistant" tabIndex={-1} onKeyDown={event => {
     if (event.key === "Escape") { event.stopPropagation(); void controller.dismiss(); }
   }}>
-    <AoedePanel scopeLabel={snapshot.binding?.scope.label ?? "Workspace"} status={snapshot.status}
+    <AoedePanel scopeLabel={snapshot.binding?.scope.label ?? "Workspace"} status={snapshot.status} focusRevision={snapshot.focusRevision}
       microphoneActive={snapshot.microphoneActive} turnMode={snapshot.turnMode} captions={snapshot.canonical.captions}
       capability={snapshot.binding?.capability} error={snapshot.error ?? undefined}
       canCancel={snapshot.canonical.canCancel}
