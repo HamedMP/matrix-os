@@ -16,6 +16,8 @@ export const MemorySourceInputSchema = z
     content: text(200000),
     kind: MemorySourceKindSchema,
     collection: text(200),
+    // Selected imports preserve tombstones unless the owner explicitly restores them.
+    restoreDeleted: z.boolean().optional(),
     occurredAt: z.iso.datetime({ offset: true }).optional(),
     metadata: z
       .record(z.string().max(80), z.string().max(2000))
@@ -76,7 +78,7 @@ export type MemorySourceInput = z.infer<typeof MemorySourceInputSchema>;
 export type MemoryImportRequest = z.infer<typeof MemoryImportRequestSchema>;
 export type MemorySourcePatch = z.infer<typeof MemorySourcePatchSchema>;
 export type MemoryIngestionStatus =
-  "pending" | "processing" | "ready" | "failed" | "not_configured";
+  "pending" | "processing" | "ready" | "failed" | "cancelled" | "not_configured";
 export interface MemorySource {
   id: string;
   title: string;
@@ -146,6 +148,7 @@ export interface MemoryContextResult {
     sourceId: string;
     revision: number;
     title: string;
+    truncated?: boolean;
   }>;
   estimatedTokens: number;
 }

@@ -80,6 +80,7 @@ describe("memory correction and revision cleanup", () => {
     await repo.importSources("alice", {
       ...request,
       clientRequestId: "restore",
+      sources: [{ ...request.sources[0], restoreDeleted: true }],
     });
     const cleanups = (await repo.listJobs("alice")).filter(
       (j) => j.operation === "delete",

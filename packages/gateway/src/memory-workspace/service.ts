@@ -271,17 +271,17 @@ export class MemoryWorkspaceService {
     )
       throw new MemoryConflictError();
     const snapshots: ChatMemorySnapshot[] = [];
-    let bytes = 0;
-    // All references are authorized, even after the budget has been consumed.
+    const allowance = Math.min(8000, Math.floor(24000 / refs.length));
+    // Reserve an excerpt for every selection, preserving each source's truncation receipt.
     for (const ref of refs) {
       const source = await this.getSource(owner, ref.id);
       if (ref.revision !== undefined && ref.revision !== source.revision)
         throw new MemoryConflictError();
       const text = truncateMemoryText(
         source.content,
-        Math.min(8000, 24000 - bytes),
+        allowance,
       );
-      bytes += Buffer.byteLength(text);
+      if (!text.trim()) throw new MemoryConflictError();
       if (text.trim())
         snapshots.push({
           sourceId: source.id,
@@ -291,7 +291,23 @@ export class MemoryWorkspaceService {
           truncated: text !== source.content,
         });
     }
+    await this.assertCurrentSnapshots(owner, snapshots);
     return snapshots;
+  }
+  private async assertCurrentSnapshots(
+    owner: string,
+    snapshots: Array<Pick<ChatMemorySnapshot, "sourceId" | "revision" | "title">>,
+  ): Promise<void> {
+    const [validated] = await this.repository.revalidateSearch(owner, [{
+      engine: "hindsight", status: "ready", latencyMs: 0,
+      hits: snapshots.map((snapshot) => ({
+        sourceId: snapshot.sourceId, title: snapshot.title, text: "",
+        provenance: "document", citation: { sourceId: snapshot.sourceId, revision: snapshot.revision, label: snapshot.title },
+      })),
+    }]);
+    if (!validated || snapshots.some((snapshot) => !validated.hits.some((hit) =>
+      hit.sourceId === snapshot.sourceId && hit.citation.revision === snapshot.revision)))
+      throw new MemoryConflictError();
   }
   async revalidateChat(
     owner: string,
@@ -302,28 +318,32 @@ export class MemoryWorkspaceService {
       if (source.revision !== snapshot.revision)
         throw new MemoryConflictError();
     }
+    await this.assertCurrentSnapshots(owner, snapshots);
   }
   async context(
     owner: string,
     sourceIds: string[],
   ): Promise<MemoryContextResult> {
-    if (sourceIds.length > 30) throw new MemoryConflictError();
+    if (!sourceIds.length || sourceIds.length > 30 || new Set(sourceIds).size !== sourceIds.length) throw new MemoryConflictError();
     let text = "";
     const sources: MemoryContextResult["sources"] = [];
-    for (const id of sourceIds) {
-      const source = await this.getSource(owner, id);
-      const header = `\n[Source ${source.id}, revision ${source.revision}] ${source.title}\n`;
-      const remaining =
-        24000 - Buffer.byteLength(text) - Buffer.byteLength(header);
-      if (remaining <= 0) continue;
-      text +=
-        header + truncateMemoryText(source.content, Math.min(8000, remaining));
+    const originals = [];
+    for (const id of sourceIds) originals.push(await this.getSource(owner, id));
+    const headers = originals.map((source) => `\n[Source ${source.id}, revision ${source.revision}] ${source.title}\n`);
+    const allowance = Math.min(8000, Math.floor((24000 - headers.reduce((n, header) => n + Buffer.byteLength(header), 0)) / originals.length));
+    if (allowance <= 0) throw new MemoryConflictError();
+    for (const [index, source] of originals.entries()) {
+      const excerpt = truncateMemoryText(source.content, allowance);
+      if (!excerpt.trim()) throw new MemoryConflictError();
+      text += headers[index] + excerpt;
       sources.push({
         sourceId: source.id,
         revision: source.revision,
         title: source.title,
+        truncated: excerpt !== source.content,
       });
     }
+    await this.assertCurrentSnapshots(owner, sources);
     return {
       text,
       sources,

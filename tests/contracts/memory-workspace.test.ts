@@ -45,4 +45,8 @@ describe("memory workspace contracts", () => {
       }).success,
     ).toBe(false);
   });
+  it("accepts only a boolean explicit deleted-source restore intent", () => {
+    expect(MemoryImportRequestSchema.safeParse({ clientRequestId: "restore", sources: [{ ...source, restoreDeleted: true }] }).success).toBe(true);
+    expect(MemoryImportRequestSchema.safeParse({ clientRequestId: "restore", sources: [{ ...source, restoreDeleted: "true" }] }).success).toBe(false);
+  });
 });

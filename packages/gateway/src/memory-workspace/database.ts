@@ -59,6 +59,8 @@ export async function bootstrapMemoryDatabase(
     await sql`CREATE TABLE IF NOT EXISTS memory_workspace_comparisons (id UUID PRIMARY KEY,owner_id TEXT NOT NULL REFERENCES memory_workspace_owners(owner_id),query TEXT NOT NULL,results JSONB NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now())`.execute(
       trx,
     );
+    // Migrate legacy arbitrary query copies to content-free comparison receipts.
+    await sql`UPDATE memory_workspace_comparisons SET query='[query omitted]' WHERE query<>'[query omitted]'`.execute(trx);
     await sql`CREATE INDEX IF NOT EXISTS memory_workspace_comparisons_owner ON memory_workspace_comparisons(owner_id,created_at DESC)`.execute(
       trx,
     );

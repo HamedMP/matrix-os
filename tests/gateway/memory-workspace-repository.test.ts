@@ -232,7 +232,7 @@ describe("memory library pagination", () => {
     }>`SELECT owner_id,query FROM memory_workspace_comparisons`.execute(
       repo.kysely,
     );
-    expect(rows).toEqual([{ owner_id: "alice", query: "question" }]);
+    expect(rows).toEqual([{ owner_id: "alice", query: "[query omitted]" }]);
   });
 });
 

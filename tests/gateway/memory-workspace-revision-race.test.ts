@@ -110,7 +110,7 @@ it("a late deletion of an expired cleanup lease cannot remove a restored source"
   await repo.importSources("alice", {
     ...request,
     clientRequestId: "restore",
-    sources: [{ ...request.sources[0], content: "Restored correction" }],
+    sources: [{ ...request.sources[0], content: "Restored correction", restoreDeleted: true }],
   });
   await sql`UPDATE memory_workspace_jobs SET lease_until=now()-interval '1 second' WHERE source_id=${source.id} AND status='processing'`.execute(
     repo.kysely,

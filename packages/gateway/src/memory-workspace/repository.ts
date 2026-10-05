@@ -157,7 +157,7 @@ export class MemoryWorkspaceRepository {
           );
           return [
             e,
-            j?.status === "cancelled" ? "pending" : (j?.status ?? "pending"),
+            j?.status ?? "pending",
           ];
         }),
       ) as MemorySource["ingestion"],
@@ -233,7 +233,9 @@ export class MemoryWorkspaceRepository {
       // history entry when evidence changed, while returning only currently valid hits.
       // Delete, revision writes and this revalidation share the same owner row lock.
       if (invalidated) return current;
-      await sql`INSERT INTO memory_workspace_comparisons(id,owner_id,query,results) VALUES(${randomUUID()},${owner},${query},${JSON.stringify(current)}::jsonb)`.execute(
+      // A receipt records that a comparison occurred, without retaining arbitrary
+      // query text that may quote a forgotten original even when there are no hits.
+      await sql`INSERT INTO memory_workspace_comparisons(id,owner_id,query,results) VALUES(${randomUUID()},${owner},'[query omitted]',${JSON.stringify(current)}::jsonb)`.execute(
         db,
       );
       await sql`DELETE FROM memory_workspace_comparisons WHERE owner_id=${owner} AND id IN(SELECT id FROM memory_workspace_comparisons WHERE owner_id=${owner} ORDER BY created_at DESC OFFSET 1000)`.execute(
@@ -291,8 +293,9 @@ export class MemoryWorkspaceRepository {
       const sourceIds: string[] = [];
       const rows: SourceRow[] = [];
       for (const s of req.sources) {
+        const { restoreDeleted, ...original } = s;
         const r = (
-          await sql<SourceRow>`INSERT INTO memory_workspace_sources(id,owner_id,external_id,title,content,kind,collection,revision,content_hash,metadata,occurred_at) VALUES(${randomUUID()},${owner},${s.externalId},${s.title},${s.content},${s.kind},${s.collection},1,${hash(s)},${JSON.stringify(s.metadata ?? {})}::jsonb,${s.occurredAt ?? null}) ON CONFLICT(owner_id,external_id) DO UPDATE SET title=excluded.title,content=excluded.content,kind=excluded.kind,collection=excluded.collection,metadata=excluded.metadata,occurred_at=excluded.occurred_at,content_hash=excluded.content_hash,revision=memory_workspace_sources.revision+1,updated_at=now(),deleted_at=NULL WHERE memory_workspace_sources.content_hash<>excluded.content_hash OR memory_workspace_sources.deleted_at IS NOT NULL RETURNING *`.execute(
+          await sql<SourceRow>`INSERT INTO memory_workspace_sources(id,owner_id,external_id,title,content,kind,collection,revision,content_hash,metadata,occurred_at) VALUES(${randomUUID()},${owner},${s.externalId},${s.title},${s.content},${s.kind},${s.collection},1,${hash(original)},${JSON.stringify(s.metadata ?? {})}::jsonb,${s.occurredAt ?? null}) ON CONFLICT(owner_id,external_id) DO UPDATE SET title=excluded.title,content=excluded.content,kind=excluded.kind,collection=excluded.collection,metadata=excluded.metadata,occurred_at=excluded.occurred_at,content_hash=excluded.content_hash,revision=memory_workspace_sources.revision+1,updated_at=now(),deleted_at=NULL WHERE (memory_workspace_sources.deleted_at IS NULL OR ${restoreDeleted === true}) AND (memory_workspace_sources.content_hash<>excluded.content_hash OR memory_workspace_sources.deleted_at IS NOT NULL) RETURNING *`.execute(
             db,
           )
         ).rows[0];
@@ -303,6 +306,7 @@ export class MemoryWorkspaceRepository {
               db,
             )
           ).rows[0];
+        if (row.deleted_at !== null) throw new MemoryConflictError();
         if (r) await this.enqueue(db, row, "upsert");
         sourceIds.push(row.id);
         rows.push(row);
@@ -347,7 +351,8 @@ export class MemoryWorkspaceRepository {
         )
       ).rows[0];
       if (!row) {
-        if (!(await this.getSource(owner, id))) throw new MemoryNotFoundError();
+        const current = (await sql`SELECT id FROM memory_workspace_sources WHERE owner_id=${owner} AND id=${id} AND deleted_at IS NULL`.execute(db)).rows[0];
+        if (!current) throw new MemoryNotFoundError();
         throw new MemoryConflictError();
       }
       await this.enqueue(db, row, "upsert");

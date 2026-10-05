@@ -175,7 +175,10 @@ it("keeps eight long-source selections valid while authorizing exhausted referen
   const service = new MemoryWorkspaceService(repo, {});
   const snapshots = await service.resolveChat("alice", refs);
   expect(repo.getSource).toHaveBeenCalledTimes(8);
-  expect(snapshots.length).toBe(3);
+  expect(snapshots.length).toBe(8);
+  expect(snapshots.map((s) => s.sourceId)).toEqual(refs.map((r) => r.id));
+  expect(snapshots.every((s) => s.truncated)).toBe(true);
+  expect(snapshots.reduce((n, s) => n + Buffer.byteLength(s.text), 0)).toBeLessThanOrEqual(24000);
   for (const snapshot of snapshots)
     expect(ChatMemorySnapshotSchema.safeParse(snapshot).success).toBe(true);
   repo.getSource
@@ -184,6 +187,20 @@ it("keeps eight long-source selections valid while authorizing exhausted referen
     .mockResolvedValueOnce({ ...source, content: "x".repeat(16000) })
     .mockResolvedValueOnce(null);
   await expect(service.resolveChat("alice", refs)).rejects.toThrow();
+});
+
+it("represents every long-source standalone context selection and validates it before returning", async () => {
+  const repo = repository();
+  const ids = Array.from({ length: 8 }, (_, i) => `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`);
+  repo.getSource.mockImplementation(async (_owner, id) => ({ ...source, id, content: "😀".repeat(8000) }));
+  const service = new MemoryWorkspaceService(repo, {});
+  const result = await service.context("alice", ids);
+  expect(result.sources.map((s) => s.sourceId)).toEqual(ids);
+  expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(24000);
+  expect(result.text).not.toContain("�");
+  expect(repo.revalidateSearch).toHaveBeenCalledWith("alice", expect.any(Array));
+  repo.revalidateSearch.mockImplementation(async (_owner, results) => results.map((r) => ({ ...r, hits: [] })));
+  await expect(service.context("alice", ids)).rejects.toThrow("Memory revision conflict");
 });
 
 describe("original memory excerpts", () => {
