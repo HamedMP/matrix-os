@@ -140,10 +140,11 @@ export function createNativeLiveControl(options: {
           });
           client.on("close", () => { void close(); }); client.on("error", () => { void close(); });
           provider.on("open", () => { if (closed) return; for (const frame of queued.splice(0)) send(frame); queuedBytes = 0; });
-          provider.on("message", (data, binary) => {
+          provider.on("message", data => {
             if (closed) return;
             try {
-              if (binary) throw new Error("Invalid Live output");
+              // Google sends JSON in binary WebSocket frames as well as text.
+              // maxPayload and JSON/schema validation bound both encodings.
               const frame = ProviderFrame.parse(JSON.parse(data.toString()));
               const usage = frame.usageMetadata;
               if (usage) schedule(async () => { if (!await funding.recordUsage(id, usage)) void close(); });

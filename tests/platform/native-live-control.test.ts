@@ -142,4 +142,16 @@ describe("platform paid Live boundary", () => {
     expect(row.accounted_microusd).toBe(3_000_000);
     expect(row.platform_absorbed_overrun_microusd).toBe(1_000_000);
   });
+  it("accepts bounded JSON in provider binary frames and forwards text JSON to the client", async () => {
+    const { provider, connect, control } = await sockets();
+    provider.on("connection", socket => socket.on("message", () => socket.send(JSON.stringify({ setupComplete: {} }), { binary: true })));
+    const client = connect(); await new Promise<void>(r => client.on("open", r));
+    const response = new Promise<unknown>(resolve => {
+      client.once("message", (data, binary) => resolve({ frame: JSON.parse(data.toString()), binary }));
+      client.once("close", () => resolve(null));
+    });
+    client.send(JSON.stringify({ setup: { tools: [] } }));
+    expect(await response).toEqual({ frame: { setupComplete: {} }, binary: false });
+    await control.shutdown();
+  });
 });
