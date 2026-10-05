@@ -15,31 +15,34 @@ const mailPreviewSchema = z.object({
   records: MemoryImportBatchSchema.shape.records,
   warnings: MemoryImportBatchSchema.shape.warnings,
 }).strict();
-/** Validate bounded source bodies before hashing; never use mutable mailbox or app item IDs when Message-ID exists. */
+/** Preserve source identity across edits; payload hashes only detect ambiguous copies in this bounded preview. */
 export function normalizeNativeMailPreview(input: unknown): MemoryImportBatch {
   const value = mailPreviewSchema.parse(input);
   if (value.records.some(r => r.kind !== "email") ||
       value.records.reduce((n, r) => n + r.content.length, 0) > 1000000)
     throw Error("Invalid mail preview");
-  const records: MemoryImportBatch["records"] = [];
+  const entries: { record: MemoryImportBatch["records"][number]; fingerprint: string; conflicted: boolean }[] = [];
   let duplicate = false;
   for (const record of value.records) {
     const fingerprint = createHash("sha256").update(JSON.stringify([
       record.externalId, record.title, record.metadata?.sender ?? "",
       record.metadata?.recipient ?? "", record.content,
     ])).digest("hex");
-    const externalId = `mail:payload:${fingerprint}`;
-    if (records.some(existing => existing.externalId === externalId)) {
-      duplicate = true;
-      continue;
-    }
-    records.push({ ...record, externalId });
+    const existing = entries.find(entry => entry.record.externalId === record.externalId);
+    if (!existing) entries.push({ record, fingerprint, conflicted: false });
+    else if (existing.fingerprint === fingerprint) duplicate = true;
+    else existing.conflicted = true;
   }
   const warnings = [...value.warnings];
-  if (duplicate) {
-    if (warnings.length === 20) warnings[19] = "Duplicate message copies were omitted. Some other import warnings are not shown.";
-    else warnings.push("Duplicate message copies were omitted.");
-  }
+  const warn = (message: string) => {
+    if (warnings.length === 20) warnings[19] = `${message} Some other import warnings are not shown.`;
+    else warnings.push(message);
+  };
+  if (duplicate) warn("Duplicate message copies were omitted.");
+  // Mail exposes no immutable variant identity for a conflicting Message-ID.
+  // Omit every candidate for that identity rather than choose an arbitrary copy.
+  if (entries.some(entry => entry.conflicted)) warn("Messages sharing an identity but different contents were omitted. Narrow your selection or use a normalized export with distinct stable IDs before importing them.");
+  const records = entries.filter(entry => !entry.conflicted).map(entry => entry.record);
   return MemoryImportBatchSchema.parse({ records, warnings });
 }
 export async function readMemoryExport(path: string) {

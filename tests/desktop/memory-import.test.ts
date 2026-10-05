@@ -267,6 +267,17 @@ describe("export import", () => {
     const fallback = parseMemoryExport("first.ics", stable.replace("X-WR-RELCALID:calendar-one\n", ""), "path-one");
     expect(fallback.warnings).toContain("This export has no stable calendar identifier. Importing it from another path creates separate sources; reuse the same file path for updates.");
   });
+  it("reads calendar identity headers case-insensitively without accepting event-scoped identities", () => {
+    const event = "BEGIN:VEVENT\nUID:event\nDTSTART:20261005T100000Z\nX-WR-RELCALID:ignored-event-id\nEND:VEVENT";
+    const calendar = `BEGIN:VCALENDAR\nX-WR-RELCALID:stable-calendar\n${event}\nEND:VCALENDAR`;
+    const expected = parseMemoryExport("first.ics", calendar, "first-path").records[0].externalId;
+    for (const header of ["x-wr-relcalid", "X-Wr-RelCalId"]) {
+      const moved = parseMemoryExport("moved.ics", calendar.replace("X-WR-RELCALID:stable", `${header}:stable`), "moved-path");
+      expect(moved.records[0].externalId).toBe(expected);
+      expect(moved.warnings.some(w => w.includes("no stable calendar identifier"))).toBe(false);
+    }
+    expect(() => parseMemoryExport("conflict.ics", calendar.replace("X-WR-RELCALID:stable-calendar", "X-WR-RELCALID:stable-calendar\nx-wr-relcalid:conflicting-calendar"))).toThrow("Conflicting calendar identities");
+  });
   it("preserves calendar recurrence/timezone without fabricating UTC dates", () => {
     const p = parseMemoryExport(
       "events.ics",

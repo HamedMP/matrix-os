@@ -33,8 +33,8 @@ describe("bounded memory export reads", () => {
 });
 describe("supported read-only macOS automation", () => {
   it("keeps Mail identity stable when a mailbox moves or is renamed and separates accounts", () => {
-    let mailboxName = "Inbox", accountId = "account-one", itemId = 1;
-    const message = { id: () => itemId, messageId: () => "<stable@example.test>", subject: () => "Synthetic", content: () => "Synthetic body", dateReceived: () => new Date("2026-10-05T00:00:00Z"), sender: () => "test@example.test" };
+    let mailboxName = "Inbox", accountId = "account-one", itemId = 1, subject = "Synthetic", body = "Synthetic body";
+    const message = { id: () => itemId, messageId: () => "<stable@example.test>", subject: () => subject, content: () => body, dateReceived: () => new Date("2026-10-05T00:00:00Z"), sender: () => "test@example.test" };
     const mailbox = { name: () => mailboxName, mailboxes: [], messages: [message] };
     const app = { accounts: [{ id: () => accountId, name: () => "Account", mailboxes: [mailbox] }], mailboxes: [] };
     const run = new Function("Application", `${MEMORY_IMPORT_SCRIPT}; return run;`)(() => app);
@@ -46,27 +46,39 @@ describe("supported read-only macOS automation", () => {
     mailboxName = "Archive";
     itemId = 99;
     expect(preview().externalId).toBe(original.externalId);
+    subject = "Edited subject"; body = "Edited body";
+    expect(preview()).toMatchObject({ externalId: original.externalId, title: subject, content: body });
     accountId = "account-two";
     expect(preview().externalId).not.toBe(original.externalId);
   });
-  it("retains distinct messages sharing Message-ID and deduplicates only exact stable payload copies", () => {
+  it("omits conflicting Message-ID payloads before upload and retains unrelated messages", () => {
     let mailboxName = "Inbox", itemOffset = 0;
     const message = (id: number, body: string, sender = "one@example.test") => ({ id: () => id + itemOffset, messageId: () => "<duplicate@example.test>", subject: () => "Synthetic", content: () => body, dateReceived: () => new Date("2026-10-05T00:00:00Z"), sender: () => sender });
-    const mailbox = { name: () => mailboxName, mailboxes: [], messages: [message(1, "First body"), message(2, "Different body"), message(3, "First body"), message(4, "First body", "other@example.test")] };
+    const unrelated = { ...message(5, "Unrelated"), messageId: () => "<other@example.test>" };
+    const mailbox = { name: () => mailboxName, mailboxes: [], messages: [message(1, "First body"), message(2, "Different body"), message(3, "First body"), message(4, "First body", "other@example.test"), unrelated] };
     const app = { accounts: [{ id: () => "account-one", name: () => "Account", mailboxes: [mailbox] }], mailboxes: [] };
     const run = new Function("Application", `${MEMORY_IMPORT_SCRIPT}; return run;`)(() => app);
     const preview = () => {
       const inventory = JSON.parse(run([JSON.stringify({ provider: "mail", action: "inventory", input: {} })]));
       const raw = JSON.parse(run([JSON.stringify({ provider: "mail", action: "preview", input: { collectionIds: [inventory.collections[0].id], limit: 10 } })]));
-      expect(raw.records).toHaveLength(4);
+      expect(raw.records).toHaveLength(5);
       return normalizeNativeMailPreview(raw);
     };
     const first = preview();
-    expect(first.records).toHaveLength(3);
+    expect(first.records).toHaveLength(1);
+    expect(first.records[0].content).toBe("Unrelated");
+    expect(first.warnings).toContain("Messages sharing an identity but different contents were omitted. Narrow your selection or use a normalized export with distinct stable IDs before importing them.");
     expect(first.warnings).toContain("Duplicate message copies were omitted.");
-    expect(new Set(first.records.map(r => r.externalId)).size).toBe(3);
     mailboxName = "Archive"; itemOffset = 99;
     expect(preview().records.map(r => r.externalId)).toEqual(first.records.map(r => r.externalId));
+  });
+  it("deduplicates exact copies without changing the stable identity or hiding conflicts behind the warning cap", () => {
+    const record = { externalId: 'mail:["account","message:<stable>"]', title: "Synthetic", content: "Body", kind: "email", collection: "Inbox", metadata: { sender: "test@example.test" } };
+    expect(normalizeNativeMailPreview({ records: [record, { ...record, collection: "Archive" }], warnings: [] })).toEqual({ records: [record], warnings: ["Duplicate message copies were omitted."] });
+    const conflicting = normalizeNativeMailPreview({ records: [record, { ...record, metadata: { sender: "other@example.test" } }], warnings: Array.from({ length: 20 }, (_, i) => `Warning ${i}`) });
+    expect(conflicting.records).toEqual([]);
+    expect(conflicting.warnings).toHaveLength(20);
+    expect(conflicting.warnings[19]).toContain("Messages sharing an identity but different contents were omitted.");
   });
   it("rejects oversized native payloads before fingerprinting", () => {
     expect(() => normalizeNativeMailPreview({ records: [{ externalId: "mail:one", title: "Synthetic", content: "x".repeat(65537), kind: "email", collection: "Inbox" }], warnings: [] })).toThrowError(expect.objectContaining({ name: "ZodError" }));

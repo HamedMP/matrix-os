@@ -67,7 +67,7 @@ function parseIcs(content: string, sourceIdentity: string): MemoryImportBatch {
   for (const line of lines) {
     if (line.startsWith("BEGIN:")) depth++;
     else if (line.startsWith("END:")) depth--;
-    else if (depth === 1 && line.startsWith("X-WR-RELCALID:")) {
+    else if (depth === 1 && /^X-WR-RELCALID:/i.test(line)) {
       const id = line.slice("X-WR-RELCALID:".length).trim();
       if (id) {
         if (calendarId && calendarId !== id) throw Error("Conflicting calendar identities");

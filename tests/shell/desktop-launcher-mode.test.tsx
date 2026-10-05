@@ -408,7 +408,7 @@ describe("Desktop launcher dock button by mode", () => {
     await waitFor(() => {
       expect(Array.from(desktopApps.querySelectorAll("button")).map(
         (button) => button.getAttribute("aria-label"),
-      ).slice(0, 4)).toEqual(["Chat", "Terminal", "Files", "Editor"]);
+      ).slice(0, 4)).toEqual(["Chat", "Terminal", "Files", "Memory"]);
     });
     fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
     expect(windowManagerStore.getState().windows.find((windowRecord) => windowRecord.path === "__chat__"))
