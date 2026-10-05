@@ -339,6 +339,7 @@ export class VoiceSessionController {
         pushToTalkActive: false,
         toolLabel: null,
         provisionalTranscript: null,
+        ...(next.companion ? { companion: { ...next.companion, captions: {}, sources: [] } } : {}),
       };
     }
     this.snapshot = { ...next, epoch: frame.epoch, sequence: frame.sequence };

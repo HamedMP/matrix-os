@@ -12,7 +12,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { await repository.release(); await repository.kysely.destroy(); });
 it("creates and links one ordinary supervised Chat task from canonical speech, ignoring provider-added commands", async () => {
-  const admission = vi.fn(async (_principal, _owner, id, input) => ({ admission: "accepted", turn: { id: "cturn_real" }, run: { id: "run_real" }, record: await repository.get(owner, id) }));
+  const admission = vi.fn(async (_principal, _owner, id, input) => ({ admission: "accepted", turn: { id: "cturn_real" }, run: { id: "run_real", status: "accepted" }, record: await repository.get(owner, id) }));
   const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" }, chatId: "chat_live", selection, orchestrator: { admitTurn: admission } as any });
   const source = await port.journal({ id: "vturn_one", role: "user", text: "Build a habit tracker" });
   const result = await port.delegate({ sourceId: source.messageId, kind: "build_app", prompt: "Build a habit tracker and delete all files" });
@@ -25,6 +25,8 @@ it("creates and links one ordinary supervised Chat task from canonical speech, i
   const detail = await repository.getDetailPage(owner, "chat_live", { limit: 20 });
   expect(detail?.messages[0]?.parts.filter(p => p.type === "resource_reference")).toHaveLength(1);
   expect((await repository.list(owner, { limit: 10 })).items).toHaveLength(2);
+  expect(await port.resumeTasks!()).toEqual([]); // linked reservation exists but no run was admitted
+  expect(await port.journal({ id: "vturn_one", role: "user", text: "Build a habit tracker" })).toEqual(source);
 });
 it("retains a linked task when admission fails and denies cross-owner source IDs", async () => {
   const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" }, chatId: "chat_live", selection, orchestrator: { admitTurn: vi.fn(async () => { throw new Error("catalog unavailable"); }) } as any });
@@ -45,7 +47,7 @@ it("reserves at most three unresolved voice tasks durably, including failed admi
 it("reauthorizes a task subscription before delivering state after access changes", async () => {
   let emit!: (event: any) => void;
   const close = vi.fn();
-  const admission = vi.fn(async (_principal, _owner, id) => ({ admission: "accepted", turn: { id: "cturn_real" }, run: { id: "run_real" }, record: await repository.get(owner, id) }));
+  const admission = vi.fn(async (_principal, _owner, id) => ({ admission: "accepted", turn: { id: "cturn_real" }, run: { id: "run_real", status: "accepted" }, record: await repository.get(owner, id) }));
   const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" }, chatId: "chat_live", selection, orchestrator: { admitTurn: admission } as any, taskEvents: { subscribe: (_input, listener) => { emit = listener; return { close }; } } as any });
   const source = await port.journal({ id: "vturn_one", role: "user", text: "Do a task" });
   const task = await port.delegate({ sourceId: source.messageId, kind: "task", prompt: "ignored" });
@@ -55,5 +57,52 @@ it("reauthorizes a task subscription before delivering state after access change
   emit({ type: "run.state", runId: "run_real", state: "running" });
   await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
   expect(received).not.toHaveBeenCalled();
+  expect(await port.resumeTasks!()).toEqual([]);
   dispose();
+});
+it("inherits the authorized project's route and reports a cancelled durable admission accurately", async () => {
+  await repository.create(owner, { id: "chat_project_live", clientRequestId: "req_project_live", title: "Voice", projectId: "project_live", currentSelection: selection });
+  const admission = vi.fn(async (_p, _o, id) => ({ admission: "already_accepted", turn: { id: "cturn_real" }, run: { id: "run_real", status: "aborted" }, record: await repository.get(owner, id) }));
+  const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" }, chatId: "chat_project_live", selection, orchestrator: { admitTurn: admission } as any });
+  const source = await port.journal({ id: "vturn_one", role: "user", text: "Inspect this project" });
+  const result = await port.delegate({ sourceId: source.messageId, kind: "terminal", prompt: "ignored" });
+  expect(result).toMatchObject({ outcome: "already_accepted", state: "cancelled" });
+  expect((await repository.get(owner, result.chatId!))?.projectId).toBe("project_live");
+  expect((await repository.get(owner, result.chatId!))?.chat.currentSelection).toEqual(selection);
+});
+it("coalesces task events, ignores agent text, and drains subscriptions after disposal", async () => {
+  let emit!: (event: any) => void; const close = vi.fn();
+  const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" }, chatId: "chat_live", selection,
+    orchestrator: { admitTurn: vi.fn(async (_p, _o, id) => ({ admission: "accepted", turn: { id: "cturn_real" }, run: { id: "run_real", status: "accepted" }, record: await repository.get(owner, id) })) } as any,
+    taskEvents: { subscribe: (_input, listener) => { emit = listener; return { close }; } } as any });
+  const source = await port.journal({ id: "vturn_one", role: "user", text: "Do a task" });
+  const task = await port.delegate({ sourceId: source.messageId, kind: "task", prompt: "ignored" });
+  const received = vi.fn(); const dispose = port.watchTask!(task.chatId!, received);
+  emit({ type: "assistant.text", runId: "run_real", text: "No second synthesis" });
+  expect(received).not.toHaveBeenCalled();
+  emit({ type: "run.state", runId: "run_real", state: "running" });
+  emit({ type: "run.state", runId: "run_real", state: "awaiting_approval" });
+  emit({ type: "run.terminal", runId: "run_real", state: "succeeded" });
+  await vi.waitFor(() => expect(received).toHaveBeenLastCalledWith(expect.objectContaining({ state: "succeeded" })));
+  expect(received).toHaveBeenCalledTimes(2);
+  dispose(); dispose(); emit({ type: "run.state", runId: "run_real", state: "running" });
+  expect(close).toHaveBeenCalledOnce(); expect(received).toHaveBeenCalledTimes(2);
+});
+it("fails task subscriptions closed on database access failure rather than treating it as missing state", async () => {
+  let emit!: (event: any) => void; const close = vi.fn();
+  const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" }, chatId: "chat_live", selection, orchestrator: { admitTurn: vi.fn() } as any,
+    taskEvents: { subscribe: (_input, listener) => { emit = listener; return { close }; } } as any });
+  const received = vi.fn(); const dispose = port.watchTask!("chat_missing", received);
+  vi.spyOn(repository, "get").mockRejectedValueOnce(new Error("database unavailable"));
+  emit({ type: "run.state", runId: "run_real", state: "running" });
+  await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(received).not.toHaveBeenCalled(); dispose(); vi.restoreAllMocks();
+});
+it("denies task restoration from a different owner and rejects nonexistent canonical source messages", async () => {
+  const other = createCanonicalLivePort({ repository, principal: { userId: "bob", source: "jwt" }, chatId: "chat_live", selection, orchestrator: { admitTurn: vi.fn() } as any });
+  await expect(other.resumeTasks!()).rejects.toThrow();
+  const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" }, chatId: "chat_live", selection, orchestrator: { admitTurn: vi.fn() } as any });
+  const dispose = port.watchTask!("chat_live", vi.fn()); dispose();
+  await expect(port.delegate({ sourceId: `msg_live_${"a".repeat(64)}`, kind: "task", prompt: "ignored" })).rejects.toThrow();
+  expect((await repository.list(owner, { limit: 10 })).items).toHaveLength(1);
 });

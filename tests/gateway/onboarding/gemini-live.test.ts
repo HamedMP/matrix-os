@@ -34,6 +34,10 @@ describe("Gemini Live connection target", () => {
 });
 
 describe("Gemini Live input boundary", () => {
+  it("preserves explicit completion even when its final frame has no text", () => {
+    expect(parseGeminiMessage({ serverContent: { inputTranscription: { finished: true } } })).toEqual([{ type: "input_transcript", text: "", finished: true }]);
+    expect(() => parseGeminiMessage({ serverContent: { inputTranscription: { text: "Hi", finished: "yes" } } })).toThrow();
+  });
   it("emits source speech before a tool call in the same frame", () => {
     const events = parseGeminiMessage({ serverContent: { inputTranscription: { text: "Build a tracker" } }, toolCall: { functionCalls: [{ id: "call_a", name: "delegate_task", args: { kind: "build_app", prompt: "ignored" } }] } });
     expect(events[0]?.type).toBe("input_transcript");

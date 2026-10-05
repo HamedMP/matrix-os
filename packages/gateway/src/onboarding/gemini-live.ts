@@ -151,14 +151,14 @@ export function buildSetupMessage(model: string, overrides?: GeminiSetupOverride
 export type GeminiEvent =
   | { type: "setup_complete" }
   | { type: "audio"; data: string }
-  | { type: "input_transcript"; text: string }
+  | { type: "input_transcript"; text: string; finished?: boolean }
   | { type: "output_transcript"; text: string }
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
   | { type: "turn_complete" }
   | { type: "interrupted" }
   | { type: "error"; message: string };
 
-const TranscriptSchema = z.object({ text: z.string().max(8000) });
+const TranscriptSchema = z.object({ text: z.string().max(8000).default(""), finished: z.boolean().optional() });
 const FunctionSchema = z.object({ id: z.string().max(128).optional(), name: z.string().min(1).max(128), args: z.record(z.string(), z.unknown()).optional() });
 const ProviderMessageSchema = z.object({
   setupComplete: z.unknown().optional(),
@@ -178,9 +178,10 @@ export function parseGeminiMessage(raw: Record<string, unknown>): GeminiEvent[] 
   if ("setupComplete" in raw) return [{ type: "setup_complete" }];
   const events: GeminiEvent[] = [];
   const sc = msg.serverContent;
-  // Final source input must be observed before effects in the same frame.
-  if (sc?.inputTranscription) events.push({ type: "input_transcript", text: sc.inputTranscription.text });
+  // Transcription is independent of model/tool ordering. Preserve explicit
+  // completion; neither a function call nor turnComplete implies final input.
   if (sc?.interrupted) events.push({ type: "interrupted" });
+  if (sc?.inputTranscription) events.push({ type: "input_transcript", text: sc.inputTranscription.text, ...(sc.inputTranscription.finished !== undefined ? { finished: sc.inputTranscription.finished } : {}) });
   for (const fc of msg.toolCall?.functionCalls ?? []) events.push({ type: "tool_call", id: fc.id ?? "", name: fc.name, args: fc.args ?? {} });
   for (const part of sc?.modelTurn?.parts ?? []) {
     if (part.inlineData?.data) events.push({ type: "audio", data: part.inlineData.data });

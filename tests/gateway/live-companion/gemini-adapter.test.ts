@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { createGeminiCompanionAdapter, LIVE_COMPANION_TOOLS } from "../../../packages/gateway/src/live-companion/gemini-adapter.js";
 
 describe("native Gemini adapter", () => {
+  it("retains late transcription corrections across independently ordered model output", async () => {
+    const provider = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), close: vi.fn(), restoreContext: vi.fn(), sendAudio: vi.fn(), sendText: vi.fn(), sendToolResponse: vi.fn(), transcript: "" });
+    const journal = vi.fn(async () => ({ messageId: "msg_final" }));
+    const delegate = vi.fn(async () => ({ outcome: "sent" as const, runId: "run_real", revision: 1, canonicalTurnId: "cturn_real" }));
+    const adapter = createGeminiCompanionAdapter({ connection: "fixture", model: "gemini-3.8-live", clientFactory: () => provider });
+    const session = await adapter.start({ sessionId: "vs_order", chatId: "chat_order", principalId: "alice", turnMode: "hands_free", memoryMode: "ordinary", audio: { codec: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20 }, emit: vi.fn(), live: { journal, delegate, restore: async () => [], search: async () => [], status: async () => ({ state: "idle" }) } });
+    session.setCapture({ turnId: "vturn_capture", mode: "hands_free" });
+    provider.emit("input_transcript", { text: "Build a tracker" });
+    provider.emit("output_transcript", { text: "I'm listening." });
+    provider.emit("input_transcript", { text: " actually make it a calendar", finished: true });
+    provider.emit("tool_call", { id: "call_final", name: "delegate_task", args: { kind: "build_app", prompt: "ignored" } });
+    try { await vi.waitFor(() => expect(delegate).toHaveBeenCalledOnce()); expect(journal).toHaveBeenCalledWith(expect.objectContaining({ text: "Build a tracker actually make it a calendar" })); }
+    finally { await session.close(); }
+  });
   it("declares async tools for Gemini 3.8 Live", () => {
     expect(LIVE_COMPANION_TOOLS[0]?.functionDeclarations.every(tool => "behavior" in tool && tool.behavior === "NON_BLOCKING")).toBe(true);
   });
@@ -12,12 +26,12 @@ describe("native Gemini adapter", () => {
     const adapter = createGeminiCompanionAdapter({ connection: "test", model: "gemini-3.8-live", clientFactory: () => provider });
     const session = await adapter.start({ sessionId: "vs_pause", chatId: "chat_pause", principalId: "alice", turnMode: "hands_free", memoryMode: "ordinary", audio: { codec: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20 }, emit: e => frames.push(e), live: { journal: vi.fn(async () => ({ messageId: "msg_source" })), delegate: vi.fn(), restore: vi.fn(async () => []), search: vi.fn(async () => []), status: vi.fn(async () => ({ state: "idle" })) } });
     session.setCapture({ turnId: "vturn_one", mode: "hands_free" });
-    provider.emit("audio", { data: "AAAA" });
+    provider.emit("audio", { data: "AAA=" });
     session.setCapture(null);
-    provider.emit("audio", { data: "AAAA" });
+    provider.emit("audio", { data: "AAA=" });
     provider.emit("output_transcript", { text: "Do not speak while paused." });
     provider.emit("turn_complete");
-    provider.emit("audio", { data: "AAAA" });
+    provider.emit("audio", { data: "AAA=" });
     await new Promise(resolve => setTimeout(resolve, 10));
     expect(frames.filter(e => e.type === "companion.frame" && e.frame.type === "response.audio")).toEqual([]);
     expect(provider.sendAudioStreamEnd).toHaveBeenCalledOnce();
@@ -31,7 +45,7 @@ describe("native Gemini adapter", () => {
     const adapter = createGeminiCompanionAdapter({ connection: "test-key", model: "gemini-3.8-live", clientFactory: () => provider });
     const session = await adapter.start({ sessionId: "vs_async", chatId: "chat_async", principalId: "alice", turnMode: "hands_free", memoryMode: "ordinary", audio: { codec: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20 }, emit: e => frames.push(e), live: { journal: vi.fn(async () => ({ messageId: "msg_source" })), delegate: () => admitted, restore: vi.fn(async () => []), search: vi.fn(async () => []), status: vi.fn(async () => ({ state: "idle" })) } });
     session.setCapture({ turnId: "vturn_one", mode: "hands_free" });
-    provider.emit("input_transcript", { text: "Build a tracker" });
+    provider.emit("input_transcript", { text: "Build a tracker", finished: true });
     provider.emit("tool_call", { id: "call_async", name: "delegate_task", args: { kind: "build_app", prompt: "ignored" } });
     provider.emit("output_transcript", { text: "We can keep talking." });
     try {
@@ -51,7 +65,7 @@ describe("native Gemini adapter", () => {
     expect(provider.sendText).not.toHaveBeenCalled();
     session.setCapture({ turnId: "vturn_one", mode: "hands_free" });
     session.pushAudio({ turnId: "vturn_one", timestampMs: 0, data: "AAAA" });
-    provider.emit("input_transcript", { text: "Build a tracker" });
+    provider.emit("input_transcript", { text: "Build a tracker", finished: true });
     provider.emit("tool_call", { id: "call_one", name: "delegate_task", args: { kind: "build_app", prompt: "Build a tracker" } });
     await vi.waitFor(() => expect(provider.sendToolResponse).toHaveBeenCalled());
     expect(delegate).toHaveBeenCalledTimes(1);

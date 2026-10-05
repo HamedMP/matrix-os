@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { VoiceSessionController } from "../../packages/ui/src/voice-session/controller.js";
 const common = { contractVersion: 1, sessionId: "vs_live", epoch: 1 };
 describe("shared native live captions", () => {
+  it("clears prior-epoch captions on resume while preserving durable tasks", () => {
+    const controller = new VoiceSessionController({ sessionId: "vs_live", initialEpoch: 1 });
+    controller.receive({ ...common, sequence: 0, type: "companion.caption", turnId: "vturn_old", speaker: "user", text: "Old request", final: false, interrupted: false });
+    controller.receive({ ...common, sequence: 1, type: "companion.task", chatId: "chat_task", runId: "run_task", state: "running", label: "Task" });
+    expect(controller.receive({ ...common, epoch: 2, sequence: 0, type: "session.resumed", state: "listening" })).toBe(true);
+    expect(controller.getState().companion?.captions).toEqual({});
+    expect(controller.getState().companion?.tasks).toHaveLength(1);
+    expect(controller.receive({ ...common, sequence: 2, type: "companion.caption", turnId: "vturn_old", speaker: "user", text: "Stale", final: true, interrupted: false })).toBe(false);
+    expect(controller.getState().companion?.captions).toEqual({});
+  });
   it("shows provisional user and assistant lanes at chunk receipt", () => {
     const controller = new VoiceSessionController({ sessionId: "vs_live", initialEpoch: 1 });
     expect(controller.receive({ ...common, sequence: 0, type: "companion.caption", turnId: "vturn_one", speaker: "user", text: "Hello", final: false, interrupted: false })).toBe(true);

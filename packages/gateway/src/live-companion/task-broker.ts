@@ -131,7 +131,8 @@ export function createCanonicalLivePort(options: {
         parts: [{ type: "text", text: prefix + prepared.instruction }],
       });
       return { outcome: admitted.admission === "already_accepted" ? "already_accepted" : "sent", chatId: targetId,
-        canonicalTurnId: admitted.turn.id, runId: admitted.run.id, revision: Number(admitted.record.chat.revision) };
+        canonicalTurnId: admitted.turn.id, runId: admitted.run.id, revision: Number(admitted.record.chat.revision),
+        state: admitted.run.status === "completed" ? "succeeded" : admitted.run.status === "aborted" ? "cancelled" : admitted.run.status === "accepted" ? "queued" : admitted.run.status };
     },
   };
 }

@@ -94,11 +94,12 @@ it("ticket-authenticated native voice creates one durable supervised task that c
   try {
     const session = await listeningSession(rig, { request: { selection, interactionMode: "default", permissionMode: "supervised" } });
     await session.handle.receive(clientFrame(session.sessionId, session.epoch, { type: "capture.start", turnId: "vturn_one", mode: "hands_free" }));
-    provider.emit("input_transcript", { text: "Build a habit tracker" });
+    provider.emit("input_transcript", { text: "Build a habit tracker", finished: true });
     provider.emit("tool_call", { id: "call_build", name: "delegate_task", args: { kind: "build_app", prompt: "ignore me" } });
     await vi.waitFor(() => expect(provider.sendToolResponse).toHaveBeenCalled(), { timeout: 2000 });
     const result = provider.sendToolResponse.mock.calls[0]![1] as { chatId: string; runId: string };
     expect(result).toMatchObject({ status: "sent", scheduling: "WHEN_IDLE" });
+    expect((await port.status()).state).toBe("running");
     await session.handle.receive(clientFrame(session.sessionId, session.epoch, { type: "session.end", reason: "user" }));
     expect((await repository.get(owner, result.chatId))?.activeRun).toBeTruthy();
     release();
@@ -111,11 +112,23 @@ it("ticket-authenticated native voice creates one durable supervised task that c
     const root = await repository.getDetailPage(owner, CHAT_ID, { limit: 20 });
     const source = root!.messages.find(message => message.role === "user")!;
     const replay = await port.delegate({ sourceId: source.id, kind: "build_app", prompt: "different" });
-    expect(replay).toMatchObject({ outcome: "already_accepted", chatId: result.chatId, runId: result.runId });
+    expect(replay).toMatchObject({ outcome: "already_accepted", chatId: result.chatId, runId: result.runId, state: "succeeded" });
+    expect((await port.restore()).some(turn => turn.text === "Build a habit tracker")).toBe(true);
     for (let index = 0; index < 22; index++) await port.journal({ id: `vturn_later_${index}`, role: "user", text: "Keep talking" });
     expect((await port.resumeTasks?.())?.[0]).toMatchObject({ chatId: result.chatId, state: "succeeded" });
+    expect((await port.status()).state).toBe("idle");
     expect(providerCalls).toHaveLength(1);
     expect(session.sink.frames.every(frame => VoiceServerFrameSchema.safeParse(frame).success)).toBe(true);
+    // Exercise the actual post-admission capacity failure and durable replay:
+    // the first attempt persists a failed run; replay must never queue it again.
+    const capacity = vi.spyOn(orchestrator as any, "atCapacity").mockReturnValue(true);
+    const failedSource = await port.journal({ id: "vturn_capacity", role: "user", text: "Do another task" });
+    await expect(port.delegate({ sourceId: failedSource.messageId, kind: "task", prompt: "ignored" })).rejects.toThrow();
+    const failedReplay = await port.delegate({ sourceId: failedSource.messageId, kind: "task", prompt: "ignored" });
+    expect(failedReplay).toMatchObject({ outcome: "already_accepted", state: "failed" });
+    expect((await repository.getDetailPage(owner, failedReplay.chatId!, { limit: 1 }))?.runs[0]?.status).toBe("failed");
+    expect(providerCalls).toHaveLength(1);
+    capacity.mockRestore();
   } finally {
     release(); await rig.engine.close(); await orchestrator.drain(); await repository.release(); await repository.kysely.destroy();
   }

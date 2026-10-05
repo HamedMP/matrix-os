@@ -13,4 +13,9 @@ describe("native Live readiness", () => {
     expect(registerNativeCompanion({ registry, connection: "test-key", env: { NODE_ENV: "development", MATRIX_AOEDE_NATIVE_LIVE: "1" } }).available).toBe(true);
     expect(registry.default()?.capabilities.conversationMode).toBe("native_live");
   });
+  it("fails closed for a requested native session without a configured credential", () => {
+    const registry = new VoiceMediaAdapterRegistry();
+    expect(registerNativeCompanion({ registry, connection: "", env: { MATRIX_AOEDE_NATIVE_LIVE: "1", NODE_ENV: "development" } })).toMatchObject({ requested: true, available: false, reason: "not_configured" });
+    expect(registry.size).toBe(0);
+  });
 });

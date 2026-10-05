@@ -47,7 +47,6 @@ export function createGeminiCompanionAdapter(options: {
       let mutedOutput = false;
       let outputGeneration = 0;
       const taskSubscriptions = new Map<string, () => void>(); // three subscriptions, cleared on close
-      const taskLabels = new Map<string, string>(); // same capped three tasks
       let conversationBusy = false;
       const toolFlights = new Set<Promise<void>>(); // max three, drained on close
       let taskUpdate: string | null = null; // one coalesced verified fact, no unbounded queue
@@ -61,12 +60,11 @@ export function createGeminiCompanionAdapter(options: {
         taskUpdate = `Verified Matrix Chat task update: ${JSON.stringify({ chatId, runId: event.runId, state })}. Explain briefly when idle. Task termination is not app launcher verification. Never infer app readiness.`;
         flushTaskUpdate();
         if (event.type === "run.terminal") {
-          taskSubscriptions.get(chatId)?.(); taskSubscriptions.delete(chatId); taskLabels.delete(chatId);
+          taskSubscriptions.get(chatId)?.(); taskSubscriptions.delete(chatId);
         }
       };
       const watch = (chatId: string, label: string) => {
         if (taskSubscriptions.has(chatId) || taskSubscriptions.size >= 3 || !context.live?.watchTask) return;
-        taskLabels.set(chatId, label);
         taskSubscriptions.set(chatId, context.live.watchTask(chatId, event => onTask(chatId, label, event)));
       };
       const live = createLiveCompanion({ port: context.live, chatId: context.chatId,
@@ -81,7 +79,7 @@ export function createGeminiCompanionAdapter(options: {
           context.emit({ type: "companion.frame", frame });
           if (frame.type === "companion.task") watch(frame.chatId, frame.label);
         },
-        reply: (id, result, name) => client.sendToolResponse(id, { ...result, scheduling: "WHEN_IDLE" }, name), update: text => client.sendText(text),
+        reply: (id, result, name) => client.sendToolResponse(id, { ...result, scheduling: "WHEN_IDLE" }, name),
         restoreContext: turns => client.restoreContext(turns),
       });
       const schedule = (task: () => void | Promise<void>, bytes = 0) => {
@@ -105,10 +103,13 @@ export function createGeminiCompanionAdapter(options: {
         conversationBusy = true;
         if (!utteranceId || inputAfterOutput) { utteranceId = `vturn_${context.sessionId.slice(3)}_native_${++ids}`; inputAfterOutput = false; mutedOutput = false; }
         const id = utteranceId;
-        schedule(() => live.input(id, event.text));
+        schedule(() => live.input(id, event.text, event.finished === true));
+        // Only explicit input completion or a provider interruption rotates
+        // the utterance. Model output may precede late input transcription.
+        if (event.finished === true) inputAfterOutput = true;
       });
       client.on("output_transcript", raw => {
-        conversationBusy = true; inputAfterOutput = true;
+        conversationBusy = true;
         const generation = outputGeneration;
         if (!mutedOutput) schedule(() => { if (!mutedOutput && generation === outputGeneration) return live.output((raw as Extract<GeminiEvent, { type: "output_transcript" }>).text); });
       });
@@ -130,8 +131,8 @@ export function createGeminiCompanionAdapter(options: {
             client.sendToolResponse(event.id, { status: "not_accepted", scheduling: "WHEN_IDLE", message: "Follow existing tasks in Chat before starting more work." }, event.name);
             return;
           }
-          // Capture/finalize the source synchronously, then let the bounded
-          // tool promise run independently from all transcript/audio work.
+          // Admission accepts only explicit finalized transcription. The
+          // bounded tool promise runs independently from transcript/audio.
           const flight = live.tool(event.id, event.name, event.args);
           toolFlights.add(flight);
           void flight.finally(() => toolFlights.delete(flight));
@@ -143,7 +144,7 @@ export function createGeminiCompanionAdapter(options: {
         flushTaskUpdate();
       }));
       client.on("interrupted", () => { outputGeneration++; inputAfterOutput = true; schedule(() => live.interrupt()); });
-      client.on("error", () => context.emit({ type: "error", code: "provider_unavailable", retryable: true, fatal: true }));
+      client.on("error", () => { if (!closed) context.emit({ type: "error", code: "provider_unavailable", retryable: true, fatal: true }); });
       client.on("disconnected", () => { if (!closed) context.emit({ type: "error", code: "connection_lost", retryable: true, fatal: true }); });
       try {
         await client.connect(); await live.restore();
@@ -155,13 +156,13 @@ export function createGeminiCompanionAdapter(options: {
       catch (error) {
         closed = true; client.close();
         for (const dispose of taskSubscriptions.values()) dispose();
-        taskSubscriptions.clear(); taskLabels.clear();
+        taskSubscriptions.clear();
         throw error;
       }
       return {
         setCapture(capture) {
           if (!capture && captureId) {
-            mutedOutput = true; outputGeneration++;
+            mutedOutput = true; outputGeneration++; inputAfterOutput = true;
             client.sendAudioStreamEnd?.();
             schedule(() => live.interrupt());
           }
@@ -171,7 +172,7 @@ export function createGeminiCompanionAdapter(options: {
         // Canonical task output remains in Chat. Native Live speaks verified
         // coarse task facts; it never synthesizes a second model's every reply.
         synthesize() {}, cancelResponse() {},
-        interrupt() { mutedOutput = true; outputGeneration++; schedule(() => live.interrupt()); },
+        interrupt() { mutedOutput = true; outputGeneration++; inputAfterOutput = true; schedule(() => live.interrupt()); },
         native: {
           played(responseId, segmentId) { schedule(() => live.played(responseId, segmentId)); },
           onTask(event: VoiceCanonicalChatEvent) { onTask(context.chatId, "Chat task", event); },
@@ -181,7 +182,7 @@ export function createGeminiCompanionAdapter(options: {
           closed = true;
           client.close();
           for (const dispose of taskSubscriptions.values()) dispose();
-          taskSubscriptions.clear(); taskLabels.clear();
+          taskSubscriptions.clear();
           await chain;
           await Promise.allSettled([...toolFlights]);
           toolFlights.clear();
