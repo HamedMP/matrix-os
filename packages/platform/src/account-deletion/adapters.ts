@@ -7,6 +7,7 @@ import { CustomerVpsError } from '../customer-vps-errors.js';
 import { createAppleRevoker, prepareClerkAppleRevocation, assertAppleDeletionConfig, type AppleDeletionConfig } from './apple.js';
 import { assertDeletionOwnershipSafe, eraseOwnerPlatformData, hasTable } from './cleanup-data.js';
 import { revokeOwnerMatrixCredentials } from './matrix.js';
+import { ownerHandlesQuery } from './owner-handles.js';
 import { readNativeAppleCredential } from './native-apple.js';
 import { projectAccountDeletionBillingCancellation } from './billing-projection.js';
 import { eraseOwnerStorage, type AccountDeletionObjectStore } from './storage.js';
@@ -339,8 +340,8 @@ async function revokeWhatsApp(db: PlatformDB, owner: string): Promise<void> {
 }
 async function revokeVoiceNumbers(options: AccountDeletionAdapterOptions, owner: string, request: typeof fetch) {
   if (!options.twilio) return; // No owner-managed voice resources exist without the configured account.
-  const handles = await options.db.executor.selectFrom('user_machines').select('handle').where('clerk_user_id','=',owner).limit(1001).execute();
-  if (handles.length > 1000) throw new Error('Voice cleanup capacity exceeded');
+  const handles = await sql<{handle:string}>`${ownerHandlesQuery(owner)} LIMIT 1001`.execute(options.db.executor);
+  if (handles.rows.length > 1000) throw new Error('Voice cleanup capacity exceeded');
   const config = options.twilio;
   z.string().regex(/^AC[0-9a-f]{32}$/i).parse(config.accountSid);
   const base = `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/IncomingPhoneNumbers`;
@@ -355,7 +356,7 @@ async function revokeVoiceNumbers(options: AccountDeletionAdapterOptions, owner:
       let url: URL;
       try { url = new URL(number.voice_url); } catch (error) { if (error instanceof TypeError) continue; throw error; }
       if (url.origin !== new URL(config.publicBaseUrl).origin || url.pathname !== '/voice/webhook/twilio'
-        || !handles.some((row)=>row.handle===url.searchParams.get('handle'))) continue;
+        || !handles.rows.some((row)=>row.handle===url.searchParams.get('handle'))) continue;
       const removed = await request(`${base}/${number.sid}.json`, { method:'DELETE', headers:auth, redirect:'error', signal:AbortSignal.timeout(10_000) });
       if (!removed.ok && removed.status!==404) throw new Error('Voice cleanup unavailable');
       await removed.body?.cancel();

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { AccountDeletionOwnershipError } from './types.js';
 import { lockAccountDeletionOwner } from './repository.js';
+import { ownerHandlesQuery } from './owner-handles.js';
 import type { PlatformDB } from '../db.js';
 
 export async function hasTable(db: PlatformDB, name: string): Promise<boolean> {
@@ -43,43 +44,39 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     const liveRuntime=await trx.executor.selectFrom('user_machines').select('machine_id')
       .where('clerk_user_id','=',owner).where((eb)=>eb.or([eb('deleted_at','is',null),eb('status','!=','deleted')])).limit(1).execute();
     if(liveRuntime.length) throw new Error('runtime_cleanup_pending');
-    const identity = await trx.executor.selectFrom('users').select(['id','handle']).where('clerk_id','=',owner).execute();
-    const legacyHandles = await trx.executor.selectFrom('containers').select('handle').where('clerk_user_id','=',owner).execute();
-    const runtimeHandles = await trx.executor.selectFrom('user_machines').select('handle').where('clerk_user_id','=',owner).limit(1001).execute();
-    if (runtimeHandles.length>1000) throw new Error('Runtime cleanup capacity exceeded');
-    const handles = [...new Set([...identity,...legacyHandles,...runtimeHandles].map((user)=>user.handle))];
-    const ids = [owner, ...identity.map((user) => user.id)];
-    const machines = await trx.executor.selectFrom('user_machines').select('machine_id').where('clerk_user_id','=',owner).execute();
-    const machineIds = machines.map((machine) => machine.machine_id);
-    if (machineIds.length) {
-      const pending = await trx.executor.selectFrom('provider_deletion_queue').select('id')
-        .where('machine_id','in',machineIds).where('completed_at','is',null).limit(1).execute();
-      if (pending.length) throw new Error('runtime_cleanup_pending');
-      await trx.executor.deleteFrom('billing_runtime_actions').where('machine_id','in',machineIds).execute();
-      await trx.executor.deleteFrom('provisioning_jobs').where('machine_id','in',machineIds).execute();
-      await trx.executor.deleteFrom('provider_deletion_queue').where('machine_id','in',machineIds).execute();
-      await trx.executor.deleteFrom('golden_snapshot_create_intents').where('machine_id','in',machineIds).execute();
-      await trx.executor.deleteFrom('golden_snapshot_leases').where('machine_id','in',machineIds).execute();
-    }
+    // Keep owner inventories in PostgreSQL. Only bounded existence probes return
+    // rows to the worker, including owners with many historical runtime slots.
+    const ids = sql<string>`SELECT ${owner}::text AS id UNION
+      SELECT id::text FROM users WHERE clerk_id = ${owner}`;
+    const handles = sql<string>`(${ownerHandlesQuery(owner)})`;
+    const machineIds = trx.executor.selectFrom('user_machines').select('machine_id').where('clerk_user_id','=',owner);
+    const pending = await trx.executor.selectFrom('provider_deletion_queue').select('id')
+      .where('machine_id','in',machineIds).where('completed_at','is',null).limit(1).execute();
+    if (pending.length) throw new Error('runtime_cleanup_pending');
+    await trx.executor.deleteFrom('billing_runtime_actions').where('machine_id','in',machineIds).execute();
+    await trx.executor.deleteFrom('provisioning_jobs').where('machine_id','in',machineIds).execute();
+    await trx.executor.deleteFrom('provider_deletion_queue').where('machine_id','in',machineIds).execute();
+    await trx.executor.deleteFrom('golden_snapshot_create_intents').where('machine_id','in',machineIds).execute();
+    await trx.executor.deleteFrom('golden_snapshot_leases').where('machine_id','in',machineIds).execute();
     // Maintain counts on other people's surviving content before deleting this owner's edges.
     await sql`UPDATE social_posts p SET likes_count = GREATEST(0, likes_count -
-      (SELECT count(*)::integer FROM social_likes l WHERE l.post_id = p.id AND l.user_id IN (${sql.join(ids)}))),
+      (SELECT count(*)::integer FROM social_likes l WHERE l.post_id = p.id AND l.user_id IN (${ids}))),
       comments_count = GREATEST(0, comments_count -
-      (SELECT count(*)::integer FROM social_comments c WHERE c.post_id = p.id AND c.author_id IN (${sql.join(ids)})))
-      WHERE p.author_id NOT IN (${sql.join(ids)}) AND (EXISTS
-        (SELECT 1 FROM social_likes l WHERE l.post_id=p.id AND l.user_id IN (${sql.join(ids)})) OR EXISTS
-        (SELECT 1 FROM social_comments c WHERE c.post_id=p.id AND c.author_id IN (${sql.join(ids)})))`.execute(trx.executor);
-    await sql`DELETE FROM social_likes WHERE user_id IN (${sql.join(ids)}) OR post_id IN
-      (SELECT id FROM social_posts WHERE author_id IN (${sql.join(ids)}))`.execute(trx.executor);
-    await sql`DELETE FROM social_comments WHERE author_id IN (${sql.join(ids)}) OR post_id IN
-      (SELECT id FROM social_posts WHERE author_id IN (${sql.join(ids)}))`.execute(trx.executor);
-    await trx.executor.deleteFrom('social_posts').where('author_id','in',ids).execute();
-    await sql`DELETE FROM social_follows WHERE follower_id IN (${sql.join(ids)}) OR following_id IN (${sql.join(ids)})`.execute(trx.executor);
-    await sql`DELETE FROM app_ratings WHERE user_id IN (${sql.join(ids)}) OR app_id IN
-      (SELECT id FROM apps_registry WHERE author_id IN (${sql.join(ids)}) AND is_public = false)`.execute(trx.executor);
-    await sql`DELETE FROM app_installs WHERE user_id IN (${sql.join(ids)}) OR app_id IN
-      (SELECT id FROM apps_registry WHERE author_id IN (${sql.join(ids)}) AND is_public = false)`.execute(trx.executor);
-    await sql`DELETE FROM apps_registry WHERE author_id IN (${sql.join(ids)}) AND is_public = false`.execute(trx.executor);
+      (SELECT count(*)::integer FROM social_comments c WHERE c.post_id = p.id AND c.author_id IN (${ids})))
+      WHERE p.author_id NOT IN (${ids}) AND (EXISTS
+        (SELECT 1 FROM social_likes l WHERE l.post_id=p.id AND l.user_id IN (${ids})) OR EXISTS
+        (SELECT 1 FROM social_comments c WHERE c.post_id=p.id AND c.author_id IN (${ids})))`.execute(trx.executor);
+    await sql`DELETE FROM social_likes WHERE user_id IN (${ids}) OR post_id IN
+      (SELECT id FROM social_posts WHERE author_id IN (${ids}))`.execute(trx.executor);
+    await sql`DELETE FROM social_comments WHERE author_id IN (${ids}) OR post_id IN
+      (SELECT id FROM social_posts WHERE author_id IN (${ids}))`.execute(trx.executor);
+    await trx.executor.deleteFrom('social_posts').where('author_id','in',sql<string>`(${ids})`).execute();
+    await sql`DELETE FROM social_follows WHERE follower_id IN (${ids}) OR following_id IN (${ids})`.execute(trx.executor);
+    await sql`DELETE FROM app_ratings WHERE user_id IN (${ids}) OR app_id IN
+      (SELECT id FROM apps_registry WHERE author_id IN (${ids}) AND is_public = false)`.execute(trx.executor);
+    await sql`DELETE FROM app_installs WHERE user_id IN (${ids}) OR app_id IN
+      (SELECT id FROM apps_registry WHERE author_id IN (${ids}) AND is_public = false)`.execute(trx.executor);
+    await sql`DELETE FROM apps_registry WHERE author_id IN (${ids}) AND is_public = false`.execute(trx.executor);
     const anonymous = `deleted:${createHash('sha256').update(owner).digest('hex')}`;
     if(await hasTable(trx,'ats_applications')) {
       await sql`UPDATE ats_applications SET owner_id=NULL WHERE owner_id=${owner}`.execute(trx.executor);
@@ -92,7 +89,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
         WHERE interviewer_ids::jsonb @> jsonb_build_array(${owner}::text)`.execute(trx.executor);
     }
     await sql`UPDATE apps_registry SET author_id = ${anonymous}, source_url = NULL
-      WHERE author_id IN (${sql.join(ids)}) AND is_public = true`.execute(trx.executor);
+      WHERE author_id IN (${ids}) AND is_public = true`.execute(trx.executor);
     if (await hasTable(trx,'collaboration_directory')) {
       await sql`DELETE FROM collaboration_connection_tickets WHERE actor_id = ${owner}`.execute(trx.executor);
       await sql`DELETE FROM collaboration_user_index WHERE actor_id = ${owner}`.execute(trx.executor);
@@ -133,11 +130,10 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     }
     await sql`UPDATE user_machines SET access_clerk_user_ids = array_remove(access_clerk_user_ids, ${owner})
       WHERE ${owner} = ANY(access_clerk_user_ids)`.execute(trx.executor);
+    // Handle subqueries must run before deleting their source runtime records.
+    await trx.executor.deleteFrom('matrix_users').where('handle','in',handles).execute();
+    await trx.executor.updateTable('port_assignments').set({ handle: null }).where('handle','in',handles).execute();
     await trx.executor.deleteFrom('user_machines').where('clerk_user_id','=',owner).execute();
-    if (handles.length) {
-      await trx.executor.deleteFrom('matrix_users').where('handle','in',handles).execute();
-      await trx.executor.updateTable('port_assignments').set({ handle: null }).where('handle','in',handles).execute();
-    }
     await trx.executor.deleteFrom('containers').where('clerk_user_id','=',owner).execute();
     // Gateway integration tables reference users with ON DELETE CASCADE, erasing encrypted credentials too.
     await trx.executor.deleteFrom('users').where('clerk_id','=',owner).execute();
