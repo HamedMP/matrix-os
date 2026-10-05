@@ -25,6 +25,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const selection = snapshot.binding?.selection;
   const capability = snapshot.binding?.capability;
+  const nativeConversation = capability?.conversationMode === "native_live";
   const boundInstance = snapshot.boundProviderInstanceId;
 
   const reloadCatalog = () => {
@@ -75,7 +76,8 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
     </fieldset>
 
     <fieldset className="matrix-aoede-settings__group" disabled={busy === "selection"}>
-      <legend className="matrix-aoede-settings__legend">Model</legend>
+      <legend className="matrix-aoede-settings__legend">{nativeConversation ? "Tasks" : "Model"}</legend>
+      {nativeConversation ? <p className="matrix-aoede-settings__hint">Voice is paid by Matrix and works without an AI subscription. Choose an agent below to run tasks.</p> : null}
       {catalog === "loading" ? <p className="matrix-aoede-settings__hint">Loading providers…</p> : null}
       {catalog === null ? <div className="matrix-aoede-settings__row">
         <p className="matrix-aoede-settings__hint" role="status">Provider list unavailable.</p>
@@ -83,7 +85,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
       </div> : null}
       {catalog !== "loading" && catalog !== null ? <>
         <label className="matrix-aoede-settings__field">
-          <span>Provider</span>
+          <span>{nativeConversation ? "Task agent" : "Provider"}</span>
           <select value={instance?.id ?? ""} disabled={busy === "selection" || boundInstance !== null}
             onChange={(event) => {
               const next = catalog.instances.find(item => item.id === event.target.value);
@@ -91,7 +93,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
               if (!next || !model) return;
               run("selection", controller.setSelection({ instanceId: next.id, model }));
             }}>
-            {instance === null ? <option value="" disabled>Choose provider</option> : null}
+            {instance === null ? <option value="" disabled>{nativeConversation ? "Choose task agent" : "Choose provider"}</option> : null}
             {catalog.instances.filter(item => item.availability === "available").slice(0, 64).map(item =>
               <option key={item.id} value={item.id}>{boundedAoedeText(item.displayName, 80)}</option>)}
           </select>
@@ -110,7 +112,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
             {availableModels.map(model => <option key={model.id} value={model.id}>{boundedAoedeText(model.displayName, 80)}</option>)}
           </select>
         </label>
-        {savedModelUnavailable ? <p className="matrix-aoede-settings__hint">The saved model is unavailable. Choose an available model to restore voice.</p> : null}
+        {savedModelUnavailable ? <p className="matrix-aoede-settings__hint">{nativeConversation ? "The saved task model is unavailable. Choose an available model to run tasks. This does not affect voice availability." : "The saved model is unavailable. Choose an available model to restore voice."}</p> : null}
       </> : null}
     </fieldset>
 
