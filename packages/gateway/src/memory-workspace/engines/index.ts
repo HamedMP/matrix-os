@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { openVikingPreview } from "./openviking-preview.js";
 import type { MemoryEngine, MemorySource } from "@matrix-os/contracts";
 import {
   createEngineHttp,
@@ -243,11 +244,8 @@ export function createMemoryEngines(
               {
                 sourceId: match[1],
                 revision: Number(match[2]),
-                text: (r.content ?? r.abstract ?? "").slice(0, 8000),
+                ...openVikingPreview(r),
                 ...(r.score !== undefined ? { score: r.score } : {}),
-                provenance: r.content
-                  ? ("document" as const)
-                  : ("summary" as const),
               },
             ];
           })

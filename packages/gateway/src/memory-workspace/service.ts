@@ -186,7 +186,7 @@ export class MemoryWorkspaceService {
         )
           continue;
         const text = truncateMemoryText(
-          result.text,
+          result.provenance === "document" ? source.content : result.text,
           Math.min(8000, 24000 - bytes),
         );
         if (!text.trim()) continue;

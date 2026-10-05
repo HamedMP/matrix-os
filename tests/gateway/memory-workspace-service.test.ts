@@ -179,3 +179,56 @@ it("keeps eight long-source selections valid while authorizing exhausted referen
     .mockResolvedValueOnce(null);
   await expect(service.resolveChat("alice", refs)).rejects.toThrow();
 });
+
+describe("original memory excerpts", () => {
+  it("uses authorized canonical originals instead of engine document wrappers", async () => {
+    const repo = repository();
+    const engine = {
+      id: "openviking" as const,
+      upsert: vi.fn(),
+      delete: vi.fn(),
+      search: vi.fn(async () => [
+        {
+          sourceId: source.id,
+          revision: source.revision,
+          text: "---\nsource_path: /tmp/openviking/private.md\n---\nGenerated wrapper",
+          provenance: "document" as const,
+        },
+      ]),
+    };
+    const result = await new MemoryWorkspaceService(repo, {
+      openviking: engine,
+    }).search("alice", "original", "openviking", 8);
+    expect(result.hits[0]).toMatchObject({
+      text: source.content,
+      provenance: "document",
+      citation: { sourceId: source.id, revision: source.revision },
+    });
+    expect(JSON.stringify(result)).not.toContain("/tmp/openviking/");
+  });
+  it("bounds canonical original excerpts with the existing UTF-8 evidence budget", async () => {
+    const repo = repository();
+    repo.getSource.mockResolvedValue({
+      ...source,
+      content: "😀".repeat(20_000),
+    });
+    const engine = {
+      id: "openviking" as const,
+      upsert: vi.fn(),
+      delete: vi.fn(),
+      search: vi.fn(async () => [
+        {
+          sourceId: source.id,
+          revision: source.revision,
+          text: "irrelevant engine wrapper",
+          provenance: "document" as const,
+        },
+      ]),
+    };
+    const result = await new MemoryWorkspaceService(repo, {
+      openviking: engine,
+    }).search("alice", "original", "openviking", 8);
+    expect(Buffer.byteLength(result.hits[0].text)).toBe(8000);
+    expect(result.hits[0].text).not.toContain("�");
+  });
+});

@@ -136,4 +136,71 @@ describe("memory engine HTTP adapters", () => {
       ).hindsight!.upsert("alice", source, new AbortController().signal),
     ).rejects.toThrow();
   });
+  it("labels directory and generated previews as summaries and removes engine storage metadata", async () => {
+    const root = `viking://resources/matrix/owner/${source.id}/r1`;
+    const generated = `---\nsource_path: /tmp/openviking/uploads/private-note.md\nuri: ${root}\nschema_version: 1\n---\n\nJuniper's launch is Friday. See ${root}/note.md; parsed from /var/lib/matrix/memory-trial/openviking/workspace/chunk.md.`;
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          result: {
+            resources: [
+              { uri: root, content: generated },
+              { uri: `${root}/.overview.md`, content: generated },
+              { uri: `${root}/.abstract.md`, content: generated },
+              {
+                uri: `${root}/note.md`,
+                content: "engine-original",
+                abstract: "original abstract",
+              },
+            ],
+          },
+        }),
+      ),
+    );
+    const hits = await createMemoryEngines(
+      { MEMORY_OPENVIKING_URL: "http://127.0.0.1:1933" },
+      fetcher,
+    ).openviking!.search("alice", "Juniper", 8, new AbortController().signal);
+    expect(hits.map((hit) => hit.provenance)).toEqual([
+      "summary",
+      "summary",
+      "summary",
+      "document",
+    ]);
+    for (const hit of hits.slice(0, 3)) {
+      expect(hit.text).toContain("Juniper's launch is Friday");
+      expect(hit.text).not.toMatch(
+        /source_path|schema_version|viking:\/\/|\/tmp\/|\/var\/lib\//,
+      );
+    }
+  });
+  it("sanitizes abstract-only previews and bounds generated summary excerpts", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            status: "ok",
+            result: {
+              resources: [
+                {
+                  uri: `viking://resources/matrix/owner/${source.id}/r1/note.md`,
+                  abstract:
+                    "Summary from /private/tmp/openviking/file.md " +
+                    "x".repeat(10_000),
+                },
+              ],
+            },
+          }),
+        ),
+      );
+    const [hit] = await createMemoryEngines(
+      { MEMORY_OPENVIKING_URL: "http://127.0.0.1:1933" },
+      fetcher,
+    ).openviking!.search("alice", "summary", 8, new AbortController().signal);
+    expect(hit.provenance).toBe("summary");
+    expect(hit.text.length).toBeLessThanOrEqual(8000);
+    expect(hit.text).not.toContain("/private/tmp/");
+  });
 });
