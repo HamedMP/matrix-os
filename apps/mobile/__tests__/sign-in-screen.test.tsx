@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { Linking } from "react-native";
+import { Linking, StyleSheet } from "react-native";
 
 const mockReplace = jest.fn();
 jest.mock("expo-router", () => ({
@@ -288,6 +288,21 @@ describe("SignInScreen email code flow", () => {
     expect(openUrl).toHaveBeenCalledWith(url);
     expect(mockCreate).not.toHaveBeenCalled();
   });
+
+  it.each(["Privacy Policy", "Terms of Service"])(
+    "gives the %s link a 44pt target of its own instead of relying on hitSlop",
+    (name) => {
+      // hitSlop never reaches past the parent's bounds, and the consent row is
+      // only as tall as its 18pt text, so the size has to be the link's own.
+      render(<SignInScreen />);
+
+      const link = screen.getByRole("link", { name });
+      const style = StyleSheet.flatten(link.props.style);
+
+      expect(style.minHeight).toBeGreaterThanOrEqual(44);
+      expect(link.props.hitSlop).toBeUndefined();
+    },
+  );
 
   it("returns to the email step so a typo can be corrected", async () => {
     render(<SignInScreen />);

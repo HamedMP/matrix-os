@@ -232,7 +232,7 @@ export function SignInScreen() {
             <Text style={styles.termsText}>By continuing, you agree to our</Text>
             <View style={styles.termsLinks}>
               <LegalLink label="Terms of Service" url={TERMS_OF_SERVICE_URL} />
-              <Text style={[styles.termsText, styles.termsJoiner]}>and</Text>
+              <Text style={styles.termsText}>and</Text>
               <LegalLink label="Privacy Policy" url={PRIVACY_POLICY_URL} />
             </View>
           </View>
@@ -242,25 +242,25 @@ export function SignInScreen() {
   );
 }
 
-// Vertical slop lifts the 18pt line to a 44pt target; horizontal slop stays
-// under half the "and" gap so the two links never claim the same touch.
-const LEGAL_LINK_HIT_SLOP = { top: 13, bottom: 13, left: 8, right: 8 };
-
-// Pressables rather than nested <Text> spans: a 12pt inline span cannot carry a
-// hitSlop, and these links have to be comfortably tappable before sign-in.
+// Pressables rather than nested <Text> spans: an inline span is only as tall as
+// its 18pt line, and these links have to be comfortably tappable before sign-in.
+// The 44pt target is the Pressable's own size, not a hitSlop, because a hitSlop
+// is not guaranteed to reach past the parent row's bounds.
 function LegalLink({ label, url }: { label: string; url: string }) {
   return (
     <Pressable
       accessibilityRole="link"
       accessibilityLabel={label}
-      hitSlop={LEGAL_LINK_HIT_SLOP}
       onPress={() => openLegalLink(url)}
-      style={({ pressed }) => (pressed ? styles.termsLinkPressed : null)}
+      style={({ pressed }) => [styles.termsLinkTarget, pressed ? styles.termsLinkPressed : null]}
     >
       <Text style={styles.termsLink}>{label}</Text>
     </Pressable>
   );
 }
+
+const LEGAL_LINK_TARGET = 44;
+const LEGAL_LINE_HEIGHT = 18;
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -305,29 +305,36 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.v2.spacing.lg,
     alignItems: "center",
   },
+  // The row is as tall as the link targets. Pulling it up by the slack above
+  // the link text keeps the two consent lines visually adjacent; the slack
+  // below stays in flow so the targets never hang outside this container.
   termsLinks: {
     flexDirection: "row",
     flexWrap: "wrap",
+    alignItems: "center",
     justifyContent: "center",
+    marginTop: -(LEGAL_LINK_TARGET - LEGAL_LINE_HEIGHT) / 2,
   },
   termsText: {
     fontFamily: theme.v2.fonts.body,
     fontSize: 12,
     color: theme.v2.appColors.muted,
     textAlign: "center",
-    lineHeight: 18,
+    lineHeight: LEGAL_LINE_HEIGHT,
   },
-  // A margin, not literal spaces: iOS trims a Text node's trailing whitespace,
-  // which leaves the gap after "and" narrower than the one before it.
-  termsJoiner: {
-    marginHorizontal: theme.v2.spacing.xs,
+  // Padding, not literal spaces around "and": iOS trims a Text node's trailing
+  // whitespace, which leaves the gap after "and" narrower than the one before.
+  termsLinkTarget: {
+    minHeight: LEGAL_LINK_TARGET,
+    justifyContent: "center",
+    paddingHorizontal: theme.v2.spacing.xs,
   },
   termsLink: {
     fontFamily: theme.v2.fonts.medium,
     fontSize: 12,
     color: theme.v2.appColors.ink,
     textDecorationLine: "underline",
-    lineHeight: 18,
+    lineHeight: LEGAL_LINE_HEIGHT,
   },
   termsLinkPressed: {
     opacity: 0.6,
