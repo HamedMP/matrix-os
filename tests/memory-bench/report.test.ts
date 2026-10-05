@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { parseArgs } from "../../scripts/memory-bench/cli.js";
+import { parseArgs, buildArtifacts } from "../../scripts/memory-bench/cli.js";
 import { renderReport } from "../../scripts/memory-bench/report.js";
 import { runBenchmark } from "../../packages/kernel/src/memory-evaluation/runner.js";
 import { createBaseline } from "../../scripts/memory-bench/baselines.js";
 import { createSuite } from "../../packages/kernel/src/memory-evaluation/fixtures.js";
 
 describe("memory benchmark CLI and explorer", () => {
+  it("bounds the combined retained artifacts before any files are written", async () => {
+    const suite = createSuite({ distractors: 0 });
+    const report = await runBenchmark(suite, () => createBaseline("none"));
+    const artifacts = buildArtifacts([report], suite);
+    const bytes = Object.values(artifacts).reduce((sum, content) => sum + Buffer.byteLength(content), 0);
+    expect(() => buildArtifacts([report], suite, bytes - 1)).toThrow(/byte limit/);
+    expect(Object.keys(buildArtifacts([report], suite, bytes))).toHaveLength(4);
+  });
   it("validates arguments and requires explicit opt-in for custom executable adapters", () => {
     expect(parseArgs(["--distractors", "10000", "--seed", "8", "--repeat", "2"]).distractors).toBe(10000);
     expect(() => parseArgs(["--distractors", "NaN"])).toThrow();

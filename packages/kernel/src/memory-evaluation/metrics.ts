@@ -1,12 +1,12 @@
 import type { ExpectedQuery, telemetrySchema } from "./contracts.js";
 import type { z } from "zod/v4";
 
-export function scoreQuery(expected: ExpectedQuery, ids: string[], status: string) {
+export function scoreQuery(expected: ExpectedQuery, ids: string[], status: string, requestedK = expected.relevant.length) {
   const relevant = expected.relevant;
   const matched = ids.filter((id) => relevant.includes(id));
   const first = ids.findIndex((id) => relevant.includes(id));
-  const dcg = ids.reduce((sum, id, i) => sum + (relevant.includes(id) ? 1 / Math.log2(i + 2) : 0), 0);
-  const ideal = relevant.slice(0, ids.length).reduce((sum, _, i) => sum + 1 / Math.log2(i + 2), 0);
+  const dcg = ids.slice(0, requestedK).reduce((sum, id, i) => sum + (relevant.includes(id) ? 1 / Math.log2(i + 2) : 0), 0);
+  const ideal = relevant.slice(0, requestedK).reduce((sum, _, i) => sum + 1 / Math.log2(i + 2), 0);
   return {
     recall: relevant.length ? matched.length / relevant.length : null,
     precision: ids.length ? matched.length / ids.length : relevant.length ? 0 : null,

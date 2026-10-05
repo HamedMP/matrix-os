@@ -33,11 +33,12 @@ describe("memory benchmark contract and scoring", () => {
     expect(() => suiteSchema.parse({ ...input, cases: [c] })).toThrow();
   });
   it("scores missing evidence and unknown status separately", () => {
-    const result = scoreQuery({ relevant: ["a", "b"], forbidden: [], status: "evidence" }, ["b"], "evidence");
+    const result = scoreQuery({ relevant: ["a", "b"], forbidden: [], status: "evidence" }, ["b"], "evidence", 2);
     expect(result.recall).toBe(0.5);
     expect(result.precision).toBe(1);
     expect(result.mrr).toBe(1);
     expect(result.complete).toBe(false);
+    expect(result.ndcg).toBeCloseTo(1 / (1 + 1 / Math.log2(3)));
     expect(scoreQuery({ relevant: [], forbidden: [], status: "unknown" }, [], "unknown").recall).toBeNull();
   });
   it("uses nearest-rank percentiles and leaves unavailable costs unmeasured", () => {
