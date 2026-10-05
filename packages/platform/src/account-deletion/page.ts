@@ -10,7 +10,7 @@ export function getAccountDeletionPage(options:{nonce:string;publishableKey?:str
  <p>Future subscription billing stops when the request is accepted. There is no automatic refund. Cancelling deletion does not restart your subscription.</p>
  <p>Download your data or finish migration before the deadline. Existing computers remain accessible during the grace period. Transfer ownership of organizations and shared projects first; other members’ data stays with them.</p>
  <p id="status" role="status" aria-live="polite">Sign in to manage your account.</p><p id="error" role="alert"></p>
- <p id="apple-revocation" hidden>Automatic removal of Apple sign-in access is unavailable for this account. Remove Matrix OS from Sign in with Apple in your Apple Account using <a href="https://support.apple.com/102571" rel="noreferrer">Apple’s instructions</a>. Your Matrix account deletion will continue.</p>
+ <p id="apple-revocation">If you used Sign in with Apple, after your Matrix account is deleted, check your Apple Account and remove Matrix OS if it is still listed. Follow <a href="https://support.apple.com/102571" rel="noreferrer">Apple’s instructions</a>. Removing Apple access alone does not delete your Matrix account.</p>
  <button id="signin" type="button">Sign in</button><section id="account" hidden><h2>Keep a copy of your data</h2><div class="actions"><button id="export" type="button">Download backed-up files</button><button id="platform-export" type="button">Download account records</button><a href="/runtime">Open your computers for migration</a></div><div id="downloads"></div><button id="more" type="button" hidden>Load more files</button><p id="export-note"></p>
  <div id="confirm"><label><input type="checkbox" id="ack"> I understand that deletion removes my account, computers and personal data.</label><button id="delete" class="danger" type="button" disabled>Schedule account deletion</button></div><button id="cancel" type="button" hidden>Cancel account deletion</button></section>
  </main>${options.publishableKey?`<script id="clerk-script" nonce="${nonce}" async crossorigin="anonymous" data-clerk-publishable-key="${key}" src="${CLERK_SCRIPT_ORIGIN}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>`:''}
@@ -32,7 +32,6 @@ export function getAccountDeletionPage(options:{nonce:string;publishableKey?:str
  function display(s){
    current=s;const pending=s.status==='scheduled';const finished=s.status==='processing'||s.status==='completed';
    el('confirm').hidden=pending||finished;el('cancel').hidden=!pending;
-   el('apple-revocation').hidden=!(s.manualAppleRevocationRequired&&(pending||finished));
    el('status').textContent=pending?'Deletion starts on '+new Date(s.erasesAfter||s.completesBy).toLocaleString()+'. '+(s.billingStopped?'Future billing has stopped.':'Billing cancellation is pending; we will retry it automatically.'):finished?(s.status==='completed'?'Your account has been deleted.':'Your deletion is being processed. Data download and cancellation are closed.'):'No account deletion is scheduled.';
    controlsState();
  }
