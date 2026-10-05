@@ -57,6 +57,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
     chat ? { ...chat, name: "Chat" } : { name: "Chat", path: "__chat__" },
     findCanonicalApp(apps, ["__terminal__"]) ?? { name: "Terminal", path: "__terminal__" },
     findCanonicalApp(apps, ["__file-browser__"]) ?? { name: "Files", path: "__file-browser__" },
+    { name: "Memory", path: "__memory-workspace__" },
     { name: "Editor", path: "__editor__" },
     { name: "VS Code", path: "__vscode__", iconUrl: "/vscode.png" },
     { name: "Settings", path: "__settings__" },
@@ -70,6 +71,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
     ...browserPaths,
     ...notesPaths,
     ...whiteboardPaths,
+    "__memory-workspace__",
   ]);
   return [...firstClass, ...apps.filter((app) => !firstClassPaths.has(app.path))];
 }

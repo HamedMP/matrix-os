@@ -17,6 +17,7 @@ export interface TaskbarAppEntry {
 const BUILT_IN_START_APPS: readonly (Omit<TaskbarAppEntry, "iconUrl"> & { iconSlug: string })[] = [
   { name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
   { name: "Files", path: "__file-browser__", iconSlug: "files" },
+  { name: "Memory", path: "__memory-workspace__", iconSlug: "notes" },
   { name: "Chat", path: "__chat__", iconSlug: "chat" },
 ];
 

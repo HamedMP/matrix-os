@@ -9,6 +9,7 @@ import HomeTab from "./HomeTab";
 import AppLauncher from "../embeds/AppLauncher";
 import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
+import DesktopMemoryWorkspace from "../memory-workspace/DesktopMemoryWorkspace";
 import FilesWorkspace from "../files/FilesWorkspace";
 import WorkTab from "../work/WorkTab";
 import BrowserTab from "../browser/BrowserTab";
@@ -85,6 +86,8 @@ export function TabPane({
       return <WorkTab tabId={tab.id} route="chat" active={active} visible={visible} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} sharedScopeId={tab.sharedScopeId} />;
     case "terminals":
       return <TerminalsTab active={active} visible={visible} visualScale={visualScale} />;
+    case "memory":
+      return <DesktopMemoryWorkspace/>;
     case "files":
       return <FilesWorkspace />;
     case "editor":

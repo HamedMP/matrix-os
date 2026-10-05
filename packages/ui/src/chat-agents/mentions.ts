@@ -8,7 +8,7 @@ export function chatResourceKey(resource: CanonicalChatResourceReference): strin
     : `${resource.kind}:${resource.id}`;
 }
 export function isChatMention(resource: CanonicalChatResourceReference): boolean {
-  return resource.kind === "agent" || resource.kind === "chat" || resource.kind === "organization_drive";
+  return resource.kind === "agent" || resource.kind === "chat" || resource.kind === "organization_drive" || resource.kind === "memory_source";
 }
 export function hasChatMentionParts(parts: CanonicalChatMessagePart[]): boolean {
   return parts.some((part) => part.type === "resource_reference" && isChatMention(part.resource));
@@ -18,6 +18,7 @@ export function canAddChatMention(resources: CanonicalChatResourceReference[], n
   if (next.kind === "agent") return !resources.some((resource) => resource.kind === "agent");
   if (next.kind === "chat") return resources.filter((resource) => resource.kind === "chat").length < 3;
   if (next.kind === "organization_drive") return resources.filter(resource => resource.kind === "organization_drive").length < 3;
+  if (next.kind === "memory_source") return resources.filter(resource => resource.kind === "memory_source").length < 8;
   return true;
 }
 export function orderChatResources(resources: CanonicalChatResourceReference[]): CanonicalChatResourceReference[] {

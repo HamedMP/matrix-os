@@ -1,4 +1,5 @@
 "use client";
+import { useWebChatDraftHandoff } from "./chat/useWebChatDraftHandoff";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
 import { WebChatRailControls } from "./chat/WebChatRailControls";
 import { ChatRailOrderContext, ChatRailOrderItem } from "@matrix-os/ui";
@@ -212,7 +213,7 @@ function ChatAppContent({
   useChatReadState({ chatId: sessionId, state: readState, throughSeq: displayedThroughSeq,
     active: active && !agentsNavigation?.opened, onRead: onUpdateReadState });
   const [newChatSequence, setNewChatSequence] = useState(0);
-  const [agentDraftRequest, setAgentDraftRequest] = useState<ChatAgentDraftRequest | null>(null);
+  const [agentDraftRequest, setAgentDraftRequest] = useState<(ChatAgentDraftRequest & {scope:string;identity:string}) | null>(null);
   const composerScope = sessionId ?? `new:${newChatSequence}`;
   const onNewChat = () => {
     botDraftNavigation.clearNotice();
@@ -221,23 +222,26 @@ function ChatAppContent({
     setAgentDraftRequest(null);
     createChat();
   };
-  const onSwitchConversation = (id: string) => { botDraftNavigation.clearNotice(); agentsNavigation?.close(); switchConversation(id); };
+  const onSwitchConversation = (id: string) => { setAgentDraftRequest(null); botDraftNavigation.clearNotice(); agentsNavigation?.close(); switchConversation(id); };
   const composer = useChatComposerDraft(composerScope, agentClient);
   const botDraftNavigation = useWebBotDraftNavigation({client:agentClient,scope:composerScope,sourceChatId:sessionId,newChatSequence,seed:composer.seedChatDraft,open:onSwitchConversation,
     restore:source=>{ agentsNavigation?.close(); if(source.chatId) switchConversation(source.chatId); else {setNewChatSequence(source.sequence);setAgentDraftRequest(null);createChat();} },
   });
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const agentDraftSequence = useRef(0);
-  const startAgentChat: StartAgentChat = (text, resources) => {
+  const startAgentChat = (...[text, resources]: Parameters<StartAgentChat>): {id:number;scope:string;identity:string} => {
     agentDraftSequence.current += 1;
     setNewChatSequence((sequence) => sequence + 1);
     createChat();
-    setAgentDraftRequest({ id: agentDraftSequence.current, text, resources });
+    const target = { id: agentDraftSequence.current, scope: `new:${newChatSequence + 1}`, identity:memoryHandoff.identity };
+    setAgentDraftRequest({ ...target, text, resources });
     if (mobile) setSidebarOpen(false);
+    return target;
   };
-  const activeDraftRequest = !sessionId && agentDraftRequest ? agentDraftRequest : composerDraftRequest;
+  const memoryHandoff = useWebChatDraftHandoff({active,scope:composerScope,sessionId,resources:composer.resources,startDraft:startAgentChat});
+  const activeDraftRequest = !sessionId && agentDraftRequest?.scope === composerScope && agentDraftRequest.identity === memoryHandoff.identity ? agentDraftRequest : composerDraftRequest;
   const consumeDraftRequest = (id: number) => {
-    if (agentDraftRequest?.id === id) setAgentDraftRequest(null);
+    if (agentDraftRequest?.id === id) { memoryHandoff.acknowledge(id); setAgentDraftRequest(null); }
     else onComposerDraftConsumed?.(id);
   };
   const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string } | null>(null);

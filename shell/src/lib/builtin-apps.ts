@@ -3,6 +3,7 @@ import type { LayoutWindow } from "@/hooks/useWindowManager";
 const BUILT_IN_APP_VALUES = [
   "__terminal__",
   "__file-browser__",
+  "__memory-workspace__",
   "__chat__",
   "__activity-monitor__",
 ] as const;
@@ -23,6 +24,7 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["terminal", "__terminal__"],
   ["apps/terminal/index.html", "__terminal__"],
   ["/files/apps/terminal/index.html", "__terminal__"],
+  ["memory", "__memory-workspace__"],
   ["files", "__file-browser__"],
   ["file-browser", "__file-browser__"],
   ["apps/files/index.html", "__file-browser__"],
@@ -41,6 +43,7 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__workspace__", "Workspace"],
   ["__terminal__", "Terminal"],
   ["__file-browser__", "Files"],
+  ["__memory-workspace__", "Memory"],
   ["__chat__", "Hermes"],
   ["__activity-monitor__", "Activity Monitor"],
 ]);

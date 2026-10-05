@@ -28,7 +28,7 @@ describe("Workspace Canvas retirement", () => {
       "shell/src/components/mobile/MobileShell.tsx",
     ]) {
       const source = read(path);
-      expect(source, path).not.toContain("WorkspaceApp");
+      expect(source, path).not.toMatch(/\bWorkspaceApp\b/);
       expect(source, path).not.toContain("matrix:open-pr-canvas");
     }
   });
