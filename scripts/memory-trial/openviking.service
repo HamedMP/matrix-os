@@ -1,0 +1,27 @@
+[Unit]
+Description=Matrix private memory trial - OpenViking
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=matrix
+Group=matrix
+WorkingDirectory=/var/lib/matrix-memory-trial
+Environment=XDG_CACHE_HOME=/var/lib/matrix-memory-trial/cache
+ExecStart=/opt/matrix-memory-trial/openviking/bin/openviking-server --config /etc/matrix/memory-trial/ov.conf --host 127.0.0.1 --port 1933
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=90
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/matrix-memory-trial
+MemoryMax=2G
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target
