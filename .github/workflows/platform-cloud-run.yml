@@ -52,6 +52,19 @@ jobs:
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       PLATFORM_MAX_INSTANCES: '30'
+      # Each open WebSocket/SSE stream counts toward per-instance concurrency. Idle streams cost
+      # almost no CPU, so a low cap makes the autoscaler add and remove instances for idle
+      # connections, and an instance being removed keeps its max-instance slot until its streams
+      # end. High concurrency keeps the stream population on a few instances.
+      PLATFORM_CONCURRENCY: '500'
+      PLATFORM_CPU: '2'
+      PLATFORM_MEMORY: '2Gi'
+      # Production runs a fixed instance count (Cloud Run manual scaling). On scale-in the
+      # autoscaler deprioritizes instances: they stop receiving new requests but stay up, holding a
+      # max-instance slot, until their open streams end, which is up to the request timeout. With
+      # many long-lived streams those instances accumulated until no slot was left. A fixed count
+      # never deprioritizes an instance. Raise it when stream or CPU load approaches capacity.
+      PLATFORM_MANUAL_INSTANCE_COUNT: '10'
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
       WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}
@@ -853,9 +866,9 @@ jobs:
             --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
             --platform managed \
             --port 8080 \
-            --cpu 1 \
-            --memory 1Gi \
-            --concurrency 80 \
+            --cpu "$PLATFORM_CPU" \
+            --memory "$PLATFORM_MEMORY" \
+            --concurrency "$PLATFORM_CONCURRENCY" \
             --timeout 3600 \
             --min-instances 0 \
             --max-instances "$PLATFORM_MAX_INSTANCES" \
@@ -1128,6 +1141,17 @@ jobs:
             echo "production revision maximum instances is $actual_max_instances, expected $PLATFORM_MAX_INSTANCES" >&2
             exit 1
           fi
+          actual_concurrency="$(printf '%s\n' "$revision_json" | jq -r '.spec.containerConcurrency // empty')"
+          if [ "$actual_concurrency" != "$PLATFORM_CONCURRENCY" ]; then
+            echo "production revision concurrency is $actual_concurrency, expected $PLATFORM_CONCURRENCY" >&2
+            exit 1
+          fi
+          actual_cpu="$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].resources.limits.cpu // empty')"
+          actual_memory="$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].resources.limits.memory // empty')"
+          if [ "$actual_cpu" != "$PLATFORM_CPU" ] || [ "$actual_memory" != "$PLATFORM_MEMORY" ]; then
+            echo "production revision resources are cpu=$actual_cpu memory=$actual_memory, expected cpu=$PLATFORM_CPU memory=$PLATFORM_MEMORY" >&2
+            exit 1
+          fi
           required_production_env=(
             "PLATFORM_BACKGROUND_WORKERS_ENABLED=false"
             "CUSTOMER_VPS_IMAGE_VERSION=stable"
@@ -1236,6 +1260,13 @@ jobs:
             echo "No production-role revision found" >&2
             exit 1
           fi
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+            # Changing the scaling mode does not create a revision; the fixed count follows traffic.
+            gcloud run services update "$CLOUD_RUN_SERVICE" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --scaling "$PLATFORM_MANUAL_INSTANCE_COUNT"
+          fi
           gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
@@ -1252,6 +1283,12 @@ jobs:
           production_percent="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName == env.PRODUCTION_REVISION) | .percent) // empty' | head -1)"
           if [ "$production_percent" != "100" ]; then
             echo "Production revision ${PRODUCTION_REVISION} does not have 100% traffic." >&2
+            exit 1
+          fi
+          scaling_mode="$(printf '%s\n' "$service_json" | jq -r '.metadata.annotations["run.googleapis.com/scalingMode"] // empty')"
+          manual_instance_count="$(printf '%s\n' "$service_json" | jq -r '.metadata.annotations["run.googleapis.com/manualInstanceCount"] // empty')"
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && { [ "$scaling_mode" != "manual" ] || [ "$manual_instance_count" != "$PLATFORM_MANUAL_INSTANCE_COUNT" ]; }; then
+            echo "Service scaling is mode=$scaling_mode count=$manual_instance_count, expected manual $PLATFORM_MANUAL_INSTANCE_COUNT" >&2
             exit 1
           fi
           stale_revision="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName != env.PRODUCTION_REVISION and (.percent // 0) > 0) | "\(.revisionName)=\(.percent)") // empty' | head -1)"
