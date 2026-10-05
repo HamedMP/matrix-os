@@ -136,7 +136,7 @@ export function SharedWorkRailProjects({ revealRequest }: {
             style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
             onClick={() => {
               if (revealOpen) setDismissedRevealRequestId(revealRequest?.requestId);
-              else setExpanded((current) => ({ ...current, [project.scopeId]: !open }));
+              setExpanded((current) => ({ ...current, [project.scopeId]: !open }));
             }}
           >
             {open

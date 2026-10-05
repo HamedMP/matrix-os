@@ -119,8 +119,12 @@ describe("Electron Work rail shared projects", () => {
 
     fireEvent.click(project);
     expect(project).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "true");
     rerender(<SharedWorkRailProjects revealRequest={{ scopeId: projectScope, requestId: 2 }} />);
     expect(project).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "false");
   });
 
   it("lists only accepted projects with an overview, and refreshes when sharing changes", async () => {
