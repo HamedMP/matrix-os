@@ -324,6 +324,15 @@ describe("onboarding websocket handler", () => {
     }
   });
 
+  it("replies to content tools using the invoked function name", async () => {
+    const h = handler("test-gemini-key"); await h.onOpen(msg => sent.push(msg));
+    await h.onMessage(JSON.stringify({ type: "start", audioFormat: "pcm16" }));
+    const client = geminiMock.clients[0];
+    const callback = client.on.mock.calls.find(([name]) => name === "tool_call")![1];
+    callback({ type: "tool_call", id: "call_content", name: "show_content", args: {} });
+    expect(client.sendToolResponse).toHaveBeenCalledWith("call_content", { success: true }, "show_content");
+    h.onClose();
+  });
   it("closes an existing Gemini client before handling a duplicate start", async () => {
     const h = handler("test-gemini-key");
     await h.onOpen((msg) => sent.push(msg));

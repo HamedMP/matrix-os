@@ -33,7 +33,7 @@ export function createLiveCompanion(options: {
   id(prefix: string): string;
   captureTurnId?(): string | null;
 }) {
-  let input: { id: string; text: string; messageId?: string; overflow: boolean; finished: boolean } | null = null;
+  let input: { id: string; text: string; messageId?: string; overflow: boolean; finished: boolean; boundaryClosed: boolean; captureCompleted: boolean } | null = null;
   let response: { id: string; text: string; bytes: number; durationMs: number; ended: boolean; segments: Array<{ id: string; durationMs: number; played: boolean }> } | null = null;
   let closed = false;
   let rejectedInput = false;
@@ -50,13 +50,19 @@ export function createLiveCompanion(options: {
   };
   const finalizeInput = async () => {
     const current = input;
-    if (!current || !current.text.trim() || current.overflow || rejectedInput) return null;
+    if (!current || !current.finished || !current.text.trim() || current.overflow || rejectedInput) return null;
     if (!current.messageId) {
       const saved = await options.port.journal({ id: current.id, role: "user", text: current.text });
       current.messageId = saved.messageId;
     }
     if (!closed) options.emit({ type: "companion.caption", speaker: "user", turnId: current.id, text: current.text, final: true, interrupted: false });
     return current.messageId;
+  };
+  const completeInput = async () => {
+    if (!input?.finished || !input.boundaryClosed || input.captureCompleted) return;
+    await finalizeInput();
+    input.captureCompleted = true;
+    options.emit({ type: "companion.capture.completed", turnId: options.captureTurnId?.() ?? input.id });
   };
   const finishResponse = async (heard: boolean) => {
     const current = response;
@@ -76,16 +82,17 @@ export function createLiveCompanion(options: {
       if (closed || poisoned) return;
       if (!input || input.id !== turnId) {
         if (input) await finalizeInput();
-        input = { id: turnId, text: "", overflow: false, finished: false };
+        input = { id: turnId, text: "", overflow: false, finished: false, boundaryClosed: false, captureCompleted: false };
         rejectedInput = false;
       }
-      // Input after a task finalization belongs to a new utterance, never
+      // Input after explicit transcription completion belongs to a new utterance, never
       // silently append it to a source whose effect was already admitted.
       if (input.messageId) { rejectedInput = true; return; }
       if (Buffer.byteLength(input.text + text) > MAX_TEXT_BYTES || (input.text + text).length > 8000) { input.overflow = true; fail(); return; }
       input.text += text;
       input.finished = finished;
       options.emit({ type: "companion.caption", speaker: "user", turnId: input.id, text: input.text, final: false, interrupted: false });
+      if (finished) { await finalizeInput(); await completeInput(); }
     },
     async output(text: string) {
       if (closed || poisoned) return;
@@ -111,9 +118,8 @@ export function createLiveCompanion(options: {
     async complete() {
       if (closed) return;
       if (poisoned) { await live.interrupt(); return; }
-      await finalizeInput();
-      if (input) options.emit({ type: "companion.capture.completed", turnId: options.captureTurnId?.() ?? input.id });
-      input = null;
+      if (input) input.boundaryClosed = true;
+      await completeInput();
       if (!response) return;
       response.ended = true;
       options.emit({ type: "response.audio_end", responseId: response.id, generatedDurationMs: Math.ceil(response.durationMs) });

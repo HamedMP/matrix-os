@@ -106,3 +106,30 @@ it("denies task restoration from a different owner and rejects nonexistent canon
   await expect(port.delegate({ sourceId: `msg_live_${"a".repeat(64)}`, kind: "task", prompt: "ignored" })).rejects.toThrow();
   expect((await repository.list(owner, { limit: 10 })).items).toHaveLength(1);
 });
+it("restores an older running build ahead of three newer completed tasks", async () => {
+  let counter = 0;
+  const admission = vi.fn(async (_principal, _owner, id, request) => {
+    const n = ++counter; const now = new Date().toISOString();
+    const record = (await repository.get(owner, id))!;
+    const turnId = `cturn_task_${n}`; const runId = `run_task_${n}`;
+    const admitted = await repository.admitTurn(owner, { chatId: id, baseRevision: record.chat.revision,
+      message: { id: `msg_task_${n}`, chatId: id, seq: 1, role: "user", state: "committed", purpose: "ai_request", turnId, parts: request.parts, createdAt: now },
+      turn: { id: turnId, chatId: id, clientRequestId: `req_task_${n}`, baseMessageSeq: 0, inputMessageId: `msg_task_${n}`, status: "accepted", createdAt: now, updatedAt: now },
+      run: { id: runId, chatId: id, turnId, attempt: 1, driverKind: "claude_code", instanceId: selection.instanceId, selection,
+        interactionMode: "default", permissionMode: "supervised", status: "accepted", historyBoundarySeq: 0,
+        capabilitySnapshot: { revision: "catalog_1", rootChat: true, attachments: [], resources: [], tools: [], approvals: true, userInput: true,
+          resume: true, cancellation: true, steering: "same_run", worktrees: "optional", interactionModes: ["default"], permissionModes: ["supervised"] },
+        createdAt: now, updatedAt: now } });
+    if (n > 1) await repository.kysely.updateTable("chat_runs").set({ status: "completed", outcome: "completed", completed_at: now, started_at: now }).where("id", "=", runId).execute();
+    return { admission: "accepted", turn: admitted.turn, run: admitted.run, record: admitted.chat };
+  });
+  const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" }, chatId: "chat_live", selection, orchestrator: { admitTurn: admission } as any });
+  let firstId = "";
+  for (let n = 0; n < 4; n++) {
+    const source = await port.journal({ id: `vturn_order_${n}`, role: "user", text: `Task ${n}` });
+    const result = await port.delegate({ sourceId: source.messageId, kind: "task", prompt: "ignored" });
+    if (!n) firstId = result.chatId!;
+  }
+  expect(await port.resumeTasks!()).toContainEqual(expect.objectContaining({ chatId: firstId, runId: "run_task_1", state: "queued" }));
+  expect((await port.status()).state).toBe("running");
+});

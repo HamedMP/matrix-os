@@ -140,7 +140,7 @@ export function createGeminiCompanionAdapter(options: {
       });
       client.on("turn_complete", () => schedule(async () => {
         await live.complete();
-        utteranceId = null; conversationBusy = false;
+        conversationBusy = false;
         flushTaskUpdate();
       }));
       client.on("interrupted", () => { outputGeneration++; inputAfterOutput = true; schedule(() => live.interrupt()); });
@@ -166,6 +166,7 @@ export function createGeminiCompanionAdapter(options: {
             client.sendAudioStreamEnd?.();
             schedule(() => live.interrupt());
           }
+          if (capture && !captureId) mutedOutput = false;
           captureId = capture?.turnId ?? null;
         },
         pushAudio(input) { if (!closed && captureId === input.turnId) client.sendAudio(input.data); },

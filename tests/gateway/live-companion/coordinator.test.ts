@@ -13,6 +13,27 @@ function setup() {
 }
 
 describe("native live companion", () => {
+  it("retains unfinished speech across provider completion and journals only the completed correction", async () => {
+    const s = setup();
+    await s.live.input("vturn_one", "Build a tracker");
+    await s.live.complete();
+    expect(s.journal).not.toHaveBeenCalled();
+    expect(s.frames.some(f => f.type === "companion.capture.completed")).toBe(false);
+    await s.live.input("vturn_one", " actually make it a calendar", true);
+    await s.live.tool("call_final", "delegate_task", { kind: "build_app", prompt: "ignored" });
+    expect(s.journal).toHaveBeenCalledTimes(1);
+    expect(s.journal).toHaveBeenCalledWith(expect.objectContaining({ text: "Build a tracker actually make it a calendar" }));
+    expect(s.delegate).toHaveBeenCalledOnce();
+    expect(s.frames.filter(f => f.type === "companion.capture.completed")).toHaveLength(1);
+  });
+  it("does not commit unfinished speech on close or utterance replacement", async () => {
+    const s = setup();
+    await s.live.input("vturn_one", "unfinished phrase");
+    await s.live.input("vturn_two", "second unfinished phrase");
+    await s.live.close();
+    expect(s.journal).not.toHaveBeenCalled();
+  });
+
   it("deduplicates concurrent admission and bounds pending action categories without blocking captions", async () => {
     const s = setup(); let release!: (result: any) => void;
     const pending = new Promise<any>(r => { release = r; }); s.delegate.mockImplementation(() => pending);
