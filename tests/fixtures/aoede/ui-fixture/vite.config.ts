@@ -37,6 +37,7 @@ export default defineConfig(({ mode }) => ({
       { find: "@matrix-os/ui/agents-providers.css", replacement: path.join(uiSrc, "agents-providers/agents-providers.css") },
       { find: "@matrix-os/ui/chat-agents.css", replacement: path.join(uiSrc, "chat-agents/chat-agents.css") },
       { find: "@matrix-os/ui/styles.css", replacement: path.join(uiSrc, "styles.css") },
+      { find: "@matrix-os/ui/shell-layering", replacement: path.join(uiSrc, "shell-layering.ts") },
       { find: "@matrix-os/ui/aoede", replacement: path.join(uiSrc, "aoede/index.ts") },
       // Bare specifier only needs window placement helpers for the pulled shell
       // graph (useWindowManager); the full barrel would drag every component in.
