@@ -17,7 +17,7 @@ export function nativeCompanionCanonicalDecision(input: {
   const eligible = validateChatProviderSelection({
     catalog: input.catalog,
     selection: input.selection,
-    requirements: { interactionMode: "default", permissionMode: "full_access" },
+    requirements: { interactionMode: "default", permissionMode: "supervised" },
   });
   const executionPolicy = {
     revision: "native_live_conversation_only_v1",
@@ -29,17 +29,18 @@ export function nativeCompanionCanonicalDecision(input: {
   return {
     selection: input.selection,
     interactionMode: "default",
-    permissionMode: "full_access",
+    permissionMode: "supervised",
     executionPolicy,
     capability: VoiceCapabilitySchema.parse({
       contractVersion: 1,
       status: eligible.ok ? "available" : "unavailable",
       surface: input.surface ?? "web_desktop",
       transportModes: eligible.ok ? ["relayed_websocket"] : [],
-      turnModes: eligible.ok ? ["hands_free", "push_to_talk"] : [],
-      supportsInterruption: eligible.ok && eligible.instance.supports.cancellation !== false
-        && eligible.instance.supports.cancellation !== "none",
-      resume: eligible.ok ? (eligible.instance.supports.resume ? "delivery_aware" : "rebuild_only") : "unsupported",
+      // Native media controls never cancel or resume the task harness.
+      // Match the registered Gemini adapter; projection intersects both.
+      turnModes: eligible.ok ? ["hands_free"] : [],
+      supportsInterruption: eligible.ok,
+      resume: eligible.ok ? "rebuild_only" : "unsupported",
       sessionOnly: "unsupported",
       actionMode: "conversation_only",
       actionCancellation: "none",

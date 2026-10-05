@@ -10,11 +10,24 @@ describe('native companion canonical route',()=>{
   const decision=nativeCompanionCanonicalDecision({selection,catalog,surface:'electron_desktop'});
   expect(decision?.capability).toMatchObject({status:'available',surface:'electron_desktop',actionMode:'conversation_only',actionCancellation:'none'});
   expect(decision?.executionPolicy).toMatchObject({tools:[],delegation:false,actionMode:'conversation_only',workspaceScope:'apps'});
-  expect(decision?.selection).toEqual(selection);
+ expect(decision?.selection).toEqual(selection);
+ });
+ it('accepts the real supervised-only OpenCode route without requesting full access',()=>{
+  const supervised=CanonicalProviderCatalogSchema.parse({...catalog,instances:[{...catalog.instances[0],supports:{...catalog.instances[0]!.supports,permissionModes:['supervised']}}]});
+  const decision=nativeCompanionCanonicalDecision({selection,catalog:supervised});
+  expect(decision?.capability.status).toBe('available');
+  expect(decision?.permissionMode).toBe('supervised');
+  expect(decision?.executionPolicy).toMatchObject({tools:[],delegation:false});
+ });
+ it('keeps native interruption and reconnect independent of task harness controls',()=>{
+  const noRunControls=CanonicalProviderCatalogSchema.parse({...catalog,instances:[{...catalog.instances[0],supports:{...catalog.instances[0]!.supports,cancellation:'none',resume:false}}]});
+  const decision=nativeCompanionCanonicalDecision({selection,catalog:noRunControls});
+  expect(decision?.capability).toMatchObject({status:'available',supportsInterruption:true,resume:'rebuild_only',turnModes:['hands_free']});
+  expect(decision?.executionPolicy).toMatchObject({tools:[],delegation:false});
  });
  it('fails closed for absent, unavailable, and mode-incompatible canonical routes',()=>{
   expect(nativeCompanionCanonicalDecision({selection:undefined,catalog})).toBeUndefined();
-  for(const change of [{availability:'unavailable',defaultSelection:undefined}, {models:[],defaultSelection:undefined}, {supports:{...catalog.instances[0]!.supports,permissionModes:['supervised']}}]) {
+  for(const change of [{availability:'unavailable',defaultSelection:undefined}, {models:[],defaultSelection:undefined}, {supports:{...catalog.instances[0]!.supports,permissionModes:['full_access']}}]) {
    const bad=CanonicalProviderCatalogSchema.parse({...catalog,instances:[{...catalog.instances[0],...change}]});
    expect(nativeCompanionCanonicalDecision({selection,catalog:bad})?.capability.status).toBe('unavailable');
   }

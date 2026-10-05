@@ -5,8 +5,8 @@ These screenshots render the real shared ShellAoedeHost/controller/panel with de
 | Surface | UI | Behavior | State/recovery | Automated tests | Real evidence |
 | --- | --- | --- | --- | --- | --- |
 | Web Canvas | Shared fixture pass | Deterministic frames pass | Controller regressions pass | pass | Fixture only; production acceptance pending |
-| Web Desktop | Shared fixture pass | Deterministic frames pass | Controller regressions pass | pass | Fixture only; production acceptance pending |
-| Electron Desktop | Shared component/layer regressions pass | Runtime-bound fetch/launcher tests pass | Auth identity fencing pass | pass | Physical client acceptance pending |
+| Web Desktop | Shared fixture pass; physical compact widget inspected | Real funded typed Chat pass | Controller regressions pass | pass | Microphone acceptance pending |
+| Electron Desktop | Shared component/layer regressions pass; physical compact widget inspected | Real funded typed Chat pass | Auth identity fencing pass | pass | Microphone acceptance pending |
 | Web Mobile | Deferred development integration | Deferred | Deferred | Deferred | Pending |
 | Native Mobile | Deferred development integration | Deferred | Deferred | Deferred | Pending |
 
@@ -22,7 +22,9 @@ Web Desktop screenshot: document width/scroll width 1280, shared layer 680, both
 
 The platform relay completed real Gemini 3.8 Live setup, audio, output captions and expense recording. A second synthetic text-driven session accepted a custom lookup response delayed by two seconds. That session observed no audio while the tool was pending; it does not qualify microphone input or simultaneous speech during delayed work. Provider JSON arrived in binary WebSocket frames, now covered by a transport regression. No provider key, raw audio or captions are persisted in expense records.
 
-The isolated test VPS served exact host bundle `v2026.10.05-pr2172-37316654940-1-d2ce071`. Its installed version and release version matched; gateway, shell and sync services were active, and local health passed. The authenticated Web Desktop loaded that runtime. Native platform credential binding is still pending approval; microphone/app/Terminal acceptance has not passed. This installed bundle predates the latest client interaction fixes and must be updated before final acceptance. The Electron Desktop production build passes; physical inspection requires the user's Mac to be unlocked.
+The isolated test VPS served exact host bundle `v2026.10.05-pr2172-37352208574-1-43a09a0`; gateway, shell and sync services were active. Native platform credential binding is active through isolated preview services. A platform-paid synthetic Gemini turn returned five audio chunks and captions with no provider error. Both physical Web Desktop and Electron Desktop returned the requested typed connection-test response through canonical funded Chat. This does not qualify microphone, app builder or Terminal acceptance.
+
+The native canonical readiness correction has 122 passing tests and a gateway build. The real runtime catalog exposed an additional mismatch: OpenCode supports supervised permissions only, while the first correction required full access. A failing regression reproduced that rejection; the corrected decision now uses supervised permissions, matching typed and delegated canonical admission. A further regression confirmed that native interruption and reconnect must be independent of the selected task harness's cancellation/resume support; the correction matches the registered native adapter. Native media retains an empty source-Chat tool inventory and no delegation grant. Client microphone acceptance remains pending installation and inspection of the corrected bundle.
 
 Client review regressions cover closing the requested app without opening it, identity-fenced result file navigation, a pointer-transparent native Web host with interactive classic controls, and a bounded SSE connection setup that retains owner cancellation after headers. The relevant shared client suite passes 249 tests.
 
