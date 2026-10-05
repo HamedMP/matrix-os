@@ -11,6 +11,8 @@ interface AuthenticatedJsonRequest<T> {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  /** Resolves a 404 to this value instead of failing, for a resource that may legitimately not exist. */
+  notFound?: () => T;
 }
 
 interface AuthenticatedRequest {
@@ -47,10 +49,12 @@ export async function fetchAuthenticatedJson<T>({
   method,
   headers,
   body,
+  notFound,
 }: AuthenticatedJsonRequest<T>): Promise<T> {
   return fetchAuthenticatedResponse(
     { url, token, errorMessage, timeoutMs, method, headers, body },
     async (response) => schema.parse(await response.json()),
+    notFound,
   );
 }
 
@@ -65,6 +69,7 @@ export async function fetchAuthenticatedResponse<T>(
     body,
   }: AuthenticatedRequest,
   read: (response: Response) => Promise<T>,
+  notFound?: () => T,
 ): Promise<T> {
   if (!token.trim()) throw new Error(errorMessage);
 
@@ -76,6 +81,7 @@ export async function fetchAuthenticatedResponse<T>(
       body,
       signal: timeout.signal,
     });
+    if (response.status === 404 && notFound) return notFound();
     if (!response.ok) {
       throw new Error("Request failed");
     }

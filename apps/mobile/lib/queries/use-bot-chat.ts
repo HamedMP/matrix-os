@@ -17,7 +17,9 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
       if (!token || !chatId || !gatewayUrl) throw new Error("Bot status could not be loaded. Try again.");
       return fetchNativeBotChat(token, gatewayUrl, chatId);
     },
-    refetchInterval: REFRESH_INTERVAL_MS,
+    // Whether a chat belongs to a bot is fixed when it is created, so an
+    // ordinary chat has nothing here to keep fresh.
+    refetchInterval: (current) => (current.state.data ? REFRESH_INTERVAL_MS : false),
     refetchIntervalInBackground: false,
   });
   const requireAuth = async () => {

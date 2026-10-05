@@ -7,7 +7,10 @@ let emitEvent: ((event: unknown) => void) | undefined;
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ userId: "owner", getToken: jest.fn() }) }));
-jest.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }) }));
+let mockBotSnapshot: unknown;
+jest.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({
+  invalidateQueries: mockInvalidateQueries, getQueryData: () => mockBotSnapshot,
+}) }));
 jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({
   computer: { handle: "test", runtimeSlot: "primary", gatewayPath: "/vm/test" },
 }) }));
@@ -38,4 +41,16 @@ it("refreshes the active bot snapshot when its chat changes or a full refresh ar
   expect(mockInvalidateQueries).toHaveBeenCalledWith({
     queryKey: mobileQueryKeys.botChat("owner", "https://example.test/vm/test", "chat_bot"),
   });
+});
+
+it("leaves an ordinary chat's bot status alone when that chat changes", () => {
+  mockBotSnapshot = null;
+  render(<CanonicalChatSessionProvider><SelectChat /></CanonicalChatSessionProvider>);
+  fireEvent.press(screen.getByText("Open bot chat"));
+  mockInvalidateQueries.mockClear();
+  act(() => emitEvent?.({ type: "chat.changed", chatId: "chat_bot", cursor: 1 }));
+  expect(mockInvalidateQueries).not.toHaveBeenCalledWith({
+    queryKey: mobileQueryKeys.botChat("owner", "https://example.test/vm/test", "chat_bot"),
+  });
+  mockBotSnapshot = undefined;
 });

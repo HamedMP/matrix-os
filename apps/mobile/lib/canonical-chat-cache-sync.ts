@@ -11,6 +11,10 @@ const MAX_WAITING_FRAMES = 200;
 // changes the chat's preview in the list. Refetching the list for every one
 // would be constant traffic, so while text streams it refreshes this often.
 const STREAMING_LIST_REFRESH_MS = 2_000;
+// A turn starting or ending is several events within a few milliseconds --
+// accepted, activity, completed. The first refreshes the list straight away;
+// the rest share one more refresh this long after it.
+const LIST_REFRESH_SPACING_MS = 1_000;
 
 /**
  * Keeps the React Query cache in step with the chat event stream: streamed
@@ -31,15 +35,29 @@ export function createCanonicalChatCacheSync(options: {
   // being dropped, so streaming picks up right after it.
   let waitingFrames: CanonicalChatContentFrame[] = [];
   let listRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let listRefreshDueAt = 0;
+  let listRefreshedAt = Number.NEGATIVE_INFINITY;
 
   function refreshList() {
     clearTimeout(listRefreshTimer);
     listRefreshTimer = undefined;
+    listRefreshedAt = Date.now();
     void queryClient.invalidateQueries({ queryKey: chatsKey });
   }
 
-  function refreshListSoon() {
-    listRefreshTimer ??= setTimeout(refreshList, STREAMING_LIST_REFRESH_MS);
+  /** Refreshes the list within `delayMs`, keeping an earlier refresh that is already scheduled. */
+  function refreshListWithin(delayMs: number) {
+    const dueAt = Date.now() + delayMs;
+    if (listRefreshTimer !== undefined && listRefreshDueAt <= dueAt) return;
+    clearTimeout(listRefreshTimer);
+    listRefreshDueAt = dueAt;
+    listRefreshTimer = setTimeout(refreshList, delayMs);
+  }
+
+  function refreshListSpaced() {
+    const wait = listRefreshedAt + LIST_REFRESH_SPACING_MS - Date.now();
+    if (wait <= 0) refreshList();
+    else refreshListWithin(wait);
   }
 
   function applyWaitingFrames() {
@@ -73,8 +91,8 @@ export function createCanonicalChatCacheSync(options: {
         if (activeChatId) void queryClient.invalidateQueries({ queryKey: detailKey });
         return;
       }
-      if (event.eventType === "run.message") refreshListSoon();
-      else refreshList();
+      if (event.eventType === "run.message") refreshListWithin(STREAMING_LIST_REFRESH_MS);
+      else refreshListSpaced();
 
       if (event.chatId !== activeChatId) return;
       if (event.content) applyFrame(event.content);

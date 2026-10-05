@@ -55,8 +55,10 @@ export function instantiateNativeBot(token: string, gatewayUrl: string,
 
 export async function fetchNativeBotChat(token: string, gatewayUrl: string, chatId: string): Promise<NativeBotChatSnapshot | null> {
   const chat = chatPath(chatId);
+  // A computer on a release from before bots has no such route. Its chats are
+  // ordinary chats, not bot chats whose status failed to load.
   const direct = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/bot`),
-    token, schema: BotDirectChatResponseSchema, errorMessage: STATUS_ERROR });
+    token, schema: BotDirectChatResponseSchema, errorMessage: STATUS_ERROR, notFound: () => ({ agentId: null }) });
   if (!direct.agentId) return null;
   const agentId = direct.agentId;
   const [interactions, tasks, authority, library] = await Promise.allSettled([

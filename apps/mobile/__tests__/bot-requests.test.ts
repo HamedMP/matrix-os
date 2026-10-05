@@ -26,6 +26,19 @@ it("returns owner-scoped bot status even when the agent library is unavailable",
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/chats/chat_research/bot"))).toBe(true);
 });
 
+it("treats a computer without the bot route as an ordinary chat, not a failed status read", async () => {
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 404 } as Response);
+
+  expect(await fetchNativeBotChat(token, gatewayUrl, "chat_research")).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("still fails a bot status read the computer could not serve", async () => {
+  jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 503 } as Response);
+
+  await expect(fetchNativeBotChat(token, gatewayUrl, "chat_research")).rejects.toThrow("Bot status could not be loaded");
+});
+
 it("sends a revision-bound answer and uses DELETE for grant revocation", async () => {
   const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input) => ({
     ok: true,

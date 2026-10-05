@@ -107,7 +107,10 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       : null;
     const unsubscribe = source.subscribe(event => {
       sync.handle(event);
-      if (botKey && (event.type === "chat.full_refresh" || event.chatId === activeChatId)) {
+      // A cached null means the open chat is known not to be a bot's; its
+      // events change no bot state worth another request.
+      if (botKey && (event.type === "chat.full_refresh" || event.chatId === activeChatId)
+        && queryClient.getQueryData(botKey) !== null) {
         void queryClient.invalidateQueries({ queryKey: botKey });
       }
     });

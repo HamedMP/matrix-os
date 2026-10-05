@@ -143,6 +143,38 @@ describe("createCanonicalChatCacheSync", () => {
     cleanup();
   });
 
+  it("shares one follow-up list refresh between events that arrive in a burst", async () => {
+    const { sync, fetchList, cleanup } = mountedQueries(jest.fn());
+
+    sync.handle({ type: "chat.changed", chatId: "chat_other", cursor: 9, eventType: "turn.accepted" });
+    sync.handle({ type: "chat.changed", chatId: "chat_other", cursor: 10, eventType: "run.activity" });
+    sync.handle({ type: "chat.changed", chatId: "chat_other", cursor: 11, eventType: "run.completed" });
+    await settle();
+    expect(fetchList).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(fetchList).toHaveBeenCalledTimes(2);
+
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(fetchList).toHaveBeenCalledTimes(2);
+    cleanup();
+  });
+
+  it("brings a refresh waiting on streamed text forward for any other event", async () => {
+    const { sync, fetchList, cleanup } = mountedQueries(jest.fn());
+
+    sync.handle({ type: "chat.changed", chatId: "chat_other", cursor: 9, eventType: "turn.accepted" });
+    await settle();
+    await jest.advanceTimersByTimeAsync(500);
+    sync.handle(textDelta(10, 0, "x", "chat_other"));
+    sync.handle({ type: "chat.changed", chatId: "chat_other", cursor: 11, eventType: "run.completed" });
+    expect(fetchList).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(500);
+    expect(fetchList).toHaveBeenCalledTimes(2);
+    cleanup();
+  });
+
   it("refetches the open chat for an event that carries no content", async () => {
     const fetchDetail = jest.fn(async () => detailAt(2, "hello"));
     const { sync, shownText, cleanup } = mountedQueries(fetchDetail);
