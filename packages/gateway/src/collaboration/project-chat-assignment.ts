@@ -20,7 +20,7 @@ export interface ProjectChatAssignmentCoordinator {
 
 interface ReconciliationEffects {
   chatEvents: ChatOutboxEvent[];
-  endedScopeIds: string[];
+  scopeIdsToRevokeSessions: string[];
 }
 
 interface BoundChat {
@@ -38,9 +38,9 @@ class AssignmentOperationError extends Error {
 
 /**
  * Keeps a Chat's inherited scope in the same transaction as its project assignment.
- * Route publications use the durable directory outbox; live sessions for ended child
- * scopes are closed immediately after commit and later authorization fails against the
- * deleted owner scope.
+ * Route publications use the durable directory outbox; live sessions for child scopes
+ * whose authority ends or changes are closed immediately after commit, and later
+ * authorization resolves against the current owner scope.
  */
 export function createProjectChatAssignmentCoordinator(options: {
   db: Kysely<OwnerCollaborationDatabase>;
@@ -126,15 +126,16 @@ export function createProjectChatAssignmentCoordinator(options: {
     return { bindingId, projectScopeId, scope };
   }
 
-  async function endBinding(
+  async function cancelScopeQueuedTurns(
     trx: CollaborationTransaction,
-    binding: BoundChat,
+    chatId: string,
+    scopeId: string,
     at: Date,
-  ): Promise<string> {
+  ): Promise<void> {
     const cancelledPositions = await trx.selectFrom("chat_queued_turns")
       .select("position")
-      .where("chat_id", "=", binding.scope.resource_id)
-      .where("collaboration_scope_id", "=", binding.scope.id)
+      .where("chat_id", "=", chatId)
+      .where("collaboration_scope_id", "=", scopeId)
       .where("status", "=", "queued")
       .orderBy("position", "asc")
       .forUpdate()
@@ -143,19 +144,27 @@ export function createProjectChatAssignmentCoordinator(options: {
       status: "cancelled",
       cancelled_at: at,
       updated_at: at,
-    }).where("chat_id", "=", binding.scope.resource_id)
-      .where("collaboration_scope_id", "=", binding.scope.id)
+    }).where("chat_id", "=", chatId)
+      .where("collaboration_scope_id", "=", scopeId)
       .where("status", "=", "queued")
       .execute();
     for (const [index, cancelled] of cancelledPositions.entries()) {
       const compactAfter = Number(cancelled.position) - index;
       await trx.updateTable("chat_queued_turns")
         .set({ position: sql<number>`position - 1`, updated_at: at })
-        .where("chat_id", "=", binding.scope.resource_id)
+        .where("chat_id", "=", chatId)
         .where("status", "=", "queued")
         .where("position", ">", compactAfter)
         .execute();
     }
+  }
+
+  async function endBinding(
+    trx: CollaborationTransaction,
+    binding: BoundChat,
+    at: Date,
+  ): Promise<string> {
+    await cancelScopeQueuedTurns(trx, binding.scope.resource_id, binding.scope.id, at);
     const ended = await trx.updateTable("collaboration_scopes").set({
       lifecycle: "deleted",
       revision: Number(binding.scope.revision) + 1,
@@ -197,7 +206,8 @@ export function createProjectChatAssignmentCoordinator(options: {
     owner: ChatOwner,
     chatId: string,
     target: ScopeRow,
-  ): Promise<void> {
+    at: Date,
+  ): Promise<string | undefined> {
     const direct = await trx.selectFrom("collaboration_scopes").selectAll()
       .where("owner_type", "=", owner.type)
       .where("owner_id", "=", owner.ownerId)
@@ -208,7 +218,7 @@ export function createProjectChatAssignmentCoordinator(options: {
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
-    if (!direct) return;
+    if (!direct) return undefined;
     if (!target.organization_id || direct.organization_id !== target.organization_id) {
       throw new ProjectInheritanceError("conflict");
     }
@@ -219,6 +229,7 @@ export function createProjectChatAssignmentCoordinator(options: {
       .forUpdate()
       .execute();
     if (members.length > 8) throw new ProjectInheritanceError("conflict");
+    await cancelScopeQueuedTurns(trx, chatId, direct.id, at);
     const updated = await trx.updateTable("collaboration_scopes").set({
       parent_scope_id: target.id,
       membership_mode: "inherited",
@@ -227,7 +238,7 @@ export function createProjectChatAssignmentCoordinator(options: {
       auth_epoch: Number(direct.auth_epoch) + 1,
       authority_runtime_id: target.authority_runtime_id,
       authority_generation: Number(target.authority_generation),
-      updated_at: now(),
+      updated_at: at,
     }).where("id", "=", direct.id)
       .where("membership_mode", "=", "direct")
       .where("revision", "=", Number(direct.revision))
@@ -247,9 +258,10 @@ export function createProjectChatAssignmentCoordinator(options: {
       recipients: [],
       discoveryState: "revoked",
       publishDirectory: false,
-      now: now().toISOString(),
+      now: at.toISOString(),
       reasonCode: "project_inheritance",
     });
+    return updated.id;
   }
 
   async function reconcile(
@@ -257,14 +269,16 @@ export function createProjectChatAssignmentCoordinator(options: {
     owner: ChatOwner,
     record: ChatRecord,
   ): Promise<ReconciliationEffects> {
-    const effects: ReconciliationEffects = { chatEvents: [], endedScopeIds: [] };
+    const effects: ReconciliationEffects = { chatEvents: [], scopeIdsToRevokeSessions: [] };
+    const at = now();
     const target = await targetProject(trx, owner, record.projectId);
     const current = await currentBinding(trx, owner, record.chat.id);
     if (current && current.projectScopeId !== target?.id) {
-      effects.endedScopeIds.push(await endBinding(trx, current, now()));
+      effects.scopeIdsToRevokeSessions.push(await endBinding(trx, current, at));
     }
     if (target && current?.projectScopeId !== target.id) {
-      await reparentDirectChatScope(trx, owner, record.chat.id, target);
+      const reparentedScopeId = await reparentDirectChatScope(trx, owner, record.chat.id, target, at);
+      if (reparentedScopeId) effects.scopeIdsToRevokeSessions.push(reparentedScopeId);
       const result = await inheritance.bindOwnedResourceInTransaction(trx, {
         projectScopeId: target.id,
         ownerId: owner.ownerId,
@@ -284,7 +298,7 @@ export function createProjectChatAssignmentCoordinator(options: {
     for (const event of effects.chatEvents) {
       options.chatRepository.publishCommittedExternalOutbox(owner, event);
     }
-    for (const scopeId of effects.endedScopeIds) {
+    for (const scopeId of effects.scopeIdsToRevokeSessions) {
       try {
         options.onScopeEnded?.(scopeId);
       } catch (error: unknown) {
@@ -298,7 +312,7 @@ export function createProjectChatAssignmentCoordinator(options: {
     operation: (repository: AssignmentRepository) => Promise<ChatRecord>,
   ): Promise<ChatRecord> {
     try {
-      let effects: ReconciliationEffects = { chatEvents: [], endedScopeIds: [] };
+      let effects: ReconciliationEffects = { chatEvents: [], scopeIdsToRevokeSessions: [] };
       const result = await options.chatRepository.withTransaction(async (repository) => {
         let record: ChatRecord;
         try {

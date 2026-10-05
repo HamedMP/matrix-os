@@ -145,6 +145,19 @@ describe("shared project Chat assignment", () => {
       organization_id: ORGANIZATION_ID, invitation_id: null, invited_by: OWNER_ID, accepted_at: NOW,
       expires_at: null, revision: 1, joined_at: NOW, updated_at: NOW, dispositioned_at: null,
     }).execute();
+    const queuedTurn = (id: string, position: number, collaborationScopeId: string | null) => ({
+      id, chat_id: created.chat.id, client_request_id: `req_${id}`,
+      requesting_actor_id: collaborationScopeId ? "user_previous_recipient" : null,
+      collaboration_scope_id: collaborationScopeId, position, status: "queued" as const,
+      parts: JSON.stringify([{ type: "text", text: id }]), driver_kind: "claude",
+      instance_id: "default", selection: JSON.stringify({ instanceId: "claude_default", model: "claude-opus-4-6" }),
+      interaction_mode: "chat", permission_mode: "default", capability_snapshot: "{}",
+      created_at: NOW, updated_at: NOW,
+    });
+    await fixture.db.insertInto("chat_queued_turns").values([
+      queuedTurn("qturn_direct_old", 1, directScopeId),
+      queuedTurn("qturn_owner_current", 2, null),
+    ]).execute();
 
     await expect(service().updateProject(OWNER, created.chat.id, {
       baseRevision: created.chat.revision, projectId: PROJECT_ID,
@@ -163,6 +176,12 @@ describe("shared project Chat assignment", () => {
       .executeTakeFirstOrThrow()).toEqual({ resource_scope_id: directScopeId });
     expect(await fixture.db.selectFrom("collaboration_members").select("actor_id")
       .where("scope_id", "=", directScopeId).execute()).toEqual([]);
+    expect(await fixture.db.selectFrom("chat_queued_turns").select(["id", "position", "status"])
+      .where("chat_id", "=", created.chat.id).orderBy("id").execute()).toEqual([
+      { id: "qturn_direct_old", position: 1, status: "cancelled" },
+      { id: "qturn_owner_current", position: 1, status: "queued" },
+    ]);
+    expect(endedScopes).toEqual([directScopeId]);
   });
 
   it("compacts remaining queued turns when a Chat moves out of a shared project", async () => {
