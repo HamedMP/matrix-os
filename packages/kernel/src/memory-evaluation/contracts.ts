@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 
-export const LIMITS = { cases: 2000, steps: 100100, sources: 100100, text: 100000, hits: 100, timeoutMs: 30000 } as const;
+export const LIMITS = { cases: 2000, steps: 100100, sources: 100100, text: 100000, hits: 100, timeoutMs: 30000,
+  evidenceHitChars: 4096, evidenceQueryChars: 16384, reportBytes: 32 * 1024 * 1024, artifactBytes: 256 * 1024 * 1024 } as const;
 const id = z.string().min(1).max(180).regex(/^[a-zA-Z0-9._:-]+$/);
 const timestamp = z.iso.datetime();
 export const placementSchema = z.enum(["fact", "preference", "instruction", "event", "procedure", "source"]);

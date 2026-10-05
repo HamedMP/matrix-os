@@ -94,9 +94,11 @@ describe("memory benchmark adversarial behavior", () => {
     const invalid = await runBenchmark(one("preference"), () => ({ ...createBaseline("none"), async ingest() { return { action: "skip", placements: ["invented"] } as never; } }));
     expect(invalid.summary.operationErrors).toBe(1);
     let sequence = 0; let closed = 0;
-    await expect(runBenchmark({ ...suite, cases: suite.cases.slice(0, 2) }, () => ({
+    const drift = await runBenchmark({ ...suite, cases: suite.cases.slice(0, 2) }, () => ({
       ...createBaseline("none"), metadata: { name: "drift", version: String(sequence++), configuration: {} }, async close() { closed++; },
-    }))).rejects.toThrow(/changed/);
+    }));
+    expect(drift.summary.operationErrors).toBe(1);
+    expect(drift.passed).toBe(false);
     expect(closed).toBe(2);
   });
   it("supports unusual group names without prototype mutation", async () => {

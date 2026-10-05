@@ -3,14 +3,29 @@ import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createSuite } from "../../packages/kernel/src/memory-evaluation/fixtures.js";
-import { suiteSchema } from "../../packages/kernel/src/memory-evaluation/contracts.js";
-import type { AdapterFactory } from "../../packages/kernel/src/memory-evaluation/contracts.js";
+import { suiteSchema, LIMITS } from "../../packages/kernel/src/memory-evaluation/contracts.js";
+import type { AdapterFactory, Suite } from "../../packages/kernel/src/memory-evaluation/contracts.js";
 import type { BenchmarkReport } from "../../packages/kernel/src/memory-evaluation/runner.js";
 import { runBenchmark } from "../../packages/kernel/src/memory-evaluation/runner.js";
 import { createBaseline } from "./baselines.js";
 import type { BaselineName } from "./baselines.js";
 import { pairedRecall } from "../../packages/kernel/src/memory-evaluation/statistics.js";
 import { renderReport } from "./report.js";
+
+export function buildArtifacts(reports: BenchmarkReport[], suite: Suite, maxBytes: number = LIMITS.artifactBytes) {
+  const artifacts: Record<string, string> = {};
+  let bytes = 0;
+  const add = (name: string, content: string) => {
+    bytes += Buffer.byteLength(content);
+    if (bytes > maxBytes) throw new Error("Benchmark artifact byte limit exceeded");
+    artifacts[name] = content;
+  };
+  add("results.json", JSON.stringify(reports, null, 2));
+  add("suite.json", JSON.stringify(suite, null, 2));
+  add("comparisons.json", JSON.stringify(reports.slice(1).map(r => pairedRecall(reports[0], r, suite.seed)), null, 2));
+  add("report.html", renderReport(reports));
+  return artifacts;
+}
 
 export function parseArgs(args: string[]) {
   const options = { distractors: 1000, seed: 42, repeat: 1, timeoutMs: 30000, baseline: "none,raw-lexical,matrix-local", out: "output/memory-bench", suite: "", adapter: "", trustAdapter: false, help: false, minRecall: 0, noBaselines: false };
@@ -49,28 +64,39 @@ export async function main(args = process.argv.slice(2)) {
     if (!info.isFile() || info.size > 128 * 1024 * 1024) throw new Error("Suite must be a regular JSON file under 128 MiB");
     suite = suiteSchema.parse(JSON.parse(await readFile(resolve(opts.suite), "utf8")));
   }
-  const factories: AdapterFactory[] = opts.noBaselines ? [] : opts.baseline.split(",").map((name) => () => createBaseline(name as BaselineName));
+  const factories: Array<{ factory: AdapterFactory; baseline?: BaselineName }> = opts.noBaselines ? [] : opts.baseline.split(",").map((name) => ({ factory: () => createBaseline(name as BaselineName), baseline: name as BaselineName }));
   if (opts.adapter) {
     const plugin = await import(pathToFileURL(resolve(opts.adapter)).href);
     if (typeof plugin.default !== "function") throw new Error("Adapter must export a default factory");
-    factories.push(plugin.default as AdapterFactory);
+    factories.push({ factory: plugin.default as AdapterFactory });
   }
   const operationCount = suite.cases.reduce((sum, c) => sum + c.steps.length, 0) * factories.length * opts.repeat;
   if (operationCount > 2000000) throw new Error("Run exceeds the two-million operation cap; reduce repeats or split the suite");
   const reports: BenchmarkReport[] = [];
-  for (const factory of factories) {
-    for (let i = 0; i < opts.repeat; i++) reports.push(await runBenchmark(suite, factory, { timeoutMs: opts.timeoutMs }));
+  const evaluated: BenchmarkReport[] = [];
+  let reportBytes = 0;
+  // Leave room for pretty JSON, HTML escaping and the separately retained dataset.
+  const maxDataBytes = LIMITS.artifactBytes / 16;
+  for (const { factory, baseline } of factories) {
+    for (let i = 0; i < opts.repeat; i++) {
+      const remaining = maxDataBytes - reportBytes;
+      if (remaining < 1024 * 1024) throw new Error("Aggregate benchmark report byte limit exceeded");
+      const report = await runBenchmark(suite, factory, { timeoutMs: opts.timeoutMs, maxReportBytes: Math.min(LIMITS.reportBytes, Math.floor(remaining)) });
+      reportBytes += Buffer.byteLength(JSON.stringify(report)) + 2;
+      if (reportBytes > maxDataBytes) throw new Error("Aggregate benchmark report byte limit exceeded");
+      reports.push(report);
+      if (opts.adapter ? baseline === undefined : baseline !== "none") evaluated.push(report);
+    }
   }
+  const artifacts = buildArtifacts(reports, suite);
   // A unique retained artifact directory, never a temporary file or overwrite.
   const destination = join(resolve(opts.out), `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`);
   await mkdir(destination, { recursive: true });
-  await writeFile(join(destination, "results.json"), JSON.stringify(reports, null, 2), { flag: "wx", mode: 0o600 });
-  await writeFile(join(destination, "suite.json"), JSON.stringify(suite, null, 2), { flag: "wx", mode: 0o600 });
-  await writeFile(join(destination, "comparisons.json"), JSON.stringify(reports.slice(1).map((r) => pairedRecall(reports[0], r, suite.seed)), null, 2), { flag: "wx", mode: 0o600 });
-  await writeFile(join(destination, "report.html"), renderReport(reports), { flag: "wx", mode: 0o600 });
+  for (const [name, content] of Object.entries(artifacts)) await writeFile(join(destination, name), content, { flag: "wx", mode: 0o600 });
   for (const r of reports) process.stdout.write(`${r.adapter.name}: recall=${r.summary.recall?.toFixed(3) ?? "unmeasured"}, admission precision=${r.summary.admissionPrecision?.toFixed(3) ?? "unmeasured"}, hard violations=${r.summary.hardFailures}, errors=${r.summary.operationErrors}\n`);
   process.stdout.write(`Report: ${join(destination, "report.html")}\n`);
-  return reports.every((r) => r.passed && (opts.minRecall === 0 || (r.summary.recall !== null && r.summary.recall >= opts.minRecall))) ? 0 : 2;
+  const gated = evaluated.length ? evaluated : reports;
+  return gated.every((r) => r.passed && (opts.minRecall === 0 || (r.summary.recall !== null && r.summary.recall >= opts.minRecall))) ? 0 : 2;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().then((code) => { process.exitCode = code; }).catch((error: unknown) => {

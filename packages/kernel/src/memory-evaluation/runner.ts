@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { admissionSchema, LIMITS, metadataSchema, retrievalSchema, suiteSchema, telemetrySchema } from "./contracts.js";
-import type { AdapterFactory, Metadata, Source, Suite } from "./contracts.js";
+import type { AdapterFactory, MemoryAdapter, Metadata, Source, Suite } from "./contracts.js";
 import { contextText, estimateTokens } from "./context.js";
 import { scoreQuery, summarize } from "./metrics.js";
 import type { AdmissionScore, Operation, QueryScore } from "./metrics.js";
 
 export interface QueryResult extends QueryScore {
   text: string; expectedIds: string[]; retrievedIds: string[];
-  latencyMs: number; estimatedTokens: number; context: string;
+  latencyMs: number; estimatedTokens: number; context: string; evidenceTruncated: boolean;
   evidence: Array<{ sourceId: string; path: string; text: string; start: number; end: number }>;
 }
 export interface CaseResult {
@@ -18,6 +18,7 @@ export interface BenchmarkReport {
   formatVersion: "1"; suite: { name: string; seed: number; split: string; sha256: string; cases: number };
   runtime: { node: string; bun: string | null; platform: string; arch: string };
   adapter: Metadata; createdAt: string; passed: boolean; cases: CaseResult[];
+  resourceLimits: { maxReportBytes: number; evidenceHitChars: number; evidenceQueryChars: number; stoppedEarly: boolean };
   summary: ReturnType<typeof summarize>; groups: Record<string, ReturnType<typeof summarize>>;
 }
 async function bounded<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
@@ -30,10 +31,21 @@ async function bounded<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: 
     ]);
   } finally { if (timer) clearTimeout(timer); }
 }
-export async function runBenchmark(input: Suite, factory: AdapterFactory, options: { timeoutMs?: number } = {}): Promise<BenchmarkReport> {
+export async function runBenchmark(input: Suite, factory: AdapterFactory, options: { timeoutMs?: number; maxReportBytes?: number } = {}): Promise<BenchmarkReport> {
   const suite = suiteSchema.parse(input);
   const timeoutMs = options.timeoutMs ?? LIMITS.timeoutMs;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) throw new Error("Invalid operation timeout");
+  const maxReportBytes = options.maxReportBytes ?? LIMITS.reportBytes;
+  // Reserve bounded metadata, case headers, group summaries and final error receipts.
+  const overhead = 256 * 1024 + suite.cases.length * 1024 + new Set(suite.cases.map(c => c.group)).size * 4096;
+  if (!Number.isInteger(maxReportBytes) || maxReportBytes < Math.max(1024 * 1024, overhead) || maxReportBytes > LIMITS.reportBytes) throw new Error("Invalid report byte limit for this suite");
+  let traceBytes = 0;
+  let stoppedEarly = false;
+  const retain = (...records: unknown[]) => {
+    const bytes = records.reduce<number>((total, record) => total + Buffer.byteLength(JSON.stringify(record)) + 2, 0);
+    if (traceBytes + bytes > maxReportBytes - overhead) throw new Error("Benchmark report limit exceeded");
+    traceBytes += bytes;
+  };
   const cases: CaseResult[] = [];
   let metadata: Metadata | undefined;
   for (const c of suite.cases) {
@@ -42,8 +54,21 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
     const sources = new Map<string, Source>(); // Bounded by validated step count; disposed after this case.
     const deleted = new Set<string>();
     const revoked = new Set<string>();
-    const adapter = await bounded((signal) => Promise.resolve(factory(signal)), timeoutMs);
+    let adapter: MemoryAdapter | undefined;
+    const initializedAt = performance.now();
     try {
+      adapter = await bounded(async (signal) => {
+        const created = await factory(signal);
+        if (signal.aborted) {
+          // A cooperative factory may finish after its caller's deadline. The late
+          // instance never runs steps; close it without mutating a returned report.
+          try { await bounded(() => created.close(), timeoutMs); }
+          catch { console.error("[memory-bench] late adapter cleanup failed"); }
+          throw new Error("Benchmark operation timed out");
+        }
+        return created;
+      }, timeoutMs);
+      const activeAdapter = adapter;
       const currentMetadata = metadataSchema.parse(adapter.metadata);
       if (metadata && JSON.stringify(metadata) !== JSON.stringify(currentMetadata)) throw new Error("Adapter configuration changed across cases");
       metadata = currentMetadata;
@@ -54,14 +79,15 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
             const existing = sources.get(step.source.id);
             if (existing && JSON.stringify(existing) !== JSON.stringify(step.source)) throw new Error("Source revisions require distinct IDs");
             sources.set(step.source.id, structuredClone(step.source));
-            const admitted = admissionSchema.parse(await bounded((signal) => adapter.ingest(structuredClone(step.source), signal), timeoutMs));
-            result.admissions.push({ group: c.group, sourceId: step.source.id, path: step.source.path, expectedPlacements: step.expected.placements, placements: admitted.placements, expectedRetain: step.expected.action === "retain", retained: admitted.action === "retain",
+            const admitted = admissionSchema.parse(await bounded((signal) => activeAdapter.ingest(structuredClone(step.source), signal), timeoutMs));
+            const admission = { group: c.group, sourceId: step.source.id, path: step.source.path, expectedPlacements: step.expected.placements, placements: admitted.placements, expectedRetain: step.expected.action === "retain", retained: admitted.action === "retain",
               violations: !step.expected.retentionAllowed && admitted.action === "retain" ? ["retention-policy-violation"] : [],
               placementCorrect: admitted.placements.length === step.expected.placements.length && step.expected.placements.every((p) => admitted.placements.includes(p)),
-            });
-            result.operations.push({ kind: "ingest", latencyMs: performance.now() - started, costUsd: admitted.telemetry?.costUsd ?? null, telemetry: admitted.telemetry, calls: admitted.telemetry?.calls?.length });
+            };
+            const operation = { kind: "ingest", latencyMs: performance.now() - started, costUsd: admitted.telemetry?.costUsd ?? null, telemetry: admitted.telemetry, calls: admitted.telemetry?.calls?.length };
+            retain(admission, operation); result.admissions.push(admission); result.operations.push(operation);
           } else if (step.type === "query") {
-            const response = retrievalSchema.parse(await bounded((signal) => adapter.retrieve(structuredClone(step.query), signal), timeoutMs));
+            const response = retrievalSchema.parse(await bounded((signal) => activeAdapter.retrieve(structuredClone(step.query), signal), timeoutMs));
             const violations: string[] = [];
             const addViolation = (v: string) => { if (!violations.includes(v)) violations.push(v); };
             const seen = new Set<string>();
@@ -85,34 +111,50 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
             const estimatedTokens = estimateTokens(response.hits);
             if (estimatedTokens > step.query.budgetTokens) addViolation("context-budget-exceeded");
             if (response.hits.length > step.query.limit) addViolation("candidate-limit-exceeded");
-            const score = scoreQuery(step.expected, scoreIds, response.status);
+            const score = scoreQuery(step.expected, scoreIds, response.status, step.query.limit);
             if (violations.length) score.complete = false;
             const latencyMs = performance.now() - started;
-            result.queries.push({ ...score, group: c.group, violations, text: step.query.text, expectedIds: step.expected.relevant,
-              retrievedIds: response.hits.map((h) => h.sourceId), estimatedTokens, latencyMs, context: contextText(valid),
-              evidence: valid.map((h) => ({ ...h, path: sources.get(h.sourceId)!.path })),
+            // Scores and token estimates above use complete validated responses. Only
+            // the retained viewer preview is clipped, with exact adjusted citation spans.
+            let previewRemaining = LIMITS.evidenceQueryChars as number;
+            let evidenceTruncated = false;
+            const evidence = valid.flatMap(hit => {
+              const text = hit.text.slice(0, Math.min(LIMITS.evidenceHitChars, previewRemaining));
+              previewRemaining -= text.length;
+              if (text.length < hit.text.length) evidenceTruncated = true;
+              return text ? [{ ...hit, text, end: hit.start + text.length, path: sources.get(hit.sourceId)!.path }] : [];
             });
-            result.operations.push({ kind: "query", latencyMs, costUsd: response.telemetry?.costUsd ?? null, telemetry: response.telemetry, calls: response.telemetry?.calls?.length });
+            const context = (evidenceTruncated ? "[Evidence preview truncated; metrics use the full response.]\n" : "") + contextText(evidence);
+            const query: QueryResult = { ...score, group: c.group, violations, text: step.query.text, expectedIds: step.expected.relevant,
+              retrievedIds: response.hits.map((h) => h.sourceId), estimatedTokens, latencyMs, context, evidence, evidenceTruncated };
+            const operation = { kind: "query", latencyMs, costUsd: response.telemetry?.costUsd ?? null, telemetry: response.telemetry, calls: response.telemetry?.calls?.length };
+            retain(query, operation); result.queries.push(query); result.operations.push(operation);
           } else {
             const response = step.type === "forget"
-              ? await bounded((signal) => adapter.forget(step.sourceId, signal), timeoutMs)
-              : await bounded((signal) => adapter.revoke(step.scope, signal), timeoutMs);
+              ? await bounded((signal) => activeAdapter.forget(step.sourceId, signal), timeoutMs)
+              : await bounded((signal) => activeAdapter.revoke(step.scope, signal), timeoutMs);
             const telemetry = response?.telemetry ? telemetrySchema.parse(response.telemetry) : undefined;
             if (step.type === "forget") deleted.add(step.sourceId); else revoked.add(step.scope);
-            result.operations.push({ kind: step.type, latencyMs: performance.now() - started, costUsd: telemetry?.costUsd ?? null, telemetry, calls: telemetry?.calls?.length });
+            const operation = { kind: step.type, latencyMs: performance.now() - started, costUsd: telemetry?.costUsd ?? null, telemetry, calls: telemetry?.calls?.length };
+            retain(operation); result.operations.push(operation);
           }
         } catch (error) {
           // Reports must not carry provider errors, credentials or private paths.
+          stoppedEarly = error instanceof Error && error.message === "Benchmark report limit exceeded";
           result.operations.push({ kind: step.type, latencyMs: performance.now() - started, costUsd: null,
-            error: error instanceof Error && error.message === "Benchmark operation timed out" ? "timeout" : "operation-failed" });
+            error: stoppedEarly ? "report-limit" : error instanceof Error && error.message === "Benchmark operation timed out" ? "timeout" : "operation-failed" });
           break; // An aborted adapter must not continue mutating the same namespace.
         }
       }
+    } catch (error) {
+      result.operations.push({ kind: "initialize", latencyMs: performance.now() - initializedAt, costUsd: null,
+        error: error instanceof Error && error.message === "Benchmark operation timed out" ? "timeout" : "initialization-failed" });
     } finally {
-      try { await bounded(() => adapter.close(), timeoutMs); }
+      try { if (adapter) await bounded(() => adapter!.close(), timeoutMs); }
       catch (error) { result.operations.push({ kind: "close", latencyMs: 0, costUsd: null, error: error instanceof Error ? "cleanup-failed" : "cleanup-failed" }); }
       sources.clear(); deleted.clear(); revoked.clear();
     }
+    if (stoppedEarly) break;
   }
   const summary = summarize(cases.flatMap((c) => c.queries), cases.flatMap((c) => c.operations), cases.flatMap((c) => c.admissions));
   const groups: BenchmarkReport["groups"] = Object.create(null);
@@ -120,8 +162,9 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
     const selected = cases.filter((c) => c.group === group);
     groups[group] = summarize(selected.flatMap((c) => c.queries), selected.flatMap((c) => c.operations), selected.flatMap((c) => c.admissions));
   }
-  return { formatVersion: "1", runtime: { node: process.versions.node, bun: process.versions.bun ?? null, platform: process.platform, arch: process.arch }, adapter: metadata!, createdAt: new Date().toISOString(),
+  return { formatVersion: "1", runtime: { node: process.versions.node, bun: process.versions.bun ?? null, platform: process.platform, arch: process.arch }, adapter: metadata ?? { name: "uninitialized-adapter", version: "unknown", configuration: {} }, createdAt: new Date().toISOString(),
     suite: { name: suite.name, seed: suite.seed, split: suite.split, sha256: createHash("sha256").update(JSON.stringify(suite)).digest("hex"), cases: suite.cases.length },
     passed: summary.hardFailures === 0 && summary.operationErrors === 0, cases, summary, groups,
+    resourceLimits: { maxReportBytes, evidenceHitChars: LIMITS.evidenceHitChars, evidenceQueryChars: LIMITS.evidenceQueryChars, stoppedEarly },
   };
 }
