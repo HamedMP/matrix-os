@@ -81,7 +81,12 @@ export default function ChatScreen() {
   const sendMessage = useSendChatMessage();
 
   const directBot = Boolean(botChat.snapshot);
-  const providerCatalogLoading = !directBot && (catalogPending || catalogFetching);
+  // The picker marks the catalog as being checked whenever it is fetched.
+  // Sending only waits when there is no catalog to choose a model from yet:
+  // one that is merely being re-checked already gives the selection, and the
+  // computer validates that selection when it admits the turn.
+  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching);
+  const providerCatalogLoading = !directBot && catalogPending;
   const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
@@ -320,7 +325,7 @@ export default function ChatScreen() {
                 <View onTouchStart={handlePickerTouchStart}>
                   {!directBot ? <ModelPicker
                     catalog={catalog}
-                    catalogLoading={providerCatalogLoading}
+                    catalogLoading={providerCatalogChecking}
                     selection={selection}
                     onSelectionChange={setSelectionOverride}
                   /> : <Text style={styles.systemText}>Bot model</Text>}
