@@ -59,3 +59,7 @@ it("leaves other apps untouched when the requested app is already closed", () =>
   state.props!.onOpenNavigation!({ kind: "close_app", app: "missing", path: "/apps/missing" });
   expect(state.tabs.closeTab).not.toHaveBeenCalled(); expect(state.tabs.openTab).not.toHaveBeenCalled();
 });
+
+it("selects the halo presentation independently of voice readiness", () => {
+  expect(state.props?.presentation).toBe("halo");
+});

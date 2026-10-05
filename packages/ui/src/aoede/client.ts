@@ -6,7 +6,8 @@ import {
   CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema,
   CanonicalActionIdSchema, CanonicalChatActionCancellationResponseSchema,
   CanonicalProviderCatalogSchema, CanonicalChatRecordSchema,
-  CanonicalUpdateChatSelectionRequestSchema,
+  CanonicalUpdateChatSelectionRequestSchema, CanonicalCreateChatTurnRequestSchema, CanonicalChatTurnAdmissionResponseSchema,
+  type CanonicalCreateChatTurnRequest,
   chatMessageVersionUrl, chatReadStateVersionUrl,
   AoedeBootstrapRequestSchema, AoedeBootstrapResponseSchema,
   type CanonicalChatDetailResponse, type CanonicalSubmitChatApprovalRequest,
@@ -23,6 +24,7 @@ export class AoedeRequestError extends Error {
   constructor(public readonly status: number, public readonly safeError?: SafeVoiceError) { super("Assistant request unavailable"); this.name = "AoedeRequestError"; }
 }
 export interface AoedeApi {
+  createTurn?(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<unknown>;
   bootstrap(input: AoedeBootstrapRequest): Promise<AoedeBootstrapResponse>;
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
   events(): CanonicalChatEventSource;
@@ -63,6 +65,7 @@ export function createAoedeApi(options: { baseUrl: string; fetcher?: typeof fetc
   const runPath = (chatId: string, runId: string) => `${chatPath(chatId)}/runs/${encodeURIComponent(CanonicalChatRunIdSchema.parse(runId))}`;
   const actionPath = (chatId: string, actionId: string) => `${chatPath(chatId)}/actions/${encodeURIComponent(CanonicalActionIdSchema.parse(actionId))}`;
   return {
+    async createTurn(chatId, input) { return CanonicalChatTurnAdmissionResponseSchema.parse(await request(`${chatPath(chatId)}/turns`, CanonicalCreateChatTurnRequestSchema.parse(input), "POST", 30_000)); },
     async bootstrap(input) { return AoedeBootstrapResponseSchema.parse(await request("/api/aoede/bootstrap", AoedeBootstrapRequestSchema.parse(input), "POST", 30_000)); },
     async detail(chatId) { return CanonicalChatDetailResponseSchema.parse(await request(chatReadStateVersionUrl(chatMessageVersionUrl(`${chatPath(chatId)}?limit=200`)))); },
     events() {

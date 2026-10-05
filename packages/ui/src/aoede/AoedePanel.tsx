@@ -18,6 +18,10 @@ const TRANSCRIPT_STICKY_PX = 24;
 
 export interface AoedePanelProps {
   title?: string;
+  presentation?: "classic" | "halo";
+  conversationKey?: string;
+  surface?: "web_canvas" | "web_desktop" | "electron_desktop";
+  canSendText?: boolean;
   scopeLabel: string;
   focusRevision?: number;
   status: AoedeStatus;
@@ -30,6 +34,7 @@ export interface AoedePanelProps {
   error?: SafeVoiceError;
   children?: ReactNode;
   commands: {
+    sendText?(text: string): Promise<boolean>;
     start(): void;
     dismiss(): void;
     end(): void;
@@ -59,7 +64,7 @@ export interface AoedePanelProps {
 
 /** Presentation only. The host owns focus restoration, light dismissal, media and canonical work. */
 export function AoedePanel({
-  title = "Aoede", scopeLabel, focusRevision, status, microphoneActive, turnMode, captions,
+  title = "Aoede", presentation, conversationKey, surface, canSendText, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions,
   capability, canCancel, error, children, commands, settings, subscribeInputLevel, renderResponse,
 }: AoedePanelProps) {
   const id = useId();
@@ -157,8 +162,33 @@ export function AoedePanel({
   const showError = status === "failed" || Boolean(error);
   const transcriptEmpty = !utterance && !response && !children && !showError;
 
-  if (capability?.conversationMode === "native_live" && typeof document !== "undefined") {
-    return createPortal(<AoedeLivePanel {...{ title, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions, capability, canCancel, error, children, commands, settings, subscribeInputLevel, renderResponse }} />, document.body);
+  const pushToTalkControl = canHold ? <Button className="matrix-aoede__button matrix-aoede__button--main matrix-aoede__ptt" aria-pressed={held}
+          aria-describedby={`${id}-ptt-hint`}
+          onPointerDown={(event) => {
+            if (event.button !== undefined && event.button !== 0) return;
+            if (hold.current) return;
+            begin({ pointerId: event.pointerId });
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+          }}
+          onPointerUp={(event) => { if (hold.current?.pointerId === event.pointerId && hold.current?.key === undefined) release(); }}
+          onPointerCancel={release} onLostPointerCapture={release} onBlur={release}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") { release(); return; }
+            if (event.key !== " " && event.key !== "Enter") return;
+            event.preventDefault();
+            if (!event.repeat) begin({ key: event.key });
+          }}
+          onKeyUp={(event) => {
+            if (event.key !== " " && event.key !== "Enter") return;
+            event.preventDefault();
+            if (hold.current?.key === event.key) release();
+          }}
+          onClick={(event) => {
+            // Assistive technology synthesizes clicks without pointer/key hold events.
+            if (event.detail === 0) { if (hold.current) release(); else begin({}); }
+          }}>Push to talk</Button> : null;
+  if ((presentation === "halo" || capability?.conversationMode === "native_live") && typeof document !== "undefined") {
+    return createPortal(<AoedeLivePanel key={conversationKey} pushToTalkControl={pushToTalkControl} {...{ presentation, surface, canSendText, title, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions, capability, canCancel, error, children, commands: { ...commands, dismiss: afterRelease(commands.dismiss), end: afterRelease(commands.end), pause: afterRelease(commands.pause), newConversation: afterRelease(commands.newConversation) }, settings, subscribeInputLevel, renderResponse }} />, document.body);
   }
   return (
     <section className="matrix-aoede" aria-labelledby={`${id}-title`} data-state={status}>
@@ -225,31 +255,7 @@ export function AoedePanel({
       <div role="group" aria-label="Aoede controls" className="matrix-aoede__controls">
         {canStart ? <Button className="matrix-aoede__button matrix-aoede__button--main" disabled={!modeAvailable}
           aria-describedby={transcriptEmpty ? `${id}-rationale` : undefined} onClick={commands.start}>Start</Button> : null}
-        {canHold ? <Button className="matrix-aoede__button matrix-aoede__button--main matrix-aoede__ptt" aria-pressed={held}
-          aria-describedby={`${id}-ptt-hint`}
-          onPointerDown={(event) => {
-            if (event.button !== undefined && event.button !== 0) return;
-            if (hold.current) return;
-            begin({ pointerId: event.pointerId });
-            event.currentTarget.setPointerCapture?.(event.pointerId);
-          }}
-          onPointerUp={(event) => { if (hold.current?.pointerId === event.pointerId && hold.current?.key === undefined) release(); }}
-          onPointerCancel={release} onLostPointerCapture={release} onBlur={release}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") { release(); return; }
-            if (event.key !== " " && event.key !== "Enter") return;
-            event.preventDefault();
-            if (!event.repeat) begin({ key: event.key });
-          }}
-          onKeyUp={(event) => {
-            if (event.key !== " " && event.key !== "Enter") return;
-            event.preventDefault();
-            if (hold.current?.key === event.key) release();
-          }}
-          onClick={(event) => {
-            // Assistive technology synthesizes clicks without pointer/key hold events.
-            if (event.detail === 0) { if (hold.current) release(); else begin({}); }
-          }}>Push to talk</Button> : null}
+        {pushToTalkControl}
         {active ? <Button variant="secondary" className="matrix-aoede__button" onClick={afterRelease(commands.pause)}>Pause</Button> : null}
         {status === "paused" ? <Button className="matrix-aoede__button matrix-aoede__button--main" disabled={!modeAvailable} onClick={commands.resume}>Resume</Button> : null}
         {status === "speaking" ? <Button variant="secondary" className="matrix-aoede__button" onClick={commands.stopSpeaking}>Stop speaking</Button> : null}

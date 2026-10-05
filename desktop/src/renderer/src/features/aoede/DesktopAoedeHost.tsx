@@ -38,7 +38,7 @@ function IdentityOwner({ children }: { children: ReactNode }) {
       if (isCurrent()) toast.error("The app could not be opened. Please try again.");
     }
   };
-  return <AoedeProvider identityKey={`aoede:${userId}:${runtimeSlot}:${authGeneration}`} baseUrl={platformHost} fetcher={fetcher} surface="electron_desktop"
+  return <AoedeProvider identityKey={`aoede:${userId}:${runtimeSlot}:${authGeneration}`} baseUrl={platformHost} fetcher={fetcher} surface="electron_desktop" presentation="halo"
     onOpenHistory={chatId => { if (isCurrent()) useTabs.getState().openTab({ kind: "chat", chatId, chatView: "conversation", title: "Chat", closable: false }); }}
     onOpenResult={path => { if (isCurrent()) openFileInDesktopEditor(path); }}
     onOpenNavigation={nav => {

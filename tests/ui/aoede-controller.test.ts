@@ -665,3 +665,13 @@ describe("Aoede shell owner", () => {
     } finally { vi.unstubAllGlobals(); }
   });
 });
+
+it('uses the same bound canonical Chat for typed messages while voice is unavailable', async () => {
+  const selected = catalog.instances[0]!.defaultSelection!;
+  const h = harness(vi.fn(async () => ({ ...binding, selection: selected, capability: { ...binding.capability, status: 'unavailable' as const, reason: 'not_configured' as const, turnModes: [], transportModes: [] } })));
+  const createTurn = vi.fn(async () => undefined); h.api.createTurn = createTurn;
+  await h.controller.open(); expect(h.controller.canSendText()).toBe(true);
+  expect(await h.controller.sendText('Build a timer')).toBe(true);
+  expect(createTurn).toHaveBeenCalledWith(binding.chatId, expect.objectContaining({ selection: selected, permissionMode: 'supervised', parts: [{ type: 'text', text: 'Build a timer' }] }));
+  expect(h.media.startVoice).not.toHaveBeenCalled(); h.controller.dispose();
+});

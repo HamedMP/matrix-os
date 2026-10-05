@@ -27,3 +27,11 @@ The isolated test VPS served exact host bundle `v2026.10.05-pr2172-37316654940-1
 Client review regressions cover closing the requested app without opening it, identity-fenced result file navigation, a pointer-transparent native Web host with interactive classic controls, and a bounded SSE connection setup that retains owner cancellation after headers. The relevant shared client suite passes 249 tests.
 
 The rendered native Web Canvas fixture also passed a browser hit test: the empty host has `pointer-events: none`, the hit target is beneath that host, and the launcher remains `pointer-events: auto`. This is presentation evidence with simulated media, not real VPS microphone acceptance.
+
+## Compact conversation correction
+
+The shared presentation now follows the approved Figma onboarding Chat widget. It stays a compact white corner conversation through loading, unavailable speech and failed bootstrap; active voice adds the edge halo. Expanding opens the same canonical Chat. Typed messages admit supervised canonical turns on the selected route, retain failed drafts and fence owner/conversation changes. A dedicated helper keeps this workflow outside the controller composition file.
+
+The correction has 200 passing shared UI/controller/Web host/Electron host tests and an Electron build/type check. The full linked-design app-connection onboarding branches are not implemented by this correction. Real voice activation and physical microphone acceptance remain pending; failed runtime readiness is not evidence of an audio transport attempt.
+
+![Compact corner conversation and edge halo; simulated media](compact-halo-widget-fixture.jpg)

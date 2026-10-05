@@ -204,14 +204,14 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
   }, [controller, register, unregister]);
 
   useEffect(() => {
-    if (snapshot.visible) focusTarget.current?.focus();
+    if (snapshot.visible && controller.presentation === "classic") focusTarget.current?.focus();
   }, [snapshot.visible, snapshot.focusRevision]);
 
   // Light dismissal: an outside pointerdown stops capture/playback and hides
   // the panel while canonical work survives for reopen. Launcher presses are
   // reveal intents, not dismissal; the clicked control owns focus return.
   useEffect(() => {
-    if (!snapshot.visible || snapshot.binding?.capability.conversationMode === "native_live") return;
+    if (!snapshot.visible || controller.presentation !== "classic") return;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -254,7 +254,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
           tabIndex={-1}
           data-testid="aoede-host"
           className={`fixed bottom-[8.5rem] right-4 h-[min(36rem,calc(100vh-10rem))] w-[min(22rem,calc(100vw-2rem))] overflow-hidden outline-none ${SHELL_AOEDE_TOKEN_MAP}`}
-          style={{ zIndex: SHELL_Z_INDEX.appDialog, pointerEvents: snapshot.binding?.capability.conversationMode === "native_live" ? "none" : undefined }}
+          style={{ zIndex: SHELL_Z_INDEX.appDialog, pointerEvents: controller.presentation !== "classic" ? "none" : undefined }}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.stopPropagation();
@@ -263,6 +263,11 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
           }}
         >
           <AoedePanel
+            presentation={controller.presentation}
+            conversationKey={snapshot.binding?.chatId}
+            surface={controller.surface()}
+            canSendText={controller.canSendText()}
+            focusRevision={snapshot.focusRevision}
             scopeLabel={snapshot.binding?.scope.label ?? "Workspace"}
             status={snapshot.status}
             microphoneActive={snapshot.microphoneActive}
@@ -274,6 +279,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
             error={snapshot.error ?? undefined}
             subscribeInputLevel={controller.subscribeInputLevel}
             commands={{
+              sendText: controller.sendText,
               start: () => void controller.start(),
               dismiss: () => void controller.dismiss(),
               end: () => void controller.end(),

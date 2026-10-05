@@ -1,3 +1,4 @@
+import { createAoedeTextSender } from "./text-turn.js";
 import type { ReactNode } from "react";
 import { CanonicalActionIdSchema, type CanonicalChatDetailResponse, type CanonicalChatApprovalView, type CanonicalChatApprovalDecision, type CanonicalChatInputView, type CanonicalSubmitChatInputRequest, type CanonicalChatModelSelection, type CanonicalChatRecord, type CanonicalUpdateChatSelectionRequest, type CanonicalChatActionCancellationResponse, type CanonicalProviderCatalog, type AoedeBootstrapRequest, type AoedeBootstrapResponse } from "@matrix-os/contracts";
 import type { SafeVoiceError } from "@matrix-os/contracts/voice-session";
@@ -25,6 +26,8 @@ export interface AoedeOwnerOptions {
   fetcher?: typeof fetch;
   surface: "web_canvas" | "web_desktop" | "electron_desktop";
   projectId?: string;
+  /** Presentation remains stable while backend readiness changes. */
+  presentation?: "classic" | "halo";
   onOpenHistory?: (chatId: string) => void;
   onOpenResult?: (path: string) => void;
   /** Validated canonical navigation into installed app windows (`apps/<slug>` only). */
@@ -413,7 +416,16 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       return false;
     } finally { action.busy = false; }
   };
+  const sendText = createAoedeTextSender({
+    context: () => disposed || suspended || unavailable || newFlight || !snapshot.visible || !snapshot.binding || !detail || !api.createTurn ? null
+      : { generation, chatId: snapshot.binding.chatId, revision: detail.record.chat.revision, selection: detail.record.chat.currentSelection ?? snapshot.binding.selection, running: Boolean(detail.record.activeRun) },
+    catalog: () => controller.listProviders(), createTurn: (chatId, input) => api.createTurn!(chatId, input), refresh, fail,
+  });
   const controller = {
+    sendText,
+    canSendText: () => Boolean(api.createTurn && detail && !detail.record.activeRun && !unavailable && !disposed && !suspended && !newFlight),
+    presentation: options.presentation ?? "halo",
+    surface: () => options.surface,
     getSnapshot: () => snapshot,
     /** Capture loudness (0…1) for the presence orb; bypasses React state. */
     subscribeInputLevel(listener: (level: number) => void) {

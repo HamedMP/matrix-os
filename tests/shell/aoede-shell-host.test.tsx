@@ -136,7 +136,7 @@ describe("Shell Aoede host", () => {
     vi.restoreAllMocks();
   });
 
-  it("mounts the assistant without any Chat UI or chat state", async () => {
+  it("mounts the compact assistant without a full Chat window", async () => {
     const h = harness();
     renderHost(h);
     expect(screen.getByTestId("shell-child")).toBeInTheDocument();
@@ -144,13 +144,13 @@ describe("Shell Aoede host", () => {
       fireEvent.click(screen.getByTestId("aoede-launcher"));
     });
     await waitFor(() => expect(screen.getByTestId("aoede-host")).toBeInTheDocument());
-    expect(document.querySelector("[data-testid='aoede-host'] .matrix-aoede")).not.toBeNull();
+    expect(screen.getByRole("dialog", { name: "Aoede live conversation" })).toBeVisible();
     // No Chat composer/message list may appear inside the assistant surface.
     expect(screen.queryByPlaceholderText(/message/i)).toBeNull();
     expect(document.querySelector("[data-testid='aoede-host'] [role='log']")).toBeNull();
   });
 
-  it("leaves the workspace clickable beneath the native portal and keeps classic controls interactive", async () => {
+  it("leaves the workspace clickable before and after native readiness", async () => {
     const nativeBinding = { ...binding, capability: { ...binding.capability, conversationMode: "native_live" as const } };
     renderHost(harness(async () => nativeBinding));
     await act(async () => { fireEvent.click(screen.getByTestId("aoede-launcher")); });
@@ -161,8 +161,8 @@ describe("Shell Aoede host", () => {
     cleanup();
     renderHost(harness());
     await act(async () => { fireEvent.click(screen.getByTestId("aoede-launcher")); });
-    await waitFor(() => expect(screen.getByTestId("aoede-host").querySelector("button")).not.toBeNull());
-    expect(screen.getByTestId("aoede-host").style.pointerEvents).not.toBe("none");
+    await waitFor(() => expect(screen.getByTestId("aoede-host")).toHaveStyle({ pointerEvents: "none" }));
+    expect(screen.getByRole("button", { name: "Start talking" })).toBeEnabled();
   });
 
   it("shows literal idle status, mic off and scope after the icon launch", async () => {
@@ -248,7 +248,7 @@ describe("Shell Aoede host", () => {
     expect(h.media.startVoice).not.toHaveBeenCalled();
     // Media starts only from the single explicit Start gesture.
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+      fireEvent.click(screen.getByRole("button", { name: "Start talking" }));
     });
     expect(h.media.startVoice).toHaveBeenCalledTimes(1);
   });
@@ -296,7 +296,7 @@ describe("Shell Aoede host", () => {
     expect(h.media.end).toHaveBeenCalled();
   });
 
-  it("is a labelled nonmodal dialog and light-dismisses outside clicks", async () => {
+  it("is a labelled nonmodal dialog that leaves voice open while using other apps", async () => {
     const h = harness();
     renderHost(h, {}, <button type="button" data-testid="shell-child">Other</button>);
     const launcher = screen.getByTestId("aoede-launcher");
@@ -310,9 +310,8 @@ describe("Shell Aoede host", () => {
     await act(async () => {
       fireEvent.pointerDown(other);
     });
-    await waitFor(() => expect(screen.queryByTestId("aoede-host")).toBeNull());
-    expect(h.media.end).toHaveBeenCalled();
-    await waitFor(() => expect(document.activeElement).toBe(other));
+    expect(screen.getByTestId("aoede-host")).toBeInTheDocument();
+    expect(h.media.end).not.toHaveBeenCalled();
 
     // A launcher press while open is a reveal intent, not an outside dismiss.
     await act(async () => {
@@ -441,6 +440,9 @@ describe("Shell Aoede host", () => {
     });
     await waitFor(() => expect(screen.getByTestId("aoede-host")).toBeInTheDocument());
     await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    });
+    await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     });
     await waitFor(() => expect(screen.getByText("Turn mode")).toBeInTheDocument());
@@ -464,6 +466,12 @@ describe("Shell Aoede host", () => {
     } as never);
     await act(async () => { h.notifyMedia(); });
     await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Context & tasks" }));
+    });
+    await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Cancel generation" }));
     });
     await waitFor(() => expect(h.cancelRun).toHaveBeenCalledWith(binding.chatId, running.runs[0].id, expect.objectContaining({ clientRequestId: expect.stringMatching(/^req_/) })));
@@ -482,8 +490,22 @@ describe("Shell Aoede host", () => {
     });
     await waitFor(() => expect(screen.getByTestId("aoede-host")).toBeInTheDocument());
     await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Context & tasks" }));
+    });
+    await act(async () => {
       fireEvent.click(await screen.findByRole("button", { name: /Open files/i }));
     });
     expect(onOpenNavigation).toHaveBeenCalledWith({ app: "files", path: "apps/files/index.html" });
   });
+});
+
+it("keeps the halo host pointer transparent when bootstrap fails", async () => {
+  const deps = harness(async () => { throw new Error("offline"); }); renderHost(deps);
+  fireEvent.click(screen.getByTestId("aoede-launcher"));
+  await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
+  expect(screen.queryByTestId("aoede-orb")).not.toBeInTheDocument();
+  expect(screen.getByTestId("aoede-host")).toHaveStyle({ pointerEvents: "none" });
 });

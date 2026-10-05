@@ -46,16 +46,16 @@ export function useAoede() {
 export function AoedeAssistant() {
   const { controller, snapshot } = useAoede();
   const focusTarget = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (snapshot.visible && snapshot.binding?.capability.conversationMode !== "native_live") focusTarget.current?.focus(); }, [snapshot.visible, snapshot.focusRevision, snapshot.binding?.capability.conversationMode]);
+  useEffect(() => { if (snapshot.visible && controller.presentation === "classic") focusTarget.current?.focus(); }, [controller, snapshot.visible, snapshot.focusRevision]);
   if (!snapshot.visible) return null;
   return <div ref={focusTarget} role="dialog" aria-modal="false" aria-label="Aoede assistant" tabIndex={-1} onKeyDown={event => {
     if (event.key === "Escape") { event.stopPropagation(); void controller.dismiss(); }
   }}>
-    <AoedePanel scopeLabel={snapshot.binding?.scope.label ?? "Workspace"} status={snapshot.status} focusRevision={snapshot.focusRevision}
+    <AoedePanel presentation={controller.presentation} conversationKey={snapshot.binding?.chatId} surface={controller.surface()} canSendText={controller.canSendText()} scopeLabel={snapshot.binding?.scope.label ?? "Workspace"} status={snapshot.status} focusRevision={snapshot.focusRevision}
       microphoneActive={snapshot.microphoneActive} turnMode={snapshot.turnMode} captions={snapshot.canonical.captions}
       capability={snapshot.binding?.capability} error={snapshot.error ?? undefined}
       canCancel={snapshot.canonical.canCancel}
-      commands={{ start: () => void controller.start(), dismiss: () => void controller.dismiss(), end: () => void controller.end(),
+      commands={{ sendText: controller.sendText, start: () => void controller.start(), dismiss: () => void controller.dismiss(), end: () => void controller.end(),
         pause: controller.pause, resume: controller.resume, stopSpeaking: controller.stopSpeaking,
         cancelGeneration: () => void controller.cancelGeneration(),
         pushToTalkStart: controller.pushToTalkStart, pushToTalkStop: controller.pushToTalkStop,
