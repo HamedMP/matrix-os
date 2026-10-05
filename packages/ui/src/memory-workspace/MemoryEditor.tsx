@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { MemorySource, MemoryWorkspaceClient } from "./model.js";
 import { safeMemoryMessage } from "./model.js";
@@ -16,6 +16,22 @@ export function MemoryEditor({
   const [title, setTitle] = useState(source?.title ?? "");
   const [content, setContent] = useState(source?.content ?? "");
   const [collection, setCollection] = useState(source?.collection ?? "Notes");
+  const [committed, setCommitted] = useState(source);
+  const committedRef = useRef(source);
+  const savedChanges = useRef(
+    source
+      ? {
+          title: source.title,
+          content: source.content,
+          collection: source.collection,
+        }
+      : null,
+  );
+  const creation = useRef<{
+    title: string;
+    content: string;
+    collection: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requestId] = useState(() => crypto.randomUUID());
@@ -24,28 +40,42 @@ export function MemoryEditor({
     setBusy(true);
     setError(null);
     try {
-      const saved = source
-        ? await client.updateSource(source.id, {
-            baseRevision: source.revision,
-            title: title.trim(),
-            content,
-            collection: collection.trim(),
-          })
-        : (
-            await client.importSources(
-              [
-                {
-                  externalId: `note:${requestId}`,
-                  title: title.trim(),
-                  content,
-                  collection: collection.trim(),
-                  kind: "note",
-                },
-              ],
-              requestId,
-            )
-          ).sources[0];
-      if (!saved) throw new Error("empty_result");
+      const changes = {
+        title: title.trim(),
+        content,
+        collection: collection.trim(),
+      };
+      let saved = committedRef.current;
+      if (!saved) {
+        // An uncertain creation is retried with exactly the original receipt payload.
+        creation.current ??= changes;
+        const created = (
+          await client.importSources(
+            [
+              {
+                externalId: `note:${requestId}`,
+                ...creation.current,
+                kind: "note",
+              },
+            ],
+            requestId,
+          )
+        ).sources[0];
+        if (!created) throw new Error("empty_result");
+        saved = created;
+        committedRef.current = saved;
+        savedChanges.current = creation.current;
+        setCommitted(saved);
+      }
+      if (JSON.stringify(changes) !== JSON.stringify(savedChanges.current)) {
+        saved = await client.updateSource(saved.id, {
+          baseRevision: saved.revision,
+          ...changes,
+        });
+        committedRef.current = saved;
+        savedChanges.current = changes;
+        setCommitted(saved);
+      }
       await onSaved(saved);
     } catch (failure) {
       setError(safeMemoryMessage(failure));
@@ -70,7 +100,7 @@ export function MemoryEditor({
           zIndex: 21,
         }}
       >
-        <Dialog.Title>{source ? "Edit note" : "New note"}</Dialog.Title>
+        <Dialog.Title>{committed ? "Edit note" : "New note"}</Dialog.Title>
         <Dialog.Description className="mw-hint">
           Your original stays editable. Saving queues this revision for both
           memory engines.
@@ -84,6 +114,7 @@ export function MemoryEditor({
           <label>
             Title
             <input
+              disabled={busy}
               value={title}
               maxLength={300}
               onChange={(e) => setTitle(e.target.value)}
@@ -94,6 +125,7 @@ export function MemoryEditor({
           <label>
             Collection
             <input
+              disabled={busy}
               value={collection}
               maxLength={200}
               onChange={(e) => setCollection(e.target.value)}
@@ -103,6 +135,7 @@ export function MemoryEditor({
           <label>
             Note content
             <textarea
+              disabled={busy}
               value={content}
               maxLength={200_000}
               onChange={(e) => setContent(e.target.value)}
@@ -129,7 +162,7 @@ export function MemoryEditor({
                 busy || !title.trim() || !content.trim() || !collection.trim()
               }
             >
-              {busy ? "Saving…" : source ? "Save changes" : "Create note"}
+              {busy ? "Saving…" : committed ? "Save changes" : "Create note"}
             </button>
           </div>
         </form>

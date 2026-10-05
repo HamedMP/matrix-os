@@ -1,6 +1,4 @@
 import {
-  MemoryImportRequestSchema,
-  MemorySourceInputSchema,
   type MemoryEngine,
   type MemorySource,
   type MemorySourceInput,
@@ -41,28 +39,11 @@ export interface MemoryWorkspaceClient {
   ): Promise<{ query: string; results: MemorySearchResult[] }>;
   actJob?(id: string, action: "retry" | "cancel"): Promise<void>;
 }
-export function parseMemoryImport(
-  name: string,
-  text: string,
-): MemoryImportSource[] {
-  if (new TextEncoder().encode(text).length > 1_000_000)
-    throw new Error("import_too_large");
-  if (name.toLowerCase().endsWith(".json"))
-    return MemoryImportRequestSchema.parse({
-      clientRequestId: "export-preview",
-      sources: JSON.parse(text),
-    }).sources;
-  if (!/\.(md|txt)$/i.test(name)) throw new Error("unsupported_import");
-  return [
-    MemorySourceInputSchema.parse({
-      externalId: `file:${crypto.randomUUID()}`,
-      title: name.replace(/\.(md|txt)$/i, ""),
-      content: text,
-      kind: /\.md$/i.test(name) ? "note" : "document",
-      collection: "Imported",
-    }),
-  ];
-}
+export {
+  parseMemoryImport,
+  parseMemoryImportBatch,
+  memoryImportRequestId,
+} from "./import-identity.js";
 export function filterMemorySources(
   sources: readonly MemorySource[],
   kind: MemorySourceKind | "all",
@@ -97,7 +78,11 @@ export function safeMemoryMessage(error: unknown): string {
     return "Choose an export up to 1 MB.";
   if (error instanceof Error && error.message === "unsupported_import")
     return "Choose a Markdown, plain text or JSON source export.";
-  if (error instanceof Error && error.message === "conflict")
+  if (
+    error instanceof Error &&
+    (error.message === "conflict" ||
+      ("status" in error && error.status === 409))
+  )
     return "This source changed elsewhere. Your edits are preserved. Reopen the source to review the latest version.";
   return "Something went wrong. Please try again.";
 }

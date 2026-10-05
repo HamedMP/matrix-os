@@ -61,7 +61,13 @@ export function MemorySearch({
           placeholder="What would you like to remember?"
           value={query}
           maxLength={500}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            generation.current++;
+            setQuery(e.target.value);
+            setResults(null);
+            setBusy(false);
+            setError(null);
+          }}
         />
         {!compare && (
           <select

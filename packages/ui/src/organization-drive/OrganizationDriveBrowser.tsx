@@ -4,7 +4,8 @@ import {
   OrganizationDriveUploadFolderSchema,
   type OrganizationDriveFile,
 } from "@matrix-os/contracts";
-import { workspaceStyle, headingStyle } from "../memory-workspace/styles.js";
+import { driveWorkspaceStyle } from "./theme.js";
+import { headingStyle } from "../memory-workspace/styles.js";
 import { driveBrowserEntries, driveFileSize } from "./browser-model.js";
 
 const control =
@@ -93,7 +94,7 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
   return (
     <section
       className="flex min-w-0 flex-1 flex-col gap-5 rounded-2xl p-5 sm:p-7"
-      style={workspaceStyle}
+      style={driveWorkspaceStyle}
       aria-label={`${props.name} drive`}
     >
       <header className="flex flex-wrap items-start justify-between gap-3">

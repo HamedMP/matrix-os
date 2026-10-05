@@ -1,5 +1,4 @@
 "use client";
-import {applicableCompanyDriveDraft,useCompanyDriveChatDraft} from "@/stores/company-drive-chat-draft";
 import { useAuth } from "@clerk/nextjs";
 import { getGatewayUrl } from "@/lib/gateway";
 import { useEffect, useMemo } from "react";
@@ -11,8 +10,6 @@ import { organizationDriveNavigationIdentity, useOrganizationDriveNavigation } f
 export function OrganizationDrivesNav({chats=[],client,onNewChat,onSelectChat,activeChatId}: {chats?:readonly {id:string;title?:string;updatedAt?:number}[];client?:ChatAgentClient;onNewChat?:StartAgentChat;onSelectChat?(id:string):void;activeChatId?:string}) {
   const {userId, sessionId} = useAuth();
   const identity = organizationDriveNavigationIdentity(userId, sessionId, getGatewayUrl());
-  const request=useCompanyDriveChatDraft(state=>state.request);
-  useEffect(()=>{if(!request||!onNewChat||useCompanyDriveChatDraft.getState().request!==request)return;useCompanyDriveChatDraft.getState().consume(request);if(applicableCompanyDriveDraft(request,identity))onNewChat("",request.references ?? [request.reference]);},[request,identity,onNewChat]);
   const origin = useBrowserOrigin();
   const api = useMemo(() => origin && userId ? createShellCollaborationApi(origin) : null, [origin, userId, identity]);
   useEffect(() => () => api?.direct?.close(), [api]);

@@ -232,7 +232,7 @@ function WorkspaceBody({
   }[view];
   return (
     <section
-      className="mw"
+      className="mw ph-no-capture"
       style={{ ...workspaceStyle, position: "relative" }}
       aria-label="Memory and Sources"
     >
@@ -426,7 +426,7 @@ function WorkspaceBody({
                   <div style={{ flex: 1 }}>
                     <strong>
                       {snapshot.sources.find((item) => item.id === job.sourceId)
-                        ?.title ?? "Removed source"}
+                        ?.title ?? "Source details unavailable"}
                     </strong>
                     <p className="mw-hint" style={{ margin: "4px 0 0" }}>
                       {job.engine === "hindsight" ? "Hindsight" : "OpenViking"}{" "}

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { z } from "zod/v4";
 import {
-  parseMemoryImport,
+  parseMemoryImportBatch,
+  memoryImportRequestId,
   safeMemoryMessage,
   type MemoryImportSource,
   type MemoryWorkspaceClient,
@@ -27,6 +28,7 @@ const nativeResult = z.object({
         kind: z.enum(["note", "email", "calendar", "document"]),
         collection: z.string(),
         occurredAt: z.string().optional(),
+        restoreDeleted: z.boolean().optional(),
         metadata: z.record(z.string(), z.string()).optional(),
       }),
     )
@@ -60,13 +62,12 @@ export function MemoryImport({
   const [warnings, setWarnings] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const live = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    live.current = true;
+    return () => {
       live.current = false;
-    },
-    [],
-  );
-  const requestId = useRef(crypto.randomUUID());
+    };
+  }, []);
   const confirmedBatch = useRef<MemoryImportSource[] | null>(null);
   const [batchLocked, setBatchLocked] = useState(false);
   async function run(action: () => Promise<void>) {
@@ -76,14 +77,13 @@ export function MemoryImport({
     try {
       await action();
     } catch (failure) {
-      setError(safeMemoryMessage(failure));
+      if (live.current) setError(safeMemoryMessage(failure));
     } finally {
-      setBusy(false);
+      if (live.current) setBusy(false);
     }
   }
   function preview(next: MemoryImportSource[]) {
     confirmedBatch.current = null;
-    requestId.current = crypto.randomUUID();
     setBatchLocked(false);
     setRecords(next);
     setIncluded(next.map((record) => record.externalId));
@@ -155,17 +155,19 @@ export function MemoryImport({
       confirmedBatch.current = selected;
       setBatchLocked(true);
       setSelectionId(null);
-      await client.importSources(selected, requestId.current);
+      await client.importSources(selected, memoryImportRequestId(selected));
       if (live.current) await onImported();
     });
   }
   async function loadFile(file: File) {
     await run(async () => {
       if (file.size > 1_000_000) throw new Error("import_too_large");
-      preview(parseMemoryImport(file.name, await file.text()));
+      const batch = parseMemoryImportBatch(file.name, await file.text());
+      if (!live.current) return;
+      preview(batch.records);
       setSelectionId(null);
       setProvider(null);
-      setWarnings([]);
+      setWarnings(batch.warnings);
     });
   }
   return (
