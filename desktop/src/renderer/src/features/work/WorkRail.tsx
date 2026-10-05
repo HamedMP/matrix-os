@@ -37,6 +37,7 @@ import { WorkRailGroups, type WorkRailSectionKey } from "./work-rail/WorkRailGro
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 import { DesktopProjectSharingHost, useDesktopProjectSharingContext } from "../project/DesktopProjectSharing";
+import { DesktopSharedWithMeDialog } from "../chat/DesktopChatCollaboration";
 
 type SectionKey = WorkRailSectionKey;
 
@@ -119,6 +120,7 @@ export function WorkRail({
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [sharedWithMeOpen, setSharedWithMeOpen] = useState(false);
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
   const projectedChatTitlesRef = useRef(projectedChatTitles);
@@ -149,6 +151,7 @@ export function WorkRail({
 
   useEffect(() => {
     if (!active || !client) setSearchOpen(false);
+    if (!active) setSharedWithMeOpen(false);
     if (!active) setShareProjectTarget(null);
   }, [active, client]);
 
@@ -417,7 +420,7 @@ export function WorkRail({
       />
       <WorkRailScrollArea>
       <WorkRailSearchControls onSearch={() => setSearchOpen(true)} sortMode={order.mode} onSortChange={order.setMode} />
-      <SharedWithMeRailRow />
+      <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
       <ChatAgentsRailSection activeChatId={activeChatId} client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
@@ -467,12 +470,14 @@ export function WorkRail({
         status={status}
         onSelectProject={(project) => { setSearchOpen(false); onSelectProject(project); }}
         onClose={() => setSearchOpen(false)}
+        onOpenShared={() => setSharedWithMeOpen(true)}
         onSelect={(record, project) => {
           setSearchOpen(false);
           if (project) onSelectChat(record, project);
           else onSelectChat(record);
         }}
       />
+      <DesktopSharedWithMeDialog open={sharedWithMeOpen} onClose={() => setSharedWithMeOpen(false)} />
       {shareProjectTarget
         && projectSharing?.organizationId === shareProjectTarget.organizationId
         && shareProjectTarget.project.id ? (

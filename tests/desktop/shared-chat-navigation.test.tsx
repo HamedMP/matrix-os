@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import DesktopChatCollaboration from "../../desktop/src/renderer/src/features/chat/DesktopChatCollaboration";
+import DesktopChatCollaboration, { DesktopSharedWithMeDialog } from "../../desktop/src/renderer/src/features/chat/DesktopChatCollaboration";
 import { CanonicalChatRoute } from "../../desktop/src/renderer/src/features/chat/CanonicalChatRoute";
 import { CanonicalChatWorkspace } from "../../desktop/src/renderer/src/features/chat/CanonicalChatWorkspace";
 import { SharedWithMeRailRow } from "../../desktop/src/renderer/src/features/work/WorkRail";
@@ -156,17 +156,53 @@ describe("Electron Shared with me navigation", () => {
   });
 
   it("exposes Shared with me in the Chat rail and opens its native content", async () => {
-    render(<SharedWithMeRailRow />);
+    const onOpen = vi.fn();
+    render(<SharedWithMeRailRow onOpen={onOpen} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Shared with me" }));
-    expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)).toMatchObject({
-      kind: "shared",
-      title: "Shared with me",
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(useTabs.getState().tabs).toEqual([]);
+  });
+
+  it("renders Shared with me as a modal over Chat instead of an app tab", async () => {
+    const onClose = vi.fn();
+    render(<DesktopSharedWithMeDialog open onClose={onClose} />);
+
+    expect(await screen.findByRole("dialog", { name: "Shared with me" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Shared with me", level: 1 })).toBeVisible();
+    expect(useTabs.getState().tabs).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close Shared with me" }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("opens a shared Chat in the retained Chat surface and dismisses the modal", async () => {
+    const chatTabId = useTabs.getState().openTab({
+      kind: "work",
+      title: "Chat",
+      workRoute: "chat",
+      chatView: "index",
+      closable: false,
+    });
+    const onClose = vi.fn();
+    render(<DesktopSharedWithMeDialog open onClose={onClose} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open Chat" }));
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(useTabs.getState().tabs).toHaveLength(1);
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      id: chatTabId,
+      kind: "work",
+      workRoute: "chat",
+      chatId: "chat_shared",
+      chatTitle: "Launch plan",
+      sharedScopeId: scopeId,
     });
   });
 
   it("refreshes the pending badge after an invitation mutation", async () => {
-    render(<SharedWithMeRailRow />);
+    render(<SharedWithMeRailRow onOpen={vi.fn()} />);
     expect(await screen.findByRole("button", { name: "Shared with me" })).toBeVisible();
     collaborationMock.pending = 1;
     notifyCollaborationDiscoveryChanged();
@@ -175,7 +211,7 @@ describe("Electron Shared with me navigation", () => {
 
   it("keeps Shared with me available when only its pending count fails", async () => {
     collaborationMock.failInbox = true;
-    render(<SharedWithMeRailRow />);
+    render(<SharedWithMeRailRow onOpen={vi.fn()} />);
 
     expect(await screen.findByRole("button", { name: "Shared with me" })).toBeVisible();
     expect(screen.queryByLabelText(/pending invitations/)).toBeNull();
