@@ -18,15 +18,30 @@ install -d -m 0700 -o matrix -g matrix /var/lib/matrix-memory-trial /var/lib/mat
 [[ -f /etc/matrix/memory-trial/operator.json && ! -L /etc/matrix/memory-trial/operator.json ]] || { echo 'Prepare the protected operator configuration first.' >&2; exit 1; }
 if [[ ! -f /etc/matrix/memory-trial/hindsight.env || ! -f /etc/matrix/memory-trial/ov.conf ]]; then
   timeout 30 python3 "$trial_script_dir/configure.py" --private-owner-trial
-  chown root:matrix /etc/matrix/memory-trial/hindsight.env /etc/matrix/memory-trial/ov.conf
 fi
+# Repair group readability on retries without modifying protected configuration contents.
+for trial_config in /etc/matrix/memory-trial/hindsight.env /etc/matrix/memory-trial/ov.conf /etc/matrix/memory-trial/configuration.receipt.json; do
+  [[ -f "$trial_config" && ! -L "$trial_config" ]] || { echo 'Trial configuration must be a regular file.' >&2; exit 1; }
+  chown root:matrix "$trial_config"
+  chmod 0640 "$trial_config"
+done
 for trial_engine in hindsight openviking; do
   trial_venv="/opt/matrix-memory-trial/${trial_engine}"
   [[ ! -L "$trial_venv" ]] || { echo 'Refusing a symlink environment.' >&2; exit 1; }
   if [[ ! -d "$trial_venv" ]]; then timeout 60 python3 -m venv "$trial_venv"; fi
   timeout 900 "$trial_venv/bin/python" -m pip install --disable-pip-version-check --timeout 30 --retries 2 -r "$trial_script_dir/${trial_engine}-requirements.txt"
   # Independent environments prevent engine dependency conflicts; receipts record the resolved versions.
-  timeout 30 "$trial_venv/bin/python" -m pip freeze > "/opt/matrix-memory-trial/${trial_engine}-installed-requirements.txt"
+  trial_requirements_receipt="/opt/matrix-memory-trial/${trial_engine}-installed-requirements.txt"
+  trial_reranking_receipt="/opt/matrix-memory-trial/${trial_engine}-reranking-verification.json"
+  timeout 30 "$trial_venv/bin/python" -m pip freeze > "$trial_requirements_receipt"
+  # Verifies the actual pinned package capability without any cloud credentials or calls.
+  timeout 30 "$trial_venv/bin/python" -B "$trial_script_dir/verify-reranking.py" "$trial_engine" > "$trial_reranking_receipt"
+  # Public package runtime only: preserve root ownership; matrix gets read/execute, never write.
+  # Do not dereference interpreter symlinks and change permissions outside the trial environment.
+  timeout 120 chgrp -R -h matrix "$trial_venv"
+  timeout 120 chmod -R g+rX,g-w,o-rwx "$trial_venv"
+  chown root:matrix "$trial_requirements_receipt" "$trial_reranking_receipt"
+  chmod 0640 "$trial_requirements_receipt" "$trial_reranking_receipt"
 done
 install -m 0644 "$trial_script_dir/hindsight.service" /etc/systemd/system/matrix-memory-trial-hindsight.service
 install -m 0644 "$trial_script_dir/openviking.service" /etc/systemd/system/matrix-memory-trial-openviking.service

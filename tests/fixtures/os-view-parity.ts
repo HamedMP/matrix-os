@@ -18,6 +18,12 @@ export const OS_VIEW_FIXED_APP_NAMES = [
   "Whiteboard",
 ] as const;
 
+export const OS_VIEW_LAUNCHER_APP_NAMES = [
+  ...OS_VIEW_FIXED_APP_NAMES.slice(0, 3),
+  "Memory",
+  ...OS_VIEW_FIXED_APP_NAMES.slice(3),
+] as const;
+
 export const OS_VIEW_PARITY_SURFACES = [
   "Web Canvas",
   "Web Desktop",

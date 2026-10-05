@@ -57,6 +57,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
     chat ? { ...chat, name: "Chat" } : { name: "Chat", path: "__chat__" },
     findCanonicalApp(apps, ["__terminal__"]) ?? { name: "Terminal", path: "__terminal__" },
     findCanonicalApp(apps, ["__file-browser__"]) ?? { name: "Files", path: "__file-browser__" },
+    { name: "Memory", path: "__memory-workspace__" },
     { name: "Editor", path: "__editor__" },
     { name: "VS Code", path: "__vscode__", iconUrl: "/vscode.png" },
     { name: "Settings", path: "__settings__" },
@@ -64,7 +65,6 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
     namedDesktopApp(findCanonicalApp(apps, browserPaths), { name: "Browser", path: "__browser__" }),
     namedDesktopApp(findCanonicalApp(apps, notesPaths), { name: "Notes", path: "apps/notes/index.html" }),
     namedDesktopApp(findCanonicalApp(apps, whiteboardPaths), { name: "Whiteboard", path: "apps/whiteboard/index.html" }),
-    { name: "Memory", path: "__memory-workspace__" },
   ];
   const firstClassPaths = new Set([
     ...DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,

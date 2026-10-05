@@ -266,7 +266,7 @@ export function WebDesktopSurface({
     height: typeof window === "undefined" ? 594 : Math.max(1, window.innerHeight - 126),
   }));
   const primeDesktopIcons = useDesktopConfigStore((state) => state.primeDesktopIcons);
-  const desktopApps = useMemo(() => buildWebDesktopIconApps(apps).slice(0, 10), [apps]);
+  const desktopApps = useMemo(() => buildWebDesktopIconApps(apps), [apps]);
   const defaultPlacements = useMemo<DesktopIconPlacement[]>(createDefaultOsViewDesktopIcons, []);
   useLayoutEffect(() => {
     if (desktopIcons === undefined) primeDesktopIcons(defaultPlacements);

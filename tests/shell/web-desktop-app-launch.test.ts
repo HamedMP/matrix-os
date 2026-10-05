@@ -8,6 +8,7 @@ import {
   buildWebDesktopLauncherApps,
   resolveWebDesktopBuiltInLaunch,
 } from "../../shell/src/lib/web-desktop-app-launch.js";
+import { OS_VIEW_LAUNCHER_APP_NAMES } from "../fixtures/os-view-parity";
 
 describe("web Desktop built-in app launch routing", () => {
   it("routes the fallback Browser launcher to a public browser URL", () => {
@@ -71,15 +72,21 @@ describe("web Desktop built-in app launch routing", () => {
   });
 
   it("uses canonical durable paths for all ten default Desktop icons", () => {
-    expect(buildWebDesktopIconApps([]).slice(0, 10).map((app) => app.path)).toEqual(
+    const defaultPaths = new Set<string>(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS);
+    expect(buildWebDesktopIconApps([]).map((app) => app.path).filter((path) => defaultPaths.has(path))).toEqual(
       DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
     );
     expect(buildWebDesktopIconApps([
       { name: "Notes", path: "apps/notes/dist/index.html" },
       { name: "Whiteboard", path: "apps/whiteboard/dist/index.html" },
-    ]).slice(0, 10).map((app) => normalizeOsViewDesktopAppPath(app.path))).toEqual(
+    ]).map((app) => normalizeOsViewDesktopAppPath(app.path)).filter((path) => defaultPaths.has(path))).toEqual(
       DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
     );
+  });
+
+  it("keeps Memory in the shared OS-view launcher order without changing default desktop icons", () => {
+    expect(buildWebDesktopLauncherApps([]).slice(1, OS_VIEW_LAUNCHER_APP_NAMES.length + 1).map((app) => app.name))
+      .toEqual(OS_VIEW_LAUNCHER_APP_NAMES);
   });
 
   it("routes launcher OS-view destinations as presentation switches", () => {

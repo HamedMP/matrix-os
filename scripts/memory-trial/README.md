@@ -12,10 +12,24 @@ Create `/etc/matrix/memory-trial/operator.json` as a root-owned regular file wit
 
 - `MATRIX_MEMORY_HINDSIGHT_DATABASE_URL`: local Postgres connection URI.
 - `MEMORY_TRIAL_OPENAI_API_KEY`: extraction and embedding cloud credential.
-- `MEMORY_TRIAL_COHERE_API_KEY`: cloud reranking credential.
-- `MEMORY_TRIAL_LLM_MODEL`, `MEMORY_TRIAL_EMBEDDING_MODEL`, `MEMORY_TRIAL_EMBEDDING_DIMENSION`, `MEMORY_TRIAL_RERANK_MODEL`: operator-selected explicit model configuration, shared by both engines.
+- `MEMORY_TRIAL_LLM_MODEL`, `MEMORY_TRIAL_EMBEDDING_MODEL`, `MEMORY_TRIAL_EMBEDDING_DIMENSION`: explicit model configuration, shared by both engines.
+- `MEMORY_TRIAL_RERANKING`: `none` (default). This uses Hindsight's supported `rrf` passthrough provider and omits OpenViking's `rerank` section. No cloud reranking key is required, no neural reranker is loaded, and extraction/embeddings still use OpenAI.
+
+For a reproducible first trial use extraction model `gpt-4.1-mini-2025-04-14`, embedding model `text-embedding-3-small`, dimension `1536`, and reranking `none`. Supply the existing authorized OpenAI credential through the protected operator file; never put it in a command argument or receipt. Both engines receive the same explicit models. These model choices are a baseline to measure, not a claim that one is optimal.
+
+The trial caps Hindsight retain completion output at `16000` tokens with `3000`-character chunks, below this extraction model's output limit. Its local database pool is limited to 2–10 connections. LLM requests use a 30-second timeout and concurrency of 2. The pinned OpenAI embedding adapters do not expose a per-request timeout setting; they use OpenAI SDK defaults. Matrix adapter request deadlines are separate from engine background work and do not prove that an engine stopped processing after a caller timeout.
+
+An operator may optionally set `MEMORY_TRIAL_LLM_BASE_URL` to a HTTPS OpenAI-compatible extraction gateway and provide `MEMORY_TRIAL_LLM_API_KEY` for it. A custom endpoint requires an explicit extraction credential; the installer never silently forwards the existing OpenAI credential there. URLs with embedded credentials, query parameters, fragments or whitespace are rejected. This root-owned setup option affects both trial engines' extraction only; embeddings retain direct OpenAI access, and Matrix's managed routes are unchanged. Receipts record the endpoint class without disclosing custom hostnames or credentials.
+
+Cloud reranking remains an explicit optional comparison: set `MEMORY_TRIAL_RERANKING=cohere` and supply `MEMORY_TRIAL_COHERE_API_KEY` plus `MEMORY_TRIAL_RERANK_MODEL`. Their presence alone does not enable cloud reranking. Unknown modes fail closed.
 
 Run `bash scripts/memory-trial/install.sh --private-owner-trial` on that VPS. Both native services bind only to loopback (Hindsight 8888, OpenViking 1933), use bounded model concurrency, and get separate 2 GB memory caps. The script never prints credentials or reads personal imports. OpenViking uses loopback development authority behind the Matrix gateway; it is not a public engine endpoint. Do not expose its port or treat liveness as model readiness.
+
+Installed package environments stay root-owned with read/execute access for the `matrix` service group and no group write access. Generated engine configuration and receipts use `root:matrix` mode `0640`, including under the installer's restrictive umask; the operator credential input remains mode `0600`. Permission repair on retries is limited to these fixed runtime/configuration paths and does not traverse interpreter symlinks or modify owner data.
+
+The installer writes a secret-free `configuration.receipt.json` recording exact engine pins, source-distribution checksums, model names, embedding dimension, and the actual ranking policy. In the no-model comparison Hindsight preserves semantic/keyword/graph/temporal fusion scores; OpenViking uses scoped global vector recall in QUICK mode. Neither performs neural reranking, but candidate generation and score scales differ. Do not describe these as identical retrieval algorithms or compare their numeric scores directly.
+
+Before starting services the installer runs `verify-reranking.py` inside each independent pinned environment, without loading model credentials. It emits `<engine>-reranking-verification.json` alongside the package receipts. This checks installed versions, the exact `rrf` factory registration/neutral-score component and the empty OpenViking rerank availability/QUICK-mode path. It is a component capability check, not evidence of full server startup or successful ingestion. Export these receipts with benchmark results and retain separate live ingestion/retrieval/deletion completion receipts.
 
 After installation check OpenViking `/ready`, Hindsight `/health`, service readiness, and synthetic retain/search/update/delete through Matrix. Record model names, full package receipt, corpus hashes and per-engine completion receipts. A health response alone does not prove working cloud credentials or source processing. Engine adapter readiness and canonical owner authorization remain mandatory.
 
