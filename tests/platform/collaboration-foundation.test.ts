@@ -72,11 +72,12 @@ describe('platform schema registration (S01 foundation)', () => {
     await destroyTestPlatformDb(fixture.db);
   });
 
-  it('registers the migration steps in the original db.ts order', () => {
+  it('registers core migration steps in their original order with the channel independently tracked', () => {
     expect(PLATFORM_MIGRATION_STEPS.map((step) => step.name)).toEqual([
       'identity',
       'user-machines',
       'ai-funded',
+      'ai-credit-history',
       'speech',
       'provisioning-jobs',
       'checkout',

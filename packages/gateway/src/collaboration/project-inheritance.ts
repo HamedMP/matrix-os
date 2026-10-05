@@ -6,6 +6,9 @@ import type {
   CollaborationResourceBindingsTable,
   OwnerCollaborationDatabase,
 } from "./database.js";
+import { publishProjectChatRoutes } from "./project-chat-routes.js";
+import { revokeProjectSharedChatCredentials } from "./project-membership-transition.js";
+import type { ChatOutboxEvent } from "../chat/records.js";
 
 const BindingIdSchema = z.uuid();
 const ScopeIdSchema = z.uuid();
@@ -189,6 +192,7 @@ export function createProjectInheritanceResolver(options: {
   now?: () => Date;
   createBindingId?: () => string;
   createScopeId?: () => string;
+  onChatShared?: (ownerId: string, event: ChatOutboxEvent) => void;
 }) {
   const now = options.now ?? (() => new Date());
   const createBindingId = options.createBindingId ?? randomUUID;
@@ -228,7 +232,8 @@ export function createProjectInheritanceResolver(options: {
     }
     const input = parsed.data;
     try {
-      return await options.db.transaction().execute(async (trx) => {
+      let committedChatEvent: ChatOutboxEvent | null = null;
+      const binding = await options.db.transaction().execute(async (trx) => {
         const project = await trx.selectFrom("collaboration_scopes").selectAll()
           .where("id", "=", input.projectScopeId).forUpdate().executeTakeFirst();
         if (!project || project.kind !== "project" || project.owner_id !== input.ownerId
@@ -251,7 +256,23 @@ export function createProjectInheritanceResolver(options: {
           .where("resource_id", "=", input.resourceId)
           .executeTakeFirst();
         if (existing) {
-          if (sameBinding(existing, input)) return rowToBinding(existing);
+          if (sameBinding(existing, input)) {
+            // An idempotent bind can encounter a Chat published before reveal
+            // revocation was introduced. Heal only lingering revealed rows;
+            // ordinary replays remain a no-op for Chat revision and outbox.
+            if (project.lifecycle === "shared" && project.owner_type === "personal" && input.kind === "chat") {
+              const lingeringReveal = await trx.selectFrom("chat_credentials").select("id")
+                .where("chat_id", "=", input.resourceId).where("revealed", "=", true)
+                .limit(1).executeTakeFirst();
+              if (lingeringReveal) {
+                committedChatEvent = await revokeProjectSharedChatCredentials(trx, {
+                  chatId: input.resourceId, ownerType: project.owner_type,
+                  ownerId: input.ownerId, now: now(),
+                });
+              }
+            }
+            return rowToBinding(existing);
+          }
           const canReconcileStaging = project.lifecycle === "preparing"
             && existing.authority_runtime_id === input.authorityRuntimeId
             && Number(existing.authority_generation) === input.authorityGeneration
@@ -305,8 +326,25 @@ export function createProjectInheritanceResolver(options: {
           || (resourceScopeId !== null && winner.resource_scope_id !== resourceScopeId)) {
           throw new ProjectInheritanceError("conflict");
         }
+        if (project.lifecycle === "shared" && project.owner_type === "personal" && input.kind === "chat") {
+          committedChatEvent = await revokeProjectSharedChatCredentials(trx, {
+            chatId: input.resourceId, ownerType: project.owner_type,
+            ownerId: input.ownerId, now: createdAt,
+          });
+        }
+        // A Chat added to a project that is already shared is opened through its own route.
+        if (project.lifecycle === "shared" && input.kind === "chat") {
+          await publishProjectChatRoutes(trx, { projectScopeId: project.id, now: createdAt });
+        }
         return rowToBinding(winner);
       });
+      if (committedChatEvent) {
+        try { options.onChatShared?.(input.ownerId, committedChatEvent); }
+        catch (error: unknown) {
+          console.warn("[collaboration-project] Chat invalidation delivery failed", error instanceof Error ? error.name : "UnknownError");
+        }
+      }
+      return binding;
     } catch (error: unknown) {
       if (error instanceof ProjectInheritanceError) throw error;
       console.warn("[collaboration-project] inherited resource binding failed", error instanceof Error ? error.name : "UnknownError");

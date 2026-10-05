@@ -1,6 +1,7 @@
 import { FUNDED_AI_READINESS_TIMEOUTS, JEV_MODEL_ID, FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
 import type { FundedAiFundingSummaryReader } from "./funded-ai-funding-summary-client.js";
 import type { FundedAiRouteReadinessReader } from "./funded-ai-route-readiness-client.js";
+import { fundedAiFundingBarrier } from "./funded-ai-funding-state.js";
 
 // Funding-summary stays bounded at 5s; route readiness also permits a cold relay.
 // The outer bound leaves transport margin and covers dependencies ignoring abort.
@@ -8,6 +9,8 @@ import type { FundedAiRouteReadinessReader } from "./funded-ai-route-readiness-c
 export interface FundedAiReadiness {
   readiness: AiProviderReadiness;
   allowedModelIds: string[];
+  /** Policy-authorized discovery only; never execution authority. */
+  discoverableModelIds?: string[];
 }
 export interface FundedAiReadinessReader { read(options?: { signal?: AbortSignal }): Promise<FundedAiReadiness> }
 
@@ -28,8 +31,8 @@ export function createFundedAiReadinessReader(options: {
       readiness: { state: "unavailable", checkedAt: checkedAt.toISOString(), staleAfter: null,
         action: "retry", safeReason: "provider_unavailable" },
       allowedModelIds: [],
+      discoverableModelIds: [],
     };
-    if (!options.routes) return unavailable;
     const controller = new AbortController();
     // The controller cancels sibling work when either dependency settles with
     // an error; the platform timeout independently bounds the external fetch.
@@ -46,37 +49,51 @@ export function createFundedAiReadinessReader(options: {
           reject(new Error("Funded readiness deadline exceeded"));
         }, deadlineMs);
       });
-      const [raw, rawReceipt] = await Promise.race([Promise.all([
-        options.summary.getFundingSummary({ signal }),
-        options.routes.getRouteReadiness({ signal, ...(options.modelId ? { modelId: options.modelId } : {}) }),
-      ]), deadline]);
+      const summary = options.summary.getFundingSummary({ signal });
+      const routes = options.routes?.getRouteReadiness({ signal, ...(options.modelId ? { modelId: options.modelId } : {}) }).catch((error: unknown) => {
+        console.warn("[funded-ai] Route observation unavailable:", error instanceof Error ? error.name : "UnknownError");
+        return undefined;
+      });
+      const raw = await Promise.race([summary, deadline]);
       const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
-      const receipt = FundedAiRouteReadinessReceiptSchema.parse(rawReceipt);
       const current = now().getTime();
       signal.throwIfAborted();
       const ledgerAsOf = Date.parse(funding.asOf);
       if (!policy.enabled || Date.parse(policy.checkedAt) > current
-        || Date.parse(policy.staleAfter) <= current || funding.remainingBudgetMicrousd === 0
+        || Date.parse(policy.staleAfter) <= current
         || ledgerAsOf > current + 60_000 || current - ledgerAsOf > 5 * 60_000) return unavailable;
+      const discoverableModelIds = policy.allowedModelIds.map((id) => id.replace(/^anthropic\//, ""));
+      const observationStaleAfter = new Date(Math.min(Date.parse(policy.staleAfter), ledgerAsOf + 5 * 60_000, checkedAt.getTime() + 30_000)).toISOString();
+      const discovery = { ...unavailable, discoverableModelIds,
+        readiness: { ...unavailable.readiness, staleAfter: observationStaleAfter } };
+      const barrier = fundedAiFundingBarrier(funding);
+      if (barrier) return { ...discovery, readiness: { ...discovery.readiness, ...barrier } };
+      let rawReceipt: unknown;
+      try { rawReceipt = await Promise.race([Promise.resolve(routes), deadline]); }
+      catch (error: unknown) {
+        console.warn("[funded-ai] Route observation deadline:", error instanceof Error ? error.name : "UnknownError");
+        return callerSignal?.aborted || Date.parse(observationStaleAfter) <= now().getTime() ? unavailable : discovery;
+      }
+      signal.throwIfAborted();
+      const readyTime = now().getTime();
+      if (Date.parse(observationStaleAfter) <= readyTime) return unavailable;
+      const parsedReceipt = FundedAiRouteReadinessReceiptSchema.safeParse(rawReceipt);
+      if (!parsedReceipt.success) return discovery;
+      const receipt = parsedReceipt.data;
       if (receipt.globalRevision !== policy.globalRevision || receipt.runtimeRevision !== policy.runtimeRevision
-        || Date.parse(receipt.checkedAt) > current || Date.parse(receipt.staleAfter) <= current
-        || receipt.readyModelIds.some((id) => !policy.allowedModelIds.includes(id))) return unavailable;
+        || Date.parse(receipt.checkedAt) > readyTime || Date.parse(receipt.staleAfter) <= readyTime
+        || receipt.readyModelIds.some((id) => !policy.allowedModelIds.includes(id))) return discovery;
       const allowedModelIds = policy.allowedModelIds
         .filter((id) => receipt.readyModelIds.includes(id))
         .map((id) => id.replace(/^anthropic\//, ""));
-      if (allowedModelIds.length === 0) return unavailable;
+      if (allowedModelIds.length === 0) return discovery;
       const staleAfter = new Date(Math.min(Date.parse(policy.staleAfter), Date.parse(receipt.staleAfter), checkedAt.getTime() + 30_000)).toISOString();
-      if (funding.remainingBalanceMicrousd === 0) return funding.topUpEnabled === true ? {
-        readiness: { state: "unavailable", checkedAt: checkedAt.toISOString(),
-          staleAfter,
-          action: "retry", safeReason: "credit_required" },
-        allowedModelIds,
-      } : unavailable;
       return {
         readiness: { state: "ready", checkedAt: checkedAt.toISOString(),
           staleAfter,
           action: "none", safeReason: null },
         allowedModelIds,
+        discoverableModelIds,
       };
     } catch (error) {
       console.warn("[funded-ai] Readiness check unavailable:", error instanceof Error ? error.name : "UnknownError");

@@ -263,7 +263,9 @@ describe("CanonicalChatOrchestrator", () => {
 
     releaseProvider();
     await orchestrator.drain();
-    expect(prompts).toEqual(["keep running", "run this next"]);
+    expect(prompts[0]).toBe("keep running");
+    expect(prompts[1]).toContain("User: keep running");
+    expect(prompts[1]).toContain("Current user request:\nrun this next");
     expect((await repository.getDetailPage(owner, "chat_queue_orchestrated", { limit: 200 }))?.queuedTurns)
       .toEqual([]);
     const snapshot = await repository.exportChat(owner, "chat_queue_orchestrated");
@@ -1165,6 +1167,36 @@ describe("CanonicalChatOrchestrator", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
+  it("refuses a client-supplied bot workspace root, even for a Chat without a Project", async () => {
+    await repository.create(owner, {
+      id: "chat_plain_bot_root",
+      clientRequestId: "req_create_plain_bot_root",
+      title: "Plain Chat",
+    });
+    const resolve = vi.fn(async () => {
+      throw new Error("a bot workspace must never resolve for an ordinary Chat");
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([adapter(async function* () {
+        yield { type: "run.completed", outcome: "completed" };
+      })]),
+      executionRoots: { resolve, revalidate: vi.fn() },
+    });
+
+    await expect(orchestrator.admitTurn(principal, owner, "chat_plain_bot_root", {
+      clientRequestId: "req_plain_bot_root_turn",
+      baseRevision: 0,
+      parts: [{ type: "text", text: "read the bot's files" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      executionRoot: { kind: "bot_workspace", botId: "bot_0123456789abcdef" },
+    })).rejects.toMatchObject({ safeError: { code: "project_unavailable" }, status: 400 });
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it("starts a fresh Provider session when execution-root provenance changes", async () => {
     await repository.create(owner, {
       id: "chat_changed_root",
@@ -1807,7 +1839,9 @@ describe("CanonicalChatOrchestrator", () => {
     expect(await restarted.reconcileActiveRuns(owner)).toBe(0);
     await restarted.drain();
 
-    expect(prompts).toEqual(["resume queued work"]);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("User: initial");
+    expect(prompts[0]).toContain("Current user request:\nresume queued work");
     expect((await repository.getDetailPage(owner, "chat_queue_restarted", { limit: 200 }))?.queuedTurns)
       .toEqual([]);
   });

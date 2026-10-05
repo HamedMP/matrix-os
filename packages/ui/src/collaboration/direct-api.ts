@@ -60,6 +60,16 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     return null;
   };
 
+  /** A project's name and Chats; an owner's home from before the overview existed has no such route. */
+  const readProjectOverview = async (scopeId: string): Promise<unknown> => {
+    try {
+      return await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}/project/overview`);
+    } catch (error: unknown) {
+      if (error instanceof CollaborationDirectError && error.code === "not_found") return undefined;
+      throw error;
+    }
+  };
+
   const hydrate = async (item: Record<string, unknown>): Promise<Record<string, unknown>> => {
     if (item.resource !== undefined) return item;
     const scopeId = typeof item.scopeId === "string" ? item.scopeId : null;
@@ -71,11 +81,16 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
       }
       if (item.status === "accepted") {
         const base = `/api/collaboration/scopes/${scopeId}`;
-        const [scope, content] = await Promise.all([
+        const [scope, content, overview] = await Promise.all([
           direct.request(scopeId, "GET", base),
           direct.request(scopeId, "GET", `${base}/${item.kind === "terminal" ? "terminal" : item.kind === "project" ? "project" : "chat"}`),
+          item.kind === "project" ? readProjectOverview(scopeId) : undefined,
         ]);
-        return { ...item, resource: { scope, [item.kind === "terminal" ? "terminal" : item.kind === "project" ? "project" : "chat"]: content } };
+        return { ...item, resource: {
+          scope,
+          [item.kind === "terminal" ? "terminal" : item.kind === "project" ? "project" : "chat"]: content,
+          ...(overview ? { overview } : {}),
+        } };
       }
       return item;
     } catch (error: unknown) {
@@ -125,7 +140,13 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     const ownerProject = OWNER_PROJECT_PATH.exec(path);
     if (prepared && ownerProject && ownerProject[1] === scopeId
       && (ownerProject[2] === "project/confirm" ? method === "POST" : method === "GET")) {
-      try { return await direct.requestOwnerProject(prepared.runtimeId, prepared.organizationId, method as "GET" | "POST", path, body); }
+      try {
+        const result = await direct.requestOwnerProject(prepared.runtimeId, prepared.organizationId, method as "GET" | "POST", path, body);
+        // An accepted confirmation starts publishing the project: it stops being private, and the
+        // owner setup key is only for private projects. Every later request uses the scope key.
+        if (ownerProject[2] === "project/confirm") preparedProjects.delete(scopeId!);
+        return result;
+      }
       catch (error: unknown) {
         if (error instanceof CollaborationDirectError) throw new Error("CollaborationUnavailable", { cause: error });
         throw error;

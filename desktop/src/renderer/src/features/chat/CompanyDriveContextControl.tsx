@@ -3,10 +3,11 @@ import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
 import { CompanyDriveContextPicker } from "@matrix-os/ui";
 import { useConnection } from "../../stores/connection";
 import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../lib/collaboration";
-export function CompanyDriveContextControl({ resources, onSelect, enabled, query, disabled }: {
+export function CompanyDriveContextControl({ resources, onSelect, enabled, botContext = false, query, disabled }: {
     resources: CanonicalChatResourceReference[];
     onSelect(reference: CanonicalChatResourceReference): void;
     enabled: boolean;
+    botContext?: boolean;
     query: string | null;
     disabled: boolean;
 }) {
@@ -14,5 +15,5 @@ export function CompanyDriveContextControl({ resources, onSelect, enabled, query
     const api = useMemo(() => createDesktopCollaborationApi(host), [host, slot, generation]);
     useEffect(() => () => { if (api)
         releaseDesktopCollaborationApi(api); }, [api]);
-    return <CompanyDriveContextPicker api={api} resources={resources} onSelect={onSelect} enabled={enabled} mentionQuery={query} disabled={disabled}/>;
+    return <CompanyDriveContextPicker api={api} resources={resources} onSelect={onSelect} enabled={enabled} botContext={botContext} mentionQuery={query} disabled={disabled}/>;
 }

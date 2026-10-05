@@ -8,6 +8,7 @@ import {
   createFundedRelayService,
   requireFundedRelayServiceConfig,
 } from "../../packages/proxy/src/funded-main-app.js";
+import { FUNDED_PRICING_VERSIONS } from "../../packages/proxy/src/funded-pricing-review.js";
 
 const root = process.cwd();
 
@@ -24,6 +25,17 @@ function enabledEnv(): NodeJS.ProcessEnv {
 }
 
 describe("funded relay Cloud Run service", () => {
+  it("preserves reviewed pricing attestations in the candidate deployment", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+    for (const model of ["SONNET", "GLM"]) {
+      for (const field of ["REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH"]) {
+        const name = `MATRIX_FUNDED_${model}_PRICING_${field}`;
+        expect(workflow).toContain(`${name}: \${{ vars.${name} }}`);
+        expect(workflow).toContain(`${name}=\${${name}}`);
+      }
+    }
+    expect(workflow).not.toContain('date -u +');
+  });
   it("fails closed unless the dedicated funded relay is explicitly enabled", () => {
     expect(() => requireFundedRelayServiceConfig({})).toThrow(
       "MATRIX_FUNDED_AI_ENABLED must be true for the dedicated relay service",
@@ -250,6 +262,12 @@ function runDeploymentValidation(reviewedAt: string, validThrough: string) {
     CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,
     MATRIX_JEV_PRICING_REVIEW_VERSION: "typesafe-jev-input-2026-09",
     MATRIX_JEV_PRICING_REVIEWED_AT: reviewedAt, MATRIX_JEV_PRICING_VALID_THROUGH: validThrough,
+    MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["anthropic/claude-sonnet-5"],
+    MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/zai-org/glm-5.3-flash"],
+    MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT: new Date(Date.now() - dayMs).toISOString(),
+    MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: new Date(Date.now() + dayMs).toISOString(),
+    MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT: new Date(Date.now() - dayMs).toISOString(),
+    MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH: new Date(Date.now() + dayMs).toISOString(),
   } });
 }
 it("rejects a format-correct nonexistent review date before Cloud Run authentication", () => {

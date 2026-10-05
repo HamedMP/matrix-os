@@ -1,3 +1,4 @@
+import { prepareChatSessionContext } from "./session-history.js";
 import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -5,6 +6,7 @@ import {
   CanonicalChatRunSchema, CanonicalChatTurnAdmissionResponseSchema,
   type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
   type CanonicalChatTurnAdmissionResponse,
+  canonicalExecutionRootProjectId,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
@@ -19,7 +21,7 @@ import { loadChatResumeState } from "./resume-checkpoint.js";
 import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 
 export interface TurnAdmissionOptions {
-  repository: Pick<ChatRepository, "get" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
+  repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
@@ -63,7 +65,7 @@ export async function admitCanonicalTurn(
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
     const effective = { ...input, ...prepared };
-    const catalog = await deps.catalog.getCatalog(principal);
+    const catalog = await deps.catalog.getCatalog(principal, effective.selection);
     const requirements = requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
       part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
     const validated = validateChatProviderSelection({
@@ -85,9 +87,18 @@ export async function admitCanonicalTurn(
         503,
       );
     }
+    // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
+    // so no ordinary Chat can mount a bot's private files.
+    if (input.executionRoot?.kind === "bot_workspace") {
+      throw new CanonicalChatOrchestrationError(
+        safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
+        400,
+      );
+    }
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
-    if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
+    if (input.executionRoot && record.projectId
+      && canonicalExecutionRootProjectId(input.executionRoot) !== record.projectId) {
       throw new CanonicalChatOrchestrationError(
         safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
         400,
@@ -123,10 +134,13 @@ export async function admitCanonicalTurn(
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
     });
-    if (resumeState !== undefined && prepared?.context?.history) {
-      const { history: _history, ...context } = prepared.context;
-      prepared.context = context;
-    }
+    let sessionContext: CanonicalChatRun["context"];
+    try {
+      sessionContext = await prepareChatSessionContext({
+        repository: deps.repository, owner, chatId, throughSeq: record.chat.messageCount,
+        requestHash, instanceId: validated.instance.id, resumeState, context: prepared?.context,
+      });
+    } catch (error: unknown) { return mapRepositoryError(error); }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),
@@ -165,8 +179,8 @@ export async function admitCanonicalTurn(
       instanceId: validated.instance.id,
       selection: validated.selection,
       interactionMode: effective.interactionMode,
-      ...(prepared?.context ? { context: prepared.context } : {}),
-      permissionMode: input.permissionMode,
+      ...(sessionContext ? { context: sessionContext } : {}),
+      permissionMode: effective.permissionMode,
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
         executionRootFingerprint: resolvedRoot.fingerprint,

@@ -105,6 +105,8 @@ interface ChatComposerOptions {
   turnModes: { interactionMode: string; permissionMode: string } | null;
   /** Only applied when the send creates the chat. */
   projectId: string | null;
+  /** Holds sends back, e.g. while the model selection is not final yet. */
+  disabled?: boolean;
 }
 
 /**
@@ -112,7 +114,15 @@ interface ChatComposerOptions {
  * sent and the composer emptied straight away, instead of waiting for the
  * server to create the chat, admit the turn, and return a fresh detail.
  */
-export function useChatComposer({ scope, activeChatId, detail, selection, turnModes, projectId }: ChatComposerOptions) {
+export function useChatComposer({
+  scope,
+  activeChatId,
+  detail,
+  selection,
+  turnModes,
+  projectId,
+  disabled = false,
+}: ChatComposerOptions) {
   const sendMessage = useSendChatMessage();
   const isSending = sendMessage.isPending;
   const [stored, setState] = useState(() => emptyComposerState(scope, activeChatId, 0));
@@ -134,7 +144,7 @@ export function useChatComposer({ scope, activeChatId, detail, selection, turnMo
     // One send at a time: the composer stays editable while a send is in
     // flight, and a second one would go out against the same stale revision
     // -- or, from a draft, create a second chat.
-    if (!trimmed || !selection || !turnModes || isSending) return;
+    if (disabled || !trimmed || !selection || !turnModes || isSending) return;
     // Reuse the idempotency keys of a failed send when the same text is
     // retried in the same chat -- if the first attempt's admission succeeded
     // server-side but its response was lost, retrying with fresh IDs would
@@ -219,7 +229,7 @@ export function useChatComposer({ scope, activeChatId, detail, selection, turnMo
       }),
     });
   }, [
-    draft, draftKey, selection, turnModes, activeChatId, detail, projectId,
+    draft, draftKey, selection, turnModes, activeChatId, detail, projectId, disabled,
     sendMessage, isSending, state.failed, epoch, navigation,
   ]);
 

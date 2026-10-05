@@ -64,6 +64,12 @@ jest.mock("expo-clipboard", () => ({
   getStringAsync: jest.fn(() => Promise.resolve("")),
 }));
 
+// Request helpers need random bytes, while Expo's AES classes require a native
+// superclass unavailable in Jest. Use Node's cryptographic implementation here.
+jest.mock("expo-crypto", () => ({
+  getRandomValues: (values) => require("node:crypto").randomFillSync(values),
+}));
+
 class MatrixMockWebSocket {
   static CONNECTING = 0;
   static OPEN = 1;

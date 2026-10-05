@@ -1,11 +1,18 @@
+jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: false }) }));
+jest.mock("@/lib/queries/use-bot-recipes", () => ({ useBotRecipes: () => ({ recipes: [], isPending: false, isError: false }) }));
+jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ invalidate: jest.fn() }) }));
+jest.mock("micromark", () => ({ micromark: jest.fn() }));
+jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
 import type { ReactNode } from "react";
 
 const mockSendMessage = jest.fn();
+let mockBotSnapshot: unknown = null;
 let mockActiveChatId: string | null = null;
 let mockDetail: unknown;
 let mockCatalog: unknown;
 let mockComputer: unknown;
 let mockSendPending = false;
+let mockCatalogLoading = false;
 
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({ isSignedIn: true }),
@@ -35,7 +42,7 @@ jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
 }));
 
 jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
-  useChatProviderCatalog: () => ({ catalog: mockCatalog }),
+  useChatProviderCatalog: () => ({ catalog: mockCatalog, isPending: mockCatalogLoading, isFetching: mockCatalogLoading }),
 }));
 
 jest.mock("@/lib/queries/use-projects", () => ({
@@ -45,10 +52,6 @@ jest.mock("@/lib/queries/use-projects", () => ({
 jest.mock("@/lib/queries/use-send-chat-message", () => ({
   useSendChatMessage: () => ({ mutate: mockSendMessage, isPending: mockSendPending }),
 }));
-
-// The contracts barrel pulls in ESM-only micromark, which Jest cannot load.
-jest.mock("micromark", () => ({ micromark: jest.fn() }));
-jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
 
 jest.mock("@expo/ui", () => {
   const React = jest.requireActual("react") as typeof import("react");
@@ -60,11 +63,14 @@ jest.mock("@expo/ui", () => {
 });
 
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
 import { Alert, StyleSheet as NativeStyleSheet } from "react-native";
 import * as Clipboard from "expo-clipboard";
 
 import ChatScreen from "../app/(drawer)/index";
+
+beforeEach(() => jest.useFakeTimers());
+afterEach(() => { act(() => jest.runOnlyPendingTimers()); cleanup(); jest.useRealTimers(); });
 
 describe("drawer home screen", () => {
   it("expands the exact tool command and bounded result", () => {
@@ -81,11 +87,13 @@ describe("drawer home screen", () => {
   });
 
   afterEach(() => {
+    mockBotSnapshot = null;
     mockActiveChatId = null;
     mockDetail = undefined;
     mockCatalog = undefined;
     mockComputer = undefined;
     mockSendPending = false;
+    mockCatalogLoading = false;
     mockSendMessage.mockReset();
     jest.restoreAllMocks();
   });
@@ -314,6 +322,17 @@ describe("drawer home screen", () => {
       expect(screen.queryByText("Ship it")).toBeNull();
     });
 
+    it("does not send from the keyboard while the provider catalog is still loading", () => {
+      mockCatalogLoading = true;
+      render(<ChatScreen />);
+      fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Ship it");
+      fireEvent(screen.getByLabelText("Message Matrix"), "submitEditing");
+
+      expect(mockSendMessage).not.toHaveBeenCalled();
+      expect(screen.queryByText("Ship it")).toBeNull();
+      expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
+    });
+
     it("does not start a second send while one is in flight", () => {
       mockSendPending = true;
       render(<ChatScreen />);
@@ -324,4 +343,19 @@ describe("drawer home screen", () => {
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
     });
   });
+});
+
+it("sends an owner-verified Native bot Chat with its private route while the general model catalog is unavailable", () => {
+  mockActiveChatId = "chat_bot";
+  mockDetail = { record: { chat: { id: mockActiveChatId, revision: 3 } }, runs: [], turns: [], activities: [], messages: [] };
+  mockBotSnapshot = { agentId: "bot_abcdefgh", name: "Writer", revision: 2,
+    selection: { instanceId: "matrix_pi_default", model: "cloudflare:@cf/zai-org/glm-5.3-flash" }, interactions: [], tasks: [],
+    authority: { agentId: "bot_abcdefgh", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } } };
+  render(<ChatScreen />);
+  const input = screen.getByPlaceholderText("Message Matrix");
+  fireEvent.changeText(input, "Write a brief");
+  fireEvent(input, "focus");
+  fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+  expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_bot", baseRevision: 3,
+    selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default" }), expect.anything());
 });

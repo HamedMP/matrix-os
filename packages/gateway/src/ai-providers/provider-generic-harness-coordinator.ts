@@ -539,6 +539,10 @@ export function createProviderGenericHarnessCoordinator(options: {
       const fallback = input.after.harnesses.find((harness) =>
         harness.enabled && systemHarness(harness.harness) && harness.id !== target.id,
       );
+      // Off gates canonical Chat admission; it does not uninstall the native
+      // runtime or require installing another one. Preserve its configuration
+      // when no enabled system harness exists to receive messaging selection.
+      if (!fallback) return null;
       const supportedFallback = requireGenericHarness(fallback);
       await requireRuntimeSupport(supportedFallback, input.canonical, input.snapshot);
       return configuredRuntimeRoute(supportedFallback as typeof supportedFallback & {

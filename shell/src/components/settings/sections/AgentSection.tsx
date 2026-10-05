@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
-import { AgentsProvidersView, useProviderSettingsController } from "@matrix-os/ui";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { AgentsProvidersView, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
 import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
 import { currentAiCreditRuntimeSlot, openWebAiCreditCheckout } from "@/lib/ai-credit-checkout";
+import { createWebProviderWorkflowClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 
 export function AgentSection({
   onOpenTerminal,
@@ -15,6 +16,11 @@ export function AgentSection({
   const transport = useMemo(() => createProviderSettingsTransport(), []);
   const identityKey = getGatewayUrl();
   const runtimeSlot = currentAiCreditRuntimeSlot();
+  const workflowClient = useMemo(() => createWebProviderWorkflowClient({
+    isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
+  }), [identityKey, runtimeSlot]);
+  const loadUsageHistory = useCallback((cursor: string | null, signal: AbortSignal) => loadWebAiCreditHistory({ runtimeSlot, cursor, signal,
+    isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot }), [identityKey, runtimeSlot]);
   const checkoutLifetime = useRef<AbortController | null>(null);
   useEffect(() => {
     const lifetime = new AbortController();
@@ -23,6 +29,15 @@ export function AgentSection({
       lifetime.abort();
       checkoutLifetime.current = null;
     };
+  }, [identityKey, runtimeSlot]);
+  const addCredit = useCallback<AgentsProvidersViewProps["onAddCredit"]>(async (_sourceId, packageId, requestId) => {
+    const lifetime = checkoutLifetime.current;
+    await openWebAiCreditCheckout({
+      packageId, requestId, runtimeSlot,
+      signal: lifetime?.signal,
+      isIdentityCurrent: () => lifetime !== null && checkoutLifetime.current === lifetime
+        && getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
+    });
   }, [identityKey, runtimeSlot]);
   const controller = useProviderSettingsController({
     identityKey,
@@ -46,6 +61,7 @@ export function AgentSection({
   return (
     <div className="px-5 py-6" data-provider-settings-adapter="shared">
       <AgentsProvidersView
+        key={`${identityKey}:${runtimeSlot}`}
         snapshot={controller.snapshot}
         selectedHarnessId={controller.selectedHarnessId}
         connectionAttempt={controller.connectionAttempt}
@@ -72,15 +88,13 @@ export function AgentSection({
         onSetupHarness={onOpenTerminal ? (harness) => openWebProviderAgentSetup(harness, onOpenTerminal) : undefined}
         onOpenTerminal={(sessionId) => { onOpenTerminal?.(sessionId); }}
         onOpenBrowser={openProviderAuthorizationPath}
-        onAddCredit={async (_sourceId, packageId, requestId) => {
-          const lifetime = checkoutLifetime.current;
-          await openWebAiCreditCheckout({
-            packageId, requestId, runtimeSlot,
-            signal: lifetime?.signal,
-            isIdentityCurrent: () => lifetime !== null && checkoutLifetime.current === lifetime
-              && getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
-          });
+        workflowClient={workflowClient}
+        onOpenAuthorizationUrl={(url) => {
+          if (getGatewayUrl() !== identityKey || currentAiCreditRuntimeSlot() !== runtimeSlot) return;
+          if (!openWebProviderWorkflowAuthorization(url)) throw new Error("Browser unavailable");
         }}
+        onLoadUsageHistory={loadUsageHistory}
+        onAddCredit={addCredit}
       />
     </div>
   );

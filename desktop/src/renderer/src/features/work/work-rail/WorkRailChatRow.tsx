@@ -16,6 +16,14 @@ import {
 } from "../work-rail-model";
 import { useEffect, useRef } from "react";
 
+const railStateLabel: Record<Exclude<WorkRailAgentState, "idle">, string> = {
+  approval_required: "Approval required",
+  input_required: "Waiting for your reply",
+  running: "Working…",
+  failed: "Needs retry",
+  unseen_completion: "Completed",
+};
+
 export function WorkRailChatRow({
   record,
   active,
@@ -32,6 +40,8 @@ export function WorkRailChatRow({
   readPending = false,
   onPin,
   onDelete,
+  moveItems,
+  moving = false,
 }: {
   record: CanonicalChatRecord;
   active: boolean;
@@ -48,6 +58,8 @@ export function WorkRailChatRow({
   readPending?: boolean;
   onPin: () => void;
   onDelete: () => void;
+  moveItems?: {label: string; disabled?: boolean; onSelect: () => void}[];
+  moving?: boolean;
 }) {
   const selectTimerRef = useRef<number | null>(null);
   const renameTimerRef = useRef<number | null>(null);
@@ -76,6 +88,7 @@ export function WorkRailChatRow({
         disabled: pinning,
         onSelect: onPin,
       },
+      ...(moveItems ? [{ label: "Move to project", disabled: moving || Boolean(record.activeRun), children: moveItems }] : []),
       {
         label: "Delete",
         danger: true,
@@ -88,7 +101,7 @@ export function WorkRailChatRow({
         style={{ background: active ? "var(--bg-selected)" : undefined }}
       >
         {renaming ? (
-          <div className="flex w-full min-w-0 items-center gap-2.5 px-2.5 py-1.5 text-sm font-medium">
+          <div className={`flex w-full min-w-0 items-center gap-2.5 px-2.5 py-1.5 text-sm font-medium ${placement === "project" ? "pl-[30px]" : ""}`}>
             <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />
             <ChatTitleEditor
               title={record.chat.title}
@@ -102,7 +115,7 @@ export function WorkRailChatRow({
           type="button"
           aria-label={record.chat.title}
           aria-current={active ? "page" : undefined}
-          className="flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+          className={`flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${placement === "project" ? "pl-[30px]" : ""}`}
           style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
           onClick={(event) => {
             if (event.detail === 0) {
@@ -126,7 +139,10 @@ export function WorkRailChatRow({
           }}
         >
           <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />
-          <span className={isChatUnread(record) ? "flex min-w-0 flex-1 font-semibold" : "flex min-w-0 flex-1"}><OverflowingChatTitle title={record.chat.title} /></span>
+          <span className="min-w-0 flex-1">
+            <span className={isChatUnread(record) ? "flex min-w-0 font-semibold" : "flex min-w-0"}><OverflowingChatTitle title={record.chat.title} /></span>
+            {agentState !== "idle" ? <span className="block text-[11px] font-normal" style={{ color: "var(--text-tertiary)" }}>{railStateLabel[agentState]}</span> : null}
+          </span>
           {isChatUnread(record) && (record.readState || agentState !== "unseen_completion") ? <span aria-label={`Unread ${record.chat.title}`} className="size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
           <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} />
         </button>}

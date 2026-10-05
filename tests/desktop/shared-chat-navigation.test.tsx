@@ -52,6 +52,7 @@ const sharedChat = {
 const collaborationMock = vi.hoisted(() => ({ pending: 0, failInbox: false }));
 
 vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
+  releaseDesktopCollaborationApi: vi.fn(),
   createDesktopCollaborationApi: () => ({
     baseUrl: "https://app.matrix-os.com",
     get: vi.fn(async (path: string) => {

@@ -21,12 +21,15 @@ const connections = [
   { service: "gmail", account_label: "Personal", account_email: "personal@example.test", status: "active" },
   { service: "google_calendar", account_label: "Calendar", account_email: "calendar@example.test", status: "active" },
 ];
-export function clientFixture() {
+export function clientFixture({ matrix = false }: { matrix?: boolean } = {}) {
   const catalog = createCanonicalProviderCatalogFixture();
   catalog.drivers.push({ ...catalog.drivers[0]!, kind: "hermes", displayName: "Hermes" });
   catalog.instances.push({ ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes", displayName: "Hermes",
     models: [{ ...catalog.instances[0]!.models[0]!, id: saved.selection.model }],
     defaultSelection: saved.selection,
+  });
+  if (matrix) catalog.instances.push({ ...catalog.instances[0]!, id: "matrix_pi_default", driverKind: "matrix_pi", displayName: "Pi", connectionLabel: "Matrix AI",
+    models: [{ ...catalog.instances[0]!.models[0]!, id: "sonnet", displayName: "Sonnet" }], defaultSelection: { instanceId: "matrix_pi_default", model: "sonnet" },
   });
   const client = {
     list: vi.fn(async () => ({ enabled: true, agents: [] })),

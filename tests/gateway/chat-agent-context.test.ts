@@ -243,6 +243,43 @@ describe("server-resolved Chat mention context", () => {
     expect(prepared.context?.chats[0]?.truncated).toBe(true);
     expect(prepared.context?.chats[0]?.text).not.toContain("INTERNAL_TOOL_OUTPUT");
   });
+  describe("recipe bot chats", () => {
+    const botSelection = { instanceId: "matrix_bot_default", model: "auto" };
+    function botContext(directBot: (chatId: string) => string | null) {
+      return new ChatAgentContext({
+        repository, agents, enabled: () => true,
+        botChats: { directBot: async (_owner, chatId) => directBot(chatId) },
+      });
+    }
+
+    it("runs a bot's own chat on the bot runtime by capability set, whatever was selected", async () => {
+      await agents.createRecipeBot(owner, {
+        id: "bot_0123456789abcdef01234567", createHash: "b".repeat(64),
+        fields: { name: "Writing Bot", description: "", instructions: "Revise.", selection: botSelection },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" },
+      });
+      const bots = botContext((chatId) => (chatId === "chat_current" ? "bot_0123456789abcdef01234567" : null));
+      await expect(bots.prepare(owner, "chat_current", { ...request, permissionMode: "read_only" }))
+        .resolves.toEqual({ selection: botSelection, interactionMode: "default", permissionMode: "default" });
+      await expect(bots.prepare(owner, "chat_current", { ...request, parts: [...request.parts, mention("chat", "chat_source")] }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+    });
+
+    it("refuses the bot runtime in any other chat, directly or through a mention", async () => {
+      const bots = botContext(() => null);
+      await expect(bots.prepare(owner, "chat_current", { ...request, selection: botSelection }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+      await expect(context.prepare(owner, "chat_current", { ...request, selection: botSelection }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+      const bot = await agents.createRecipeBot(owner, {
+        id: "bot_0123456789abcdef01234567", createHash: "a".repeat(64),
+        fields: { name: "Writing Bot", description: "", instructions: "Revise.", selection: botSelection },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" },
+      });
+      await expect(bots.prepare(owner, "chat_current", { ...request, parts: [...request.parts, mention("agent", bot.id)] }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+    });
+  });
 });
 
 it("marks unavailable ordinary integration steps while retaining real pinned and custom skill text", async () => {
@@ -274,4 +311,5 @@ it("marks unavailable ordinary integration steps while retaining real pinned and
   expect(full).toContain(bundledBody);
   expect(full).toContain(customBody);
   expect(full).toContain("Before making integration calls, call list_integration_inventory");
+
 });

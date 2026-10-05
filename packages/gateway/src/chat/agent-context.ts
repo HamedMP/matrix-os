@@ -13,6 +13,13 @@ import {
 import { recipeSkillPrompt } from "./recipe-skill-context.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
+import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_SELECTION } from "../bots/selection.js";
+
+/** Finds the recipe bot whose live direct chat this is, if any. */
+export interface BotChatLookup {
+  directBot(owner: ChatOwner, chatId: string): Promise<string | null>;
+  directChat?(owner: ChatOwner, agentId: string): Promise<string | null>;
+}
 
 export class ChatAgentContextError extends Error {
   constructor(readonly code: "feature_disabled" | "context_unavailable" | "workflow_unavailable" | "workflow_setup_required" | "workflow_funding_required") {
@@ -41,8 +48,11 @@ export function transcript(messages: CanonicalChatMessage[], limit: number): { t
     });
   const text = lines.join("\n\n");
   const bytes = Buffer.from(text);
+  let offset = Math.max(0, bytes.length - limit);
+  // Start at a UTF-8 code point boundary without inventing replacement characters.
+  while (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80) offset += 1;
   return {
-    text: bytes.length > limit ? bytes.subarray(-limit).toString("utf8").replace(/^\uFFFD/u, "") : text,
+    text: bytes.length > limit ? bytes.subarray(offset).toString("utf8") : text,
     truncated: bytes.length > limit,
   };
 }
@@ -56,6 +66,7 @@ export class ChatAgentContext {
     drives?: { authorize(owner: ChatOwner, chatId: string, references: OrganizationDriveContextReference[]): Promise<void> };
     assertChatReferenceAllowed?: (owner: ChatOwner, chatId: string) => Promise<void>;
     admitJevWorkflow?: (owner: ChatOwner, agent: ChatAgent) => Promise<void>;
+    botChats?: BotChatLookup;
   }) {}
 
   private async snapshot(owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
@@ -99,6 +110,21 @@ export class ChatAgentContext {
   async prepare(owner: ChatOwner, chatId: string, inputValue: CanonicalCreateChatTurnRequest) {
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
     const references = input.parts.flatMap((part) => part.type === "resource_reference" ? [part.resource] : []);
+    // A recipe bot's direct chat always runs that bot, whatever the client selected. Its
+    // authority is the bot's capability set and grants, not the Chat permission mode.
+    const directBotId = await this.options.botChats?.directBot(owner, chatId);
+    if (directBotId) {
+      if (references.some((reference) => reference.kind === "agent" || reference.kind === "chat")) {
+        throw new ChatAgentContextError("context_unavailable");
+      }
+      const bot = await this.agent(owner, directBotId);
+      const concrete = input.selection.instanceId === "matrix_pi_default" || (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID && input.selection.model !== "auto")
+        ? input.selection : bot.selection.instanceId === "matrix_pi_default" ? bot.selection : undefined;
+      if (concrete && Object.keys(concrete.options ?? {}).length) throw new ChatAgentContextError("context_unavailable");
+      return { selection: concrete ? { instanceId: MATRIX_BOT_INSTANCE_ID, model: concrete.model } : MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
+    }
+    // Only a bot's own chat can run the bot runtime.
+    if (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
     const agentReference = references.find((reference) => reference.kind === "agent");
     const chatReferences = references.filter((reference) => reference.kind === "chat");
     const driveReferences = references.flatMap((reference) => reference.kind === "organization_drive" && reference.drive ? [reference.drive] : []);
@@ -107,6 +133,8 @@ export class ChatAgentContext {
     }
     if (chatReferences.some((reference) => reference.id === chatId)) throw new ChatAgentContextError("context_unavailable");
     const agent = agentReference ? await this.agent(owner, agentReference.id) : undefined;
+    // Recipe bots are reached only through their own direct chat.
+    if (agent?.recipeRef || agent?.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
     if (agent?.recipe?.skills.includes("matrix-jev-email-triage") &&
       (!agent.recipe.jevInboxTriage || agent.recipe.jevInboxTriage.ownerId !== owner.ownerId)) {
       throw new ChatAgentContextError("context_unavailable");

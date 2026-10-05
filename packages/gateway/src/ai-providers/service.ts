@@ -60,6 +60,7 @@ interface AiProviderServiceOptions {
   driverInventory?: (signal: AbortSignal) => Promise<AiProviderSnapshotV3["drivers"]>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedReadinessReader?: FundedAiReadinessReader;
+  codexNativeKeyReadiness?: () => Promise<AiProviderReadiness | null>;
   codexLocalObservation?: (signal: AbortSignal) => Promise<CodexLocalCredentialObservation>;
 }
 
@@ -193,6 +194,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #nativeHarnessCatalogReader?: (refresh: boolean) => Promise<NonNullable<AiProviderSnapshotV3["nativeHarnessCatalog"]>>;
   readonly #driverInventory?: AiProviderServiceOptions["driverInventory"];
   readonly #fundedReadiness?: FundedAiReadinessReader;
+  readonly #codexNativeKeyReadiness?: AiProviderServiceOptions["codexNativeKeyReadiness"];
   readonly #codexLocalObservation?: AiProviderServiceOptions["codexLocalObservation"];
 
   constructor(options: AiProviderServiceOptions) {
@@ -214,6 +216,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     this.#nativeHarnessCatalogReader = options.nativeHarnessCatalogReader ? createCanonicalNativeHarnessCatalogReader(options.nativeHarnessCatalogReader,
       { hermesRuntimeSource: options.hermesRuntimeSource, now: this.#now }) : undefined;
     this.#fundedReadiness = options.fundedReadinessReader;
+    this.#codexNativeKeyReadiness = options.codexNativeKeyReadiness;
     this.#codexLocalObservation = options.codexLocalObservation;
   }
 
@@ -235,7 +238,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     }
   }
 
-  async #drivers(): Promise<AiProviderSnapshotV3["drivers"]> {
+  async #drivers(managedMatrixOnly = false): Promise<AiProviderSnapshotV3["drivers"]> {
     const kernel = AiProviderDriverViewSchema.parse({
       id: "kernel",
       displayName: "Claude SDK",
@@ -245,7 +248,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       capabilities: [...KERNEL_CAPABILITIES],
       setupActions: [],
     });
-    if (!this.#driverInventory) return [kernel];
+    if (managedMatrixOnly || !this.#driverInventory) return [kernel];
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -333,44 +336,46 @@ export class AiProviderService implements AiProviderSnapshotReader {
 
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
     options.signal?.throwIfAborted();
+    const managedMatrixOnly = options.admissionScope === "managed_matrix";
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
     const [drivers, funded, apiKeyReadiness, profileReadiness, nativeHarnessCatalog] = await Promise.all([
-      this.#drivers(),
+      this.#drivers(managedMatrixOnly),
       !options.suppressFundedProbes && credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
         : undefined,
-      this.#resolveOwnerReadiness(
+      managedMatrixOnly ? readinessForObservation(credentials.ownerApiKey.state, "api_key", now) : this.#resolveOwnerReadiness(
         "owner_anthropic_key", credentials.ownerApiKey.state, "api_key", now, options.refresh === true, options.ownerKeyPreflight, options.signal,
       ),
-      this.#resolveOwnerReadiness(
+      managedMatrixOnly ? readinessForObservation(credentials.ownerProfile.state, "profile", now) : this.#resolveOwnerReadiness(
         "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
       ),
-      this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true) : undefined,
+      !managedMatrixOnly && this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true) : undefined,
     ]);
     options.signal?.throwIfAborted();
     // Native discovery can consume more than the local credential probe's
     // five-second TTL. Collect the bounded observation after metadata settles;
     // preserve its original timestamps rather than extending stale evidence.
-    const codexLocalObservation = await this.#readCodexLocalObservation();
+    const codexLocalObservation = managedMatrixOnly ? undefined : await this.#readCodexLocalObservation();
     options.signal?.throwIfAborted();
+    const codexNativeKey = managedMatrixOnly ? undefined : await this.#codexNativeKeyReadiness?.();
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     // Driver health and CLI login are local observations. Neither proves the
     // selected OpenAI account or model can complete a remote request.
-    const codexReadiness: AiProviderReadiness = codexDriver?.installState === "installed"
+    const codexReadiness: AiProviderReadiness = codexNativeKey ?? (codexDriver?.installState === "installed"
       ? { state: "unknown", checkedAt: now, staleAfter: null, action: "retry", safeReason: "unknown" }
-      : readinessForDriver(codexDriver, now);
+      : readinessForDriver(codexDriver, now));
     const matrixReadiness = funded?.readiness ?? readinessForObservation(
       credentials.matrixIncluded.state === "ready" ? "unverified" : credentials.matrixIncluded.state,
       "matrix",
       now,
     );
     const fundedSourceReadiness = (modelId: string): AiProviderReadiness =>
-      (matrixReadiness.state === "ready" || matrixReadiness.safeReason === "credit_required")
-        && !funded?.allowedModelIds.includes(modelId)
+      funded !== undefined && (matrixReadiness.state === "ready" ? !funded.allowedModelIds.includes(modelId)
+        : !funded.discoverableModelIds?.includes(modelId) && !funded.allowedModelIds.includes(modelId))
         ? { state: "unavailable", checkedAt: matrixReadiness.checkedAt, staleAfter: null,
           action: "retry", safeReason: "provider_unavailable" }
         : matrixReadiness;
@@ -381,7 +386,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
         vendor: "cloudflare", accountLabel: "Included",
         eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
-          .filter((model) => funded?.allowedModelIds.includes(model.id)).map((model) => model.id),
+          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id)).map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSourceReadiness("@cf/zai-org/glm-5.3-flash")),
       sourceFromReadiness({
@@ -391,7 +396,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         vendor: "anthropic",
         accountLabel: "Included",
         eligibleModelIds: eligibleModelsForSource("matrix_included", catalog)
-          .filter((model) => funded?.allowedModelIds.includes(model.id))
+          .filter((model) => (funded?.discoverableModelIds ?? funded?.allowedModelIds)?.includes(model.id))
           .map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSourceReadiness("claude-sonnet-5")),
@@ -424,15 +429,15 @@ export class AiProviderService implements AiProviderSnapshotReader {
       }, readinessForObservation("setup_required", "profile", now)),
       sourceFromReadiness({
         id: "owner_openai_profile",
-        displayName: "Codex account",
-        fundingKind: "owner_account",
+        displayName: codexNativeKey ? "OpenAI API key" : "Codex account",
+        fundingKind: codexNativeKey ? "owner_api_key" : "owner_account",
         vendor: "openai",
-        accountLabel: "Codex",
+        accountLabel: codexNativeKey ? "API key" : "Codex",
         eligibleModelIds: [...OWNER_OPENAI_MODEL_IDS],
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, codexReadiness),
     ];
-    if (codexLocalObservation) {
+    if (codexLocalObservation && !codexNativeKey) {
       accessSources[accessSources.length - 1] = {
         ...accessSources[accessSources.length - 1]!, localObservation: codexLocalObservation,
       };
@@ -462,8 +467,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
       {
         id: "owner_codex",
         vendor: "openai",
-        authMethod: codexReadiness.state === "setup_required" ? null : "provider_profile",
-        accountLabel: "Codex",
+        authMethod: codexNativeKey ? "api_key" : codexReadiness.state === "setup_required" ? null : "provider_profile",
+        accountLabel: codexNativeKey ? "OpenAI API key" : "Codex",
         ...codexReadiness,
       },
     ];
