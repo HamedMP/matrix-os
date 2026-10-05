@@ -7,18 +7,20 @@ trial_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 command -v timeout >/dev/null
 command -v python3 >/dev/null
 command -v systemctl >/dev/null
+command -v flock >/dev/null
+source "$trial_script_dir/install-runtime.sh"
 id matrix >/dev/null
 for trial_dir in /opt/matrix-memory-trial /etc/matrix/memory-trial /var/lib/matrix-memory-trial; do
   [[ ! -L "$trial_dir" ]] || { echo 'Refusing a symlink trial root.' >&2; exit 1; }
 done
 install -d -m 0755 -o root -g root /opt/matrix-memory-trial
+trial_lock_install /opt/matrix-memory-trial
 install -d -m 0750 -o root -g matrix /etc/matrix/memory-trial
 install -d -m 0700 -o matrix -g matrix /var/lib/matrix-memory-trial /var/lib/matrix-memory-trial/cache
 # The operator must provision owner-local Postgres + pgvector and a protected operator.json first.
 [[ -f /etc/matrix/memory-trial/operator.json && ! -L /etc/matrix/memory-trial/operator.json ]] || { echo 'Prepare the protected operator configuration first.' >&2; exit 1; }
-if [[ ! -f /etc/matrix/memory-trial/hindsight.env || ! -f /etc/matrix/memory-trial/ov.conf || ! -f /etc/matrix/memory-trial/configuration.receipt.json ]]; then
-  timeout 30 python3 "$trial_script_dir/configure.py" --private-owner-trial
-fi
+timeout 30 python3 "$trial_script_dir/configure.py" --private-owner-trial
+trial_require_stopped
 # Repair group readability on retries without modifying protected configuration contents.
 for trial_config in /etc/matrix/memory-trial/hindsight.env /etc/matrix/memory-trial/ov.conf /etc/matrix/memory-trial/configuration.receipt.json; do
   [[ -f "$trial_config" && ! -L "$trial_config" ]] || { echo 'Trial configuration must be a regular file.' >&2; exit 1; }
@@ -33,9 +35,9 @@ for trial_engine in hindsight openviking; do
   # Independent environments prevent engine dependency conflicts; receipts record the resolved versions.
   trial_requirements_receipt="/opt/matrix-memory-trial/${trial_engine}-installed-requirements.txt"
   trial_reranking_receipt="/opt/matrix-memory-trial/${trial_engine}-reranking-verification.json"
-  timeout 30 "$trial_venv/bin/python" -m pip freeze > "$trial_requirements_receipt"
+  timeout 40 python3 -B "$trial_script_dir/receipts.py" "$trial_requirements_receipt" "$trial_venv/bin/python" -m pip freeze
   # Verifies the actual pinned package capability without any cloud credentials or calls.
-  timeout 30 "$trial_venv/bin/python" -B "$trial_script_dir/verify-reranking.py" "$trial_engine" > "$trial_reranking_receipt"
+  timeout 40 python3 -B "$trial_script_dir/receipts.py" "$trial_reranking_receipt" "$trial_venv/bin/python" -B "$trial_script_dir/verify-reranking.py" "$trial_engine"
   # Public package runtime only: preserve root ownership; matrix gets read/execute, never write.
   # Do not dereference interpreter symlinks and change permissions outside the trial environment.
   timeout 120 chgrp -R -h matrix "$trial_venv"

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Render protected local trial config and a secret-free comparison receipt."""
 import json
+import ctypes
 import fcntl
 import hmac
 import os
@@ -143,8 +144,33 @@ def benchmark_receipt(env):
                          'embeddingRequestTimeout': 'OpenAI SDK default; these pinned adapters expose no per-request timeout override'},
         'note': 'Compare the full engine pipelines. Equal models and no cloud reranking do not make candidate generation or score scales identical.',
         'verification': {'pinnedSourceInspected': True, 'installedRuntimeVerified': False,
+                         'installedArtifactHashesVerified': False,
                          'syntheticIngestionVerified': False},
+        'hashProvenance': 'sdistSha256 values reference official source distributions; the installer does not verify downloaded artifact hashes',
     }
+
+def atomic_rename_exclusive(source, destination):
+    """Native no-replace rename: Linux installer, plus macOS developer tests."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == 'linux':
+        if not hasattr(libc, 'renameat2'):
+            raise ValueError('Exclusive native rename is unavailable')
+        rename = libc.renameat2
+        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(-100, os.fsencode(source), -100, os.fsencode(destination), 1)
+    elif sys.platform == 'darwin':
+        if not hasattr(libc, 'renamex_np'):
+            raise ValueError('Exclusive native rename is unavailable')
+        rename = libc.renamex_np
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(os.fsencode(source), os.fsencode(destination), 0x00000004)
+    else:
+        raise ValueError('Exclusive native rename is unavailable')
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
 
 def write_exclusive(path, text):
     pending = path.with_name('.' + path.name + '.pending')
@@ -156,10 +182,10 @@ def write_exclusive(path, text):
             output.write(text)
             output.flush()
             os.fsync(output.fileno())
-        # Publish a complete inode atomically; link refuses an existing destination.
-        os.link(pending, path, follow_symlinks=False)
+        # Publish a complete inode by rename; the native primitive refuses replacement.
+        atomic_rename_exclusive(pending, path)
     finally:
-        pending.unlink()
+        pending.unlink(missing_ok=True)
 
 def protected_file_info(source):
     info = os.fstat(source.fileno())

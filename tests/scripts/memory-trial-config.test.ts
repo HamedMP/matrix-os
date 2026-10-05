@@ -38,8 +38,12 @@ describe("native private memory trial configuration", () => {
     expect(result).toEqual({ complete: true, pendingRemoved: true });
   });
   it("keeps failed publication invisible and removes its staged file before retry", () => {
-    const result = exercisePublication(`originalLink=m.os.link\ndef failLink(*args,**kwargs): raise OSError('synthetic interruption')\nm.os.link=failLink\ntry: m.write_exclusive(root/'hindsight.env',outputs['hindsight.env'])\nexcept OSError: pass\nm.os.link=originalLink\ninvisible=not (root/'hindsight.env').exists() and not (root/'.hindsight.env.pending').exists()\nm.publish_configuration(root,outputs)\nprint(json.dumps({'invisibleUntilComplete':invisible,'retrySucceeded':all((root/name).read_text()==text for name,text in outputs.items())}))`);
+    const result = exercisePublication(`originalRename=m.atomic_rename_exclusive\ndef failRename(*args,**kwargs): raise OSError('synthetic interruption')\nm.atomic_rename_exclusive=failRename\ntry: m.write_exclusive(root/'hindsight.env',outputs['hindsight.env'])\nexcept OSError: pass\nm.atomic_rename_exclusive=originalRename\ninvisible=not (root/'hindsight.env').exists() and not (root/'.hindsight.env.pending').exists()\nm.publish_configuration(root,outputs)\nprint(json.dumps({'invisibleUntilComplete':invisible,'retrySucceeded':all((root/name).read_text()==text for name,text in outputs.items())}))`);
     expect(result).toEqual({ invisibleUntilComplete: true, retrySucceeded: true });
+  });
+  it("publishes by exclusive native rename without replacing a racing destination", () => {
+    const result = exercisePublication(`p=root/'hindsight.env'\nm.write_exclusive(p,'preserve')\nrefused=False\ntry: m.write_exclusive(p,'replace')\nexcept FileExistsError: refused=True\nprint(json.dumps({'refused':refused,'preserved':p.read_text()=='preserve','stagingCleared':not (root/'.hindsight.env.pending').exists(),'usesNativeRename':hasattr(m,'atomic_rename_exclusive')}))`);
+    expect(result).toEqual({refused:true,preserved:true,stagingCleared:true,usesNativeRename:true});
   });
   it("refuses a concurrent installer without waiting or publishing files", () => {
     const result = exercisePublication(`fd=os.open(root/'.configure.lock',os.O_RDWR|os.O_CREAT,0o600)\nm.fcntl.flock(fd,m.fcntl.LOCK_EX|m.fcntl.LOCK_NB)\nrejected=False\ntry: m.publish_configuration(root,outputs)\nexcept BlockingIOError: rejected=True\nos.close(fd)\nprint(json.dumps({'rejected':rejected,'unpublished':not (root/'hindsight.env').exists()}))`);
