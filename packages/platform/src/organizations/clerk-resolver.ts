@@ -11,6 +11,7 @@ import { ClerkActorIdSchema, ClerkOrganizationIdSchema, normalizeClerkRole, proj
 const CLERK_API_BASE = "https://api.clerk.com/v1";
 const REQUEST_TIMEOUT_MS = 10_000;
 const PAGE_SIZE = 100;
+const MAX_ACTOR_ORGANIZATIONS = 100;
 const MAX_MEMBERS = 2_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
@@ -32,12 +33,32 @@ const ClerkMembershipPageSchema = z.object({
   total_count: z.number().int().nonnegative().optional(),
 }).passthrough();
 
+const ClerkActorMembershipPageSchema = z.object({
+  data: z.array(z.object({
+    id: z.string().regex(/^[A-Za-z0-9_:-]{1,128}$/),
+    organization: z.object({ id: ClerkOrganizationIdSchema }).passthrough(),
+  }).passthrough()).max(MAX_ACTOR_ORGANIZATIONS),
+  total_count: z.number().int().nonnegative(),
+}).passthrough();
+
 export class ClerkOrganizationUpstreamClient implements ClerkOrganizationUpstream {
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly options: { secretKey: string; fetchImpl?: typeof fetch; now?: () => Date }) {
     if (!options.secretKey) throw new Error("Clerk secret key is required");
     this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  async listOrganizationsForActor(actorId: string): Promise<string[]> {
+    const id = ClerkActorIdSchema.parse(actorId);
+    const url = new URL(`${CLERK_API_BASE}/users/${encodeURIComponent(id)}/organization_memberships`);
+    url.searchParams.set("limit", String(MAX_ACTOR_ORGANIZATIONS));
+    url.searchParams.set("offset", "0");
+    const page = ClerkActorMembershipPageSchema.parse(await this.getJson(url.toString()));
+    if (page.total_count > MAX_ACTOR_ORGANIZATIONS) {
+      throw new Error("Actor exceeds the supported organization count");
+    }
+    return [...new Set(page.data.map((membership) => membership.organization.id))];
   }
 
   async listMembers(organizationId: string): ReturnType<ClerkOrganizationUpstream["listMembers"]> {
