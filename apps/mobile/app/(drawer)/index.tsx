@@ -49,6 +49,7 @@ import { useBotRecipes } from "@/lib/queries/use-bot-recipes";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
@@ -56,6 +57,7 @@ export default function ChatScreen() {
   const { isSignedIn, userId } = useAuth();
   const { user } = useUser();
   const { theme } = useUnistyles();
+  const warmSessionToken = useSessionTokenWarmup();
   const {
     activeChatId,
     selectionOverride,
@@ -114,7 +116,13 @@ export default function ChatScreen() {
       hidePickerTimer.current = null;
     }
     setInputFocused(true);
-  }, []);
+    warmSessionToken();
+  }, [warmSessionToken]);
+
+  const handleDraftChange = useCallback((text: string) => {
+    setDraft(text);
+    warmSessionToken();
+  }, [setDraft, warmSessionToken]);
 
   const handleInputBlur = useCallback(() => {
     hidePickerTimer.current = setTimeout(() => {
@@ -303,7 +311,7 @@ export default function ChatScreen() {
             ref={inputRef}
             accessibilityLabel="Message Matrix"
             value={draft}
-            onChangeText={setDraft}
+            onChangeText={handleDraftChange}
             onSubmitEditing={send}
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
