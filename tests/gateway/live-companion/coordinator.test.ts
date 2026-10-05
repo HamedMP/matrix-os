@@ -25,6 +25,7 @@ describe("native live companion", () => {
     expect(s.journal).toHaveBeenCalledWith(expect.objectContaining({ text: "Build a tracker actually make it a calendar" }));
     expect(s.delegate).toHaveBeenCalledOnce();
     expect(s.frames.filter(f => f.type === "companion.capture.completed")).toHaveLength(1);
+    expect(s.frames.filter(f => f.type === "companion.caption" && f.speaker === "user" && f.final)).toHaveLength(1);
   });
   it("does not commit unfinished speech on close or utterance replacement", async () => {
     const s = setup();
@@ -94,6 +95,7 @@ describe("native live companion", () => {
     await s.live.tool("call_2", "delegate_task", { kind: "build_app", prompt: "Build a habit tracker" });
     expect(s.delegate).toHaveBeenCalledTimes(2);
     expect(s.reply).toHaveBeenLastCalledWith("call_2", expect.objectContaining({ runId: "run_real" }), "delegate_task");
+    expect(s.frames.filter(f => f.type === "companion.caption" && f.speaker === "user" && f.final)).toHaveLength(1);
   });
   it("does not grant commands from empty speech or accept arbitrary tool arguments", async () => {
     const s = setup();

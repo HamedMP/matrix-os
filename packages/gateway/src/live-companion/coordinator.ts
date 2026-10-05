@@ -54,8 +54,8 @@ export function createLiveCompanion(options: {
     if (!current.messageId) {
       const saved = await options.port.journal({ id: current.id, role: "user", text: current.text });
       current.messageId = saved.messageId;
+      if (!closed) options.emit({ type: "companion.caption", speaker: "user", turnId: current.id, text: current.text, final: true, interrupted: false });
     }
-    if (!closed) options.emit({ type: "companion.caption", speaker: "user", turnId: current.id, text: current.text, final: true, interrupted: false });
     return current.messageId;
   };
   const completeInput = async () => {
