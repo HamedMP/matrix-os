@@ -1,4 +1,4 @@
-import { updateNativeBotModel, fetchNativeBotChat, fetchNativeBotRecipes, instantiateNativeBot,
+import { BotStatusUnsupportedError, updateNativeBotModel, fetchNativeBotChat, fetchNativeBotRecipes, instantiateNativeBot,
   resolveNativeBotInteraction, revokeNativeBotGrant } from "@/lib/requests/bots";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -26,17 +26,26 @@ it("returns owner-scoped bot status even when the agent library is unavailable",
   expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/chats/chat_research/bot"))).toBe(true);
 });
 
-it("treats a computer without the bot route as an ordinary chat, not a failed status read", async () => {
+it("reports a computer without the bot route as unsupported, apart from a failed status read", async () => {
   const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 404 } as Response);
 
-  expect(await fetchNativeBotChat(token, gatewayUrl, "chat_research")).toBeNull();
+  await expect(fetchNativeBotChat(token, gatewayUrl, "chat_research")).rejects.toBeInstanceOf(BotStatusUnsupportedError);
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it("still fails a bot status read the computer could not serve", async () => {
+it("fails a bot status read the computer could not serve with the ordinary error", async () => {
   jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 503 } as Response);
 
-  await expect(fetchNativeBotChat(token, gatewayUrl, "chat_research")).rejects.toThrow("Bot status could not be loaded");
+  const failure = await fetchNativeBotChat(token, gatewayUrl, "chat_research").catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure).not.toBeInstanceOf(BotStatusUnsupportedError);
+  expect((failure as Error).message).toContain("Bot status could not be loaded");
+});
+
+it("returns null for a chat the computer says has no bot", async () => {
+  jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, status: 200, json: async () => ({ agentId: null }) } as Response);
+
+  expect(await fetchNativeBotChat(token, gatewayUrl, "chat_research")).toBeNull();
 });
 
 it("sends a revision-bound answer and uses DELETE for grant revocation", async () => {

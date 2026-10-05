@@ -1,10 +1,44 @@
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
-import { updateNativeBotModel, fetchNativeBotChat, mutateNativeBotMemory, resolveNativeBotInteraction, revokeNativeBotGrant } from "@/lib/requests/bots";
+import {
+  BotStatusUnsupportedError, updateNativeBotModel, fetchNativeBotChat, mutateNativeBotMemory, resolveNativeBotInteraction,
+  revokeNativeBotGrant, type NativeBotChatSnapshot,
+} from "@/lib/requests/bots";
 import type { CanonicalChatModelSelection, BotMemoryMutationRequest, ResolveBotInteractionRequest } from "@matrix-os/contracts";
 import { mobileQueryKeys } from "@/lib/requests";
 
 const REFRESH_INTERVAL_MS = 15_000;
+// A missing route may only mean the gateway is still starting. Looking again
+// is cheap, but a computer that really has no such route should not be asked
+// at the pace a bot's own status needs.
+const UNSUPPORTED_RECHECK_MS = 60_000;
+
+interface BotStatusState {
+  data: NativeBotChatSnapshot | null | undefined;
+  error: unknown;
+}
+
+/**
+ * What is known about whether a chat belongs to a bot:
+ * - `bot`: it does, and its status is held.
+ * - `ordinary`: the computer answered that it does not. That is fixed when a
+ *   chat is created, so there is nothing further to read.
+ * - `unsupported`: the computer has no bot-status route.
+ * - `unknown`: not read yet, or the read failed.
+ */
+export function botStatusKnowledge(state: BotStatusState | undefined): "bot" | "ordinary" | "unsupported" | "unknown" {
+  if (!state) return "unknown";
+  if (state.error instanceof BotStatusUnsupportedError) return "unsupported";
+  if (state.data) return "bot";
+  return state.data === null && !state.error ? "ordinary" : "unknown";
+}
+
+/** How soon to read a chat's bot status again, or false when there is nothing to keep fresh. */
+export function botStatusRefetchInterval(state: BotStatusState | undefined): number | false {
+  const knowledge = botStatusKnowledge(state);
+  if (knowledge === "ordinary") return false;
+  return knowledge === "unsupported" ? UNSUPPORTED_RECHECK_MS : REFRESH_INTERVAL_MS;
+}
 
 export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth();
@@ -17,11 +51,14 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
       if (!token || !chatId || !gatewayUrl) throw new Error("Bot status could not be loaded. Try again.");
       return fetchNativeBotChat(token, gatewayUrl, chatId);
     },
-    // Whether a chat belongs to a bot is fixed when it is created, so an
-    // ordinary chat has nothing here to keep fresh.
-    refetchInterval: (current) => (current.state.data ? REFRESH_INTERVAL_MS : false),
+    // Asking a computer without the route a second time gets the same answer.
+    retry: (failures, error) => !(error instanceof BotStatusUnsupportedError) && failures < 1,
+    refetchInterval: (current) => botStatusRefetchInterval(current.state),
     refetchIntervalInBackground: false,
   });
+  // On a computer without the route every chat is shown as an ordinary one,
+  // not as a bot chat whose status failed to load.
+  const unsupported = query.data === undefined && query.error instanceof BotStatusUnsupportedError;
   const requireAuth = async () => {
     const token = await getToken();
     if (!token || !chatId || !gatewayUrl || !query.data) throw new Error("Bot action unavailable. Try again.");
@@ -29,7 +66,7 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
   };
   return {
     snapshot: query.data ?? null,
-    isError: query.isError,
+    isError: query.isError && !unsupported,
     refresh: async () => {
       const result = await query.refetch();
       if (result.isError) throw new Error("Bot status could not be loaded. Try again.");

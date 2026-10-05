@@ -2,7 +2,7 @@ interface ResponseSchema<T> {
   parse(value: unknown): T;
 }
 
-interface AuthenticatedJsonRequest<T> {
+interface AuthenticatedJsonRequest<T, N = never> {
   url: string;
   token: string;
   schema: ResponseSchema<T>;
@@ -12,7 +12,7 @@ interface AuthenticatedJsonRequest<T> {
   headers?: Record<string, string>;
   body?: string;
   /** Resolves a 404 to this value instead of failing, for a resource that may legitimately not exist. */
-  notFound?: () => T;
+  notFound?: () => N;
 }
 
 interface AuthenticatedRequest {
@@ -40,7 +40,7 @@ export function buildGatewayRequestUrl(
   return url.toString();
 }
 
-export async function fetchAuthenticatedJson<T>({
+export async function fetchAuthenticatedJson<T, N = never>({
   url,
   token,
   schema,
@@ -50,8 +50,8 @@ export async function fetchAuthenticatedJson<T>({
   headers,
   body,
   notFound,
-}: AuthenticatedJsonRequest<T>): Promise<T> {
-  return fetchAuthenticatedResponse(
+}: AuthenticatedJsonRequest<T, N>): Promise<T | N> {
+  return fetchAuthenticatedResponse<T | N>(
     { url, token, errorMessage, timeoutMs, method, headers, body },
     async (response) => schema.parse(await response.json()),
     notFound,

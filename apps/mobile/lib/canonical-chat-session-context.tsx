@@ -16,6 +16,7 @@ import { createCanonicalChatCacheSync } from "@/lib/canonical-chat-cache-sync";
 import { createCanonicalChatEventSource, type CanonicalChatInvalidation } from "@/lib/canonical-chat-events";
 import { mobileQueryKeys } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { botStatusKnowledge } from "@/lib/queries/use-bot-chat";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 
 interface CanonicalChatSessionContextValue {
@@ -107,11 +108,12 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       : null;
     const unsubscribe = source.subscribe(event => {
       sync.handle(event);
-      // A cached null means the open chat is known not to be a bot's; its
-      // events change no bot state worth another request.
-      if (botKey && (event.type === "chat.full_refresh" || event.chatId === activeChatId)
-        && queryClient.getQueryData(botKey) !== null) {
-        void queryClient.invalidateQueries({ queryKey: botKey });
+      // A chat known to be ordinary, or on a computer without bot status, has
+      // no bot state its events could change. One whose status is held, or
+      // has not been read yet, is read again.
+      if (botKey && (event.type === "chat.full_refresh" || event.chatId === activeChatId)) {
+        const knowledge = botStatusKnowledge(queryClient.getQueryState(botKey));
+        if (knowledge === "bot" || knowledge === "unknown") void queryClient.invalidateQueries({ queryKey: botKey });
       }
     });
     return () => {
