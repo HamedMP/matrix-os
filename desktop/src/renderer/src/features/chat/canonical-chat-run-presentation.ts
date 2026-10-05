@@ -322,7 +322,7 @@ export function runPresentation(
         label: stopped ? "Agent work stopped" : "Agent work failed",
         ...(!stopped && runError ? { failureCode: runError.error.code } : {}),
         markdown: stopped ? "Run was cancelled."
-          : canonicalChatSafeFailureReason(runError?.error.code)
+          : canonicalChatSafeFailureReason(runError?.error.code, runError?.error.safeMessage)
             ?? canonicalChatSafeFailureReason("run_failed")!,
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
         ...(!stopped && allowRetry && runError?.error.retryable && runError.error.recoveryActions?.includes("retry")
@@ -336,4 +336,3 @@ export function runPresentation(
     ...(terminalNotice ? { failure: terminalNotice } : {}),
   };
 }
-

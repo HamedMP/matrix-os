@@ -10,6 +10,7 @@ import type { CodingAgentProviderAdapter } from "../coding-agents/provider-adapt
 import {
   AgentModeSchema,
   CanonicalChatSafeErrorSchema,
+  canonicalAgentFailure,
   CanonicalChatToolOutputTextSchema,
   type CanonicalChatAgentActivityKind,
   type AgentThreadEvent,
@@ -257,12 +258,14 @@ function normalizeEvent(
     return [...settled, CanonicalProviderRunEventSchema.parse({
       type: "run.completed",
       outcome: "failed",
-      error: CanonicalChatSafeErrorSchema.parse({
+      error: CanonicalChatSafeErrorSchema.parse(
+        canonicalAgentFailure(event.error.code.startsWith("agent_") ? event.error.code.slice(6) : undefined) ?? {
         code: "run_failed",
         safeMessage: "The coding Provider Run failed.",
         retryable: true,
         recoveryActions: ["retry"],
-      }),
+        },
+      ),
     })];
   }
   if (event.type === "thread.completed") {

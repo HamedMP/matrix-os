@@ -88,7 +88,35 @@ const CANONICAL_CHAT_FAILURE_COPY: Record<CanonicalChatSafeError["code"], string
   service_unavailable: "Chat service is temporarily unavailable. Try again.",
 };
 
-export function canonicalChatSafeFailureReason(code: unknown): string | undefined {
+const AGENT_FAILURE_COPY = {
+  authentication_required: { code: "provider_unavailable", safeMessage: "The agent connection is signed out or its login is no longer valid. Open Agents & providers and sign in again on the selected computer." },
+  usage_limit: { code: "run_failed", safeMessage: "The selected connection has reached its usage limit. Wait for your allowance to reset or choose another connection." },
+  credit_required: { code: "provider_unavailable", safeMessage: "The selected connection has no usable credit. Check its billing or choose another connection." },
+  billing_required: { code: "provider_unavailable", safeMessage: "The selected connection needs billing attention. Check its credit or payment settings, or choose another connection." },
+} as const;
+
+/** Reviewed details use existing codes, so strict older clients can still load the Chat. */
+export function canonicalAgentFailure(reason: unknown): CanonicalChatSafeError | undefined {
+  if (typeof reason !== "string" || !Object.hasOwn(AGENT_FAILURE_COPY, reason)) return undefined;
+  return { ...AGENT_FAILURE_COPY[reason as keyof typeof AGENT_FAILURE_COPY], retryable: false,
+    recoveryActions: reason === "authentication_required" ? ["open_setup_terminal", "select_provider"] : ["select_provider"] };
+}
+
+export function canonicalChatSafeFailureReason(code: unknown, reviewedDetail?: unknown): string | undefined {
+  for (const detail of Object.values(AGENT_FAILURE_COPY)) {
+    if (code === detail.code && reviewedDetail === detail.safeMessage) return detail.safeMessage;
+  }
+  // Claude publishes a separately validated quota reset. Accept only this
+  // closed copy template, never an arbitrary upstream safeMessage.
+  if (code === "run_failed" && typeof reviewedDetail === "string") {
+    if (reviewedDetail === "Your usage limit has been reached. Try again after your allowance resets.") return reviewedDetail;
+    const match = /^Your usage limit has been reached\. Try again after (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) UTC\.$/.exec(reviewedDetail);
+    if (match) {
+      const timestamp = `${match[1]}T${match[2]}:00.000Z`;
+      const parsed = Date.parse(timestamp);
+      if (Number.isFinite(parsed) && new Date(parsed).toISOString() === timestamp) return reviewedDetail;
+    }
+  }
   return typeof code === "string" && Object.hasOwn(CANONICAL_CHAT_FAILURE_COPY, code)
     ? CANONICAL_CHAT_FAILURE_COPY[code as CanonicalChatSafeError["code"]]
     : undefined;
@@ -111,7 +139,8 @@ export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalCha
       ...(run.status === "failed" && runError?.type === "run.error" ? { code: runError.error.code } : {}),
       beforeMessageId: inputs[index + 1]?.turn.inputMessageId,
       text: run.status === "failed"
-        ? canonicalChatSafeFailureReason(runError?.type === "run.error" ? runError.error.code : undefined)
+        ? canonicalChatSafeFailureReason(runError?.type === "run.error" ? runError.error.code : undefined,
+          runError?.type === "run.error" ? runError.error.safeMessage : undefined)
           ?? canonicalChatSafeFailureReason("run_failed")!
         : "Agent work stopped.",
       timestamp: Date.parse(run.completedAt ?? run.updatedAt),

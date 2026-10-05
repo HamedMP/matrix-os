@@ -930,10 +930,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "authorization_failed",
-        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
+        code: "provider_unavailable",
+        safeMessage: "The agent connection is signed out or its login is no longer valid. Open Agents & providers and sign in again on the selected computer.",
         retryable: false,
-        recoveryActions: ["open_setup_terminal"],
+        recoveryActions: ["open_setup_terminal", "select_provider"],
       },
     }]);
     expect(JSON.stringify(events)).not.toContain("sk-ant-secret-value");
@@ -1021,10 +1021,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "authorization_failed",
-        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
+        code: "provider_unavailable",
+        safeMessage: "The agent connection is signed out or its login is no longer valid. Open Agents & providers and sign in again on the selected computer.",
         retryable: false,
-        recoveryActions: ["open_setup_terminal"],
+        recoveryActions: ["open_setup_terminal", "select_provider"],
       },
     }]);
     expect(JSON.stringify(events)).not.toMatch(/Authentication required|secret|xxxx/);
