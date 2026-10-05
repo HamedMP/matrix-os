@@ -88,7 +88,7 @@ export const CreateVoiceSessionRequestSchema = z.object({
   turnMode: VoiceTurnModeSchema,
   memoryMode: z.enum(["ordinary", "session_only"]),
   requestedTransport: z.enum(["relayed_websocket", "direct_webrtc"]).optional(),
-  selection: CanonicalChatModelSelectionSchema,
+  selection: CanonicalChatModelSelectionSchema.optional(),
   interactionMode: boundedId(80),
   permissionMode: boundedId(80),
   locale: z.string().min(2).max(35).optional(),

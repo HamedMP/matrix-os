@@ -88,7 +88,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
             onChange={(event) => {
               const next = catalog.instances.find(item => item.id === event.target.value);
               const model = next?.defaultSelection?.model ?? next?.models.find(item => item.availability === "available")?.id;
-              if (!next || !model || !selection) return;
+              if (!next || !model) return;
               run("selection", controller.setSelection({ instanceId: next.id, model }));
             }}>
             {instance === null ? <option value="" disabled>Choose provider</option> : null}
@@ -102,7 +102,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
           <select value={selection?.model ?? ""} disabled={busy === "selection" || !instance}
             onChange={(event) => {
               const model = event.target.value;
-              if (!instance || !model || !selection) return;
+              if (!instance || !model) return;
               run("selection", controller.setSelection({ instanceId: instance.id, model }));
             }}>
             {savedModelUnavailable ? <option value={selection!.model} disabled>Saved model unavailable</option> : null}

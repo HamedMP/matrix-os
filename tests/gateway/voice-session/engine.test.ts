@@ -65,6 +65,13 @@ describe("VoiceSessionEngine lifecycle", () => {
     resetFrameSeq();
     rig = makeRig();
   });
+  it("requires a task selection for managed speech but allows native conversation without one", () => {
+    const request = { ...makeCreateRequest(), selection: undefined };
+    expect(() => rig.engine.createSession({ principal: PRINCIPAL, chatId: CHAT_ID, request })).toThrowError(expect.objectContaining({ code: "provider_unavailable" }));
+    Object.assign(rig.adapter.capabilities, { conversationMode: "native_live" });
+    expect(rig.engine.createSession({ principal: PRINCIPAL, chatId: CHAT_ID, request }).outcome).toBe("created");
+    expect(rig.admission.calls).toHaveLength(0);
+  });
   it("allows only one active native voice session per owner across Chats", () => {
     Object.assign(rig.adapter.capabilities, { conversationMode: "native_live" });
     rig.engine.createSession({ principal: PRINCIPAL, chatId: CHAT_ID, request: makeCreateRequest() });

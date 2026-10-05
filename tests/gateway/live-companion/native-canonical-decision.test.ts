@@ -25,11 +25,16 @@ describe('native companion canonical route',()=>{
   expect(decision?.capability).toMatchObject({status:'available',supportsInterruption:true,resume:'rebuild_only',turnModes:['hands_free']});
   expect(decision?.executionPolicy).toMatchObject({tools:[],delegation:false});
  });
- it('fails closed for absent, unavailable, and mode-incompatible canonical routes',()=>{
-  expect(nativeCompanionCanonicalDecision({selection:undefined,catalog})).toBeUndefined();
+ it('allows conversation without a task selection or subscription',()=>{
+  const decision=nativeCompanionCanonicalDecision({selection:undefined,catalog});
+  expect(decision?.capability.status).toBe('available');
+  expect(decision?.selection).toBeUndefined();
+  expect(decision?.executionPolicy).toMatchObject({tools:[],delegation:false});
+ });
+ it('does not use task account availability as native media authority',()=>{
   for(const change of [{availability:'unavailable',defaultSelection:undefined}, {models:[],defaultSelection:undefined}, {supports:{...catalog.instances[0]!.supports,permissionModes:['full_access']}}]) {
    const bad=CanonicalProviderCatalogSchema.parse({...catalog,instances:[{...catalog.instances[0],...change}]});
-   expect(nativeCompanionCanonicalDecision({selection,catalog:bad})?.capability.status).toBe('unavailable');
+   expect(nativeCompanionCanonicalDecision({selection,catalog:bad})?.capability.status).toBe('available');
   }
  });
 });

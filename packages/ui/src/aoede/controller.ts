@@ -431,7 +431,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   });
   const controller = {
     sendText,
-    canSendText: () => Boolean(api.createTurn && detail && !detail.record.activeRun && !unavailable && !disposed && !suspended && !newFlight),
+    canSendText: () => Boolean(api.createTurn && detail && (detail.record.chat.currentSelection ?? snapshot.binding?.selection) && !detail.record.activeRun && !unavailable && !disposed && !suspended && !newFlight),
     presentation: options.presentation ?? "halo",
     surface: () => options.surface,
     getSnapshot: () => snapshot,

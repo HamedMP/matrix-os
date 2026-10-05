@@ -11,6 +11,14 @@ function harness() {
   const sender = createAoedeTextSender({ context, catalog: async () => createCanonicalProviderCatalogFixture(), createTurn, fail, refresh });
   return { sender, createTurn, fail, refresh, switchOwner: () => { generation++; } };
 }
+it('preserves native media and declines typed task admission when no task route is selected', async () => {
+  const prepare = vi.fn(); const createTurn = vi.fn();
+  const send = createAoedeTextSender({ context: () => ({ generation: 1, chatId: fixture.chat.id,
+    revision: 0, selection: undefined }), prepare, createTurn,
+    catalog: async () => createCanonicalProviderCatalogFixture(), fail: vi.fn(), refresh: vi.fn() });
+  expect(await send('Build an app')).toBe(false);
+  expect(prepare).not.toHaveBeenCalled(); expect(createTurn).not.toHaveBeenCalled();
+});
 it('submits supervised canonical turns and does not replay an accepted request id', async () => {
   const h = harness(); expect(await h.sender('Find a recipe')).toBe(true);
   const first = h.createTurn.mock.calls[0]!;
