@@ -23,14 +23,13 @@ export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'reset': return { ...initialState, generation: state.generation + 1 };
     case 'scenario': {
-      const common = { ...state, generation: state.generation + 1, scenario: action.scenario,
-        active: true, muted: false, build: 0, terminal: 'idle' as const };
-      if (action.scenario === 'build') return { ...common, app: 'Chat', build: 1,
-        user: 'Build me a calm habit tracker. Use the ideas from our earlier chat.',
-        aoede: 'I’ll build it in Chat, using your earlier notes. We can keep talking while I work.' };
+      const common = { ...state, scenario: action.scenario, active: true, muted: false };
       if (action.scenario === 'context') return { ...common, app: 'Notes', contextOpen: true,
         user: 'What did we decide about my morning routine last time?',
         aoede: 'A short walk, then ten minutes of reading. I found the chat where you said you wanted mornings to feel less rushed.' };
+      if (action.scenario === 'build') return { ...common, generation: state.generation + 1, app: 'Chat', build: 1,
+        user: 'Build me a calm habit tracker. Use the ideas from our earlier chat.',
+        aoede: 'I’ll build it in Chat, using your earlier notes. We can keep talking while I work.' };
       return { ...common, app: 'Terminal', terminal: 'approval',
         user: 'Can you run the tests for the habit tracker?',
         aoede: 'I’ve opened Terminal with the command ready. You can check it before I run it.' };
