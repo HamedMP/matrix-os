@@ -15,6 +15,33 @@ function rig(overrides: Partial<LiveCompanionPort> = {}) {
 }
 
 describe("native Gemini lifecycle boundaries", () => {
+  it("resumes output immediately after explicit capture restart without replaying queued pre-pause media", async () => {
+    const s = rig(); const session = await s.start();
+    session.setCapture({ turnId: "vturn_one", mode: "hands_free" });
+    s.provider.emit("output_transcript", { text: "Old queued caption" });
+    s.provider.emit("audio", { data: "AAA=" });
+    session.setCapture(null);
+    session.setCapture({ turnId: "vturn_two", mode: "hands_free" });
+    s.provider.emit("output_transcript", { text: "Resumed caption" });
+    s.provider.emit("audio", { data: "AAA=" });
+    await vi.waitFor(() => expect(s.frames.filter(e => e.frame?.type === "response.audio")).toHaveLength(1));
+    expect(s.frames.some(e => e.frame?.text === "Old queued caption")).toBe(false);
+    expect(s.frames.some(e => e.frame?.text === "Resumed caption")).toBe(true);
+    await session.close();
+  });
+  it("keeps a late final transcription in the same utterance after provider turn completion", async () => {
+    const s = rig({ delegate: vi.fn(async () => ({ outcome: "sent", revision: 1, state: "queued", chatId: "chat_task", runId: "run_task" })) });
+    const session = await s.start(); session.setCapture({ turnId: "vturn_one", mode: "hands_free" });
+    s.provider.emit("input_transcript", { text: "Build a tracker" });
+    s.provider.emit("turn_complete");
+    s.provider.emit("input_transcript", { text: " actually a calendar", finished: true });
+    s.provider.emit("tool_call", { id: "call_final", name: "delegate_task", args: { kind: "build_app", prompt: "ignored" } });
+    await vi.waitFor(() => expect(s.port.delegate).toHaveBeenCalledOnce());
+    expect(s.port.journal).toHaveBeenCalledWith(expect.objectContaining({ text: "Build a tracker actually a calendar" }));
+    expect(s.port.journal).toHaveBeenCalledTimes(1);
+    await session.close();
+  });
+
   it("ignores uncaptured transcripts, fences queued output on pause, and drains live task subscriptions on close", async () => {
     const dispose = vi.fn();
     const s = rig({ resumeTasks: async () => [{ chatId: "chat_task", runId: "run_task", state: "running", label: "Task" }], watchTask: () => dispose });
@@ -91,7 +118,7 @@ describe("native Gemini lifecycle boundaries", () => {
   it("fails safely on canonical journal errors and provider text overflow", async () => {
     const failed = rig({ journal: async () => { throw new Error("private database connection detail"); } });
     const session = await failed.start(); session.setCapture({ turnId: "vturn_one", mode: "hands_free" });
-    failed.provider.emit("input_transcript", { text: "Hello" }); failed.provider.emit("turn_complete");
+    failed.provider.emit("input_transcript", { text: "Hello", finished: true }); failed.provider.emit("turn_complete");
     await vi.waitFor(() => expect(failed.frames).toContainEqual({ type: "error", code: "chat_unavailable", retryable: true, fatal: true }));
     expect(JSON.stringify(failed.frames)).not.toContain("database connection detail");
     // The engine's close path sees the journal failure; it must not be mistaken for a successful write.

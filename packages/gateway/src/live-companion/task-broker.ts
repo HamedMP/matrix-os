@@ -32,15 +32,30 @@ export function createCanonicalLivePort(options: {
     if (!source || source.chat.collaboration) throw new ChatNotFoundError(chatId);
     // Select bounded reference-bearing messages, not the latest conversation
     // page: a task may run across many subsequent casual voice turns.
-    const linked = await repository.kysely.selectFrom("chat_messages")
-      .innerJoin("chats", "chats.id", "chat_messages.chat_id")
-      .select(["chat_messages.parts", "chat_messages.seq"])
-      .where("chats.id", "=", chatId).where("chats.owner_type", "=", "personal")
-      .where("chats.owner_id", "=", principal.userId).where("chats.collaboration", "is", null)
-      .where("chat_messages.state", "=", "committed")
-      .where(sql<boolean>`EXISTS (SELECT 1 FROM jsonb_array_elements(chat_messages.parts) AS part WHERE part->>'type' = 'resource_reference' AND part->'resource'->>'kind' = 'chat' AND part->'resource'->>'id' LIKE 'chat_live_task_%')`)
-      .orderBy("chat_messages.seq", "desc").limit(3).execute();
-    const ids = [...new Set(linked.flatMap(row => CanonicalChatMessageSchema.shape.parts.parse(parseJson(row.parts)).flatMap(p => p.type === "resource_reference" && p.resource.kind === "chat" && p.resource.id.startsWith("chat_live_task_") ? [p.resource.id] : [])))].slice(0, 3);
+    const linked = await sql<{ id: string }>`
+      WITH linked AS (
+        SELECT child.id, MAX(message.seq) AS seq
+        FROM chat_messages AS message
+        JOIN chats AS root ON root.id = message.chat_id
+        CROSS JOIN LATERAL jsonb_array_elements(message.parts) AS part
+        JOIN chats AS child ON child.id = part->'resource'->>'id'
+        WHERE root.id = ${chatId} AND root.owner_type = 'personal' AND root.owner_id = ${principal.userId}
+          AND root.collaboration IS NULL AND message.state = 'committed'
+          AND part->>'type' = 'resource_reference' AND part->'resource'->>'kind' = 'chat'
+          AND child.id LIKE 'chat_live_task_%' AND child.owner_type = root.owner_type
+          AND child.owner_id = root.owner_id AND child.collaboration IS NULL
+          AND child.project_id IS NOT DISTINCT FROM root.project_id
+        GROUP BY child.id
+      )
+      SELECT linked.id FROM linked
+      LEFT JOIN LATERAL (
+        SELECT status FROM chat_runs WHERE chat_id = linked.id ORDER BY created_at DESC, id DESC LIMIT 1
+      ) AS latest_run ON TRUE
+      ORDER BY CASE WHEN latest_run.status NOT IN ('completed', 'failed', 'aborted') THEN 0 ELSE 1 END,
+        linked.seq DESC, linked.id ASC
+      LIMIT 3
+    `.execute(repository.kysely);
+    const ids = linked.rows.map(row => row.id);
     const tasks = [];
     for (const id of ids) {
       const record = await repository.getDetailPage(owner, id, { limit: 1 });

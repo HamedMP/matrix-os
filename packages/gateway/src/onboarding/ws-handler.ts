@@ -196,11 +196,11 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         toolCallThisTurn = true;
         const content = mapToolArgsToContent(e.args);
         if (content) send({ type: "contextual_content", content });
-        client.sendToolResponse(e.id, { success: true });
+        client.sendToolResponse(e.id, { success: true }, e.name);
         return;
       }
       if (e.name === "finish_onboarding") {
-        client.sendToolResponse(e.id, { success: true });
+        client.sendToolResponse(e.id, { success: true }, e.name);
         void finishOnboarding().catch((err: unknown) => {
           console.error("[onboarding] finishOnboarding failed:", err instanceof Error ? err.message : String(err));
           reportFailure(sm.current, "finish_failed");
