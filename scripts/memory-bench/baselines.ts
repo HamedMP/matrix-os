@@ -4,9 +4,14 @@ import { LIMITS } from "../../packages/kernel/src/memory-evaluation/contracts.js
 import type { MemoryAdapter, Source, Retrieval, Admission } from "../../packages/kernel/src/memory-evaluation/contracts.js";
 
 export type BaselineName = "none" | "raw-lexical" | "matrix-local";
-export function createBaseline(name: BaselineName): MemoryAdapter {
+export function createBaseline(name: BaselineName, options: { collectionLimit?: number } = {}): MemoryAdapter {
   const sources = new Map<string, Pick<Source, "id" | "scope" | "observedAt"> & { spans: Retrieval["hits"] }>();
   const revoked = new Set<string>();
+  const collectionLimit = options.collectionLimit ?? LIMITS.sources;
+  if (!Number.isInteger(collectionLimit) || collectionLimit < 1 || collectionLimit > LIMITS.sources) throw new Error("Invalid collection limit");
+  let closed = false;
+  const assertOpen = () => { if (closed) throw new Error("Benchmark adapter closed"); };
+  const capacityFailure = () => { closed = true; sources.clear(); revoked.clear(); throw new Error("Benchmark collection limit exceeded"); };
   const tokens = (text: string): string[] => text.toLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? [];
   return {
     metadata: { name, version: name === "matrix-local" ? "2" : "1", configuration: {
@@ -15,7 +20,8 @@ export function createBaseline(name: BaselineName): MemoryAdapter {
       tokenizer: "ceil(context UTF-16 length / 4)", model: "none",
     } },
     async ingest(source) {
-      if (sources.size >= LIMITS.sources && !sources.has(source.id)) throw new Error("Benchmark corpus cap exceeded");
+      assertOpen();
+      if (sources.size >= collectionLimit && !sources.has(source.id)) capacityFailure();
       let placements: Admission["placements"] = [];
       let spans: Retrieval["hits"] = [];
       if (name === "raw-lexical") placements = ["source"];
@@ -32,6 +38,7 @@ export function createBaseline(name: BaselineName): MemoryAdapter {
       return { action: placements.length ? "retain" : "skip", placements: [...new Set(placements)], telemetry: { costUsd: 0, calls: [] } };
     },
     async retrieve(query) {
+      assertOpen();
       if (!query.scopes.length || name === "none") return { hits: [], status: "unknown", telemetry: { costUsd: 0 } };
       const words = [...new Set(tokens(query.text))];
       const ranked = [...sources.values()].filter((s) => query.scopes.includes(s.scope) && !revoked.has(s.scope) && Date.parse(s.observedAt) <= Date.parse(query.knownAt ?? query.at))
@@ -48,12 +55,13 @@ export function createBaseline(name: BaselineName): MemoryAdapter {
       }
       return { hits, status: hits.length ? "evidence" : "unknown", telemetry: { costUsd: 0 } };
     },
-    async forget(sourceId) { sources.delete(sourceId); return { telemetry: { costUsd: 0 } }; },
+    async forget(sourceId) { assertOpen(); sources.delete(sourceId); return { telemetry: { costUsd: 0 } }; },
     async revoke(scope) {
-      if (revoked.size >= 50 && !revoked.has(scope)) throw new Error("Benchmark scope cap exceeded");
+      assertOpen();
+      if (revoked.size >= Math.min(50, collectionLimit) && !revoked.has(scope)) capacityFailure();
       revoked.add(scope);
       return { telemetry: { costUsd: 0 } };
     },
-    async close() { sources.clear(); revoked.clear(); },
+    async close() { closed = true; sources.clear(); revoked.clear(); },
   };
 }

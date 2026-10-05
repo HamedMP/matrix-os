@@ -2,6 +2,10 @@ import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { gzip, gunzip } from "node:zlib";
+import { promisify } from "node:util";
+const gzipAsync = promisify(gzip);
+const gunzipAsync = promisify(gunzip);
 import { createSuite } from "../../packages/kernel/src/memory-evaluation/fixtures.js";
 import { suiteSchema, LIMITS } from "../../packages/kernel/src/memory-evaluation/contracts.js";
 import type { AdapterFactory, Suite } from "../../packages/kernel/src/memory-evaluation/contracts.js";
@@ -10,9 +14,10 @@ import { runBenchmark } from "../../packages/kernel/src/memory-evaluation/runner
 import { createBaseline } from "./baselines.js";
 import type { BaselineName } from "./baselines.js";
 import { pairedRecall } from "../../packages/kernel/src/memory-evaluation/statistics.js";
-import { renderReport } from "./report.js";
+import { renderReport, incompleteReportPage } from "./report.js";
+import type { RunFailure } from "./report.js";
 
-export function buildArtifacts(reports: BenchmarkReport[], suite: Suite, maxBytes: number = LIMITS.artifactBytes) {
+export function buildArtifacts(reports: BenchmarkReport[], suite: Suite, maxBytes: number = LIMITS.artifactBytes, failure?: RunFailure) {
   const artifacts: Record<string, string> = {};
   let bytes = 0;
   const add = (name: string, content: string) => {
@@ -23,7 +28,8 @@ export function buildArtifacts(reports: BenchmarkReport[], suite: Suite, maxByte
   add("results.json", JSON.stringify(reports, null, 2));
   add("suite.json", JSON.stringify(suite, null, 2));
   add("comparisons.json", JSON.stringify(reports.slice(1).map(r => pairedRecall(reports[0], r, suite.seed)), null, 2));
-  add("report.html", renderReport(reports));
+  add("report.html", renderReport(reports, failure));
+  if (failure) add("run-status.json", JSON.stringify(failure, null, 2));
   return artifacts;
 }
 
@@ -52,7 +58,7 @@ export function parseArgs(args: string[]) {
   if (options.noBaselines && !options.adapter) throw new Error("--no-baselines requires a custom adapter");
   return options;
 }
-export async function main(args = process.argv.slice(2)) {
+export async function main(args = process.argv.slice(2), limits: { maxDataBytes?: number; maxArtifactBytes?: number } = {}) {
   const opts = parseArgs(args);
   if (opts.help) {
     process.stdout.write("Matrix memory benchmark\n\nbun run bench:memory [--distractors 10000] [--seed 42] [--repeat 3]\n  --baseline none,raw-lexical,matrix-local\n  --suite reviewed-suite.json\n  --adapter ./trusted-adapter.ts --trust-adapter\n  --out output/memory-bench --timeout-ms 30000 --min-recall 0.9\n\nOutputs JSON results, dataset manifest and an interactive HTML evidence report.\nExit 2: hard violations, operation errors or configured recall gate failed.\n");
@@ -62,7 +68,29 @@ export async function main(args = process.argv.slice(2)) {
   if (opts.suite) {
     const info = await lstat(resolve(opts.suite));
     if (!info.isFile() || info.size > 128 * 1024 * 1024) throw new Error("Suite must be a regular JSON file under 128 MiB");
-    suite = suiteSchema.parse(JSON.parse(await readFile(resolve(opts.suite), "utf8")));
+    const bytes = await readFile(resolve(opts.suite));
+    const content = opts.suite.toLowerCase().endsWith(".gz")
+      ? await gunzipAsync(bytes, { maxOutputLength: 128 * 1024 * 1024 }) : bytes;
+    suite = suiteSchema.parse(JSON.parse(content.toString("utf8")));
+  }
+  // Leave room for pretty JSON, HTML escaping and the separately retained dataset.
+  const maxDataBytes = limits.maxDataBytes ?? LIMITS.artifactBytes / 16;
+  const maxArtifactBytes = limits.maxArtifactBytes ?? LIMITS.artifactBytes;
+  if (!Number.isInteger(maxDataBytes) || maxDataBytes < 1024 * 1024 || maxDataBytes > LIMITS.artifactBytes / 16
+    || !Number.isInteger(maxArtifactBytes) || maxArtifactBytes < 4 * maxDataBytes + 65536 || maxArtifactBytes > LIMITS.artifactBytes) throw new Error("Invalid artifact limits");
+  // Reserve a lossless dataset before running any adapter. Compression allows
+  // a large suite to survive when HTML/pretty JSON duplication hits the cap.
+  let compressedSuite: Buffer;
+  try {
+    compressedSuite = await gzipAsync(JSON.stringify(suite), { level: 1, maxOutputLength: maxArtifactBytes });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error("Dataset exceeds reserved artifact space; split the suite");
+    }
+    throw error;
+  }
+  if (compressedSuite.length + maxDataBytes + 65536 > maxArtifactBytes) {
+    throw new Error("Dataset exceeds reserved artifact space; split the suite");
   }
   const factories: Array<{ factory: AdapterFactory; baseline?: BaselineName }> = opts.noBaselines ? [] : opts.baseline.split(",").map((name) => ({ factory: () => createBaseline(name as BaselineName), baseline: name as BaselineName }));
   if (opts.adapter) {
@@ -75,20 +103,42 @@ export async function main(args = process.argv.slice(2)) {
   const reports: BenchmarkReport[] = [];
   const evaluated: BenchmarkReport[] = [];
   let reportBytes = 0;
-  // Leave room for pretty JSON, HTML escaping and the separately retained dataset.
-  const maxDataBytes = LIMITS.artifactBytes / 16;
-  for (const { factory, baseline } of factories) {
+  const plannedRuns = factories.length * opts.repeat;
+  let failure: RunFailure | undefined;
+  runs: for (const { factory, baseline } of factories) {
     for (let i = 0; i < opts.repeat; i++) {
       const remaining = maxDataBytes - reportBytes;
-      if (remaining < 1024 * 1024) throw new Error("Aggregate benchmark report byte limit exceeded");
+      const minimum = Math.max(1024 * 1024, 256 * 1024 + suite.cases.length * 1024 + new Set(suite.cases.map(c => c.group)).size * 4096);
+      if (remaining < minimum) {
+        failure = { status: "incomplete", reason: "aggregate-report-limit", retainedRuns: reports.length, plannedRuns };
+        break runs;
+      }
       const report = await runBenchmark(suite, factory, { timeoutMs: opts.timeoutMs, maxReportBytes: Math.min(LIMITS.reportBytes, Math.floor(remaining)) });
-      reportBytes += Buffer.byteLength(JSON.stringify(report)) + 2;
-      if (reportBytes > maxDataBytes) throw new Error("Aggregate benchmark report byte limit exceeded");
+      const bytes = Buffer.byteLength(JSON.stringify(report)) + 2;
+      if (reportBytes + bytes > maxDataBytes) {
+        failure = { status: "incomplete", reason: "aggregate-report-limit", retainedRuns: reports.length, plannedRuns };
+        break runs;
+      }
+      reportBytes += bytes;
       reports.push(report);
       if (opts.adapter ? baseline === undefined : baseline !== "none") evaluated.push(report);
     }
   }
-  const artifacts = buildArtifacts(reports, suite);
+  let artifacts: Record<string, string | Uint8Array>;
+  try { artifacts = buildArtifacts(reports, suite, maxArtifactBytes, failure); }
+  catch (error) {
+    if (!(error instanceof Error) || error.message !== "Benchmark artifact byte limit exceeded") throw error;
+    failure = { status: "incomplete", reason: "artifact-limit", retainedRuns: reports.length, plannedRuns,
+      omittedArtifacts: ["comparisons.json", "report.html evidence explorer"] };
+    // Keep scored traces and the full replayable suite; omit only derived views.
+    artifacts = {
+      "results.json": JSON.stringify(reports),
+      "suite.json.gz": compressedSuite,
+      "run-status.json": JSON.stringify(failure, null, 2),
+      "report.html": incompleteReportPage,
+    };
+    if (Object.values(artifacts).reduce((sum, text) => sum + Buffer.byteLength(text), 0) > maxArtifactBytes) throw new Error("Retained benchmark results exceed reserved artifact space");
+  }
   // A unique retained artifact directory, never a temporary file or overwrite.
   const destination = join(resolve(opts.out), `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`);
   await mkdir(destination, { recursive: true });
@@ -96,7 +146,7 @@ export async function main(args = process.argv.slice(2)) {
   for (const r of reports) process.stdout.write(`${r.adapter.name}: recall=${r.summary.recall?.toFixed(3) ?? "unmeasured"}, admission precision=${r.summary.admissionPrecision?.toFixed(3) ?? "unmeasured"}, hard violations=${r.summary.hardFailures}, errors=${r.summary.operationErrors}\n`);
   process.stdout.write(`Report: ${join(destination, "report.html")}\n`);
   const gated = evaluated.length ? evaluated : reports;
-  return gated.every((r) => r.passed && (opts.minRecall === 0 || (r.summary.recall !== null && r.summary.recall >= opts.minRecall))) ? 0 : 2;
+  return !failure && gated.every((r) => r.passed && (opts.minRecall === 0 || (r.summary.recall !== null && r.summary.recall >= opts.minRecall))) ? 0 : 2;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().then((code) => { process.exitCode = code; }).catch((error: unknown) => {

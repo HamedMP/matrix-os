@@ -9,7 +9,7 @@ import type { AdmissionScore, Operation, QueryScore } from "./metrics.js";
 export interface QueryResult extends QueryScore {
   text: string; expectedIds: string[]; retrievedIds: string[];
   latencyMs: number; estimatedTokens: number; context: string; evidenceTruncated: boolean;
-  evidence: Array<{ sourceId: string; path: string; text: string; start: number; end: number }>;
+  evidence: Array<{ sourceId: string; path: string; text: string; start: number; end: number; truncated?: boolean }>;
 }
 export interface CaseResult {
   id: string; group: string; queries: QueryResult[]; admissions: AdmissionScore[]; operations: Operation[];
@@ -18,7 +18,7 @@ export interface BenchmarkReport {
   formatVersion: "1"; suite: { name: string; seed: number; split: string; sha256: string; cases: number };
   runtime: { node: string; bun: string | null; platform: string; arch: string };
   adapter: Metadata; createdAt: string; passed: boolean; cases: CaseResult[];
-  resourceLimits: { maxReportBytes: number; evidenceHitChars: number; evidenceQueryChars: number; stoppedEarly: boolean };
+  resourceLimits: { maxReportBytes: number; evidenceHitChars: number; evidenceQueryChars: number; stoppedEarly: boolean; collectionLimit: number };
   summary: ReturnType<typeof summarize>; groups: Record<string, ReturnType<typeof summarize>>;
 }
 async function bounded<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
@@ -31,7 +31,7 @@ async function bounded<T>(work: (signal: AbortSignal) => Promise<T>, timeoutMs: 
     ]);
   } finally { if (timer) clearTimeout(timer); }
 }
-export async function runBenchmark(input: Suite, factory: AdapterFactory, options: { timeoutMs?: number; maxReportBytes?: number } = {}): Promise<BenchmarkReport> {
+export async function runBenchmark(input: Suite, factory: AdapterFactory, options: { timeoutMs?: number; maxReportBytes?: number; collectionLimit?: number } = {}): Promise<BenchmarkReport> {
   const suite = suiteSchema.parse(input);
   const timeoutMs = options.timeoutMs ?? LIMITS.timeoutMs;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) throw new Error("Invalid operation timeout");
@@ -39,6 +39,11 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
   // Reserve bounded metadata, case headers, group summaries and final error receipts.
   const overhead = 256 * 1024 + suite.cases.length * 1024 + new Set(suite.cases.map(c => c.group)).size * 4096;
   if (!Number.isInteger(maxReportBytes) || maxReportBytes < Math.max(1024 * 1024, overhead) || maxReportBytes > LIMITS.reportBytes) throw new Error("Invalid report byte limit for this suite");
+  const collectionLimit = options.collectionLimit ?? LIMITS.sources;
+  if (!Number.isInteger(collectionLimit) || collectionLimit < 1 || collectionLimit > LIMITS.sources) throw new Error("Invalid collection limit");
+  const checkCapacity = (collection: Map<string, unknown> | Set<string>, key: string) => {
+    if (!collection.has(key) && collection.size >= collectionLimit) throw new Error("Benchmark collection limit exceeded");
+  };
   let traceBytes = 0;
   let stoppedEarly = false;
   const retain = (...records: unknown[]) => {
@@ -51,7 +56,7 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
   for (const c of suite.cases) {
     const result: CaseResult = { id: c.id, group: c.group, queries: [], admissions: [], operations: [] };
     cases.push(result);
-    const sources = new Map<string, Source>(); // Bounded by validated step count; disposed after this case.
+    const sources = new Map<string, Source>(); // Abort on capacity; finally drains the entire case without score-changing eviction.
     const deleted = new Set<string>();
     const revoked = new Set<string>();
     let adapter: MemoryAdapter | undefined;
@@ -78,6 +83,7 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
           if (step.type === "ingest") {
             const existing = sources.get(step.source.id);
             if (existing && JSON.stringify(existing) !== JSON.stringify(step.source)) throw new Error("Source revisions require distinct IDs");
+            checkCapacity(sources, step.source.id);
             sources.set(step.source.id, structuredClone(step.source));
             const admitted = admissionSchema.parse(await bounded((signal) => activeAdapter.ingest(structuredClone(step.source), signal), timeoutMs));
             const admission = { group: c.group, sourceId: step.source.id, path: step.source.path, expectedPlacements: step.expected.placements, placements: admitted.placements, expectedRetain: step.expected.action === "retain", retained: admitted.action === "retain",
@@ -121,8 +127,9 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
             const evidence = valid.flatMap(hit => {
               const text = hit.text.slice(0, Math.min(LIMITS.evidenceHitChars, previewRemaining));
               previewRemaining -= text.length;
-              if (text.length < hit.text.length) evidenceTruncated = true;
-              return text ? [{ ...hit, text, end: hit.start + text.length, path: sources.get(hit.sourceId)!.path }] : [];
+              const truncated = text.length < hit.text.length;
+              if (truncated) evidenceTruncated = true;
+              return text ? [{ ...hit, text, truncated, end: hit.start + text.length, path: sources.get(hit.sourceId)!.path }] : [];
             });
             const context = (evidenceTruncated ? "[Evidence preview truncated; metrics use the full response.]\n" : "") + contextText(evidence);
             const query: QueryResult = { ...score, group: c.group, violations, text: step.query.text, expectedIds: step.expected.relevant,
@@ -130,6 +137,7 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
             const operation = { kind: "query", latencyMs, costUsd: response.telemetry?.costUsd ?? null, telemetry: response.telemetry, calls: response.telemetry?.calls?.length };
             retain(query, operation); result.queries.push(query); result.operations.push(operation);
           } else {
+            checkCapacity(step.type === "forget" ? deleted : revoked, step.type === "forget" ? step.sourceId : step.scope);
             const response = step.type === "forget"
               ? await bounded((signal) => activeAdapter.forget(step.sourceId, signal), timeoutMs)
               : await bounded((signal) => activeAdapter.revoke(step.scope, signal), timeoutMs);
@@ -142,7 +150,7 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
           // Reports must not carry provider errors, credentials or private paths.
           stoppedEarly = error instanceof Error && error.message === "Benchmark report limit exceeded";
           result.operations.push({ kind: step.type, latencyMs: performance.now() - started, costUsd: null,
-            error: stoppedEarly ? "report-limit" : error instanceof Error && error.message === "Benchmark operation timed out" ? "timeout" : "operation-failed" });
+            error: stoppedEarly ? "report-limit" : error instanceof Error && error.message === "Benchmark collection limit exceeded" ? "collection-limit" : error instanceof Error && error.message === "Benchmark operation timed out" ? "timeout" : "operation-failed" });
           break; // An aborted adapter must not continue mutating the same namespace.
         }
       }
@@ -165,6 +173,6 @@ export async function runBenchmark(input: Suite, factory: AdapterFactory, option
   return { formatVersion: "1", runtime: { node: process.versions.node, bun: process.versions.bun ?? null, platform: process.platform, arch: process.arch }, adapter: metadata ?? { name: "uninitialized-adapter", version: "unknown", configuration: {} }, createdAt: new Date().toISOString(),
     suite: { name: suite.name, seed: suite.seed, split: suite.split, sha256: createHash("sha256").update(JSON.stringify(suite)).digest("hex"), cases: suite.cases.length },
     passed: summary.hardFailures === 0 && summary.operationErrors === 0, cases, summary, groups,
-    resourceLimits: { maxReportBytes, evidenceHitChars: LIMITS.evidenceHitChars, evidenceQueryChars: LIMITS.evidenceQueryChars, stoppedEarly },
+    resourceLimits: { maxReportBytes, evidenceHitChars: LIMITS.evidenceHitChars, evidenceQueryChars: LIMITS.evidenceQueryChars, stoppedEarly, collectionLimit },
   };
 }
