@@ -1,5 +1,9 @@
 import { z } from "zod/v4";
 import { openVikingPreview } from "./openviking-preview.js";
+import {
+  assertOpenVikingDeletion,
+  assertOpenVikingIngestion,
+} from "./openviking-outcome.js";
 import type { MemoryEngine, MemorySource } from "@matrix-os/contracts";
 import {
   createEngineHttp,
@@ -192,12 +196,14 @@ export function createMemoryEngines(
       revision: number,
       signal: AbortSignal,
     ) {
-      await request(
+      const deleted = await request(
         `/api/v1/fs?${new URLSearchParams({ uri: `${root(owner)}/${id}/r${revision}`, recursive: "true", wait: "true", timeout: "90" })}`,
         { method: "DELETE" },
         signal,
         true,
       );
+      if (deleted !== null)
+        assertOpenVikingDeletion(parse(vikingEnvelope, deleted).result);
     }
     engines.openviking = {
       id: "openviking",
@@ -224,7 +230,7 @@ export function createMemoryEngines(
           z.object({ temp_file_id: z.string().min(1).max(500) }),
           uploaded.result,
         );
-        parse(
+        const ingested = parse(
           vikingEnvelope,
           await request(
             "/api/v1/resources",
@@ -242,6 +248,10 @@ export function createMemoryEngines(
             }),
             signal,
           ),
+        );
+        assertOpenVikingIngestion(
+          ingested.result,
+          `${root(owner)}/${source.id}/r${source.revision}`,
         );
       },
       delete: remove,

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ownerNamespace } from "../../packages/gateway/src/memory-workspace/engines/http.js";
 import { createMemoryEngines } from "../../packages/gateway/src/memory-workspace/engines/index.js";
 const source = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -12,6 +13,17 @@ const source = {
   updatedAt: new Date().toISOString(),
   ingestion: { hindsight: "pending" as const, openviking: "pending" as const },
 };
+const target = (revision = 1) =>
+  `viking://resources/matrix/${ownerNamespace("alice")}/${source.id}/r${revision}`;
+const healthyQueue = () => ({
+  Semantic: { processed: 0, requeue_count: 0, error_count: 0, errors: [] },
+  Embedding: { processed: 0, requeue_count: 0, error_count: 0, errors: [] },
+});
+const completedImport = (revision = 1) => ({
+  status: "success",
+  root_uri: target(revision),
+  queue_status: healthyQueue(),
+});
 describe("memory engine HTTP adapters", () => {
   it("rejects non-loopback operator URLs and defaults to no engines", () => {
     expect(createMemoryEngines({})).toEqual({});
@@ -80,7 +92,7 @@ describe("memory engine HTTP adapters", () => {
         new Response(
           JSON.stringify({
             status: "ok",
-            result: { root_uri: "viking://resources/x" },
+            result: completedImport(),
           }),
         ),
       )
@@ -235,7 +247,12 @@ it("isolates remote writes and cleanup by revision while accepting legacy Hindsi
         JSON.stringify({ status: "ok", result: { temp_file_id: "file" } }),
       );
     return new Response(
-      JSON.stringify({ success: true, async: false, status: "ok", result: {} }),
+      JSON.stringify({
+        success: true,
+        async: false,
+        status: "ok",
+        result: body?.to ? completedImport(2) : {},
+      }),
     );
   });
   const engines = createMemoryEngines(
@@ -267,4 +284,115 @@ it("isolates remote writes and cleanup by revision while accepting legacy Hindsi
     .map((r) => new URL(r.url).searchParams.get("uri"));
   expect(paths[0]).toMatch(new RegExp(`/${source.id}/r2$`));
   expect(paths[1]).toMatch(new RegExp(`/${source.id}/r1$`));
+});
+
+describe("OpenViking waited operation outcomes", () => {
+  const signal = () => new AbortController().signal;
+  function engineFor(result: unknown, operation: "delete" | "upsert") {
+    const fetcher = vi.fn(async (url: URL) => {
+      if (operation === "upsert" && url.pathname === "/api/v1/fs")
+        return new Response("", { status: 404 });
+      if (url.pathname.endsWith("temp_upload"))
+        return new Response(
+          JSON.stringify({ status: "ok", result: { temp_file_id: "one" } }),
+        );
+      return new Response(JSON.stringify({ status: "ok", result }));
+    });
+    return createMemoryEngines(
+      { MEMORY_OPENVIKING_URL: "http://127.0.0.1:1933" },
+      fetcher,
+    ).openviking!;
+  }
+  it.each([
+    { semantic_status: "failed" },
+    { semantic_status: "queued" },
+    { semantic_status: "deferred" },
+    { semantic_root_uri: target() },
+    {
+      semantic_status: "complete",
+      queue_status: {
+        ...healthyQueue(),
+        Embedding: { error_count: 1, errors: [] },
+      },
+    },
+    {
+      semantic_status: "complete",
+      queue_status: {
+        ...healthyQueue(),
+        Semantic: {
+          error_count: 0,
+          errors: [{ message: "private cloud failure" }],
+        },
+      },
+    },
+    {
+      semantic_status: "complete",
+      queue_status: {
+        ...healthyQueue(),
+        Embedding: {
+          error_count: 0,
+          errors: [{ message: "embedding failed" }],
+        },
+      },
+    },
+  ])(
+    "rejects HTTP-success deletion with failed or incomplete refresh %#",
+    async (result) => {
+      await expect(
+        engineFor(result, "delete").delete("alice", source.id, 1, signal()),
+      ).rejects.toThrow("Memory engine unavailable");
+    },
+  );
+  it.each([
+    { uri: target(), estimated_deleted_count: 0 },
+    {
+      uri: target(),
+      semantic_status: "complete",
+      semantic_root_uri: target(),
+      queue_status: healthyQueue(),
+    },
+  ])(
+    "accepts legitimate no-op and complete zero-work deletion %#",
+    async (result) => {
+      await expect(
+        engineFor(result, "delete").delete("alice", source.id, 1, signal()),
+      ).resolves.toBeUndefined();
+    },
+  );
+  it.each([
+    { ...completedImport(), status: "cancelled" },
+    { ...completedImport(), status: "failed" },
+    { ...completedImport(), status: "running" },
+    { ...completedImport(), status: "error" },
+    { ...completedImport(), task_id: "still-enqueued" },
+    {
+      ...completedImport(),
+      queue_status: {
+        ...healthyQueue(),
+        Embedding: { error_count: 1, errors: [] },
+      },
+    },
+    {
+      ...completedImport(),
+      queue_status: {
+        ...healthyQueue(),
+        Semantic: { error_count: 0, errors: [{ message: "semantic failure" }] },
+      },
+    },
+    { ...completedImport(), queue_status: undefined },
+    { ...completedImport(), root_uri: "" },
+    { ...completedImport(), root_uri: target(2) },
+  ])(
+    "rejects HTTP-success import with cancelled, incomplete or failed work %#",
+    async (result) => {
+      await expect(
+        engineFor(result, "upsert").upsert("alice", source, signal()),
+      ).rejects.toThrow("Memory engine unavailable");
+    },
+  );
+  it("accepts completed import with healthy queues and absent optional semantic status", async () => {
+    await expect(
+      engineFor(completedImport(), "upsert").upsert("alice", source, signal()),
+    ).resolves.toBeUndefined();
+  });
 });
