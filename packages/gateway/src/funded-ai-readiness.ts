@@ -1,4 +1,4 @@
-import { FUNDED_AI_READINESS_TIMEOUTS, JEV_MODEL_ID, FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, JEV_MODEL_ID, FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, FundedAiRuntimeChatFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
 import type { FundedAiFundingSummaryReader } from "./funded-ai-funding-summary-client.js";
 import type { FundedAiRouteReadinessReader } from "./funded-ai-route-readiness-client.js";
 import { fundedAiFundingBarrier } from "./funded-ai-funding-state.js";
@@ -55,7 +55,9 @@ export function createFundedAiReadinessReader(options: {
         return undefined;
       });
       const raw = await Promise.race([summary, deadline]);
-      const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
+      const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, funding: raw.funding, policy: raw.policy });
+      const chatAvailability = raw.chatAvailability === undefined ? undefined
+        : FundedAiRuntimeChatFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw }).chatAvailability;
       const current = now().getTime();
       signal.throwIfAborted();
       const ledgerAsOf = Date.parse(funding.asOf);
@@ -66,7 +68,8 @@ export function createFundedAiReadinessReader(options: {
       const observationStaleAfter = new Date(Math.min(Date.parse(policy.staleAfter), ledgerAsOf + 5 * 60_000, checkedAt.getTime() + 30_000)).toISOString();
       const discovery = { ...unavailable, discoverableModelIds,
         readiness: { ...unavailable.readiness, staleAfter: observationStaleAfter } };
-      const barrier = fundedAiFundingBarrier(funding);
+      if (!chatAvailability) return discovery;
+      const barrier = fundedAiFundingBarrier(funding, chatAvailability);
       if (barrier) return { ...discovery, readiness: { ...discovery.readiness, ...barrier } };
       let rawReceipt: unknown;
       try { rawReceipt = await Promise.race([Promise.resolve(routes), deadline]); }

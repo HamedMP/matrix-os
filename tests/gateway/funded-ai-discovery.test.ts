@@ -11,11 +11,17 @@ function fixture() {
       monthlyBudgetMicrousd: 5_100_000, settledThisMonthMicrousd: 297_893,
       reservedMicrousd: 4_802_107, reservedThisMonthMicrousd: 4_802_107,
       promotionalBalanceMicrousd: 4_802_107, addonBalanceMicrousd: 0,
-      creditBalanceMicrousd: 4_802_107, remainingBalanceMicrousd: 0, remainingBudgetMicrousd: 0 },
+      creditBalanceMicrousd: 4_802_107, fundingShortfallMicrousd: 0, remainingBalanceMicrousd: 0, remainingBudgetMicrousd: 0 },
   };
   const receipt = { contractVersion: 1 as const, globalRevision: 4, runtimeRevision: 2,
     checkedAt: now.toISOString(), staleAfter: "2026-10-02T08:00:05.000Z", readyModelIds: [] as string[] };
-  const getFundingSummary = vi.fn(async () => state);
+  const getFundingSummary = vi.fn(async () => ({ ...state,
+    // This fixture uses only ordinary Chat sources, so its source projection
+    // follows the protected aggregate while individual tests vary holds/budget.
+    chatAvailability: { contractVersion: 1 as const, asOf: state.funding.asOf,
+      eligibleBalanceMicrousd: Math.max(0, state.funding.creditBalanceMicrousd - state.funding.fundingShortfallMicrousd),
+      availableBalanceMicrousd: state.funding.remainingBalanceMicrousd },
+  }));
   const getRouteReadiness = vi.fn(async () => receipt);
   const reader = createFundedAiReadinessReader({ summary: { getFundingSummary }, routes: { getRouteReadiness }, now: () => now });
   return { reader, state, receipt, getRouteReadiness };
@@ -78,13 +84,13 @@ describe("funded discovery is separate from executable availability", () => {
   it("does not describe settled budget exhaustion as reserved credit", async () => {
     const f = fixture(); Object.assign(f.state.funding, { settledThisMonthMicrousd: 5_100_000,
       reservedMicrousd: 0, reservedThisMonthMicrousd: 0, remainingBalanceMicrousd: 4_802_107 });
-    expect(await f.reader.read()).toMatchObject({ readiness: { safeReason: "policy", action: "contact_owner" },
+    expect(await f.reader.read()).toMatchObject({ readiness: { safeReason: "budget_exceeded", action: "contact_owner" },
       allowedModelIds: [], discoverableModelIds: ["claude-sonnet-5"] });
   });
   it("does not let a balance hold hide a simultaneously exhausted settled budget", async () => {
     const f = fixture(); Object.assign(f.state.funding, { settledThisMonthMicrousd: 5_100_000,
       reservedThisMonthMicrousd: 0 });
-    expect(await f.reader.read()).toMatchObject({ readiness: { safeReason: "policy", action: "contact_owner" },
+    expect(await f.reader.read()).toMatchObject({ readiness: { safeReason: "budget_exceeded", action: "contact_owner" },
       allowedModelIds: [], discoverableModelIds: ["claude-sonnet-5"] });
   });
   it("does not let a budget hold hide simultaneously exhausted credit", async () => {

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  FundedAiChatAvailabilitySchema,
+  FundedAiRuntimeChatFundingSummaryResponseSchema,
+  FundedAiRuntimeFundingSummaryRequestSchema,
   FundedAiAuthorizationRequestSchema,
   FundedAiAuthorizationResponseSchema,
   FundedAiFinalizationRequestSchema,
@@ -49,6 +52,24 @@ const funding = {
 } as const;
 
 describe("funded AI control-plane contracts", () => {
+  it("negotiates Chat availability independently without weakening legacy financial contracts", () => {
+    const chatAvailability = { contractVersion: 1, asOf: now, eligibleBalanceMicrousd: 400_000, availableBalanceMicrousd: 200_000 };
+    const value = { contractVersion: 1, funding, policy, chatAvailability };
+    expect(FundedAiRuntimeChatFundingSummaryResponseSchema.parse(value)).toEqual(value);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse(value).success).toBe(false);
+    expect(FundedAiRuntimeFundingSummaryRequestSchema.parse({})).toEqual({});
+    expect(FundedAiRuntimeFundingSummaryRequestSchema.parse({ includeChatAvailability: true })).toEqual({ includeChatAvailability: true });
+    for (const bad of [{ includeChatAvailability: false }, { includeChatAvailability: true, ownerId: "spoof" }]) {
+      expect(FundedAiRuntimeFundingSummaryRequestSchema.safeParse(bad).success).toBe(false);
+    }
+    for (const bad of [{ ...chatAvailability, availableBalanceMicrousd: 400_001 }, { ...chatAvailability, contractVersion: 2 }, { ...chatAvailability, eligibleBalanceMicrousd: -1 }, { ...chatAvailability, token: "secret" }]) {
+      expect(FundedAiChatAvailabilitySchema.safeParse(bad).success).toBe(false);
+    }
+    for (const bad of [{ ...value, funding: { ...funding, remainingBalanceMicrousd: 2 } }, { ...value, policy: { ...policy, monthlyBudgetMicrousd: 2 } }, { ...value, chatAvailability: { ...chatAvailability, asOf: staleAfter } }, { ...value, chatAvailability: { ...chatAvailability, eligibleBalanceMicrousd: 1_000_001 } }]) {
+      expect(FundedAiRuntimeChatFundingSummaryResponseSchema.safeParse(bad).success).toBe(false);
+    }
+  });
+
   it("represents a bounded dynamic global policy without credentials", () => {
     const value = {
       enabled: true,

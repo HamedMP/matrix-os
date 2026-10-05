@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
+import { FundedAiChatAvailabilitySchema } from "#funded-ai";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -52,7 +53,7 @@ export const ProviderSourceReadinessSchema = z.object({
   checkedAt: IsoTimestampSchema.nullable(),
   staleAfter: IsoTimestampSchema.nullable(),
   action: z.enum(["none", "connect", "enter_api_key", "open_terminal", "retry", "contact_owner"]),
-  safeReason: z.enum(["auth", "timeout", "rate_limited", "provider_unavailable", "policy", "credit_required", "credit_reserved", "unknown"]).nullable(),
+  safeReason: z.enum(["auth", "timeout", "rate_limited", "provider_unavailable", "policy", "credit_required", "credit_reserved", "budget_exceeded", "unknown"]).nullable(),
 }).strict().superRefine((readiness, ctx) => {
   if (readiness.state === "ready" && readiness.action !== "none") {
     ctx.addIssue({ code: "custom", path: ["action"], message: "Ready sources cannot require an action" });
@@ -147,7 +148,14 @@ export const ProviderUsageSchema = z.discriminatedUnion("kind", [
     asOf: IsoTimestampSchema,
     credit: ProviderManagedCreditSchema,
     budget: ProviderManagedBudgetSchema,
+    /** Opt-in ordinary Chat projection; legacy aggregate credit remains unchanged. */
+    chatAvailability: FundedAiChatAvailabilitySchema.optional(),
   }).strict().superRefine((usage, ctx) => {
+    if (usage.chatAvailability && (usage.chatAvailability.asOf !== usage.asOf
+      || usage.chatAvailability.eligibleBalanceMicrousd > usage.credit.creditBalanceMicrousd
+      || usage.chatAvailability.availableBalanceMicrousd > usage.credit.remainingBalanceMicrousd)) {
+      ctx.addIssue({ code: "custom", path: ["chatAvailability"], message: "Chat funding must match the protected ledger observation" });
+    }
     if (usage.limitMicrousd !== usage.budget.monthlyBudgetMicrousd
       || usage.usedMicrousd !== usage.budget.settledThisMonthMicrousd
       || usage.remainingMicrousd !== Math.min(

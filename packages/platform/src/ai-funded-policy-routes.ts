@@ -11,6 +11,8 @@ import {
   FundedAiSafeErrorSchema,
   FundedAiReleaseRequestSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
+  FundedAiRuntimeChatFundingSummaryResponseSchema,
+  FundedAiRuntimeFundingSummaryRequestSchema,
   FundedAiRouteReadinessReceiptSchema,
   FundedAiRouteReadinessRequestSchema,
   FUNDED_AI_READINESS_TIMEOUTS,
@@ -258,7 +260,7 @@ export function createAiFundedRuntimeRoutes(options: {
       return policyErrorResponse(c, error);
     }
     if (!machine) return c.json(safeError("unauthorized"), 401);
-    const body = EmptyBodySchema.safeParse(await readStrictJson(c));
+    const body = FundedAiRuntimeFundingSummaryRequestSchema.safeParse(await readStrictJson(c));
     if (!body.success) return c.json(safeError("invalid_request"), 400);
     try {
       const identity = {
@@ -269,18 +271,21 @@ export function createAiFundedRuntimeRoutes(options: {
       // Verify live policy before allocating promotion credit. The grant itself
       // is owner/campaign idempotent, so refreshes and multiple runtimes cannot
       // mint it more than once.
-      let summary = await options.repository.getRuntimeFundingSummary(identity);
+      let summary = await options.repository.getRuntimeFundingSummary(identity, body.data);
       if (options.promotionalGrant?.enabled
         && summary.policy.enabled
         && summary.policy.allowedModelIds.length > 0
         && options.promotionalGrant.expiresAt > now().toISOString()) {
         await grantConfiguredPromotion(options.repository, identity, options.promotionalGrant);
-        summary = await options.repository.getRuntimeFundingSummary(identity);
+        summary = await options.repository.getRuntimeFundingSummary(identity, body.data);
       }
-      return c.json(FundedAiRuntimeFundingSummaryResponseSchema.parse({
+      const schema = body.data.includeChatAvailability
+        ? FundedAiRuntimeChatFundingSummaryResponseSchema : FundedAiRuntimeFundingSummaryResponseSchema;
+      return c.json(schema.parse({
         contractVersion: 1,
         funding: { ...summary.funding, topUpEnabled: options.topUpEnabled === true },
         policy: summary.policy,
+        ...(body.data.includeChatAvailability ? { chatAvailability: summary.chatAvailability } : {}),
       }), 200);
     } catch (error) {
       return policyErrorResponse(c, error);

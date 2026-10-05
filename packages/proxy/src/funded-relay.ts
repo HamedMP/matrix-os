@@ -168,7 +168,9 @@ function controlPlaneError(c: Context, error: unknown): Response {
   if (error instanceof FundedControlPlaneError) {
     if (error.status === 401) return errorResponse(c, 401, "authentication_error", "Unauthorized");
     if (error.status === 402 || error.status === 403) {
-      return errorResponse(c, 403, "permission_error", "Matrix-funded AI is unavailable");
+      const response = errorResponse(c, 403, "permission_error", "Matrix-funded AI is unavailable");
+      if (error.fundingReason) response.headers.set("x-matrix-funded-error", error.fundingReason);
+      return response;
     }
     if (error.status === 429) {
       const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");

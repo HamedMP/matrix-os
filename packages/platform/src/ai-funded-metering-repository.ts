@@ -30,6 +30,7 @@ import {
   FundedAiStartResponseSchema,
   IsoTimestampSchema,
   JEV_MODEL_ID,
+  FundedAiChatAvailabilitySchema,
   type FundedAiFundingSummary,
   type FundedAiFinalizationResponse,
   type FundedAiPolicyCheckResponse,
@@ -44,6 +45,7 @@ import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { readCheckoutFundingSnapshot } from "./ai-funded-checkout-snapshot.js";
 import {
+  fundingSourceAvailability,
   debitAttributedPromotionalGrants,
   debitPromotionalGrants,
   reconcileExpiredPromotionalCredit,
@@ -112,6 +114,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
 
   async function getRuntimeFundingSummary(
     identityInput: z.input<typeof IdentitySchema>,
+    projection: { includeChatAvailability?: true } = {},
   ) {
     const identity = IdentitySchema.parse(identityInput);
     const checked = options.now();
@@ -119,6 +122,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const currentPeriod = utcMonthStart(checked);
     await options.db.ready;
     return options.db.transaction(async (trx) => {
+      // Match admission lock order before machine, balance, and grant row locks.
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
       const machine = await trx.executor.selectFrom("user_machines").select([
         "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirst();
@@ -151,8 +156,18 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const allowedModelIds = enabled
         ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
         : [];
+      const funding = fundingSummary(balance, monthlyBudgetMicrousd, checkedAt);
+      const sources = projection.includeChatAvailability
+        ? await fundingSourceAvailability(trx.executor, identity, balance, checkedAt) : undefined;
+      const chatAvailability = sources ? FundedAiChatAvailabilitySchema.parse({
+        contractVersion: 1, asOf: checkedAt,
+        eligibleBalanceMicrousd: Math.min(sources.ceilingMicrousd,
+          Math.max(0, funding.creditBalanceMicrousd - (funding.fundingShortfallMicrousd ?? 0))),
+        availableBalanceMicrousd: Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd),
+      }) : undefined;
       return {
-        funding: fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
+        funding,
+        ...(chatAvailability ? { chatAvailability } : {}),
         policy: {
           enabled: enabled && allowedModelIds.length > 0,
           globalRevision: global.revision,
