@@ -3,7 +3,6 @@ import { Folder, MessageSquare, Search, UsersIcon, X } from "@renderer/lib/hugei
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Dialog } from "../../design/primitives";
 import type { Project } from "../../stores/board";
-import { useTabs } from "../../stores/tabs";
 import { sharedItemContext, sharedItemLabel, useWorkSharedDiscovery } from "./use-work-shared-discovery";
 import { buildWorkRailSearchResults } from "./work-rail-model";
 
@@ -15,6 +14,7 @@ export function WorkRailSearchDialog({
   onClose,
   onSelect,
   onSelectProject,
+  onOpenShared,
 }: {
   open: boolean;
   records: readonly CanonicalChatRecord[];
@@ -23,6 +23,7 @@ export function WorkRailSearchDialog({
   onClose: () => void;
   onSelect: (record: CanonicalChatRecord, project?: Project) => void;
   onSelectProject?: (project: Project) => void;
+  onOpenShared?: () => void;
 }) {
   const [filter, setFilter] = useState<"All" | "Chats" | "Projects" | "Shared">("All");
   const shared = useWorkSharedDiscovery(open);
@@ -39,7 +40,8 @@ export function WorkRailSearchDialog({
       ? projects.filter(project => !normalized || `${project.name}
 ${project.slug}`.toLocaleLowerCase().includes(normalized)).map(project => ({ kind: "project" as const, project, label: project.name, contextLabel: "Project", key: `project:${project.id ?? project.slug}` })) : [];
     const sharedResults = filter === "All" || filter === "Shared"
-      ? shared.items.filter(item => !normalized || `${sharedItemLabel(item)}
+      ? shared.items.filter(item => !(item.status === "accepted" && item.kind === "project"))
+        .filter(item => !normalized || `${sharedItemLabel(item)}
 ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item => ({ kind: "shared" as const, item, label: sharedItemLabel(item), contextLabel: sharedItemContext(item), key: item.status === "invited" ? `invite:${item.invitationId}` : `shared:${item.scopeId}` })) : [];
     return [...chats, ...projectResults, ...sharedResults].slice(0, 50);
   }, [filter, projects, query, records, shared.items, onSelectProject]);
@@ -64,7 +66,7 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
     if (!result) return;
     if (result.kind === "chat") onSelect(result.record, result.project);
     else if (result.kind === "project") onSelectProject?.(result.project);
-    else { useTabs.getState().openTab({ kind: "shared", title: "Shared with me" }); onClose(); }
+    else { onOpenShared?.(); onClose(); }
     setQuery("");
     setSelectedIndex(0);
   };
