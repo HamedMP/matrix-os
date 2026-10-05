@@ -304,6 +304,27 @@ describe("setOwner", () => {
     queryClient.clear();
   });
 
+  it("does not let an earlier sign-in's clean-up remove what a later one saved", async () => {
+    const { queryClient, storage, persistence } = setup();
+    let finishRead: () => void = () => undefined;
+    storage.getItem.mockImplementationOnce(() => new Promise((resolve) => { finishRead = () => resolve(null); }));
+    const stop = persistence.start();
+
+    // Both arrive while the launch restore is still reading.
+    const first = persistence.setOwner("user_a");
+    const second = persistence.setOwner("user_b");
+    queryClient.setQueryData(chatsKey("user_b"), { items: ["chat_b"] });
+    await jest.advanceTimersByTimeAsync(1_000);
+    finishRead();
+    await Promise.all([first, second]);
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(JSON.parse(storage.values[CHATS_SLOT]!)).toMatchObject({ userId: "user_b", data: { items: ["chat_b"] } });
+    expect(queryClient.getQueryData(chatsKey("user_b"))).toEqual({ items: ["chat_b"] });
+    stop();
+    queryClient.clear();
+  });
+
   it("restores first when the owner is set before anything was restored", async () => {
     const { queryClient, storage, persistence } = setup({ [CHATS_SLOT]: saved("user_a", ["chat_1"]) });
 

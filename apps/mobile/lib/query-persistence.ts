@@ -205,12 +205,17 @@ export function createQueryPersistence(options: {
       // Restoring first means every entry on disk is accounted for below, and
       // one still being read cannot bring back another user's data after this.
       await this.restore();
+      // The owner can change again during either wait below. The later call
+      // then does the clean-up for whoever is signed in; this one, acting on
+      // who it was called for, would remove that user's data.
+      if (owner !== userId) return;
       for (const [kindId, query] of [...unsaved]) {
         if (query.kind.ownerOf(query.query.queryKey) !== userId) unsaved.delete(kindId);
       }
       // Each slot is looked at in its own turn, behind any write that was
       // already under way for the previous user.
       await Promise.all(kinds.map((kind) => inSlotOrder(kind, async () => {
+        if (owner !== userId) return;
         const entry = stored.get(kind.id);
         if (entry && entry.userId !== userId) queryClient.removeQueries({ queryKey: entry.queryKey, exact: true });
         if (userId === null || (entry !== undefined && entry.userId !== userId)) await removeSlot(kind);
