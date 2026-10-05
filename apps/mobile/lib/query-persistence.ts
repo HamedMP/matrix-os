@@ -80,7 +80,17 @@ export function createQueryPersistence(options: {
 
   const storageKey = (kind: PersistedQueryKind) => `${STORAGE_PREFIX}${kind.id}`;
 
-  async function forget(kind: PersistedQueryKind) {
+  // Writes to one slot run one after another, also keyed by kind id. A slow
+  // write then cannot land on top of a later one, or be undone by a removal
+  // that was meant for what the slot held before.
+  const slotQueues = new Map<string, Promise<void>>();
+  function inSlotOrder(kind: PersistedQueryKind, write: () => Promise<void>): Promise<void> {
+    const turn = (slotQueues.get(kind.id) ?? Promise.resolve()).then(write);
+    slotQueues.set(kind.id, turn);
+    return turn;
+  }
+
+  async function removeSlot(kind: PersistedQueryKind) {
     stored.delete(kind.id);
     try {
       await storage.removeItem(storageKey(kind));
@@ -88,6 +98,8 @@ export function createQueryPersistence(options: {
       console.warn("[query-persistence] could not remove a saved query", failureName(error));
     }
   }
+
+  const forget = (kind: PersistedQueryKind) => inSlotOrder(kind, () => removeSlot(kind));
 
   async function restoreKind(kind: PersistedQueryKind) {
     let raw: string | null;
@@ -126,7 +138,9 @@ export function createQueryPersistence(options: {
     queryClient.setQueryData(saved.queryKey, data, { updatedAt: saved.updatedAt });
   }
 
-  async function save(kind: PersistedQueryKind, query: Query) {
+  // Runs in the slot's turn, so who is signed in is judged when the write
+  // starts: a save queued for a user who has since left is skipped.
+  async function writeSlot(kind: PersistedQueryKind, query: Query) {
     const userId = kind.ownerOf(query.queryKey);
     const { data, dataUpdatedAt } = query.state;
     if (userId === null || userId !== owner || data === undefined || data === null) return;
@@ -140,7 +154,7 @@ export function createQueryPersistence(options: {
     }
     if (serialized.length > MAX_ENTRY_CHARS) {
       // Leaving the previous value in place would restore something the user has moved past.
-      await forget(kind);
+      await removeSlot(kind);
       return;
     }
     try {
@@ -150,9 +164,9 @@ export function createQueryPersistence(options: {
       return;
     }
     stored.set(kind.id, { userId, queryKey: saved.queryKey, updatedAt: dataUpdatedAt });
-    // The user can change while the write is in flight; their data must not outlast them.
-    if (owner !== userId) await forget(kind);
   }
+
+  const save = (kind: PersistedQueryKind, query: Query) => inSlotOrder(kind, () => writeSlot(kind, query));
 
   function flush() {
     saveTimer = undefined;
@@ -194,15 +208,13 @@ export function createQueryPersistence(options: {
       for (const [kindId, query] of [...unsaved]) {
         if (query.kind.ownerOf(query.query.queryKey) !== userId) unsaved.delete(kindId);
       }
-      const others = kinds.filter((kind) => {
+      // Each slot is looked at in its own turn, behind any write that was
+      // already under way for the previous user.
+      await Promise.all(kinds.map((kind) => inSlotOrder(kind, async () => {
         const entry = stored.get(kind.id);
-        return userId === null || (entry !== undefined && entry.userId !== userId);
-      });
-      for (const kind of others) {
-        const entry = stored.get(kind.id);
-        if (entry) queryClient.removeQueries({ queryKey: entry.queryKey, exact: true });
-      }
-      await Promise.all(others.map(forget));
+        if (entry && entry.userId !== userId) queryClient.removeQueries({ queryKey: entry.queryKey, exact: true });
+        if (userId === null || (entry !== undefined && entry.userId !== userId)) await removeSlot(kind);
+      })));
     },
   };
 }

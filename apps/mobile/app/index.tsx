@@ -48,15 +48,11 @@ function SignedInJourneyGate() {
         }
         const token = await getToken();
         const next = await fetchMobileJourney(getMobileJourneyGatewayUrl(gateway.url), token);
-        // The shell has been open while this was in flight, so the answer may
-        // be about a session that is over: another account signed in, or
-        // another computer selected. Such an answer changes nothing.
-        if (enteredFromMemory) {
-          const selected = await getSelectedGatewayConnection();
-          if (getClerkInstance().user?.id !== userId || selected.url !== gateway.url) return;
-        }
+        // With a remembered answer the shell has been open while this was in
+        // flight, so by now another account may be signed in.
+        const stillSignedIn = () => !enteredFromMemory || getClerkInstance().user?.id === userId;
         if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
-          if (userId) void rememberJourneyConnectable(userId);
+          if (userId && stillSignedIn()) void rememberJourneyConnectable(userId);
           if (active && !enteredFromMemory) router.replace("/(drawer)" as any);
           return;
         }
@@ -65,7 +61,14 @@ function SignedInJourneyGate() {
           // that could not be made leaves them in the shell, which reports its
           // own connection errors.
           if (next.status === "unreachable") return;
+          // The answer is about this user's account, so their remembered
+          // answer goes whoever is signed in now.
           await forgetJourneyConnectable(userId);
+          const selected = await getSelectedGatewayConnection();
+          // Nothing is awaited between this check and the redirect: the
+          // session on screen is not sent to the gate by an answer about a
+          // different account or computer.
+          if (selected.url !== gateway.url || !stillSignedIn()) return;
           router.replace("/" as any);
           return;
         }

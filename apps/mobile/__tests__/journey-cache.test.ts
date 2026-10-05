@@ -7,13 +7,14 @@ import {
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** AsyncStorage stand-in. Only ever holds the one key the journey cache writes. */
 function memoryStorage() {
-  const values = new Map<string, string>();
+  const values: Record<string, string> = {};
   return {
     values,
-    getItem: jest.fn(async (key: string) => values.get(key) ?? null),
-    setItem: jest.fn(async (key: string, value: string) => { values.set(key, value); }),
-    removeItem: jest.fn(async (key: string) => { values.delete(key); }),
+    getItem: jest.fn(async (key: string) => values[key] ?? null),
+    setItem: jest.fn(async (key: string, value: string) => { values[key] = value; }),
+    removeItem: jest.fn(async (key: string) => { delete values[key]; }),
   };
 }
 
@@ -64,7 +65,7 @@ it("has no answer when nothing was remembered, the value is damaged, or storage 
   const storage = memoryStorage();
   expect(await wasJourneyConnectable("user_a", storage, NOW)).toBe(false);
 
-  storage.values.set("matrix_os_journey_ready_v1", "{not json");
+  storage.values.matrix_os_journey_ready_v1 = "{not json";
   expect(await wasJourneyConnectable("user_a", storage, NOW)).toBe(false);
 
   storage.getItem.mockRejectedValue(new Error("storage unavailable"));

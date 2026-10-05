@@ -21,13 +21,14 @@ const chatsKind: PersistedQueryKind = {
   },
 };
 
+/** AsyncStorage stand-in. Only ever holds the one slot these tests write. */
 function memoryStorage(initial: Record<string, string> = {}) {
-  const values = new Map(Object.entries(initial));
+  const values: Record<string, string> = { ...initial };
   return {
     values,
-    getItem: jest.fn(async (key: string) => values.get(key) ?? null),
-    setItem: jest.fn(async (key: string, value: string) => { values.set(key, value); }),
-    removeItem: jest.fn(async (key: string) => { values.delete(key); }),
+    getItem: jest.fn(async (key: string) => values[key] ?? null),
+    setItem: jest.fn(async (key: string, value: string) => { values[key] = value; }),
+    removeItem: jest.fn(async (key: string) => { delete values[key]; }),
   };
 }
 
@@ -68,7 +69,7 @@ describe("restore", () => {
     await persistence.restore();
 
     expect(queryClient.getQueryData(chatsKey("user_a"))).toBeUndefined();
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect((CHATS_SLOT in storage.values)).toBe(false);
   });
 
   it("drops a saved query that is not valid JSON", async () => {
@@ -77,7 +78,7 @@ describe("restore", () => {
     await persistence.restore();
 
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect((CHATS_SLOT in storage.values)).toBe(false);
   });
 
   it("drops a saved query older than a week", async () => {
@@ -88,7 +89,7 @@ describe("restore", () => {
     await persistence.restore();
 
     expect(queryClient.getQueryData(chatsKey("user_a"))).toBeUndefined();
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect((CHATS_SLOT in storage.values)).toBe(false);
   });
 
   it("drops a saved query whose key belongs to a different user than it claims", async () => {
@@ -100,7 +101,7 @@ describe("restore", () => {
     await persistence.restore();
 
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect((CHATS_SLOT in storage.values)).toBe(false);
   });
 
   it("keeps a result fetched before the restore finished", async () => {
@@ -133,7 +134,7 @@ describe("saving", () => {
     await jest.advanceTimersByTimeAsync(1_000);
 
     expect(storage.setItem).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(storage.values.get(CHATS_SLOT)!)).toMatchObject({
+    expect(JSON.parse(storage.values[CHATS_SLOT]!)).toMatchObject({
       userId: "user_a", queryKey: chatsKey("user_a"), data: { items: ["chat_1", "chat_2"] },
     });
     stop();
@@ -200,7 +201,7 @@ describe("saving", () => {
     await jest.advanceTimersByTimeAsync(1_000);
 
     expect(storage.setItem).not.toHaveBeenCalled();
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect((CHATS_SLOT in storage.values)).toBe(false);
     stop();
     queryClient.clear();
   });
@@ -226,7 +227,7 @@ describe("setOwner", () => {
 
     await persistence.setOwner(null);
 
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect((CHATS_SLOT in storage.values)).toBe(false);
     expect(queryClient.getQueryData(chatsKey("user_a"))).toBeUndefined();
   });
 
@@ -236,7 +237,7 @@ describe("setOwner", () => {
 
     await persistence.setOwner("user_b");
 
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect((CHATS_SLOT in storage.values)).toBe(false);
     expect(queryClient.getQueryData(chatsKey("user_a"))).toBeUndefined();
   });
 
@@ -246,11 +247,11 @@ describe("setOwner", () => {
     const stop = persistence.start();
     queryClient.setQueryData(chatsKey("user_a"), { items: ["chat_1"] });
     await jest.advanceTimersByTimeAsync(1_000);
-    expect(storage.values.has(CHATS_SLOT)).toBe(true);
+    expect((CHATS_SLOT in storage.values)).toBe(true);
 
     await persistence.setOwner("user_b");
 
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect((CHATS_SLOT in storage.values)).toBe(false);
     expect(queryClient.getQueryData(chatsKey("user_a"))).toBeUndefined();
     stop();
     queryClient.clear();
@@ -263,16 +264,42 @@ describe("setOwner", () => {
     let finishWrite: () => void = () => undefined;
     storage.setItem.mockImplementationOnce(async (key: string, value: string) => {
       await new Promise<void>((resolve) => { finishWrite = resolve; });
-      storage.values.set(key, value);
+      storage.values[key] = value;
     });
     queryClient.setQueryData(chatsKey("user_a"), { items: ["chat_1"] });
     await jest.advanceTimersByTimeAsync(1_000);
 
-    await persistence.setOwner("user_b");
+    const switching = persistence.setOwner("user_b");
+    await jest.advanceTimersByTimeAsync(0);
     finishWrite();
+    await switching;
+
+    expect((CHATS_SLOT in storage.values)).toBe(false);
+    stop();
+    queryClient.clear();
+  });
+
+  it("keeps the new user's entry when the previous user's write lands late", async () => {
+    const { queryClient, storage, persistence } = setup();
+    await persistence.setOwner("user_a");
+    const stop = persistence.start();
+    let finishWrite: () => void = () => undefined;
+    storage.setItem.mockImplementationOnce(async (key: string, value: string) => {
+      await new Promise<void>((resolve) => { finishWrite = resolve; });
+      storage.values[key] = value;
+    });
+    queryClient.setQueryData(chatsKey("user_a"), { items: ["chat_a"] });
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    const switching = persistence.setOwner("user_b");
+    await jest.advanceTimersByTimeAsync(0);
+    queryClient.setQueryData(chatsKey("user_b"), { items: ["chat_b"] });
+    await jest.advanceTimersByTimeAsync(1_000);
+    finishWrite();
+    await switching;
     await jest.advanceTimersByTimeAsync(0);
 
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect(JSON.parse(storage.values[CHATS_SLOT]!)).toMatchObject({ userId: "user_b", data: { items: ["chat_b"] } });
     stop();
     queryClient.clear();
   });
@@ -282,7 +309,7 @@ describe("setOwner", () => {
 
     await persistence.setOwner("user_a");
 
-    expect(storage.values.has(CHATS_SLOT)).toBe(true);
+    expect((CHATS_SLOT in storage.values)).toBe(true);
     expect(queryClient.getQueryData(chatsKey("user_a"))).toEqual({ items: ["chat_1"] });
     queryClient.clear();
   });
@@ -293,7 +320,7 @@ describe("setOwner", () => {
 
     await persistence.setOwner("user_a");
 
-    expect(storage.values.has(CHATS_SLOT)).toBe(true);
+    expect((CHATS_SLOT in storage.values)).toBe(true);
     expect(queryClient.getQueryData(chatsKey("user_a"))).toEqual({ items: ["chat_1"] });
     queryClient.clear();
   });
@@ -306,6 +333,6 @@ describe("setOwner", () => {
     await restoring;
 
     expect(queryClient.getQueryData(chatsKey("user_a"))).toBeUndefined();
-    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect((CHATS_SLOT in storage.values)).toBe(false);
   });
 });

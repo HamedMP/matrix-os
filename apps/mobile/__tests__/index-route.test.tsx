@@ -146,8 +146,10 @@ it("ignores a late answer once another computer is selected", async () => {
 
   await settle(journey("plan_required"));
 
+  // The answer is still true of the account, so the next launch asks again;
+  // it just does not pull the user out of the computer they have since chosen.
   expect(mockReplace).toHaveBeenCalledTimes(1);
-  expect(await wasJourneyConnectable("user_a")).toBe(true);
+  expect(await wasJourneyConnectable("user_a")).toBe(false);
 });
 
 it("stays in the shell on a remembered answer when the journey cannot be reached", async () => {
