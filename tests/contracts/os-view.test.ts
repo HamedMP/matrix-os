@@ -87,11 +87,12 @@ describe("shared OS-view contract", () => {
     expect(fitted.some((icon) => icon.x + 64 > 180)).toBe(true);
   });
 
-  it("defines one canonical ten-icon Desktop layout for every renderer", () => {
+  it("defines one canonical Desktop layout with Memory beside Files for every renderer", () => {
     expect(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS).toEqual([
       "__chat__",
       "__terminal__",
       "__file-browser__",
+      "__memory-workspace__",
       "__editor__",
       "__vscode__",
       "__settings__",

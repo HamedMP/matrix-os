@@ -71,7 +71,7 @@ describe("web Desktop built-in app launch routing", () => {
     expect(buildWebDesktopIconApps([]).some((app) => app.path.startsWith("__os-view-"))).toBe(false);
   });
 
-  it("uses canonical durable paths for all ten default Desktop icons", () => {
+  it("uses canonical durable paths for every default Desktop icon, including Memory", () => {
     const defaultPaths = new Set<string>(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS);
     expect(buildWebDesktopIconApps([]).map((app) => app.path).filter((path) => defaultPaths.has(path))).toEqual(
       DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
@@ -84,7 +84,7 @@ describe("web Desktop built-in app launch routing", () => {
     );
   });
 
-  it("keeps Memory in the shared OS-view launcher order without changing default desktop icons", () => {
+  it("keeps Memory beside Files in the shared OS-view default and launcher order", () => {
     expect(buildWebDesktopLauncherApps([]).slice(1, OS_VIEW_LAUNCHER_APP_NAMES.length + 1).map((app) => app.name))
       .toEqual(OS_VIEW_LAUNCHER_APP_NAMES);
   });

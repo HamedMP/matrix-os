@@ -107,6 +107,7 @@ export const DEFAULT_OS_VIEW_DESKTOP_APP_PATHS = Object.freeze([
   "__chat__",
   "__terminal__",
   "__file-browser__",
+  "__memory-workspace__",
   "__editor__",
   "__vscode__",
   "__settings__",
