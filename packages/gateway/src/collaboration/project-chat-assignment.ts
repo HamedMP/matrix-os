@@ -1,4 +1,4 @@
-import type { Kysely, Transaction } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import type { ChatOwner, ChatOutboxEvent, ChatRecord } from "../chat/records.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
@@ -27,6 +27,13 @@ interface BoundChat {
   bindingId: string;
   projectScopeId: string;
   scope: ScopeRow;
+}
+
+class AssignmentOperationError extends Error {
+  constructor(readonly original: unknown) {
+    super("Chat assignment operation failed");
+    this.name = "AssignmentOperationError";
+  }
 }
 
 /**
@@ -124,6 +131,14 @@ export function createProjectChatAssignmentCoordinator(options: {
     binding: BoundChat,
     at: Date,
   ): Promise<string> {
+    const cancelledPositions = await trx.selectFrom("chat_queued_turns")
+      .select("position")
+      .where("chat_id", "=", binding.scope.resource_id)
+      .where("collaboration_scope_id", "=", binding.scope.id)
+      .where("status", "=", "queued")
+      .orderBy("position", "asc")
+      .forUpdate()
+      .execute();
     await trx.updateTable("chat_queued_turns").set({
       status: "cancelled",
       cancelled_at: at,
@@ -132,6 +147,15 @@ export function createProjectChatAssignmentCoordinator(options: {
       .where("collaboration_scope_id", "=", binding.scope.id)
       .where("status", "=", "queued")
       .execute();
+    for (const [index, cancelled] of cancelledPositions.entries()) {
+      const compactAfter = Number(cancelled.position) - index;
+      await trx.updateTable("chat_queued_turns")
+        .set({ position: sql<number>`position - 1`, updated_at: at })
+        .where("chat_id", "=", binding.scope.resource_id)
+        .where("status", "=", "queued")
+        .where("position", ">", compactAfter)
+        .execute();
+    }
     const ended = await trx.updateTable("collaboration_scopes").set({
       lifecycle: "deleted",
       revision: Number(binding.scope.revision) + 1,
@@ -168,6 +192,66 @@ export function createProjectChatAssignmentCoordinator(options: {
     return ended.id;
   }
 
+  async function reparentDirectChatScope(
+    trx: CollaborationTransaction,
+    owner: ChatOwner,
+    chatId: string,
+    target: ScopeRow,
+  ): Promise<void> {
+    const direct = await trx.selectFrom("collaboration_scopes").selectAll()
+      .where("owner_type", "=", owner.type)
+      .where("owner_id", "=", owner.ownerId)
+      .where("kind", "=", "chat")
+      .where("resource_id", "=", chatId)
+      .where("membership_mode", "=", "direct")
+      .where("lifecycle", "in", ["private", "shared"])
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!direct) return;
+    if (!target.organization_id || direct.organization_id !== target.organization_id) {
+      throw new ProjectInheritanceError("conflict");
+    }
+    const members = await trx.selectFrom("collaboration_members").selectAll()
+      .where("scope_id", "=", direct.id)
+      .orderBy("actor_id", "asc")
+      .limit(9)
+      .forUpdate()
+      .execute();
+    if (members.length > 8) throw new ProjectInheritanceError("conflict");
+    const updated = await trx.updateTable("collaboration_scopes").set({
+      parent_scope_id: target.id,
+      membership_mode: "inherited",
+      lifecycle: "shared",
+      revision: Number(direct.revision) + 1,
+      auth_epoch: Number(direct.auth_epoch) + 1,
+      authority_runtime_id: target.authority_runtime_id,
+      authority_generation: Number(target.authority_generation),
+      updated_at: now(),
+    }).where("id", "=", direct.id)
+      .where("membership_mode", "=", "direct")
+      .where("revision", "=", Number(direct.revision))
+      .where("auth_epoch", "=", Number(direct.auth_epoch))
+      .returningAll()
+      .executeTakeFirst();
+    if (!updated) throw new ProjectInheritanceError("conflict");
+    const removed = await trx.deleteFrom("collaboration_members")
+      .where("scope_id", "=", direct.id)
+      .returning("actor_id")
+      .execute();
+    if (removed.length !== members.length) throw new ProjectInheritanceError("conflict");
+    await appendMutationRecords(trx, {
+      scope: updated,
+      actorId: owner.ownerId,
+      action: "project.item_grants.reconciled",
+      recipients: [],
+      discoveryState: "revoked",
+      publishDirectory: false,
+      now: now().toISOString(),
+      reasonCode: "project_inheritance",
+    });
+  }
+
   async function reconcile(
     trx: CollaborationTransaction,
     owner: ChatOwner,
@@ -180,6 +264,7 @@ export function createProjectChatAssignmentCoordinator(options: {
       effects.endedScopeIds.push(await endBinding(trx, current, now()));
     }
     if (target && current?.projectScopeId !== target.id) {
+      await reparentDirectChatScope(trx, owner, record.chat.id, target);
       const result = await inheritance.bindOwnedResourceInTransaction(trx, {
         projectScopeId: target.id,
         ownerId: owner.ownerId,
@@ -215,7 +300,12 @@ export function createProjectChatAssignmentCoordinator(options: {
     try {
       let effects: ReconciliationEffects = { chatEvents: [], endedScopeIds: [] };
       const result = await options.chatRepository.withTransaction(async (repository) => {
-        const record = await operation(repository);
+        let record: ChatRecord;
+        try {
+          record = await operation(repository);
+        } catch (error: unknown) {
+          throw new AssignmentOperationError(error);
+        }
         effects = await reconcile(
           repository.kysely as unknown as CollaborationTransaction,
           owner,
@@ -231,6 +321,7 @@ export function createProjectChatAssignmentCoordinator(options: {
       publishEffects(owner, effects);
       return result;
     } catch (error: unknown) {
+      if (error instanceof AssignmentOperationError) throw error.original;
       if (error instanceof ProjectInheritanceError) throw error;
       console.warn("[collaboration-project] Chat project assignment failed", error instanceof Error ? error.name : "UnknownError");
       throw new ProjectInheritanceError("unavailable");
@@ -239,51 +330,71 @@ export function createProjectChatAssignmentCoordinator(options: {
 
   async function backfill(): Promise<number> {
     let reconciled = 0;
+    let cursor: string | undefined;
     while (shouldContinue()) {
-      let batchEffects: Array<{ owner: ChatOwner; effects: ReconciliationEffects }> = [];
-      const selected = await options.db.transaction().execute(async (trx) => {
-        const rows = await trx.selectFrom("chats as chat")
-          .innerJoin("collaboration_scopes as project", (join) => join
-            .onRef("project.owner_type", "=", "chat.owner_type")
-            .onRef("project.owner_id", "=", "chat.owner_id")
-            .onRef("project.resource_id", "=", "chat.project_id")
-            .on("project.kind", "=", "project")
-            .on("project.membership_mode", "=", "direct")
-            .on("project.lifecycle", "=", "shared")
-            .on("project.deleted_at", "is", null))
-          .leftJoin("collaboration_resource_bindings as binding", (join) => join
-            .onRef("binding.project_scope_id", "=", "project.id")
-            .on("binding.resource_kind", "=", "chat")
-            .onRef("binding.resource_id", "=", "chat.id"))
-          .select(["chat.id", "chat.owner_type", "chat.owner_id", "chat.project_id", "chat.revision"])
-          .where("binding.id", "is", null)
-          .orderBy("chat.id", "asc")
-          .limit(MAX_BACKFILL_BATCH)
-          .forUpdate("chat")
-          .execute();
-        for (const row of rows) {
+      let candidates = options.db.selectFrom("chats as chat")
+        .innerJoin("collaboration_scopes as project", (join) => join
+          .onRef("project.owner_type", "=", "chat.owner_type")
+          .onRef("project.owner_id", "=", "chat.owner_id")
+          .onRef("project.resource_id", "=", "chat.project_id")
+          .on("project.kind", "=", "project")
+          .on("project.membership_mode", "=", "direct")
+          .on("project.lifecycle", "=", "shared")
+          .on("project.deleted_at", "is", null))
+        .leftJoin("collaboration_resource_bindings as binding", (join) => join
+          .onRef("binding.project_scope_id", "=", "project.id")
+          .on("binding.resource_kind", "=", "chat")
+          .onRef("binding.resource_id", "=", "chat.id"))
+        .select(["chat.id", "chat.owner_type", "chat.owner_id"])
+        .where("binding.id", "is", null);
+      if (cursor) candidates = candidates.where("chat.id", ">", cursor);
+      const rows = await candidates.orderBy("chat.id", "asc").limit(MAX_BACKFILL_BATCH).execute();
+      if (rows.length === 0) return reconciled;
+      for (const row of rows) {
+        if (!shouldContinue()) return reconciled;
+        try {
           const owner: ChatOwner = { type: row.owner_type, ownerId: row.owner_id };
-          const effects = await reconcile(trx, owner, {
-            chat: {
-              id: row.id,
-              ownerScope: owner,
-              title: "Backfill",
-              lifecycle: "active",
-              attention: "none",
-              revision: Number(row.revision),
-              messageCount: 0,
-              createdAt: now().toISOString(),
-              updatedAt: now().toISOString(),
-            },
-            ...(row.project_id ? { projectId: row.project_id } : {}),
+          const repaired = await options.db.transaction().execute(async (trx) => {
+            const chat = await trx.selectFrom("chats")
+              .select(["id", "project_id", "revision"])
+              .where("id", "=", row.id)
+              .where("owner_type", "=", owner.type)
+              .where("owner_id", "=", owner.ownerId)
+              .forUpdate()
+              .executeTakeFirst();
+            if (!chat) return null;
+            const effects = await reconcile(trx, owner, {
+              chat: {
+                id: chat.id,
+                ownerScope: owner,
+                title: "Backfill",
+                lifecycle: "active",
+                attention: "none",
+                revision: Number(chat.revision),
+                messageCount: 0,
+                createdAt: now().toISOString(),
+                updatedAt: now().toISOString(),
+              },
+              ...(chat.project_id ? { projectId: chat.project_id } : {}),
+            });
+            const binding = await trx.selectFrom("collaboration_resource_bindings")
+              .select("id")
+              .where("resource_kind", "=", "chat")
+              .where("resource_id", "=", chat.id)
+              .executeTakeFirst();
+            return { effects, bound: binding !== undefined };
           });
-          batchEffects.push({ owner, effects });
+          if (repaired) {
+            publishEffects(owner, repaired.effects);
+            if (repaired.bound) reconciled += 1;
+          }
+        } catch (error: unknown) {
+          if (!(error instanceof ProjectInheritanceError)) throw error;
+          console.warn("[collaboration-project] Chat assignment backfill skipped", error.code);
         }
-        return rows.length;
-      });
-      for (const item of batchEffects) publishEffects(item.owner, item.effects);
-      reconciled += selected;
-      if (selected < MAX_BACKFILL_BATCH) return reconciled;
+      }
+      cursor = rows.at(-1)!.id;
+      if (rows.length < MAX_BACKFILL_BATCH) return reconciled;
     }
     return reconciled;
   }
