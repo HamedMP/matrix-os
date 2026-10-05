@@ -1,8 +1,0 @@
-{
-  "name": "aoede-interaction-preview",
-  "private": true,
-  "type": "module",
-  "scripts": { "dev": "vite --host 127.0.0.1 --port 4316", "build": "vite build", "test": "vitest run" },
-  "dependencies": { "react": "19.2.6", "react-dom": "19.2.6" },
-  "devDependencies": { "vite": "6.4.2", "@vitejs/plugin-react": "4.7.0", "vitest": "4.0.18" }
-}
