@@ -26,7 +26,7 @@ function memoryStorage(initial: Record<string, string> = {}) {
   const values: Record<string, string> = { ...initial };
   return {
     values,
-    getItem: jest.fn(async (key: string) => values[key] ?? null),
+    getItem: jest.fn(async (key: string): Promise<string | null> => values[key] ?? null),
     setItem: jest.fn(async (key: string, value: string) => { values[key] = value; }),
     removeItem: jest.fn(async (key: string) => { delete values[key]; }),
   };
@@ -307,7 +307,7 @@ describe("setOwner", () => {
   it("does not let an earlier sign-in's clean-up remove what a later one saved", async () => {
     const { queryClient, storage, persistence } = setup();
     let finishRead: () => void = () => undefined;
-    storage.getItem.mockImplementationOnce(() => new Promise((resolve) => { finishRead = () => resolve(null); }));
+    storage.getItem.mockImplementationOnce(() => new Promise<string | null>((resolve) => { finishRead = () => resolve(null); }));
     const stop = persistence.start();
 
     // Both arrive while the launch restore is still reading.

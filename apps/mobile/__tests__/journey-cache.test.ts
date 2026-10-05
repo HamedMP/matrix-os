@@ -12,7 +12,7 @@ function memoryStorage() {
   const values: Record<string, string> = {};
   return {
     values,
-    getItem: jest.fn(async (key: string) => values[key] ?? null),
+    getItem: jest.fn(async (key: string): Promise<string | null> => values[key] ?? null),
     setItem: jest.fn(async (key: string, value: string) => { values[key] = value; }),
     removeItem: jest.fn(async (key: string) => { delete values[key]; }),
   };
