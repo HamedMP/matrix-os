@@ -368,6 +368,36 @@ describe("provider settings routes", () => {
 
 
 describe("provider Settings reserved-credit negotiation", () => {
+  it.each([false, true])("negotiates Chat funding on every snapshot response: %s", async include => {
+    const funded = structuredClone(snapshot);
+    const usage = funded.accessSources[0]!.usage;
+    if (usage.kind !== "managed_credit") throw new Error("Managed fixture required");
+    Object.assign(usage, { chatAvailability: { contractVersion: 1, asOf: usage.asOf,
+      eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 } });
+    const f = createApp({ getSnapshot: async () => funded, mutate: async () => ({ snapshot: funded, kind: "snapshot" }) });
+    for (const [path, method, body] of [
+      ["/api/ai/provider-settings", "GET", undefined],
+      ["/api/ai/provider-settings/actions", "POST", { type: "set_gateway_budget", expectedRevision: 0,
+        idempotencyKey: "chat_budget", monthlyBudgetMicrousd: 10_000_000 }],
+      ["/api/ai/provider-settings/accounts/account1", "DELETE", { expectedRevision: 0, idempotencyKey: "chat_delete",
+        dependencyGuard: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 }, confirmation: "remove_account" }],
+    ] as const) {
+      const response = await f.app.request(`${path}${include ? "?includeChatFunding=true" : ""}`, { method,
+        ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) });
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect("chatAvailability" in (result.snapshot ?? result).accessSources[0].usage).toBe(include);
+      expect("chatAvailability" in usage).toBe(true);
+      expect((await f.app.request(`${path}?includeChatFunding=invalid`, { method })).status).toBe(400);
+    }
+  });
+  it.each([false, true])("negotiates the monthly budget reason without leaking a new enum to legacy clients: %s", async include => {
+    const funded = structuredClone(snapshot);
+    Object.assign(funded.accessSources[0]!.readiness, { state: "unavailable", action: "contact_owner", safeReason: "budget_exceeded" });
+    const f = createApp({ getSnapshot: async () => funded });
+    const response = await f.app.request(`/api/ai/provider-settings${include ? "?includeChatFunding=true" : ""}`);
+    expect((await response.json()).accessSources[0].readiness.safeReason).toBe(include ? "budget_exceeded" : "policy");
+  });
   it.each([false, true])("negotiates enum additions on GET, POST and DELETE: %s", async include => {
     const held = structuredClone(snapshot);
     Object.assign(held.accessSources[0]!.readiness, { state: "unavailable", action: "retry", safeReason: "credit_reserved" });
