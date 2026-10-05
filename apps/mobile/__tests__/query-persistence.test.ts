@@ -240,6 +240,53 @@ describe("setOwner", () => {
     expect(queryClient.getQueryData(chatsKey("user_a"))).toBeUndefined();
   });
 
+  it("removes what the previous user saved in this session when someone else signs in", async () => {
+    const { queryClient, storage, persistence } = setup();
+    await persistence.setOwner("user_a");
+    const stop = persistence.start();
+    queryClient.setQueryData(chatsKey("user_a"), { items: ["chat_1"] });
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(storage.values.has(CHATS_SLOT)).toBe(true);
+
+    await persistence.setOwner("user_b");
+
+    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    expect(queryClient.getQueryData(chatsKey("user_a"))).toBeUndefined();
+    stop();
+    queryClient.clear();
+  });
+
+  it("does not leave a write that was still in flight when the user changed", async () => {
+    const { queryClient, storage, persistence } = setup();
+    await persistence.setOwner("user_a");
+    const stop = persistence.start();
+    let finishWrite: () => void = () => undefined;
+    storage.setItem.mockImplementationOnce(async (key: string, value: string) => {
+      await new Promise<void>((resolve) => { finishWrite = resolve; });
+      storage.values.set(key, value);
+    });
+    queryClient.setQueryData(chatsKey("user_a"), { items: ["chat_1"] });
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    await persistence.setOwner("user_b");
+    finishWrite();
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(storage.values.has(CHATS_SLOT)).toBe(false);
+    stop();
+    queryClient.clear();
+  });
+
+  it("restores first when the owner is set before anything was restored", async () => {
+    const { queryClient, storage, persistence } = setup({ [CHATS_SLOT]: saved("user_a", ["chat_1"]) });
+
+    await persistence.setOwner("user_a");
+
+    expect(storage.values.has(CHATS_SLOT)).toBe(true);
+    expect(queryClient.getQueryData(chatsKey("user_a"))).toEqual({ items: ["chat_1"] });
+    queryClient.clear();
+  });
+
   it("keeps the signed-in user's own restored data", async () => {
     const { queryClient, storage, persistence } = setup({ [CHATS_SLOT]: saved("user_a", ["chat_1"]) });
     await persistence.restore();

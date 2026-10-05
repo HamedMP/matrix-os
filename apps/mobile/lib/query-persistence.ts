@@ -73,14 +73,15 @@ export function createQueryPersistence(options: {
   let owner: string | null | undefined;
   let restoring: Promise<void> | undefined;
   // Both maps are keyed by kind id, so they never hold more than `kinds.length` entries.
-  const restored = new Map<string, SavedQuery>();
+  // What is known to be on disk: restored at launch, or saved since.
+  const stored = new Map<string, Omit<SavedQuery, "data">>();
   const unsaved = new Map<string, { kind: PersistedQueryKind; query: Query }>();
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   const storageKey = (kind: PersistedQueryKind) => `${STORAGE_PREFIX}${kind.id}`;
 
   async function forget(kind: PersistedQueryKind) {
-    restored.delete(kind.id);
+    stored.delete(kind.id);
     try {
       await storage.removeItem(storageKey(kind));
     } catch (error: unknown) {
@@ -118,7 +119,7 @@ export function createQueryPersistence(options: {
       await forget(kind);
       return;
     }
-    restored.set(kind.id, saved);
+    stored.set(kind.id, saved);
     // A fetch that already finished is newer than anything on disk.
     const current = queryClient.getQueryState(saved.queryKey);
     if (current && current.dataUpdatedAt >= saved.updatedAt) return;
@@ -129,9 +130,9 @@ export function createQueryPersistence(options: {
     const userId = kind.ownerOf(query.queryKey);
     const { data, dataUpdatedAt } = query.state;
     if (userId === null || userId !== owner || data === undefined || data === null) return;
+    const saved: SavedQuery = { userId, queryKey: [...query.queryKey], updatedAt: dataUpdatedAt, data };
     let serialized: string;
     try {
-      const saved: SavedQuery = { userId, queryKey: [...query.queryKey], updatedAt: dataUpdatedAt, data };
       serialized = JSON.stringify(saved);
     } catch (error: unknown) {
       console.warn("[query-persistence] could not serialize a query", failureName(error));
@@ -146,7 +147,11 @@ export function createQueryPersistence(options: {
       await storage.setItem(storageKey(kind), serialized);
     } catch (error: unknown) {
       console.warn("[query-persistence] could not save a query", failureName(error));
+      return;
     }
+    stored.set(kind.id, { userId, queryKey: saved.queryKey, updatedAt: dataUpdatedAt });
+    // The user can change while the write is in flight; their data must not outlast them.
+    if (owner !== userId) await forget(kind);
   }
 
   function flush() {
@@ -169,7 +174,7 @@ export function createQueryPersistence(options: {
         const kind = kinds.find((candidate) => candidate.ownerOf(query.queryKey) !== null);
         if (!kind) return;
         // Restoring writes into the cache too; that data is already on disk.
-        if (restored.get(kind.id)?.updatedAt === query.state.dataUpdatedAt) return;
+        if (stored.get(kind.id)?.updatedAt === query.state.dataUpdatedAt) return;
         unsaved.set(kind.id, { kind, query });
         saveTimer ??= setTimeout(flush, SAVE_DEBOUNCE_MS);
       });
@@ -183,15 +188,21 @@ export function createQueryPersistence(options: {
 
     async setOwner(userId) {
       owner = userId;
-      // Wait for a restore in flight so it cannot bring back another user's data after this.
-      if (restoring) await restoring;
-      for (const saved of restored.values()) {
-        if (saved.userId !== userId) queryClient.removeQueries({ queryKey: saved.queryKey, exact: true });
+      // Restoring first means every entry on disk is accounted for below, and
+      // one still being read cannot bring back another user's data after this.
+      await this.restore();
+      for (const [kindId, query] of [...unsaved]) {
+        if (query.kind.ownerOf(query.query.queryKey) !== userId) unsaved.delete(kindId);
       }
-      if (userId === null) unsaved.clear();
-      await Promise.all(kinds
-        .filter((kind) => userId === null || (restored.has(kind.id) && restored.get(kind.id)?.userId !== userId))
-        .map(forget));
+      const others = kinds.filter((kind) => {
+        const entry = stored.get(kind.id);
+        return userId === null || (entry !== undefined && entry.userId !== userId);
+      });
+      for (const kind of others) {
+        const entry = stored.get(kind.id);
+        if (entry) queryClient.removeQueries({ queryKey: entry.queryKey, exact: true });
+      }
+      await Promise.all(others.map(forget));
     },
   };
 }

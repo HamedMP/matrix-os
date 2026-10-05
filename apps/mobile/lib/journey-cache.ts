@@ -54,8 +54,16 @@ export async function rememberJourneyConnectable(
   }
 }
 
-export async function forgetJourneyConnectable(storage: JourneyCacheStorage = AsyncStorage): Promise<void> {
+/** Forgets the remembered answer: `userId`'s only, or whoever's it is when null (signed out). */
+export async function forgetJourneyConnectable(
+  userId: string | null = null,
+  storage: JourneyCacheStorage = AsyncStorage,
+): Promise<void> {
   try {
+    if (userId !== null) {
+      const raw = await storage.getItem(STORAGE_KEY);
+      if (raw === null || (JSON.parse(raw) as { userId?: unknown }).userId !== userId) return;
+    }
     await storage.removeItem(STORAGE_KEY);
   } catch (error: unknown) {
     console.warn("[mobile] remembered journey could not be cleared", failureName(error));

@@ -4,15 +4,18 @@ import { act, render, screen } from "@testing-library/react-native";
 const mockReplace = jest.fn();
 const mockFetchMobileJourney = jest.fn();
 let mockHostedGateway = true;
+let mockGatewayUrl = "https://example.test";
+let mockSignedInUserId: string | null = "user_a";
 
 jest.mock("expo-router", () => ({ useRouter: () => ({ replace: mockReplace }) }));
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({ isSignedIn: true, userId: "user_a", getToken: mockGetToken, signOut: jest.fn() }),
+  getClerkInstance: () => ({ user: mockSignedInUserId ? { id: mockSignedInUserId } : null }),
 }));
 jest.mock("@/lib/storage", () => ({
   HOSTED_GATEWAY_URL: "https://example.test",
-  getSelectedGatewayConnection: async () => ({ url: mockHostedGateway ? "https://example.test" : "http://10.0.0.2:4000" }),
-  isHostedGatewayUrl: (url: string) => url === "https://example.test",
+  getSelectedGatewayConnection: async () => ({ url: mockHostedGateway ? mockGatewayUrl : "http://10.0.0.2:4000" }),
+  isHostedGatewayUrl: (url: string) => url.startsWith("https://example.test"),
   getMobileJourneyGatewayUrl: (url: string) => url,
 }));
 jest.mock("@/lib/journey", () => ({
@@ -39,6 +42,8 @@ const flush = () => act(async () => { await new Promise((resolve) => setImmediat
 beforeEach(async () => {
   jest.clearAllMocks();
   mockHostedGateway = true;
+  mockGatewayUrl = "https://example.test";
+  mockSignedInUserId = "user_a";
   await AsyncStorage.clear();
   jest.spyOn(console, "warn").mockImplementation(() => undefined);
 });
@@ -103,6 +108,46 @@ it("comes back to the gate when the session is no longer accepted", async () => 
 
   expect(mockReplace).toHaveBeenLastCalledWith("/");
   expect(await wasJourneyConnectable("user_a")).toBe(false);
+});
+
+it("ignores a late answer once someone else is signed in", async () => {
+  await rememberJourneyConnectable("user_a");
+  const settle = pendingJourney();
+  render(<Index />);
+  await flush();
+  mockSignedInUserId = "user_b";
+  await rememberJourneyConnectable("user_b");
+
+  await settle(journey("plan_required"));
+
+  expect(mockReplace).toHaveBeenCalledTimes(1);
+  expect(await wasJourneyConnectable("user_b")).toBe(true);
+});
+
+it("does not remember a late ready answer for a user who is no longer signed in", async () => {
+  await rememberJourneyConnectable("user_a");
+  const settle = pendingJourney();
+  render(<Index />);
+  await flush();
+  mockSignedInUserId = "user_b";
+  await rememberJourneyConnectable("user_b");
+
+  await settle(journey("ready"));
+
+  expect(await wasJourneyConnectable("user_b")).toBe(true);
+});
+
+it("ignores a late answer once another computer is selected", async () => {
+  await rememberJourneyConnectable("user_a");
+  const settle = pendingJourney();
+  render(<Index />);
+  await flush();
+  mockGatewayUrl = "https://example.test/vm/other";
+
+  await settle(journey("plan_required"));
+
+  expect(mockReplace).toHaveBeenCalledTimes(1);
+  expect(await wasJourneyConnectable("user_a")).toBe(true);
 });
 
 it("stays in the shell on a remembered answer when the journey cannot be reached", async () => {

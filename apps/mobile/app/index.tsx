@@ -2,7 +2,7 @@ import "@/lib/hermes-polyfills";
 import { View, Text, Linking } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useRouter } from "expo-router";
-import { useAuth } from "@clerk/clerk-expo";
+import { getClerkInstance, useAuth } from "@clerk/clerk-expo";
 import { useEffect, useState } from "react";
 import { HOSTED_GATEWAY_URL, getMobileJourneyGatewayUrl, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
 import { JourneyGate } from "@/components/JourneyGate";
@@ -48,6 +48,13 @@ function SignedInJourneyGate() {
         }
         const token = await getToken();
         const next = await fetchMobileJourney(getMobileJourneyGatewayUrl(gateway.url), token);
+        // The shell has been open while this was in flight, so the answer may
+        // be about a session that is over: another account signed in, or
+        // another computer selected. Such an answer changes nothing.
+        if (enteredFromMemory) {
+          const selected = await getSelectedGatewayConnection();
+          if (getClerkInstance().user?.id !== userId || selected.url !== gateway.url) return;
+        }
         if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
           if (userId) void rememberJourneyConnectable(userId);
           if (active && !enteredFromMemory) router.replace("/(drawer)" as any);
@@ -58,7 +65,7 @@ function SignedInJourneyGate() {
           // that could not be made leaves them in the shell, which reports its
           // own connection errors.
           if (next.status === "unreachable") return;
-          await forgetJourneyConnectable();
+          await forgetJourneyConnectable(userId);
           router.replace("/" as any);
           return;
         }

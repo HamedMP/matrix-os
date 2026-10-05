@@ -44,9 +44,20 @@ it("stops trusting an answer after a week", async () => {
 it("has no answer once forgotten", async () => {
   const storage = memoryStorage();
   await rememberJourneyConnectable("user_a", storage, NOW);
-  await forgetJourneyConnectable(storage);
+  await forgetJourneyConnectable(null, storage);
 
   expect(await wasJourneyConnectable("user_a", storage, NOW)).toBe(false);
+});
+
+it("forgets only the named user's answer", async () => {
+  const storage = memoryStorage();
+  await rememberJourneyConnectable("user_b", storage, NOW);
+
+  await forgetJourneyConnectable("user_a", storage);
+  expect(await wasJourneyConnectable("user_b", storage, NOW)).toBe(true);
+
+  await forgetJourneyConnectable("user_b", storage);
+  expect(await wasJourneyConnectable("user_b", storage, NOW)).toBe(false);
 });
 
 it("has no answer when nothing was remembered, the value is damaged, or storage fails", async () => {
@@ -66,5 +77,5 @@ it("does not fail the caller when storage cannot be written or cleared", async (
   storage.removeItem.mockRejectedValue(new Error("storage unavailable"));
 
   await expect(rememberJourneyConnectable("user_a", storage, NOW)).resolves.toBeUndefined();
-  await expect(forgetJourneyConnectable(storage)).resolves.toBeUndefined();
+  await expect(forgetJourneyConnectable(null, storage)).resolves.toBeUndefined();
 });
