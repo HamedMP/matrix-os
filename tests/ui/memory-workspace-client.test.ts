@@ -6,6 +6,12 @@ import {
 } from "../../packages/ui/src/chat-agents/mentions";
 import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
 describe("memory source handoff and client", () => {
+  it.each(["retry", "cancel"] as const)("sends %s job actions with the type discriminator", async (type) => {
+    const request = vi.fn().mockResolvedValue({ updated: true });
+    const client = createMemoryWorkspaceClient({ request });
+    await client.actJob!("job/id", type);
+    expect(request).toHaveBeenCalledExactlyOnceWith("POST", "/api/memory-workspace/jobs/job%2Fid/action", { type });
+  });
   it("uses canonical authenticated paths and optimistic revision writes", async () => {
     const request = vi.fn().mockResolvedValue({ source: { id: "a" } });
     const client = createMemoryWorkspaceClient({ request });

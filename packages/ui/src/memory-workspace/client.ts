@@ -65,7 +65,7 @@ export function createMemoryWorkspaceClient(
       await transport.request(
         "POST",
         `${base}/jobs/${encodeURIComponent(id)}/action`,
-        { action },
+        { type: action },
       );
     },
   };

@@ -21,6 +21,10 @@ import {
   MemoryLimitError,
 } from "./repository.js";
 const idSchema = z.uuid();
+const jobActionSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("retry") }).strict(),
+  z.object({ type: z.literal("cancel") }).strict(),
+]);
 export function createMemoryWorkspaceRoutes(deps: {
   service: MemoryWorkspaceService;
   getOwnerId: (context: Context) => string;
@@ -152,11 +156,8 @@ export function createMemoryWorkspaceRoutes(deps: {
     try {
       const actor = owner(c);
       const jobId = id(c);
-      const { action } = z
-        .object({ action: z.enum(["retry", "cancel"]) })
-        .strict()
-        .parse(await c.req.json());
-      if (!(await deps.service.jobAction(actor, jobId, action)))
+      const action = jobActionSchema.parse(await c.req.json());
+      if (!(await deps.service.jobAction(actor, jobId, action.type)))
         return c.json({ error: "Activity cannot be changed right now" }, 409);
       return c.json({ updated: true });
     } catch (err) {

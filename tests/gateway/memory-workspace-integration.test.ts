@@ -106,10 +106,10 @@ describe("memory workspace full route and worker path", () => {
       (j) => j.engine === "openviking" && j.revision === 2,
     )!;
     expect(
-      (await post(`/jobs/${pending.id}/action`, { action: "cancel" })).status,
+      (await post(`/jobs/${pending.id}/action`, { type: "cancel" })).status,
     ).toBe(200);
     expect(
-      (await post(`/jobs/${pending.id}/action`, { action: "retry" })).status,
+      (await post(`/jobs/${pending.id}/action`, { type: "retry" })).status,
     ).toBe(200);
     expect(
       (await app.request(`/sources/${s.id}`, { method: "DELETE" })).status,
