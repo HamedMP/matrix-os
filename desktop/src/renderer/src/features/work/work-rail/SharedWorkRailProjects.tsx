@@ -35,7 +35,15 @@ async function loadSharedProjects(api: CollaborationDirectApi): Promise<Collabor
   let cursor: string | undefined;
   for (let page = 0; page < MAX_SHARED_PAGES; page += 1) {
     const path = cursor ? `${SHARED_PAGE}&cursor=${encodeURIComponent(cursor)}` : SHARED_PAGE;
-    const value = SharedPageSchema.parse(await api.get(path));
+    let value: z.infer<typeof SharedPageSchema>;
+    try {
+      value = SharedPageSchema.parse(await api.get(path));
+    } catch (error: unknown) {
+      // The first page failing means nothing is known; a later one keeps what already loaded.
+      if (page === 0) throw error;
+      console.warn("[work-rail] later shared page unavailable", error instanceof Error ? error.name : "UnknownError");
+      break;
+    }
     projects.push(...projectsOnPage(value.items));
     if (!value.nextCursor) break;
     cursor = value.nextCursor;

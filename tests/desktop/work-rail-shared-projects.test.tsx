@@ -19,7 +19,7 @@ const scope = {
 } as const;
 const mock = vi.hoisted(() => ({
   items: [] as unknown[],
-  pages: null as null | Array<{ items: unknown[]; nextCursor?: string }>,
+  pages: null as null | Array<{ items: unknown[]; nextCursor?: string } | "fail">,
   fail: false,
   calls: 0,
   paths: [] as string[],
@@ -44,7 +44,9 @@ vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
         if (!path.startsWith("/api/collaboration/shared")) throw new Error("UnexpectedRequest");
         if (!mock.pages) return { items: mock.items };
         const cursor = new URL(path, "https://x").searchParams.get("cursor");
-        return mock.pages[cursor ? Number(cursor) : 0];
+        const page = mock.pages[cursor ? Number(cursor) : 0];
+        if (page === "fail") throw new Error("PageUnavailable");
+        return page;
       }),
       post: vi.fn(),
       delete: vi.fn(),
@@ -151,6 +153,13 @@ describe("Electron Work rail shared projects", () => {
     render(<SharedWorkRailProjects />);
     expect(await screen.findByRole("button", { name: "collab testing 12PMOct3" })).toBeVisible();
     expect(mock.paths).toEqual(["/api/collaboration/shared?limit=50", "/api/collaboration/shared?limit=50&cursor=1"]);
+  });
+
+  it("keeps projects from pages that loaded when a later page fails", async () => {
+    mock.pages = [{ items: [sharedProject()], nextCursor: "1" }, "fail"];
+    render(<SharedWorkRailProjects />);
+    expect(await screen.findByRole("button", { name: "collab testing 12PMOct3" })).toBeVisible();
+    expect(mock.paths).toHaveLength(2);
   });
 
   it("reloads once more when sharing changes during a load, instead of dropping the change", async () => {
