@@ -1,56 +1,95 @@
 import { CollaborationDiscoveryItemSchema, type CollaborationProjectOverview } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import { subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
-import { useEffect, useMemo, useState } from "react";
+import { subscribeCollaborationDiscoveryChanged, type CollaborationDirectApi } from "@matrix-os/ui";
+import { useEffect, useState } from "react";
 import { Folder, FolderOpen, MessageSquare, UsersIcon } from "@renderer/lib/hugeicons";
-import { createDesktopCollaborationApi } from "../../../lib/collaboration";
+import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../../lib/collaboration";
 import { useConnection } from "../../../stores/connection";
 import { useTabs } from "../../../stores/tabs";
 
 const REFRESH_MS = 30_000;
 const SHARED_PAGE = "/api/collaboration/shared?limit=50";
+/** Most pages of shared items read per refresh; 50 items each. */
+const MAX_SHARED_PAGES = 20;
 /** The page is only bounded here; each item is validated on its own below. */
-const SharedPageSchema = z.looseObject({ items: z.array(z.unknown()).max(100) });
+const SharedPageSchema = z.looseObject({
+  items: z.array(z.unknown()).max(100),
+  nextCursor: z.string().min(1).max(1_024).optional(),
+});
 
-/** Accepted shared projects whose owner's home described them; refreshed when sharing changes. */
+/** The shared projects on one page; one item a client could not describe never hides the rest. */
+function projectsOnPage(items: unknown[]): CollaborationProjectOverview[] {
+  return items.flatMap((raw) => {
+    const item = CollaborationDiscoveryItemSchema.safeParse(raw);
+    if (!item.success) {
+      console.warn("[work-rail] shared project skipped", item.error.name);
+      return [];
+    }
+    const resource = item.data.status === "accepted" ? item.data.resource : undefined;
+    return resource && "project" in resource && resource.overview ? [resource.overview] : [];
+  });
+}
+
+async function loadSharedProjects(api: CollaborationDirectApi): Promise<CollaborationProjectOverview[]> {
+  const projects: CollaborationProjectOverview[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_SHARED_PAGES; page += 1) {
+    const path = cursor ? `${SHARED_PAGE}&cursor=${encodeURIComponent(cursor)}` : SHARED_PAGE;
+    const value = SharedPageSchema.parse(await api.get(path));
+    projects.push(...projectsOnPage(value.items));
+    if (!value.nextCursor) break;
+    cursor = value.nextCursor;
+  }
+  return projects;
+}
+
+/**
+ * Accepted shared projects whose owner's home described them. Each sign-in gets its own client
+ * (a sign-in change closes the previous one), and a change that arrives during a load is not lost:
+ * it runs one more load when the current one settles.
+ */
 function useSharedProjects(): CollaborationProjectOverview[] {
   const actorId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
-  const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
+  const authGeneration = useConnection((state) => state.authGeneration);
   const [projects, setProjects] = useState<CollaborationProjectOverview[]>([]);
   useEffect(() => {
     let current = true;
     let inFlight = false;
+    let again = false;
     setProjects([]);
-    if (!actorId || !api) return () => { current = false; };
-    const load = async () => {
-      if (inFlight) return;
+    const api = actorId ? createDesktopCollaborationApi(platformHost) : null;
+    if (!api) return () => { current = false; };
+    const load = async (): Promise<void> => {
+      if (inFlight) {
+        again = true;
+        return;
+      }
       inFlight = true;
       try {
-        const page = SharedPageSchema.parse(await api.get(SHARED_PAGE));
-        // One item a client could not describe must not hide every other shared project.
-        const overviews = page.items.flatMap((raw) => {
-          const item = CollaborationDiscoveryItemSchema.safeParse(raw);
-          if (!item.success) {
-            console.warn("[work-rail] shared project skipped", item.error.name);
-            return [];
-          }
-          const resource = item.data.status === "accepted" ? item.data.resource : undefined;
-          return resource && "project" in resource && resource.overview ? [resource.overview] : [];
-        });
-        if (current) setProjects(overviews);
+        const next = await loadSharedProjects(api);
+        if (current) setProjects(next);
       } catch (error: unknown) {
         console.warn("[work-rail] shared projects unavailable", error instanceof Error ? error.name : "UnknownError");
         if (current) setProjects([]);
       } finally {
         inFlight = false;
       }
+      if (again && current) {
+        again = false;
+        await load();
+      }
     };
     void load();
     const unsubscribe = subscribeCollaborationDiscoveryChanged(() => void load());
     const timer = setInterval(() => void load(), REFRESH_MS);
-    return () => { current = false; unsubscribe(); clearInterval(timer); };
-  }, [actorId, api]);
+    return () => {
+      current = false;
+      unsubscribe();
+      clearInterval(timer);
+      releaseDesktopCollaborationApi(api);
+    };
+  }, [actorId, platformHost, authGeneration]);
   return projects;
 }
 

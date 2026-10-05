@@ -19,22 +19,38 @@ const scope = {
 } as const;
 const mock = vi.hoisted(() => ({
   items: [] as unknown[],
+  pages: null as null | Array<{ items: unknown[]; nextCursor?: string }>,
   fail: false,
   calls: 0,
+  paths: [] as string[],
+  gate: null as null | Promise<void>,
+  created: 0,
+  released: [] as number[],
 }));
 
 vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
-  createDesktopCollaborationApi: () => ({
-    baseUrl: "https://app.matrix-os.com",
-    get: vi.fn(async (path: string) => {
-      mock.calls += 1;
-      if (mock.fail) throw new Error("SharedUnavailable");
-      if (path.startsWith("/api/collaboration/shared")) return { items: mock.items };
-      throw new Error("UnexpectedRequest");
-    }),
-    post: vi.fn(),
-    delete: vi.fn(),
-  }),
+  createDesktopCollaborationApi: () => {
+    mock.created += 1;
+    const id = mock.created;
+    return {
+      id,
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        mock.calls += 1;
+        mock.paths.push(path);
+        const gate = mock.gate;
+        if (gate) await gate;
+        if (mock.fail) throw new Error("SharedUnavailable");
+        if (!path.startsWith("/api/collaboration/shared")) throw new Error("UnexpectedRequest");
+        if (!mock.pages) return { items: mock.items };
+        const cursor = new URL(path, "https://x").searchParams.get("cursor");
+        return mock.pages[cursor ? Number(cursor) : 0];
+      }),
+      post: vi.fn(),
+      delete: vi.fn(),
+    };
+  },
+  releaseDesktopCollaborationApi: (api: { id: number }) => { mock.released.push(api.id); },
 }));
 
 function sharedProject(overrides: Record<string, unknown> = {}) {
@@ -56,8 +72,13 @@ function sharedProject(overrides: Record<string, unknown> = {}) {
 describe("Electron Work rail shared projects", () => {
   beforeEach(() => {
     mock.items = [sharedProject()];
+    mock.pages = null;
     mock.fail = false;
     mock.calls = 0;
+    mock.paths = [];
+    mock.gate = null;
+    mock.created = 0;
+    mock.released = [];
     useConnection.setState({ ...useConnection.getInitialState(), userId: "user_member", platformHost: "https://app.matrix-os.com" }, true);
     useTabs.setState({ ...useTabs.getInitialState(), tabs: [], activeTabId: null }, true);
   });
@@ -110,6 +131,40 @@ describe("Electron Work rail shared projects", () => {
     mock.items = [{ ...sharedProject(), scopeId: "10000000-0000-4000-8000-000000000a09" }, sharedProject()];
     render(<SharedWorkRailProjects />);
     expect(await screen.findAllByRole("button", { name: "collab testing 12PMOct3" })).toHaveLength(1);
+  });
+
+  it("uses a fresh connection after the account signs in again, and releases the old one", async () => {
+    const { unmount } = render(<SharedWorkRailProjects />);
+    expect(await screen.findByRole("button", { name: "collab testing 12PMOct3" })).toBeVisible();
+    await act(async () => { useConnection.setState({ authGeneration: useConnection.getState().authGeneration + 1 }); });
+    expect(await screen.findByRole("button", { name: "collab testing 12PMOct3" })).toBeVisible();
+    expect(mock.created).toBe(2);
+    expect(mock.released).toEqual([1]);
+    unmount();
+    expect(mock.released).toEqual([1, 2]);
+  });
+
+  it("finds shared projects on later pages of shared items", async () => {
+    const chatOnly = { scopeId: "10000000-0000-4000-8000-000000000b01", runtimeId: "vps:11111111-1111-4111-8111-111111111111",
+      ownerId: "user_owner", kind: "chat", authorityGeneration: 1, status: "accepted", home: "offline" };
+    mock.pages = [{ items: [chatOnly], nextCursor: "1" }, { items: [sharedProject()] }];
+    render(<SharedWorkRailProjects />);
+    expect(await screen.findByRole("button", { name: "collab testing 12PMOct3" })).toBeVisible();
+    expect(mock.paths).toEqual(["/api/collaboration/shared?limit=50", "/api/collaboration/shared?limit=50&cursor=1"]);
+  });
+
+  it("reloads once more when sharing changes during a load, instead of dropping the change", async () => {
+    let release!: () => void;
+    mock.gate = new Promise<void>((resolve) => { release = resolve; });
+    mock.items = [];
+    render(<SharedWorkRailProjects />);
+    await act(async () => { await Promise.resolve(); });
+    mock.items = [sharedProject()];
+    act(() => notifyCollaborationDiscoveryChanged());
+    mock.gate = null;
+    await act(async () => { release(); await Promise.resolve(); });
+    expect(await screen.findByRole("button", { name: "collab testing 12PMOct3" })).toBeVisible();
+    expect(mock.calls).toBe(2);
   });
 
   it("renders nothing when shared projects cannot be loaded or the account is disconnected", async () => {
