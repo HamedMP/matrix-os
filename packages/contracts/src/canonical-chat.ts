@@ -92,6 +92,7 @@ export const CanonicalChatResourceKindSchema = z.enum([
   "agent",
   "chat",
   "organization_drive",
+  "memory_source",
 ]);
 
 export const CanonicalChatResourceReferenceSchema = z.object({
@@ -104,6 +105,9 @@ export const CanonicalChatResourceReferenceSchema = z.object({
 }).strict().superRefine((resource, context) => {
   if ((resource.kind === "organization_drive") !== (resource.drive !== undefined) || (resource.drive && resource.id !== resource.drive.scopeId)) {
     context.addIssue({ code: "custom", path: ["drive"], message: "Drive references require matching organization scope identity" });
+  }
+  if (resource.kind === "memory_source" && (!z.uuid().safeParse(resource.id).success || (resource.revision !== undefined && !/^[1-9][0-9]{0,14}$/.test(resource.revision)))) {
+    context.addIssue({code:"custom",path:["id"],message:"Memory references require a source identity and valid revision"});
   }
   if (resource.path && resource.kind !== "file" && resource.kind !== "folder") {
     context.addIssue({ code: "custom", path: ["path"], message: "Only file and folder resources may include a path" });

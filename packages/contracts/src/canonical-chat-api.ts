@@ -136,7 +136,8 @@ function validMentionCounts(parts: z.infer<typeof CanonicalChatUserInputPartSche
   const agents = references.filter((reference) => reference.kind === "agent");
   const chats = references.filter((reference) => reference.kind === "chat");
   const drives = references.filter((reference) => reference.kind === "organization_drive");
-  return agents.length <= 1 && chats.length <= 3 && drives.length <= 3
+  const memories = references.filter((reference) => reference.kind === "memory_source");
+  return memories.length <= 8 && new Set(memories.map(entry => entry.id)).size === memories.length && agents.length <= 1 && chats.length <= 3 && drives.length <= 3
     && new Set(drives.map((entry) => JSON.stringify(entry.drive))).size === drives.length
     && new Set(chats.map((chat) => chat.id)).size === chats.length;
 }
@@ -177,7 +178,7 @@ export const CanonicalSteerChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   expectedTurnId: CanonicalChatTurnSchema.shape.id,
   parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64).refine((parts) => !parts.some(
-    (part) => part.type === "resource_reference" && ["agent", "chat", "organization_drive"].includes(part.resource.kind),
+    (part) => part.type === "resource_reference" && ["agent", "chat", "organization_drive", "memory_source"].includes(part.resource.kind),
   ), { message: "Queue Agent, Chat and company drive references as a new turn" }),
 }).strict();
 
