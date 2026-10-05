@@ -86,7 +86,7 @@ describe("preview funded readiness probe budgets", () => {
       expect(bindings.split("|")).toContain(`${daily}=${dayLimit}`);
       expect(bindings.split("|")).toContain(`${minute}=${minuteLimit}`);
       expect(loadFundedModelProbeLimits(Object.fromEntries(bindings.split("|").map(binding => binding.split("=")))))
-        .toEqual({ dailyLimit: Number(dayLimit), minuteLimit: Number(minuteLimit) });
+        .toEqual({ dailyLimit: Number(dayLimit), minuteLimit: Number(minuteLimit), budgetKey: "global" });
     },
   );
 });
