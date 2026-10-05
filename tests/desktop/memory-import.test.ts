@@ -246,6 +246,17 @@ describe("export import", () => {
       parseMemoryExport("note.md", "# Example\nSource").records[0],
     ).toMatchObject({ kind: "document", content: "# Example\nSource" });
   });
+  it("keeps recurring exceptions distinct and namespaces calendar exports by their source", () => {
+    const event = (recurrence = "", title = "Review") => `BEGIN:VEVENT\nUID:shared-uid\nSUMMARY:${title}\nDTSTART:20261005T100000Z\n${recurrence}END:VEVENT\n`;
+    const content = `BEGIN:VCALENDAR\n${event()}${event("RECURRENCE-ID:20261012T100000Z\n", "Rescheduled")}END:VCALENDAR`;
+    const first = parseMemoryExport("calendar.ics", content, "account-a/file-one");
+    expect(first.records).toHaveLength(2);
+    expect(first.records[0].externalId).not.toBe(first.records[1].externalId);
+    expect(first.records[1].metadata?.recurrenceId).toBe("20261012T100000Z");
+    expect(parseMemoryExport("calendar.ics", content, "account-b/file-one").records[0].externalId).not.toBe(first.records[0].externalId);
+    expect(parseMemoryExport("calendar.ics", content, "account-a/file-two").records[0].externalId).not.toBe(first.records[0].externalId);
+    expect(parseMemoryExport("renamed.ics", content.replace("Review", "Updated"), "account-a/file-one").records[0].externalId).toBe(first.records[0].externalId);
+  });
   it("preserves calendar recurrence/timezone without fabricating UTC dates", () => {
     const p = parseMemoryExport(
       "events.ics",
@@ -253,7 +264,7 @@ describe("export import", () => {
     );
     expect(p.records[0]).toMatchObject({
       kind: "calendar",
-      externalId: expect.stringContaining("evt"),
+      externalId: expect.stringMatching(/^calendar:export:[a-f0-9]{64}:[a-f0-9]{64}$/),
       metadata: {
         start: "20261005T100000",
         timeZone: "Europe/Stockholm",

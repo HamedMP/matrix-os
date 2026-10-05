@@ -50,12 +50,12 @@ export function parseMemoryExport(
       ],
       warnings: [],
     };
-  } else if (extension === ".ics") batch = parseIcs(content);
+  } else if (extension === ".ics") batch = parseIcs(content, sourceIdentity);
   else if (extension === ".eml") batch = parseEml(content);
   else throw Error("Unsupported export");
   return MemoryImportBatchSchema.parse(batch);
 }
-function parseIcs(content: string): MemoryImportBatch {
+function parseIcs(content: string, sourceIdentity: string): MemoryImportBatch {
   const lines = content
     .replace(/\r\n/g, "\n")
     .replace(/\n[ \t]/g, "")
@@ -84,11 +84,20 @@ function parseIcs(content: string): MemoryImportBatch {
       const tz = start.params.match(/(?:^|;)TZID=([^;]+)/)?.[1];
       const metadata: Record<string, string> = { start: start.value };
       if (tz) metadata.timeZone = tz;
+      const recurrence = fields["RECURRENCE-ID"];
+      if (recurrence) {
+        metadata.recurrenceId = recurrence.value;
+        const recurrenceTz = recurrence.params.match(/(?:^|;)TZID=([^;]+)/)?.[1];
+        if (recurrenceTz) metadata.recurrenceTimeZone = recurrenceTz;
+      }
       if (fields.DTEND) metadata.end = fields.DTEND.value;
       if (fields.RRULE) metadata.recurrence = fields.RRULE.value;
       if (fields.EXDATE) metadata.excludedDates = fields.EXDATE.value;
+      const eventIdentity = JSON.stringify([
+        fields.UID.value, recurrence?.params ?? "", recurrence?.value ?? "",
+      ]);
       records.push({
-        externalId: `calendar:${fields.UID.value}`,
+        externalId: `calendar:export:${hash(sourceIdentity)}:${hash(eventIdentity)}`,
         title: unescapeIcs(fields.SUMMARY?.value ?? "Calendar event"),
         content: [
           fields.SUMMARY?.value ?? "Calendar event",
@@ -115,6 +124,7 @@ function parseIcs(content: string): MemoryImportBatch {
           value !== undefined &&
           [
             "UID",
+            "RECURRENCE-ID",
             "SUMMARY",
             "DTSTART",
             "DTEND",
