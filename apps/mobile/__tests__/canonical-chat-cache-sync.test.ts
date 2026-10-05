@@ -12,6 +12,7 @@ const createdAt = "2026-09-06T00:00:00.000Z";
 const CHATS_KEY = ["mobile", "chats", "user", "computer"];
 const DETAIL_KEY = ["mobile", "chats", "detail", "user", "computer", "chat_content"];
 const BOT_KEY = ["native-bot-chat", "user", "https://example.test/vm/computer", "chat_content"];
+const OTHER_DETAIL_KEY = ["mobile", "chats", "detail", "user", "computer", "chat_other"];
 
 const message: CanonicalChatMessage = {
   id: "msg_stream", chatId: "chat_content", seq: 1, role: "assistant", state: "pending",
@@ -64,14 +65,15 @@ function mountedQueries(
       .subscribe(() => undefined),
   ];
   const sync = createCanonicalChatCacheSync({
-    queryClient, chatsKey: CHATS_KEY, detailKey: DETAIL_KEY, botKey: BOT_KEY, activeChatId: "chat_content",
+    queryClient, chatsKey: CHATS_KEY,
+    activeChat: { chatId: "chat_content", detailKey: DETAIL_KEY, botKey: BOT_KEY },
   });
   const shownText = () => {
     const part = queryClient.getQueryData<CanonicalChatDetailResponse>(DETAIL_KEY)?.messages[0]?.parts[0];
     return part?.type === "text" ? part.text : undefined;
   };
   return {
-    sync, fetchList, fetchBot, shownText,
+    sync, queryClient, fetchList, fetchBot, shownText,
     cleanup() {
       sync.dispose();
       unmount.forEach((stop) => stop());
@@ -299,23 +301,96 @@ describe("createCanonicalChatCacheSync", () => {
     cleanup();
   });
 
-  it("lets a first load already in flight stand in for the refresh", async () => {
+  it("reconciles once a first load that was already in flight has landed", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     let finishLoad: (value: { items: never[] }) => void = () => undefined;
-    const fetchList = jest.fn(() => new Promise((resolve) => { finishLoad = resolve; }));
+    const fetchList = jest.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { finishLoad = resolve; }))
+      .mockResolvedValue({ items: [] });
     const stop = new QueryObserver(queryClient, { queryKey: CHATS_KEY, queryFn: fetchList }).subscribe(() => undefined);
-    const sync = createCanonicalChatCacheSync({
-      queryClient, chatsKey: CHATS_KEY, detailKey: DETAIL_KEY, activeChatId: null,
-    });
+    const sync = createCanonicalChatCacheSync({ queryClient, chatsKey: CHATS_KEY });
 
+    // The load began before whatever this refresh is for, so it may not include it.
     sync.handle({ type: "chat.full_refresh" });
-    finishLoad({ items: [] });
-    await jest.advanceTimersByTimeAsync(10_000);
-
+    await jest.advanceTimersByTimeAsync(5_000);
     expect(fetchList).toHaveBeenCalledTimes(1);
+
+    finishLoad({ items: [] });
+    await jest.advanceTimersByTimeAsync(2_000);
+    expect(fetchList).toHaveBeenCalledTimes(2);
     sync.dispose();
     stop();
     queryClient.clear();
+  });
+
+  it("keeps a slow list refresh that is pending when the open chat changes", async () => {
+    const { sync, fetchList, cleanup } = mountedQueries(jest.fn());
+
+    sync.handle(textDelta(2, 0, "x", "chat_other"));
+    sync.setActiveChat({ chatId: "chat_other", detailKey: OTHER_DETAIL_KEY });
+    await jest.advanceTimersByTimeAsync(10_000);
+
+    expect(fetchList).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("keeps the list refresh owed to a burst when the open chat changes", async () => {
+    const { sync, fetchList, cleanup } = mountedQueries(jest.fn());
+
+    for (let cursor = 2; cursor <= 4; cursor += 1) {
+      sync.handle({ type: "chat.changed", chatId: "chat_other", cursor, eventType: "chat.updated" });
+    }
+    await settle();
+    expect(fetchList).toHaveBeenCalledTimes(1);
+
+    sync.setActiveChat(null);
+    await jest.advanceTimersByTimeAsync(2_000);
+    expect(fetchList).toHaveBeenCalledTimes(2);
+    cleanup();
+  });
+
+  it("marks a chat stale when the refresh it was owed is dropped by a chat change", async () => {
+    const fetchDetail = jest.fn(async () => detailAt(2, "hello"));
+    const { sync, queryClient, cleanup } = mountedQueries(fetchDetail);
+
+    for (let cursor = 9; cursor <= 11; cursor += 1) {
+      sync.handle({ type: "chat.changed", chatId: "chat_content", cursor, eventType: "chat.updated" });
+    }
+    await settle();
+    expect(fetchDetail).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryState(DETAIL_KEY)?.isInvalidated).toBe(false);
+
+    sync.setActiveChat({ chatId: "chat_other", detailKey: OTHER_DETAIL_KEY });
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    // Not fetched for a chat nobody is looking at, but refetched when it is next opened.
+    expect(fetchDetail).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryState(DETAIL_KEY)?.isInvalidated).toBe(true);
+    cleanup();
+  });
+
+  it("stops writing streamed text into a chat that is no longer open", async () => {
+    const fetchDetail = jest.fn();
+    const { sync, shownText, cleanup } = mountedQueries(fetchDetail);
+
+    sync.handle(textDelta(2, 0, "hello"));
+    sync.setActiveChat({ chatId: "chat_other", detailKey: OTHER_DETAIL_KEY });
+    sync.handle(textDelta(3, 5, " world"));
+    await settle();
+
+    expect(shownText()).toBe("hello");
+    expect(fetchDetail).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("asks again when a bot event arrives for a chat thought to have no bot", async () => {
+    const { sync, fetchBot, cleanup } = mountedQueries(jest.fn(async () => detailAt(2)), detailAt(1), { bot: null });
+
+    sync.handle({ type: "chat.changed", chatId: "chat_content", cursor: 2, eventType: "bot.created" });
+    await settle();
+
+    expect(fetchBot).toHaveBeenCalledTimes(1);
+    cleanup();
   });
 
   it("refetches the list and the open chat on a full refresh", async () => {

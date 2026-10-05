@@ -12,7 +12,7 @@ import {
 import { useAuth } from "@clerk/clerk-expo";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { createCanonicalChatCacheSync } from "@/lib/canonical-chat-cache-sync";
+import { createCanonicalChatCacheSync, type CanonicalChatCacheSync } from "@/lib/canonical-chat-cache-sync";
 import { createCanonicalChatEventSource, type CanonicalChatInvalidation } from "@/lib/canonical-chat-events";
 import { mobileQueryKeys } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
@@ -81,6 +81,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   const { computer } = useCanonicalChats();
   const queryClient = useQueryClient();
   const eventSourceRef = useRef<ReturnType<typeof createCanonicalChatEventSource> | null>(null);
+  const cacheSyncRef = useRef<CanonicalChatCacheSync | null>(null);
   const computerKey = computer ? `${computer.handle}:${computer.runtimeSlot}` : null;
 
   useEffect(() => {
@@ -103,22 +104,30 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   useEffect(() => {
     const source = eventSourceRef.current;
     if (!source) return;
-    const uid = userId ?? "signed-out";
-    const key = computerKey ?? "none";
     const sync = createCanonicalChatCacheSync({
       queryClient,
-      chatsKey: mobileQueryKeys.canonicalChats(uid, key),
-      activeChatId,
-      detailKey: mobileQueryKeys.canonicalChatDetail(uid, key, activeChatId ?? "none"),
-      botKey: activeChatId && computer
-        ? mobileQueryKeys.botChat(uid, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, activeChatId)
-        : null,
+      chatsKey: mobileQueryKeys.canonicalChats(userId ?? "signed-out", computerKey ?? "none"),
     });
+    cacheSyncRef.current = sync;
     const unsubscribe = source.subscribe(sync.handle);
     return () => {
       unsubscribe();
+      cacheSyncRef.current = null;
       sync.dispose();
     };
+  }, [computerKey, userId, queryClient]);
+
+  // Separate from the effect above so that opening another chat does not
+  // rebuild the sync, which would drop a chat-list refresh it still owes.
+  useEffect(() => {
+    const uid = userId ?? "signed-out";
+    cacheSyncRef.current?.setActiveChat(activeChatId ? {
+      chatId: activeChatId,
+      detailKey: mobileQueryKeys.canonicalChatDetail(uid, computerKey ?? "none", activeChatId),
+      botKey: computer
+        ? mobileQueryKeys.botChat(uid, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, activeChatId)
+        : null,
+    } : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChatId, computerKey, userId, queryClient]);
 

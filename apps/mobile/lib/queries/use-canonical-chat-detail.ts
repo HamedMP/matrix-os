@@ -64,6 +64,10 @@ export function useCanonicalChatDetail(chatId: string | null) {
       const cached = queryClient.getQueryData<CanonicalChatDetailResponse>(detailQueryKey);
       return cached && cached.record.chat.revision > snapshot.record.chat.revision ? cached : snapshot;
     },
+    // Events for a chat that is not open are not applied to it, so its cached
+    // detail can be behind however recently it was fetched. Opening a chat
+    // always reconciles it, as desktop does.
+    staleTime: 0,
     refetchInterval: ({ state }) => activeRunPollInterval(state.data, streamLive),
     refetchIntervalInBackground: false,
   });
