@@ -14,6 +14,8 @@ import pg from 'pg';
 import { runPlatformMigration } from './migration-runner.js';
 import { PLATFORM_SCHEMA_REVISION } from './database/migration-revision.js';
 import { migratePlatformSchema } from './database/migrate.js';
+import { migrateNativeLive } from './native-live/migration.js';
+import { NATIVE_LIVE_SCHEMA_REVISION } from './native-live/migration-revision.js';
 import { parseStringArray } from './database/json.js';
 import { mapUserMachine, type UserMachineProvisioningClass } from './database/user-machine-records.js';
 import { z } from 'zod/v4';
@@ -1267,6 +1269,11 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   await runPlatformMigration(db, migrateSchema, {
     revision: PLATFORM_SCHEMA_REVISION,
     deadlockAttempts: 12,
+  });
+  // Independent feature scope: previews based on an older core still install
+  // this additive ledger without downgrading a newer core schema revision.
+  await runPlatformMigration(db, migrateNativeLive, {
+    scope: 'native-live', revision: NATIVE_LIVE_SCHEMA_REVISION, deadlockAttempts: 12,
   });
 }
 

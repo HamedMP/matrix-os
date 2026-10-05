@@ -20,4 +20,9 @@ describe("platform-owned Live policy", () => {
     expect(usageUpperBound({ promptTokenCount: 100, responseTokenCount: 10, thoughtsTokenCount: 5 })).toBe(480);
     expect(() => usageUpperBound({ promptTokenCount: -1, responseTokenCount: 1 })).toThrow();
   });
+  it("rejects oversized setup before forwarding and supplies safe defaults", () => {
+    expect(() => constrainNativeLiveSetup({ ignored: "x".repeat(64_001) })).toThrow();
+    expect(constrainNativeLiveSetup({}).tools).toEqual([]);
+    expect(usageUpperBound({ promptTokenCount: 1, responseTokenCount: 1, toolUsePromptTokenCount: 1 })).toBe(18);
+  });
 });

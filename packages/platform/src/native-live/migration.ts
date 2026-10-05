@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import type { PlatformMigrationExecutor } from "../migration-types.js";
+import type { PlatformMigrationExecutor } from "../database/migration-types.js";
 
 export async function migrateNativeLive(db: PlatformMigrationExecutor): Promise<void> {
   await sql`CREATE TABLE IF NOT EXISTS native_live_sessions (
