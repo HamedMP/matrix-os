@@ -127,6 +127,7 @@ export interface VoiceSessionTransportHandle {
 }
 
 export interface VoiceSessionEngineDeps {
+  liveHistory?: VoiceSessionHost["liveHistory"];
   admission: VoiceAdmissionPort;
   delivery: VoiceDeliveryPort;
   chatEvents: VoiceChatEventSource;
@@ -177,6 +178,7 @@ function fingerprint(input: VoiceSessionCreateInput): string {
 }
 
 export class VoiceSessionEngine implements VoiceSessionHost {
+  readonly liveHistory?: VoiceSessionHost["liveHistory"];
   readonly limits: VoiceSessionLimits;
   readonly clock: VoiceClock;
   readonly admission: VoiceAdmissionPort;
@@ -220,6 +222,7 @@ export class VoiceSessionEngine implements VoiceSessionHost {
 
   constructor(deps: VoiceSessionEngineDeps) {
     this.deps = deps;
+    this.liveHistory = deps.liveHistory;
     this.limits = { ...VOICE_SESSION_LIMITS, ...deps.limits };
     this.clock = deps.clock ?? createSystemVoiceClock();
     this.admission = {
@@ -312,6 +315,10 @@ export class VoiceSessionEngine implements VoiceSessionHost {
       throw new VoiceSessionError("provider_unavailable", "No voice adapter is configured", 503);
     }
     const caps = adapter.capabilities;
+    if (caps.conversationMode === "native_live" && [...this.sessions.values()].some(session =>
+      session.principalId === principal.userId && !this.isTerminal(session))) {
+      throw new VoiceSessionError("session_conflict", "A voice session is already active", 409);
+    }
     if (request.memoryMode === "session_only") {
       throw new VoiceSessionError("unsupported_surface", "Session-only mode is not supported", 422);
     }

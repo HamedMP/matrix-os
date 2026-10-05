@@ -1,3 +1,5 @@
+import { registerCanonicalVoice } from "./server/canonical-voice.js";
+import { canonicalVoiceDecision } from "./voice-session/canonical-ports.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { createHmac } from "node:crypto";
 import { serve } from "@hono/node-server";
@@ -37,7 +39,6 @@ import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { buildAllowedOrigins, createAllowedOriginController } from "./allowed-origins.js";
 import { AoedeBindingRepository } from "./aoede/binding-repository.js";
 import { AoedeBootstrapService } from "./aoede/bootstrap-service.js";
-import { createAoedeRoutes } from "./aoede/routes.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
@@ -71,36 +72,8 @@ import { validateChatProviderSelection } from "./chat/provider-catalog.js";
 import { closeCanonicalChatEventLifecycle } from "./chat/routes.js";
 import { createGatewayChatProviderCatalog } from "./chat/runtime-provider-catalog.js";
 import { createCanonicalChatRuntime } from "./chat/runtime.js";
-import { ChatVoiceDeliveryRepository } from "./chat/voice-delivery-repository.js";
 import { createVoiceSessionPolicyLookup } from "./chat/voice-session-policy.js";
-import {
-  createAdapterCapabilityPort,
-  VoiceMediaAdapterRegistry,
-} from "./voice-session/adapter.js";
-import { registerVoiceSessionMediaAdapters } from "./voice-session/adapter-registration.js";
-import {
-  createManagedVoiceReadinessProbe,
-  wrapCapabilityPortWithReadiness,
-} from "./speech/managed-readiness.js";
-import {
-  canonicalVoiceDecision,
-  createCanonicalVoicePorts,
-} from "./voice-session/canonical-ports.js";
 import { VoiceSessionEngine } from "./voice-session/engine.js";
-import {
-  createManagedVoiceTranscriptionPort,
-  createManagedVoiceSynthesisPort,
-  createVoiceSessionPlatformSpeechClient,
-} from "./speech/voice-session-ports.js";
-import {
-  createVoiceSessionRoutes,
-  projectVoiceCapability,
-  registerVoiceSessionWebSocketRoute,
-} from "./voice-session/routes.js";
-import {
-  createVoiceOriginAllowlist,
-  VoiceTicketAuthority,
-} from "./voice-session/ticket-auth.js";
 import { createRateLimiter } from "./security/rate-limiter.js";
 import { createBackgroundChatProjection, restoreBackgroundChatThread } from "./coding-agents/background-chat-recovery.js";
 import {
@@ -1708,194 +1681,15 @@ export async function createGateway(config: GatewayConfig) {
     }
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
 
-    // ------------------------------------------------------------------
-    // Canonical voice sessions — voice as a mode of exactly one canonical
-    // Chat. Finalized speech enters through canonical admission; assistant
-    // output/activity arrives from the canonical outbox; the engine owns
-    // only ephemeral transport/media state.
-    const voiceLog = (event: string, fields: Record<string, unknown>) =>
-      console.warn("[voice-session]", event, fields);
-    const voiceDeliveries = new ChatVoiceDeliveryRepository(chatRepository.kysely);
-    const voicePorts = createCanonicalVoicePorts({
-      orchestrator: canonicalChatOrchestrator,
-      repository: chatRepository,
-      deliveries: voiceDeliveries,
-      ...(canonicalActionAuthority ? { actions: canonicalActionAuthority } : {}),
-      log: voiceLog,
-    });
-    const voiceAdapters = new VoiceMediaAdapterRegistry();
-    // One registration policy owns adapter authority
-    // (`registerVoiceSessionMediaAdapters`): the simulator stays an explicit
-    // dev seam; Platform Speech is the only production speech path — the
-    // managed adapter transcribes and speaks through the provisioned runtime
-    // client. A direct provider key is a non-production escape
-    // hatch — never a second key authority on a production gateway.
-    const voicePlatformSpeechClient = createVoiceSessionPlatformSpeechClient(process.env);
-    const voiceAdapterRegistration = registerVoiceSessionMediaAdapters({
-      registry: voiceAdapters,
-      env: process.env,
-      managedTranscribe: voicePlatformSpeechClient
-        ? createManagedVoiceTranscriptionPort({ client: voicePlatformSpeechClient })
-        : undefined,
-      managedSynthesize: voicePlatformSpeechClient
-        ? createManagedVoiceSynthesisPort({ client: voicePlatformSpeechClient })
-        : undefined,
-      log: voiceLog,
-    });
-    // Managed speech readiness is authoritative and bounded (≤15s probe, 30s
-    // positive / 5s negative cache). Consulted only when the registered adapter
-    // is "managed"; every non-ready state fails closed downstream. When the
-    // managed adapter's synthesis leg came from a development-gated port, the
-    // probe adjudicates only the platform transcription it is authoritative
-    // for — it must not fail closed on a synthesis leg the adapter never uses.
-    const managedVoiceReadiness = voicePlatformSpeechClient
-      ? createManagedVoiceReadinessProbe({
-          client: voicePlatformSpeechClient,
-          synthesisSource: voiceAdapterRegistration.synthesisSource ?? "platform",
-        })
-      : undefined;
-    const voiceAdapterCapabilities = createAdapterCapabilityPort({
-      registry: voiceAdapters,
-      limits: { maxSessionSeconds: 3_600, maxIdleSeconds: 300 },
-    });
-    const voiceCapabilities = managedVoiceReadiness
-      ? wrapCapabilityPortWithReadiness({
-          port: voiceAdapterCapabilities,
-          probe: managedVoiceReadiness,
-          selectedAdapterId: () => voiceAdapterRegistration.adapterId,
-        })
-      : voiceAdapterCapabilities;
-    // Single-process authority: customer VPSes run exactly one gateway, so
-    // this in-memory map is the complete replay state; replicas would need a
-    // shared atomic consume store (see ticket-auth.ts). MATRIX_AUTH_TOKEN
-    // also derives the ticket HMAC; without it the authority falls back to a
-    // per-process key and outstanding tickets die on restart.
-    if (!process.env.MATRIX_AUTH_TOKEN) {
-      voiceLog("voice.tickets.ephemeral_key", { note: "MATRIX_AUTH_TOKEN unset; voice transport tickets are not restart-stable" });
-    }
-    const voiceTickets = new VoiceTicketAuthority({
-      hmacKey: process.env.MATRIX_AUTH_TOKEN
-        ? createHmac("sha256", process.env.MATRIX_AUTH_TOKEN)
-          .update("matrix-os/voice-transport-tickets").digest()
-        : undefined,
-    });
-    voiceSessionEngine = new VoiceSessionEngine({
-      admission: voicePorts.admission,
-      delivery: voicePorts.delivery,
-      chatEvents: voicePorts.chatEvents,
-      runControl: voicePorts.runControl,
-      adapters: voiceAdapters,
-      tickets: voiceTickets,
-      log: voiceLog,
-    });
-    voiceSessionPolicy?.set(voiceSessionEngine.sessionPolicyLookup);
-    const voiceSessionRateLimiter = createRateLimiter({
-      maxAttempts: 30,
-      windowMs: 60_000,
-      lockoutMs: 60_000,
-    });
-    app.route("/", createVoiceSessionRoutes({
-      engine: voiceSessionEngine,
-      resolvePrincipal: requireRequestPrincipal,
-      chatAccess: voicePorts.chatAccess,
-      capabilities: {
-        capabilities: async (input) => {
-          const capability = await voiceCapabilities.capabilities(input);
-          // No canonical harness enforces per-run memory suppression yet, so
-          // no surface may claim an enforceable session-only route.
-          return capability.status === "available"
-            ? { ...capability, sessionOnly: "unsupported" as const }
-            : capability;
-        },
+    ({ voiceSessionEngine, aoedeBootstrapService } = registerCanonicalVoice({
+      app, upgradeWebSocket, geminiLiveConnection, chatRepository, canonicalChatOrchestrator, canonicalActionAuthority,
+      voiceSessionPolicy, aoedeBindings, voiceReadinessCatalog, qualifiedCanonicalPolicyFor,
+      requireRequestPrincipal,
+      resolveProject: async (principal, projectId) => {
+        const resolved = await codingAgentProjectManager.getProjectById({ type: "user", id: principal.userId }, projectId);
+        return resolved.ok ? { kind: "project" as const, id: resolved.project.id, label: resolved.project.name } : null;
       },
-      // Server-owned canonical authority: persisted Chat selection, provider
-      // route eligibility, and the adapter-qualified frozen execution policy.
-      // No decision (no persisted selection) fails closed to conversation_only.
-      canonicalDecision: async ({ principal, chatId, surface }) => {
-        const owner = { type: "personal" as const, ownerId: principal.userId };
-        const selection = (await chatRepository!.get(owner, chatId))?.chat.currentSelection;
-        if (!selection) return undefined;
-        const catalog = await voiceReadinessCatalog.getCatalog(principal, selection.instanceId);
-        return canonicalVoiceDecision({
-          selection,
-          catalog,
-          qualifiedPolicy: await qualifiedCanonicalPolicyFor(selection, catalog),
-          ...(surface !== undefined ? { surface } : {}),
-        });
-      },
-      checkRateLimit: ({ principal }) => voiceSessionRateLimiter.check(principal.userId),
     }));
-    registerVoiceSessionWebSocketRoute({
-      app,
-      upgradeWebSocket,
-      engine: voiceSessionEngine,
-      tickets: voiceTickets,
-      isOriginAllowed: createVoiceOriginAllowlist(
-        buildAllowedOrigins({
-          shellOrigin: process.env.SHELL_ORIGIN,
-          proxyOrigin: process.env.PROXY_ORIGIN,
-        }),
-        // Native/Electron WebSocket clients send no Origin header; the ticket
-        // itself carries the session/principal/path binding.
-        { allowMissing: true },
-      ),
-      log: voiceLog,
-    });
-
-    // ------------------------------------------------------------------
-    // Aoede standalone assistant bootstrap — an authenticated owner-local
-    // pointer to exactly one canonical Chat per runtime/scope. Runtime
-    // identity is server configuration only; request fields never supply it.
-    // No dispatch, microphone, or provider run starts here.
-    const aoedeMachineId = process.env.MATRIX_MACHINE_ID?.trim();
-    const aoedeRuntimeSlot = process.env.MATRIX_RUNTIME_SLOT?.trim();
-    if (aoedeBindings && aoedeMachineId && aoedeRuntimeSlot) {
-      try {
-        aoedeBootstrapService = new AoedeBootstrapService({
-          repository: aoedeBindings,
-          catalog: voiceReadinessCatalog,
-          runtimeIdentity: { machineId: aoedeMachineId, runtimeSlot: aoedeRuntimeSlot },
-          resolveProject: async (principal, projectId) => {
-            const resolved = await codingAgentProjectManager.getProjectById(
-              { type: "user", id: principal.userId }, projectId,
-            );
-            return resolved.ok
-              ? { kind: "project" as const, id: resolved.project.id, label: resolved.project.name }
-              : null;
-          },
-          // Speech readiness is independent of the selected model and Chat;
-          // overlap its bounded probe with cold canonical catalog discovery.
-          resolveSpeechCapability: async ({ principal, surface }) => voiceCapabilities.capabilities({
-            principalId: principal.userId, chatId: "aoede_bootstrap", surface,
-          }),
-          resolveReadiness: async ({ principal, surface, selection, catalog, speechCapability }) => ({
-            // The exact requested/saved selection is authoritative — the
-            // service rejects any substituted route, so never substitute.
-            selection,
-            capability: projectVoiceCapability(
-              // The Chat may not exist yet; adapter capability is not chat-scoped.
-              speechCapability ?? await voiceCapabilities.capabilities({
-                principalId: principal.userId, chatId: "aoede_bootstrap", surface,
-              }),
-              canonicalVoiceDecision({
-                selection,
-                catalog,
-                surface,
-                qualifiedPolicy: await qualifiedCanonicalPolicyFor(selection, catalog),
-              }),
-            ),
-          }),
-        });
-        app.route("/", createAoedeRoutes({
-          service: aoedeBootstrapService,
-          requirePrincipal: requireRequestPrincipal,
-        }));
-      } catch (error: unknown) {
-        aoedeBootstrapService = null;
-        console.warn("[aoede] bootstrap service unavailable:",
-          error instanceof Error ? error.name : "UnknownError");
-      }
-    }
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
     // S07: this layer has no execution-root resolver, so no `sandboxManifests` source is passed
