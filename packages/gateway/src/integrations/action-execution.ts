@@ -40,7 +40,7 @@ export async function executeIntegrationAction(opts: {
     if (!pipedream.boundedGmailGet) throw new BoundedPipedreamReadError();
     const identity = { externalUserId, accountId: connection.pipedream_account_id };
     return { data: await pipedream.boundedGmailGet(actionId === "list_threads"
-      ? { ...identity, kind: "threads" }
+      ? { ...identity, kind: "threads", ...(params?.pageToken !== undefined ? { pageToken: String(params.pageToken) } : {}) }
       : { ...identity, kind: "thread-ids", id: String(params?.threadId) }) };
   }
 

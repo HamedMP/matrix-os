@@ -146,3 +146,10 @@ Jev Ultrafast, generic user-authored recipes, research routing and other decisio
 ## Recipe catalog compatibility (2026-10-05)
 
 The bound Jev Inbox Triage recipe remains discoverable in the shared recipe panel when the host provides its verified Jev creation handoff, including while the generic Bot catalog is loading. A generic read-only Inbox bot with the same recipe ID must not replace this entry. Hosts without the bound handoff may retain the generic Inbox bot. Creation continues to require a connected Gmail account and the existing explicit, unchecked-by-default labeling grant; catalog presentation must not widen permissions or migrate saved agents.
+
+
+## Inbox pagination validation (2026-10-05)
+
+The platform-owned Gmail `list_threads` registry accepts an optional opaque `pageToken` of 1–4096 characters without whitespace or control characters. Both the bound read-call and ordinary bounded execution forward the cursor to the same verified account. Inbox scope and the 30-thread page size remain fixed; query, label and size overrides are rejected. Direct API mapping URL-encodes the cursor. A saved next-page cursor must pass platform validation before the resumable batch can proceed. Gateway integration source changes must trigger Platform Cloud Run deployment because Platform imports these routes; a customer VPS bundle alone does not update this validation.
+
+Acceptance requires a real second-page read, new Jev evaluations, confirmed additive labels independently read back from Gmail, and a visible English chat that distinguishes prior progress from this run. Historical batch totals alone are insufficient. Public documentation changes remain a separate site-repository deliverable when user-visible behavior changes.
