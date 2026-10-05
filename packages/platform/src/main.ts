@@ -262,6 +262,7 @@ export function createApp(deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  internalNativeLiveRuntimeRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
@@ -609,6 +610,7 @@ export function createApp(deps: {
 
   // Runtime speech uses its own runtime-bound credential and must never fall
   // through to Clerk session routing or the tenant proxy.
+  if (deps.internalNativeLiveRuntimeRoutes) app.route('/', deps.internalNativeLiveRuntimeRoutes);
   if (deps.internalSpeechRuntimeRoutes) {
     app.route('/internal/containers/:handle/speech', deps.internalSpeechRuntimeRoutes);
   }

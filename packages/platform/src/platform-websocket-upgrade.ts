@@ -1,3 +1,4 @@
+import type { createNativeLiveControl } from './native-live/control.js';
 import { buildPreviewTerminalAccess } from "./preview-terminal-access.js";
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
@@ -79,6 +80,7 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
     provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
   /** S05: runtime control-stream upgrade (`/internal/collaboration/control`); handled before session routing. */
+  nativeLiveControl?: ReturnType<typeof createNativeLiveControl>;
   collaborationDirect?: {
     handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean>;
     relay: { prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<{ home: { runtimeId: string; origin: string }; upstreamPath: string; headers: string; release(): void; touch(): void; onEvict(hook: () => void): void } | null> };
@@ -116,6 +118,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       }
     }
     try {
+      if (opts.nativeLiveControl && await opts.nativeLiveControl.handleUpgrade(req, socket as Socket, head)) return;
       const handledInternalGeminiLive = await handleInternalGeminiLiveProxyUpgrade({
         req,
         socket: socket as Socket,

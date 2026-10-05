@@ -100,6 +100,14 @@ export interface UserMachinesTable {
   activation_authorized_at: Generated<string | null>;
 }
 
+export interface NativeLiveSessionsTable {
+  session_id: string; owner_id: string; machine_id: string; runtime_slot: string;
+  policy_revision: string; model_id: string; period_start: string; status: string;
+  accounting_mode: string; reserved_microusd: number; reported_upper_microusd: number;
+  accounted_microusd: number; platform_absorbed_overrun_microusd: number; usage_events: number;
+  created_at: string; expires_at: string; closed_at: string | null;
+}
+
 export interface AiFundedGlobalPolicyTable {
   policy_id: string;
   enabled: boolean;
@@ -781,6 +789,7 @@ export interface PlatformDatabase {
   ai_funded_credit_ledger: AiFundedCreditLedgerTable;
   ai_funded_promotional_grant_balances: AiFundedPromotionalGrantBalancesTable;
   ai_funded_runtime_balances: AiFundedRuntimeBalancesTable;
+  native_live_sessions: NativeLiveSessionsTable;
   speech_operations: SpeechOperationsTable;
   speech_runtime_allowances: SpeechRuntimeAllowancesTable;
   ai_credit_checkout_claims: AiCreditCheckoutClaimsTable;

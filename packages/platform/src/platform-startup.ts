@@ -1,3 +1,4 @@
+import { createNativeLiveControl } from './native-live/control.js';
 import { serve } from '@hono/node-server';
 import {
   createPostHogErrorTracker,
@@ -223,6 +224,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  internalNativeLiveRuntimeRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
@@ -1015,6 +1017,7 @@ async function startPlatformServerWithCleanup(
   const appEnv = process.env;
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
+  const nativeLiveControl = createNativeLiveControl({ db, env: appEnv, platformSecret });
   const app = createPlatformApp({
     db,
     atsDb,
@@ -1032,6 +1035,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
+    internalNativeLiveRuntimeRoutes: nativeLiveControl.routes,
     fundedAiRepository,
     fundedModelProbes,
     collaboration,
@@ -1086,6 +1090,7 @@ async function startPlatformServerWithCleanup(
         }
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
+          nativeLiveControl.shutdown(),
           collaboration?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
@@ -1128,6 +1133,7 @@ async function startPlatformServerWithCleanup(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationDirect: collaboration?.direct,
+    nativeLiveControl,
   });
 }
 
