@@ -1,5 +1,6 @@
 import {
   MEMORY_ENGINES,
+  chatMemoryTitle,
   type MemorySource,
   type MemoryImportRequest,
   type MemoryImportResult,
@@ -286,7 +287,7 @@ export class MemoryWorkspaceService {
         snapshots.push({
           sourceId: source.id,
           revision: source.revision,
-          title: source.title,
+          title: chatMemoryTitle(source.title),
           text,
           truncated: text !== source.content,
         });

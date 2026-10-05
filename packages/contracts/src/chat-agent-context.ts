@@ -23,6 +23,16 @@ export const ChatMemorySnapshotSchema = z.object({
 }).strict();
 export type ChatMemorySnapshot = z.infer<typeof ChatMemorySnapshotSchema>;
 
+const chatMemoryLabelSchema = canonicalSafeLabel(280, 1120);
+/** Chat receipts share safe labels; the owner-controlled source title remains intact. */
+export function chatMemoryTitle(title: string): string {
+  const label = title.slice(0, 280);
+  return ChatMemorySnapshotSchema.shape.title.safeParse(title).success &&
+    chatMemoryLabelSchema.safeParse(label).success
+    ? label
+    : "Memory source";
+}
+
 /** Written only by the gateway after owner-scoped resolution, never accepted from a client. */
 export const ChatRunContextSchema = z.object({
   version: z.literal(1),
