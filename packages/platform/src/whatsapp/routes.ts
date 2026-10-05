@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 import type { WhatsAppConfig } from './config.js';
@@ -17,6 +17,7 @@ export function createWhatsAppRoutes(deps: {
   config: WhatsAppConfig; repository: ReturnType<typeof createWhatsAppRepository>; service: WhatsAppService;
   authenticate: (bearer: string) => Promise<string | null>; publishableKey: string; now?: () => number;
   logError?: (error: unknown) => void;
+  admissionMiddleware?: MiddlewareHandler;
 }) {
   const app = new Hono<{ Variables: { whatsappOwner: string } }>();
   const log = deps.logError ?? ((error) => console.error('[whatsapp] Request failed', error));
@@ -34,6 +35,7 @@ export function createWhatsAppRoutes(deps: {
     } catch (error) { log(error); return c.json({ error: 'Connection unavailable' }, 503); }
     await next();
   });
+  if (deps.admissionMiddleware) app.use('/api/whatsapp/*', deps.admissionMiddleware);
   app.get('/whatsapp/webhook', (c) => {
     const parsed = challengeSchema.safeParse({ mode: c.req.query('hub.mode'), token: c.req.query('hub.verify_token'), challenge: c.req.query('hub.challenge') });
     if (!parsed.success) return c.text('Request denied', 403);

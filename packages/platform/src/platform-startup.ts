@@ -1,10 +1,14 @@
+import { z } from 'zod/v4';
+import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
+import { createConfiguredAccountDeletionRuntime } from './account-deletion/wiring.js';
+import type { AccountDeletionAdapterOptions } from './account-deletion/adapters.js';
 import { serve } from '@hono/node-server';
 import {
   createPostHogErrorTracker,
   installPostHogProcessErrorTracking,
   type MatrixTelemetryEvent,
 } from '@matrix-os/observability';
-import type { Hono, Context } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
@@ -79,6 +83,7 @@ import {
 } from './speech/config.js';
 import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
+import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -118,6 +123,7 @@ interface GatewayCustomMcpModules {
       activatePreset(input: { userId: string; presetId: string; allowedTools: readonly string[]; requiredTools?: readonly string[] }): Promise<any>;
       callSelectedTool(input: { userId: string; serverId: string; toolName: string; arguments?: Record<string, unknown>; approvalGranted: boolean }): Promise<unknown>;
       remove(userId: string, serverId: string): Promise<void>;
+      removeForAccountDeletion(userId: string, serverId: string): Promise<void>;
     };
   };
   oauth: {
@@ -128,7 +134,7 @@ interface GatewayCustomMcpModules {
       revoke(credential: unknown): Promise<void>;
     };
   };
-  crypto: { parseCustomMcpEncryptionKey(value?: string): Buffer };
+  crypto: { parseCustomMcpEncryptionKey(value?: string): Buffer; decryptCustomMcpOAuthState(state:string,key:Buffer):unknown };
   routes: {
     createCustomMcpRoutes(options: Record<string, unknown>): Hono;
   };
@@ -149,7 +155,7 @@ interface GatewayPipedreamConfig {
 }
 
 interface GatewayPipedreamModule {
-  createPipedreamClient(config: GatewayPipedreamConfig): unknown;
+  createPipedreamClient(config: GatewayPipedreamConfig): Promise<NonNullable<AccountDeletionAdapterOptions['pipedream']>>;
 }
 
 interface GatewayIntegrationRoutesModule {
@@ -161,6 +167,7 @@ interface GatewayIntegrationRoutesModule {
     resolveUserId: (c: Context) => Promise<string | null>;
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
     mcpPresetBroker?: unknown;
+    verifiedConnectedWebhook?: ReturnType<typeof createAccountDeletionIntegrationWebhookAdmission>;
   }): Hono;
 }
 
@@ -179,6 +186,7 @@ interface GatewayR2ClientModule {
 }
 
 type CreatePlatformApp = (deps: {
+  accountDeletion?: import('./account-deletion/wiring.js').AccountDeletionRuntime;
   db: PlatformDB;
   atsDb?: AtsDB;
   docker?: Dockerode;
@@ -435,6 +443,8 @@ async function startPlatformServerWithCleanup(
     console.log(`[matrix] Provisioner enabled (${homeserverUrl})`);
   }
 
+  let deletionPipedream: AccountDeletionAdapterOptions['pipedream'];
+  let deletionCustomMcp: AccountDeletionAdapterOptions['customMcp'];
   let integrationRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
   let customMcpRoutes: Hono | undefined;
@@ -479,6 +489,9 @@ async function startPlatformServerWithCleanup(
       projectId: integrationConfig.pipedreamProjectId,
       environment: integrationConfig.pipedreamEnvironment,
     });
+    deletionPipedream = pipedream;
+    const verifiedConnectedWebhook=process.env.ACCOUNT_DELETION_SECRET===undefined?undefined:
+      createAccountDeletionIntegrationWebhookAdmission({db,pipedream,env:process.env});
     const webhookSecret = integrationConfig.pipedreamWebhookSecret;
     const resolveIntegrationUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
       if (!clerkUserId) return null;
@@ -507,6 +520,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
+      verifiedConnectedWebhook,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('platformUserId') as string | undefined;
         const handle = c.get('platformHandle') as string | undefined;
@@ -518,6 +532,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
+      verifiedConnectedWebhook,
       authorizeJevLabelCall: authorizeInternalJevLabels,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('internalContainerClerkUserId') as string | undefined;
@@ -605,8 +620,9 @@ async function startPlatformServerWithCleanup(
       clientId: oauthClientId,
       redirectUri: oauthRedirectUri,
     });
+    deletionCustomMcp = { remove: (userId,serverId) => broker.removeForAccountDeletion(userId,serverId) };
     managedMcpPresetBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
-    customMcpRoutes = routesModule.createCustomMcpRoutes({
+    const publicCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
       oauth: oauthManager,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
@@ -614,6 +630,14 @@ async function startPlatformServerWithCleanup(
         c.get('platformHandle') as string | undefined,
       ),
     });
+    customMcpRoutes=new Hono();
+    customMcpRoutes.use('/oauth/callback',createAccountDeletionMutationGuard({db,env:process.env,isMutation:()=>true,
+      resolveOwner:async c=>{
+        const state=z.string().min(32).max(512).parse(c.req.query('state'));
+        const decoded=z.object({userId:z.string().min(1).max(128)}).parse(cryptoModule.decryptCustomMcpOAuthState(state,encryptionKey));
+        return (await customDb.getUserById(decoded.userId))?.clerk_id;
+      }}));
+    customMcpRoutes.route('/',publicCustomMcpRoutes);
     internalCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
       oauth: oauthManager,
@@ -925,7 +949,16 @@ async function startPlatformServerWithCleanup(
   registerCustomMcpStartupCleanup(async () => { await whatsappRuntime?.shutdown(); });
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
+  const accountDeletion = await createConfiguredAccountDeletionRuntime({
+    db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, customMcp: deletionCustomMcp,
+  });
+  registerCustomMcpStartupCleanup(async () => {
+    accountDeletion?.stop();
+    await accountDeletion?.drain();
+    accountDeletion?.close();
+  });
   const app = createPlatformApp({
+    accountDeletion,
     db,
     atsDb,
     docker,
@@ -975,6 +1008,7 @@ async function startPlatformServerWithCleanup(
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[platform] Received ${signal}, shutting down`);
+    accountDeletion?.stop();
     customerVpsReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
@@ -991,6 +1025,8 @@ async function startPlatformServerWithCleanup(
         console.error('[platform] HTTP server close failed:', err.message);
       }
       (async () => {
+        await accountDeletion?.drain();
+        accountDeletion?.close();
         await customerVpsReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
