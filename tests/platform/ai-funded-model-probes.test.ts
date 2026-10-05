@@ -1,4 +1,4 @@
-import { migrateAiFunded } from "../../packages/platform/src/database/migrations/ai-funded.js";
+import { migrateFundedProbeBudget } from "../../packages/platform/src/funded-probe-budget-migration.js";
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFundedModelProbeService, loadFundedModelProbeLimits, reserveFundedModelProbe } from "../../packages/platform/src/ai-funded-model-probes.js";
@@ -55,7 +55,7 @@ describe("fleet funded model probe budget", () => {
     expect(await reserveFundedModelProbe({ db, now, dailyLimit: 1, minuteLimit: 1 })).toBe(true);
     await sql`ALTER TABLE ai_funded_model_probe_budget DROP CONSTRAINT ai_funded_probe_budget_scope_check`.execute(db.executor);
     await sql`ALTER TABLE ai_funded_model_probe_budget ADD CONSTRAINT ai_funded_model_probe_budget_budget_key_check CHECK (budget_key = 'global')`.execute(db.executor);
-    await migrateAiFunded(db.executor);
+    await migrateFundedProbeBudget(db.executor);
     expect(await reserveFundedModelProbe({ db, now, dailyLimit: 1, minuteLimit: 1 })).toBe(false);
     expect(await reserveFundedModelProbe({ db, now, dailyLimit: 1, minuteLimit: 1, budgetKey: "preview-isolated" })).toBe(true);
     const rows = await sql<{ budget_key: string; day_used: number }>`select budget_key, day_used from ai_funded_model_probe_budget order by budget_key`.execute(db.executor);

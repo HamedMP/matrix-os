@@ -6,8 +6,7 @@ import type { PlatformMigrationExecutor } from '../migration-types.js';
 export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_model_probe_budget (
-      budget_key TEXT PRIMARY KEY CONSTRAINT ai_funded_probe_budget_scope_check
-        CHECK (budget_key = 'global' OR (length(budget_key) <= 64 AND budget_key ~ '^preview-[a-z0-9][a-z0-9-]*$')),
+      budget_key TEXT PRIMARY KEY CHECK (budget_key = 'global'),
       day_start TEXT NOT NULL,
       daily_limit INTEGER NOT NULL CHECK (daily_limit > 0),
       day_used INTEGER NOT NULL CHECK (day_used >= 0),
@@ -16,16 +15,6 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
       minute_used INTEGER NOT NULL CHECK (minute_used >= 0)
     )
   `.execute(db);
-  // Upgrade the legacy global-only constraint without resetting counters.
-  // migrate.ts runs this under the platform migration advisory transaction.
-  await sql`ALTER TABLE ai_funded_model_probe_budget DROP CONSTRAINT IF EXISTS ai_funded_model_probe_budget_budget_key_check`.execute(db);
-  await sql`DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_funded_probe_budget_scope_check'
-      AND conrelid = 'ai_funded_model_probe_budget'::regclass) THEN
-      ALTER TABLE ai_funded_model_probe_budget ADD CONSTRAINT ai_funded_probe_budget_scope_check
-        CHECK (budget_key = 'global' OR (length(budget_key) <= 64 AND budget_key ~ '^preview-[a-z0-9][a-z0-9-]*$'));
-    END IF;
-  END $$`.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_global_policy (
       policy_id TEXT PRIMARY KEY CHECK (policy_id = 'default'),

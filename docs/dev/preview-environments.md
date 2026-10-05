@@ -434,3 +434,9 @@ its limit; use one persistent preview scope across revisions and restarts.
 Owner policy, credit reservations, model eligibility, and relay health remain
 independent requirements. Request bodies and runtime principals cannot choose
 this operator-owned key.
+
+The additive probe-key migration uses its own `funded-probe-budget` revision
+scope. It can run beside a newer core schema without replacing its generation,
+and reuses the existing advisory-locked migration transaction. Migration
+composition lives in `database/run-migrations.ts`; focused feature modules own
+DDL, rather than adding behavior to the large `db.ts` composition.
