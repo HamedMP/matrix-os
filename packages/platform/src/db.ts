@@ -1,3 +1,4 @@
+import { migratePlatformDatabase } from "./database/run-migrations.js";
 import { randomUUID } from 'node:crypto';
 import {
   Kysely,
@@ -11,11 +12,6 @@ import {
   type Updateable,
 } from 'kysely';
 import pg from 'pg';
-import { runPlatformMigration } from './migration-runner.js';
-import { PLATFORM_SCHEMA_REVISION } from './database/migration-revision.js';
-import { migratePlatformSchema } from './database/migrate.js';
-import { migrateNativeLive } from './native-live/migration.js';
-import { NATIVE_LIVE_SCHEMA_REVISION } from './native-live/migration-revision.js';
 import { parseStringArray } from './database/json.js';
 import { mapUserMachine, type UserMachineProvisioningClass } from './database/user-machine-records.js';
 import { z } from 'zod/v4';
@@ -1265,22 +1261,6 @@ function wrapDb(
   return wrapped;
 }
 
-async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
-  await runPlatformMigration(db, migrateSchema, {
-    revision: PLATFORM_SCHEMA_REVISION,
-    deadlockAttempts: 12,
-  });
-  // Independent feature scope: previews based on an older core still install
-  // this additive ledger without downgrading a newer core schema revision.
-  await runPlatformMigration(db, migrateNativeLive, {
-    scope: 'native-live', revision: NATIVE_LIVE_SCHEMA_REVISION, deadlockAttempts: 12,
-  });
-}
-
-async function migrateSchema(db: Executor): Promise<void> {
-  await migratePlatformSchema(db);
-}
-
 export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_PLATFORM_DB_URL ?? ''): PlatformDB {
   if (typeof opts === 'string' && !opts) {
     throw new Error('Platform Postgres URL is required: set PLATFORM_DATABASE_URL or POSTGRES_URL');
@@ -1297,7 +1277,7 @@ export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_P
       })()
     : new Kysely<PlatformDatabase>({ dialect: opts.dialect as never });
 
-  const ready = migrate(kysely);
+  const ready = migratePlatformDatabase(kysely);
   return wrapDb(kysely, kysely, ready, async () => {
     await kysely.destroy();
     try {
