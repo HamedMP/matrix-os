@@ -1,3 +1,4 @@
+import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { Hono } from 'hono';
 import { canClerkUserAccessMachine, getPersonalAccountRestrictedMachineByHandle } from './customer-vps-preview.js';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from './db.js';
@@ -97,6 +98,8 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       await next();
     });
   });
+  internalIntegrationApp.use('*', createAccountDeletionMutationGuard({ db,
+    resolveOwner: (c) => c.get('internalContainerClerkUserId') as string | undefined }));
   internalIntegrationApp.route('/', options.internalIntegrationRoutes);
   app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
 }

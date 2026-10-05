@@ -66,7 +66,18 @@ describe("merged platform schema upgrade", () => {
       await expect(runPlatformMigration(db, migratePlatformSchema, {
         revision: PLATFORM_SCHEMA_REVISION,
       })).resolves.toBeUndefined();
-      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(13);
+      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(14);
+      const deletionColumns = await sql<{column_name:string}>`
+        SELECT column_name FROM information_schema.columns WHERE table_schema='public'
+          AND table_name='account_deletion_jobs' ORDER BY column_name
+      `.execute(db);
+      expect(deletionColumns.rows.map(row=>row.column_name)).toEqual(expect.arrayContaining([
+        'owner_hash','encrypted_context','accounting_summary','due_at','next_step','lease_token','billing_stopped',
+      ]));
+      const deletionIndexes = await sql<{indexname:string}>`
+        SELECT indexname FROM pg_indexes WHERE tablename='account_deletion_jobs'
+      `.execute(db);
+      expect(deletionIndexes.rows.map(row=>row.indexname)).toContain('idx_account_deletion_dispatch');
       const marker = await sql<{ generation: number; fingerprint: string }>`
         SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'core'
       `.execute(db);

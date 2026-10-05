@@ -56,6 +56,13 @@ export default function AccountSection() {
           <Button variant="subtle" onClick={() => void invoke("shell:open-external", { url: manageUrl })}>
             Manage account
           </Button>
+          <Button variant="subtle" onClick={() => {
+            void invoke("shell:open-external", { url: new URL("/account/delete", manageUrl).href }).catch((error: unknown) => {
+              console.warn("[settings] account page could not be opened", error instanceof Error ? error.name : "UnknownError");
+            });
+          }}>
+            Account data and deletion
+          </Button>
           <Button
             variant="danger"
             onClick={() => {

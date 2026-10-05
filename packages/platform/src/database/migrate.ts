@@ -1,3 +1,4 @@
+import { migrateAccountDeletion } from './migrations/account-deletion.js';
 import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
 import { migrateUserMachines } from './migrations/user-machines.js';
@@ -38,6 +39,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'golden-snapshots', run: migrateGoldenSnapshots },
   { name: 'provider-deletion', run: migrateProviderDeletion },
   { name: 'directory-and-social', run: migrateDirectoryAndSocial },
+  { name: 'account-deletion', run: migrateAccountDeletion },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

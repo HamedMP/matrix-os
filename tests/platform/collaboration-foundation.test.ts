@@ -87,6 +87,7 @@ describe('platform schema registration (S01 foundation)', () => {
       'golden-snapshots',
       'provider-deletion',
       'directory-and-social',
+      'account-deletion',
     ]);
     expect(PLATFORM_MIGRATION_STEPS.every((step) => typeof step.run === 'function')).toBe(true);
   });

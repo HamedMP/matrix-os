@@ -1,3 +1,4 @@
+import { prepareChatSessionContext } from "./session-history.js";
 import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -20,7 +21,7 @@ import { loadChatResumeState } from "./resume-checkpoint.js";
 import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 
 export interface TurnAdmissionOptions {
-  repository: Pick<ChatRepository, "get" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
+  repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
@@ -133,10 +134,13 @@ export async function admitCanonicalTurn(
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
     });
-    if (resumeState !== undefined && prepared?.context?.history) {
-      const { history: _history, ...context } = prepared.context;
-      prepared.context = context;
-    }
+    let sessionContext: CanonicalChatRun["context"];
+    try {
+      sessionContext = await prepareChatSessionContext({
+        repository: deps.repository, owner, chatId, throughSeq: record.chat.messageCount,
+        requestHash, instanceId: validated.instance.id, resumeState, context: prepared?.context,
+      });
+    } catch (error: unknown) { return mapRepositoryError(error); }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),
@@ -175,7 +179,7 @@ export async function admitCanonicalTurn(
       instanceId: validated.instance.id,
       selection: validated.selection,
       interactionMode: effective.interactionMode,
-      ...(prepared?.context ? { context: prepared.context } : {}),
+      ...(sessionContext ? { context: sessionContext } : {}),
       permissionMode: effective.permissionMode,
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
