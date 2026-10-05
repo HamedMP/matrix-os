@@ -76,3 +76,124 @@ describe("production Hermes native catalog wiring", () => {
     } finally { producer.close(); await rm(homePath, { recursive: true, force: true }); }
   });
 });
+
+
+describe("native observation renewal ordering", () => {
+  it("timestamps the options receipt, retaining strict five-second expiry after a slow probe", async () => {
+    let clock = 0;
+    const source = createHermesRuntimeSource(async (path) => {
+      if (path === "/api/status") return { gateway_running: false };
+      clock = 5001;
+      return { provider: "openai-codex", model: "gpt-5.6-sol", providers: [{ slug: "openai-codex", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol"] }] };
+    }, { now: () => clock });
+    const result = await source(AbortSignal.timeout(6500));
+    expect(result.nativeProfileObservations?.[0]?.localObservation).toEqual({ state: "present_unverified", checkedAt: new Date(5001).toISOString(), staleAfter: new Date(10001).toISOString() });
+  });
+
+  it("renews once when slow coding discovery consumes Hermes evidence, without repeating coding discovery", async () => {
+    let clock = 0;
+    const coding = Promise.withResolvers<{ providers: []; accessSources: []; failures: [] }>();
+    const getCatalog = vi.fn(() => coding.promise);
+    const readJson = vi.fn(async (path: string) => path === "/api/status" ? { gateway_running: false } : {
+      provider: "openai-codex", model: "gpt-5.6-sol", providers: [{ slug: "openai-codex", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol"] }],
+    });
+    const source = createHermesRuntimeSource(readJson, { now: () => clock });
+    const reader = createCanonicalNativeHarnessCatalogReader({ getCatalog }, { hermesRuntimeSource: source, now: () => new Date(clock) });
+    const request = reader(true);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    clock = 6000; coding.resolve({ providers: [], accessSources: [], failures: [] });
+    const catalog = await request;
+    expect(catalog.profiles[0]?.localObservation.checkedAt).toBe(new Date(6000).toISOString());
+    expect(catalog.profiles[0]?.localObservation.staleAfter).toBe(new Date(11000).toISOString());
+    expect(getCatalog).toHaveBeenCalledOnce();
+    expect(readJson.mock.calls.filter(([path]) => path === "/api/model/options")).toHaveLength(2);
+  });
+
+  it("renews near final V3 projection after an unrelated driver wait", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "hermes-final-freshness-"));
+    let clock = 0;
+    const drivers = Promise.withResolvers<[]>();
+    const observed = Promise.withResolvers<void>();
+    const source = createHermesRuntimeSource(async (path) => {
+      if (path === "/api/status") return { gateway_running: false };
+      observed.resolve();
+      return { provider: "openai-codex", model: "gpt-5.6-sol", providers: [{ slug: "openai-codex", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol"] }] };
+    }, { now: () => clock });
+    const producer = new AiProviderService({ homePath, env: {}, now: () => new Date(clock), driverInventory: () => drivers.promise,
+      nativeHarnessCatalogReader: { getCatalog: async () => ({ providers: [], accessSources: [], failures: [] }) }, hermesRuntimeSource: source });
+    try {
+      const request = producer.getSnapshot({ refresh: true });
+      await observed.promise;
+      for (let i = 0; i < 50; i++) await Promise.resolve();
+      clock = 6000; drivers.resolve([]);
+      const catalog = (await request).nativeHarnessCatalog;
+      expect(catalog?.profiles[0]?.localObservation.checkedAt).toBe(new Date(6000).toISOString());
+    } finally { producer.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
+});
+
+it("renews positive options evidence consumed by slow status, but preserves a new negative", async () => {
+  for (const authenticated of [true, false]) {
+    let clock = 0;
+    const status = Promise.withResolvers<{ gateway_running: false }>();
+    let statusReads = 0;
+    const readJson = vi.fn(async (path: string) => {
+      if (path === "/api/status") return ++statusReads === 1 ? status.promise : { gateway_running: false };
+      return { provider: "openai-codex", model: "gpt-5.6-sol", providers: [{ slug: "openai-codex", authenticated: statusReads === 1 ? true : authenticated, is_user_defined: false, models: ["gpt-5.6-sol"] }] };
+    });
+    const source = createHermesRuntimeSource(readJson, { now: () => clock });
+    const reader = createCanonicalNativeHarnessCatalogReader({ getCatalog: async () => ({ providers: [], accessSources: [], failures: [] }) },
+      { hermesRuntimeSource: source, now: () => new Date(clock) });
+    const request = reader(true);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    clock = 6000; status.resolve({ gateway_running: false });
+    const catalog = await request;
+    if (authenticated) expect(catalog.profiles[0]?.localObservation.checkedAt).toBe(new Date(6000).toISOString());
+    else expect(catalog).toEqual({ profiles: [], failures: ["hermes"] });
+    expect(readJson.mock.calls.filter(([path]) => path === "/api/model/options")).toHaveLength(2);
+  }
+});
+
+it("does not retry proven absence and aborts a shared bounded catalog wait promptly", async () => {
+  const absent = createHermesRuntimeSource(async path => path === "/api/status" ? { gateway_running: false } : {
+    provider: "openai-codex", model: "gpt-5.6-sol", providers: [{ slug: "openai-codex", authenticated: false, is_user_defined: false, models: ["gpt-5.6-sol"] }],
+  });
+  const reader = createCanonicalNativeHarnessCatalogReader({ getCatalog: async () => ({ providers: [], accessSources: [], failures: [] }) }, { hermesRuntimeSource: absent });
+  expect(await reader(true)).toEqual({ profiles: [], failures: ["hermes"] });
+  const coding = Promise.withResolvers<{ providers: []; accessSources: []; failures: [] }>();
+  const other = createCanonicalNativeHarnessCatalogReader({ getCatalog: () => coding.promise });
+  const controller = new AbortController();
+  const pending = other(true, { signal: controller.signal, deadline: Date.now() + 13000 });
+  const result = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  controller.abort(); await result;
+  coding.resolve({ providers: [], accessSources: [], failures: [] });
+});
+
+it("collects Codex local evidence after slow conditional Hermes renewal", async () => {
+  const homePath = await mkdtemp(join(tmpdir(), "hermes-codex-observation-order-"));
+  let clock = 0;
+  let reads = 0;
+  const observed = Promise.withResolvers<void>();
+  const drivers = Promise.withResolvers<[]>();
+  const source = createHermesRuntimeSource(async path => {
+    if (path === "/api/status") return { gateway_running: false };
+    reads += 1;
+    if (reads > 1) clock += 5001;
+    observed.resolve();
+    return { provider: "openai-codex", model: "gpt-5.6-sol", providers: [{ slug: "openai-codex", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol"] }] };
+  }, { now: () => clock });
+  const codexLocalObservation = vi.fn(async () => ({ accessSourceId: "owner_openai_profile", state: "present_unverified" as const,
+    checkedAt: new Date(clock).toISOString(), staleAfter: new Date(clock + 5000).toISOString() }));
+  const producer = new AiProviderService({ homePath, env: {}, now: () => new Date(clock), driverInventory: () => drivers.promise,
+    nativeHarnessCatalogReader: { getCatalog: async () => ({ providers: [], accessSources: [], failures: [] }) }, hermesRuntimeSource: source, codexLocalObservation });
+  try {
+    const request = producer.getSnapshot({ refresh: true });
+    await observed.promise;
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    clock = 6000; drivers.resolve([]);
+    const snapshot = await request;
+    expect(snapshot.nativeHarnessCatalog?.profiles[0]?.localObservation.checkedAt).toBe(new Date(11001).toISOString());
+    expect(snapshot.accessSources.find(source => source.id === "owner_openai_profile")?.localObservation?.checkedAt).toBe(new Date(11001).toISOString());
+    expect(codexLocalObservation).toHaveBeenCalledTimes(2);
+  } finally { producer.close(); await rm(homePath, { recursive: true, force: true }); }
+});

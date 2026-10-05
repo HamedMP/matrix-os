@@ -228,6 +228,7 @@ export async function startBots(options: {
     if (!botId) return [];
     return transact(ownerId, async (tx) => (await createBotTasksRepository(tx.db).listOpen({ ownerId, botId, chatId }, tx.db))
       .map((task) => ({ taskId: task.taskId, chatId: task.chatId, agentId: task.botId,
+        ...(task.runId ? { runId: task.runId } : {}),
         status: task.status, ...(task.blockedReason ? { blockedReason: task.blockedReason } : {}),
         revision: task.revision, updatedAt: task.updatedAt })));
   };

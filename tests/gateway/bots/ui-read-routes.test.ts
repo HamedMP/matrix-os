@@ -64,7 +64,7 @@ describe("bot UI read routes", () => {
 
   it("reads only the principal's Chat and returns allowlisted task fields", async () => {
     const tasks = vi.fn(async () => [{ taskId: "task_abcdefgh", agentId: "bot_research1", chatId: "chat_research",
-      status: "waiting_person", revision: 2, updatedAt: "2026-09-28T12:00:00.000Z" }]);
+      runId: "run_abcdefgh", status: "waiting_person", revision: 2, updatedAt: "2026-09-28T12:00:00.000Z" }]);
     const server = new Hono();
     server.route("/", createBotRoutes({ tasks, getPrincipal: () => ({ userId: "owner_1", source: "jwt" }) as never }));
     const response = await server.request("/api/chats/chat_research/bot-tasks");

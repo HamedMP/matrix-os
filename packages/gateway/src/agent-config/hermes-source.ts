@@ -318,10 +318,12 @@ export function createHermesRuntimeSource(
     if (cached !== null && cached.expiresAt > now()) return cached.value;
     if (inFlight === null || inFlight.generation !== generation) {
       const requestGeneration = generation;
-      const observedAt = now();
+      // Credential evidence is observed when model/options actually arrives,
+      // not when the RPC starts. A slow status call must not retimestamp it.
+      let observedAt: number | undefined;
       const promise = Promise.allSettled([
         readJson("/api/status", signal),
-        readJson("/api/model/options", signal),
+        readJson("/api/model/options", signal).then(value => { observedAt = now(); return value; }),
       ]).then(([statusResult, modelOptionsResult]) => {
         signal.throwIfAborted();
         if (statusResult.status === "rejected") throw statusResult.reason;

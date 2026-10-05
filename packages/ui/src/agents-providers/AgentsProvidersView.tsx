@@ -1,7 +1,7 @@
 import type { ProviderWorkflowCapability } from "@matrix-os/contracts";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
-import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
+import { hasConfiguredConnection, hasStaleHermesConnection, resolveHarnessConnection } from "./harness-connection.js";
 import { updateWorkflowRowStatus } from "./workflow-row-status.js";
 import { useEffect, useState, type ReactNode } from "react";
 import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
@@ -232,7 +232,7 @@ export function AgentsProvidersView({
             );
             const guided = Boolean(workflowClient && capability);
             const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
-            const connected = hasConfiguredConnection(harness, source);
+            const connected = hasConfiguredConnection(harness, source) || hasStaleHermesConnection(harness, source);
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (

@@ -971,7 +971,7 @@ export function CanonicalChatWorkspace({
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
               client={client.agents} directBotId={directBotId} detailsContainer={botDetailsContainer} headerContainer={botHeaderContainer}
               headerActions={chatSharingAction}
-              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
+              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision}>
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
@@ -1012,6 +1012,7 @@ export function CanonicalChatWorkspace({
             </div>
             </ChatContextMenu>
             <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>{composer}</div>
+            </BotChatPanel>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
           <div

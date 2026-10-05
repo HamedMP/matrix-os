@@ -1,5 +1,5 @@
 import { ConversationNotice } from "./notice";
-import { ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
+import { BotRunMessageBody, BotUnassignedMessageBody, ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   ChevronRight,
@@ -354,10 +354,13 @@ function ConversationTurn({
   const visibleTimeline = timeline?.filter((entry) => (
     entry.kind === "user-followup" || showWork || (terminalPartial !== undefined && entry.item.id === terminalPartial.id)
   ));
+  const pendingRequestIds = (visibleTimeline?.flatMap(entry => entry.kind === "work" ? [entry.item] : []) ?? visibleWork)
+    .flatMap(item => item.kind === "request" && item.input && !item.input.resolved && (item.input.pending || item.input.submitted) ? [item.requestId] : []);
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} /> : null}
       <ChatContextReceipt context={turn.runContext} />
+      <div data-agent-message-body={turn.id} className="min-w-0">
       {hasWork || turn.final || turn.active ? (
         <TurnReceipt
           startedAt={turn.startedAt}
@@ -398,6 +401,8 @@ function ConversationTurn({
           }
         />
       ) : null}
+      <BotRunMessageBody runIds={turn.runIds ?? []} requestIds={pendingRequestIds}/>
+      </div>
     </>
   );
 }
@@ -423,6 +428,9 @@ export function ConversationTranscript({
             initialFinalIds={initialFinalIds}
           />
         ))}
+        <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
+          requestIds={turns.flatMap(turn => turn.active || turn.expandedByDefault ? turn.work.flatMap(item =>
+            item.kind === "request" && item.input && !item.input.resolved && (item.input.pending || item.input.submitted) ? [item.requestId] : []) : [])}/>
       </ConversationContent>
     </Conversation>
   );
