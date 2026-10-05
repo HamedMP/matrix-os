@@ -16,12 +16,13 @@ export async function validateMemoryEvidence(
   owner: string,
   results: MemorySearchResult[],
 ) {
-  // Admission limits match two engine lanes and the public 20-hit query limit.
+  // Two engine lanes share this validator with the internal 30-source context
+  // snapshot lane. Public search/compare schemas retain their 20-hit limit.
   // No partial eviction: losing an ID would make evidence validation incorrect.
-  if (results.length > 2 || results.some((result) => result.hits.length > 20)) {
+  if (results.length > 2 || results.some((result) => result.hits.length > 30)) {
     throw new RangeError("Memory evidence exceeds its bound");
   }
-  // At most 40 entries; this request-local collection is released on return.
+  // At most 60 entries; this request-local collection is released on return.
   const ids: string[] = [];
   for (const result of results) {
     for (const hit of result.hits) {

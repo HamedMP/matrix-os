@@ -3,6 +3,7 @@ import { sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { MemoryWorkspaceRepository, MemoryConflictError, MemoryNotFoundError } from "../../packages/gateway/src/memory-workspace/repository.js";
 import { MemoryWorkspaceService } from "../../packages/gateway/src/memory-workspace/service.js";
+import { MemoryContextRequestSchema } from "@matrix-os/contracts";
 const input = { clientRequestId: "one", sources: [{ externalId: "one", title: "Original", content: "Forgotten secret", kind: "note" as const, collection: "Notes" }] };
 let repo: MemoryWorkspaceRepository;
 beforeEach(async () => { repo = new MemoryWorkspaceRepository((await KyselyPGlite.create()).dialect); await repo.bootstrap(); });
@@ -58,4 +59,26 @@ it.each(["patch", "delete"])("rejects standalone context if %s happens between s
     return read(owner, id);
   });
   await expect(new MemoryWorkspaceService(repo, {}).context("alice", sources.map((s) => s.id))).rejects.toBeInstanceOf(MemoryConflictError);
+});
+it("returns every selected original at the thirty-source context limit through real repository validation", async () => {
+  const { sources } = await repo.importSources("alice", {
+    clientRequestId: "context-max",
+    sources: Array.from({ length: 30 }, (_, index) => ({
+      ...input.sources[0], externalId: `context-${index}`, title: `Source ${index}`, content: `Original fact ${index}.`,
+    })),
+  });
+  const sourceIds = sources.map(source => source.id);
+  expect(MemoryContextRequestSchema.safeParse({ sourceIds }).success).toBe(true);
+  const context = await new MemoryWorkspaceService(repo, {}).context("alice", sourceIds);
+  expect(context.sources.map(source => source.sourceId)).toEqual(sourceIds);
+  expect(context.sources.every(source => source.revision === 1 && !source.truncated)).toBe(true);
+  for (const source of sources) expect(context.text).toContain(source.content);
+  expect(Buffer.byteLength(context.text)).toBeLessThanOrEqual(24000);
+});
+it("rejects thirty-one context selections at contract and service admission before reading originals", async () => {
+  const sourceIds = Array.from({ length: 31 }, (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+  expect(MemoryContextRequestSchema.safeParse({ sourceIds }).success).toBe(false);
+  const read = vi.spyOn(repo, "getSource");
+  await expect(new MemoryWorkspaceService(repo, {}).context("alice", sourceIds)).rejects.toBeInstanceOf(MemoryConflictError);
+  expect(read).not.toHaveBeenCalled();
 });
