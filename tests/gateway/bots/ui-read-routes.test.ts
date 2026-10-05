@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { BotTaskSummarySchema } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createBotRoutes } from "../../../packages/gateway/src/bots/routes.js";
 import { MissingRequestPrincipalError } from "../../../packages/gateway/src/request-principal.js";
@@ -69,9 +70,19 @@ describe("bot UI read routes", () => {
     server.route("/", createBotRoutes({ tasks, getPrincipal: () => ({ userId: "owner_1", source: "jwt" }) as never }));
     const response = await server.request("/api/chats/chat_research/bot-tasks");
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ tasks: await tasks.mock.results[0]!.value });
+    const body = await response.json();
+    const legacySummary = BotTaskSummarySchema.omit({ runId: true });
+    expect(legacySummary.safeParse(body.tasks[0]).success).toBe(true);
+    expect(body.tasks[0]).not.toHaveProperty("runId");
+    const enriched = await server.request("/api/chats/chat_research/bot-tasks?includeRunIds=true");
+    expect(await enriched.json()).toEqual({ tasks: await tasks.mock.results[0]!.value });
+    const optOut = await server.request("/api/chats/chat_research/bot-tasks?includeRunIds=false");
+    expect((await optOut.json()).tasks[0]).not.toHaveProperty("runId");
+    const calls = tasks.mock.calls.length;
+    expect((await server.request("/api/chats/chat_research/bot-tasks?includeRunIds=yes")).status).toBe(400);
+    expect(tasks).toHaveBeenCalledTimes(calls);
     expect(tasks).toHaveBeenCalledWith("owner_1", "chat_research");
     expect((await server.request("/api/chats/invalid!/bot-tasks")).status).toBe(400);
-    expect(tasks).toHaveBeenCalledTimes(1);
+    expect(tasks).toHaveBeenCalledTimes(calls);
   });
 });
