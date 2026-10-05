@@ -1,3 +1,4 @@
+import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 /**
  * Funded AI authorization: the single owner-wide admission point before a
  * reservation. Under an owner advisory lock it checks the credential, runtime
@@ -67,6 +68,9 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         || credential.audience !== FUNDED_AI_AUDIENCE || credential.scope !== FUNDED_AI_SCOPE) {
         throw new AiFundedPolicyError("unauthorized");
       }
+      await withAccountDeletionOwnerLock(trx, credential.owner_id, async (_locked, admission) => {
+        if (!admission.newWorkAllowed) throw new AiFundedPolicyError("access_disabled");
+      });
       // Serialize admission across every runtime/replica for this owner. The
       // namespaced transaction lock is acquired before runtime and balance locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${credential.owner_id}`}, 0))`.execute(trx.executor);
