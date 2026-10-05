@@ -304,6 +304,20 @@ describe("SignInScreen email code flow", () => {
     },
   );
 
+  it("keeps the link targets clear of the consent sentence above them", () => {
+    // A row pulled up over "By continuing, you agree to our" would let a tap
+    // on that plain text open a legal page.
+    render(<SignInScreen />);
+
+    const row = StyleSheet.flatten(screen.getByTestId("sign-in-legal-links").props.style);
+    const link = StyleSheet.flatten(
+      screen.getByRole("link", { name: "Privacy Policy" }).props.style,
+    );
+
+    expect(row.marginTop ?? 0).toBeGreaterThanOrEqual(0);
+    expect(link.marginTop ?? 0).toBeGreaterThanOrEqual(0);
+  });
+
   it("returns to the email step so a typo can be corrected", async () => {
     render(<SignInScreen />);
 

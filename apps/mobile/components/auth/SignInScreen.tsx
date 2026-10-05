@@ -230,7 +230,7 @@ export function SignInScreen() {
 
           <View style={styles.terms}>
             <Text style={styles.termsText}>By continuing, you agree to our</Text>
-            <View style={styles.termsLinks}>
+            <View style={styles.termsLinks} testID="sign-in-legal-links">
               <LegalLink label="Terms of Service" url={TERMS_OF_SERVICE_URL} />
               <Text style={styles.termsText}>and</Text>
               <LegalLink label="Privacy Policy" url={PRIVACY_POLICY_URL} />
@@ -245,7 +245,9 @@ export function SignInScreen() {
 // Pressables rather than nested <Text> spans: an inline span is only as tall as
 // its 18pt line, and these links have to be comfortably tappable before sign-in.
 // The 44pt target is the Pressable's own size, not a hitSlop, because a hitSlop
-// is not guaranteed to reach past the parent row's bounds.
+// is not guaranteed to reach past the parent row's bounds. The link text sits at
+// the top of that target, so the extra height falls below the links, where
+// nothing else is tappable, and never over the consent sentence above them.
 function LegalLink({ label, url }: { label: string; url: string }) {
   return (
     <Pressable
@@ -260,7 +262,6 @@ function LegalLink({ label, url }: { label: string; url: string }) {
 }
 
 const LEGAL_LINK_TARGET = 44;
-const LEGAL_LINE_HEIGHT = 18;
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -305,28 +306,24 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.v2.spacing.lg,
     alignItems: "center",
   },
-  // The row is as tall as the link targets. Pulling it up by the slack above
-  // the link text keeps the two consent lines visually adjacent; the slack
-  // below stays in flow so the targets never hang outside this container.
   termsLinks: {
     flexDirection: "row",
     flexWrap: "wrap",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "center",
-    marginTop: -(LEGAL_LINK_TARGET - LEGAL_LINE_HEIGHT) / 2,
   },
   termsText: {
     fontFamily: theme.v2.fonts.body,
     fontSize: 12,
     color: theme.v2.appColors.muted,
     textAlign: "center",
-    lineHeight: LEGAL_LINE_HEIGHT,
+    lineHeight: 18,
   },
   // Padding, not literal spaces around "and": iOS trims a Text node's trailing
   // whitespace, which leaves the gap after "and" narrower than the one before.
   termsLinkTarget: {
     minHeight: LEGAL_LINK_TARGET,
-    justifyContent: "center",
+    justifyContent: "flex-start",
     paddingHorizontal: theme.v2.spacing.xs,
   },
   termsLink: {
@@ -334,7 +331,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 12,
     color: theme.v2.appColors.ink,
     textDecorationLine: "underline",
-    lineHeight: LEGAL_LINE_HEIGHT,
+    lineHeight: 18,
   },
   termsLinkPressed: {
     opacity: 0.6,
