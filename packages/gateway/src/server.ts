@@ -176,6 +176,7 @@ import {
   createSessionRuntimeBridge,
 } from "./session-runtime-bridge.js";
 import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
+import { createGatewayMemoryWorkspace } from "./server/memory-workspace-runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
@@ -856,6 +857,8 @@ export async function createGateway(config: GatewayConfig) {
   gatewayCollaboration = ownerDatabaseServices?.collaboration ?? null;
   messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
+  const memoryWorkspace = await createGatewayMemoryWorkspace(ownerDatabaseServices ? databaseUrl : undefined);
+
   const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
   const osViewTools = osViewStateRepository
     && trustedOsViewOwnerId
@@ -1230,6 +1233,7 @@ export async function createGateway(config: GatewayConfig) {
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
   }));
+  app.route("/api/memory-workspace", memoryWorkspace.routes);
   const legacyProjectPathAdmission = gatewayCollaboration
     ? createLegacyProjectPathAdmission({
         homePath,
@@ -1597,6 +1601,7 @@ export async function createGateway(config: GatewayConfig) {
     }
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
+      memories: memoryWorkspace.memories,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
       repository: chatRepository,
@@ -1919,6 +1924,7 @@ export async function createGateway(config: GatewayConfig) {
       ]);
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
+      await memoryWorkspace.close();
       canonicalChatOrchestrator = null;
       await botServices?.close();
       botServices = undefined;

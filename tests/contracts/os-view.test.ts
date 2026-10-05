@@ -289,3 +289,7 @@ describe("shared OS-view contract", () => {
     });
   });
 });
+
+it("projects the Memory workspace's fixed appearance for canonical agent placement",()=>{
+ expect(osViewFixedAppAppearanceForPath("__memory-workspace__")).toMatchObject({icon:"notebook",iconSource:"fixed"});
+});

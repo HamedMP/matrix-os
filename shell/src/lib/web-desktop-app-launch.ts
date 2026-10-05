@@ -64,12 +64,14 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
     namedDesktopApp(findCanonicalApp(apps, browserPaths), { name: "Browser", path: "__browser__" }),
     namedDesktopApp(findCanonicalApp(apps, notesPaths), { name: "Notes", path: "apps/notes/index.html" }),
     namedDesktopApp(findCanonicalApp(apps, whiteboardPaths), { name: "Whiteboard", path: "apps/whiteboard/index.html" }),
+    { name: "Memory", path: "__memory-workspace__" },
   ];
   const firstClassPaths = new Set([
     ...DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
     ...browserPaths,
     ...notesPaths,
     ...whiteboardPaths,
+    "__memory-workspace__",
   ]);
   return [...firstClass, ...apps.filter((app) => !firstClassPaths.has(app.path))];
 }

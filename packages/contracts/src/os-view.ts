@@ -44,6 +44,7 @@ export const OS_VIEW_FIXED_APP_APPEARANCES = {
     background: "var(--surface-brand-emphasis, #748E59)",
     foreground: "white",
   },
+  memory: {icon:"notebook",iconSource:"fixed",background:"var(--surface-brand-emphasis, #748E59)",foreground:"white"},
   editor: { icon: "file-pen", iconSource: "fixed", background: "#4D7FA8", foreground: "white" },
   vscode: { icon: "code", iconSource: "app", background: "#FFFEFC", foreground: "#007ACC" },
   settings: {
@@ -82,6 +83,7 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   __chat__: "chat",
   __terminal__: "terminal",
   "__file-browser__": "files",
+  "__memory-workspace__": "memory",
   __editor__: "editor",
   __vscode__: "vscode",
   __settings__: "settings",
@@ -119,6 +121,7 @@ export const OS_VIEW_PLACEABLE_BUILTIN_APPS = Object.freeze([
   { appId: "chat", name: "Chat", path: "__chat__" },
   { appId: "terminal", name: "Terminal", path: "__terminal__" },
   { appId: "files", name: "Files", path: "__file-browser__" },
+  { appId: "memory", name: "Memory", path: "__memory-workspace__" },
   { appId: "editor", name: "Editor", path: "__editor__" },
   { appId: "vscode", name: "VS Code", path: "__vscode__" },
   { appId: "settings", name: "Settings", path: "__settings__" },

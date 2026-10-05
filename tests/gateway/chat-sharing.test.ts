@@ -246,3 +246,11 @@ it.each(["55P03", "57014", "08006"])("keeps owner bootstrap available only for o
     expect(await repository.get(owner, "chat_share")).not.toBeNull();
   } finally { warning.mockRestore(); }
 });
+
+it("blocks sharing copied personal Memory sources even after queued cancellation", async () => {
+  await repository.kysely.insertInto("chat_messages").values({
+    id:"msg_memory", chat_id:"chat_share", seq:20, role:"user", state:"committed", purpose:"ai_request", turn_id:null,run_id:null,actor_id:null,
+    parts:JSON.stringify([{type:"resource_reference",resource:{kind:"memory_source",id:"source",label:"private"}}]),byte_count:100,search_text:"",created_at:new Date(),
+  }).execute();
+  await expect(shares.preview(owner,"chat_share")).rejects.toMatchObject({code:"conflict"});
+});

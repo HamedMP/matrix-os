@@ -50,6 +50,8 @@ import {
   updateHermesConfiguration,
 } from "./hermes/configuration-client";
 import { createNativeChatImportService } from "./files/local-chat-import";
+import { createDefaultMemoryImportService } from "./memory-import/native";
+import { registerMemoryImportIpc } from "./memory-import/ipc";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
@@ -88,6 +90,7 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
+let memoryImports: ReturnType<typeof createDefaultMemoryImportService> | null = null;
 let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
 let importsDrained=false;
 let drainingImports=false;
@@ -244,6 +247,7 @@ if (!gotLock) {
           fileDownloads?.cancelAll();
           organizationDriveTransfers?.cancelAll();
           localChatImports?.cancelAll();
+          memoryImports?.cancelAll();
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.signedIn ? {
@@ -407,6 +411,18 @@ if (!gotLock) {
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
         return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
       });
+      memoryImports = createDefaultMemoryImportService({identity:()=>{
+        const status=auth.getStatus();return status.signedIn&&status.userId?JSON.stringify([status.userId,status.runtimeSlot,status.authGeneration]):null;
+      },chooseFile:async()=>{
+        const options={title:"Import into Memory",filters:[{name:"Notes and exports",extensions:["json","md","txt","ics","eml"]}],properties:["openFile"] as Array<"openFile">};
+        const result=mainWindow&&!mainWindow.isDestroyed()?await dialog.showOpenDialog(mainWindow,options):await dialog.showOpenDialog(options);
+        return result.canceled?null:result.filePaths[0]??null;
+      }});
+      registerMemoryImportIpc(ipcMain,memoryImports,rawEvent=>{
+        const event=rawEvent as IpcMainInvokeEvent;const contents=mainWindow?.webContents;
+        const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
+        return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
+      });
       const downloads = fileDownloads;
       const driveTransfers = organizationDriveTransfers;
       registerTerminalClipboardIpc(ipcMain, {
@@ -447,6 +463,7 @@ if (!gotLock) {
           downloads.cancelAll();
           driveTransfers.cancelAll();
           localChatImports?.cancelAll();
+          memoryImports?.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
@@ -585,7 +602,7 @@ if (!gotLock) {
     if (handleAnalyticsBeforeQuit?.(event)) return;
     if(!importsDrained&&localChatImports){
       event.preventDefault();
-      if(!drainingImports){drainingImports=true;void localChatImports.dispose().catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}
+      if(!drainingImports){drainingImports=true;void Promise.all([localChatImports.dispose(), memoryImports?.dispose()]).catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}
       return;
     }
     if (!downloadsDrained && fileDownloads) {

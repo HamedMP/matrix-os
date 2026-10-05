@@ -69,6 +69,7 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   if (app.path.startsWith("__terminal__")) {
     return { color: "var(--surface-warning-emphasis, #E0AA52)", iconColor: "white", icon: SquareTerminal };
   }
+  if (app.path === "__memory-workspace__") return {color:"var(--surface-brand-emphasis)",iconColor:"white",icon:FileText};
   if (app.path === "__file-browser__") {
     return { color: "var(--surface-brand-emphasis, #748E59)", iconColor: "white", icon: FolderTree };
   }

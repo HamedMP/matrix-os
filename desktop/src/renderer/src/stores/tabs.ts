@@ -16,6 +16,7 @@ export type TabKind =
   | "terminal"
   | "terminals"
   | "files"
+  | "memory"
   | "editor"
   | "vscode"
   | "notes"

@@ -12,7 +12,7 @@ export function OrganizationDrivesNav({chats=[],client,onNewChat,onSelectChat,ac
   const {userId, sessionId} = useAuth();
   const identity = organizationDriveNavigationIdentity(userId, sessionId, getGatewayUrl());
   const request=useCompanyDriveChatDraft(state=>state.request);
-  useEffect(()=>{if(!request||!onNewChat||useCompanyDriveChatDraft.getState().request!==request)return;useCompanyDriveChatDraft.getState().consume(request);if(applicableCompanyDriveDraft(request,identity))onNewChat("",[request.reference]);},[request,identity,onNewChat]);
+  useEffect(()=>{if(!request||!onNewChat||useCompanyDriveChatDraft.getState().request!==request)return;useCompanyDriveChatDraft.getState().consume(request);if(applicableCompanyDriveDraft(request,identity))onNewChat("",request.references ?? [request.reference]);},[request,identity,onNewChat]);
   const origin = useBrowserOrigin();
   const api = useMemo(() => origin && userId ? createShellCollaborationApi(origin) : null, [origin, userId, identity]);
   useEffect(() => () => api?.direct?.close(), [api]);

@@ -21,6 +21,7 @@ export type DesktopAppId =
   | "work"
   | "terminal"
   | "files"
+  | "memory"
   | "editor"
   | "vscode"
   | "settings"
@@ -70,6 +71,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     color: APPEARANCE.files.background,
     iconColor: APPEARANCE.files.foreground,
   },
+  {id:"memory",path:"__memory-workspace__",kind:"memory",icon:Notebook,name:"Memory",color:APPEARANCE.files.background,iconColor:APPEARANCE.files.foreground},
   {
     id: "editor",
     path: "__editor__",

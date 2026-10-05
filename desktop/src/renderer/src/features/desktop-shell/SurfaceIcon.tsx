@@ -27,6 +27,7 @@ const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   terminal: SquareTerminal,
   terminals: SquareTerminal,
   files: FolderTree,
+  memory: Notebook,
   editor: FilePenLine,
   vscode: Code2,
   notes: Notebook,

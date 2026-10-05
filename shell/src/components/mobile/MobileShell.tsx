@@ -47,6 +47,7 @@ import {
 import { HERMES_CHAT_HIDDEN } from "@/lib/feature-flags";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetail } from "@/components/terminal/mobile-terminal-events";
+import {MemoryWorkspaceApp} from "@/components/memory-workspace/MemoryWorkspaceApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { ChatApp } from "@/components/ChatApp";
 import { AppViewer } from "@/components/AppViewer";
@@ -94,6 +95,7 @@ function mobileTerminalCapacityAction<T extends {
 const BUILT_IN_APPS: MobileApp[] = [
   { id: "terminal", name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
+  { id: "memory", name: "Memory", path: "__memory-workspace__", iconSlug: "notes" },
   ...(HERMES_CHAT_HIDDEN
     ? []
     : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
@@ -614,6 +616,7 @@ function MobileAppFrame({
       />
     );
   }
+  if (app.path === "__memory-workspace__") return <MemoryWorkspaceApp mobile/>;
   if (app.path === "__file-browser__") {
     return <FileBrowser windowId={openId} mobile />;
   }

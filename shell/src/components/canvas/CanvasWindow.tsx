@@ -1,4 +1,5 @@
 "use client";
+import {MemoryWorkspaceApp} from "../memory-workspace/MemoryWorkspaceApp";
 
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -466,6 +467,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
             },
           }}
         />
+      ) : win.path === "__memory-workspace__" ? (
+        <MemoryWorkspaceApp mobile={isMobile}/>
       ) : win.path === "__file-browser__" ? (
         <FileBrowser windowId={win.id} mobile={isMobile} />
       ) : win.path === "__preview-window__" ? (

@@ -54,7 +54,8 @@
     "check:patterns": "./scripts/review/check-patterns.sh",
     "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
     "lint": "bun run --filter './shell' lint",
-    "bench:memory": "bun scripts/memory-bench/cli.ts"
+    "bench:memory": "bun scripts/memory-bench/cli.ts",
+    "bench:memory:live": "bun scripts/memory-bench/live.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
