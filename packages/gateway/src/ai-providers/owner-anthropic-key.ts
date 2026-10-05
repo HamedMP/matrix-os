@@ -24,7 +24,11 @@ export async function readOwnerAnthropicKey(home: string): Promise<{ state: "unv
     catch (error) {
       if (!missing(error)) throw error;
       const legacyPath = join(home, "system/config.json");
-      try { await lstat(legacyPath); } catch (legacyError) { if (missing(legacyError)) return { state: "setup_required" }; throw legacyError; }
+      try {
+        const metadata = await lstat(legacyPath);
+        // An inaccessible configuration source is not an invalid provider credential.
+        if (metadata.isDirectory()) throw new ProviderWorkflowError("unavailable");
+      } catch (legacyError) { if (missing(legacyError)) return { state: "setup_required" }; throw legacyError; }
       const legacy = await readBoundedJsonFileWithIdentity(legacyPath, 64 * 1024);
       if (!legacy) return { state: "invalid" };
       const result = z.object({ kernel: z.object({ anthropicApiKey: z.string().trim().min(1).max(4096) }).optional() }).safeParse(legacy?.value);
