@@ -31,6 +31,29 @@ describe("canonical live conversation history", () => {
     expect(detail?.record.chat.revision).toBe(1);
     expect(detail?.messages[0]?.purpose).toBe("discussion");
   });
+  it("prioritizes the newest turns when the restored byte budget is full", async () => {
+    const history = createLiveHistory(chats, owner, "chat_live");
+    await history.journal({ id: "vturn_old", role: "user", text: "a".repeat(8000) });
+    await history.journal({ id: "vturn_mid", role: "assistant", text: "b".repeat(8000), heard: true });
+    await history.journal({ id: "vturn_new", role: "user", text: "Actually, build a calendar." });
+    expect((await history.restore()).at(-1)?.text).toBe("Actually, build a calendar.");
+  });
+  it("returns bounded source-linked quotes while excluding other owners and projects", async () => {
+    for (const [id, who] of [["chat_same", "alice"], ["chat_other_owner", "bob"]]) {
+      const scope = { type: "personal" as const, ownerId: who! };
+      await chats.create(scope, { id: id!, clientRequestId: `req_${id}`, title: "Tracker discussion" });
+      await createLiveHistory(chats, scope, id!).journal({ id: "vturn_one", role: "user", text: "Tracker context ".repeat(150) });
+    }
+    await chats.create(owner, { id: "chat_other_project", clientRequestId: "req_project", title: "Tracker project", projectId: "project_private" });
+    await createLiveHistory(chats, owner, "chat_other_project").journal({ id: "vturn_one", role: "user", text: "Tracker context" });
+    const history = createLiveHistory(chats, owner, "chat_live");
+    const sources = await history.search("Tracker");
+    expect(sources.map(source => source.chatId)).toEqual(["chat_same"]);
+    expect(sources[0]?.snippet.length).toBeLessThanOrEqual(1600);
+    expect(sources[0]?.title).toBe("Tracker discussion");
+    await expect(history.search("x".repeat(161))).rejects.toThrow();
+    await expect(createLiveHistory(chats, { type: "personal", ownerId: "bob" }, "chat_live").search("Tracker")).rejects.toThrow();
+  });
   it("never restores unheard assistant speech as conversation context", async () => {
     const history = createLiveHistory(chats, owner, "chat_live");
     await history.journal({ id: "vresp_a", role: "assistant", text: "unheard words", heard: false });

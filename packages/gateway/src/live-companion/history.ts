@@ -61,11 +61,13 @@ export function createLiveHistory(repository: ChatRepository, ownerInput: ChatOw
       if (!page) throw new ChatNotFoundError(chatId);
       const messages = page.messages;
       let bytes = 0;
-      return messages.filter(m => m.state === "committed" && (m.role === "user" || m.role === "assistant")).flatMap(m => {
+      return messages.filter(m => m.state === "committed" && (m.role === "user" || m.role === "assistant")).reverse().flatMap(m => {
         const text = m.parts.flatMap(p => p.type === "text" ? [p.text] : []).join("\n");
-        bytes += Buffer.byteLength(text);
-        return bytes <= 16_000 && text ? [{ role: m.role as "user" | "assistant", text }] : [];
-      });
+        const size = Buffer.byteLength(text);
+        if (!text || bytes + size > 16_000) return [];
+        bytes += size;
+        return [{ role: m.role as "user" | "assistant", text }];
+      }).reverse();
     },
     async search(query: string) {
       const binding = await access();
