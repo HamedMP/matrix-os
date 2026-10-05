@@ -10,9 +10,20 @@ These screenshots render the real shared ShellAoedeHost/controller/panel with de
 | Web Mobile | Deferred development integration | Deferred | Deferred | Deferred | Pending |
 | Native Mobile | Deferred development integration | Deferred | Deferred | Deferred | Pending |
 
-This is an explicitly non-production development slice. Production registration fails closed. Full five-surface acceptance is an open spec 547 release gate, including real microphone/barge-in, owner policy, builder/launcher, child approval/result projection and Terminal attachment. No pending row is a parity exemption or claimed pass. The spec's full mobile presentation remains future scope, not shipped functionality. Exact input finality/heard words are tracked in #2174. Do not merge or deploy before the required reviewer/release decisions.
+This is an explicitly non-production development slice. Hosted native registration requires fresh Matrix-paid platform eligibility and an explicit rollout allowlist. Full five-surface acceptance is an open spec 547 release gate, including real microphone/barge-in, owner policy, builder/launcher, child approval/result projection and Terminal attachment. No pending row is a parity exemption or claimed pass. The spec's full mobile presentation remains future scope, not shipped functionality. Exact input finality/heard words are tracked in #2174. An isolated test VPS deployment is authorized; merging, production traffic promotion and fleet rollout still require the reviewer/release decisions.
 
 Web Desktop screenshot: document width/scroll width 1280, shared layer 680, both caption lanes and task drawer. Web Canvas screenshot: mobile-width viewport, document width/scroll width 375, shared layer 680, both caption lanes. Neither screenshot represents real audio capture or task execution.
 
 ![Web Desktop shared fixture](shared-web-desktop-fixture.jpg)
 ![Web Canvas shared fixture](shared-web-canvas-fixture.jpg)
+
+
+## Matrix-paid relay and isolated VPS checks
+
+The platform relay completed real Gemini 3.8 Live setup, audio, output captions and expense recording. A second synthetic text-driven session accepted a custom lookup response delayed by two seconds. That session observed no audio while the tool was pending; it does not qualify microphone input or simultaneous speech during delayed work. Provider JSON arrived in binary WebSocket frames, now covered by a transport regression. No provider key, raw audio or captions are persisted in expense records.
+
+The isolated test VPS served exact host bundle `v2026.10.05-pr2172-37316654940-1-d2ce071`. Its installed version and release version matched; gateway, shell and sync services were active, and local health passed. The authenticated Web Desktop loaded that runtime. Native platform credential binding is still pending approval; microphone/app/Terminal acceptance has not passed. This installed bundle predates the latest client interaction fixes and must be updated before final acceptance. The Electron Desktop production build passes; physical inspection requires the user's Mac to be unlocked.
+
+Client review regressions cover closing the requested app without opening it, identity-fenced result file navigation, a pointer-transparent native Web host with interactive classic controls, and a bounded SSE connection setup that retains owner cancellation after headers. The relevant shared client suite passes 249 tests.
+
+The rendered native Web Canvas fixture also passed a browser hit test: the empty host has `pointer-events: none`, the hit target is beneath that host, and the launcher remains `pointer-events: auto`. This is presentation evidence with simulated media, not real VPS microphone acceptance.

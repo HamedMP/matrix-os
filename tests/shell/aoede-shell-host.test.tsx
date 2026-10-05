@@ -150,6 +150,21 @@ describe("Shell Aoede host", () => {
     expect(document.querySelector("[data-testid='aoede-host'] [role='log']")).toBeNull();
   });
 
+  it("leaves the workspace clickable beneath the native portal and keeps classic controls interactive", async () => {
+    const nativeBinding = { ...binding, capability: { ...binding.capability, conversationMode: "native_live" as const } };
+    renderHost(harness(async () => nativeBinding));
+    await act(async () => { fireEvent.click(screen.getByTestId("aoede-launcher")); });
+    await waitFor(() => expect(screen.getByTestId("aoede-host")).toHaveStyle({ pointerEvents: "none" }));
+    expect(screen.getByTestId("aoede-launcher").style.pointerEvents).not.toBe("none");
+    // Native controls live outside the transparent workspace host.
+    expect(screen.getByTestId("aoede-host").querySelector("button")).toBeNull();
+    cleanup();
+    renderHost(harness());
+    await act(async () => { fireEvent.click(screen.getByTestId("aoede-launcher")); });
+    await waitFor(() => expect(screen.getByTestId("aoede-host").querySelector("button")).not.toBeNull());
+    expect(screen.getByTestId("aoede-host").style.pointerEvents).not.toBe("none");
+  });
+
   it("shows literal idle status, mic off and scope after the icon launch", async () => {
     const h = harness();
     renderHost(h);

@@ -254,7 +254,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
           tabIndex={-1}
           data-testid="aoede-host"
           className={`fixed bottom-[8.5rem] right-4 h-[min(36rem,calc(100vh-10rem))] w-[min(22rem,calc(100vw-2rem))] overflow-hidden outline-none ${SHELL_AOEDE_TOKEN_MAP}`}
-          style={{ zIndex: SHELL_Z_INDEX.appDialog }}
+          style={{ zIndex: SHELL_Z_INDEX.appDialog, pointerEvents: snapshot.binding?.capability.conversationMode === "native_live" ? "none" : undefined }}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.stopPropagation();

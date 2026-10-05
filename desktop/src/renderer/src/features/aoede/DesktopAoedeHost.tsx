@@ -4,6 +4,7 @@ import "@matrix-os/ui/aoede.css";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { createDesktopAoedeFetcher } from "../../lib/aoede-desktop";
+import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { parseApps } from "../apps/apps.api";
 import { toast } from "sonner";
 
@@ -39,7 +40,18 @@ function IdentityOwner({ children }: { children: ReactNode }) {
   };
   return <AoedeProvider identityKey={`aoede:${userId}:${runtimeSlot}:${authGeneration}`} baseUrl={platformHost} fetcher={fetcher} surface="electron_desktop"
     onOpenHistory={chatId => { if (isCurrent()) useTabs.getState().openTab({ kind: "chat", chatId, chatView: "conversation", title: "Chat", closable: false }); }}
-    onOpenNavigation={nav => { void openApp(nav); }}>
+    onOpenResult={path => { if (isCurrent()) openFileInDesktopEditor(path); }}
+    onOpenNavigation={nav => {
+      if (!isCurrent()) return;
+      if (nav.kind === "close_app") {
+        const tabs = useTabs.getState();
+        for (const tab of tabs.tabs) {
+          if (tab.kind === "app" && tab.slug === nav.app) tabs.closeTab(tab.id);
+        }
+        return;
+      }
+      void openApp(nav);
+    }}>
     {children}<AoedeAssistant />
   </AoedeProvider>;
 }
