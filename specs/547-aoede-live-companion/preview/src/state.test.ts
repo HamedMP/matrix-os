@@ -54,10 +54,12 @@ describe('voice preview lifecycle and action boundaries', () => {
     expect(done.terminal).toBe('done');
     expect(done.aoede).toBe(newer.aoede);
   });
-  it('keeps a follow-up answer when the current background build completes', () => {
+  it('updates a build follow-up when the same background build completes', () => {
     const building = reducer(initialState, { type: 'scenario', scenario: 'build' });
     const spoken = reducer(building, { type: 'say', text: 'Make it simple please' });
-    expect(reducer(spoken, { type: 'progress', generation: building.generation, step: 4 }).aoede).toBe(spoken.aoede);
+    const ready = reducer(spoken, { type: 'progress', generation: building.generation, step: 4 });
+    expect(ready.aoede).toContain('Your habit tracker is ready');
+    expect(ready.aoede).not.toContain('still building');
   });
   it('cannot open a generated app before completion', () => {
     const pending = reducer(initialState, { type: 'scenario', scenario: 'build' });

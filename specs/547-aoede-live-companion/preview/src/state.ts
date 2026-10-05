@@ -47,7 +47,9 @@ export function reducer(state: State, action: Action): State {
     case 'context': return { ...state, contextOpen: !state.contextOpen };
     case 'history': return { ...state, historyOpen: !state.historyOpen };
     case 'open': return action.app === 'Leaf' && state.build !== 4 ? state : { ...state, app: action.app };
-    case 'say': return { ...state, exchange: state.exchange + 1, user: action.text, aoede: state.build > 0 && state.build < 4
+    case 'say': return { ...state, exchange: state.exchange + 1,
+      buildExchange: state.build > 0 && state.build < 4 ? state.exchange + 1 : state.buildExchange,
+      user: action.text, aoede: state.build > 0 && state.build < 4
       ? 'Yes, I can keep it simple. The app is still building in Chat; I’m right here.'
       : 'Let’s try building an app, finding an earlier chat, or running its tests. Choose one below to explore the preview.' };
   }
