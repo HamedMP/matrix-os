@@ -332,6 +332,15 @@ list, and system info. They live in AsyncStorage under
 To keep another query across launches, add a kind there with a matcher for its
 `mobileQueryKeys` builder and the schema its request already parses with.
 
+The journey gate works the same way. Once `/api/journey` has answered with a
+connectable phase, `apps/mobile/lib/journey-cache.ts` remembers that for the
+user (`matrix_os_journey_ready_v1`, seven days), and the next launch opens the
+shell on that answer while the request runs in the background. A definite
+non-connectable or unauthorized answer returns the user to the gate and forgets
+the remembered one; a check that could not be made leaves them in the shell.
+The remembered answer is a hint about where to land, not an entitlement: the
+platform checks machine access and billing on every request the shell makes.
+
 The Agents route relies on its root scroll view's automatic iOS content inset.
 Keep top and bottom content padding independent of safe-area values so the
 notch and home-indicator insets are not applied twice. Its attention-first

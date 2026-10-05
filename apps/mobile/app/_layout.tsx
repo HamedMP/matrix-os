@@ -37,6 +37,7 @@ import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
 import { CanonicalChatSessionProvider } from "@/lib/canonical-chat-session-context";
 import { mobileQueryClient } from "@/lib/query-client";
 import { mobileQueryPersistence } from "@/lib/query-cache-persistence";
+import { forgetJourneyConnectable } from "@/lib/journey-cache";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
@@ -273,6 +274,7 @@ function GatewayShell() {
     if (!isLoaded) return;
     const signedInUserId = isSignedIn && userId ? userId : null;
     void mobileQueryPersistence.setOwner(signedInUserId);
+    if (signedInUserId === null) void forgetJourneyConnectable();
   }, [isLoaded, isSignedIn, userId]);
 
   const incrementUnread = useCallback(() => {
