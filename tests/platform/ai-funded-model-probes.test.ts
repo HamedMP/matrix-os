@@ -1,3 +1,4 @@
+import { migrateAiFunded } from "../../packages/platform/src/database/migrations/ai-funded.js";
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFundedModelProbeService, loadFundedModelProbeLimits, reserveFundedModelProbe } from "../../packages/platform/src/ai-funded-model-probes.js";
@@ -37,6 +38,43 @@ describe("fleet funded model probe budget", () => {
     `.execute(db.executor);
     expect(unchanged.rows).toEqual([{ day_used: 2, minute_used: 2 }]);
     expect(await reserveFundedModelProbe({ db, now: new Date(now.getTime() + 60_000), dailyLimit: 4, minuteLimit: 3 })).toBe(false);
+  });
+
+  it("keeps an operator-isolated preview allowance separate from the fleet counter", async () => {
+    expect(await reserveFundedModelProbe({ db, now, dailyLimit: 1, minuteLimit: 1 })).toBe(true);
+    const preview = { db, now, dailyLimit: 2, minuteLimit: 2, budgetKey: "preview-pr-2172" };
+    expect(await reserveFundedModelProbe(preview)).toBe(true);
+    expect(await reserveFundedModelProbe(preview)).toBe(true);
+    expect(await reserveFundedModelProbe(preview)).toBe(false);
+    expect(await reserveFundedModelProbe({ db, now, dailyLimit: 1, minuteLimit: 1 })).toBe(false);
+    const rows = await sql<{ budget_key: string; day_used: number }>`select budget_key, day_used from ai_funded_model_probe_budget order by budget_key`.execute(db.executor);
+    expect(rows.rows).toEqual([{ budget_key: "global", day_used: 1 }, { budget_key: "preview-pr-2172", day_used: 2 }]);
+  });
+
+  it("upgrades the legacy schema without resetting the exhausted fleet counter", async () => {
+    expect(await reserveFundedModelProbe({ db, now, dailyLimit: 1, minuteLimit: 1 })).toBe(true);
+    await sql`ALTER TABLE ai_funded_model_probe_budget DROP CONSTRAINT ai_funded_probe_budget_scope_check`.execute(db.executor);
+    await sql`ALTER TABLE ai_funded_model_probe_budget ADD CONSTRAINT ai_funded_model_probe_budget_budget_key_check CHECK (budget_key = 'global')`.execute(db.executor);
+    await migrateAiFunded(db.executor);
+    expect(await reserveFundedModelProbe({ db, now, dailyLimit: 1, minuteLimit: 1 })).toBe(false);
+    expect(await reserveFundedModelProbe({ db, now, dailyLimit: 1, minuteLimit: 1, budgetKey: "preview-isolated" })).toBe(true);
+    const rows = await sql<{ budget_key: string; day_used: number }>`select budget_key, day_used from ai_funded_model_probe_budget order by budget_key`.execute(db.executor);
+    expect(rows.rows).toEqual([{ budget_key: "global", day_used: 1 }, { budget_key: "preview-isolated", day_used: 1 }]);
+  });
+
+  it("fails closed on malformed operator budget keys and passes a valid key through the service", async () => {
+    const env = { MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "100", MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "2" };
+    expect(loadFundedModelProbeLimits({ ...env, MATRIX_FUNDED_AI_MODEL_PROBE_BUDGET_KEY: "preview-pr-2172" })).toMatchObject({ budgetKey: "preview-pr-2172" });
+    for (const budgetKey of ["", "global ", "user-key", "preview-../secret", "preview-" + "a".repeat(100)]) {
+      expect(loadFundedModelProbeLimits({ ...env, MATRIX_FUNDED_AI_MODEL_PROBE_BUDGET_KEY: budgetKey })).toBeUndefined();
+      expect(await reserveFundedModelProbe({ db, now, dailyLimit: 1, minuteLimit: 1, budgetKey })).toBe(false);
+    }
+    const reserveProbe = vi.fn(async () => true);
+    const probes = createFundedModelProbeService({ db, relayBaseUrl: "https://relay.example.test", relayControlToken: "c".repeat(32),
+      dailyLimit: 100, minuteLimit: 2, budgetKey: "preview-pr-2172", reserveProbe, now: () => now,
+      fetchFn: vi.fn<typeof fetch>().mockResolvedValue(Response.json(pricedReady)) });
+    expect((await probes.probe(sonnet)).ready).toBe(true);
+    expect(reserveProbe).toHaveBeenCalledWith(expect.objectContaining({ budgetKey: "preview-pr-2172" }));
   });
 
   it("coalesces repeated probes and retains the fleet count after service restart", async () => {

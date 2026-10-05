@@ -11,6 +11,9 @@ const POSITIVE_TTL_MS = 30_000;
 const NEGATIVE_TTL_MS = 5_000;
 const MAX_PENDING_BUDGET_OPERATIONS = 8;
 const MAX_WAITERS_PER_MODEL = 32;
+// Operator configuration only. Preview services may share staging Postgres
+// while retaining a separate bounded counter; fleet defaults stay global.
+const ProbeBudgetKeySchema = z.union([z.literal("global"), z.string().max(64).regex(/^preview-[a-z0-9][a-z0-9-]*$/)]);
 const pendingBudgetOperations = new Set<Promise<boolean>>();
 const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough: IsoTimestampSchema }).strict();
 
@@ -18,22 +21,26 @@ export interface FundedModelProbeResult { ready: boolean; checkedAt: string; sta
 export interface FundedModelProbeCall { signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime }
 export interface FundedModelProbeService { probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
 
-export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit: number; minuteLimit: number } | undefined {
+export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit: number; minuteLimit: number; budgetKey: string } | undefined {
   const dailyLimit = Number(env.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT);
   const minuteLimit = Number(env.MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT);
   if (!Number.isSafeInteger(dailyLimit) || dailyLimit <= 0 || dailyLimit > 10_000
     || !Number.isSafeInteger(minuteLimit) || minuteLimit <= 0 || minuteLimit > 100
     || minuteLimit > dailyLimit) return undefined;
-  return { dailyLimit, minuteLimit };
+  const budgetKey = ProbeBudgetKeySchema.safeParse(env.MATRIX_FUNDED_AI_MODEL_PROBE_BUDGET_KEY ?? "global");
+  if (!budgetKey.success) return undefined;
+  return { dailyLimit, minuteLimit, budgetKey: budgetKey.data };
 }
 
 /** One conditional UPSERT atomically admits both daily and minute count.
  * PostgreSQL's conflicting-row lock serializes reservations across replicas. */
 export async function reserveFundedModelProbe(input: {
-  db: PlatformDB; now?: Date; dailyLimit: number; minuteLimit: number; deadlineMs?: number;
+  db: PlatformDB; now?: Date; dailyLimit: number; minuteLimit: number; deadlineMs?: number; budgetKey?: string;
 }): Promise<boolean> {
   if (!Number.isSafeInteger(input.dailyLimit) || input.dailyLimit <= 0
     || !Number.isSafeInteger(input.minuteLimit) || input.minuteLimit <= 0) return false;
+  const budgetKey = ProbeBudgetKeySchema.safeParse(input.budgetKey ?? "global");
+  if (!budgetKey.success) return false;
   if (pendingBudgetOperations.size >= MAX_PENDING_BUDGET_OPERATIONS) return false;
   const deadlineMs = Math.min(1_500, Math.max(1, input.deadlineMs ?? 1_500));
   const operation = (async () => {
@@ -44,7 +51,7 @@ export async function reserveFundedModelProbe(input: {
         to_char(observed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI') as minute_start from clock)
       insert into ai_funded_model_probe_budget
         (budget_key, day_start, daily_limit, day_used, minute_start, minute_limit, minute_used)
-      select 'global', bucket.day_start, ${input.dailyLimit}, 1, bucket.minute_start, ${input.minuteLimit}, 1 from bucket
+      select ${budgetKey.data}, bucket.day_start, ${input.dailyLimit}, 1, bucket.minute_start, ${input.minuteLimit}, 1 from bucket
       on conflict (budget_key) do update
         set day_start = excluded.day_start,
             daily_limit = excluded.daily_limit,
@@ -120,6 +127,7 @@ export function createFundedModelProbeService(input: {
   relayControlToken?: string;
   dailyLimit?: number;
   minuteLimit?: number;
+  budgetKey?: string;
   fetchFn?: typeof fetch;
   now?: () => Date;
   budgetDeadlineMs?: number;
@@ -210,7 +218,7 @@ export function createFundedModelProbeService(input: {
       inFlight.set(model, entry);
       entry.promise = (async (): Promise<FundedModelProbeResult> => {
         const admitted = await (input.reserveProbe ?? reserveFundedModelProbe)({ db: input.db,
-          dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!, deadlineMs: input.budgetDeadlineMs });
+          dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!, budgetKey: input.budgetKey, deadlineMs: input.budgetDeadlineMs });
         if (entry.controller.signal.aborted || !hasActiveWaiter(entry)) return unavailable();
         if (!admitted) {
           const result = unavailable();

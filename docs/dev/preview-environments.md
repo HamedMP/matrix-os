@@ -420,3 +420,17 @@ dashboards.
   once via `cloudflared tunnel route dns matrix-os <hostname>`.
 - Preview bundles in R2 (`system-bundles/0.0.0-pr*`) can be cleaned after PR
   close; they are never referenced by channel pointers.
+
+### Isolated funded model readiness probes
+
+When platform previews share staging Postgres, an operator may configure
+`MATRIX_FUNDED_AI_MODEL_PROBE_BUDGET_KEY=preview-<scope>` on that preview revision.
+The key must start with `preview-`, contain lowercase letters/digits/hyphens, and
+be at most 64 characters. Unset configuration retains the `global` fleet counter.
+Malformed keys disable probes. The configured daily/minute limits, atomic
+reservation, UTC reset, and fail-closed limit-mismatch guard apply independently
+to each counter. Never reset an exhausted counter or choose a new key to evade
+its limit; use one persistent preview scope across revisions and restarts.
+Owner policy, credit reservations, model eligibility, and relay health remain
+independent requirements. Request bodies and runtime principals cannot choose
+this operator-owned key.
