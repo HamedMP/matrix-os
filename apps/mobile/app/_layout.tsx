@@ -36,6 +36,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
 import { CanonicalChatSessionProvider } from "@/lib/canonical-chat-session-context";
 import { mobileQueryClient } from "@/lib/query-client";
+import { mobileQueryPersistence } from "@/lib/query-cache-persistence";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
@@ -114,6 +115,14 @@ export default function RootLayout() {
   });
 
   useEffect(() => startMobileThemeController(), []);
+
+  // The last session's chats, models and projects are on screen while this
+  // launch's requests are still in flight. Clerk has to load before any query
+  // can run, which is longer than the read takes.
+  useEffect(() => {
+    void mobileQueryPersistence.restore();
+    return mobileQueryPersistence.start();
+  }, []);
 
   useEffect(() => {
     if (!fontsLoaded) return;
@@ -257,6 +266,14 @@ function GatewayShell() {
   useEffect(() => {
     if (isSignedIn && userId) identifyUser(userId);
   }, [isSignedIn, userId]);
+
+  // What was kept on disk for the next launch belongs to one user: signing
+  // out, or signing in as someone else, removes it.
+  useEffect(() => {
+    if (!isLoaded) return;
+    const signedInUserId = isSignedIn && userId ? userId : null;
+    void mobileQueryPersistence.setOwner(signedInUserId);
+  }, [isLoaded, isSignedIn, userId]);
 
   const incrementUnread = useCallback(() => {
     setUnreadCount((c) => c + 1);

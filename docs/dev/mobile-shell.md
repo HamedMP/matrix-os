@@ -309,6 +309,29 @@ Mobile resume state is intentionally small and validated before use.
 
 Do not persist raw paths, user-controlled URLs, or unvalidated terminal identifiers in mobile shell state.
 
+### Launch Cache (Native Mobile)
+
+Native Mobile keeps five query results on the device so the next cold start can
+draw the shell before the network answers: the active computer, the chat list
+(titles and last-message previews), the chat provider catalog, the project
+list, and system info. They live in AsyncStorage under
+`matrix_os_query_cache_v1:<kind>`, one entry per kind. The mechanism is
+`apps/mobile/lib/query-persistence.ts`; the list of kinds and their schemas is
+`apps/mobile/lib/query-cache-persistence.ts`.
+
+- Restored data is display state only. It is loaded with its original
+  timestamp, so each query still refetches when its screen mounts, and the
+  gateway validates whatever is sent with it.
+- Every entry is re-validated on restore against the same schema as a fresh
+  response, and dropped if it no longer parses, is older than seven days, or is
+  larger than 512 KiB.
+- Entries belong to one Clerk user. Signing out, or signing in as someone else,
+  removes them from disk and from the query cache.
+- Chat transcripts, files, terminal output and credentials are never written.
+
+To keep another query across launches, add a kind there with a matcher for its
+`mobileQueryKeys` builder and the schema its request already parses with.
+
 The Agents route relies on its root scroll view's automatic iOS content inset.
 Keep top and bottom content padding independent of safe-area values so the
 notch and home-indicator insets are not applied twice. Its attention-first
