@@ -41,6 +41,24 @@ describe('voice preview lifecycle and action boundaries', () => {
     expect(terminal.terminal).toBe('approval');
     expect(reducer(terminal, { type: 'progress', generation: building.generation, step: 4 }).build).toBe(4);
   });
+  it('does not replace a newer conversation with a background completion', () => {
+    const building = reducer(initialState, { type: 'scenario', scenario: 'build' });
+    const recalled = reducer(building, { type: 'scenario', scenario: 'context' });
+    const ready = reducer(recalled, { type: 'progress', generation: building.generation, step: 4 });
+    expect(ready.build).toBe(4);
+    expect(ready.aoede).toBe(recalled.aoede);
+    const pending = reducer(initialState, { type: 'scenario', scenario: 'terminal' });
+    const running = reducer(pending, { type: 'approve' });
+    const newer = reducer(running, { type: 'scenario', scenario: 'build' });
+    const done = reducer(newer, { type: 'terminal.done' });
+    expect(done.terminal).toBe('done');
+    expect(done.aoede).toBe(newer.aoede);
+  });
+  it('keeps a follow-up answer when the current background build completes', () => {
+    const building = reducer(initialState, { type: 'scenario', scenario: 'build' });
+    const spoken = reducer(building, { type: 'say', text: 'Make it simple please' });
+    expect(reducer(spoken, { type: 'progress', generation: building.generation, step: 4 }).aoede).toBe(spoken.aoede);
+  });
   it('cannot open a generated app before completion', () => {
     const pending = reducer(initialState, { type: 'scenario', scenario: 'build' });
     expect(reducer(pending, { type: 'open', app: 'Leaf' }).app).toBe('Chat');
