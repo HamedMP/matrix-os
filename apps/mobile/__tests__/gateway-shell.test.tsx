@@ -77,15 +77,17 @@ jest.mock("@/lib/analytics", () => ({
 
 import React, { type ReactNode } from "react";
 import { act, render, waitFor } from "@testing-library/react-native";
+import * as SecureStore from "expo-secure-store";
 
 import { GatewayClient } from "../lib/gateway-client";
-import { HOSTED_GATEWAY, type GatewayConnection } from "../lib/storage";
+import { saveSelectedGatewayBasicAuth, type GatewayConnection } from "../lib/storage";
 import { MobileTerminalClient } from "../lib/terminal-client";
 import { jsonResponse } from "./mobile-shell-test-utils";
 
-const SELF_HOSTED_GATEWAY: GatewayConnection = {
+const SELF_HOSTED_URL = "https://matrix.example.com";
+const SELF_HOSTED_GATEWAY_WITH_CREDENTIAL: GatewayConnection = {
   id: "matrix-os-custom",
-  url: "https://matrix.example.com",
+  url: SELF_HOSTED_URL,
   token: "Basic bWF0cml4OnNlY3JldA==",
   name: "Self-hosted",
   addedAt: 1,
@@ -94,6 +96,7 @@ const TERMINAL_SESSION_ID = "tws_00000000000000000000000000000001:tt_00000000000
 const WS_TOKEN_PATH = "/api/auth/ws-token";
 
 const openedSocketUrls: string[] = [];
+const secureStoreItems = new Map<string, string>();
 
 class RecordingWebSocket {
   static CONNECTING = 0;
@@ -162,6 +165,13 @@ async function renderShell(): Promise<GatewayClient> {
   return mockGatewayContext!.client!;
 }
 
+async function renderShellExpectingNoClient(): Promise<void> {
+  const RootLayout = loadRootLayout();
+  render(<RootLayout />);
+  await waitFor(() => expect(mockGatewayContext).not.toBeNull());
+  await settle();
+}
+
 describe("GatewayShell", () => {
   const OriginalWebSocket = global.WebSocket;
   let fetchMock: jest.SpyInstance<ReturnType<typeof fetch>, Parameters<typeof fetch>>;
@@ -173,6 +183,19 @@ describe("GatewayShell", () => {
   beforeEach(() => {
     mockGatewayContext = null;
     openedSocketUrls.length = 0;
+    // The selected computer is read through the real storage module, backed
+    // by an in-memory SecureStore, unless a test overrides it.
+    secureStoreItems.clear();
+    (SecureStore.getItemAsync as jest.Mock).mockImplementation(async (key: string) => secureStoreItems.get(key) ?? null);
+    (SecureStore.setItemAsync as jest.Mock).mockImplementation(async (key: string, value: string) => {
+      secureStoreItems.set(key, value);
+    });
+    (SecureStore.deleteItemAsync as jest.Mock).mockImplementation(async (key: string) => {
+      secureStoreItems.delete(key);
+    });
+    mockGetSelectedGatewayConnection.mockReset();
+    mockGetSelectedGatewayConnection.mockImplementation(() =>
+      jest.requireActual<typeof import("../lib/storage")>("@/lib/storage").getSelectedGatewayConnection());
     global.WebSocket = RecordingWebSocket as unknown as typeof WebSocket;
     fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input) =>
       jsonResponse(
@@ -189,7 +212,6 @@ describe("GatewayShell", () => {
 
   it("gives a signed-in hosted computer a gateway client without opening the legacy chat socket", async () => {
     signedInAuth();
-    mockGetSelectedGatewayConnection.mockResolvedValue(HOSTED_GATEWAY);
 
     const client = await renderShell();
 
@@ -199,38 +221,58 @@ describe("GatewayShell", () => {
     expect(fetchedPaths()).not.toContain(WS_TOKEN_PATH);
   });
 
-  it("gives saved self-hosted credentials a gateway client without opening the legacy chat socket", async () => {
+  it("opens nothing on a signed-out launch with a saved self-hosted computer", async () => {
+    // The Basic credential is kept in memory only, so the record a relaunch
+    // reads back from storage has no credential to build a client from.
     signedOutAuth();
-    mockGetSelectedGatewayConnection.mockResolvedValue(SELF_HOSTED_GATEWAY);
+    await saveSelectedGatewayBasicAuth(SELF_HOSTED_URL, "matrix", "test-password");
+
+    await renderShellExpectingNoClient();
+
+    const selected: GatewayConnection = await mockGetSelectedGatewayConnection.mock.results[0]?.value;
+    expect(selected.url).toBe(SELF_HOSTED_URL);
+    expect(selected.token).toBeUndefined();
+    expect(mockGatewayContext?.client).toBeNull();
+    expect(mockGatewayContext?.gateway).toBeNull();
+    expect(openedSocketUrls).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("gives a selected self-hosted connection that carries a credential a gateway client without opening the legacy chat socket", async () => {
+    // Storage never returns a credential today, so this guards GatewayShell's
+    // credential branch rather than a launch a user can reach.
+    signedOutAuth();
+    mockGetSelectedGatewayConnection.mockResolvedValue(SELF_HOSTED_GATEWAY_WITH_CREDENTIAL);
 
     const client = await renderShell();
 
-    expect(client.httpUrl).toBe("https://matrix.example.com");
+    expect(client.httpUrl).toBe(SELF_HOSTED_URL);
     expect(openedSocketUrls).toEqual([]);
     expect(fetchedPaths()).not.toContain(WS_TOKEN_PATH);
   });
 
-  it("switches computers without opening the legacy chat socket", async () => {
+  it("switches to a self-hosted computer without opening the legacy chat socket", async () => {
     signedInAuth();
-    mockGetSelectedGatewayConnection.mockResolvedValue(HOSTED_GATEWAY);
     const hostedClient = await renderShell();
 
+    // As the computer URL sign-in screen does: save, then hand the returned
+    // connection (which still carries the credential) to setGateway.
+    const selfHosted = await saveSelectedGatewayBasicAuth(SELF_HOSTED_URL, "matrix", "test-password");
     act(() => {
-      mockGatewayContext!.setGateway(SELF_HOSTED_GATEWAY);
+      mockGatewayContext!.setGateway(selfHosted);
     });
     await settle();
 
     const switchedClient = mockGatewayContext!.client!;
     expect(switchedClient).not.toBe(hostedClient);
-    expect(switchedClient.httpUrl).toBe("https://matrix.example.com");
-    expect(mockGatewayContext?.gateway).toEqual(SELF_HOSTED_GATEWAY);
+    expect(switchedClient.httpUrl).toBe(SELF_HOSTED_URL);
+    expect(mockGatewayContext?.gateway).toEqual(selfHosted);
     expect(openedSocketUrls).toEqual([]);
     expect(fetchedPaths()).not.toContain(WS_TOKEN_PATH);
   });
 
   it("still mints a ws-token on demand for the terminal socket", async () => {
     signedInAuth();
-    mockGetSelectedGatewayConnection.mockResolvedValue(HOSTED_GATEWAY);
     const client = await renderShell();
 
     const connection = await new MobileTerminalClient(client).connect({
