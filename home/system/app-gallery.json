@@ -1,0 +1,1675 @@
+{
+  "version": 1,
+  "apps": [
+    {
+      "id": "folio",
+      "name": "Folio",
+      "collection": "personal",
+      "category": "Money",
+      "description": "Your receipts and invoices, organized into a clear picture of spending.",
+      "tagline": "A calmer relationship with money.",
+      "icon": "folio",
+      "accent": "forest",
+      "view": "finance",
+      "entity": "expense",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "provider",
+          "label": "Provider",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "amount",
+          "label": "Amount",
+          "kind": "money"
+        },
+        {
+          "key": "currency",
+          "label": "Currency",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "category",
+          "label": "Category",
+          "kind": "text"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Paid",
+            "Unpaid",
+            "Refund",
+            "Needs review"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Find receipts, paid purchases, refunds and unpaid invoice notices from email. Separate unpaid invoices and uncertain amounts from actual spending. Preserve source evidence and currencies. Exclude newsletters and promotional offers.",
+      "highlights": [
+        "Weekly and monthly spending",
+        "Receipts with source evidence",
+        "Separate work and personal"
+      ]
+    },
+    {
+      "id": "atlas",
+      "name": "Atlas",
+      "collection": "personal",
+      "category": "Travel",
+      "description": "Turn bookings and calendar plans into a beautiful travel journal.",
+      "tagline": "Every journey, in one place.",
+      "icon": "atlas",
+      "accent": "blue",
+      "view": "travel",
+      "entity": "journey",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "destination",
+          "label": "Destination",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Departure",
+          "kind": "date"
+        },
+        {
+          "key": "end-date",
+          "label": "Return",
+          "kind": "date"
+        },
+        {
+          "key": "flight",
+          "label": "Flight number",
+          "kind": "text"
+        },
+        {
+          "key": "booking",
+          "label": "Booking reference",
+          "kind": "text"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Planned",
+            "Confirmed",
+            "Cancelled",
+            "Needs review"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        },
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "actions": [
+            "list_events"
+          ]
+        }
+      ],
+      "importGoal": "Find actual travel reservations, flights and stays plus calendar travel plans. Use travel dates, not email dates. Merge evidence for the same journey. Keep tentative plans distinct from paid bookings and cancellations. Leave unknown flight times blank.",
+      "highlights": [
+        "Journeys and itineraries",
+        "Bookings alongside plans",
+        "Original confirmation evidence"
+      ]
+    },
+    {
+      "id": "agenda",
+      "name": "Agenda",
+      "collection": "personal",
+      "category": "Planning",
+      "description": "A considered daily view of events, places, and priorities.",
+      "tagline": "Make room for what matters.",
+      "icon": "agenda",
+      "accent": "amber",
+      "view": "agenda",
+      "entity": "event",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "time",
+          "label": "Time",
+          "kind": "text"
+        },
+        {
+          "key": "location",
+          "label": "Location",
+          "kind": "text"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Scheduled",
+            "Done",
+            "Cancelled"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "actions": [
+            "list_events"
+          ]
+        }
+      ],
+      "importGoal": "Read calendar events in the selected date range, keeping the original timezone and all-day semantics. Preserve event identifiers and calendar evidence.",
+      "highlights": [
+        "Daily and weekly agenda",
+        "Locations at a glance",
+        "Clear all-day events"
+      ]
+    },
+    {
+      "id": "follow-ups",
+      "name": "Follow-ups",
+      "collection": "personal",
+      "category": "Planning",
+      "description": "Keep promises and open conversations from slipping through the cracks.",
+      "tagline": "Close the loop.",
+      "icon": "follow-ups",
+      "accent": "forest",
+      "view": "board",
+      "entity": "follow-up",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "person",
+          "label": "Person",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "To follow up",
+            "Waiting",
+            "Done"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Find explicit follow-up commitments and unanswered actionable conversations. Preserve who owes whom a response. Do not infer commitments from promotional messages. Never send replies.",
+      "highlights": [
+        "Personal follow-up board",
+        "Due dates and context",
+        "Links to conversations"
+      ]
+    },
+    {
+      "id": "subscriptions",
+      "name": "Subscriptions",
+      "collection": "personal",
+      "category": "Money",
+      "description": "See recurring payments and renewal dates without hunting through email.",
+      "tagline": "Know what renews next.",
+      "icon": "subscriptions",
+      "accent": "violet",
+      "view": "finance",
+      "entity": "subscription",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "provider",
+          "label": "Provider",
+          "kind": "text"
+        },
+        {
+          "key": "amount",
+          "label": "Amount",
+          "kind": "money"
+        },
+        {
+          "key": "currency",
+          "label": "Currency",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "cadence",
+          "label": "Cadence",
+          "kind": "select",
+          "options": [
+            "Monthly",
+            "Annual",
+            "Other",
+            "Unknown"
+          ]
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Active",
+            "Cancelled",
+            "Needs review"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Extract recurring subscription receipts and explicit renewal notices. Do not double count receipts as separate subscriptions. Separate monthly and annual cadence and leave uncertain renewal dates blank.",
+      "highlights": [
+        "Renewal calendar",
+        "Costs by currency",
+        "Evidence for each subscription"
+      ]
+    },
+    {
+      "id": "deliveries",
+      "name": "Deliveries",
+      "collection": "personal",
+      "category": "Everyday",
+      "description": "Orders, tracking references, and delivery dates in one tidy place.",
+      "tagline": "From checkout to your doorstep.",
+      "icon": "deliveries",
+      "accent": "amber",
+      "view": "board",
+      "entity": "order",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "provider",
+          "label": "Store",
+          "kind": "text"
+        },
+        {
+          "key": "tracking",
+          "label": "Tracking reference",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Ordered",
+            "Shipped",
+            "Delivered",
+            "Returned",
+            "Needs review"
+          ]
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Extract real purchase confirmations and shipment updates. Merge messages for the same order and preserve the latest supported delivery status. Never invent delivery dates.",
+      "highlights": [
+        "Order progress",
+        "Tracking references",
+        "Merged shipment evidence"
+      ]
+    },
+    {
+      "id": "reading-library",
+      "name": "Reading Library",
+      "collection": "personal",
+      "category": "Knowledge",
+      "description": "A personal shelf for articles and documents you want to return to.",
+      "tagline": "Save good things for later.",
+      "icon": "reading-library",
+      "accent": "rose",
+      "view": "library",
+      "entity": "article",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "author",
+          "label": "Author",
+          "kind": "text"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "To read",
+            "Reading",
+            "Finished"
+          ]
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        },
+        {
+          "id": "google_drive",
+          "name": "Google Drive",
+          "actions": [
+            "list_files"
+          ]
+        }
+      ],
+      "importGoal": "Collect explicitly saved or shared reading material and relevant Drive documents in the selected range. Avoid importing an entire mailbox or Drive. Preserve original links and authors when known.",
+      "highlights": [
+        "A considered reading shelf",
+        "Reading progress",
+        "Articles and documents together"
+      ]
+    },
+    {
+      "id": "people",
+      "name": "People",
+      "collection": "personal",
+      "category": "Everyday",
+      "description": "Remember the people, context, and next conversations that matter.",
+      "tagline": "A little more thoughtful.",
+      "icon": "people",
+      "accent": "teal",
+      "view": "library",
+      "entity": "person",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "email",
+          "label": "Email",
+          "kind": "text"
+        },
+        {
+          "key": "company",
+          "label": "Company",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "context",
+          "label": "How you know them",
+          "kind": "longtext"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        },
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "actions": [
+            "list_events"
+          ]
+        }
+      ],
+      "importGoal": "Find people from actual selected conversations and meetings. Deduplicate known email addresses. Keep source-supported context; never infer sensitive traits or fabricate relationships.",
+      "highlights": [
+        "People and conversation context",
+        "Upcoming touchpoints",
+        "Account-aware organization"
+      ]
+    },
+    {
+      "id": "files",
+      "name": "Files",
+      "collection": "personal",
+      "category": "Knowledge",
+      "description": "An organized index of important documents with links back to Drive.",
+      "tagline": "Find it when you need it.",
+      "icon": "files",
+      "accent": "blue",
+      "view": "library",
+      "entity": "document",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "category",
+          "label": "Category",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "google_drive",
+          "name": "Google Drive",
+          "actions": [
+            "list_files"
+          ]
+        }
+      ],
+      "importGoal": "Index relevant Drive documents using metadata and accessible content only. Preserve original links, document IDs and modified dates. Do not move or delete Drive files.",
+      "highlights": [
+        "Important document cards",
+        "Searchable notes",
+        "Original Drive links"
+      ]
+    },
+    {
+      "id": "notes",
+      "name": "Notes",
+      "collection": "personal",
+      "category": "Knowledge",
+      "description": "A quiet place to capture thoughts and keep useful notes.",
+      "tagline": "Space to think.",
+      "icon": "notes",
+      "accent": "forest",
+      "view": "notes",
+      "entity": "note",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        },
+        {
+          "key": "category",
+          "label": "Notebook",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        }
+      ],
+      "services": [],
+      "importGoal": "This is a local notes app. No integration import is required. Create notes only from owner-provided content.",
+      "highlights": [
+        "Personal notebooks",
+        "Searchable writing",
+        "Saved in your computer"
+      ]
+    },
+    {
+      "id": "habits",
+      "name": "Habits",
+      "collection": "personal",
+      "category": "Wellbeing",
+      "description": "Track small daily rituals and see the consistency build.",
+      "tagline": "Small things, often.",
+      "icon": "habits",
+      "accent": "rose",
+      "view": "habits",
+      "entity": "check-in",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Planned",
+            "Done",
+            "Skipped"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [],
+      "importGoal": "This is a local habit tracker. Add habits and check-ins only from owner-provided content.",
+      "highlights": [
+        "Daily check-ins",
+        "Weekly consistency",
+        "A gentle progress view"
+      ]
+    },
+    {
+      "id": "focus",
+      "name": "Focus",
+      "collection": "personal",
+      "category": "Wellbeing",
+      "description": "A focused timer and a record of time spent on meaningful work.",
+      "tagline": "One thing at a time.",
+      "icon": "focus",
+      "accent": "amber",
+      "view": "focus",
+      "entity": "session",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "minutes",
+          "label": "Minutes",
+          "kind": "number"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [],
+      "importGoal": "This is a local focus timer and session log. Record only real completed sessions or owner-provided entries.",
+      "highlights": [
+        "A focused session timer",
+        "Weekly focus time",
+        "Session history"
+      ]
+    },
+    {
+      "id": "cashflow",
+      "name": "Cashflow",
+      "collection": "business",
+      "category": "Finance",
+      "description": "Track incoming invoices, due dates, and payment evidence.",
+      "tagline": "A clear view of what is owed.",
+      "icon": "cashflow",
+      "accent": "forest",
+      "view": "finance",
+      "entity": "invoice",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "client",
+          "label": "Client",
+          "kind": "text"
+        },
+        {
+          "key": "amount",
+          "label": "Amount",
+          "kind": "money"
+        },
+        {
+          "key": "currency",
+          "label": "Currency",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Draft",
+            "Sent",
+            "Paid",
+            "Overdue",
+            "Needs review"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Find outgoing customer invoices and payment confirmations. Track receivables separately from expenses. Mark paid only with explicit evidence. Preserve invoice numbers and due dates.",
+      "highlights": [
+        "Invoice and payment ledger",
+        "Receivables by currency",
+        "Payment evidence"
+      ]
+    },
+    {
+      "id": "revenue",
+      "name": "Revenue",
+      "collection": "business",
+      "category": "Finance",
+      "description": "A readable ledger of invoices and payments from your billing account.",
+      "tagline": "Understand the money coming in.",
+      "icon": "revenue",
+      "accent": "violet",
+      "view": "finance",
+      "entity": "payment",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "client",
+          "label": "Customer",
+          "kind": "text"
+        },
+        {
+          "key": "amount",
+          "label": "Amount",
+          "kind": "money"
+        },
+        {
+          "key": "currency",
+          "label": "Currency",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Succeeded",
+            "Pending",
+            "Refunded",
+            "Needs review"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "stripe",
+          "name": "Stripe",
+          "actions": [
+            "list_invoices",
+            "list_payment_intents"
+          ]
+        }
+      ],
+      "importGoal": "Read Stripe invoices and payment intents. Deduplicate payments linked to invoices, use actual settlement status, and convert minor units correctly per currency. Do not combine currencies or treat pending funds as revenue.",
+      "highlights": [
+        "Confirmed payments",
+        "Currency-safe revenue charts",
+        "Billing source references"
+      ]
+    },
+    {
+      "id": "pipeline",
+      "name": "Pipeline",
+      "collection": "business",
+      "category": "Customers",
+      "description": "Manage real opportunities with context from conversations.",
+      "tagline": "Keep your next move clear.",
+      "icon": "pipeline",
+      "accent": "blue",
+      "view": "board",
+      "entity": "opportunity",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "client",
+          "label": "Company",
+          "kind": "text"
+        },
+        {
+          "key": "contact",
+          "label": "Contact",
+          "kind": "text"
+        },
+        {
+          "key": "amount",
+          "label": "Amount",
+          "kind": "money"
+        },
+        {
+          "key": "currency",
+          "label": "Currency",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Lead",
+            "Discovery",
+            "Proposal",
+            "Won",
+            "Lost"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Find explicit commercial opportunities and agreed next steps from work email. Keep amounts and stages evidence-based. Never send messages or infer deals from general newsletters.",
+      "highlights": [
+        "Opportunity stages",
+        "Next steps and dates",
+        "Conversation evidence"
+      ]
+    },
+    {
+      "id": "projects",
+      "name": "Projects",
+      "collection": "business",
+      "category": "Operations",
+      "description": "Bring active projects and issues into a focused delivery board.",
+      "tagline": "Know what is moving.",
+      "icon": "projects",
+      "accent": "forest",
+      "view": "board",
+      "entity": "issue",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "project",
+          "label": "Project",
+          "kind": "text"
+        },
+        {
+          "key": "assignee",
+          "label": "Assignee",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Backlog",
+            "In progress",
+            "Blocked",
+            "Done"
+          ]
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "linear",
+          "name": "Linear",
+          "actions": [
+            "list_projects",
+            "list_issues"
+          ]
+        }
+      ],
+      "importGoal": "Read selected Linear projects and issues. Preserve IDs, assignees, status and original links. Do not change source issues. Scope imports to the selected project when supplied.",
+      "highlights": [
+        "Delivery board",
+        "Owners and due dates",
+        "Original issue links"
+      ]
+    },
+    {
+      "id": "meeting-briefs",
+      "name": "Meeting Briefs",
+      "collection": "business",
+      "category": "Operations",
+      "description": "Prepare for meetings with relevant calendar and conversation context.",
+      "tagline": "Walk in prepared.",
+      "icon": "meeting-briefs",
+      "accent": "amber",
+      "view": "agenda",
+      "entity": "meeting",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "time",
+          "label": "Time",
+          "kind": "text"
+        },
+        {
+          "key": "people",
+          "label": "Attendees",
+          "kind": "text"
+        },
+        {
+          "key": "brief",
+          "label": "Preparation",
+          "kind": "longtext"
+        },
+        {
+          "key": "actions",
+          "label": "Next steps",
+          "kind": "longtext"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "actions": [
+            "list_events"
+          ]
+        },
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Read upcoming calendar meetings and relevant email threads for those meetings only. Separate source facts from suggested preparation. Do not invent meeting outcomes or send invitations.",
+      "highlights": [
+        "Meeting preparation",
+        "Relevant conversations",
+        "Action notes"
+      ]
+    },
+    {
+      "id": "support",
+      "name": "Support",
+      "collection": "business",
+      "category": "Customers",
+      "description": "Organize customer requests and the next response needed.",
+      "tagline": "Every request deserves attention.",
+      "icon": "support",
+      "accent": "rose",
+      "view": "board",
+      "entity": "request",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "customer",
+          "label": "Customer",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "priority",
+          "label": "Priority",
+          "kind": "select",
+          "options": [
+            "Low",
+            "Normal",
+            "High"
+          ]
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "New",
+            "In progress",
+            "Waiting",
+            "Resolved"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        },
+        {
+          "id": "slack",
+          "name": "Slack",
+          "actions": [
+            "search"
+          ]
+        }
+      ],
+      "importGoal": "Find genuine customer support requests from selected work accounts or channels. Deduplicate cross-posted requests and preserve source evidence. Never send replies or mark source conversations resolved.",
+      "highlights": [
+        "A focused support queue",
+        "Priority and status",
+        "Email and channel context"
+      ]
+    },
+    {
+      "id": "hiring",
+      "name": "Hiring",
+      "collection": "business",
+      "category": "People",
+      "description": "Candidates, interview dates, and hiring context in a clear board.",
+      "tagline": "A thoughtful hiring process.",
+      "icon": "hiring",
+      "accent": "teal",
+      "view": "board",
+      "entity": "candidate",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "role",
+          "label": "Role",
+          "kind": "text"
+        },
+        {
+          "key": "email",
+          "label": "Email",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Applied",
+            "Screening",
+            "Interview",
+            "Offer",
+            "Closed"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        },
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "actions": [
+            "list_events"
+          ]
+        }
+      ],
+      "importGoal": "Find actual candidate applications and interviews. Keep factual role, interview date and candidate-provided context. Never infer protected traits, rank candidates, or send outreach.",
+      "highlights": [
+        "Candidate stages",
+        "Interview dates",
+        "Source-supported context"
+      ]
+    },
+    {
+      "id": "company-spend",
+      "name": "Company Spend",
+      "collection": "business",
+      "category": "Finance",
+      "description": "Track work purchases and recurring vendor costs with evidence.",
+      "tagline": "Give every expense a home.",
+      "icon": "company-spend",
+      "accent": "forest",
+      "view": "finance",
+      "entity": "expense",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "provider",
+          "label": "Vendor",
+          "kind": "text"
+        },
+        {
+          "key": "amount",
+          "label": "Amount",
+          "kind": "money"
+        },
+        {
+          "key": "currency",
+          "label": "Currency",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "category",
+          "label": "Cost category",
+          "kind": "text"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Paid",
+            "Unpaid",
+            "Refund",
+            "Needs review"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Extract business receipts and supplier invoices from explicitly selected work inboxes. Separate paid expenses, unpaid invoices and refunds. Preserve currencies and source IDs; do not include personal inboxes without explicit selection.",
+      "highlights": [
+        "Vendor spend",
+        "Weekly and monthly costs",
+        "Work account filters"
+      ]
+    },
+    {
+      "id": "releases",
+      "name": "Releases",
+      "collection": "business",
+      "category": "Product",
+      "description": "Follow pull requests and delivery work across your product.",
+      "tagline": "From work in progress to shipped.",
+      "icon": "releases",
+      "accent": "blue",
+      "view": "board",
+      "entity": "release",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "project",
+          "label": "Repository or project",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Planned",
+            "In review",
+            "Shipped",
+            "Blocked"
+          ]
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "github",
+          "name": "GitHub",
+          "actions": [
+            "list_repos",
+            "list_prs"
+          ]
+        },
+        {
+          "id": "linear",
+          "name": "Linear",
+          "actions": [
+            "list_projects",
+            "list_issues"
+          ]
+        }
+      ],
+      "importGoal": "Read selected GitHub repositories, pull requests and Linear issues. Require a specific repository/project before deep import. Mark shipped only when merged/released evidence exists. Do not create or change issues or PRs.",
+      "highlights": [
+        "Release progress",
+        "Review and issue links",
+        "Evidence for shipped work"
+      ]
+    },
+    {
+      "id": "knowledge",
+      "name": "Knowledge",
+      "collection": "business",
+      "category": "Operations",
+      "description": "A shared-purpose index of the documents your work depends on.",
+      "tagline": "Useful knowledge, easy to find.",
+      "icon": "knowledge",
+      "accent": "violet",
+      "view": "library",
+      "entity": "document",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "category",
+          "label": "Area",
+          "kind": "text"
+        },
+        {
+          "key": "owner",
+          "label": "Document owner",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "notion",
+          "name": "Notion",
+          "actions": [
+            "search"
+          ]
+        },
+        {
+          "id": "google_drive",
+          "name": "Google Drive",
+          "actions": [
+            "list_files"
+          ]
+        }
+      ],
+      "importGoal": "Index selected Notion pages and Drive documents using supported read actions. Preserve access boundaries and original links. This app stores an owner-local index, not a new organization-wide permission scope.",
+      "highlights": [
+        "Work document index",
+        "Original knowledge links",
+        "Searchable notes"
+      ]
+    },
+    {
+      "id": "campaigns",
+      "name": "Campaigns",
+      "collection": "business",
+      "category": "Marketing",
+      "description": "Keep campaign plans, assets, and delivery stages together.",
+      "tagline": "Bring the plan into focus.",
+      "icon": "campaigns",
+      "accent": "rose",
+      "view": "board",
+      "entity": "campaign",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "channel",
+          "label": "Channel",
+          "kind": "text"
+        },
+        {
+          "key": "owner",
+          "label": "Owner",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Idea",
+            "Planned",
+            "In progress",
+            "Published"
+          ]
+        },
+        {
+          "key": "url",
+          "label": "Source link",
+          "kind": "url"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "google_drive",
+          "name": "Google Drive",
+          "actions": [
+            "list_files"
+          ]
+        },
+        {
+          "id": "slack",
+          "name": "Slack",
+          "actions": [
+            "search"
+          ]
+        }
+      ],
+      "importGoal": "Collect explicitly identified campaign plans and campaign-related Slack discussions. Preserve actual stage, dates and asset links. Do not infer publishing completion or publish posts.",
+      "highlights": [
+        "Campaign delivery board",
+        "Plans and asset links",
+        "Dates and owners"
+      ]
+    },
+    {
+      "id": "analytics",
+      "name": "Analytics",
+      "collection": "business",
+      "category": "Product",
+      "description": "Save source-supported product observations and their next actions.",
+      "tagline": "Turn observations into decisions.",
+      "icon": "analytics",
+      "accent": "teal",
+      "view": "library",
+      "entity": "observation",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "project",
+          "label": "Project",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "metric",
+          "label": "Metric",
+          "kind": "text"
+        },
+        {
+          "key": "value",
+          "label": "Observed value",
+          "kind": "number"
+        },
+        {
+          "key": "insight",
+          "label": "Observation",
+          "kind": "longtext"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "posthog",
+          "name": "PostHog",
+          "actions": [
+            "list_projects"
+          ]
+        }
+      ],
+      "importGoal": "Read available PostHog project metadata first, then only supported read actions for owner-selected observations. Never fabricate metric values or call unsupported queries. If detailed metrics are unavailable, import project metadata and leave metric/value empty for manual entry.",
+      "highlights": [
+        "Project observations",
+        "Source-supported metrics",
+        "A decision notebook"
+      ]
+    }
+  ]
+}
