@@ -238,7 +238,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
             Cancel
           </button>
         ) : null}
-        {operation?.terminalSessionId && (operation.kind !== "login" || (harness.harness === "claude" && operation.connectionOption?.method === "terminal")) ? (
+        {operation?.terminalSessionId && (operation.kind !== "login" || (active(operation) && harness.harness === "claude" && operation.connectionOption?.method === "terminal")) ? (
           <button
             type="button"
             className="matrix-ap-link-button"
