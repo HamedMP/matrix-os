@@ -75,29 +75,24 @@ export function WorkRailProjectGroup({
   return (
     <div>
       <ProjectActionsMenu items={items}>
-        <div className="group/project relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]">
-          <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${group.name} chats`} aria-expanded={expanded}
-            className="grid w-5 self-stretch shrink-0 place-items-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            onClick={onToggle}>
-            <ChevronRight size={12} aria-hidden className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
-          </button>
+        <div className="work-rail-project group/project relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]">
           <button
             type="button"
             aria-label={group.name}
             aria-current={activeProjectSlug === group.slug && !activeChatId ? "page" : undefined}
-            className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-            style={{ color: activeProjectSlug === group.slug ? "var(--text-primary)" : "var(--text-secondary)" }}
+            className="work-rail-project-select flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-normal transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+            style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }}
             onClick={() => onSelect?.(group.project)}
           >
             {expanded
-              ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: activeProjectSlug === group.slug ? "var(--accent)" : "var(--text-tertiary)" }} />
-              : <Folder size={15} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />}
+              ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: activeProjectSlug === group.slug ? "var(--accent)" : "var(--matrix-chat-rail-text, var(--text-primary))" }} />
+              : <Folder size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />}
             <span className="truncate">{group.name}</span>
-            {shared ? <span role="img" aria-label="Shared project" title="Shared with others" className="ml-auto flex shrink-0" style={{ color: "var(--text-tertiary)" }}>
+            {shared ? <span role="img" aria-label="Shared project" title="Shared with others" className="ml-auto flex shrink-0" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>
               <UsersIcon size={13} aria-hidden />
             </span> : null}
           </button>
-          <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100">
+          <div className="work-rail-project-actions flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100">
             <ProjectActionsButton buttonRef={actionButtonRef} name={group.name} items={items} />
             <button
               type="button"
@@ -109,6 +104,11 @@ export function WorkRailProjectGroup({
               <PencilEditIcon size={15} aria-hidden />
             </button>
           </div>
+          <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${group.name} chats`} aria-expanded={expanded}
+            className="work-rail-project-disclosure grid size-6 shrink-0 place-items-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            onClick={onToggle}>
+            <ChevronRight size={12} aria-hidden className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
+          </button>
         </div>
       </ProjectActionsMenu>
       {actions.error && actions.dialog !== "edit" ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}

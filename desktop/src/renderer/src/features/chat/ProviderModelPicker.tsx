@@ -54,7 +54,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
       </button>
     </Popover.Trigger>
     <Popover.Portal><Popover.Content ref={content} tabIndex={-1} onOpenAutoFocus={(event) => { event.preventDefault(); content.current?.focus(); }} side={menuSide} align="end" sideOffset={10} collisionPadding={16}
-      className="w-[376px] max-w-[calc(100vw-32px)] overflow-x-hidden overflow-y-auto rounded-xl border shadow-xl"
+      className="w-[352px] max-w-[calc(100vw-32px)] overflow-x-hidden overflow-y-auto rounded-xl border shadow-xl"
       style={{ zIndex: DESKTOP_Z_INDEX.popover, maxHeight: "min(520px, calc(100vh - 32px))", borderColor: "var(--border-default)", background: "var(--bg-overlay)", color: "var(--text-primary)" }}
       data-slot="provider-model-picker" data-preferred-side={menuSide}>
       <CompactChatProviderChoices loading={loading} catalog={catalog} choices={deriveCanonicalProviderChoices(catalog)}

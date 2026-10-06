@@ -21,7 +21,7 @@ import {
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { createChatMentionRequestTracker } from "@matrix-os/ui";
 import { ChatMentionControls, useChatMentionPermission } from "@matrix-os/ui";
-import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { BotDetailsContext, BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { ChatSharingButton } from "./ChatSharingButton";
 import { ChatContextMenu } from "@matrix-os/ui";
 import { openChatWebLink } from "./chat-web-navigation";
@@ -157,6 +157,7 @@ export function CanonicalChatWorkspace({
   const fileNavigation = useChatFileNavigation();
   const chromeHost = useSurfaceChromeHost();
   const botHeaderContainer = useContext(BotHeaderContext);
+  const frameDetailsContainer = useContext(BotDetailsContext);
   const reportBotHeaderBinding = useContext(BotHeaderBindingContext);
   const reportShareSuspension = useContext(HostedChatShareSuspensionContext);
   const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
@@ -973,8 +974,8 @@ export function CanonicalChatWorkspace({
         {controller.detail && globalView === "conversation" ? (
           <>
             {!directBotId ? chatSharingAction : null}
-            <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
-              client={client.agents} directBotId={directBotId} detailsContainer={botDetailsContainer} headerContainer={botHeaderContainer}
+            <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id} visible={live && !inspectorExclusive}
+              client={client.agents} directBotId={directBotId} detailsContainer={frameDetailsContainer ?? botDetailsContainer} headerContainer={botHeaderContainer}
               headerActions={chatSharingAction}
               onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
@@ -1016,7 +1017,7 @@ export function CanonicalChatWorkspace({
             }} />
             </div>
             </ChatContextMenu>
-            <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>{composer}</div>
+            <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>{composer}</div>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
           <div

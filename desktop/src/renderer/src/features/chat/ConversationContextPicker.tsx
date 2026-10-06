@@ -123,9 +123,9 @@ export default function ConversationContextPicker({
           title={compact ? visibleTriggerText : undefined}
           disabled={disabled}
           className={compact
-            ? "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+            ? "inline-flex h-7 w-8 shrink-0 items-center justify-center rounded-[8px] border hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
             : "inline-flex h-7 min-w-0 max-w-[min(18rem,45vw)] items-center gap-1.5 rounded-md px-1.5 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"}
-          style={{ color: "var(--text-secondary)" }}
+          style={{ color: "var(--text-secondary)", borderColor: "var(--border-subtle)" }}
           onKeyDown={(event) => {
             if (event.key !== "ArrowDown" || disabled) return;
             event.preventDefault();

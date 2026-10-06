@@ -6,12 +6,14 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { createCanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
-import type { ChatAgentClient } from "@matrix-os/ui";
+import { ChatAgentsWorkspace, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { CanonicalChatEventSource, CanonicalChatInvalidation } from "@matrix-os/ui";
 import { createCanonicalChatWorkspaceClient, canonicalChatRecord, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
-import { BotHeaderContext } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
+import { BotDetailsContext, BotHeaderContext } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 
 beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  HTMLDialogElement.prototype.close = function () { this.open = false; };
   globalThis.ResizeObserver = class implements ResizeObserver {
     observe() {}
     unobserve() {}
@@ -21,7 +23,7 @@ beforeAll(() => {
 afterEach(cleanup);
 
 describe("Electron Desktop bot Chat", () => {
-  it("shows the direct bot, its pending question, and remembered parts in Chat", async () => {
+  it("preserves visible Bot details and unsaved edits across focus changes, then cleans up when hidden", async () => {
     const client = createCanonicalChatWorkspaceClient();
     client.agents = {
       bots: {
@@ -40,23 +42,75 @@ describe("Electron Desktop bot Chat", () => {
       list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" }, recipeRef: { recipeId: "research", version: "1" } }] })),
     } as unknown as ChatAgentClient;
 
-    function HostedBot() {
+    function HostedBot({ active = true, live = true }: { active?: boolean; live?: boolean }) {
       const [header, setHeader] = React.useState<HTMLElement | null>(null);
-      return <BotHeaderContext.Provider value={header}>
+      const [details, setDetails] = React.useState<HTMLElement | null>(null);
+      return <BotDetailsContext.Provider value={details}><BotHeaderContext.Provider value={header}>
+        <section ref={setDetails} data-testid="bot-details-host" />
         <header ref={setHeader} data-testid="bot-toolbar" />
         <CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
-          initialView="conversation" active catalog={providerCatalog} />
-      </BotHeaderContext.Provider>;
+          initialView="conversation" active={active} live={live} catalog={providerCatalog} />
+      </BotHeaderContext.Provider></BotDetailsContext.Provider>;
     }
-    render(<HostedBot />);
+    const { rerender } = render(<HostedBot />);
 
     expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Details" }).closest("header")).toBe(screen.getByTestId("bot-toolbar"));
     expect(document.querySelector("[data-slot='canonical-chat-workspace'] .matrix-bot-identity-bar")).toBeNull();
     expect(await screen.findByText("Which company?")).toBeTruthy();
+    const host = screen.getByTestId("bot-details-host");
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({ width: 900 } as DOMRect);
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
+    expect(screen.getByText("Keep briefs concise").closest("aside")?.parentElement).toBe(screen.getByTestId("bot-details-host"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit bot" }));
+    const nameInput = await screen.findByRole("textbox", { name: "Name" });
+    fireEvent.change(nameInput, { target: { value: "Unsaved research name" } });
+    rerender(<HostedBot active={false} live />);
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveProperty("value", "Unsaved research name");
+    expect(host.querySelector("aside")).toBeTruthy();
+    expect(host.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("360px");
+
+    rerender(<HostedBot active={false} live={false}/>);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit bot" })).toBeNull());
+    expect(host.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("");
+
+    await waitFor(() => expect(screen.getByTestId("bot-details-host").querySelector("aside")).toBeNull());
     await waitFor(() => expect(client.agents!.bots!.directBot).toHaveBeenCalledWith(snapshot.chat.id));
+  });
+
+  it.each(["Agents", "Add new agent"])("closes frame Details and releases its reservation when opening %s", async label => {
+    const client = createCanonicalChatWorkspaceClient();
+    client.agents = {
+      bots: { directBot: vi.fn(async () => "bot_research1") },
+      list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1,
+        instructions: "Research", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z",
+        updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" } }] })),
+    } as unknown as ChatAgentClient;
+    function HostedBot() {
+      const navigation = useChatAgentsNavigation();
+      const [host, setHost] = React.useState<HTMLElement | null>(null);
+      return <BotDetailsContext.Provider value={host}>
+        <section data-testid="navigation-details-host" ref={setHost}/>
+        <button onClick={event => navigation!.open({ client: client.agents!, view: label === "Agents" ? "library" : "recipes" }, event.currentTarget)}>{label}</button>
+        <button onClick={() => navigation!.close()}>Return to Chat</button>
+        <CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id} initialView="conversation" active catalog={providerCatalog}/>
+      </BotDetailsContext.Provider>;
+    }
+    render(<ChatAgentsWorkspace><HostedBot/></ChatAgentsWorkspace>);
+    const detailsButton = await screen.findByRole("button", { name: "Details", exact: true });
+    const host = screen.getByTestId("navigation-details-host");
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({ width: 900 } as DOMRect);
+    fireEvent.click(detailsButton);
+    await screen.findByRole("button", { name: "Close bot details" });
+    expect(host.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("360px");
+    fireEvent.click(screen.getByRole("button", { name: label, exact: true }));
+    await waitFor(() => expect(host.querySelector("aside")).toBeNull());
+    expect(host.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("");
+    expect(host.hasAttribute("data-bot-details-reserved")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Return to Chat" }));
+    expect(screen.getByRole("button", { name: "Details", exact: true }).getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector("aside")).toBeNull();
   });
 
   it("uses DELETE for grant revocation", async () => {
