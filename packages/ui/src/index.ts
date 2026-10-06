@@ -132,6 +132,7 @@ export {
 export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
+export { createOrganizationManagementActions, type OrganizationManagementActions } from "./organization-management/actions.js";
 export { createCollaborationDirectClient, CollaborationDirectError, type CollaborationDirectClient, type CollaborationDirectClientOptions, type CollaborationDirectErrorCode, type DirectScopeState } from "./collaboration/direct-client.js";
 export { createCollaborationDirectApi, type CollaborationDirectApi } from "./collaboration/direct-api.js";
 export { resolveOrganizationDriveNavigation, createRefreshGuard, driveBasePath, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive/paging.js";
