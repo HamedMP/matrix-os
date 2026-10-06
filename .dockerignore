@@ -2,6 +2,7 @@ node_modules
 .git
 .gitignore
 .amp
+.local/production-parity
 Dockerfile*
 !Dockerfile.platform
 .dockerignore

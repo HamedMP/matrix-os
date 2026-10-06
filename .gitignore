@@ -47,6 +47,7 @@ packages/platform/data/
 
 # Generated local parity credentials, host bundles, and VM images
 /.amp/in/local-production-parity/
+/.local/production-parity/
 
 # Test artifacts
 shell/test-results/

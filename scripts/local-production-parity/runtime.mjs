@@ -3,7 +3,7 @@ import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from "no
 import { resolve } from "node:path";
 import {
   root, machineName, runtimeDirectory, runtimeDiskPath, runtimeSeedPath,
-  runtimePidPath, runtimeLogPath, runtimeSshKeyPath,
+  runtimePidPath, runtimeLogPath,
 } from "./config.mjs";
 
 export function readRuntimePid() {
@@ -102,15 +102,16 @@ export async function stopQemuRuntime() {
   }
 }
 
-export function sshArguments(command) {
+export function sshArguments(command, options = {}) {
+  const runtime = options.runtime ?? runtimeDirectory;
   return [
-    "-i", runtimeSshKeyPath,
+    "-i", resolve(runtime, "operator_ed25519"),
     "-o", "BatchMode=yes",
     "-o", "IdentitiesOnly=yes",
     "-o", "ConnectTimeout=5",
     "-p", "2222",
-    "-o", "StrictHostKeyChecking=no",
-    "-o", `UserKnownHostsFile=${resolve(runtimeDirectory, "known_hosts")}`,
+    "-o", `StrictHostKeyChecking=${options.strict ? "yes" : "no"}`,
+    "-o", `UserKnownHostsFile=${resolve(runtime, "known_hosts")}`,
     "matrix-local-operator@127.0.0.1",
     ...command,
   ];

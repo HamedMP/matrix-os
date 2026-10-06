@@ -1,8 +1,16 @@
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-export const stateDirectory = resolve(root, ".amp/in/local-production-parity");
+export function resolveParityStateDirectory(projectRoot) {
+  const current = resolve(projectRoot, ".local/production-parity");
+  const legacy = resolve(projectRoot, ".amp/in/local-production-parity");
+  if (existsSync(current) && existsSync(legacy)) throw new Error("Two local parity directories exist; choose the retained environment before launching");
+  // Preserve absolute qcow2 backing paths, Docker mounts and the lock inode.
+  return existsSync(legacy) ? legacy : current;
+}
+export const stateDirectory = resolveParityStateDirectory(root);
 export const statePath = resolve(stateDirectory, "state.json");
 export const bundleDirectory = resolve(stateDirectory, "host-bundle");
 export const cloudInitPath = resolve(stateDirectory, "cloud-init.yaml");

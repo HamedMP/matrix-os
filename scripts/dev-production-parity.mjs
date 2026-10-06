@@ -15,6 +15,7 @@ import {
   storageTlsPort, guestHostAddress, fixturePublicAddress, localPlatformUrl,
   localArtifactUrl, ubuntuImageUrl, fixtureRouterName, storageTlsProxyName,
   platformContainerName, platformImageName, LOCAL_PARITY_OWNER_LABEL,
+  resolveParityStateDirectory,
 } from "./local-production-parity/config.mjs";
 import {
   readRuntimePid, runtimeProcessIsOwned, runtimeProcessPids, startQemuRuntime,
@@ -44,14 +45,14 @@ export function createLocalParityPlan(options = {}) {
   const projectRoot = options.root ?? root;
   const runtimeName = options.machineName ?? machineName;
   const buildName = options.builderName ?? `${runtimeName}-builder`;
-  const generatedCloudInitPath = resolve(projectRoot, ".amp/in/local-production-parity/cloud-init.yaml");
+  const generatedCloudInitPath = resolve(resolveParityStateDirectory(projectRoot), "cloud-init.yaml");
   const sourcePath = `/mnt/mac${projectRoot}`;
   const buildCommand = [
     "set -euo pipefail",
     `exec > >(tee ${shellQuote(`/mnt/mac${stateDirectory}/builder.log`)}) 2>&1`,
     "rm -rf /var/tmp/matrix-os-source",
     "mkdir -p /var/tmp/matrix-os-source",
-    `rsync -a --delete --exclude=.env --exclude='.env.*' --exclude=.amp --exclude=node_modules --exclude=dist --exclude='.next' ${shellQuote(`${sourcePath}/`)} /var/tmp/matrix-os-source/`,
+    `rsync -a --delete --exclude=.env --exclude='.env.*' --exclude=.amp --exclude=.local/production-parity --exclude=node_modules --exclude=dist --exclude='.next' ${shellQuote(`${sourcePath}/`)} /var/tmp/matrix-os-source/`,
     "cd /var/tmp/matrix-os-source",
     "export NODE_OPTIONS=--max-old-space-size=2048",
     "export ERL_AFLAGS='+JMsingle true'",
@@ -683,7 +684,7 @@ export async function startArtifactServer(state, options = {}) {
   return server;
 }
 
-function publicBuildEnvironment() {
+export function publicBuildEnvironment() {
   const env = { ...parseEnvFile(resolve(root, ".env")), ...process.env };
   return {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "",
@@ -912,10 +913,14 @@ function logs() {
 
 const command = process.argv[2];
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const action = command === "up" ? up : command === "down" ? down : command === "status" ? status : command === "logs" ? logs : undefined;
+  const recovery = () => import("./local-production-parity/recovery.mjs").then(module => module.recoverLocalParity({ restart: command === "restart" }));
+  const action = command === "up" ? up : command === "down" ? down : command === "status" ? status : command === "logs" ? logs
+    : command === "resume" || command === "restart" ? recovery : undefined;
   Promise.resolve().then(() => {
-    if (!action) throw new Error("usage: dev-production-parity.mjs <up|down|status|logs> [--reuse-bundle]");
-    if ((command === "up" || command === "down") && process.env.MATRIX_PARITY_LAUNCHER_LOCKED !== "1") {
+    const usage = "usage: dev-production-parity.mjs <up|down|status|logs|resume|restart> [--reuse-bundle]\nResume/restart preserve saved disks, credentials and volumes; restart interrupts active runs.";
+    if (command === "--help") return console.log(usage);
+    if (!action) throw new Error(usage);
+    if (["up", "down", "resume", "restart"].includes(command) && process.env.MATRIX_PARITY_LAUNCHER_LOCKED !== "1") {
       return runLocalParityLauncherWithLock();
     }
     return action();

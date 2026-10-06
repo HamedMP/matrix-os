@@ -132,7 +132,10 @@ Prerequisites on macOS:
   uses port 443.
 
 ```bash
-bun run dev:full                 # build bundle, provision machine, run platform
+bun run dev:full               # build bundle, provision machine, run platform
+bun run dev:parity:resume      # recover a saved VM and dependencies without reprovisioning
+bun run dev:parity:restart     # also restart gateway/shell and owned platform/proxies
+bun run dev:preflight          # read-only service, TLS and owner-authenticated API checks
 bun run dev:parity:status       # production units and failed-unit summary
 bun run dev:parity:logs         # cloud-init and Matrix service logs
 bun run dev:parity:down         # delete the disposable machine; preserve infra volumes
@@ -152,8 +155,31 @@ adapter during provisioning and updates. Provider-backed AI, billing, speech,
 and integrations still require their normal credentials and should fail with
 their bounded unavailable states when those credentials are absent.
 
-Open `https://192.0.2.2` after provisioning. Generated state, the cached Ubuntu
-image, and bundles live under ignored `.amp/in/local-production-parity/`.
+Open `https://192.0.2.2` after provisioning. New environments keep generated
+credentials, VM disks and bundles under ignored `.local/production-parity/`,
+outside coding-harness storage. Existing `.amp/in/local-production-parity/`
+environments stay in place to preserve absolute disk backing paths, container
+mounts and the existing launcher lock. Both paths are excluded from Git and
+build inputs. Two saved directories are ambiguous and fail closed; do not move
+a live VM's files or delete credentials to make the launcher proceed.
+
+Use `resume` after closing the provisioning launcher or restarting your computer.
+It reuses the saved disk, identity, SSH/TLS keys, dependency volumes and platform
+image. It refuses missing retained files/volumes, foreign containers, occupied VM
+ports and duplicate QEMU processes. It never reseeds the database, rotates
+credentials, rebuilds images or installs source changes. `restart` additionally
+interrupts active runs and connections; close browser tabs first. Both commands
+return after service and platform-to-VM health checks, leave saved data intact on
+failure, and use the same checkout lock as `up` and `down`. They do not restart the
+foreground bundle/metadata server needed for provisioning or bundle updates.
+
+Preflight makes no paid provider calls and requires neither Codex nor an existing
+Chat or speech configuration. Missing optional integrations warn; failed required
+service, TLS or owner-authenticated checks exit nonzero. A successful preflight
+does not establish browser sign-in, microphone or complete AI-turn correctness.
+Public docs in `FinnaAI/matrix-os-site` should receive this command reference in a
+separate documentation PR when this workflow is adopted.
+
 Use `--reuse-bundle` only when the working tree has not changed:
 
 ```bash

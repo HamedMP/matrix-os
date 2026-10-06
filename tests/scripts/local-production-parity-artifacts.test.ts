@@ -21,7 +21,7 @@ it("keeps parity credentials and VM artifacts out of a normal git add in a fresh
     ".amp/in/local-production-parity/runtime/disk.qcow2",
     ".amp/in/local-production-parity/runtime/cidata.iso",
     ".amp/in/local-production-parity/ubuntu-24.04-amd64.qcow2",
-  ];
+  ].flatMap(path => [path, path.replace(".amp/in/local-production-parity", ".local/production-parity")]);
   try {
     git("init", "--quiet", "--template=");
     await copyFile(join(process.cwd(), ".gitignore"), join(checkout, ".gitignore"));

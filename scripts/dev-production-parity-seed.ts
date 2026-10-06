@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { statePath } from "./local-production-parity/config.mjs";
 import {
   createPlatformDb,
   getUserMachine,
@@ -95,7 +96,7 @@ export async function seedLocalParityMachine(db: PlatformDB, state: LocalParityS
 
 async function main(): Promise<void> {
   const state = JSON.parse(
-    await readFile(".amp/in/local-production-parity/state.json", "utf8"),
+    await readFile(statePath, "utf8"),
   ) as LocalParitySeedState;
   const db = createPlatformDb(required("PLATFORM_DATABASE_URL"));
   try {
