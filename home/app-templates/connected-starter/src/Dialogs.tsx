@@ -28,6 +28,7 @@ export function Editor({
     [busy, setBusy] = useState(false);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     const errors = validateFields(app, fields);
     if (errors.length) {
       setError(errors.join(". "));
@@ -66,7 +67,7 @@ export function Editor({
     }
   }
   async function archive() {
-    if (!record) return;
+    if (!record || busy) return;
     setBusy(true);
     try {
       await onArchive(record);
@@ -102,6 +103,7 @@ export function Editor({
             </span>
             {field.kind === "longtext" ? (
               <textarea
+                disabled={busy}
                 rows={5}
                 maxLength={12000}
                 value={fields[field.key] ?? ""}
@@ -111,6 +113,7 @@ export function Editor({
               />
             ) : field.kind === "select" ? (
               <select
+                disabled={busy}
                 value={fields[field.key] ?? ""}
                 onChange={(e) =>
                   setFields({ ...fields, [field.key]: e.target.value || null })
@@ -123,6 +126,7 @@ export function Editor({
               </select>
             ) : (
               <input
+                disabled={busy}
                 type={
                   field.kind === "date"
                     ? "date"
@@ -165,6 +169,7 @@ export function Editor({
         <label>
           <span>Record group</span>
           <select
+            disabled={busy}
             value={scope}
             onChange={(e) => setScope(e.target.value as "personal" | "work")}
           >

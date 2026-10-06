@@ -24,7 +24,7 @@ export default function Focus(props: ViewProps) {
     return () => clearInterval(timer);
   }, [deadline]);
   async function log() {
-    if (!completed || !task.trim()) return;
+    if (!completed || !task.trim() || saving) return;
     setSaving(true);
     try {
       const d = new Date(),
@@ -56,6 +56,7 @@ export default function Focus(props: ViewProps) {
         <span className="eyebrow">One thing at a time</span>
         <input
           aria-label="Focus task"
+          disabled={saving}
           value={task}
           maxLength={1000}
           onChange={(e) => setTask(e.target.value)}

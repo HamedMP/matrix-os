@@ -228,6 +228,10 @@ export default function App() {
       } else {
         setPending(app.id);
         const result = await installGalleryApp(window.MatrixOS, app.id);
+        // Discovery started before this install may still contain its old state.
+        request.current++;
+        setLoading(false);
+        setLoadError("");
         setApps((items) =>
           items.map((item) =>
             item.id === app.id
