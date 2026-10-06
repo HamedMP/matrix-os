@@ -1,3 +1,4 @@
+@import "@fontsource-variable/geist/wght.css";
 @import "tailwindcss";
 @source "../../../../../packages/ui/src/chat";
 @source "../../../../../packages/ui/src/chat-agents";

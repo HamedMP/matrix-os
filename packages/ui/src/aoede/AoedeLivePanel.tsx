@@ -1,7 +1,7 @@
 "use client";
 import "./aoede-live.css";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { desktopPalette, fonts, onboardingChecklist, palette } from "@matrix-os/brand/tokens";
+import { chatWidget, desktopPalette } from "@matrix-os/brand/tokens";
 import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import { SHELL_Z_INDEX, DESKTOP_Z_INDEX } from "../shell-layering.js";
 import type { AoedePanelProps } from "./AoedePanel.js";
@@ -30,9 +30,11 @@ export function AoedeLivePanel(props: AoedePanelProps & { pushToTalkControl?: Re
   const style = { zIndex: (props.surface ?? props.capability?.surface) === "electron_desktop" ? DESKTOP_Z_INDEX.voiceCompanion : SHELL_Z_INDEX.voiceCompanion,
     "--live-forest": desktopPalette.forest, "--live-paper": desktopPalette.paper,
     "--live-gold": desktopPalette.gold, "--live-coral": desktopPalette.coral, "--live-blue": desktopPalette.blue,
-    "--live-serif": fonts.display, "--live-sans": fonts.ui,
-    "--live-widget": onboardingChecklist.colors.surface, "--live-border": onboardingChecklist.colors.border,
-    "--live-ink": palette.surfaceInverse, "--live-muted": desktopPalette.textMuted,
+    "--live-sans": chatWidget.fontFamily,
+    "--live-widget": chatWidget.colors.surface, "--live-border": chatWidget.colors.border,
+    "--live-ink": chatWidget.colors.ink, "--live-muted": chatWidget.colors.muted,
+    "--live-text": chatWidget.colors.text, "--live-placeholder": chatWidget.colors.placeholder,
+    "--live-composer": chatWidget.colors.composer,
   } as CSSProperties;
   const submit = async () => {
     if (sendingRef.current || !props.canSendText || !props.commands.sendText || !draft.trim()) return;

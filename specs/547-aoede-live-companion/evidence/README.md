@@ -39,3 +39,11 @@ The correction has 200 passing shared UI/controller/Web host/Electron host tests
 ![Compact corner conversation and edge halo; simulated media](compact-halo-widget-fixture.jpg)
 
 Native audio/task independence correction: native bootstrap and session create no longer consult task readiness or require a selected task account. Managed STT/agent/TTS keeps its selection requirement. Conversation can journal into an owner-bound canonical Chat without a task selection; typed and delegated work fail closed independently until a real route is selected. Platform speech eligibility, live capacity, tickets, ownership, and limits still gate audio. Added failing tests first for no-account bootstrap, unavailable task catalogs, native session creation, speech-funding denial, client-invented selection, and task admission without a route. Real deployment/microphone validation remains pending.
+
+## Current Figma typography correction (October 6)
+
+Authenticated Figma MCP context for Desktop-app `1176:1715` on page `1164:9060` specifies Geist Regular for message/composer text and Geist Medium for the header and controls. The shared native widget now uses these fonts and current widget color tokens from `@matrix-os/brand`. Caption typography stays 14px / 1.45 across streaming, listening, tool activity, paused, idle and ended states; the legacy active-state Instrument Serif override is removed. Electron bundles the Geist variable face rather than relying on a system installation.
+
+Regression validation: 172 focused tests pass, including typography transitions on Web Canvas, Web Desktop and Electron Desktop. Electron type checks and production build pass. Browser inspection of the deterministic fixture on Web Canvas and Web Desktop measured Matrix Geist, 14px, 20.3px line height both during active captions and after explicit End. This is rendered shared UI evidence with simulated media, not physical Electron or live voice acceptance. Earlier serif fixture screenshots above represent superseded typography.
+
+![Current Geist widget on Web Desktop; simulated media](geist-widget-fixture.png)

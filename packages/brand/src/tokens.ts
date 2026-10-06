@@ -51,6 +51,20 @@ export const desktopFonts = {
   mono: '"Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace',
 } as const;
 
+/** Desktop-app Figma 1176:1715; shared compact conversation widget. */
+export const chatWidget = {
+  fontFamily: "var(--font-geist-sans, Geist), system-ui, sans-serif",
+  colors: {
+    surface: "#FFFEFC",
+    border: "#ECEAE8",
+    ink: "#0D0C0C",
+    text: "#242323",
+    muted: "#6E6969",
+    placeholder: "#999494",
+    composer: "#FFFFFF",
+  },
+} as const;
+
 /** Compact onboarding checklist tokens shared by landing-adjacent shells. */
 export const onboardingChecklist = {
   colors: {
