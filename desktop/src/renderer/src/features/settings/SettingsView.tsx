@@ -47,7 +47,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
-  { id: "services", label: "Services", icon: <Blocks size={15} />, group: "Integrations" },
+  { id: "services", label: "Connect Apps", icon: <Blocks size={15} />, group: "Integrations" },
   { id: "mcps", label: "MCPs", icon: <Server size={15} />, group: "Integrations" },
   { id: "skills", label: "Skills", icon: <Sparkles size={15} />, group: "Integrations" },
   { id: "chat-import", label: "Import chats", icon: <Upload size={15} />, group: "Integrations" },

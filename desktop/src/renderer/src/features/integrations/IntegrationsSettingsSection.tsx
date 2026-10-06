@@ -4,7 +4,7 @@
 // consent URL through the HTTPS-only shell:open-external bridge, then polls
 // the sync endpoint with backoff until the account lands; Disconnect asks
 // for confirmation first. The renderer only displays name/category/label/
-// email/status — never tokens, remote logos, or upstream error text.
+// email/status and public app logos — never tokens or upstream error text.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { invoke } from "../../lib/operator";
@@ -12,6 +12,7 @@ import { categoryMessage } from "../../../../shared/app-error";
 import { RefreshButton } from "../settings/sections/ProvidersSection";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
+import { IntegrationMarketplace } from "@matrix-os/ui";
 import { AvailableServiceCard } from "./AvailableServiceCard";
 import { ConnectPendingBanner } from "./ConnectPendingBanner";
 import { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll } from "./connect-poll";
@@ -239,25 +240,13 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
           {available.length === 0 && connections.length === 0 ? (
             <EmptyCatalogState />
           ) : (
-            <div data-testid="integrations-grid" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {catalogServices.map((service) => {
-                const connection = connections.find((conn) => conn.service === service.id);
-                const serviceConnections = connections.filter((conn) => conn.service === service.id);
-                return (
-                  <AvailableServiceCard
-                    key={service.id}
-                    service={service}
-                    connected={connection !== undefined}
-                    connection={serviceConnections.length === 1 ? connection : undefined}
-                    connections={serviceConnections}
-                    connecting={connectingService === service.id}
-                    disabled={connectingService !== null}
-                    onConnect={() => void handleConnect(service.id)}
-                    onDisconnect={(target) => setConfirmId(target.id)}
-                  />
-                );
-              })}
-            </div>
+            <IntegrationMarketplace services={catalogServices} connectedIds={connections.map(c => c.service)} connectingId={connectingService}
+              onConnect={id => void handleConnect(id)} renderService={service => (
+                <AvailableServiceCard service={service} connected={connections.some(c => c.service === service.id)}
+                  connections={connections.filter(c => c.service === service.id)} connecting={connectingService === service.id}
+                  disabled={connectingService !== null || !available.some(s => s.id === service.id)}
+                  onConnect={() => void handleConnect(service.id)} onDisconnect={target => setConfirmId(target.id)} />
+              )} />
           )}
         </section>
 
@@ -279,8 +268,8 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       <div className="flex items-start justify-between gap-4">
         <SettingsSectionHeader
           className="mb-0"
-          title="Integrations"
-          description="Connect extra services to extend your agent's capabilities."
+          title="Connect Apps"
+          description="Connect apps to let Matrix work across your tools."
         />
         {status === "ready" ? <RefreshButton onClick={refresh} /> : null}
       </div>

@@ -53,7 +53,7 @@ const sections = [
   { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
   { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
-  { id: "integrations", label: "Services", icon: CableIcon },
+  { id: "integrations", label: "Connect Apps", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "chat-import", label: "Import chats", icon: UploadIcon },
   { id: "security", label: "Security", icon: ShieldIcon },

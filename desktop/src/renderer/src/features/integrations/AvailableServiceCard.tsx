@@ -2,21 +2,11 @@
 // service gets the green check affordance, while an available service gets a
 // compact plus action. Account details remain accessible without changing the
 // compact visual treatment of the card.
+import { integrationAuthType, integrationDescription } from "@matrix-os/contracts/integration-marketplace";
 import { Button } from "../../design/primitives";
 import { Check, Plus } from "@renderer/lib/hugeicons";
 import { IntegrationIcon } from "./IntegrationIcon";
 import { displayIntegrationName, type AvailableIntegration, type ConnectedIntegration } from "./types";
-
-const INTEGRATION_DESCRIPTIONS: Record<string, string> = {
-  github: "Manage repos, issues, and pull requests",
-  notion: "Search, update, and organize workspace",
-  slack: "Send messages and manage channels",
-  linear: "Manage issues, projects & team workflows",
-  figma: "Generate diagrams and export designs",
-  google_drive: "Search, read, and upload files",
-  jira: "Access issues and project boards",
-  hubspot: "CRM context for every answer and action",
-};
 
 export function AvailableServiceCard({
   service,
@@ -37,11 +27,11 @@ export function AvailableServiceCard({
   onConnect: () => void;
   onDisconnect?: (connection: ConnectedIntegration) => void;
 }) {
-  const description = service.description ?? INTEGRATION_DESCRIPTIONS[service.id] ?? "Connect this service to extend your agent.";
+  const description = integrationDescription(service);
   return (
     <div
       data-testid={`integration-card-${service.id}`}
-      className="group relative flex min-h-[72px] items-center gap-3 rounded-xl border p-3"
+      className="group relative flex min-h-[84px] items-center gap-3 py-3"
       style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
     >
       <IntegrationIcon name={service.name} logoUrl={service.logoUrl} testId={`integration-icon-${service.id}`} />
@@ -52,6 +42,7 @@ export function AvailableServiceCard({
         <p className="truncate text-sm" style={{ color: "var(--text-tertiary)" }}>
           {description}
         </p>
+        <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>{integrationAuthType(service) === "keys" ? "API key required" : integrationAuthType(service) === "oauth" ? "Sign in securely" : "Connect your account"}</p>
         <span className="sr-only">
           <span>Category: </span>
           <span>{service.category}</span>
@@ -97,28 +88,28 @@ export function AvailableServiceCard({
           </span>
           <Button
             variant="subtle"
-            className="size-7 justify-center rounded-[8px] border p-1 px-1!"
+            className="justify-center rounded-full px-3! py-1.5"
             style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
             aria-label={`Add another ${service.name} account`}
             data-testid={`integration-connect-${service.id}`}
             disabled={disabled}
             onClick={onConnect}
           >
-            <Plus size={16} aria-hidden="true" />
+            {connecting ? "Connecting…" : connected ? "Add account" : "Connect"}
           </Button>
         </div>
       ) : (
-        <div data-testid={`integration-action-${service.id}`} data-state="available" className="size-7 shrink-0">
+        <div data-testid={`integration-action-${service.id}`} data-state="available" className="shrink-0">
           <Button
             variant="subtle"
-            className="size-7 justify-center rounded-[8px] border p-1 px-1!"
+            className="justify-center rounded-full px-3! py-1.5"
             style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
             aria-label={connecting ? `Connecting ${service.name}` : `Connect ${service.name}`}
             data-testid={`integration-connect-${service.id}`}
             disabled={disabled}
             onClick={onConnect}
           >
-            <Plus size={16} aria-hidden="true" />
+            {connecting ? "Connecting…" : connected ? "Add account" : "Connect"}
           </Button>
         </div>
       )}
