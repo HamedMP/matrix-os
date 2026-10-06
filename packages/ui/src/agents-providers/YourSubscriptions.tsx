@@ -65,8 +65,10 @@ export function YourSubscriptions({snapshot, capabilities, client, operationIds,
             {kind === "codex" && canKey ? <p className="matrix-ap-help">Connect with an OpenAI API key, billed per request by OpenAI. Matrix AI credit is separate.</p> : null}
             {account || source ? <p className="matrix-ap-help">{account?.connectionDetails?.email ?? account?.displayName ?? source?.displayName}</p> : null}
             {connected || retained ? <p className="matrix-ap-help">{source?.fundingKind === "owner_api_key" ? "API key connected · billed by your provider" : usage?.primary ?? "Usage unavailable"}{usage?.secondary ? ` · ${usage.secondary}` : ""}</p> : null}
-            {action ? <button type="button" className="matrix-ap-button" disabled={disabled} aria-controls={`matrix-ap-details-${id}`}
-              onClick={() => onOpen(id, kind)}>{action}</button> : <p className="matrix-ap-help">{forbidden || snapshot.access.mode === "read_only" ? "Only this Computer’s owner can manage connections." : `${nativeName} connection is unavailable on this Computer. Refresh or update this Computer to check supported sign-in methods.`}</p>}
+            {action ? <div className="matrix-ap-workflow-actions matrix-ap-subscription-actions">
+              <button type="button" className="matrix-ap-button" disabled={disabled} aria-controls={`matrix-ap-details-${id}`}
+                onClick={() => onOpen(id, kind)}>{action}</button>
+            </div> : <p className="matrix-ap-help">{forbidden || snapshot.access.mode === "read_only" ? "Only this Computer’s owner can manage connections." : `${nativeName} connection is unavailable on this Computer. Refresh or update this Computer to check supported sign-in methods.`}</p>}
           </article>;
         });
       })}
