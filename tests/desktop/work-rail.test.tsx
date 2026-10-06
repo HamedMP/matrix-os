@@ -9,7 +9,7 @@ import type {
   CanonicalChatInvalidation,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
-import { ChatAgentsWorkspace } from "@matrix-os/ui";
+import { ChatAgentsWorkspace, subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
 import { PinOffIcon } from "@desktop/renderer/src/lib/hugeicons";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -139,6 +139,22 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it("refreshes shared project discovery immediately after a canonical Chat is created", async () => {
+    const events = eventHarness();
+    const client = { list: vi.fn(async () => ({ items: [] })) } as unknown as CanonicalChatClient;
+    const changed = vi.fn();
+    const unsubscribe = subscribeCollaborationDiscoveryChanged(changed);
+    try {
+      renderRail(client, events.eventSource);
+      await waitFor(() => expect(client.list).toHaveBeenCalled());
+
+      act(() => events.emit(chatChanged("chat_new_project", 1, "chat.created")));
+
+      await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    } finally {
+      unsubscribe();
+    }
+  });
   it("projects Bot approvals only as Needs you reminders and clears resolved reminders on refresh", async () => {
     const bot = record("chat_bot", "Bot transcript", { pinned: true, projectId: "alpha", updatedAt: "2026-10-02T12:00:00Z" });
     let approvalPending = true;

@@ -56,7 +56,7 @@ async function loadSharedProjects(api: CollaborationDirectApi): Promise<Collabor
  * (a sign-in change closes the previous one), and a change that arrives during a load is not lost:
  * it runs one more load when the current one settles.
  */
-function useSharedProjects(): CollaborationProjectOverview[] {
+export function useSharedProjects(): CollaborationProjectOverview[] {
   const actorId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -101,6 +101,22 @@ function useSharedProjects(): CollaborationProjectOverview[] {
   return projects;
 }
 
+export function partitionSharedProjects(
+  projects: readonly CollaborationProjectOverview[],
+  canonicalProjectIds: ReadonlySet<string>,
+): {
+  ownedSharedProjectIds: Set<string>;
+  receivedProjects: CollaborationProjectOverview[];
+} {
+  const ownedSharedProjectIds = new Set<string>();
+  const receivedProjects: CollaborationProjectOverview[] = [];
+  for (const project of projects) {
+    if (canonicalProjectIds.has(project.projectId)) ownedSharedProjectIds.add(project.projectId);
+    else receivedProjects.push(project);
+  }
+  return { ownedSharedProjectIds, receivedProjects };
+}
+
 /**
  * Shared projects in the Work rail, shown like the member's own projects with one shared mark.
  * Owner actions (pin, edit, share, delete, new Chat) are absent; Chats open as shared Chat tabs.
@@ -109,6 +125,13 @@ export function SharedWorkRailProjects({ revealRequest }: {
   revealRequest?: { scopeId: string; requestId: number };
 } = {}) {
   const projects = useSharedProjects();
+  return <SharedWorkRailProjectList projects={projects} revealRequest={revealRequest} />;
+}
+
+export function SharedWorkRailProjectList({ projects, revealRequest }: {
+  projects: readonly CollaborationProjectOverview[];
+  revealRequest?: { scopeId: string; requestId: number };
+}) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [dismissedRevealRequestId, setDismissedRevealRequestId] = useState<number>();
   const scrolledRevealRequestId = useRef<number | undefined>(undefined);
