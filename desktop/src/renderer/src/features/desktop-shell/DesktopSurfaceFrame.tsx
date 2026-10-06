@@ -254,7 +254,7 @@ export default function DesktopSurfaceFrame({
     <SurfaceChromeContext.Provider value={surfaceChromeHost}>
     <OSWindow
       surfaceId={tab.id}
-      sidebarWidth={tab.kind === "settings" ? 208 : isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined}
+      sidebarWidth={tab.kind === "settings" ? 248 : isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined}
       sidebar={tab.kind === "settings" ? (
         <SettingsSidebar section={settingsSection} onSectionChange={setSettingsSection} />
       ) : isWorkSurface ? (
