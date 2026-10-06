@@ -82,7 +82,7 @@ const CANONICAL_CHAT_FAILURE_COPY: Record<CanonicalChatSafeError["code"], string
   run_failed: "The agent could not finish. Try again.",
   insufficient_credit: "Not enough Matrix AI credit. Add credit in Settings.",
   credit_reserved: "Credit is reserved by other requests. Wait or switch connection.",
-  budget_exceeded: "Monthly AI budget reached. Adjust it in Settings.",
+  budget_exceeded: "Monthly AI budget reached. Switch connection.",
   resource_unavailable: "One of the referenced files or resources is unavailable.",
   authorization_failed: "You do not have permission to send this message.",
   service_unavailable: "Chat service is temporarily unavailable. Try again.",
@@ -92,18 +92,19 @@ type AgentFailureDefinition = {
   code: CanonicalChatSafeError["code"];
   safeMessage: string;
   legacyMessage?: string;
+  legacyErrors?: Array<Pick<CanonicalChatSafeError, "code" | "safeMessage">>;
   retryable?: boolean;
   recoveryActions?: CanonicalChatSafeError["recoveryActions"];
 };
 
 const AGENT_FAILURE_COPY = {
-  authentication_required: { code: "provider_unavailable", safeMessage: "Sign-in required. Reconnect in Agents & providers on this computer.", legacyMessage: "The agent connection is signed out or its login is no longer valid. Open Agents & providers and sign in again on the selected computer." },
+  authentication_required: { code: "provider_unavailable", safeMessage: "Sign-in required. Reconnect in Agents & providers on this computer.", legacyMessage: "The agent connection is signed out or its login is no longer valid. Open Agents & providers and sign in again on the selected computer.", legacyErrors: [{ code: "authorization_failed", safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude." }] },
   usage_limit: { code: "run_failed", safeMessage: "Usage limit reached. Wait for reset or switch connection.", legacyMessage: "The selected connection has reached its usage limit. Wait for your allowance to reset or choose another connection." },
   credit_required: { code: "provider_unavailable", safeMessage: "No usable agent credit. Check billing or switch connection.", legacyMessage: "The selected connection has no usable credit. Check its billing or choose another connection." },
   billing_required: { code: "provider_unavailable", safeMessage: "Billing needs attention. Check billing or switch connection.", legacyMessage: "The selected connection needs billing attention. Check its credit or payment settings, or choose another connection." },
   rate_limited: { code: "service_unavailable", safeMessage: "Too many requests. Wait a moment and retry.", retryable: true, recoveryActions: ["retry"], legacyMessage: "Requests are temporarily rate limited. Wait a moment and try again." },
-  execution_timeout: { code: "run_failed", safeMessage: "The agent timed out. Check progress before trying again.", retryable: false, recoveryActions: [] },
-  request_timeout: { code: "service_unavailable", safeMessage: "The agent timed out. Try again.", retryable: true, recoveryActions: ["retry"], legacyMessage: "Claude took too long to respond. Try the Run again." },
+  execution_timeout: { code: "run_failed", safeMessage: "The agent timed out. Check progress before trying again.", retryable: false, recoveryActions: [], legacyErrors: [{ code: "service_unavailable", safeMessage: "Claude took too long to respond. Try the Run again." }] },
+  request_timeout: { code: "service_unavailable", safeMessage: "The agent timed out. Try again.", retryable: true, recoveryActions: ["retry"] },
   connection_failed: { code: "service_unavailable", safeMessage: "Connection lost. Reconnect or try again.", retryable: true, recoveryActions: ["retry"] },
   service_busy: { code: "service_unavailable", safeMessage: "Service is busy. Try again shortly.", retryable: true, recoveryActions: ["retry"] },
   service_failed: { code: "service_unavailable", safeMessage: "Service failed. Try again shortly.", retryable: true, recoveryActions: ["retry"] },
@@ -128,10 +129,22 @@ export function canonicalAgentFailure(reason: unknown): CanonicalChatSafeError |
       ? ["open_setup_terminal", "select_provider"] : ["select_provider"]) };
 }
 
-export function canonicalChatSafeFailureReason(code: unknown, reviewedDetail?: unknown): string | undefined {
-  for (const detail of Object.values(AGENT_FAILURE_COPY)) {
-    if (code === detail.code && (reviewedDetail === detail.safeMessage || ("legacyMessage" in detail && reviewedDetail === detail.legacyMessage))) return detail.safeMessage;
+/** Restores reviewed recovery metadata as well as copy for persisted legacy failures. */
+export function canonicalReviewedAgentFailure(code: unknown, reviewedDetail: unknown): CanonicalChatSafeError | undefined {
+  if (typeof reviewedDetail !== "string") return undefined;
+  for (const [reason, definition] of Object.entries(AGENT_FAILURE_COPY)) {
+    const detail: AgentFailureDefinition = definition;
+    if ((code === detail.code && (reviewedDetail === detail.safeMessage || reviewedDetail === detail.legacyMessage))
+      || detail.legacyErrors?.some((error) => code === error.code && reviewedDetail === error.safeMessage)) {
+      return canonicalAgentFailure(reason);
+    }
   }
+  return undefined;
+}
+
+export function canonicalChatSafeFailureReason(code: unknown, reviewedDetail?: unknown): string | undefined {
+  const reviewed = canonicalReviewedAgentFailure(code, reviewedDetail);
+  if (reviewed) return reviewed.safeMessage;
   // Claude publishes a separately validated quota reset. Accept only this
   // closed copy template, never an arbitrary upstream safeMessage.
   if (code === "run_failed" && typeof reviewedDetail === "string") {

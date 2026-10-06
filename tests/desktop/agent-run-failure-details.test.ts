@@ -11,6 +11,7 @@ describe("actionable agent failure details", () => {
   it.each([
     ["provider_unavailable", authCopy], ["run_failed", usageCopy], ["provider_unavailable", creditCopy],
     ["insufficient_credit", "Not enough Matrix AI credit. Add credit in Settings."],
+    ["budget_exceeded", "Monthly AI budget reached. Switch connection."],
   ] as const)("renders reviewed %s details live and after reload on every shared presentation", (code, copy) => {
     const { snapshot } = createCanonicalChatFixture("failed");
     const run = snapshot.runs[0]!;
@@ -35,6 +36,23 @@ describe("actionable agent failure details", () => {
 
 
 describe("short failure copy and persisted compatibility", () => {
+  it.each([
+    ["authorization_failed", "Claude needs to be connected before it can run. Open setup and connect Claude.", authCopy, false],
+    ["service_unavailable", "Claude took too long to respond. Try the Run again.", "The agent timed out. Check progress before trying again.", true],
+  ] as const)("restores the reviewed legacy %s recovery without immediate Retry", (code, oldCopy, copy, retryable) => {
+    const { snapshot } = createCanonicalChatFixture("failed");
+    const run = snapshot.runs[0]!;
+    const detail = JSON.parse(JSON.stringify({ ...snapshot, activities: [{
+      id: "legacy_failure", chatId: run.chatId, runId: run.id, sequence: 1,
+      type: "run.error", occurredAt: run.updatedAt,
+      error: { code, safeMessage: oldCopy, retryable, recoveryActions: retryable ? ["retry"] : ["open_setup_terminal"] },
+    }] }));
+    expect(canonicalChatPresentation(detail)[0]?.final).toMatchObject({ markdown: copy });
+    expect(canonicalChatPresentation(detail)[0]?.final).not.toHaveProperty("actions");
+    expect(canonicalChatTerminalNotices(detail)[0]?.text).toBe(copy);
+    expect(canonicalChatSafeFailureReason(code, `${oldCopy} secret=private`)).not.toBe(copy);
+    expect(canonicalChatSafeFailureReason("run_failed", oldCopy)).toBe("The agent could not finish. Try again.");
+  });
   it("keeps old persisted login guidance recognizable while rendering the short copy", () => {
     const oldCopy = "The agent connection is signed out or its login is no longer valid. Open Agents & providers and sign in again on the selected computer.";
     expect(canonicalChatSafeFailureReason("provider_unavailable", oldCopy)).toBe(authCopy);
@@ -55,6 +73,15 @@ describe("short failure copy and persisted compatibility", () => {
 
 
 describe("distinct concise terminal recovery", () => {
+  it("does not override a server Retry restriction for a known transient cause", () => {
+    const { snapshot } = createCanonicalChatFixture("failed");
+    const run = snapshot.runs[0]!;
+    const detail = { ...snapshot, activities: [{ id: "restricted_failure", chatId: run.chatId, runId: run.id,
+      type: "run.error" as const, sequence: 1, occurredAt: run.updatedAt,
+      error: { ...canonicalAgentFailure("request_timeout")!, retryable: false },
+    }] };
+    expect(canonicalChatPresentation(detail)[0]?.final).not.toHaveProperty("actions");
+  });
   it.each([
     ["rate_limited", "Too many requests. Wait a moment and retry.", true],
     ["execution_timeout", "The agent timed out. Check progress before trying again.", false],

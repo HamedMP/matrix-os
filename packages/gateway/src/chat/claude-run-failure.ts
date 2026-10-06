@@ -34,7 +34,7 @@ export function classifiedClaudeFailureEvidence(text: string) {
 export function classifiedClaudeCliFailure(error: unknown) {
   if (!(error instanceof CanonicalCliError)) return undefined;
   if (error.kind === "startup") return { category: "startup" as const, safeError: canonicalAgentFailure("agent_unavailable")! };
-  if (error.kind === "timeout") return { category: "timeout" as const, safeError: canonicalAgentFailure("request_timeout")! };
+  if (error.kind === "timeout") return { category: "timeout" as const, safeError: canonicalAgentFailure("execution_timeout")! };
   if (error.kind === "invalid_output" || error.kind === "stdout_limit") {
     return { category: "invalid_protocol" as const, safeError: canonicalAgentFailure("invalid_response")! };
   }

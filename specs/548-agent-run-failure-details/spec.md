@@ -30,6 +30,13 @@ permission and configuration refusals do not offer an immediate Retry that
 cannot repair the cause. Existing persisted allowlisted messages and validated
 reset templates are recognized and rendered with the new concise copy.
 
+Both Claude and Codex local execution deadlines require checking progress;
+provider-confirmed request timeouts remain distinct. Exact historical Claude
+login and local-timeout code/copy pairs restore their reviewed recovery after
+reload, overriding the historical timeout's unsafe Retry flag in presentation.
+Monthly budget guidance offers switching connections, including when a workspace
+manages the budget and Settings has no edit action.
+
 ## Authority and privacy
 
 Only terminal native error envelopes and strictly allowlisted durable reason

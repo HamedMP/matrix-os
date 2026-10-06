@@ -827,10 +827,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "service_unavailable",
-        safeMessage: "The agent timed out. Try again.",
-        retryable: true,
-        recoveryActions: ["retry"],
+        code: "run_failed",
+        safeMessage: "The agent timed out. Check progress before trying again.",
+        retryable: false,
+        recoveryActions: [],
       },
     });
   });

@@ -19,7 +19,7 @@ function fixture(status: "failed" | "aborted", retry = false): CanonicalChatDeta
 describe("terminal notice parity", () => {
   it.each([
     ["insufficient_credit", "Not enough Matrix AI credit. Add credit in Settings."],
-    ["budget_exceeded", "Monthly AI budget reached. Adjust it in Settings."],
+    ["budget_exceeded", "Monthly AI budget reached. Switch connection."],
     ["provider_unavailable", "Sign-in required. Reconnect in Agents & providers on this computer."],
     ["run_failed", "Usage limit reached. Wait for reset or switch connection."],
   ])("shows trusted %s with the same safe copy on Web and Native Mobile", (code, text) => {

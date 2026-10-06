@@ -1,4 +1,4 @@
-import { projectChatSubagent, canonicalChatToolDetail } from "@matrix-os/contracts";
+import { projectChatSubagent, canonicalChatToolDetail, canonicalReviewedAgentFailure } from "@matrix-os/contracts";
 import type { CanonicalChatRun, CanonicalChatRunActivity } from "@matrix-os/contracts";
 import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
 import type {
@@ -313,6 +313,7 @@ export function runPresentation(
         phase: "final" as const,
       }
     : undefined;
+  const reviewedFailure = canonicalReviewedAgentFailure(runError?.error.code, runError?.error.safeMessage);
   const terminalNotice = failed || stopped
     ? {
         kind: "notice" as const,
@@ -325,7 +326,8 @@ export function runPresentation(
           : canonicalChatSafeFailureReason(runError?.error.code, runError?.error.safeMessage)
             ?? canonicalChatSafeFailureReason("run_failed")!,
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
-        ...(!stopped && allowRetry && runError?.error.retryable && runError.error.recoveryActions?.includes("retry")
+        ...(!stopped && allowRetry && runError?.error.retryable && (reviewedFailure?.retryable ?? true)
+          && runError.error.recoveryActions?.includes("retry")
           ? { actions: [{ kind: "retry" as const, turnId, label: "Retry" }] }
           : {}),
       }

@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "../../packages/gateway/src/chat/claude-run-failure.js";
 import { canonicalChatSafeFailureReason } from "@matrix-os/contracts";
+import { CanonicalCliError } from "../../packages/gateway/src/chat/cli-process.js";
 
 describe("Claude actionable terminal failures", () => {
+  it("requires checking progress after a typed local execution deadline", () => {
+    expect(classifiedClaudeCliFailure(new CanonicalCliError("timeout"))?.safeError).toEqual({
+      code: "run_failed", safeMessage: "The agent timed out. Check progress before trying again.",
+      retryable: false, recoveryActions: [],
+    });
+  });
   it.each([
     ["Authentication required. Run /login. secret=private", "authentication"],
     ["Credit balance is too low /home/private token=secret", "credit"],
