@@ -109,6 +109,24 @@ describe("Electron Work rail shared projects", () => {
     expect(screen.getByRole("button", { name: "Release plan" })).toHaveAttribute("aria-current", "page");
   });
 
+  it("reveals a newly accepted project in the rail without opening a project surface", async () => {
+    const { rerender } = render(<SharedWorkRailProjects revealRequest={{ scopeId: projectScope, requestId: 1 }} />);
+
+    const project = await screen.findByRole("button", { name: "collab testing 12PMOct3" });
+    expect(project).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Release plan" })).toBeVisible();
+    expect(useTabs.getState().tabs).toEqual([]);
+
+    fireEvent.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "true");
+    rerender(<SharedWorkRailProjects revealRequest={{ scopeId: projectScope, requestId: 2 }} />);
+    expect(project).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("lists only accepted projects with an overview, and refreshes when sharing changes", async () => {
     mock.items = [
       { scopeId: "10000000-0000-4000-8000-000000000a04", runtimeId: "vps:11111111-1111-4111-8111-111111111111",

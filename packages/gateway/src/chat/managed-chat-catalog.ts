@@ -36,6 +36,8 @@ export function managedChatInstances(
       displayName: "Matrix AI",
       connectionLabel: "Matrix AI",
       connectionState: available ? "ready" as const : fresh
+        && (source.safeReason === "budget_exceeded" || instance.readiness.safeReason === "budget_exceeded")
+        ? "budget_exceeded" as const : fresh
         && (source.safeReason === "credit_reserved" || instance.readiness.safeReason === "credit_reserved")
         ? "credit_reserved" as const : fresh
           && (source.safeReason === "credit_required" || instance.readiness.safeReason === "credit_required")
@@ -87,7 +89,8 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
   const unavailableModels = discoverable.filter(model => !eligible.some(ready => ready.id === model.id));
   const fundingSources = sources.filter(source => unavailableModels.some(model => source.eligibleModelIds.includes(model.id)
     && model.eligibleAccessSourceIds.includes(source.id)));
-  const fundingState = fundingSources.some(source => source.safeReason === "credit_reserved") ? "credit_reserved" as const
+  const fundingState = fundingSources.some(source => source.safeReason === "budget_exceeded") ? "budget_exceeded" as const
+    : fundingSources.some(source => source.safeReason === "credit_reserved") ? "credit_reserved" as const
     : fundingSources.some(source => source.safeReason === "credit_required") ? "credit_required" as const : "unavailable" as const;
   return [{
     id: MANAGED_PI_INSTANCE_ID, driverKind: "matrix_pi", displayName: "Matrix AI", connectionLabel: "Matrix AI",

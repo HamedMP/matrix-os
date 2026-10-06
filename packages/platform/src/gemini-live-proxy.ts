@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from "./db.js";
+import { rejectWebSocketUpgrade } from "./websocket-upgrade-rejection.js";
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -22,10 +23,6 @@ export function parseInternalGeminiLivePath(path: string): { handle: string } | 
   return match ? { handle: match[1] } : null;
 }
 
-function rejectUpgrade(socket: Socket, status: number, message: string): void {
-  socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-  socket.destroy();
-}
 
 export async function handleInternalGeminiLiveProxyUpgrade(opts: {
   req: IncomingMessage;
@@ -40,11 +37,11 @@ export async function handleInternalGeminiLiveProxyUpgrade(opts: {
   if (!parsed) return false;
 
   if (!opts.platformSecret) {
-    rejectUpgrade(opts.socket, 503, "Service Unavailable");
+    rejectWebSocketUpgrade(opts.socket, 503);
     return true;
   }
   if (!opts.geminiApiKey) {
-    rejectUpgrade(opts.socket, 503, "Service Unavailable");
+    rejectWebSocketUpgrade(opts.socket, 503);
     return true;
   }
 
@@ -52,14 +49,14 @@ export async function handleInternalGeminiLiveProxyUpgrade(opts: {
   const token = typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7) : undefined;
   const expected = buildPlatformVerificationToken(parsed.handle, opts.platformSecret);
   if (!timingSafeTokenEquals(token, expected)) {
-    rejectUpgrade(opts.socket, 401, "Unauthorized");
+    rejectWebSocketUpgrade(opts.socket, 401);
     return true;
   }
 
   const container = await getContainer(opts.db, parsed.handle);
   const machine = container?.clerkUserId ? undefined : await getRunningUserMachineByHandle(opts.db, parsed.handle);
   if (!container?.clerkUserId && !machine?.clerkUserId) {
-    rejectUpgrade(opts.socket, 404, "Not Found");
+    rejectWebSocketUpgrade(opts.socket, 404);
     return true;
   }
 

@@ -47,13 +47,14 @@ export const AiProviderSafeReasonSchema = z.enum([
   "policy",
   "credit_required",
   "credit_reserved",
+  "budget_exceeded",
   "unknown",
 ]);
 
 export const AiProviderSafeReasonLabels: Readonly<Record<z.infer<typeof AiProviderSafeReasonSchema>, string>> = {
   auth: "Authentication required", timeout: "Connection timed out", rate_limited: "Temporarily limited",
   provider_unavailable: "Unavailable", policy: "Unavailable under current policy", credit_required: "Credit required",
-  credit_reserved: "Credit reserved", unknown: "Unavailable",
+  credit_reserved: "Credit reserved", budget_exceeded: "Monthly AI budget reached", unknown: "Unavailable",
 };
 
 export function aiProviderSafeReasonLabel(reason: z.infer<typeof AiProviderSafeReasonSchema> | null): string {

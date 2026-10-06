@@ -284,14 +284,18 @@ export class PlatformOrganizationRepository {
     return Number(result.numDeletedRows ?? 0);
   }
 
-  async listOrganizationsForActor(actorId: string, limit = ORGANIZATION_LIST_LIMIT): Promise<Array<{ organization: OrganizationRecord; membership: MembershipRecord }>> {
+  async listOrganizationsForActorPage(actorId: string, limit = ORGANIZATION_LIST_LIMIT): Promise<{
+    organizations: Array<{ organization: OrganizationRecord; membership: MembershipRecord }>;
+    complete: boolean;
+  }> {
+    const boundedLimit = Math.min(Math.max(limit, 1), ORGANIZATION_LIST_LIMIT);
     const rows = await this.db.selectFrom("organization_memberships as m")
       .innerJoin("organizations as o", "o.organization_id", "m.organization_id")
       .selectAll("m")
       .select(["o.name", "o.slug", "o.ai_submission", "o.lifecycle", "o.source_updated_at as org_source_updated_at", "o.verified_at", "o.membership_epoch as org_epoch"])
       .where("m.actor_id", "=", actorId).where("m.state", "=", "active").where("o.lifecycle", "=", "active")
-      .orderBy("m.organization_id").limit(Math.min(Math.max(limit, 1), ORGANIZATION_LIST_LIMIT)).execute();
-    return rows.map((row) => ({
+      .orderBy("m.organization_id").limit(boundedLimit + 1).execute();
+    const organizations = rows.slice(0, boundedLimit).map((row) => ({
       organization: {
         organizationId: row.organization_id,
         name: row.name,
@@ -304,6 +308,11 @@ export class PlatformOrganizationRepository {
       },
       membership: toMembership(row),
     }));
+    return { organizations, complete: rows.length <= boundedLimit };
+  }
+
+  async listOrganizationsForActor(actorId: string, limit = ORGANIZATION_LIST_LIMIT): Promise<Array<{ organization: OrganizationRecord; membership: MembershipRecord }>> {
+    return (await this.listOrganizationsForActorPage(actorId, limit)).organizations;
   }
 
   async listMembers(organizationId: string, page: { limit: number; afterActorId?: string }): Promise<{ members: MembershipRecord[]; nextActorId?: string }> {

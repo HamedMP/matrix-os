@@ -14,6 +14,7 @@ import { flushActiveNotesBeforeIdentityChange } from "../features/notes/notes-co
 import { clearDesktopQueryCache } from "../lib/query-client";
 
 export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
+export type OrganizationMembershipStatus = "loading" | "none" | "member" | "unavailable";
 
 interface ConnectionState {
   status: ConnectionStatus;
@@ -28,6 +29,8 @@ interface ConnectionState {
    * access -- it only decides which organization the share controls act in.
    */
   organizationId: string | null;
+  /** Whether the platform has authoritatively resolved this user's memberships. */
+  organizationStatus: OrganizationMembershipStatus;
   displayName: string | null;
   imageUrl: string | null;
   email: string | null;
@@ -51,6 +54,7 @@ interface ConnectionState {
    * rules a choice out.
    */
   reconcileOrganizations: (listing: { request: number; forUserId: string; organizationIds: readonly string[]; complete: boolean }) => void;
+  organizationListingFailed: (listing: { request: number; forUserId: string }) => void;
   /** Numbers a membership listing request so a slower, older response cannot undo a newer one. */
   beginOrganizationListing: () => number;
   selectRuntime: (slot: string) => Promise<void>;
@@ -62,6 +66,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   handle: null,
   userId: null,
   organizationId: null,
+  organizationStatus: "loading",
   displayName: null,
   imageUrl: null,
   email: null,
@@ -111,11 +116,16 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
             },
           })
         : null;
+      const assertedOrganizationId = readOrganizationId(status);
+      const organizationId = assertedOrganizationId ?? readSelectedOrganization(status.userId ?? null);
       set({
         status: status.signedIn ? "signed-in" : "signed-out",
         handle: status.handle ?? null,
         userId: status.userId ?? null,
-        organizationId: readOrganizationId(status) ?? readSelectedOrganization(status.userId ?? null),
+        organizationId,
+        organizationStatus: status.signedIn
+          ? assertedOrganizationId ? "member" : identityChanged ? "loading" : previous.organizationStatus
+          : "none",
         displayName: status.displayName ?? null,
         imageUrl: status.imageUrl ?? null,
         email: status.email ?? null,
@@ -133,13 +143,13 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         clearDraftChats();
         clearPreloadedAppIcons();
       }
-      set({ status: "signed-out", handle: null, userId: null, organizationId: null, displayName: null, imageUrl: null, email: null, api: null });
+      set({ status: "signed-out", handle: null, userId: null, organizationId: null, organizationStatus: "none", displayName: null, imageUrl: null, email: null, api: null });
     }
   },
 
   selectOrganization: (organizationId) => {
     const valid = organizationId === null || ORGANIZATION_ID.test(organizationId) ? organizationId : null;
-    set({ organizationId: valid });
+    set({ organizationId: valid, organizationStatus: valid ? "member" : "none" });
     writeSelectedOrganization(get().userId, valid);
   },
 
@@ -152,9 +162,34 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     if (forUserId !== get().userId || request < lastAppliedOrganizationListing) return;
     lastAppliedOrganizationListing = request;
     const current = get().organizationId;
-    if (current && (!complete || organizationIds.includes(current))) return;
+    if (current && organizationIds.includes(current)) {
+      set({ organizationStatus: "member" });
+      return;
+    }
+    if (current && !complete) {
+      // An incomplete refresh cannot revoke membership established by an earlier
+      // authoritative listing. Preserve that verified state so merely opening the
+      // account menu during an upstream failure does not disable sharing. A saved
+      // but never verified selection remains loading/unavailable instead.
+      set((state) => ({
+        organizationStatus: state.organizationStatus === "member" ? "member" : "unavailable",
+      }));
+      return;
+    }
     const fallback = pickDefaultOrganizationId(organizationIds);
-    if (fallback !== current) get().selectOrganization(fallback);
+    if (fallback !== current) {
+      get().selectOrganization(fallback);
+      return;
+    }
+    set({ organizationStatus: complete ? "none" : "unavailable" });
+  },
+
+  organizationListingFailed: ({ request, forUserId }) => {
+    if (forUserId !== get().userId || request < lastAppliedOrganizationListing) return;
+    lastAppliedOrganizationListing = request;
+    set((state) => ({
+      organizationStatus: state.organizationStatus === "member" ? "member" : "unavailable",
+    }));
   },
 
   selectRuntime: async (slot) => {
@@ -202,7 +237,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     // request cannot repopulate the next account's desktop.
     clearDesktopQueryCache();
     reconcileDesktopRuntimeChange();
-    set({ status: "signed-out", handle: null, userId: null, organizationId: null, displayName: null, imageUrl: null, email: null, api: null });
+    set({ status: "signed-out", handle: null, userId: null, organizationId: null, organizationStatus: "none", displayName: null, imageUrl: null, email: null, api: null });
   },
 }));
 

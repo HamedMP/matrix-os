@@ -59,6 +59,7 @@ export function createPlatformOrganizationRoutes(options: {
     const actorId = await resolveValidatedActor(c, options.resolveActor);
     if (!actorId) return safeJson(c, "Unauthorized", 401);
     try {
+      const discovery = await options.projection.discoverOrganizationsForActor(actorId);
       const memberships = await options.repository.listOrganizationsForActor(actorId);
       // The repository caps this request at 100 entries. Use at most the
       // global pool's capacity, so one supported listing can refresh every
@@ -89,7 +90,7 @@ export function createPlatformOrganizationRoutes(options: {
         });
       }
       c.header("Cache-Control", "private, no-store");
-      return c.json({ organizations });
+      return c.json({ organizations, complete: discovery.complete });
     } catch (error: unknown) {
       console.warn("[organizations] organization listing failed", error instanceof Error ? error.name : "UnknownError");
       return safeJson(c, "Organizations unavailable", 503);

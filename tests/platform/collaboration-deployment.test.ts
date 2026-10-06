@@ -37,10 +37,31 @@ describe("platform collaboration deployment contract", () => {
 
   it("keeps long-lived collaboration sockets within a bounded Cloud Run capacity envelope", () => {
     expect(workflow).toContain("--timeout 3600");
-    expect(workflow).toContain("--concurrency 80");
     expect(workflow).toContain("PLATFORM_MAX_INSTANCES: '30'");
     expect(workflow.match(/--max-instances "\$PLATFORM_MAX_INSTANCES"/g)).toHaveLength(2);
     expect(workflow).toContain('if [ "$actual_max_instances" != "$PLATFORM_MAX_INSTANCES" ]; then');
+  });
+
+  // On scale-in the autoscaler deprioritizes instances: they get no new requests but keep their
+  // max-instance slot until their open WebSocket/SSE streams end. Those instances accumulated until
+  // no slot was left ("no available instance"). Production runs a fixed count, which never
+  // deprioritizes an instance, and each instance holds many idle streams.
+  it("sizes platform instances for many idle long-lived streams and runs production at a fixed count", () => {
+    expect(workflow).toContain("PLATFORM_CONCURRENCY: '500'");
+    expect(workflow).toContain("PLATFORM_CPU: '2'");
+    expect(workflow).toContain("PLATFORM_MEMORY: '2Gi'");
+    expect(workflow).toContain("PLATFORM_MANUAL_INSTANCE_COUNT: '10'");
+    expect(workflow).toContain('--scaling "$PLATFORM_MANUAL_INSTANCE_COUNT"');
+    expect(workflow).toContain('--concurrency "$PLATFORM_CONCURRENCY"');
+    expect(workflow).toContain('--cpu "$PLATFORM_CPU"');
+    expect(workflow).toContain('--memory "$PLATFORM_MEMORY"');
+    expect(workflow).not.toContain("--concurrency 80");
+    const promote = workflow.match(/- name: Promote revision[\s\S]*?- name: Verify promoted revision traffic/)?.[0] ?? "";
+    expect(promote.indexOf('--scaling "$PLATFORM_MANUAL_INSTANCE_COUNT"')).toBeGreaterThan(-1);
+    expect(promote.indexOf('--scaling "$PLATFORM_MANUAL_INSTANCE_COUNT"')).toBeLessThan(promote.indexOf("update-traffic"));
+    expect(workflow).toContain('if [ "$actual_concurrency" != "$PLATFORM_CONCURRENCY" ]; then');
+    expect(workflow).toContain('if [ "$actual_cpu" != "$PLATFORM_CPU" ] || [ "$actual_memory" != "$PLATFORM_MEMORY" ]; then');
+    expect(workflow).toContain('if [ "$DEPLOY_ENVIRONMENT" = "production" ] && { [ "$scaling_mode" != "manual" ] || [ "$manual_instance_count" != "$PLATFORM_MANUAL_INSTANCE_COUNT" ]; }; then');
   });
 
   // Without this secret the Clerk organization webhook answers 503, the membership projection

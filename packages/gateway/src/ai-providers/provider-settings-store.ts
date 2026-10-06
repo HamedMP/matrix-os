@@ -180,7 +180,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false,
     enrichment?: ProviderSettingsEnrichment, codexNativeAccountMetadata?: CodexNativeAccountMetadata | null, hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null) {
     try {
-      const { fundingSummary, fundedPolicy, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
+      const { fundingSummary, fundedPolicy, chatAvailability, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
         canonical, fundingSummary: this.#fundingSummary,
         genericModelCatalog: this.#genericModelCatalog, refresh,
         catalogFailureHarnesses: [...new Set(config.harnesses.flatMap((harness) =>
@@ -197,6 +197,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         dependencies: this.#dependencies,
         supportedActions: this.#supportedActions(config, canonical),
         fundingSummary,
+        chatAvailability,
         fundedPolicy,
         fundedPolicyAuthoritative: Boolean(this.#fundingSummary),
         genericModelCatalog,

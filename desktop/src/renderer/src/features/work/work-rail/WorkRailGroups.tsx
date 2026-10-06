@@ -6,7 +6,7 @@ import { SharedWorkRailProjects } from "./SharedWorkRailProjects";
 import { WorkRailSection } from "./WorkRailSection";
 
 export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
-export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives }: {
+export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives, revealSharedProjectRequest }: {
   model: WorkRailModel;
   activeChatId?: string;
   sections: Record<WorkRailSectionKey, boolean>;
@@ -17,6 +17,7 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
   bots: BotConversationSummary[];
   onOpenBotChat?: (chatId: string) => void;
   organizationDrives: ReactNode;
+  revealSharedProjectRequest?: { scopeId: string; requestId: number };
 }) {
   return <>
 
@@ -38,7 +39,7 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
 
         >
           {model.projects.map(renderProject)}
-          <SharedWorkRailProjects />
+          <SharedWorkRailProjects revealRequest={revealSharedProjectRequest} />
           <ChatSidebarAddAction label="New project" ariaLabel="Create project" onClick={onCreateProject} />
           {organizationDrives}
         </WorkRailSection>

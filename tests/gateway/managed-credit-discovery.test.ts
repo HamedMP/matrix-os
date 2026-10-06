@@ -30,6 +30,19 @@ describe("managed catalog with reserved credit", () => {
     expect(managedPiBotModelChoices(catalog)).toEqual([]);
     expect(() => resolveManagedPiRoute(snapshot, { instanceId: "matrix_pi_default", model: "claude-sonnet-5" }, now)).toThrow("model_unavailable");
   });
+  it("preserves a fresh exhausted-budget reason ahead of credit holds and drops stale funding reasons", () => {
+    const snapshot = held();
+    Object.assign(snapshot.accessSources[0]!, { safeReason: "budget_exceeded", action: "contact_owner" });
+    snapshot.instances[0]!.readiness = { ...snapshot.instances[0]!.readiness, safeReason: "budget_exceeded", action: "contact_owner" };
+    for (const instance of [...managedChatInstances(snapshot, [], now), ...managedPiChatInstances(snapshot, now)]) {
+      expect(instance.connectionState).toBe("budget_exceeded");
+      expect(instance.availability).toBe("unavailable");
+    }
+    snapshot.accessSources[0]!.staleAfter = "2026-10-02T07:59:59.000Z";
+    expect(managedPiChatInstances(snapshot, now)[0]!.connectionState).toBe("unavailable");
+    expect(managedChatInstances(snapshot, [], now)[0]!.connectionState).toBe("unavailable");
+  });
+
   it.each(["unauthorized", "mismatched_source", "retired", "stale"])("never discovers %s models from static catalog alone", kind => {
     const snapshot = held();
     if (kind === "unauthorized") snapshot.accessSources[0]!.eligibleModelIds = [];

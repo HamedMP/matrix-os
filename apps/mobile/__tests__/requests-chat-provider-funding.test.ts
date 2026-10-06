@@ -11,7 +11,7 @@ jest.mock("../lib/requests/http", () => ({
 it("negotiates funding-aware catalog states without changing the authenticated request boundary", async () => {
   await fetchChatProviderCatalog("test-token", "https://example.test/vm/test");
   expect(fetchAuthenticatedJson).toHaveBeenCalledWith(expect.objectContaining({
-    url: "https://example.test/vm/test/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true",
+    url: "https://example.test/vm/test/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true",
     token: "test-token", errorMessage: "Models unavailable. Try again.",
   }));
 });

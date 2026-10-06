@@ -70,14 +70,14 @@ export async function enableOwnerCollaborationSurfaces(
       },
     },
     chats: {
-      list: async (ownerId, projectId) => chatRepository.kysely.selectFrom("chats")
+      list: async (ownerId, projectId) => (await chatRepository.kysely.selectFrom("chats")
         .select(["id", "revision"])
         .where("owner_type", "=", "personal")
         .where("owner_id", "=", ownerId)
         .where("project_id", "=", projectId)
         .orderBy("id", "asc")
         .limit(100_001)
-        .execute(),
+        .execute()).map((chat) => ({ ...chat, revision: Number(chat.revision) })),
     },
     canvases: {
       getProjectCanvas: async (ownerId, projectId) => {

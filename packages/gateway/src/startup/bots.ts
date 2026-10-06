@@ -352,6 +352,7 @@ export async function startBots(options: {
     }),
     inference: {
       homePath: options.homePath,
+      onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
       revalidateBinding: async (binding) => {
         if (!isManagedPiBinding(binding)) return true;
         try { await managedAdmission.workspace(binding); return true; }

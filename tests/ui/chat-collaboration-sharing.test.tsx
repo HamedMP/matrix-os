@@ -15,6 +15,47 @@ const scopeId = "10000000-0000-4000-8000-000000000001";
 const chatId = "chat_one";
 
 describe("Chat collaboration sharing", () => {
+  it("can reserve accepted shared projects for the Chats rail while keeping project invitations visible", async () => {
+    const projectScopeId = "10000000-0000-4000-8000-000000000101";
+    const projectInvitationId = "30000000-0000-4000-8000-000000000101";
+    const projectScope = {
+      id: projectScopeId, ownerId: "user_owner", kind: "project", resourceId: "project_shared",
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    } as const;
+    const projectInvitation = {
+      id: projectInvitationId, scopeId: projectScopeId,
+      owner: { actorId: "user_owner", displayName: "Nima" },
+      target: { actorId: "user_editor", displayName: "Ada" }, scopeKind: "project" as const,
+      role: "editor" as const, status: "pending" as const,
+      expiresAt: "2026-10-12T12:00:00.000Z", revision: "1",
+    };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path.endsWith("/inbox")
+        ? { items: [{ scopeId: projectScopeId, runtimeId: "runtime_owner", ownerId: "user_owner",
+          kind: "project", authorityGeneration: 1, status: "invited", invitationId: projectInvitationId,
+          resource: projectInvitation }] }
+        : { items: [{ scopeId: projectScopeId, runtimeId: "runtime_owner", ownerId: "user_owner",
+          kind: "project", authorityGeneration: 1, status: "accepted", resource: {
+            scope: projectScope,
+            project: { id: "project_shared", scopeId: projectScopeId, status: "active", resources: [] },
+            overview: { projectId: "project_shared", scopeId: projectScopeId, name: "Rail only project",
+              status: "active", chats: [] },
+          } }] }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" hideAcceptedProjects />);
+
+    expect(await screen.findByText("Nima invited you")).toBeVisible();
+    expect(screen.getByText(/Accepted projects live in the Projects rail/)).toBeVisible();
+    expect(screen.queryByText("Rail only project")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open project" })).toBeNull();
+  });
+
   it("keeps snapshot sharing and live invitations as distinct choices", () => {
     const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={api} runtimeId="runtime_owner" organizationId="org_matrix_team" chatId={chatId}
