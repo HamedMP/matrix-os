@@ -1660,11 +1660,14 @@
           "id": "posthog",
           "name": "PostHog",
           "actions": [
-            "list_projects"
+            "list_projects",
+            "list_insights",
+            "get_insight",
+            "query"
           ]
         }
       ],
-      "importGoal": "Read available PostHog project metadata first, then only supported read actions for owner-selected observations. Never fabricate metric values or call unsupported queries. If detailed metrics are unavailable, import project metadata and leave metric/value empty for manual entry.",
+      "importGoal": "Read selected PostHog project insights and supported read-only queries within the chosen date range. Preserve insight IDs, query date ranges and original project links. Store actual observed metrics only; do not fabricate trends, compare incompatible definitions, or call unsupported actions. Leave unavailable values empty and report coverage.",
       "highlights": [
         "Project observations",
         "Source-supported metrics",
