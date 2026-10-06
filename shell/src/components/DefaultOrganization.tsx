@@ -2,22 +2,26 @@
 
 import { useAuth, useOrganization, useOrganizationList } from "@clerk/nextjs";
 import { pickDefaultOrganizationId } from "@matrix-os/ui/default-organization";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  OrganizationStateProvider,
+  type OrganizationMembershipState,
+} from "@/lib/collaboration-organization-state";
 
 /**
  * Activates the member's oldest organization when they have none active.
  *
  * Matrix adds people to organizations; members never have to activate one. Clerk
  * leaves the active organization empty until something sets it, so without this every
- * share control would read "Join an organization to share" for a member who belongs
- * to one. A user in no organization is left individual and sharing stays disabled.
+ * share control would remain in its loading state for a member who belongs to one. A
+ * user in no organization is left individual and organization-only UI stays hidden.
  *
  * Mounted once beside the ClerkProvider so it covers every Web view, not only those
  * that render the account menu. Every membership page is loaded first, since the oldest
  * organization can be on any page; switching stays in the account menu
  * (OrganizationMenuItems).
  */
-export function DefaultOrganization() {
+export function DefaultOrganization({ children }: { children?: ReactNode }) {
   const { userId } = useAuth();
   const { isLoaded: organizationLoaded, organization } = useOrganization();
   const { isLoaded, setActive, userMemberships } = useOrganizationList({
@@ -26,6 +30,7 @@ export function DefaultOrganization() {
   // One attempt per account and organization: a failed activation must not retry on every
   // render, and the next account in this tab must not inherit the previous one's attempt.
   const attempted = useRef<string | null>(null);
+  const [failedActivation, setFailedActivation] = useState<string | null>(null);
   const needsDefault = organizationLoaded && isLoaded && !organization && Boolean(userId);
   const hasNextPage = userMemberships?.hasNextPage ?? false;
   const isFetching = userMemberships?.isFetching ?? false;
@@ -37,6 +42,18 @@ export function DefaultOrganization() {
   const defaultId = complete
     ? pickDefaultOrganizationId(memberships?.map((membership) => membership.organization.id) ?? [])
     : null;
+  const activation = userId && defaultId ? `${userId}:${defaultId}` : null;
+  const organizationState: OrganizationMembershipState = (() => {
+    if (organization?.id) return { status: "member", organizationId: organization.id };
+    if (loadFailed) return { status: "unavailable", organizationId: null };
+    if (!userId || !organizationLoaded || !isLoaded || !complete) {
+      return { status: "loading", organizationId: null };
+    }
+    if ((memberships?.length ?? 0) === 0) return { status: "none", organizationId: null };
+    if (failedActivation === activation) return { status: "unavailable", organizationId: null };
+    // A membership exists, but Clerk has not finished making the oldest one active.
+    return { status: "loading", organizationId: null };
+  })();
 
   // A failed page is not retried here: the default waits for the next load (a reload or the
   // account menu's "More organizations"), so a persistent failure cannot loop requests.
@@ -46,16 +63,18 @@ export function DefaultOrganization() {
 
   useEffect(() => {
     if (!needsDefault || !setActive || !defaultId) return;
-    const attempt = `${userId}:${defaultId}`;
+    const attempt = activation;
+    if (!attempt) return;
     if (attempted.current === attempt) return;
     attempted.current = attempt;
     void setActive({ organization: defaultId }).catch((error: unknown) => {
+      setFailedActivation(attempt);
       console.warn(
         "[collaboration-organization] default activation failed",
         error instanceof Error ? error.name : "UnknownError",
       );
     });
-  }, [defaultId, needsDefault, setActive, userId]);
+  }, [activation, defaultId, needsDefault, setActive]);
 
-  return null;
+  return <OrganizationStateProvider value={organizationState}>{children ?? null}</OrganizationStateProvider>;
 }

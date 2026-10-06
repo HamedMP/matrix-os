@@ -1,3 +1,4 @@
+import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { assertJevNoDispatchSettlement, type JevNoDispatchAttestation } from "./ai-funded-no-dispatch.js";
 import { createHmac, randomUUID } from "node:crypto";
 import { CleanupSchema, cleanupExpiredReservations as cleanupReservations } from "./ai-funded-reservation-cleanup.js";
@@ -209,6 +210,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       throw new AiFundedPolicyError("access_disabled");
     }
     await transaction.ready;
+    await withAccountDeletionOwnerLock(transaction, grant.identity.ownerId, async (_locked, admission) => {
+      if (!admission.newWorkAllowed) throw new AiFundedPolicyError("access_disabled");
+    });
     const ownerPromotion = grant.kind === "promotional_grant" && grant.entryId.startsWith("promotion:");
     if (ownerPromotion) {
       // Campaign grants and admission share one owner-wide lock namespace.

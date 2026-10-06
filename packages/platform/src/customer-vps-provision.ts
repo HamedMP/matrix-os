@@ -1,3 +1,4 @@
+import { withAccountDeletionAdmission } from './account-deletion/admission.js';
 /** Customer VPS provisioning requests, split from customer-vps.ts. */
 import type { PlatformDB, UserMachineProvisioningClass, UserMachineRecord } from './db.js';
 import {
@@ -166,7 +167,7 @@ export function createCustomerVpsProvisioner(
 
     let provisionRow: { existing: UserMachineRecord | null };
     try {
-      provisionRow = await runInPlatformTransaction(deps.db, async (trx) => {
+      provisionRow = await withAccountDeletionAdmission(deps.db, request.clerkUserId, async (trx) => {
       // Preview capacity and customer entitlement checks share the owner lock
       // with insertion so concurrent platform instances cannot over-allocate.
       if (billingContext || prebillingIntent || provisioningClass === 'preview') {

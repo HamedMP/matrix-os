@@ -108,6 +108,13 @@ describe("UserButton", () => {
     return screen.findByRole("menuitem", { name: "Sign out" });
   }
 
+  it("links account data and deletion to the platform flow", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+    expect(screen.getByRole("menuitem", { name: "Account data and deletion" }).getAttribute("href")).toBe("https://app.matrix-os.com/account/delete");
+  });
+
   it("renders the settings account control as a left-aligned row with the user's name", async () => {
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
 

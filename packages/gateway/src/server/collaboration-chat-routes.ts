@@ -98,6 +98,9 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
           ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
           ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
+          ...(gatewayCollaboration?.projectChatAssignments
+            ? { projectAssignments: gatewayCollaboration.projectChatAssignments }
+            : {}),
         })
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
