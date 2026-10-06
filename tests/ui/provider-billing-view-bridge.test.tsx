@@ -7,8 +7,14 @@ import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
 import { GatewayPanel } from "../../packages/ui/src/agents-providers/GatewayPanel";
 
-afterEach(cleanup);
-const source = (id: string) => ({ id, kind: "matrix_gateway", readiness: { state: "ready", action: "none", safeReason: null }, eligibleModelIds: ["sonnet"], usage: { kind: "managed_credit", state: "current", currency: "USD", credit: {reservedMicrousd: 0, remainingBalanceMicrousd: 100000}, budget: {reservedThisMonthMicrousd: 0} } });
+afterEach(() => {cleanup(); vi.useRealTimers();});
+const source = (id: string) => {
+  const asOf = new Date().toISOString();
+  return { id, kind: "matrix_gateway", readiness: { state: "ready", action: "none", safeReason: null }, eligibleModelIds: ["sonnet"],
+    usage: { kind: "managed_credit", state: "current", currency: "USD", asOf,
+      chatAvailability: { contractVersion: 1, asOf, eligibleBalanceMicrousd: 100000, availableBalanceMicrousd: 100000 },
+      credit: {reservedMicrousd: 0, remainingBalanceMicrousd: 100000}, budget: {reservedThisMonthMicrousd: 0, remainingBudgetMicrousd: 100000} } };
+};
 const props = { policy: { accessSourceId: "a", topUpEnabled: true, allowedModelIds: ["sonnet"], monthlyBudgetMicrousd: null }, provider: {id: "anthropic", displayName: "Anthropic", models: [{id: "sonnet", displayName: "Sonnet", enabled: true}]}, disabled: false, canSetBudget: false, canSetAllowlist: false, canAddCredit: true, onMutate: vi.fn(), onRefresh: vi.fn(), onUseGateway: vi.fn() };
 it.each([false, true])("ignores stale checkout settlement after the source switches (rejection: %s)", async rejected => {
   let resolve!: () => void;
@@ -99,7 +105,10 @@ it.each([
 });
 
 it.each([[1, '$0.000001'], [4999, '$0.004999'], [9999, '$0.009999'], [0, '$0.00'], [10000, '$0.01']] as const)('shows exact positive sub-cent spendable credit (%s microUSD)', (amount, label) => {
+  vi.useFakeTimers({toFake: ['Date']}); vi.setSystemTime('2026-10-05T09:00:00.000Z');
   const current = source('a'); current.usage.credit.remainingBalanceMicrousd = amount;
+  Object.assign(current.usage, { asOf: "2026-10-05T09:00:00.000Z", chatAvailability: {contractVersion: 1, asOf: "2026-10-05T09:00:00.000Z", eligibleBalanceMicrousd: amount, availableBalanceMicrousd: amount} });
+  Object.assign(current.usage.budget, {remainingBudgetMicrousd: amount});
   render(<GatewayPanel {...props as Omit<React.ComponentProps<typeof GatewayPanel>, 'source' | 'onAddCredit'>} source={current as never} onAddCredit={vi.fn()} />);
   expect(screen.getByText(label)).toBeVisible();
 });

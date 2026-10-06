@@ -47,7 +47,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     const fetchFn = vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_stream?")) {
         detailCalls += 1;
@@ -113,7 +113,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_fallback?")) {
         detailCalls += 1;
@@ -146,7 +146,7 @@ describe("canonical shell Chat state", () => {
       if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
         return Response.json(detail("chat_a", "Old title", 3));
       }
-      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1") && init?.method === "PATCH") {
+      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1&fundingVersion=1") && init?.method === "PATCH") {
         expect(JSON.parse(String(init.body))).toEqual({ expectedTitleVersion: 3, title: "New title" });
         return Response.json(record("chat_a", "New title", 4));
       }
@@ -178,7 +178,7 @@ describe("canonical shell Chat state", () => {
         detailCalls += 1;
         return Response.json(detail("chat_a", detailCalls === 1 ? "Initial" : "Newest refresh", detailCalls === 1 ? 3 : 5));
       }
-      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1") && init?.method === "PATCH") return renameResponse;
+      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1&fundingVersion=1") && init?.method === "PATCH") return renameResponse;
       throw new Error(`Unexpected request: ${url}`);
     }));
 
@@ -209,7 +209,7 @@ describe("canonical shell Chat state", () => {
         if (++detailCalls === 1) return Response.json(detail("chat_a", "Initial", 3));
         return new Promise<Response>((resolve) => { staleDetail = resolve; });
       }
-      if (url.endsWith("/title?readStateVersion=1") && init?.method === "PATCH") return Response.json(record("chat_a", "Manual", 4));
+      if (url.endsWith("/title?readStateVersion=1&fundingVersion=1") && init?.method === "PATCH") return Response.json(record("chat_a", "Manual", 4));
       throw new Error("Unexpected request");
     }));
     const { result } = renderHook(() => useCanonicalChatState());
@@ -328,7 +328,7 @@ describe("canonical shell Chat state", () => {
         const path = parsed.searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1&fundingVersion=1")) {
         return Response.json({ error: { code: "provider_unavailable", safeMessage: "Do not render upstream details", retryable: true } }, { status: 409 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
@@ -401,7 +401,7 @@ describe("canonical shell Chat state", () => {
 
     await waitFor(() => expect(fetchFn.mock.calls.filter(([, init]) =>
       (init as RequestInit | undefined)?.method === "DELETE")).toHaveLength(1));
-    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1"))).toBe(false);
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1&fundingVersion=1"))).toBe(false);
   });
 
   it("keeps uploaded files when admission outcome is ambiguous", async () => {
@@ -415,7 +415,7 @@ describe("canonical shell Chat state", () => {
         const path = new URL(url).searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1&fundingVersion=1")) {
         return Response.json({ error: "unavailable" }, { status: 503 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
