@@ -9,6 +9,7 @@ import {
   FundedAiPolicyCheckResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
+  FundedAiRuntimeChatFundingSummaryResponseSchema,
   FundedAiRouteReadinessReceiptSchema,
   FundedAiSettlementResponseSchema,
   FundedAiStartResponseSchema,
@@ -716,6 +717,23 @@ describe("funded AI policy routes", () => {
       machineId: "machine_staging",
       runtimeSlot: "staging",
     });
+  });
+
+  it("negotiates an identity-free Chat projection while retaining the exact legacy response", async () => {
+    const { app } = await createTestApp();
+    const request = (body: unknown, authorization = `Bearer ${bearerFor("alice")}`) => app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST", headers: { authorization, "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    const legacy = await (await request({})).json();
+    const response = await request({ includeChatAvailability: true });
+    expect(response.status).toBe(200);
+    const modern = FundedAiRuntimeChatFundingSummaryResponseSchema.parse(await response.json());
+    expect(modern).toEqual({ ...legacy, chatAvailability: { contractVersion: 1, asOf: now, eligibleBalanceMicrousd: 1_500, availableBalanceMicrousd: 1_500 } });
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse(modern).success).toBe(false);
+    expect((await request({ includeChatAvailability: true }, "Bearer invalid")).status).toBe(401);
+    expect((await request({ includeChatAvailability: true, ownerId: "spoof" })).status).toBe(400);
+    expect((await request({ includeChatAvailability: false })).status).toBe(400);
+    expect(JSON.stringify(modern.chatAvailability)).not.toMatch(/user_alice|machine_123|token|credential/);
   });
 
   it("returns the exact identity-free Postgres funding summary for the authenticated runtime", async () => {
