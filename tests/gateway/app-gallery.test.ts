@@ -1,5 +1,10 @@
 import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import * as fsPromises from "node:fs/promises";
+import { constants } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import ts from "typescript";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -14,6 +19,9 @@ vi.mock("node:fs/promises", async importOriginal => ({ ...await importOriginal<t
 let root: string, homePath: string, catalogPath: string, templatePath: string;
 const definition = { id: "folio", name: "Folio", collection: "personal", category: "Finance", description: "A ledger", tagline: "Your spending", icon: "wallet", accent: "forest", view: "finance", entity: "Expense", fields: [{ key: "amount", label: "Amount", kind: "money" }], services: [], importGoal: "Extract receipts", highlights: ["Currency totals"] };
 const placeholder = "__MATRIX_APP_DEFINITION__";
+function spyBufferWrite(handle: Awaited<ReturnType<typeof fsPromises.open>>) {
+  return vi.spyOn(handle as { write(buffer: Uint8Array, offset: number, length: number, position: number): Promise<{ bytesWritten: number; buffer: Uint8Array }> }, "write");
+}
 function service(options = {}) { return createAppGalleryService({ homePath, catalogPath, templatePath, ...options }); }
 function app(userId: string | null = "owner") {
   const app = new Hono();
@@ -39,12 +47,12 @@ describe("trusted gallery filesystem installation", () => {
     expect(await readdir(homePath)).toEqual([]);
   });
   it("installs an empty personal Postgres Vite app and injects definition", async () => {
-    expect(await service().install("folio")).toEqual({ status: "installed", slug: "folio", name: "Folio", path: "/apps/folio/" });
+    expect(await service().install("folio")).toEqual({ status: "installed", slug: "folio", name: "Folio", path: "apps/folio" });
     const manifest = JSON.parse(await readFile(join(homePath, "apps/folio/matrix.json"), "utf8"));
     expect(manifest).toMatchObject({ scope: "personal", runtime: "vite", database: "postgres", listingTrust: "first_party", storage: { tables: { records: { columns: { payload: "jsonb", source_id: "text" } } } } });
     expect(JSON.parse(await readFile(join(homePath, "apps/folio/src/definition.json"), "utf8"))).toEqual(definition);
     expect(await readFile(join(homePath, "apps/folio/dist/index.html"), "utf8")).not.toContain(placeholder);
-    expect(await service().list()).toMatchObject([{ installed: true, installedName: "Folio", launchPath: "/apps/folio/" }]);
+    expect(await service().list()).toMatchObject([{ installed: true, installedName: "Folio", launchPath: "apps/folio" }]);
   });
   it("preserves existing custom apps and returns their manifest name", async () => {
     await service().install("folio");
@@ -162,10 +170,13 @@ describe("trusted gallery filesystem installation", () => {
     const bundled = createAppGalleryService({ homePath });
     expect((await bundled.list()).length).toBe(24);
   });
-  it("rejects invalid owner manifests and preserves renamed runtime slugs", async () => {
+  it("rejects invalid manifests and mismatched runtime slugs without overwriting", async () => {
     await service().install("folio"); const path = join(homePath, "apps/folio/matrix.json");
     const manifest = JSON.parse(await readFile(path, "utf8")); manifest.slug = "my-folio";
-    await writeFile(path, JSON.stringify(manifest)); expect(await service().install("folio")).toMatchObject({ slug: "my-folio", path: "/apps/my-folio/" });
+    await writeFile(path, JSON.stringify(manifest));
+    expect(await service().list()).toMatchObject([{ installed: false }]);
+    await expect(service().install("folio")).rejects.toMatchObject({ status: 409 });
+    expect(JSON.parse(await readFile(path, "utf8")).slug).toBe("my-folio");
     await writeFile(path, "{}"); expect(await service().list()).toMatchObject([{ installed: false }]);
     await writeFile(path, "bad json"); expect(await service().list()).toMatchObject([{ installed: false }]);
   });
@@ -236,6 +247,97 @@ describe("trusted gallery filesystem installation", () => {
       return original(path, bytes);
     });
     expect((await service().install("folio")).status).toBe("installed");
+  });
+  it("resolves the compiled gateway contract import through its source package export", async () => {
+    const source = await readFile(new URL("../../packages/gateway/src/app-gallery/service.ts", import.meta.url), "utf8");
+    const output = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2024, module: ts.ModuleKind.ESNext, verbatimModuleSyntax: true } }).outputText;
+    const contractImport = output.match(/import \{ AppGalleryCatalogSchema \} from "([^"]+)"/);
+    expect(contractImport?.[1]).toBe("@matrix-os/contracts/app-gallery");
+    const contracts = fileURLToPath(new URL("../../packages/contracts/", import.meta.url));
+    const packageJson = JSON.parse(await readFile(join(contracts, "package.json"), "utf8"));
+    const runtime = join(root, "runtime"); await mkdir(join(runtime, "node_modules/@matrix-os"), { recursive: true });
+    await symlink(contracts, join(runtime, "node_modules/@matrix-os/contracts"));
+    await writeFile(join(runtime, "package.json"), '{"type":"module"}');
+    const probe = join(runtime, "compiled-import.mjs");
+    await writeFile(probe, `import { AppGalleryCatalogSchema } from ${JSON.stringify(contractImport?.[1])}; console.log(JSON.stringify({url:import.meta.resolve(${JSON.stringify(contractImport?.[1])}),version:AppGalleryCatalogSchema.parse(${JSON.stringify({ version: 1, apps: [definition] })}).version}));`);
+    const { stdout } = await promisify(execFile)(process.execPath, [probe], { timeout: 10_000 });
+    expect(JSON.parse(stdout)).toEqual({ url: new URL(packageJson.exports["./app-gallery"], pathToFileURL(join(contracts, "package.json"))).href, version: 1 });
+    expect(stdout).toContain("/src/app-gallery.ts");
+  });
+  it("removes newly created partial files when the underlying write fails", async () => {
+    const path = join(homePath, "partial"); const original = fsPromises.open;
+    vi.spyOn(fsPromises, "open").mockImplementation(async (...args) => {
+      const handle = await original(...args);
+      if (args[0] === path && (Number(args[1]) & constants.O_EXCL)) {
+        const write = handle.write.bind(handle); let calls = 0;
+        spyBufferWrite(handle).mockImplementation(async () => { if (calls++ === 0) return write(Buffer.from("ins"), 0, 3, 0); throw new Error("write failed"); });
+      }
+      return handle;
+    });
+    await expect(filesystem.exclusiveWrite(path, Buffer.from("installer data"))).rejects.toThrow("write failed");
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("removes empty files when the write makes no progress", async () => {
+    const path = join(homePath, "empty-failure"); const original = fsPromises.open;
+    vi.spyOn(fsPromises, "open").mockImplementation(async (...args) => {
+      const handle = await original(...args);
+      if (args[0] === path && (Number(args[1]) & constants.O_EXCL)) spyBufferWrite(handle).mockImplementation(async () => ({ bytesWritten: 0, buffer: Buffer.alloc(0) }));
+      return handle;
+    });
+    await expect(filesystem.exclusiveWrite(path, Buffer.from("data"))).rejects.toThrow("File write made no progress");
+    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("cleans installer files if closing fails, retaining the original failure", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const path = join(homePath, "close-failure"); const original = fsPromises.open; let closeHandle: (() => Promise<void>) | undefined;
+    vi.spyOn(fsPromises, "open").mockImplementation(async (...args) => {
+      const handle = await original(...args);
+      if (args[0] === path && (Number(args[1]) & constants.O_EXCL)) { closeHandle = handle.close.bind(handle); vi.spyOn(handle, "close").mockRejectedValue(new Error("close failed")); }
+      return handle;
+    });
+    try {
+      await expect(filesystem.exclusiveWrite(path, Buffer.from("data"))).rejects.toThrow("close failed");
+      await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" }); expect(console.warn).toHaveBeenCalled();
+    } finally { await closeHandle?.(); }
+  });
+  it("rolls back incomplete app folders after a real partial copy failure", async () => {
+    const path = join(homePath, "apps/folio/dist/index.html"); const original = fsPromises.open;
+    vi.spyOn(fsPromises, "open").mockImplementation(async (...args) => {
+      const handle = await original(...args);
+      if (args[0] === path && (Number(args[1]) & constants.O_EXCL)) {
+        const write = handle.write.bind(handle); let calls = 0;
+        spyBufferWrite(handle).mockImplementation(async () => { if (calls++ === 0) return write(Buffer.from("<sc"), 0, 3, 0); throw new Error("copy interrupted"); });
+      }
+      return handle;
+    });
+    await expect(service().install("folio")).rejects.toThrow("copy interrupted");
+    expect(await readdir(join(homePath, "apps"))).toEqual([]);
+  });
+  it("retains owner-changed content after a partial write failure", async () => {
+    const path = join(homePath, "owner-file"); const original = fsPromises.open;
+    vi.spyOn(fsPromises, "open").mockImplementation(async (...args) => {
+      const handle = await original(...args);
+      if (args[0] === path && (Number(args[1]) & constants.O_EXCL)) {
+        const write = handle.write.bind(handle); let calls = 0;
+        spyBufferWrite(handle).mockImplementation(async () => { if (calls++ === 0) return write(Buffer.from("ins"), 0, 3, 0); await writeFile(path, "own"); throw new Error("write failed"); });
+      }
+      return handle;
+    });
+    await expect(filesystem.exclusiveWrite(path, Buffer.from("installer data"))).rejects.toThrow("write failed");
+    expect(await readFile(path, "utf8")).toBe("own");
+  });
+  it("retains an owner-replaced inode after a partial write failure", async () => {
+    const path = join(homePath, "replacement"); const original = fsPromises.open;
+    vi.spyOn(fsPromises, "open").mockImplementation(async (...args) => {
+      const handle = await original(...args);
+      if (args[0] === path && (Number(args[1]) & constants.O_EXCL)) {
+        const write = handle.write.bind(handle); let calls = 0;
+        spyBufferWrite(handle).mockImplementation(async () => { if (calls++ === 0) return write(Buffer.from("ins"), 0, 3, 0); await rename(path, join(homePath, "original")); await writeFile(path, "ins"); throw new Error("write failed"); });
+      }
+      return handle;
+    });
+    await expect(filesystem.exclusiveWrite(path, Buffer.from("installer data"))).rejects.toThrow("write failed");
+    expect(await readFile(path, "utf8")).toBe("ins");
   });
   it("escapes HTML-sensitive definition content", async () => {
     await writeFile(catalogPath, JSON.stringify({ version: 1, apps: [{ ...definition, description: "</script><script>bad</script>\u2028text" }] }));

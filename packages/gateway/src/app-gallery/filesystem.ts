@@ -77,11 +77,27 @@ export interface OwnedFile { path: string; dev: number; ino: number; digest: str
 export async function exclusiveWrite(path: string, bytes: Buffer): Promise<OwnedFile> {
   await safeDirectory(dirname(path));
   const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  let identity: { dev: number; ino: number } | undefined;
+  let written = 0;
   try {
-    await handle.writeFile(bytes);
-    const info = await handle.stat();
-    return { path, dev: info.dev, ino: info.ino, digest: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
-  } finally { await handle.close(); }
+    identity = await handle.stat();
+    // Track successful writes explicitly: writeFile can reject after internally writing a prefix.
+    while (written < bytes.length) {
+      const result = await handle.write(bytes, written, bytes.length - written, written);
+      if (result.bytesWritten === 0) throw new GalleryError(503, "File write made no progress");
+      written += result.bytesWritten;
+    }
+    await handle.close();
+    return { path, ...identity, digest: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
+  } catch (error) {
+    try { await handle.close(); }
+    catch (closeError) { console.warn("[app-gallery] Failed to close installer file", closeError); }
+    if (identity) {
+      const expectedPrefix = bytes.subarray(0, written);
+      await cleanOwnedFiles([{ path, ...identity, digest: createHash("sha256").update(expectedPrefix).digest("hex"), bytes: written }], []);
+    }
+    throw error;
+  }
 }
 
 /** Publish a fully closed manifest atomically without replacing any existing owner file. */

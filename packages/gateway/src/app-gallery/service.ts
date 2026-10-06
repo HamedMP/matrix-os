@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
-import { AppGalleryCatalogSchema, type GalleryApp, type GalleryAppListing, type GalleryInstallResult } from "../../../contracts/src/app-gallery.js";
+import { AppGalleryCatalogSchema, type GalleryApp, type GalleryAppListing, type GalleryInstallResult } from "@matrix-os/contracts/app-gallery";
 import { AppManifestSchema } from "../app-runtime/manifest-schema.js";
 import { cleanOwnedFiles, directoryIdentity, DEFAULT_LIMITS, exclusiveWrite, GalleryError, isFsError, publishManifest, readLimited, readTemplate, safeDirectory, type GalleryLimits, type OwnedFile } from "./filesystem.js";
 
@@ -60,8 +60,8 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
       await safeDirectory(dir);
       const bytes = await readLimited(join(dir, "matrix.json"), 32_768);
       const parsed = AppManifestSchema.safeParse(JSON.parse(bytes.toString("utf8")));
-      if (!parsed.success) return null;
-      return { status: "already_installed", slug: parsed.data.slug, name: parsed.data.name, path: `/apps/${parsed.data.slug}/` };
+      if (!parsed.success || parsed.data.slug !== id) return null;
+      return { status: "already_installed", slug: parsed.data.slug, name: parsed.data.name, path: `apps/${parsed.data.slug}` };
     } catch (error) {
       if (isFsError(error, "ENOENT") || error instanceof SyntaxError) return null;
       throw error;
@@ -104,7 +104,7 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
       }
       // App discovery and schema provisioning begin only after every portable file is present.
       await publishManifest(join(appDir, "matrix.json"), manifest);
-      return { status: "installed", slug: definition.id, name: definition.name, path: `/apps/${definition.id}/` };
+      return { status: "installed", slug: definition.id, name: definition.name, path: `apps/${definition.id}` };
     } catch (error) { await cleanOwnedFiles(owned, directories); throw error; }
   }
   return {
