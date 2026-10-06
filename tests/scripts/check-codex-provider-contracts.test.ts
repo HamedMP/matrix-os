@@ -89,8 +89,8 @@ describe("Codex provider contract checker", () => {
     }
   });
 
-  it("qualifies exact published Codex 0.160.0 bytes on both supported targets", () => {
-    const version = "0.160.0";
+  it("qualifies exact published Codex 0.160.1 bytes on both supported targets", () => {
+    const version = "0.160.1";
     const execSchemaBytes = readFileSync(new URL(
       "../fixtures/codex-0158/exec-events.rs",
       import.meta.url,
@@ -103,7 +103,7 @@ describe("Codex provider contract checker", () => {
 
     // The checked-in fixture is the tagged source plus published CLI-generated
     // schema, not a hand-built approximation of the methods we consume.
-    // Tagged 0.160.0 exec source is byte-identical to the retained 0.158 fixture;
+    // Tagged 0.160.1 exec source is byte-identical to the retained 0.158 fixture;
     // its published CLI schema is byte-identical to the retained 0.159 fixture.
     // Both CI targets independently report these exact schema/semantic digests.
     expect(digest(execSchemaBytes)).toBe(
@@ -138,16 +138,16 @@ describe("Codex provider contract checker", () => {
     expect(contract.verifiedVersions["0.156.1"]).toBeDefined();
     expect(appServerContract.verifiedVersions["0.156.1"]).toBeDefined();
     expect(() => verifyCodexProviderContracts({
-      version: "0.160.1",
+      version: "0.160.2",
       execContract: contract,
       appServerContract,
       execSchemaBytes,
       appServerSchemaBytes,
-    })).toThrow("Codex 0.160.1 is not verified");
+    })).toThrow("Codex 0.160.2 is not verified");
   });
 
-  it("retains reviewed Codex schemas through 0.160.0", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.160.0");
+  it("retains reviewed Codex schemas through 0.160.1", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.160.1");
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256: "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     });
@@ -172,7 +172,9 @@ describe("Codex provider contract checker", () => {
     expect(appServerContract.verifiedVersions["0.159.3"]).toEqual(appServerContract.verifiedVersions["0.159.2"]);
     expect(contract.verifiedVersions["0.160.0"]).toEqual(contract.verifiedVersions["0.159.3"]);
     expect(appServerContract.verifiedVersions["0.160.0"]).toEqual(appServerContract.verifiedVersions["0.159.3"]);
-    expect(appServerContract.latestVerifiedVersion).toBe("0.160.0");
+    expect(contract.verifiedVersions["0.160.1"]).toEqual(contract.verifiedVersions["0.160.0"]);
+    expect(appServerContract.verifiedVersions["0.160.1"]).toEqual(appServerContract.verifiedVersions["0.160.0"]);
+    expect(appServerContract.latestVerifiedVersion).toBe("0.160.1");
     expect(appServerContract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",

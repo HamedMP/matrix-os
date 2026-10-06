@@ -82,3 +82,18 @@ Present Human Review before requesting Greptile or merging.
 
 Public documentation companion in FinnaAI/matrix-os-site describes the safe
 failure categories and recovery steps without private incident identifiers.
+
+## Merge-time provider qualification
+
+The separate latest-published Codex CI gate initially rejected 0.160.1. A
+throwaway, credential-free spike fetched official rust-v0.160.1 exec source and
+generated the experimental schema with the published 0.160.1 CLI. Both are
+byte-identical to the retained reviewed fixtures (0.158 exec and 0.159 schema),
+which also qualify 0.160.0. Previous CI on Linux x64 and Darwin arm64 independently
+reported the same full-schema and consumed-method digests. The contract records
+0.160.1 and requires fresh green CI on both architectures before merge.
+
+The production installation pin remains 0.156.1. Unknown versions, changed
+schema bytes and changed consumed-method payloads remain rejected; no digest
+verification or CI gate is bypassed. Qualification tests fail first against the
+missing record, then pass with the bounded record update.
