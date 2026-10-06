@@ -28,3 +28,19 @@ Native Mobile currently uses `apps/mobile/components/AppRuntimeFrame.tsx` to ope
 The gateway reads the immutable bundled catalog/template rather than owner-modifiable definitions for installation. Catalog GET and install POST require the authenticated owner principal bound to the runtime home. Only the gallery receives exact method/path bridge allowances. Installed records stay in owner Postgres; examples and screenshots are illustrative and never seeded. Source integration execution remains kernel-mediated and its production app bridge guard remains intact. Existing custom Folio and Atlas are returned as installed without overwriting them.
 
 The production host bundle builds the gallery and connected starter before generating template metadata. Core deployment uses the normal immutable release and scoped VPS rollout; copying unreviewed gateway code onto a running owner computer is outside this implementation's release path.
+
+## Authentication, boundaries, and installation recovery
+
+| Endpoint | Authentication | Public |
+| --- | --- | --- |
+| GET `/api/app-gallery` | Verified principal matching the configured owner of this home | No |
+| POST `/api/app-gallery/:id/install` | Same owner principal; strict empty JSON body and safe catalog ID | No |
+| POST `/api/bridge/query` with `compareAndSwap` | Existing authenticated app-data bridge and owner/scoped-app authorization | No |
+
+Installation is supported on Linux owner runtimes. Filesystem publication pins directory handles through `/proc/self/fd` and refuses symlink traversal. Node does not offer equivalent portable directory-relative operations on macOS; catalog discovery remains available there, but new installation fails closed with an unavailable response. This explicitly limits local macOS installation until a safe platform capability exists.
+
+Installers stage outside app discovery in `data/app-gallery-staging`, a subtree denied to ordinary file APIs and workspace grants. Exclusive publication never replaces existing files and publishes `matrix.json` last. Visible incomplete folders are retained after a failure rather than deleted using stale pathname identity checks; the owner must recover or rename an incomplete folder before retrying. Fixed staging slots bound retained staging state. Existing complete owner apps remain readable and unchanged.
+
+The catalog is capped at 30 definitions. Template traversal is bounded by file, entry, depth, and byte limits; simultaneous installs are capped at two. Mutations use body limits and strict action schemas. The shared app-data bridge keeps its established body/time budgets. Browser requests have bounded timeouts and do not follow redirects.
+
+Existing-record saves and archives compare the original JSON payload in the SQL write itself. A mismatch returns an explicit conflict, preserving the editor draft. Source imports must preserve owner-edited fields and may not send, label, publish, or modify source integrations. New-row retries reconcile a stable ID after an uncertain response. Active-record loading scans bounded pages and discloses when its coverage limit is reached.
