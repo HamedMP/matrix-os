@@ -357,7 +357,7 @@ describe("canonical shell Chat state", () => {
     await waitFor(() => expect(fetchFn.mock.calls.some(([url, init]) =>
       String(url).includes("/api/files/blob?") && (init as RequestInit | undefined)?.method === "DELETE"))
       .toBe(true));
-    expect(result.current.messages.at(-1)?.content).toBe("This connection is currently unavailable. Open Agents & providers to check it.");
+    expect(result.current.messages.at(-1)?.content).toBe("Connection unavailable. Check Agents & providers.");
   });
 
   it("waits for parallel uploads to settle before deleting partial successes", async () => {

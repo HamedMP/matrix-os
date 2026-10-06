@@ -8,19 +8,27 @@ A signed-out agent account or exhausted allowance can fail before producing any
 reply, but Chat currently shows only `Agent work failed` with generic guidance.
 Users need to know which action can recover the selected connection.
 
-The failure notice keeps its existing title and shows reviewed explanations for:
+The failure notice keeps its existing title. Each explanation names one cause
+and one recovery step, normally within 75 characters. Supported details include:
 
-- A signed-out or invalid agent login: sign in again on the selected computer
-  through Agents & providers.
-- A native account usage limit: wait for the allowance reset or select another
-  connection. Preserve a separately validated quota reset when supplied.
-- A native credit refusal: check that connection's billing or select another
-  connection.
-- Trusted Matrix AI insufficient credit, reserved credit and exhausted budget:
-  consume the prerequisite funding transport and existing Settings guidance.
+- Sign-in required, native usage limits, verified reset time, native credit and billing.
+- Matrix AI insufficient credit, reserved credit and monthly budget.
+- Temporary throttling, request timeout, lost connection, busy or failed service.
+- Conversation length and unavailable conversation history: start a new Chat.
+- Native session budget: review the agent budget settings.
+- Permissions, unavailable model or agent, invalid response, blocked policy,
+  unsupported request and failed agent environment.
 
-Unknown errors keep the generic explanation. Authentication and financial
-refusals do not offer an immediate Retry that cannot repair the cause.
+A local execution deadline is distinct from a provider-confirmed timeout: it says
+to check progress before retrying and does not offer immediate Retry because the
+remote outcome may be unknown. Native session budget is never described as the
+Matrix AI monthly budget. HTTP 429 denotes temporary throttling, not exhausted
+account allowance. A sandbox failure is never inferred to be a permission denial.
+
+Unknown errors keep a short generic explanation. Authentication, financial,
+permission and configuration refusals do not offer an immediate Retry that
+cannot repair the cause. Existing persisted allowlisted messages and validated
+reset templates are recognized and rendered with the new concise copy.
 
 ## Authority and privacy
 
@@ -28,8 +36,10 @@ Only terminal native error envelopes and strictly allowlisted durable reason
 values supply classification. Ordinary assistant text, tool output, subagent
 failures and recoverable error notifications do not fail the parent Run.
 
-Codex app-server prefers its structured unauthorized/usage-limit/HTTP status
-metadata. Older workspace-authentication errors use narrowly recognized native
+Codex app-server prefers its structured error variants and bounded HTTP status
+metadata. Native variants were checked against locally generated app-server
+bindings from codex-cli 0.153.4; this is compatibility evidence, not a live test
+of the pinned 0.156.1 runtime. Older workspace-authentication errors use narrowly recognized native
 message prefixes. Non-retrying error notifications are retained only for the
 exact active thread and turn, then confirmed by a failed completion. Completion,
 abort and the next turn discard prior diagnostic state.
@@ -59,7 +69,9 @@ remain renderer-specific.
 Keep new classification in small `codex-terminal-failure` and
 `claude-run-failure` helpers. Extract the existing Claude classifier from its
 large orchestration entrypoint; add only state reset and classification wiring
-to the Codex runner. Add no new endpoints or network calls.
+to the Codex runner. Extend the existing small helper with a typed local timeout
+error; the runner retains all lifecycle and child cleanup rules. Add no new
+endpoints or network calls.
 
 Tests-first validation covers live/reloaded notices, strict old envelopes,
 secret and arbitrary-text rejection, native runner -> journal -> bridge -> Chat,

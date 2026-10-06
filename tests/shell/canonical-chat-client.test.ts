@@ -46,7 +46,7 @@ describe("canonical shell Chat client", () => {
   });
 
   it.each([
-    ["provider_unavailable", "This connection is currently unavailable. Open Agents & providers to check it."],
+    ["provider_unavailable", "Connection unavailable. Check Agents & providers."],
     ["model_unavailable", "The selected model is unavailable. Choose another model."],
     ["chat_conflict", "This Chat changed before the message was sent. Refresh and try again."],
     ["authorization_failed", "You do not have permission to send this message."],

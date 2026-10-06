@@ -13,9 +13,20 @@ for await (const line of input) {
     else send({ id: message.id, result: { thread: { id: threadId } } });
   } else if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: turnId } } });
-    const error = mode === "usage" || mode === "notification" ? { codexErrorInfo: "usageLimitExceeded" }
-      : mode === "credit" ? { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 402 } } }
-      : { message: "workspace routing discovery unauthorized (401) /home/private bearer fixture-secret", codexErrorInfo: "other" };
+    if (mode === "watchdog") continue;
+    const typed = {
+      usage: "usageLimitExceeded", notification: "usageLimitExceeded",
+      context: "contextWindowExceeded", session_budget: "sessionBudgetExceeded",
+      overload: "serverOverloaded", policy: "cyberPolicy", invalid_request: "badRequest",
+      sandbox: "sandboxError", history: "threadRollbackFailed", internal: "internalServerError",
+      credit: { httpConnectionFailed: { httpStatusCode: 402 } },
+      rate: { httpConnectionFailed: { httpStatusCode: 429 } },
+      timeout: { httpConnectionFailed: { httpStatusCode: 408 } },
+      permission: { httpConnectionFailed: { httpStatusCode: 403 } },
+      disconnect: { responseStreamDisconnected: { httpStatusCode: null } },
+    };
+    const error = { message: "workspace routing discovery unauthorized (401) /home/private bearer fixture-secret",
+      codexErrorInfo: typed[mode] ?? "other" };
     if (["notification", "stale", "child", "retry_success"].includes(mode)) send({ method: "error", params: {
       threadId: mode === "child" ? "native_child_thread" : threadId,
       turnId: mode === "stale" ? "stale_turn" : turnId,
@@ -23,7 +34,7 @@ for await (const line of input) {
     } });
     send({ method: "turn/completed", params: { threadId, turn: { id: turnId,
       status: mode === "retry_success" ? "completed" : "failed",
-      ...(["auth", "usage", "credit"].includes(mode) ? { error } : {}),
+      ...((mode === "auth" || Object.hasOwn(typed, mode) && mode !== "notification") ? { error } : {}),
     } } });
     process.exit(0);
   }

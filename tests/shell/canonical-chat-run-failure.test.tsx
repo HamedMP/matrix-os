@@ -11,7 +11,7 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-const COPY = "The agent could not complete its reply. Try again or check Agents & providers.";
+const COPY = "The agent could not finish. Try again.";
 
 function failedDetail(): CanonicalChatDetailResponse {
   const { snapshot } = createCanonicalChatFixture("failed");

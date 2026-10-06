@@ -111,8 +111,10 @@ function completionEvents(input: {
       error: SafeClientErrorSchema.parse(classified ? {
         code: `agent_${input.failureReason}`,
         safeMessage: classified.safeMessage,
-        retryable: false,
-        recoveryActions: input.failureReason === "authentication_required" ? ["sign_in", "open_setup_terminal"] : ["select_runtime"],
+        retryable: classified.retryable,
+        recoveryActions: classified.retryable ? ["retry"]
+          : input.failureReason === "authentication_required" ? ["sign_in", "open_setup_terminal"]
+          : classified.recoveryActions?.includes("start_new_chat") ? ["start_new_session"] : ["select_runtime"],
       } : {
         code: "provider_failed",
         safeMessage: "The coding agent stopped. Review the thread and try again.",

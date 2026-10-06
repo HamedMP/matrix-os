@@ -13,7 +13,13 @@ describe("native terminal failures reach canonical Chat", () => {
   it.each([
     ["auth", "authentication_required"], ["rpc_auth", "authentication_required"],
     ["usage", "usage_limit"], ["notification", "usage_limit"], ["credit", "billing_required"],
-    ["stale", undefined], ["child", undefined], ["retry_success", undefined],
+    ["rate", "rate_limited"], ["timeout", "request_timeout"],
+    ["context", "context_limit"], ["session_budget", "session_budget"],
+    ["overload", "service_busy"], ["disconnect", "connection_failed"],
+    ["permission", "permission_denied"], ["policy", "policy_blocked"],
+    ["invalid_request", "invalid_request"], ["sandbox", "environment_failed"],
+    ["history", "history_unavailable"], ["internal", "service_failed"],
+    ["watchdog", "execution_timeout"], ["stale", undefined], ["child", undefined], ["retry_success", undefined],
   ])("retains only the exact terminal cause for %s", async (mode, reason) => {
     const homePath = await mkdtemp("/tmp/cfr-");
     let child: ChildProcess | undefined;
@@ -29,7 +35,7 @@ describe("native terminal failures reach canonical Chat", () => {
         const config = Buffer.from(JSON.stringify({ prompt: "Read only", approvalPolicy: "never", sandbox: "read-only", writableRoots: [homePath] })).toString("base64");
         child = spawn(process.execPath, [join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs"),
           transcriptPath, process.version.slice(1), process.execPath, join(process.cwd(), "tests/fixtures/codex-terminal-failure.mjs"), config], {
-          cwd: homePath, stdio: ["ignore", "ignore", "ignore"], env: { ...process.env, MATRIX_TEST_TERMINAL_FAILURE: mode },
+          cwd: homePath, stdio: ["ignore", "ignore", "ignore"], env: { ...process.env, MATRIX_TEST_TERMINAL_FAILURE: mode, ...(mode === "watchdog" ? { MATRIX_CODEX_NO_PROGRESS_MS: "120" } : {}) },
         });
         ended = once(child, "close");
         return { events: [{ type: "thread.status", eventId: nextEventId(), threadId: thread.id,

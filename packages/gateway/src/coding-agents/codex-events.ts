@@ -1,5 +1,5 @@
 import { codexToolOutput, coarseToolOutputText } from "./codex-tool-output.mjs";
-import { codexTerminalFailureReason, type CodexFailureReason } from "./codex-terminal-failure.mjs";
+import { CODEX_FAILURE_REASONS, codexTerminalFailureReason, type CodexFailureReason } from "./codex-terminal-failure.mjs";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
@@ -497,7 +497,7 @@ export function parseCodexExecJsonLine(
   }
   if (codexEvent.type === "turn.aborted") return { events: [], outcome: "aborted" };
   if (codexEvent.type === "turn.failed") {
-    const parsedReason = z.enum(["authentication_required", "usage_limit", "credit_required", "billing_required"]).safeParse(codexEvent.failureReason);
+    const parsedReason = z.enum(CODEX_FAILURE_REASONS).safeParse(codexEvent.failureReason);
     const failureReason = parsedReason.success ? parsedReason.data : codexTerminalFailureReason(codexEvent.error);
     return { events: [], outcome: "failed", ...(failureReason ? { failureReason } : {}) };
   }

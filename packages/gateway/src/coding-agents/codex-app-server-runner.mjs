@@ -1,5 +1,5 @@
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
-import { codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
+import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
@@ -431,7 +431,7 @@ const executionWatchdog = createCodexExecutionWatchdog({
       ...(diagnostic.toolCallId ? { toolCallId: diagnostic.toolCallId } : {}),
       remoteOutcome: "unknown",
     })}\n`);
-    rejectExecution?.(new Error("Coding execution deadline exceeded"));
+    rejectExecution?.(new CodexExecutionTimeout());
   },
 });
 
@@ -639,7 +639,7 @@ function request(method, params, timeoutMs = RPC_TIMEOUT_MS, subagentMetadata) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingRpc.delete(id);
-      reject(new Error("provider_request_timeout"));
+      reject(new CodexExecutionTimeout());
     }, timeoutMs);
     timeout.unref();
     pendingRpc.set(id, { resolve, reject, timeout, method, subagentMetadata });
@@ -1546,7 +1546,8 @@ try {
     await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect",
       outcome: userStopped ? "cancelled" : "failed" });
   }
-  await finishTurn(userStopped ? "aborted" : "failed", error instanceof ProviderRpcError ? error.failureReason : undefined).catch((error) => {
+  await finishTurn(userStopped ? "aborted" : "failed", error instanceof ProviderRpcError ? error.failureReason
+    : codexExecutionFailureReason(error)).catch((error) => {
     console.warn("[coding-agents] Terminal startup state could not be persisted:", error instanceof Error ? error.name : "UnknownError");
   });
   stop();

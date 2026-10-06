@@ -1,4 +1,4 @@
-import { classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
+import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
 import { createClaudeInputController } from "./claude-input-control.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
@@ -149,44 +149,6 @@ function canonicalClaudeActivityEvent(
   return retained;
 }
 
-
-function classifiedClaudeCliFailure(error: unknown) {
-  if (!(error instanceof CanonicalCliError)) return undefined;
-  if (error.kind === "startup") {
-    return {
-      category: "startup" as const,
-      safeError: {
-        code: "provider_unavailable" as const,
-        safeMessage: "Claude is not available on this runtime. Open setup and install or reconnect Claude.",
-        retryable: false,
-        recoveryActions: ["open_setup_terminal" as const],
-      },
-    };
-  }
-  if (error.kind === "timeout") {
-    return {
-      category: "timeout" as const,
-      safeError: {
-        code: "service_unavailable" as const,
-        safeMessage: "Claude took too long to respond. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  if (error.kind === "invalid_output" || error.kind === "stdout_limit") {
-    return {
-      category: "invalid_protocol" as const,
-      safeError: {
-        code: "run_failed" as const,
-        safeMessage: "Claude returned an invalid response. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  return undefined;
-}
 
 export function createClaudeChatProviderAdapter(options: {
   homePath: string;
@@ -758,12 +720,7 @@ export function createClaudeChatProviderAdapter(options: {
                   retryable: true,
                   recoveryActions: ["retry", "open_setup_terminal"],
                 }
-              : {
-                  code: "run_failed",
-                  safeMessage: "Claude returned an invalid response. Try the Run again.",
-                  retryable: true,
-                  recoveryActions: ["retry"],
-                }),
+              : classifiedClaudeCliFailure(new CanonicalCliError("invalid_output"))!.safeError),
           }
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
