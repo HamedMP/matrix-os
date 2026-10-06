@@ -42,7 +42,7 @@ export class PinnedDirectory {
     return open(`${this.path}/${leaf(name)}`, flags | constants.O_NOFOLLOW, 0o600);
   }
   async readFile(name: string, maxBytes: number): Promise<Buffer> {
-    const handle = await this.openFile(name, constants.O_RDONLY);
+    const handle = await this.openFile(name, constants.O_RDONLY | constants.O_NONBLOCK);
     try {
       const info = await handle.stat();
       if (!info.isFile() || info.size > maxBytes) throw new GalleryError(503, "Invalid file");
@@ -54,7 +54,9 @@ export class PinnedDirectory {
         count += result.bytesRead;
       }
       if (count > maxBytes) throw new GalleryError(503, "File too large");
-      return bytes.subarray(0, count);
+      // Template traversal retains these buffers. A subarray would retain the
+      // entire read budget for every small file instead of its actual content.
+      return Buffer.from(bytes.subarray(0, count));
     } finally { await handle.close(); }
   }
 }
