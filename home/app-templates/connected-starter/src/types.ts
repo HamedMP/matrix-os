@@ -52,6 +52,7 @@ export interface Evidence {
 export interface OwnerRecord {
   id: string;
   rowId?: string;
+  basePayload?: Record<string, unknown>;
   fields: Record<string, string | number | null>;
   scope: "personal" | "work";
   accounts: Account[];
@@ -63,8 +64,19 @@ export interface OwnerRecord {
 export interface Database {
   find(
     table: string,
-    options?: { limit?: number; orderBy?: Record<string, "asc" | "desc"> },
+    options?: {
+      limit?: number;
+      offset?: number;
+      orderBy?: Record<string, "asc" | "desc">;
+    },
   ): Promise<Record<string, unknown>[]>;
+  findOne?(table: string, id: string): Promise<Record<string, unknown> | null>;
+  compareAndSwap?(
+    table: string,
+    id: string,
+    expectedPayload: Record<string, unknown>,
+    row: Record<string, unknown>,
+  ): Promise<{ ok: boolean }>;
   insert(table: string, row: Record<string, unknown>): Promise<{ id: string }>;
   update(
     table: string,

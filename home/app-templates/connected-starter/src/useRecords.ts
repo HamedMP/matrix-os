@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readRecords } from "./model";
 import { archiveRecord, persistRecord } from "./persistence";
-import type { OwnerRecord } from "./types";
+import type { Database, OwnerRecord } from "./types";
 export function useRecords() {
   const [records, setRecords] = useState<OwnerRecord[]>([]),
     [error, setError] = useState(""),
-    [loading, setLoading] = useState(false);
+    [loading, setLoading] = useState(false),
+    [limited, setLimited] = useState(false);
   const revision = useRef(0),
     mounted = useRef(true);
   const reload = useCallback(async () => {
@@ -14,12 +15,13 @@ export function useRecords() {
     try {
       const db = window.MatrixOS?.db;
       if (!db) throw new Error("Owner data bridge unavailable");
-      const rows = await db.find("records", {
-        limit: 1000,
-        orderBy: { created_at: "desc" },
-      });
-      if (mounted.current && ticket === revision.current) {
-        setRecords(readRecords(rows));
+      const result = await loadActive(
+        db,
+        () => mounted.current && ticket === revision.current,
+      );
+      if (result && mounted.current && ticket === revision.current) {
+        setRecords(result.records);
+        setLimited(result.limited);
         setError("");
       }
     } catch (cause) {
@@ -48,16 +50,48 @@ export function useRecords() {
     if (!db)
       throw new Error("Save is unavailable. Your changes are still here.");
     const saved = await persistRecord(db, record);
-    if (mounted.current)
+    if (mounted.current) {
+      revision.current++;
+      setLoading(false);
+      setError("");
       setRecords((old) => [saved, ...old.filter((r) => r.id !== saved.id)]);
+    }
     return saved;
   };
   const archive = async (record: OwnerRecord) => {
     const db = window.MatrixOS?.db;
     if (!db) throw new Error("Archive is unavailable. Record is still here.");
     await archiveRecord(db, record);
-    if (mounted.current)
+    if (mounted.current) {
+      revision.current++;
+      setLoading(false);
+      setError("");
       setRecords((old) => old.filter((r) => r.id !== record.id));
+    }
   };
-  return { records, error, loading, reload, save, archive };
+  return { records, error, loading, limited, reload, save, archive };
+}
+
+async function loadActive(db: Database, current: () => boolean) {
+  const records: OwnerRecord[] = [];
+  const seen = new Set<string>(); // At most 1,001 ids; discarded when this bounded read completes.
+  for (let page = 0; page < 10; page++) {
+    const rows = await db.find("records", {
+      limit: 500,
+      offset: page * 500,
+      orderBy: { created_at: "desc", id: "desc" },
+    });
+    if (!current()) return;
+    if (!Array.isArray(rows)) throw new Error("Invalid record page");
+    for (const record of readRecords(rows)) {
+      if (!seen.has(record.id)) {
+        seen.add(record.id);
+        records.push(record);
+      }
+      if (records.length > 1000)
+        return { records: records.slice(0, 1000), limited: true };
+    }
+    if (rows.length < 500) return { records, limited: false };
+  }
+  return { records, limited: true };
 }

@@ -7,6 +7,7 @@ interface Props {
   error: string;
   exportError: string;
   loading: boolean;
+  limited: boolean;
   unavailable: string;
   canUseRecords: boolean;
   onEdit: (r: OwnerRecord) => void;
@@ -21,6 +22,7 @@ export default function WorkspaceContent({
   error,
   exportError,
   loading,
+  limited,
   unavailable,
   canUseRecords,
   onEdit,
@@ -62,7 +64,9 @@ export default function WorkspaceContent({
         {app.services.length
           ? "Source-backed imports and your own notes, together."
           : "A space built from your own entries."}{" "}
-        {records.length >= 1000 ? "Showing up to 1,000 records." : ""}
+        {limited
+          ? "Coverage is limited: showing up to 1,000 active records from the latest 5,000 saved rows. Charts and exports cover the displayed records only."
+          : ""}
       </p>
     </main>
   );

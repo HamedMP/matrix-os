@@ -159,6 +159,7 @@ export function readRecords(rows: unknown): OwnerRecord[] {
       result.push({
         id: p.id,
         rowId: typeof row.id === "string" ? row.id : undefined,
+        basePayload: p,
         fields: fields as OwnerRecord["fields"],
         scope: p.scope === "work" ? "work" : "personal",
         accounts,

@@ -6,7 +6,8 @@ import Sidebar from "./Sidebar";
 import WorkspaceContent from "./WorkspaceContent";
 import type { Definition, OwnerRecord } from "./types";
 export default function App({ app }: { app: Definition }) {
-  const { records, error, loading, reload, save, archive } = useRecords();
+  const { records, error, loading, limited, reload, save, archive } =
+    useRecords();
   const canUseRecords = !!window.MatrixOS?.db,
     canImport =
       canUseRecords &&
@@ -106,6 +107,7 @@ export default function App({ app }: { app: Definition }) {
           error={error}
           exportError={exportError}
           loading={loading}
+          limited={limited}
           unavailable={unavailable}
           canUseRecords={canUseRecords}
           onEdit={setEditor}
