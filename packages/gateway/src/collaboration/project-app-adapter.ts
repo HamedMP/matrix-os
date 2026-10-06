@@ -28,7 +28,7 @@ const MutationEnvelopeSchema = z.object({
 }).strict();
 
 const READ_ACTIONS: readonly BridgeQueryBody["action"][] = ["find", "findOne", "count", "schema", "appInfo"];
-const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete"];
+const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "compareAndSwap", "bulkUpdate", "delete"];
 
 export interface ProjectAppBridge {
   execute(input: {

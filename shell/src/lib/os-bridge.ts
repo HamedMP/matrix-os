@@ -492,6 +492,14 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 	        }, 10000).then(function(r) { return r.json(); });
 	      },
 
+      compareAndSwap: function(table, id, expectedPayload, data) {
+        return parentFetch("/api/bridge/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app: app, action: "compareAndSwap", table: table, id: id, expectedPayload: expectedPayload, data: data })
+        }, 10000).then(function(r) { return r.json(); });
+      },
+
 	      bulkUpdate: function(table, updates) {
 	        return parentFetch("/api/bridge/query", {
 	          method: "POST",
