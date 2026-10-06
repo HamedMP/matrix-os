@@ -43,12 +43,16 @@ async function fixture() {
 }
 
 describe("bundled gallery through client, authenticated route, and portable runtime", () => {
-  it("loads the complete shipped catalog through the actual client parser", async () => {
+  it.skipIf(process.platform !== "linux")("loads the complete shipped catalog through the actual client parser", async () => {
     const { bridge } = await fixture();
     const { apps, connections } = await loadGallery(bridge);
     expect(apps).toHaveLength(24);
     expect(apps.every(app => !app.installed)).toBe(true);
     expect(connections).toEqual([]);
+  });
+  it.skipIf(process.platform === "linux")("fails closed when the runtime lacks safe directory capabilities", async () => {
+    const { bridge } = await fixture();
+    await expect(loadGallery(bridge)).rejects.toThrow("Gallery unavailable");
   });
   it.skipIf(process.platform !== "linux")("installs and opens all 24 actual compiled portable starters", async () => {
     const { bridge, homePath, opened } = await fixture();

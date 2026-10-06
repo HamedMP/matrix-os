@@ -17,7 +17,7 @@ The owner installs a first-party starter from a reusable collection of 12 Person
 | --- | --- |
 | Web Desktop | Discoverable app; shared injected app bridge; complete gallery, install/open, records and import request |
 | Web Canvas | Same app and bridge; identical state/actions in spatial chrome |
-| Electron Desktop | Same shared AppViewer, API and injected bridge |
+| Electron Desktop | Same gallery/workspace UI and API; native preload adapts the shared capabilities, exact account inventory, app opening and kernel import dispatch |
 | Web Mobile | Same bridge-enabled web app renderer with responsive layout |
 | Native Mobile | Unavailable-state explanation directing to the three bridge-enabled desktop views; full gallery/workspace actions await a native app bridge |
 
@@ -37,7 +37,7 @@ The production host bundle builds the gallery and connected starter before gener
 | POST `/api/app-gallery/:id/install` | Same owner principal; strict empty JSON body and safe catalog ID | No |
 | POST `/api/bridge/query` with `compareAndSwap` | Existing authenticated app-data bridge and owner/scoped-app authorization | No |
 
-Installation is supported on Linux owner runtimes. Filesystem publication pins directory handles through `/proc/self/fd` and refuses symlink traversal. Node does not offer equivalent portable directory-relative operations on macOS; catalog discovery remains available there, but new installation fails closed with an unavailable response. This explicitly limits local macOS installation until a safe platform capability exists.
+The gallery API is supported on Linux owner runtimes. Filesystem reads and publication pin directory handles through `/proc/self/fd` and refuse symlink traversal. Node does not offer equivalent portable directory-relative operations on macOS; the API fails closed on local macOS runtimes until a safe platform capability exists. Electron Desktop on macOS remains supported when connected to its Linux Matrix computer.
 
 Installers stage outside app discovery in `data/app-gallery-staging`, a subtree denied to ordinary file APIs and workspace grants. Exclusive publication never replaces existing files and publishes `matrix.json` last. Visible incomplete folders are retained after a failure rather than deleted using stale pathname identity checks; the owner must recover or rename an incomplete folder before retrying. Fixed staging slots bound retained staging state. Existing complete owner apps remain readable and unchanged.
 

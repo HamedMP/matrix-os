@@ -54,14 +54,14 @@ export function parseListing(raw: unknown): GalleryAppListing[] {
       installedName !== undefined &&
       (typeof installedName !== "string" ||
         !installedName.trim() ||
-        installedName.length > 80)
+        installedName.length > 32768)
     )
       throw new Error("Gallery unavailable");
     return {
       ...app.data,
       installed,
       ...(safePath(launchPath) ? { launchPath } : {}),
-      ...(typeof installedName === "string" ? { installedName } : {}),
+      ...(typeof installedName === "string" ? { installedName: installedName.slice(0, 200) } : {}),
     };
   });
   if (new Set(apps.map((app) => app.id)).size !== apps.length)
@@ -122,10 +122,10 @@ export async function installGalleryApp(
       result.path !== `apps/${id}` ||
       typeof result.name !== "string" ||
       !result.name.trim() ||
-      result.name.length > 80
+      result.name.length > 32768
     )
       throw new Error("Invalid installation");
-    return result;
+    return { ...result, name: result.name.slice(0, 200) };
   } catch (error) {
     console.warn(
       "Gallery installation failed",

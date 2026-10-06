@@ -10,8 +10,21 @@ export class RecordConflictError extends Error {
 function payload(
   record: OwnerRecord,
 ): Omit<OwnerRecord, "rowId" | "basePayload"> {
-  const { rowId: _rowId, basePayload: _basePayload, ...data } = record;
-  return JSON.parse(JSON.stringify(data));
+  const { rowId: _rowId, basePayload, ...data } = record;
+  if (!basePayload) return JSON.parse(JSON.stringify(data));
+  // Display bounds must never truncate stored evidence or opaque owner metadata.
+  const baseFields = basePayload.fields && typeof basePayload.fields === "object" && !Array.isArray(basePayload.fields)
+    ? basePayload.fields as Record<string, unknown> : {};
+  const markers = Array.isArray(basePayload.manualFields) ? basePayload.manualFields : [];
+  const { rowId: _storedRow, basePayload: _storedBase, ...stored } = basePayload;
+  return JSON.parse(JSON.stringify({
+    ...stored,
+    fields: { ...baseFields, ...data.fields },
+    scope: data.scope,
+    manualFields: [...markers, ...data.manualFields.filter(key => !markers.includes(key))],
+    updatedAt: data.updatedAt,
+    ...(data.archivedAt ? { archivedAt: data.archivedAt } : {}),
+  }));
 }
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
