@@ -1,4 +1,5 @@
 import { createNativeProviderProfileGuard } from "../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
+import { CODEX_TERMINAL_LOGIN_COMMAND } from "../../packages/gateway/src/ai-providers/provider-codex-terminal-login.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -126,7 +127,7 @@ describe("provider terminal login coordinator", () => {
       cwd: "~",
       agent: "codex",
       exclusive: false,
-      cmd: "sh -lc 'export MATRIX_NODE_PREFIX=\"${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}\"; export PATH=\"$MATRIX_NODE_PREFIX/bin:$PATH\"; codex login --device-auth'",
+      cmd: CODEX_TERMINAL_LOGIN_COMMAND,
     }));
   });
 

@@ -4,13 +4,14 @@ import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
 import { updateWorkflowRowStatus } from "./workflow-row-status.js";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { RetainedHarnessAction } from "./RetainedHarnessAction.js";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AccountLifecycleActions } from "./AccountLifecycleActions.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
+import { YourSubscriptions } from "./YourSubscriptions.js";
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
 import { useHarnessEnablement } from "./use-harness-enablement.js";
 import { ConnectedAccountCard } from "./ConnectedAccountCard.js";
@@ -50,6 +51,8 @@ export function AgentsProvidersView({
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
 }: AgentsProvidersViewProps) {
+  const root = useRef<HTMLDivElement>(null);
+  const [subscriptionTarget, setSubscriptionTarget] = useState<string | null>(null);
   const [historyLoader, setHistoryLoader] = useState<AgentsProvidersViewProps["onLoadUsageHistory"]>(undefined);
   const [workflowCapabilities, setWorkflowCapabilities] = useState<ProviderWorkflowUICapability[]>([]);
   const [operationIds, setOperationIds] = useState<Record<string, string>>({});
@@ -82,7 +85,7 @@ export function AgentsProvidersView({
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const [expandedRowKind, setExpandedRowKind] = useState<ProviderWorkflowUICapability["harness"] | null>(null);
   if (stateClient !== workflowClient) {
-    setStateClient(workflowClient); setWorkflowCapabilities([]); setOperationIds({}); setWorkflowStatus({}); setHistoryLoader(undefined); setConnectRequests({}); setExpandedRowId(null); setExpandedRowKind(null); setWorkflowPermission("unknown");
+    setStateClient(workflowClient); setWorkflowCapabilities([]); setOperationIds({}); setWorkflowStatus({}); setHistoryLoader(undefined); setConnectRequests({}); setExpandedRowId(null); setExpandedRowKind(null); setWorkflowPermission("unknown"); setSubscriptionTarget(null);
   }
   const inventoryHarnesses = workflowCapabilities.filter(
     (item) =>
@@ -108,6 +111,15 @@ export function AgentsProvidersView({
   const resolvedExpandedId = expandedRowId === null ? null
     : rowIdentities.some(item => item.id === expandedRowId) ? expandedRowId
     : rowIdentities.find(item => item.harness === expandedRowKind)?.id ?? null;
+  useEffect(() => {
+    if (!subscriptionTarget || resolvedExpandedId !== subscriptionTarget) return;
+    const trigger = root.current?.ownerDocument.getElementById(`matrix-ap-details-${subscriptionTarget}-trigger`);
+    if (trigger && root.current?.contains(trigger)) {
+      trigger.scrollIntoView?.({block: "nearest"});
+      trigger.focus({preventScroll: true});
+    }
+    setSubscriptionTarget(null);
+  }, [subscriptionTarget, resolvedExpandedId]);
 
   const harness = selectedHarness(snapshot, selectedHarnessId);
   const actions = supportedActions(snapshot);
@@ -125,7 +137,7 @@ export function AgentsProvidersView({
   const errorPresentation = settingsErrorPresentation(gatewayError ? null : visibleError);
 
   return (
-    <div className="matrix-agents-providers" aria-busy={busy || gatewayPending ? "true" : undefined}>
+    <div ref={root} className="matrix-agents-providers" aria-busy={busy || gatewayPending ? "true" : undefined}>
       <header className="matrix-ap-page-head">
         <div>
           <span className="matrix-ap-eyebrow">Settings</span>
@@ -172,6 +184,10 @@ export function AgentsProvidersView({
           compatibleAgents={compatibleGatewayAgents}
           onChooseAgent={(id) => { setExpandedRowId(id); setExpandedRowKind(snapshot.harnesses.find(item => item.id === id)?.harness ?? null); onSelectHarness(id); }}
           onUseGateway={useGateway}
+          subscriptions={<YourSubscriptions snapshot={snapshot} capabilities={workflowCapabilities} client={workflowClient}
+            operationIds={operationIds} workflowStatus={workflowStatus} forbidden={workflowPermission === "forbidden"}
+            disabled={busy || gatewayPending || enablement.pending} onRefresh={refreshSettings}
+            onOpen={(id, kind) => { setExpandedRowId(id); setExpandedRowKind(kind); setSubscriptionTarget(id); if (snapshot.harnesses.some(item => item.id === id)) onSelectHarness(id); }} />}
         />
         <HarnessRail
           harnesses={snapshot.harnesses}
@@ -238,7 +254,7 @@ export function AgentsProvidersView({
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
-                {workflowClient?.botConnections && (harness.harness === "codex" || harness.harness === "claude") ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={snapshot.refreshedAt} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
+                {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={snapshot.refreshedAt} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
                 {!guided ? <ConnectionChoices
                   snapshot={snapshot}
                   harness={harness}

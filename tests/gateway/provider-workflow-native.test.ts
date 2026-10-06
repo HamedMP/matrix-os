@@ -9,6 +9,11 @@ describe('native device login extraction', () => {
 });
 
 import { vi } from 'vitest';
+vi.mock('../../packages/gateway/src/ai-providers/provider-codex-terminal-login.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../../packages/gateway/src/ai-providers/provider-codex-terminal-login.js')>(),
+  supportsCodexTerminalLogin: vi.fn(async () => true),
+}));
+import { supportsCodexTerminalLogin } from '../../packages/gateway/src/ai-providers/provider-codex-terminal-login.js';
 import { createNativeProviderWorkflowAdapters } from '../../packages/gateway/src/ai-providers/provider-workflow-native.js';
 import type { ProviderSettingsStoreWriter } from '../../packages/gateway/src/ai-providers/provider-settings-store.js';
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
@@ -36,6 +41,39 @@ it('uses native Codex account RPC in Settings without a Terminal login mutation'
   expect(login).toHaveBeenCalledOnce(); expect(result.terminalSessionId).toBeUndefined();
   expect(f.terminal.attach).not.toHaveBeenCalled();
   expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', enabled: true }));
+});
+it('offers official Codex Terminal login alongside native device login without changing the selected method', async () => {
+  const f = nativeFixture();
+  const login = vi.fn();
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+    codexSettingsLogin: login, hostControl: { available: false, run: vi.fn() } });
+  expect(adapter!.loginMethods).toEqual(['device_code', 'terminal']);
+  const option = adapter!.connectionOptions!.find(row => row.id === 'openai_terminal');
+  expect(option).toMatchObject({ availability: 'available', billingKind: 'subscription', executionKind: 'native' });
+  const running = await adapter!.start({ registerCleanup: vi.fn(), connectionOption: option,
+    request: { harnessInstanceId: f.row.id, kind: 'login', method: 'terminal', idempotencyKey: 'terminal-choice' }, publish: vi.fn() });
+  expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'start_login', method: 'terminal' }));
+  expect(login).not.toHaveBeenCalled();
+  await running.cancel();
+});
+it('omits Codex Terminal when the installed native login protocol is not verified, retaining the independently wired device flow', async () => {
+  const f = nativeFixture(); vi.mocked(supportsCodexTerminalLogin).mockResolvedValueOnce(false);
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+    codexSettingsLogin: vi.fn(), hostControl: { available: false, run: vi.fn() } });
+  expect(adapter!.loginMethods).toEqual(['device_code']);
+  expect(adapter!.connectionOptions).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'openai_terminal' })]));
+});
+it.each(['missing-install', 'missing-method', 'wrong-provider', 'wrong-method'] as const)('refuses unqualified official Terminal starts before mutation: %s', async mode => {
+  const f = nativeFixture();
+  if (mode === 'missing-install') f.row.installState = 'missing';
+  if (mode === 'missing-method') f.row.loginMethods = [];
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
+    codexSettingsLogin: vi.fn(), hostControl: { available: false, run: vi.fn() } });
+  await expect(adapter!.start({ registerCleanup: vi.fn(),
+    connectionOption: { id: 'chosen', providerId: mode === 'wrong-provider' ? 'anthropic' : 'openai', authKind: 'subscription',
+      billingKind: 'subscription', executionKind: 'native', availability: 'available', method: mode === 'wrong-method' ? 'device_code' : 'terminal' },
+    request: { harnessInstanceId: f.row.id, kind: 'login', method: 'terminal', idempotencyKey: 'invalid-terminal-choice' }, publish: vi.fn() })).rejects.toThrow('unavailable');
+  expect(f.store.mutate).not.toHaveBeenCalled(); expect(f.terminal.createTab).not.toHaveBeenCalled();
 });
 describe('native workflow runtime wiring', () => {
   it('does not treat exit zero as verified authentication without exact credential observation', async () => {
@@ -129,6 +167,18 @@ it('deliberate successful login enables the exact saved harness before reporting
   f.observer().onFrame({ type: 'exit', revision: 1, exitCode: 0, terminalRef: ref });
   await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }));
   expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', harnessInstanceId: 'harness_codex', enabled: true, expectedRevision: 0 }));
+});
+it.each(['unverified-profile', 'replaced-harness', 'owner-denied'] as const)('does not confirm Terminal consent from stale or unverified native state: %s', async mode => {
+  const f = nativeFixture(); const snapshot = await f.store.getSnapshot();
+  Object.assign(f.row, { enabled: false, authState: mode === 'unverified-profile' ? 'unknown' : 'authenticated', localObservation: { state: 'present_unverified' } });
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
+  const publish = vi.fn();
+  await adapter!.start({ registerCleanup: vi.fn(), request: { harnessInstanceId: f.row.id, kind: 'login', method: 'terminal', idempotencyKey: 'fresh-native-readback' }, publish });
+  if (mode === 'replaced-harness') f.row.id = 'other-codex-harness';
+  if (mode === 'owner-denied') Object.assign(snapshot.access, { mode: 'read_only' });
+  f.observer().onFrame({ type: 'exit', revision: 1, exitCode: 0, terminalRef: ref });
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'failed', safeFailure: 'unavailable' }));
+  expect(f.store.mutate).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled' }));
 });
 it('a verified key deliberately enables an Off harness, while rejected keys leave it Off', async () => {
   const f = nativeFixture(); Object.assign(f.row, { enabled: false });

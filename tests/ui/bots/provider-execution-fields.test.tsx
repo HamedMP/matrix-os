@@ -110,3 +110,21 @@ it("keeps a failed Bot authorization visible after safely refreshing its status"
  await screen.findByText("Bot authorization could not be updated. Check again.");
  expect(document.body.textContent).not.toContain("private failure");
 });
+
+it("shows connect-first guidance for a logged-out qualified native account without offering consent", async () => {
+ const api=client(); api.connections.mockResolvedValue({connections:[{...connection,availability:"unavailable",unavailableReason:"authentication_required",authorization:{revision:0,enabled:false,background:false},models:[]}]} as never);
+ render(<BotUseAuthorizationPanel client={api as never} harness="claude" disabled={false}/>);
+ await screen.findByText("Connect the native account on this computer before enabling Bot use.");
+ expect(screen.queryByText("Bot execution is unavailable on this computer.")).not.toBeInTheDocument();
+ expect(screen.queryByRole("button",{name:"Enable for Bot tasks"})).not.toBeInTheDocument();
+ expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+ expect(api.authorizeConnection).not.toHaveBeenCalled();
+});
+
+it("keeps unsupported native runtime guidance distinct from missing login", async () => {
+ const api=client(); api.connections.mockResolvedValue({connections:[{...connection,availability:"unavailable",unavailableReason:"unsupported_runtime",authorization:{revision:0,enabled:false,background:false},models:[]}]} as never);
+ render(<BotUseAuthorizationPanel client={api as never} harness="claude" disabled={false}/>);
+ await screen.findByText("Bot execution is unavailable on this computer.");
+ expect(screen.queryByText("Connect the native account on this computer before enabling Bot use.")).not.toBeInTheDocument();
+ expect(api.authorizeConnection).not.toHaveBeenCalled();
+});

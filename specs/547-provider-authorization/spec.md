@@ -1,19 +1,23 @@
-# Complete provider authorization
+# Codex and Claude subscription connections
 
-Tracking: ENG-117. Approved implementation scope: 2026-10-05.
+Tracking: ENG-117 / PR2198. Revised subscription-first scope approved: 2026-10-06.
 
 ## Outcome
 
-Settings exposes the actual supported account and key connection methods for Codex,
-Claude Code, Hermes, Pi, OpenCode and OpenClaw on the selected Computer. Selecting a
+The Matrix AI Settings area exposes **Connect Codex** and **Connect Claude** for
+the official native account workflows on the selected Computer. Hermes, Pi and
+OpenCode expose qualified permitted connection methods and **Log in in Terminal**
+where the installed native protocol supports it. Selecting a
 provider binds that provider to validation, native persistence, readback, catalog
 and execution admission. A connected native account, permission to use it in Bots
 and an executable model route remain separate observations.
 
-The first fixed API-key provider set is OpenAI, Anthropic and OpenRouter, wherever
-the installed harness has a verified saver and catalog. Codex uses OpenAI; Claude
-Code uses Anthropic. Additional providers use the same qualified registry rather
-than arbitrary URLs, commands or claimed upstream support.
+Other provider additions and new OpenClaw behavior are deferred. Preserve existing
+qualified OpenAI, Anthropic and OpenRouter API-key/native behavior. Restricted
+subscription routes are excluded from this delivery, including direct Claude
+subscription inference inside Hermes, Pi or OpenCode and unapproved Matrix-owned
+ChatGPT inference. Do not fill an unsupported native model row with hidden official
+agent delegation or a Terminal workaround.
 
 ## Authorization and execution sources
 
@@ -22,9 +26,9 @@ than arbitrary URLs, commands or claimed upstream support.
 | Matrix AI credit | Existing private Pi inference broker | Preserve current funded admission and model proof |
 | Owner API key | Qualified native harness or explicit Pi broker route | Fixed provider, current credentials, catalog and exact owner selection |
 | ChatGPT subscription for native Codex | Official Codex login | Existing native authorization is reusable on the same Computer |
-| ChatGPT subscription for Matrix Pi | Matrix registered Sign in with ChatGPT adapter | Own issued client and confirmed deployment/access eligibility; native Codex login alone is insufficient |
+| ChatGPT subscription for Matrix Pi | Deferred from this delivery | Own issued client and confirmed deployment/access eligibility required; native Codex login alone is insufficient |
 | Claude subscription for Bot tasks | Unmodified official Claude Code child executor | Existing end-user native login, explicit Bot grant and scoped child authority |
-| Claude subscription for direct Pi inference | Unavailable by default | Requires separate provider permission |
+| Claude subscription for direct Pi/Hermes/OpenCode inference | Excluded | No native credential import, login advertisement or Terminal workaround |
 
 Never silently fall back to Matrix credit, another account or another source.
 Subscription usage is not a fabricated USD balance. Any Pi coordinator inference
@@ -37,12 +41,19 @@ valid authorization is reused for the exact permitted consumer. Missing Matrix a
 consent or Bot permission asks only for that missing step. A login on another
 Computer or in the provider's website does not establish runtime authorization.
 
+The Matrix AI subscription shortcuts and existing native cards share one canonical
+authorization operation and current account state. Valid same-route native login
+shows Connected rather than reopening sign-in. Keep the Matrix credit balance and
+owner subscription usage visibly separate; do not add another Pi account.
+
 Use existing account cards, verified identity and supported Connect/Reconnect/
 Change account actions. Ordinary setup does not require saved-account management
 or advanced configuration. Subscription allowance/reset appears only if observed;
 otherwise show Usage unavailable. A supported native TTY login opens the canonical
-Terminal with visible progress and cancellation; unqualified methods remain
-unavailable with a safe explanation.
+Terminal with visible progress and cancellation. It runs a fixed version-qualified
+native command on the selected Computer and confirms account/catalog readback
+before reporting connection success. Restricted subscription methods are omitted;
+an installed-version failure remains a truthful unavailable state.
 
 Disconnect from Bots revokes Bot use without signing out unrelated native
 consumers. Full provider sign-out states its scope. Background/recurring subscription
@@ -163,14 +174,31 @@ draft stacks or infer cross-provider memory import support.
    scoped VPS are recorded separately from fixture/contract results.
 8. Fresh required CI and Greptile 5/5 are required before any authorized merge.
 
-External registration/access or unavailable real credentials are explicit
-acceptance gaps; synthetic success is not a live subscription execution claim.
-Provider access is disabled until the required eligibility is confirmed.
+Unavailable real credentials are explicit acceptance gaps; synthetic success is
+not a live subscription execution claim. Restricted or unapproved direct routes
+are deferred scope, not advertised promises or blockers for otherwise complete
+permitted native delivery.
+
+## Native status and legacy workflow regression contract
+
+Native Claude qualification checks version and required CLI flags independently
+from authentication. `claude auth status --json` may return a valid logged-out
+object with exit1. Parse only bounded structured output: explicit logged-out status
+maps to `authentication_required` and connect-first UI; missing executable/flags,
+timeouts, malformed protocol and unexpected exits remain unavailable. Never infer
+authentication from stderr or grant Bot access from credential presence alone.
+
+A legacy fixture that does not implement V2 returns404 at absent V2 workflow
+routes. Product clients retain strict response validation: malformed200 is an
+error, not permission to fall back or authenticate. Cover connected/logged-out
+status, malformed/timeouts, legacy browser completion/cancellation/disconnect and
+late account/Computer changes with focused regressions and real Electron tests.
 
 ## Deferred scope
 
-Google/Gemini, Z.ai/GLM, DeepSeek and further providers need the same qualification
-before addition. Direct Pi Claude subscription requires separate permission.
+Google/Gemini, Z.ai/GLM, DeepSeek, further OpenRouter expansion and new OpenClaw
+behavior need the same qualification before later addition. Restricted direct
+Claude subscription inference and unapproved Matrix SIWC are not implemented.
 Arbitrary verifier URLs, subscription resale/pooling, new memory-import design and
 fleet deployment are outside this PR. Public documentation in the private site
 repository remains paused at the owner's request.

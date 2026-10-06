@@ -4,10 +4,38 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { z } from 'zod/v4';
 import type { AiProviderSnapshotV3 } from '@matrix-os/contracts';
 import type { ClaudeTaskObservation } from './provider-connections.js';
 import { claudeBotEnvironment } from './claude-task-executor.js';
 const run = promisify(execFile);
+const AUTH_STATUS_BYTES = 16 * 1024;
+const authenticationStatus = z.discriminatedUnion('loggedIn', [
+  z.object({ loggedIn: z.literal(false), authMethod: z.literal('none') }),
+  z.object({ loggedIn: z.literal(true), authMethod: z.enum(['claude.ai', 'api_key']) }),
+]);
+function parseAuthenticationStatus(stdout: string) {
+  if (Buffer.byteLength(stdout, 'utf8') > AUTH_STATUS_BYTES) throw new Error('Native status exceeds limit');
+  return authenticationStatus.parse(JSON.parse(stdout));
+}
+async function readAuthenticationStatus(command: string, env: NodeJS.ProcessEnv) {
+  let stdout: string;
+  try {
+    const status = await run(command, ['auth', 'status', '--json'], { env, timeout: 5000, maxBuffer: AUTH_STATUS_BYTES });
+    stdout = status.stdout;
+  } catch (error) {
+    // Claude documents exit1 for a logged-out account. Only that bounded, valid
+    // protocol is an authentication outcome; timeouts/signals/startup failures are not.
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 1
+      || !('killed' in error) || error.killed !== false
+      || !('signal' in error) || error.signal !== null
+      || !('stdout' in error) || typeof error.stdout !== 'string') throw error;
+    const status = parseAuthenticationStatus(error.stdout);
+    if (status.loggedIn) throw error;
+    return status;
+  }
+  return parseAuthenticationStatus(stdout);
+}
 export const claudeBotCommand = () => join(process.env.MATRIX_NODE_PREFIX ?? '/opt/matrix/runtime/node', 'bin/claude');
 /** A documented flag is still gated by the actual installed native protocol. */
 export function qualifiesClaudeBotRuntime(version: string, help: string): boolean {
@@ -22,8 +50,7 @@ export function createClaudeTaskObserver(input: { homePath: string; providers: {
       const [version, help] = await Promise.all([run(command, ['--version'], { env, timeout: 5000, maxBuffer: 64 * 1024 }),
         run(command, ['--help'], { env, timeout: 5000, maxBuffer: 64 * 1024 })]);
       if (!qualifiesClaudeBotRuntime(version.stdout, help.stdout)) return { available: false, reason: 'unsupported_runtime' };
-      const status = await run(command, ['auth', 'status', '--json'], { env, timeout: 5000, maxBuffer: 16 * 1024 });
-      const authentication = JSON.parse(status.stdout);
+      const authentication = await readAuthenticationStatus(command, env);
       if (authentication.loggedIn !== true || authentication.authMethod !== 'claude.ai') return { available: false, reason: 'authentication_required' };
       // Stable account identity rather than a rotating bearer. No subscription token is read/copied.
       const profile = await open(join(input.homePath, '.claude.json'), constants.O_RDONLY | constants.O_NOFOLLOW);

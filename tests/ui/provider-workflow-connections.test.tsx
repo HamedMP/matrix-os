@@ -51,7 +51,7 @@ it("offers qualified Terminal methods on the primary connection path", async () 
  const openTerminal = vi.fn();
  render(<HarnessWorkflowPanel harness={{id: "pi", harness: "pi", displayName: "Pi", installState: "installed", authState: "unauthenticated"}} capability={{...capability, loginMethods: ["terminal"], apiKeyProviders: [], connectionOptions: [terminalOption]}} client={client} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
  expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
- fireEvent.click(screen.getByRole("button", {name: /ChatGPT account · Sign in in Terminal/}));
+ fireEvent.click(screen.getByRole("button", {name: /ChatGPT account · Log in in Terminal/}));
  await waitFor(() => expect(openTerminal).toHaveBeenCalledWith("tws_1:tt_1"));
  expect(screen.getByRole("button", {name: "Continue in Terminal"})).toBeInTheDocument();
 });

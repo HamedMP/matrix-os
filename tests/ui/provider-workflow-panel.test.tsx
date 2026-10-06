@@ -454,15 +454,13 @@ it('keeps account changes and disconnect unavailable until an active replacement
   expect(api.cancel).toHaveBeenCalledWith('replacement', expect.any(AbortSignal));
 });
 
-it("offers terminal-only supported login behind collapsed Advanced configuration", async () => {
+it("offers terminal-only supported login on the primary connection path", async () => {
   const api = client();
   api.start = vi.fn().mockResolvedValue({ id: "terminal", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null });
   const openTerminal = vi.fn();
   render(<HarnessWorkflowPanel harness={harness} capability={{ ...capability, loginMethods: ["terminal"], apiKeyProviders: [] }} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
-  const summary = screen.getByText("Advanced configuration");
-  expect(summary.closest("details")).not.toHaveAttribute("open");
-  fireEvent.click(summary);
-  fireEvent.click(screen.getByRole("button", { name: "Sign in in Terminal" }));
+  expect(screen.queryByText("Advanced configuration")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Log in in Terminal" }));
   await waitFor(() => expect(openTerminal).toHaveBeenCalledWith("tws_1:tt_1"));
   expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ method: "terminal", harnessInstanceId: "codex" }), expect.any(AbortSignal));
 });

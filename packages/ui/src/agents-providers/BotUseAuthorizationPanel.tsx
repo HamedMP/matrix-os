@@ -31,8 +31,8 @@ export function BotUseAuthorizationPanel({client, harness, disabled, refreshKey}
    <p className="matrix-ap-help">The bot’s coordinator has a separate model connection and funding source.</p>
    {state.loading ? <p role="status">Loading Bot authorization…</p> : null}
    {state.error ? <p role="alert">{state.error}</p> : null}
-   {connection?.availability === "unavailable" ? <p role="status" className="matrix-ap-help">{connection.unavailableReason === "provider_access_required" ? "ChatGPT plan access for Matrix Bots requires provider approval for this deployment." : "Bot execution is unavailable on this computer."}</p> : null}
-   {connection?.availability === "setup_required" && !mayEnable ? <p role="status" className="matrix-ap-help">Connect the native account on this computer before enabling Bot use.</p> : null}
+   {connection?.availability === "unavailable" && connection.unavailableReason !== "authentication_required" ? <p role="status" className="matrix-ap-help">{connection.unavailableReason === "provider_access_required" ? "ChatGPT plan access for Matrix Bots requires provider approval for this deployment." : "Bot execution is unavailable on this computer."}</p> : null}
+   {connection && !mayEnable && (connection.availability === "setup_required" || connection.unavailableReason === "authentication_required") ? <p role="status" className="matrix-ap-help">Connect the native account on this computer before enabling Bot use.</p> : null}
    {connection && mayEnable ? <>
      <p role="status">{connection.authorization.enabled ? "Available in Bots" : "Not enabled for Bots"}</p>
      <label className="matrix-ap-uninstall-choice"><input type="checkbox" checked={background} disabled={disabled || pending} onChange={event => setBackground(event.target.checked)}/>Allow scheduled and background Bot tasks<span>Uses your subscription when a bot runs without a message from you.</span></label>

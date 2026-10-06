@@ -1,6 +1,8 @@
 import type { createGenericNativeWriter, GenericNativeWriterProfile } from "./generic-native-writer.js";
 import type { createHermesSettingsConnection } from "./hermes-settings-auth.js";
 import { nativeWorkflowConnectionOptions } from "./native-workflow-options.js";
+import { authenticatedNativeHarness } from "./native-workflow-account.js";
+import { supportsCodexTerminalLogin } from "./provider-codex-terminal-login.js";
 import type { createPiSettingsConnection } from "./pi-settings-auth.js";
 import type { createOpenClawSettingsConnection } from "./openclaw-settings-auth.js";
 import type { createOpenCodeSettingsConnection } from "./opencode-settings-auth.js";
@@ -13,7 +15,7 @@ import { promisify } from 'node:util';
 import { randomUUID, createHash } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3 } from '@matrix-os/contracts';
+import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3, type ProviderWorkflowStart } from '@matrix-os/contracts';
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 import type { ProviderSettingsStoreWriter } from './provider-settings-store.js';
 import { ProviderWorkflowError, ProviderWorkflowNotStartedError, type ProviderWorkflowAdapter } from './provider-workflows.js';
@@ -88,7 +90,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
   if (snapshot.access.mode !== 'writable')
     return [];
   const inventory = options.inventory ? await options.inventory() : [];
-  const rows: Array<Pick<typeof snapshot.harnesses[number], 'id' | 'harness' | 'displayName' | 'installState' | 'loginMethods' | 'selectedAccountId'>> = [...snapshot.harnesses];
+  const rows: Array<Pick<typeof snapshot.harnesses[number], 'id' | 'harness' | 'displayName' | 'installState' | 'loginMethods' | 'selectedAccountId'>> = snapshot.harnesses.map(row => ({ ...row, loginMethods: [...row.loginMethods] }));
   for (const driver of inventory) {
     const kind = driver.id === 'claude_code' ? 'claude' : driver.id;
     if (!['claude', 'codex', 'pi', 'opencode', 'hermes', 'openclaw'].includes(kind) || rows.some(row => row.harness === kind))
@@ -113,11 +115,24 @@ export async function createNativeProviderWorkflowAdapters(options: {
     const packageName = harness.harness in packages ? packages[harness.harness as keyof typeof packages] : null;
     const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && ['codex', 'claude'].includes(harness.harness);
     const canBrowserLogin = canLogin && harness.harness === 'claude' && !!options.claudeBrowserLogin;
+    const canTerminalLogin = canLogin && (harness.harness !== 'codex' || await supportsCodexTerminalLogin(prefix));
     const system = harness.harness === 'hermes' || harness.harness === 'openclaw';
     const keyAdapter = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
-    const loginMethods = canBrowserLogin ? ['browser' as const, 'terminal' as const] : canLogin ? [harness.harness === 'codex' && options.codexSettingsLogin ? 'device_code' as const : 'terminal' as const] : [];
+    const loginMethods: NonNullable<ProviderWorkflowStart['method']>[] = [
+      ...(canBrowserLogin ? ['browser' as const] : []),
+      ...(canLogin && harness.harness === 'codex' && options.codexSettingsLogin ? ['device_code' as const] : []),
+      ...(canTerminalLogin ? ['terminal' as const] : []),
+    ];
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
       ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
+    const confirmNativeLogin = async (idempotencyKey: string) => {
+      const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true });
+      const exact = authenticatedNativeHarness(fresh, harness.id, harness.harness);
+      if (!exact) throw new ProviderWorkflowError('unavailable');
+      if (!exact.enabled) await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: exact.id,
+        enabled: true, expectedRevision: fresh.revision,
+        idempotencyKey: `connect-${createHash('sha256').update(idempotencyKey).digest('hex')}` });
+    };
     return {
       harnessInstanceId: harness.id, harness: harness.harness, displayName: harness.displayName, installState: harness.installState,
       loginMethods, apiKeyProviders,
@@ -131,32 +146,12 @@ export async function createNativeProviderWorkflowAdapters(options: {
       async start({ request, connectionOption, publish, registerCleanup }) {
         // V1 keeps its DTO shape but cannot bypass V2 provider qualification.
         if (request.kind === 'login' && !['codex', 'claude'].includes(harness.harness)) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && (!request.method || !loginMethods.includes(request.method))) throw new ProviderWorkflowNotStartedError();
         if (connectionOption && (connectionOption.availability !== "available" || connectionOption.providerId !== (harness.harness === "claude" ? "anthropic" : "openai"))) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription' || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && request.method === 'device_code' && harness.harness === 'codex') {
           if (!canLogin || !options.codexSettingsLogin) throw new ProviderWorkflowNotStartedError();
-          return options.codexSettingsLogin({ publish, registerCleanup, onSuccess: async () => {
-            const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true });
-            const exact = fresh.harnesses.find(row => row.id === harness.id);
-            // Native consent and account identity are separate from the
-            // harness's execution readiness. Accept only this route's exact
-            // authenticated account; local credential presence is insufficient.
-            const account = fresh.accounts?.find(row => row.id === exact?.selectedAccountId);
-            const source = fresh.accessSources?.find(row => row.id === exact?.accessSourceId);
-            const authenticatedAccount = !!account && account.authState === 'authenticated'
-              && account.accessSourceId === exact?.accessSourceId
-              && account.providerId === exact?.route.providerId
-              && source?.accountId === account.id && source.providerId === account.providerId;
-            if (!exact || exact.harness !== harness.harness || fresh.access.mode !== 'writable'
-              || !(exact.authState === 'authenticated' || authenticatedAccount))
-              throw new ProviderWorkflowError('unavailable');
-            if (!exact.enabled) {
-              // Use the same validated snapshot revision so an account/route
-              // change cannot be enabled by a second, unvalidated read.
-              await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: exact.id,
-                enabled: true, expectedRevision: fresh.revision,
-                idempotencyKey: `connect-${createHash('sha256').update(request.idempotencyKey).digest('hex')}` });
-            }
-          } });
+          return options.codexSettingsLogin({ publish, registerCleanup, onSuccess: () => confirmNativeLogin(request.idempotencyKey) });
         }
         if (request.kind === 'login' && request.method === 'browser') {
           if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
@@ -313,12 +308,15 @@ export async function createNativeProviderWorkflowAdapters(options: {
             return;
           }
           try {
+            if (request.kind === 'login') {
+              await confirmNativeLogin(request.idempotencyKey);
+              publish({ state: 'succeeded', safeFailure: null });
+              return;
+            }
             const confirmed = await options.store.getSnapshot({ refresh: true });
             const exact = confirmed.harnesses.find(row => row.id === harness.id) ?? confirmed.harnesses.find(row => row.harness === harness.harness);
             const installed = exact?.installState ?? confirmed.harnessCatalog.find(row => row.harness === harness.harness)?.installState;
-            const success = request.kind === 'login' ? exact?.authState === 'authenticated' || exact?.localObservation?.state === 'present_unverified' : request.kind === 'install' ? installed === 'installed' : installed === 'missing';
-            if (success && request.kind === 'login')
-              await enableConnectedHarness(harness.id, `connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}`);
+            const success = request.kind === 'install' ? installed === 'installed' : installed === 'missing';
             publish({ state: success ? 'succeeded' : 'failed', safeFailure: success ? null : 'unavailable' });
           }
           catch (error) {

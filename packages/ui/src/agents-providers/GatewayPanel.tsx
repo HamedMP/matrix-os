@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { checkoutUnavailablePresentation } from "./checkout-unavailable-presentation.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
@@ -79,6 +79,7 @@ export function GatewayPanel({
   compatibleAgents = [],
   onChooseAgent,
   onUsageHistory,
+  subscriptions,
 }: {
   source: ProviderAccessSource | null;
   policy: ProviderGatewayPolicy | null;
@@ -104,6 +105,7 @@ export function GatewayPanel({
   compatibleAgents?: ReadonlyArray<{ id: string; displayName: string }>;
   onChooseAgent?: (id: string) => void;
   onUsageHistory?: () => void;
+  subscriptions?: ReactNode;
 }) {
   // Older runtimes retain their readiness-based inventory. New runtimes provide
   // an explicit policy inventory that does not imply a runnable route.
@@ -291,9 +293,9 @@ export function GatewayPanel({
           ) : null}
         </div>
       ) : null}
-      <p className="matrix-ap-gateway-footer">
+      {subscriptions ?? <p className="matrix-ap-gateway-footer">
         Already have Claude or ChatGPT? Connect it on the agent instead.
-      </p>
+      </p>}
       {!policy || !source ? <details className="matrix-ap-advanced"><summary>Advanced Matrix AI settings</summary>
           {!ready ? (
             <button

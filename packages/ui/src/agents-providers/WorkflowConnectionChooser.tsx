@@ -2,7 +2,7 @@ import { ConnectionMethodCard } from "./ConnectionMethodCard.js";
 import type { HarnessWorkflowController } from "./use-harness-workflow-controller.js";
 const providerNames = {openai: "ChatGPT", anthropic: "Claude", openrouter: "OpenRouter"};
 const keyNames = {openai: "OpenAI", anthropic: "Anthropic", openrouter: "OpenRouter"};
-const methodNames = {device_code: "Sign in with a code", browser: "Sign in in browser", existing_codex: "Use existing Codex account", terminal: "Sign in in Terminal"};
+const methodNames = {device_code: "Sign in with a code", browser: "Sign in in browser", existing_codex: "Use existing Codex account", terminal: "Log in in Terminal"};
 const unavailable = {not_installed: "Install this agent on this computer to connect.", unsupported_runtime: "This connection requires a supported agent version.", provider_access_required: "This connection requires provider access for this deployment."};
 
 /** Only exact, qualified server options can start a provider-aware connection. */

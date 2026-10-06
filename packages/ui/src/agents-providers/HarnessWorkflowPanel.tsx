@@ -7,15 +7,16 @@ const active = (operation: import("@matrix-os/contracts").ProviderWorkflow | nul
 export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const state = useHarnessWorkflowController(props);
   const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, failure, setFailure, connected, setDisconnectOpen, uninstall, setUninstall, connectionPanel, pendingStart, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
+  const terminalOnly = !capability.connectionOptions && capability.loginMethods.includes("terminal") && !inlineLogin;
   const changeAccountAction =
     connected &&
-    (capability.connectionOptions?.length || inlineLogin || capability.apiKeyProviders.length) ? (
+    (capability.connectionOptions?.length || inlineLogin || terminalOnly || capability.apiKeyProviders.length) ? (
       <button
         type="button"
         className="matrix-ap-button"
         disabled={disabled || pending || connecting}
         onClick={() =>
-          setMethod(inlineLogin ? "account" : "key")
+          setMethod(inlineLogin || terminalOnly ? "account" : "key")
         }
       >
         Change account
@@ -35,25 +36,26 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       {onConnectSaved && !connected ? <button type="button" className="matrix-ap-button"
         disabled={disabled || connectSavedDisabled || pending || connecting} onClick={() => void run(onConnectSaved)}>Connect saved connection</button> : null}
       {harness.installState === "installed" && !connected
-        && !capability.connectionOptions && !inlineLogin && capability.apiKeyProviders.length === 0 ? (
+        && !capability.connectionOptions && !inlineLogin && !terminalOnly && capability.apiKeyProviders.length === 0 ? (
         <p className="matrix-ap-help" role="status">
           Connection in Settings is unavailable for this agent on this computer.
         </p>
       ) : null}
-      {advancedConfiguration || (!capability.connectionOptions && capability.loginMethods.includes("terminal") && !inlineLogin) ? (
-        <details className="matrix-ap-advanced">
-          <summary>Advanced configuration</summary>
-          {!capability.connectionOptions && harness.installState === "installed" && capability.loginMethods.includes("terminal") && !inlineLogin ? (
+      {terminalOnly && harness.installState === "installed" && (!connected || method !== null || failed || connecting) ? (
+        <div className="matrix-ap-workflow-actions">
             <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting}
-              onClick={() => void start("login", true)}>Sign in in Terminal</button>
-          ) : null}
-          {!capability.connectionOptions && harness.installState === "installed" && capability.loginMethods.includes("terminal") && !inlineLogin
-            && connecting && !failure && operation?.kind === "login" && operation.terminalSessionId ? (
+              onClick={() => void start("login", true)}>Log in in Terminal</button>
+          {connecting && !failure && operation?.kind === "login" && operation.terminalSessionId ? (
             <button type="button" className="matrix-ap-button" disabled={disabled || pending}
               onClick={() => void run(async () => { onOpenTerminal(operation.terminalSessionId!); })}>
               Continue in Terminal
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {advancedConfiguration ? (
+        <details className="matrix-ap-advanced">
+          <summary>Advanced configuration</summary>
           <fieldset disabled={disabled || pending || connecting} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{advancedConfiguration}</fieldset>
         </details>
       ) : null}

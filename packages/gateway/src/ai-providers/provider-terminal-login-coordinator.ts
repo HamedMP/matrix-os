@@ -1,4 +1,5 @@
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
+import { CODEX_TERMINAL_LOGIN_COMMAND } from "./provider-codex-terminal-login.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ type ReceiptWriter = (path: string, value: ReceiptDocument) => Promise<void>;
 const LOGIN_COMMANDS = {
   codex: {
     agent: "codex" as const,
-    command: "sh -lc 'export MATRIX_NODE_PREFIX=\"${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}\"; export PATH=\"$MATRIX_NODE_PREFIX/bin:$PATH\"; codex login --device-auth'",
+    command: CODEX_TERMINAL_LOGIN_COMMAND,
   },
   claude: {
     agent: "claude" as const,
