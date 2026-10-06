@@ -4,6 +4,15 @@ import { describe, expect, it } from "vitest";
 const workflow = readFileSync(".github/workflows/preview-platform.yml", "utf8");
 
 describe("protected Slack preview connection", () => {
+  it("checks out the connection helpers before creating Google credentials", () => {
+    const slackJob = workflow.slice(workflow.indexOf("  connect-slack-pilot-preview:"));
+    const checkout = slackJob.indexOf("uses: actions/checkout@v6");
+    const authenticate = slackJob.indexOf("uses: google-github-actions/auth@v3");
+    expect(checkout).toBeGreaterThanOrEqual(0);
+    expect(authenticate).toBeGreaterThan(checkout);
+    expect(slackJob.slice(authenticate)).not.toContain("uses: actions/checkout@");
+  });
+
   it("requires the exact isolated PR revision and pilot account before connection", () => {
     expect(workflow).toContain("connect_slack_pilot:");
     expect(workflow).toContain("environment: Preview");
