@@ -1,0 +1,1 @@
+hindsight-api-slim==0.10.2
