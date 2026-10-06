@@ -1,0 +1,53 @@
+/* Fictional preview chrome; the shared compiled app assets remain unchanged. */
+.demo-banner {
+  position: relative;
+  padding: 10px 14px;
+  font: 12px/1.5 system-ui, sans-serif;
+  background: #fff4db;
+  color: #403621;
+  border-bottom: 1px solid #e8d4a5;
+}
+.demo-banner strong { font-weight: 700; }
+html, body { margin: 0; min-width: 0; }
+
+/* Preview-only phone adaptation, separate from the production starter.
+   Keep the ledger's genuine two-dimensional scroll inside its own region.
+   Its absolutely positioned screen-reader heading must also be contained. */
+@media (max-width: 700px) {
+  .workbench { min-height: 100dvh; }
+  .main-column, main, main > section, .finance-overview > section { min-width: 0; }
+  .finance-overview { grid-template-columns: minmax(0, 1fr); }
+  .table-scroll, .habit-table { position: relative; max-width: 100%; }
+  .table-scroll { overscroll-behavior-inline: contain; }
+  .section-heading, .page-heading { flex-wrap: wrap; }
+  .page-heading > div:first-child { min-width: 0; flex: 1 1 180px; }
+  .page-heading h1 { overflow-wrap: anywhere; }
+  .section-heading > span { line-height: 1.6; }
+  .obligation-grid { grid-template-columns: minmax(0, 1fr); }
+  .segmented { max-width: 100%; }
+  button, input, select, textarea { min-height: 44px; min-width: 44px; }
+  input, select, textarea { font-size: 16px; }
+  .sidebar input, .sidebar select { font-size: 16px; }
+  .balance select { min-height: 44px; }
+  .record-actions { gap: 12px; flex-wrap: wrap; }
+  .record-actions button, td button { padding-inline: 10px; }
+  .topbar > div { gap: 8px; }
+  .bar-chart { min-width: 0; }
+  .trip-journey { grid-template-columns: 36px minmax(0, 1fr); }
+  .trip-journey > div { min-width: 0; }
+  .card-top { flex-wrap: wrap; }
+  .trip-journey h2, .agenda-event h3, .agenda-event p { overflow-wrap: anywhere; }
+  .agenda-event { grid-template-columns: minmax(0, 1fr) auto; }
+  .focus-stage > label { flex-wrap: wrap; justify-content: center; }
+  .timer { font-size: clamp(48px, 18vw, 75px); }
+  .backdrop { z-index: 110; }
+  .sheet {
+    height: 100dvh;
+    padding: max(22px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right)) max(22px, env(safe-area-inset-bottom)) max(22px, env(safe-area-inset-left));
+    scroll-padding-block: 22px;
+  }
+  .sheet > header { gap: 12px; }
+  .sheet > header h2 { overflow-wrap: anywhere; }
+  .sheet-actions { flex-wrap: wrap; gap: 12px; }
+  .sheet-actions button { flex: 1; }
+}

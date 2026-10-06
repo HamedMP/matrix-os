@@ -1,0 +1,20 @@
+{
+  "sourceHead": "97033cd24e23c2ed848a0ae87991eeed43dc649a",
+  "sourceDirectory": "home/app-templates/connected-starter/dist",
+  "catalog": "home/system/app-gallery.json",
+  "prototypeOnly": true,
+  "assetSha256": {
+    "index-K-kwZJx4.css": "d9226f21084116bfabe3be9aad5a6110712ebcc75ccfab6f3c377bc5a9e8bd1e",
+    "index-DtZVQcb9.js": "71f062264f30c26085291a5fa52157b9e95d47491c4319fa9a943130ab416d70"
+  },
+  "apps": [
+    "folio",
+    "atlas",
+    "agenda",
+    "subscriptions",
+    "focus",
+    "meeting-briefs",
+    "projects",
+    "revenue"
+  ]
+}

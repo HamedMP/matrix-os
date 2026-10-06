@@ -1,0 +1,26 @@
+.variant-c { max-width: 1260px; margin: auto; padding: 32px 48px 72px; }
+.guided-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.guided-intro { display: grid; grid-template-columns: 1fr 0.94fr; align-items: center; gap: 100px; padding: 80px 0 62px; }
+.guided-copy h1 { font: 560 clamp(40px, 4.8vw, 67px)/1.04 'Instrument Sans', sans-serif; letter-spacing: -2.6px; margin: 0 0 26px; }
+.guided-copy p { font-size: 19px; line-height: 1.6; color: var(--muted); max-width: 430px; margin: 0 0 28px; }
+.guided-reassurance { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-top: 18px; }
+.tool-to-app { border-radius: 24px; background: var(--paper); border: 1px solid var(--border); overflow: hidden; }
+.tool-selection { padding: 26px; }
+.tool-selection .small-heading { display: block; margin-bottom: 14px; font-weight: 550; font-size: 15px; }
+.tool-selection button { width: 100%; display: flex; text-align: left; align-items: center; gap: 14px; padding: 13px 0; border: 0; background: none; min-height: 64px; }
+.tool-selection button > span:nth-child(2) { flex: 1; min-width: 0; }
+.tool-selection button strong, .tool-selection button small { display: block; }
+.tool-selection button strong { font-weight: 550; margin-bottom: 4px; }
+.tool-selection button small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.tool-selection button.active > svg { color: var(--forest); }
+.tool-symbol { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; border-radius: 13px; background: var(--canvas); color: var(--forest); }
+.possibility-note { padding: 19px 26px; background: var(--forest); color: var(--paper); display: flex; align-items: flex-start; gap: 12px; }
+.possibility-note svg { flex-shrink: 0; margin-top: 4px; }
+.possibility-note p { margin: 0; font-size: 14px; line-height: 1.6; }
+.guided-collection { border-top: 1px solid var(--border); padding-top: 34px; }
+.guided-collection .section-title { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 26px; }
+.guided-collection h2 { margin: 0 0 8px; font-size: 26px; font-weight: 550; letter-spacing: -0.6px; }
+.guided-collection .section-title p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.guided-app-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+@media(max-width: 1000px) { .variant-c { padding: 28px; } .guided-intro { gap: 40px; padding: 48px 0; } .guided-collection .section-title { align-items: start; flex-direction: column; } .guided-app-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media(max-width: 600px) { .variant-c { padding: 22px 18px 40px; } .guided-intro { grid-template-columns: minmax(0, 1fr); gap: 28px; padding: 36px 0; } .guided-copy h1 { letter-spacing: -1.8px; font-size: 45px; } .guided-copy p { font-size: 16px; } .guided-app-grid { grid-template-columns: minmax(0, 1fr); } .tool-selection { padding: 22px; } .guided-header .store-wordmark span { display: none; } }
