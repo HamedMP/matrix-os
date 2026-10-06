@@ -1,3 +1,4 @@
+import { createCustomBotChats } from "../bots/custom-direct-chat.js";
 import { createManagedPiOwnerTools } from "../chat/managed-pi-owner-tools.js";
 import { createManagedPiAdmission } from "../chat/managed-pi-admission.js";
 import { createManagedPiRuntime } from "../chat/managed-pi-runtime.js";
@@ -210,19 +211,7 @@ export async function startBots(options: {
     clearInterval(sweep);
     await sweeping;
   };
-  const botChats: BotChatLookup = {
-    async directChat(owner, agentId) {
-      if (owner.type !== "personal") return null;
-      const agent = await options.agents.get(owner, agentId);
-      if (!agent?.recipeRef || agent.archived) return null;
-      return await bindings.directChatId({ ownerId: owner.ownerId, botId: agentId }) ?? null;
-    },
-    async directBot(owner, chatId) {
-      if (owner.type !== "personal") return null;
-      const bound = await bindings.forChat({ ownerId: owner.ownerId, chatId });
-      return bound.find((binding) => binding.kind === "direct")?.botId ?? null;
-    },
-  };
+  const botChats = createCustomBotChats({ chats: options.repository, agents: options.agents });
   const tasks: BotServices["tasks"] = async (ownerId, chatId) => {
     const botId = await botChats.directBot({ type: "personal", ownerId }, chatId);
     if (!botId) return [];

@@ -11,7 +11,7 @@ function setup(lookup: () => Promise<string | null>, recipeBot = true) {
   const base = clientFixture();
   base.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, ...(recipeBot ? { recipeRef: { recipeId: "writing-bot", version: "1" } } : {}) }] });
   const directChat = vi.fn(lookup);
-  const client = { ...base, bots: { directChat } } as unknown as ChatAgentClient;
+  const client = { ...base, bots: { directChat, ensureDirectChat: directChat } } as unknown as ChatAgentClient;
   const onStartChat = vi.fn(), onOpenBotChat = vi.fn();
   render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} onOpenBotChat={onOpenBotChat} /></ChatAgentsWorkspace>);
   return { directChat, onStartChat, onOpenBotChat };
@@ -31,16 +31,17 @@ describe("bot sidebar navigation", () => {
     expect(handlers.onStartChat).not.toHaveBeenCalled();
     expect(handlers.onOpenBotChat).not.toHaveBeenCalled();
   });
-  it("preserves ordinary Agent drafts", async () => {
-    const handlers = setup(async () => null, false);
+  it("opens old definitions as their dedicated Bot without starting ordinary Agent drafts", async () => {
+    const handlers = setup(async () => "chat_custom", false);
     fireEvent.click(await screen.findByRole("button", { name: `Chat with ${saved.name}` }));
-    await waitFor(() => expect(handlers.onStartChat).toHaveBeenCalledWith("", [{ kind: "agent", id: saved.id, label: saved.name, revision: "1" }]));
+    await waitFor(() => expect(handlers.onOpenBotChat).toHaveBeenCalledWith("chat_custom"));
     expect(handlers.directChat).toHaveBeenCalledWith(saved.id);
+    expect(handlers.onStartChat).not.toHaveBeenCalled();
   });
   it("finishes the host's accepted navigation when the host closes Agents", async () => {
     const base = clientFixture();
     base.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipeRef: { recipeId: "writing-bot", version: "1" } }] });
-    const client = { ...base, bots: { directChat: vi.fn(async () => "chat_bot_direct") } } as unknown as ChatAgentClient;
+    const client = { ...base, bots: { ensureDirectChat: vi.fn(async () => "chat_bot_direct") } } as unknown as ChatAgentClient;
     const onOpen = vi.fn(), openedChat = vi.fn();
     function Host() {
       const navigation = useChatAgentsNavigation();
@@ -57,7 +58,7 @@ describe("bot sidebar navigation", () => {
     let finish!: (chatId: string) => void;
     const base = clientFixture();
     base.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipeRef: { recipeId: "writing-bot", version: "1" } }] });
-    const client = { ...base, bots: { directChat: vi.fn(() => new Promise<string>(resolve => { finish = resolve; })) } } as unknown as ChatAgentClient;
+    const client = { ...base, bots: { ensureDirectChat: vi.fn(() => new Promise<string>(resolve => { finish = resolve; })) } } as unknown as ChatAgentClient;
     const openedChat = vi.fn();
     function Host() {
       const navigation = useChatAgentsNavigation();

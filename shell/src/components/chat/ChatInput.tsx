@@ -43,7 +43,7 @@ export function ChatInput({
   attachmentsEnabled,
   driveContextEnabled = false,
   botContext = false,
-  botControls,
+  botControls, botConsentResources = [], botRequiresFullAccess = false,
   speechClient,
   speechCaptureAdapter,
 }: {
@@ -65,6 +65,8 @@ export function ChatInput({
   driveContextEnabled?: boolean;
   botContext?: boolean;
   botControls?: React.ReactNode;
+  botRequiresFullAccess?: boolean;
+  botConsentResources?: import("@matrix-os/contracts").CanonicalChatResourceReference[];
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
 }) {
@@ -74,7 +76,8 @@ export function ChatInput({
   const [dismissedQuery, setDismissedQuery] = useState<string | null>(null);
   const queryMatch = /(?:^|\s)@([^\s@]*)$/.exec(input);
   const query = queryMatch && dismissedQuery !== input ? queryMatch[1]! : null;
-  const permission = useChatMentionPermission(scope, resources, permissionMode, composer.permissionIdentity);
+  const permissionResources = botConsentResources.length ? botConsentResources : resources;
+  const permission = useChatMentionPermission(scope, permissionResources, permissionMode, composer.permissionIdentity);
   const mayQueue = resources.length > 0;
   const canAbort = Boolean(activeRunId && onAbortCurrent);
 
@@ -102,7 +105,7 @@ export function ChatInput({
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const contextEnabled = driveContextEnabled && !botContext;
   const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
-  const canSend = !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length, text: input, attachments: attachments.length });
+  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length, text: input, attachments: attachments.length });
 
   useEffect(() => {
     inputRef.current = input;
@@ -133,7 +136,7 @@ export function ChatInput({
       const accepted = await onSubmit(text || (files?.length ? `Attached ${files.length} file(s)` : ""), files, {
         resources, clientRequestId: composer.requestId || crypto.randomUUID(), permissionMode: permission.permissionMode,
       });
-      if (accepted !== false) { composer.clear(); clearAll(); }
+      if (accepted !== false) { permission.confirm(false); composer.clear(); clearAll(); }
     } catch (failure: unknown) {
       console.warn("[chat] Message submission failed:", failure instanceof Error ? failure.name : "UnknownError");
       setError("Message could not be sent. Try again.");
@@ -159,7 +162,7 @@ export function ChatInput({
         textareaRef.current?.focus();
       }}/>
       <ChatMentionTokens resources={resources} onRemove={(resource) => composer.setResources(resources.filter((item) => item !== resource))} />
-      <ChatMentionControls client={agentClient} resources={resources} permissionMode={permissionMode} confirmed={permission.confirmed} onConfirm={permission.confirm} />
+      <ChatMentionControls client={agentClient} resources={permissionResources} permissionMode={permissionMode} bot={botContext} requiresFullAccess={botRequiresFullAccess} confirmed={permission.confirmed} onConfirm={permission.confirm} />
       {botMention.pending ? <p role="status" className="text-xs">Opening bot Chat…</p> : null}
       {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}

@@ -8,7 +8,7 @@ import { createCanonicalChatClient } from "@desktop/renderer/src/lib/canonical-c
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import type { ChatAgentClient } from "@matrix-os/ui";
 import type { CanonicalChatEventSource, CanonicalChatInvalidation } from "@matrix-os/ui";
-import { createCanonicalChatWorkspaceClient, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
+import { createCanonicalChatWorkspaceClient, canonicalChatRecord, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
 import { BotHeaderContext } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 
 beforeAll(() => {
@@ -75,7 +75,7 @@ describe("Electron Desktop bot Chat", () => {
       directBot: vi.fn(async () => "bot_research1"), interactions,
       tasks: vi.fn(async () => []), authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1,
         grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
-    }, list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
+    }, list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "auto" }, recipeRef: { recipeId: "research", version: "1" } }] })) } as unknown as ChatAgentClient;
     const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
     const eventSource = { subscribe(listener: (event: CanonicalChatInvalidation) => void) {
       listeners.add(listener); return { dispose: () => { listeners.delete(listener); } };
@@ -101,7 +101,7 @@ describe("Electron Desktop bot Chat", () => {
       authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1,
         grants: [{ grantId: "gr_abcdefgh", service: "gmail", accountLabel: "Work", effects: ["read"], audience: "direct", expiresAt: null }],
         connections: [{ service: "gmail", state: "granted" }], routines: [], pendingInteractions: [], memory: { items: [] } })),
-    }, list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
+    }, list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "auto" }, recipeRef: { recipeId: "research", version: "1" } }] })) } as unknown as ChatAgentClient;
     render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
       initialView="conversation" active catalog={providerCatalog} />);
     fireEvent.change(await screen.findByRole("textbox", { name: "Answer Target" }), { target: { value: "Acme" } });
@@ -120,7 +120,7 @@ it("admits a direct bot turn when the ordinary provider catalog is empty", async
   client.agents = { bots: { directBot: vi.fn(async () => "bot_research1"), interactions: vi.fn(async () => []),
     tasks: vi.fn(async () => []), authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1,
       grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) },
-    list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
+    list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "auto" }, recipeRef: { recipeId: "research", version: "1" } }] })) } as unknown as ChatAgentClient;
   render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation"
     active catalog={{ ...providerCatalog, instances: [] }} />);
   await screen.findByRole("button", { name: "Choose bot agent and model" });
@@ -133,4 +133,23 @@ it("admits a direct bot turn when the ordinary provider catalog is empty", async
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
     expect.objectContaining({ selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default" }), expect.anything()));
+});
+
+it("Electron Desktop custom Bot keeps its saved executor and request-scoped consent", async () => {
+  const catalog = structuredClone(providerCatalog), base = catalog.instances[0]!;
+  const bot = { id: "bot_custom01", name: "Custom Helper", revision: 1, instructions: "Read only", description: "", archived: false, selection: { instanceId: "hermes_custom", model: "retained" } };
+  catalog.instances = [{ ...base, id: bot.selection.instanceId, driverKind: "hermes", displayName: "Hermes", models: [{ ...base.models[0]!, id: bot.selection.model }], supports: { ...base.supports, permissionModes: ["full_access"] } }];
+  const client = createCanonicalChatWorkspaceClient();
+  vi.mocked(client.admitTurn).mockResolvedValue({record:{...canonicalChatRecord,chat:{...canonicalChatRecord.chat,revision:canonicalChatRecord.chat.revision+1}},message:snapshot.messages[0]!,turn:snapshot.turns[0]!,run:snapshot.runs[0]!,admission:"accepted"});
+  const bots = { directBot: vi.fn(async()=>bot.id), interactions: vi.fn(), tasks: vi.fn(), authority: vi.fn() };
+  client.agents = { bots, list: vi.fn(async()=>({enabled:true,agents:[bot]})) } as never;
+  render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation" active catalog={catalog}/>);
+  await screen.findAllByText(bot.name);
+  await setSharedComposerText(screen.getByRole("textbox",{name:"Reply to chat"}), "Read only");
+  expect(screen.getByRole("button",{name:"Send"})).toHaveProperty("disabled",true);
+  fireEvent.click(screen.getByRole("checkbox",{name:"Allow Full access on this computer for this Bot request."}));
+  fireEvent.click(screen.getByRole("button",{name:"Send"}));
+  await waitFor(()=>expect(client.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,expect.objectContaining({selection:bot.selection,permissionMode:"full_access",parts:expect.arrayContaining([{type:"resource_reference",resource:{kind:"agent",id:bot.id,label:bot.name,revision:"1"}}])}),expect.anything()));
+  await waitFor(()=>expect(screen.getByRole("checkbox",{name:"Allow Full access on this computer for this Bot request."})).toHaveProperty("checked",false));
+  expect(bots.authority).not.toHaveBeenCalled();expect(bots.tasks).not.toHaveBeenCalled();
 });

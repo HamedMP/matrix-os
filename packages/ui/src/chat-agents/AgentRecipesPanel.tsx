@@ -91,7 +91,7 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
   const launchIds = useMemo(() => Object.fromEntries(botRecipes.map((recipe) => [recipe.recipeId, true] as const)), [botRecipes]);
   const visibleBotRecipes = botRecipes.filter((recipe) => (category === "All" || agentInspirations.some(idea => idea.id === recipe.recipeId && fitsCategory(idea))) && (!normalized || [recipe.name, recipe.description, recipe.output]
     .some((value) => value.toLocaleLowerCase().includes(normalized))));
-  const showJev = !botMode && !Object.hasOwn(launchIds, jevRecipe.id) && (!normalized || [jevRecipe.name, jevRecipe.description, jevRecipe.category,
+  const showJev = Boolean(onCreateJev || !botMode) && !Object.hasOwn(launchIds, jevRecipe.id) && (!normalized || [jevRecipe.name, jevRecipe.description, jevRecipe.category,
     ...jevRecipe.skills, ...jevRecipe.integrations].some((value) => value.toLocaleLowerCase().includes(normalized)));
   const matches = useMemo(() => normalized ? agentInspirations.filter((recipe) =>
     fitsCategory(recipe) && (!botMode || !isLaunchBotRecipeId(recipe.id)) && !Object.hasOwn(launchIds, recipe.id) &&

@@ -69,21 +69,25 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
     let current = true;
     const refresh = async () => {
       try {
-        const [pending, activeTasks, view, library] = await Promise.allSettled([
-          bots.interactions(chatId), bots.tasks(chatId), bots.authority(agentId), client.list(),
+        const library = await client.list();
+        if (!current) return;
+        const saved = library.enabled ? library.agents.find(candidate => candidate.id === agentId && !candidate.archived) : undefined;
+        if (!saved) throw new Error("Bot definition unavailable");
+        if (saved.revision >= latestRevision.current) {
+          latestRevision.current = saved.revision; setAgent(saved); setName(saved.name);
+        }
+        if (!saved.recipeRef) {
+          setInteractions([]); setInteractionsFresh(false); setTasks([]); setAuthority(null); setError("");
+          return;
+        }
+        const [pending, activeTasks, view] = await Promise.allSettled([
+          bots.interactions(chatId), bots.tasks(chatId), bots.authority(agentId),
         ]);
         if (!current) return;
         if (pending.status === "fulfilled") setInteractions(pending.value);
         setInteractionsFresh(pending.status === "fulfilled");
         if (activeTasks.status === "fulfilled") setTasks(activeTasks.value);
         if (view.status === "fulfilled") setAuthority(view.value);
-        if (library.status === "fulfilled") {
-          const agent = library.value.agents.find((candidate) => candidate.id === agentId);
-          if (agent && agent.revision >= latestRevision.current) {
-            latestRevision.current = agent.revision; setAgent(agent); setName(agent.name);
-          }
-        }
-        if (library.status === "rejected") console.warn("[chat-agents] Bot name unavailable:", library.reason instanceof Error ? library.reason.name : "UnknownError");
         setError(pending.status === "rejected" || activeTasks.status === "rejected" || view.status === "rejected"
           ? "Bot status could not be loaded. Try again." : "");
       } catch (failure: unknown) {
