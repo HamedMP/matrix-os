@@ -192,6 +192,8 @@ export interface BotSchemaMigrationsTable {
 }
 
 export interface BotDatabase {
+  /** Dormant device trust pins: compatibility must never replace or remove these rows. */
+  bot_chatgpt_plan_devices: { owner_id: string; computer_id: string; device_id: string; public_key: string };
   managed_pi_sessions: Omit<BotAgentSessionsTable, "bot_id">;
   managed_pi_tool_checkpoints: Omit<BotToolCheckpointsTable, "task_id"> & { chat_id: string };
   bot_schema_migrations: BotSchemaMigrationsTable;
