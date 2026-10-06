@@ -68,16 +68,22 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
   async function transaction<T>(work: (trx: DB) => Promise<T>): Promise<T> {
     if (pendingTransactions >= 1000) throw new WhatsAppRepositoryError('capacity');
     pendingTransactions += 1;
-    const result = transactionTail.then(async () => {
+    const admitted = platform.executor.isTransaction;
+    const run = async () => {
       await platform.ready;
-      return db.transaction().execute(async (trx) => {
+      return platform.transaction(async (scoped) => {
+        const trx = scoped.executor as unknown as DB;
         await sql`SELECT pg_advisory_xact_lock(5460001)`.execute(trx);
         return work(trx);
       });
-    });
+    };
+    // An admitted request already holds a pool connection. Waiting behind a
+    // background transaction that needs that connection would deadlock the
+    // pool. Keep the capacity bound and database fence, bypassing only this queue.
+    const result = admitted ? run() : transactionTail.then(run);
     // Rejections remain observable through result; only queue continuation is
     // normalized, so a rejected request cannot poison subsequent operations.
-    transactionTail = result.then(() => undefined, () => undefined);
+    if (!admitted) transactionTail = result.then(() => undefined, () => undefined);
     try { return await result; }
     finally { pendingTransactions -= 1; }
   }
@@ -275,10 +281,9 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
       const conflicting = await trx.selectFrom('whatsapp_connections').selectAll()
         .where((eb) => eb.or([eb('owner', '=', owner), eb('sender', '=', challenge.sender)])).execute();
       if (conflicting.some((row) => row.owner !== owner || row.sender !== challenge.sender)) return null;
-      await trx.insertInto('whatsapp_connections').values({ id: randomUUID(), owner, sender: challenge.sender, chat_id: null, machine_id: null, consent_version: consentVersion, created_at: time })
-        .onConflict((oc) => oc.doNothing()).execute();
-      const persisted = await trx.selectFrom('whatsapp_connections').selectAll().where('owner', '=', owner).executeTakeFirst();
-      if (!persisted || persisted.sender !== challenge.sender) throw new WhatsAppRepositoryError('invalid_link');
+      // These typed validation failures become 4xx responses in a guarded
+      // request. Validate before writes so the admitted transaction can commit
+      // intentional wrong-code attempt counts without committing failed linking.
       const proof = decryptWhatsAppPayload(challenge.token_cipher, key);
       const phone = WhatsAppPhoneSchema.optional().parse(proof.phone);
       // Older proofs did not retain the original reply deadline. Fail closed
@@ -288,6 +293,10 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
         replyDeadline < challenge.expires_at || replyDeadline > challenge.created_at + DAY_MS) {
         throw new WhatsAppRepositoryError('invalid_link');
       }
+      await trx.insertInto('whatsapp_connections').values({ id: randomUUID(), owner, sender: challenge.sender, chat_id: null, machine_id: null, consent_version: consentVersion, created_at: time })
+        .onConflict((oc) => oc.doNothing()).execute();
+      const persisted = await trx.selectFrom('whatsapp_connections').selectAll().where('owner', '=', owner).executeTakeFirst();
+      if (!persisted || persisted.sender !== challenge.sender) throw new WhatsAppRepositoryError('invalid_link');
       const consumed = await trx.updateTable('whatsapp_link_challenges').set({ state: 'consumed', code_hash: null, token_cipher: '' }).where('token_hash', '=', hash)
         .where('state', '=', 'claimed').where('owner', '=', owner).where('attempts', '<', 5).where('expires_at', '>', time).returning('token_hash').executeTakeFirst();
       if (!consumed) throw new WhatsAppRepositoryError('invalid_link');
@@ -329,7 +338,16 @@ export function createWhatsAppRepository(platform: PlatformDB, configuredKey: Bu
     });
   }
   async function enqueue(input: WhatsAppEnqueueInput): Promise<boolean> {
-    return transaction((trx) => insertJob(trx, input, now()));
+    return transaction(async (trx) => {
+      // An ingest snapshot taken before disconnect/deletion must not resurrect owner data.
+      if (typeof input.payload.owner === 'string' && typeof input.payload.connectionId === 'string') {
+        const current = await trx.selectFrom('whatsapp_connections').select('id')
+          .where('owner', '=', input.payload.owner).where('sender', '=', input.sender)
+          .where('id', '=', input.payload.connectionId).executeTakeFirst();
+        if (!current) return false;
+      }
+      return insertJob(trx, input, now());
+    });
   }
   async function lease(): Promise<WhatsAppJob | null> {
     let quarantined = false;

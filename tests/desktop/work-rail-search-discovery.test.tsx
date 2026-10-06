@@ -24,12 +24,30 @@ describe("Work search discovery", () => {
   });
   it("reads only authorized existing shared discovery and delegates invitation review to the shared tab", async () => {
     api.get.mockResolvedValue({ items: [{ scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "actor_owner", kind: "chat", authorityGeneration: 1, status: "invited", invitationId: "20000000-0000-4000-8000-000000000001" }] });
-    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" onClose={vi.fn()} onSelect={vi.fn()} />);
+    const onOpenShared = vi.fn();
+    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" onClose={vi.fn()} onSelect={vi.fn()} onOpenShared={onOpenShared} />);
     fireEvent.click(screen.getByRole("tab", { name: "Shared" }));
     fireEvent.click(await screen.findByRole("option", { name: "Shared chat invitation, Invitation · Shared chat" }));
     expect(api.get).toHaveBeenCalledWith("/api/collaboration/inbox");
     expect(api.get).toHaveBeenCalledWith("/api/collaboration/shared");
-    expect(useTabs.getState().tabs.find(tab => tab.kind === "shared")).toBeTruthy();
+    expect(onOpenShared).toHaveBeenCalledOnce();
+    expect(useTabs.getState().tabs).toEqual([]);
+  });
+  it("keeps accepted shared projects out of search because the Projects rail owns them", async () => {
+    api.get.mockResolvedValue({ items: [{
+      scopeId: "10000000-0000-4000-8000-000000000101",
+      runtimeId: "vps:11111111-1111-4111-8111-111111111111",
+      ownerId: "actor_owner",
+      kind: "project",
+      authorityGeneration: 1,
+      status: "accepted",
+    }] });
+    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" onClose={vi.fn()} onSelect={vi.fn()} onOpenShared={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Shared" }));
+
+    expect(await screen.findByText("No shared items found.")).toBeTruthy();
+    expect(screen.queryByRole("option")).toBeNull();
   });
   it("clears the prior actor's discovery before a new actor lookup completes", async () => {
     api.get.mockResolvedValue({ items: [{ scopeId: "10000000-0000-4000-8000-000000000001", runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "actor_owner", kind: "chat", authorityGeneration: 1, status: "invited", invitationId: "20000000-0000-4000-8000-000000000001" }] });

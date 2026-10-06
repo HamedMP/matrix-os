@@ -23,12 +23,14 @@ export function createChatProviderRoutes(options: {
         includeConnectionLabels: z.enum(["true", "false"]).optional(),
         includeConnectionState: z.enum(["true", "false"]).optional(),
         includeFundingState: z.enum(["true", "false"]).optional(),
+        includeChatFunding: z.enum(["true", "false"]).optional(),
         includeSettingsSetupActions: z.enum(["true", "false"]).optional(),
       }).strict().safeParse({
         refresh: context.req.query("refresh"),
         includeConnectionLabels: context.req.query("includeConnectionLabels"),
         includeConnectionState: context.req.query("includeConnectionState"),
         includeFundingState: context.req.query("includeFundingState"),
+        includeChatFunding: context.req.query("includeChatFunding"),
         includeSettingsSetupActions: context.req.query("includeSettingsSetupActions"),
       });
       if (!query.success) return context.json({ error: "Invalid request" }, 400);
@@ -47,8 +49,9 @@ export function createChatProviderRoutes(options: {
           ...legacy,
           ...(query.data.includeConnectionLabels === "true" && connectionLabel !== undefined ? { connectionLabel } : {}),
           ...(query.data.includeConnectionState === "true" && connectionState !== undefined ? {
-            connectionState: connectionState === "credit_reserved" && query.data.includeFundingState !== "true"
-              ? "credit_required" : connectionState,
+            connectionState: connectionState === "budget_exceeded" && query.data.includeChatFunding !== "true"
+              ? "unavailable" : connectionState === "credit_reserved" && query.data.includeFundingState !== "true"
+                ? "credit_required" : connectionState,
           } : {}),
         })),
       });

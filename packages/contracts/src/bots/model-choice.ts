@@ -72,6 +72,7 @@ export function canonicalProviderAvailabilityReasonLabel(
   const fundingState = canonicalProviderFundingState(instance);
   if (fundingState === "credit_required") return "Matrix AI credit required";
   if (fundingState === "credit_reserved") return "Matrix AI credit reserved";
+  if (fundingState === "budget_exceeded") return "Monthly AI budget reached";
   if (fundingState === "unavailable") return "Matrix AI unavailable";
   if (instance.availability === "available") return "Available";
   if (instance.unavailabilityReason) return UNAVAILABLE_LABELS[instance.unavailabilityReason];

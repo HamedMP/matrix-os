@@ -10,6 +10,7 @@ import {
   type AiProviderSnapshotV3,
   type FundedAiEffectivePolicy,
   type FundedAiFundingSummary,
+  type FundedAiChatAvailability,
   type ProviderAccount,
   type ProviderAccessSource,
   type ProviderDependencyCounts,
@@ -125,6 +126,7 @@ function projectAccessSources(
   fundedPolicy?: FundedAiEffectivePolicy,
   fundedPolicyAuthoritative = false,
   now = new Date(),
+  chatAvailability?: FundedAiChatAvailability,
 ) {
   const { sourceByAccount, sourceIds } = selectedCanonicalSources(canonical, config);
   const accountBySource = new Map([...sourceByAccount].map(([accountId, sourceId]) => [sourceId, accountId]));
@@ -186,6 +188,7 @@ function projectAccessSources(
         periodStartedAt: fundingSummary.periodStart,
         resetsAt: nextUtcMonth(fundingSummary.periodStart),
         asOf: fundingSummary.asOf,
+        ...(chatAvailability ? { chatAvailability } : {}),
         credit: {
           promotionalBalanceMicrousd: fundingSummary.promotionalBalanceMicrousd,
           addonBalanceMicrousd: fundingSummary.addonBalanceMicrousd,
@@ -425,6 +428,7 @@ export async function projectProviderSettings(input: {
   dependencies?: ProviderSettingsDependencyReader;
   supportedActions: ProviderSettingsSupportedAction[];
   fundingSummary?: FundedAiFundingSummary;
+  chatAvailability?: FundedAiChatAvailability;
   fundedPolicy?: FundedAiEffectivePolicy;
   fundedPolicyAuthoritative?: boolean;
   genericModelCatalog?: GenericHarnessModelCatalog;
@@ -447,6 +451,7 @@ export async function projectProviderSettings(input: {
     input.fundedPolicy,
     fundedPolicyAuthoritative,
     input.now,
+    input.chatAvailability,
   );
   const generatedSourceIds = new Set(input.config.harnesses.filter((harness) => harness.enablementOrigin === "generated_default")
     .flatMap((harness) => harness.accessSourceId ? [harness.accessSourceId] : []));

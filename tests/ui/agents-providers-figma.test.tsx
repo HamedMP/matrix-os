@@ -469,7 +469,7 @@ it("keeps missing-runtime purchase explanations out of the overview while showin
   const { GatewayPanel } = await import("../../packages/ui/src/agents-providers/GatewayPanel");
   render(<GatewayPanel source={null} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   expect(screen.queryByText(/Credit purchases are unavailable/)).not.toBeInTheDocument();
-  expect(screen.getByText("Credit unavailable")).toBeInTheDocument();
+  expect(screen.getByText("Chat credit unavailable")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Buy credit" })).toBeEnabled();
 });
 

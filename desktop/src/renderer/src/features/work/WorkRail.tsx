@@ -37,6 +37,7 @@ import { WorkRailGroups, type WorkRailSectionKey } from "./work-rail/WorkRailGro
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 import { DesktopProjectSharingHost, useDesktopProjectSharingContext } from "../project/DesktopProjectSharing";
+import { DesktopSharedWithMeDialog } from "../chat/DesktopChatCollaboration";
 
 type SectionKey = WorkRailSectionKey;
 
@@ -119,6 +120,11 @@ export function WorkRail({
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [sharedWithMeOpen, setSharedWithMeOpen] = useState(false);
+  const [sharedProjectRevealRequest, setSharedProjectRevealRequest] = useState<{
+    scopeId: string;
+    requestId: number;
+  }>();
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
   const projectedChatTitlesRef = useRef(projectedChatTitles);
@@ -149,6 +155,7 @@ export function WorkRail({
 
   useEffect(() => {
     if (!active || !client) setSearchOpen(false);
+    if (!active) setSharedWithMeOpen(false);
     if (!active) setShareProjectTarget(null);
   }, [active, client]);
 
@@ -244,6 +251,13 @@ export function WorkRail({
 
   const toggleSection = (key: SectionKey) => {
     setSections((current) => ({ ...current, [key]: !current[key] }));
+  };
+  const revealSharedProject = (scopeId: string) => {
+    setSections((current) => current.projects ? current : { ...current, projects: true });
+    setSharedProjectRevealRequest((current) => ({
+      scopeId,
+      requestId: (current?.requestId ?? 0) + 1,
+    }));
   };
 
   const updatePinned = (record: CanonicalChatRecord) => {
@@ -417,11 +431,12 @@ export function WorkRail({
       />
       <WorkRailScrollArea>
       <WorkRailSearchControls onSearch={() => setSearchOpen(true)} sortMode={order.mode} onSortChange={order.setMode} />
-      <SharedWithMeRailRow />
+      <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
       <ChatAgentsRailSection activeChatId={activeChatId} client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
         onOpenBotChat={onOpenBotChat ? (chatId) => { agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
+        revealSharedProjectRequest={sharedProjectRevealRequest}
         organizationDrives={<OrganizationDrivesRail active={active} chats={ordinaryRecords} client={client?.agents} onNewChat={onStartAgentChat} onSelectChat={onSelectChat} activeChatId={activeChatId} />} />
         {status === "loading" && records.length === 0 ? (
           <p role="status" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading chats…</p>
@@ -467,12 +482,15 @@ export function WorkRail({
         status={status}
         onSelectProject={(project) => { setSearchOpen(false); onSelectProject(project); }}
         onClose={() => setSearchOpen(false)}
+        onOpenShared={() => setSharedWithMeOpen(true)}
         onSelect={(record, project) => {
           setSearchOpen(false);
           if (project) onSelectChat(record, project);
           else onSelectChat(record);
         }}
       />
+      <DesktopSharedWithMeDialog open={sharedWithMeOpen} onClose={() => setSharedWithMeOpen(false)}
+        onOpenProject={revealSharedProject} />
       {shareProjectTarget
         && projectSharing?.organizationId === shareProjectTarget.organizationId
         && shareProjectTarget.project.id ? (

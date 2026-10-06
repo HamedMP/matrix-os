@@ -259,6 +259,12 @@ function MountedUserButton({
               <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
               Manage account
             </DropdownMenuPrimitive.Item>
+            <DropdownMenuPrimitive.Item asChild>
+              <a className={itemClass} href="https://app.matrix-os.com/account/delete" target="_blank" rel="noreferrer">
+                <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+                Account data and deletion
+              </a>
+            </DropdownMenuPrimitive.Item>
             {showSharedWithMe ? <DropdownMenuPrimitive.Item asChild>
               <Link className={itemClass} href="/shared">
                 <UsersIcon className="size-4 text-muted-foreground" aria-hidden="true" />

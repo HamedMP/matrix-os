@@ -1,3 +1,4 @@
+import { createAccountDeletionMutationGuard } from '../account-deletion/integration-admission.js';
 import type { PlatformDB } from '../db.js';
 import { getRunningUserMachineByClerkId } from '../db.js';
 import type { ClerkAuth } from '../clerk-auth.js';
@@ -34,6 +35,8 @@ export function createConfiguredWhatsAppRuntime(deps: {
   });
   const service = createWhatsAppService({ config, repository, agent });
   const routes = createWhatsAppRoutes({ config, repository, service, publishableKey,
+    admissionMiddleware: createAccountDeletionMutationGuard({ db: deps.db, env: deps.env,
+      resolveOwner: (c) => c.get('whatsappOwner') as string | undefined }),
     authenticate: async (bearer) => {
       const verified = await clerkAuth.verify(bearer);
       return verified.authenticated && verified.userId ? verified.userId : null;

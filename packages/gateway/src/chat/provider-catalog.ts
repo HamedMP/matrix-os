@@ -39,6 +39,7 @@ import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
 import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
+import { fundedSelectionError } from "./funded-chat-error.js";
 
 const ADAPTER_VERSION = "1.0.0";
 type SystemDriverKind = typeof SYSTEM_DRIVERS[number];
@@ -773,6 +774,13 @@ export function validateChatProviderSelection(input: {
     candidate.id === selection.data.instanceId
   );
   if (instance?.availability !== "available") {
+    const fundingError = fundedSelectionError(instance);
+    if (fundingError) {
+      if (!instance?.models.some(candidate => candidate.id === selection.data.model)) {
+        return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
+      }
+      return { ok: false, error: fundingError };
+    }
     return selectionError(
       "provider_unavailable",
       "The selected Provider is not available.",

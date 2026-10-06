@@ -79,8 +79,11 @@ export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderIn
 
 /** Preserve a bound route while reporting why it cannot execute. */
 export function canonicalProviderUnavailableSelectionLabel(instance?: CanonicalProviderInstanceDescriptor | null, modelId?: string): string {
-  return instance && !isLegacyMatrixSdkProvider(instance) && instance.models.some(model => model.id === modelId) && canonicalProviderFundingState(instance) === "credit_reserved"
-    ? "Credit reserved" : "Unavailable";
+  if (!instance || isLegacyMatrixSdkProvider(instance) || !instance.models.some(model => model.id === modelId)) return "Unavailable";
+  const fundingState = canonicalProviderFundingState(instance);
+  if (fundingState === "credit_reserved") return "Credit reserved";
+  if (fundingState === "budget_exceeded") return "Monthly budget reached";
+  return "Unavailable";
 }
 
 export function codexLocalObservationLabel(observation?: AiProviderLocalObservation): string {

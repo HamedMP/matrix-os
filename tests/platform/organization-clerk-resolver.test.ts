@@ -23,6 +23,36 @@ function fakeClerk(memberCount: number, totalCount: number | null = memberCount)
 }
 
 describe("Clerk organization upstream pagination boundary", () => {
+  it("discovers every organization for an actor before an empty listing is considered authoritative", async () => {
+    const actorId = "user_member0000000000000000";
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe(`/v1/users/${actorId}/organization_memberships`);
+      expect(url.searchParams.get("limit")).toBe("100");
+      return new Response(JSON.stringify({
+        data: [
+          { id: "orgmem_a", organization: { id: org } },
+          { id: "orgmem_b", organization: { id: "org_2clerk0000000000000000002" } },
+        ],
+        total_count: 2,
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new ClerkOrganizationUpstreamClient({ secretKey: "sk_test_x", fetchImpl });
+
+    await expect(client.listOrganizationsForActor(actorId)).resolves.toEqual([
+      org,
+      "org_2clerk0000000000000000002",
+    ]);
+  });
+
+  it("rejects an actor organization listing that exceeds the platform cap", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: [], total_count: 101 }), { status: 200 })) as unknown as typeof fetch;
+    const client = new ClerkOrganizationUpstreamClient({ secretKey: "sk_test_x", fetchImpl });
+
+    await expect(client.listOrganizationsForActor("user_member0000000000000000"))
+      .rejects.toThrow(/organization count/);
+  });
+
   it("accepts an organization with exactly 2,000 members when total_count confirms it", async () => {
     const clerk = fakeClerk(2_000);
     const client = new ClerkOrganizationUpstreamClient({ secretKey: "sk_test_x", fetchImpl: clerk.fetchImpl });
