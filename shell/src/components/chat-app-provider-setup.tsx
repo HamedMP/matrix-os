@@ -329,7 +329,7 @@ export function ChatProviderSetupPanel({
         panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
         onDismiss();
       } }}
-      className="absolute right-3 top-14 z-30 w-[380px] max-w-[calc(100%-24px)] overflow-y-auto rounded-xl border border-border bg-background p-3 shadow-xl"
+      className="absolute right-3 top-14 z-30 w-[352px] max-w-[calc(100%-24px)] overflow-y-auto rounded-xl border border-border bg-background shadow-xl"
       style={{ maxHeight: "min(520px, calc(100% - 72px))" }}>
       <div className="grid min-w-0 gap-3">
         <div>
@@ -346,11 +346,11 @@ export function ChatProviderSetupPanel({
               panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
               onDismiss();
             }} />
-          {!loading && !catalog && choices.length === 0 ? <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
+          {!loading && !catalog && choices.length === 0 ? <p className="m-3 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
             Connect a harness in Settings to start chatting.
           </p> : null}
           {selected ? (
-            <details className="mt-2 border-t border-border pt-2">
+            <details className="mt-2 border-t border-border px-3 pb-3 pt-2">
               <summary className="cursor-pointer py-2 text-sm font-medium">Execution options</summary>
               <div className="grid gap-2 sm:grid-cols-2">
               <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
@@ -402,7 +402,7 @@ export function ChatProviderSetupPanel({
             </details>
           ) : null}
         </div>
-        {showChannels ? <div>
+        {showChannels ? <div className="px-3 pb-3">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Channels</p>
           <div className="grid grid-cols-2 gap-1.5">
             {CHANNEL_OPTIONS.map((option) => {

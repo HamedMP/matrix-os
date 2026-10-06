@@ -18,7 +18,7 @@ it.each(["Web Canvas","Web Desktop","Web Mobile"])("%s keeps a custom Bot execut
  const bots={directBot:vi.fn(async()=>saved.id),directChat:vi.fn(async()=>"chat_custom"),interactions:vi.fn(),tasks:vi.fn(),authority:vi.fn()};
  const submit=vi.fn(async()=>true);
  render(<ChatApp mobile={surface==="Web Mobile"} messages={[]} sessionId="chat_custom" busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={submit} agentClient={{...baseClient,bots} as never}/>);
- await screen.findByText(saved.name); const input=screen.getByRole("textbox",{name:/message/i});
+ await screen.findByRole("checkbox",{name:"Allow Full access on this computer for this Bot request."}); const input=screen.getByRole("textbox",{name:/message/i});
  fireEvent.change(input,{target:{value:"Read only"}});
  expect(screen.getByRole("button",{name:/send/i})).toHaveProperty("disabled",true);
  const consent=screen.getByRole("checkbox",{name:"Allow Full access on this computer for this Bot request."});fireEvent.click(consent);

@@ -106,6 +106,12 @@ vi.mock("../../shell/src/components/Settings.js", () => ({
   Settings: () => null,
 }));
 
+// Organization authentication is covered by organization-management-ui.test.tsx;
+// launcher tests isolate host chrome without mounting a Clerk session.
+vi.mock("../../shell/src/components/organization/OrganizationSwitcher", () => ({
+  OrganizationSwitcher: () => null,
+}));
+
 vi.mock("../../shell/src/components/canvas/CanvasRenderer.js", () => ({
   CanvasRenderer: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
 }));

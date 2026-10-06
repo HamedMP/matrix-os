@@ -137,15 +137,15 @@ describe("shared Agents entry", () => {
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} onOpenBotChat={onStartChat} /><ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
     await screen.findByRole("button",{name:"Chat with Meeting helper"});
     const items=screen.getAllByRole("button");
-    expect(items.findIndex(item=>item.getAttribute("aria-label")==="Chat with Meeting helper")).toBeLessThan(items.findIndex(item=>item.getAttribute("aria-label")==="Add new agent"));
+    expect(items.findIndex(item=>item.getAttribute("aria-label")==="Add new agent")).toBeLessThan(items.findIndex(item=>item.getAttribute("aria-label")==="Chat with Meeting helper"));
+    expect(screen.getByRole("button",{name:"Add new agent"}).closest('[data-slot="chat-sidebar-section-heading"]')).toBeTruthy();
     fireEvent.click(screen.getByRole("button",{name:"Chat with Meeting helper"}));
     await waitFor(()=>expect(onStartChat).toHaveBeenCalledWith("chat_custom"));
     fireEvent.click(screen.getByRole("button",{name:"Collapse agents"}));
     expect(screen.queryByRole("button",{name:"Chat with Meeting helper"})).toBeNull();
-    expect(screen.queryByRole("button",{name:"Add new agent"})).toBeNull();
+    expect(screen.getByRole("button",{name:"Add new agent"})).toBeTruthy();
     fireEvent.click(screen.getByRole("button",{name:"Agents"}));
     expect(await screen.findByRole("button",{name:`Edit ${saved.name}`})).toBeTruthy();
-    fireEvent.click(screen.getByRole("button",{name:"Expand agents"}));
     fireEvent.click(screen.getByRole("button",{name:"Add new agent"}));
     expect(await screen.findByRole("region",{name:"Agent recipes"})).toBeTruthy();
     expect(onStartChat).toHaveBeenCalledTimes(1);

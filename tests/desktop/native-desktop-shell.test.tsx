@@ -435,6 +435,7 @@ describe("native desktop shell", () => {
     expect(settingsWindow.querySelector("[data-os-window-sidebar]")).toBeTruthy();
     expect(settingsWindow.querySelector('[data-os-window-chrome-placement="sidebar"]')?.textContent).not.toContain("Settings");
     expect(within(settingsWindow).getByRole("navigation", { name: "Settings sections" })).toBeTruthy();
+    expect(within(settingsWindow).queryByRole("heading", { name: "Settings" })).toBeNull();
     expect(within(settingsWindow).getByRole("button", { name: "Account" })).toBeTruthy();
     expect(within(settingsWindow).getByRole("button", { name: "Organization" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();

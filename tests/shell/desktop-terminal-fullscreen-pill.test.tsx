@@ -54,6 +54,10 @@ vi.mock("../../shell/src/components/Settings.js", () => ({
   Settings: () => null,
 }));
 
+vi.mock("../../shell/src/components/organization/OrganizationSwitcher", () => ({
+  OrganizationSwitcher: () => null,
+}));
+
 vi.mock("../../shell/src/components/canvas/CanvasRenderer.js", () => ({
   CanvasRenderer: () => null,
 }));
