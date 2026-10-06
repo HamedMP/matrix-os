@@ -7,6 +7,7 @@ import { sql, type Kysely } from "kysely";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BotSchemaError, bootstrapBotDatabase, type OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { BOT_MIGRATIONS } from "../../../packages/gateway/src/bots/database-migrations.js";
+import { migrateChatGptPlanDevices } from "../../../packages/gateway/src/bots/chatgpt-plan-device-migration.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createBotGrantsRepository } from "../../../packages/gateway/src/bots/repositories/grants.js";
 import { createBotRoutes } from "../../../packages/gateway/src/bots/routes.js";
@@ -32,6 +33,20 @@ beforeEach(async () => {
 });
 afterEach(async () => { await services?.close(); services=undefined; await agents.close(); await destroy(); await rm(home,{recursive:true,force:true}); });
 async function rows(table: string) { return (await sql`SELECT * FROM ${sql.table(table)} ORDER BY 1, 2`.execute(db)).rows; }
+
+it("executes exactly the frozen released v6 DDL from the production migration", async () => {
+  const statements: Array<{ sql: string; parameters: readonly unknown[] }> = [];
+  const traced = db.withPlugin({
+    transformQuery({ node, queryId }) {
+      const query = db.getExecutor().compileQuery(node, queryId);
+      statements.push({ sql: query.sql, parameters: query.parameters });
+      return node;
+    },
+    async transformResult({ result }) { return result; },
+  });
+  await traced.transaction().execute(migrateChatGptPlanDevices);
+  expect(statements).toEqual([{ sql: DEPLOYED_DEVICE_PINS_V6_SQL, parameters: [] }]);
+});
 
 it("restores Bot startup from exact deployed v6 while preserving every trust pin, grant, binding, definition and historical message", async () => {
   expect(Buffer.byteLength(DEPLOYED_DEVICE_PINS_V6_SQL)).toBe(366);
