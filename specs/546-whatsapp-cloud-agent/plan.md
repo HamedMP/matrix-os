@@ -16,6 +16,12 @@ One Matrix-owned Cloud API number accepts a user's message, replies with a short
 - Platform Postgres holds identity/routing, encrypted transient jobs, and deduplication metadata. Canonical transcripts live in owner Postgres. Content is erased on completion and recurring expiry cleanup. Disconnect revokes pending work.
 - Durable jobs use database leases and fencing. Agent requests are idempotent; ambiguous outbound sends are recorded and not automatically resent. Per-sender order is serialized. Shutdown stops claims and drains active work before closing the shared pool.
 
+## Direct-user parity with the native Slack app
+
+The personal Slack DM flow in spec 540 and this WhatsApp Cloud API flow share one channel-neutral acceptance contract: verify the sender-to-Matrix-owner link, admit each external event once into that owner's stable private canonical Chat, run only the owner's configured personal agent, and send only that request's committed response back to the same private conversation. Pending approvals, runtime failures, disconnects, and uncertain sends must remain truthful and owner-private across both channels. Event IDs provide idempotency; sender identity must never be inferred from matching profile fields.
+
+The adapters retain distinct, qualified runtime choices and provider rules. Slack private DMs currently use the employee's durable direct bot Chat and personal `matrix_bot`/Pi route; WhatsApp currently uses one persistent owner Chat and the available general system agent. Do not silently switch either flow to the other's agent, memory, funding, or conversation model. Slack's explicitly configured company channels and Company Brain are a separate shared scope and are not part of this personal parity contract. This Cloud API feature is also separate from spec 077's personal-account WhatsApp bridge: that bridge mirrors existing WhatsApp conversations as Matrix rooms and defaults AI access off per room.
+
 ## Auth matrix
 
 | Route | Auth | Public |
