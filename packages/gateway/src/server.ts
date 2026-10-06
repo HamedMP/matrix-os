@@ -1365,7 +1365,7 @@ export async function createGateway(config: GatewayConfig) {
 
   const appOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
     .filter((id): id is string => Boolean(id?.trim())).map(id => id.trim());
-  const appAiService = createRuntimeAppAiService({ homePath, ownerIds: appOwnerIds, fundedCredentialProvider });
+  const appAiService = createRuntimeAppAiService({ homePath, ownerIds: appOwnerIds, fundedCredentialProvider, fundedAdmission });
   app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
     homePath, ownerIds: appOwnerIds, fundedCredentialProvider, service: appAiService,
   }));

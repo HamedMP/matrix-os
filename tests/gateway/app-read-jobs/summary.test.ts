@@ -8,7 +8,7 @@ it("passes bounded untrusted evidence to the owner-granted AI service", async ()
   const generate = vi.fn(async () => ({ text: JSON.stringify(result) }));
   const summarize = createReadJobSummary({ generate });
   expect(await summarize({ ownerId: "owner", job, snapshots: [snapshot], signal: new AbortController().signal })).toMatchObject({ ...result, evidenceLimited: false, evidence: [{id: "gh:0", data: snapshot.records[0].data}] });
-  expect(generate).toHaveBeenCalledWith("owner", expect.objectContaining({ app: "briefing", prompt: expect.stringContaining("untrusted") }), expect.any(AbortSignal));
+  expect(generate).toHaveBeenCalledWith("owner", expect.objectContaining({ app: "briefing", prompt: expect.stringContaining("untrusted") }), expect.any(AbortSignal), "background");
 });
 it("rejects invented citations rather than storing convincing unsupported findings", async () => {
   const summarize = createReadJobSummary({ generate: vi.fn(async () => ({ text: JSON.stringify({ ...result, items: [{ ...result.items[0], evidenceIds: ["other:9"] }] }) })) });

@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { AppIntegrationAppSchema } from "./app-integrations.js";
+import { AppIntegrationAppSchema } from "#app-integrations";
 
 export const APP_READ_JOB_CHANNEL = "native-app:read-job";
 export const AppReadJobIdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/);

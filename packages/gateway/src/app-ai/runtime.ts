@@ -2,17 +2,19 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import { generateAppText } from "@matrix-os/kernel";
-import { APP_AI_TIMEOUT_MS, AppAiRequestSchema, AppAiResultSchema, type AppAiRequest } from "@matrix-os/contracts";
+import { APP_AI_TIMEOUT_MS, AppAiRequestSchema, AppAiResultSchema, FundedAiRequestClassSchema, type FundedAiRequestClass, type AppAiRequest } from "@matrix-os/contracts";
 import { buildKernelCredentialLaunch, resolveKernelCredentialSources } from "../kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { requireRequestPrincipal } from "../request-principal.js";
 import { MATRIX_INCLUDED_MODEL_IDS } from "../ai-providers/model-catalog.js";
 import { KernelModelSchema } from "../kernel-settings.js";
 import { createAppAiRoutes } from "./routes.js";
+import { APP_AI_MANAGED_MODEL, generateManagedAppText } from "./managed-text.js";
+import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 
 const PolicySchema = z.strictObject({
   apps: z.array(AppAiRequestSchema.shape.app).max(100),
-  model: KernelModelSchema,
+  model: z.union([KernelModelSchema, z.literal(APP_AI_MANAGED_MODEL)]),
 });
 
 async function readPolicy(homePath: string) {
@@ -30,6 +32,8 @@ interface RuntimeAppAiOptions {
   homePath: string;
   ownerIds: readonly string[];
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  fundedAdmission?: FundedAdmissionQueue;
+  fetchImpl?: typeof fetch;
 }
 
 /** One owner-policy and admission boundary for interactive and scheduled generation. */
@@ -43,8 +47,9 @@ export function createRuntimeAppAiService(options: RuntimeAppAiOptions) {
   }
   return {
     authorize,
-    async generate(ownerId: string, input: AppAiRequest, callerSignal: AbortSignal) {
+    async generate(ownerId: string, input: AppAiRequest, callerSignal: AbortSignal, requestClass: FundedAiRequestClass = "interactive") {
       const request = AppAiRequestSchema.parse(input);
+      FundedAiRequestClassSchema.parse(requestClass);
       if (!await authorize(ownerId, request.app)) throw new Error("App AI access denied");
       const now = Date.now();
       if (now - windowStart >= 60_000) { windowStart = now; requests = 0; }
@@ -56,11 +61,20 @@ export function createRuntimeAppAiService(options: RuntimeAppAiOptions) {
         signal.throwIfAborted();
         const policy = await readPolicy(options.homePath);
         if (!policy?.apps.includes(request.app)) throw new Error("App AI access denied");
+        if (policy.model === APP_AI_MANAGED_MODEL) {
+          return await generateManagedAppText({ prompt: request.prompt, model: policy.model, signal, requestClass,
+            provider: options.fundedCredentialProvider, admission: options.fundedAdmission, fetchImpl: options.fetchImpl,
+            async revalidate() {
+              const current = await readPolicy(options.homePath);
+              return options.ownerIds.includes(ownerId) && current?.apps.includes(request.app) === true && current.model === policy.model;
+            },
+          });
+        }
         const sources = await resolveKernelCredentialSources(options.homePath, process.env, options.fundedCredentialProvider);
         if (sources.selectedAccessSourceId === "matrix_included" && !MATRIX_INCLUDED_MODEL_IDS.some((model) => model === policy.model)) {
           throw new Error("Model is unavailable for selected access");
         }
-        const launch = await buildKernelCredentialLaunch(options.homePath, process.env, sources.selectedAccessSourceId, options.fundedCredentialProvider, { requestClass: "interactive" });
+        const launch = await buildKernelCredentialLaunch(options.homePath, process.env, sources.selectedAccessSourceId, options.fundedCredentialProvider, { requestClass });
         signal.throwIfAborted();
         if (!launch.env) throw new Error("App AI credentials unavailable");
         const current = await readPolicy(options.homePath);

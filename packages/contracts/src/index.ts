@@ -1,5 +1,5 @@
-export * from "./app-read-jobs.js";
-export * from "./app-integrations.js";
+export * from "#app-read-jobs";
+export * from "#app-integrations";
 export * from "#chat-drive-project";
 import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
 export * from "#terminal-scroll";

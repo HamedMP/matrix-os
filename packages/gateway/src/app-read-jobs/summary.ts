@@ -51,7 +51,7 @@ export function createReadJobSummary(ai: Pick<RuntimeAppAiService, "generate">) 
       JSON.stringify({ coverage, evidenceLimited, evidence }),
     ].join("\n");
     if (prompt.length > 32000) throw new Error("Brief evidence exceeds limit");
-    const response = await ai.generate(input.ownerId, { app: input.job.app, prompt }, input.signal);
+    const response = await ai.generate(input.ownerId, { app: input.job.app, prompt }, input.signal, "background");
     const brief = ReadJobBriefSchema.parse(JSON.parse(response.text));
     const ids = new Set(evidence.map(record => record.id));
     if (brief.items.some(item => item.evidenceIds.some(id => !ids.has(id)))) throw new Error("Invalid brief evidence");

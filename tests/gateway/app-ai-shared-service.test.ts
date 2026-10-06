@@ -55,3 +55,28 @@ it("rejects changed model policy after an in-flight generation", async () => {
   });
   await expect(service.generate("owner", request, new AbortController().signal)).rejects.toThrow();
 });
+
+it("uses explicitly selected Matrix AI without launching the owner SDK", async () => {
+  await writeFile(join(homePath, "system/app-ai.json"), JSON.stringify({ apps: ["briefing"], model: "@cf/zai-org/glm-5.3-flash" }));
+  const getCredential = vi.fn(async () => ({ token: "fixture-lease", relayBaseUrl: "https://relay.example.test", requestClass: "background" }));
+  const fetchImpl = vi.fn(async () => Response.json({ choices: [{ message: { role: "assistant", content: "managed summary" }, finish_reason: "stop" }] }));
+  const service = createRuntimeAppAiService({ homePath, ownerIds: ["owner"], fundedCredentialProvider: { enabled: true, getCredential } as never, fetchImpl });
+  expect(await service.generate("owner", request, new AbortController().signal, "background")).toEqual({ text: "managed summary" });
+  expect(mocks.sources).not.toHaveBeenCalled();
+  expect(mocks.launch).not.toHaveBeenCalled();
+  expect(mocks.generate).not.toHaveBeenCalled();
+  expect(getCredential).toHaveBeenCalledWith(expect.objectContaining({ requestClass: "background" }));
+});
+
+it("defaults manual Matrix AI calls to interactive and rejects changed policy before publication", async () => {
+  await writeFile(join(homePath, "system/app-ai.json"), JSON.stringify({ apps: ["briefing"], model: "@cf/zai-org/glm-5.3-flash" }));
+  const getCredential = vi.fn(async () => ({ token: "fixture-lease", relayBaseUrl: "https://relay.example.test", requestClass: "interactive" }));
+  const fetchImpl = vi.fn(async () => {
+    await writeFile(join(homePath, "system/app-ai.json"), JSON.stringify({ apps: ["briefing"], model: "claude-sonnet-5" }));
+    return Response.json({ choices: [{ message: { role: "assistant", content: "stale model summary" }, finish_reason: "stop" }] });
+  });
+  const service = createRuntimeAppAiService({ homePath, ownerIds: ["owner"], fundedCredentialProvider: { enabled: true, getCredential } as never, fetchImpl });
+  await expect(service.generate("owner", request, new AbortController().signal)).rejects.toThrow(/^App AI is unavailable$/);
+  expect(getCredential).toHaveBeenCalledWith(expect.objectContaining({ requestClass: "interactive" }));
+  expect(mocks.launch).not.toHaveBeenCalled();
+});

@@ -23,7 +23,13 @@ function seed(job:ReadJob,ownerId:string):ReadRequest[] {
   return job.sources.map(source=>({ownerId,app:job.app,service:source.service,action:actions[source.service]!,connectionId:source.connectionId,label:source.label,params:source.params}));
 }
 function abortable<T>(work:Promise<T>,signal:AbortSignal):Promise<T> {
-  if(signal.aborted){void work.catch(()=>{});return Promise.reject(new DOMException("Aborted","AbortError"));}
+  if(signal.aborted){
+    void work.catch(error=>{
+      if(!(error instanceof Error&&["AbortError","TimeoutError"].includes(error.name)))
+        console.warn("[app-read-jobs] cancelled operation failed:",error instanceof Error?error.name:"UnknownError");
+    });
+    return Promise.reject(new DOMException("Aborted","AbortError"));
+  }
   return new Promise((resolve,reject)=>{
     const abort=()=>reject(new DOMException("Aborted","AbortError"));
     signal.addEventListener("abort",abort,{once:true});
