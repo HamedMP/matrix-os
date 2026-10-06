@@ -83,9 +83,19 @@ export const ApprovalDecisionSchema = z.enum(["approve", "approve_for_session", 
 export const ApprovalRiskSchema = z.enum(["low", "medium", "high"]);
 export const ApprovalActionKindSchema = z.enum(["command", "file_change", "network", "provider", "other"]);
 
+// Optional display evidence from detached/legacy producers must not carry
+// recognizable credentials. Masked assignments from the current formatter are
+// permitted; this is a conservative guard, not a proof arbitrary text is public.
+const APPROVAL_CREDENTIAL = /(?:authorization|cookie|[A-Za-z0-9_-]{0,128}(?:credential|password|secret|token|api[_-]?key)[A-Za-z0-9_-]{0,128})["']?\s*(?:[=:]|\s)\s*[^\s]|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|(?:^|[\s"'(=+])[A-Za-z]:[\\/]|\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"']*[@?#]|auth\.json|(?:^|[\\/])\.env(?:\b|\.)|[\w.-]+\.internal\b|-----BEGIN .*PRIVATE KEY/i;
+function approvalPreviewHasNoCredentials(value: string): boolean {
+  const unmasked = value.replace(/(?:[A-Za-z0-9_-]+["']?\s*[=:]\s*|--[A-Za-z0-9_-]+\s+)\[redacted\]/g, "");
+  return !APPROVAL_CREDENTIAL.test(unmasked);
+}
+
 export const ApprovalPreviewSchema = z.object({
   title: SafeDisplayStringSchema.optional(),
-  body: boundedDisplayText(2_000, 8 * 1024).optional(),
+  body: boundedDisplayText(2_000, 8 * 1024)
+    .refine(approvalPreviewHasNoCredentials, { message: "Approval preview contains private details" }).optional(),
   truncated: z.boolean().default(false),
 }).strict();
 

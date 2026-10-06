@@ -1,3 +1,4 @@
+import { ApprovalPreviewSchema } from "#agent-thread-contracts";
 import type { CanonicalChatApprovalDecision } from "./canonical-chat.js";
 
 const PRIVATE_DETAILS = "Details withheld for privacy.";
@@ -10,11 +11,18 @@ const ENVELOPE = /^Server ([^\n]*)\nTool ([^\n]*)\nArguments ([\s\S]+)$/;
  * approval producers retain their existing bounded review formatting.
  * Never include values, arbitrary keys, or recursively inspect private objects.
  */
-export function canonicalChatApprovalDisplay(title: string, description: string): { title: string; description: string } {
+export function canonicalChatApprovalDisplay(title: string, description: string, preview?: unknown): { title: string; description: string } {
   const prefix = /^Server ([^\n]*)\nTool(?: |$)/u.exec(description);
   const knownPrefix = prefix !== null && SERVER_ID.test(prefix[1]!);
   const fullMarkers = description.startsWith("Server ") && description.includes("\nTool ") && description.includes("\nArguments ");
-  if (!knownPrefix && !fullMarkers) return { title, description };
+  if (!knownPrefix && !fullMarkers) {
+    const parsed = ApprovalPreviewSchema.safeParse(preview);
+    if (!parsed.success || !parsed.data.body) return { title, description };
+    const content = [description, parsed.data.title, parsed.data.body,
+      parsed.data.truncated ? "Preview truncated. Review the full action in the project before approving." : undefined]
+      .filter(Boolean).join("\n\n");
+    return { title, description: content };
+  }
   const hidden = { title: "Review Custom MCP request", description: PRIVATE_DETAILS };
   if (description.length > 4_000) return hidden;
   const match = ENVELOPE.exec(description);

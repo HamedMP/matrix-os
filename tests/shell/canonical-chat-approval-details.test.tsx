@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
-import { canonicalChatApprovals, type CanonicalChatDetailResponse, type CanonicalChatApprovalDecision } from "@matrix-os/contracts";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { CanonicalChatDetailResponseSchema, canonicalChatApprovals, type CanonicalChatDetailResponse, type CanonicalChatApprovalDecision } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 import { ConversationTranscript } from "@desktop/renderer/src/components/conversation/transcript";
@@ -148,4 +148,47 @@ it("does not borrow an identical approval ID's decision from another run", () =>
     type: "approval.resolved", approvalId: "approval-fetch", decision: "approve" });
   expect(canonicalChatApprovals(detail)[0]).toMatchObject({ pending: true });
   expect(canonicalChatApprovals(detail)[0]).not.toHaveProperty("decision");
+});
+
+
+it.each([
+  { title: "Run command", body: "Command:\npnpm run build --filter shell\nWorking directory: apps/demo" },
+  { title: "Change files", body: "Files:\nupdate: src/App.tsx\nPatch:\n- old title\n+ new title" },
+])("renders actionable $title evidence after JSON reload across actual Chat cards", async ({ title, body }) => {
+  const detail = fixture(false, "Review this action.");
+  const activity = detail.activities[0]!;
+  if (activity.type !== "approval.requested") throw new Error("Expected approval fixture");
+  activity.title = title;
+  Object.assign(activity, { preview: { body, truncated: true } });
+  const { snapshot } = createCanonicalChatFixture("approval_required");
+  const { project: _project, providerBinding, activeRun, ...chat } = snapshot.chat;
+  const reloaded = CanonicalChatDetailResponseSchema.parse(JSON.parse(JSON.stringify({
+    record: { chat, providerBinding, activeRun }, messages: detail.messages, turns: detail.turns,
+    runs: detail.runs, activities: detail.activities,
+  })));
+  const summary = canonicalChatApprovals(reloaded)[0]!.description;
+  expect(summary).toContain(body);
+  expect(summary).toContain("Preview truncated");
+  const webMessage = projectCanonicalTranscript(reloaded).find(m => m.metadata?.canonicalApproval)!;
+  expect(buildTranscript(reloaded).find(m => m.approval)?.approval).toMatchObject({ description: summary });
+  const submit = vi.fn(async () => undefined);
+  render(<CanonicalApprovalMessage message={webMessage} submitting={false} onSubmit={submit} />);
+  expect(screen.getByText((_text, element) => element?.textContent === summary)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Approve", exact: true }));
+  expect(submit).toHaveBeenCalledWith(detail.runs[0]!.id, "approval-fetch", "approve");
+  cleanup();
+  const decision = vi.fn(async () => undefined);
+  render(<ConversationTranscript turns={canonicalChatPresentation(reloaded)} callbacks={{ copyText: vi.fn(), performAction: decision }} />);
+  expect(screen.getByText((_text, element) => element?.textContent === summary)).toBeTruthy();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: `Decline ${title}`, exact: true })); });
+  expect(decision).toHaveBeenCalled();
+});
+
+it("withholds an unredacted preview from a legacy producer without losing approval controls", () => {
+  const detail = fixture(false, "Review this action.");
+  Object.assign(detail.activities[0]!, { preview: { body: "Command: API_TOKEN=fixture-preview-secret pnpm build", truncated: false } });
+  const approval = canonicalChatApprovals(detail)[0]!;
+  expect(approval.description).not.toContain("fixture-preview-secret");
+  expect(approval.pending).toBe(true);
+  expect(approval.allowedDecisions).toEqual(["approve", "decline", "cancel"]);
 });

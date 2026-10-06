@@ -1,5 +1,6 @@
 import {
   UserInputQuestionListSchema,
+  ApprovalPreviewSchema,
   AgentAttachmentSchema,
   ProtectedToolOutputSchema,
   type CanonicalSubmitChatInputRequest,
@@ -77,6 +78,7 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     title: z.string().trim().min(1).max(160),
     risk: z.enum(["low", "medium", "high"]),
     safeDescription: z.string().min(1).max(4_000).optional(),
+    preview: ApprovalPreviewSchema.optional().catch(undefined),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
   }).strict(),
   z.object({
