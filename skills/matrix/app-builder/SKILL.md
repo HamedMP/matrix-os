@@ -139,9 +139,12 @@ only for system chrome or simple compatibility fallbacks, not for newly generate
 
 ## Data (Postgres via the MatrixOS bridge)
 
-In the Web/Electron app runtime, apps run in a sandboxed, null-origin iframe (CSP `connect-src 'self'`), so a direct `fetch()` to
-`/api/bridge/*` is **blocked** and `localStorage` throws `SecurityError`. Persist ONLY through the
-injected authenticated bridge. Discover the actual Native Mobile bridge contract before using its capabilities; this skill does not implement that runtime:
+Web apps run in sandboxed, opaque-origin `srcdoc` iframes (CSP `connect-src 'self'`): direct
+`fetch()` calls to `/api/bridge/*` are blocked and `localStorage` can throw `SecurityError`.
+Electron Desktop uses isolated WebContentsView instances with a typed preload bridge.
+Native Mobile targets a WebView with a host bridge; verify the installed host's actual
+capabilities before using them. Persist ONLY through the authenticated Matrix bridge on
+each surface. This skill does not implement the Native Mobile runtime:
 
 - Declare your tables in `matrix.json` `storage.tables` (above). The gateway provisions the Postgres
   schema automatically — at startup for shipped apps, and **lazily on first query** for apps you build
@@ -221,8 +224,9 @@ If the template is not present, create the standard Vite files directly with `re
 ## Data Access
 
 Use the injected `window.MatrixOS.db` bridge for structured data. Do not call `/api/bridge/query`
-directly from app code; runtime apps load as sandboxed `srcdoc` iframes, and direct bridge fetches
-are blocked by the shell's CORS/CSP boundary.
+directly from app code. In Web apps, sandboxed `srcdoc` iframes block direct bridge fetches
+through the shell's CORS/CSP boundary; Electron and Native Mobile use their verified host
+bridge contracts. Keep the same bridge-only persistence policy across surfaces.
 
 Example CRUD:
 
