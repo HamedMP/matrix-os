@@ -333,6 +333,13 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         if (pending)
             return snapshot(value);
         const selected = active();
+        // Explicit reconnect recovers the same local account without another OAuth
+        // prompt. Read-only status/catalog checks never change Bot authorization.
+        if (state === 'connected' && selected?.tokens && !grant(value.computerId).enabled) {
+            const expected = { accountId: selected.id, generation };
+            await readCatalog(value, AbortSignal.timeout(15000));
+            return setGrant({ runtimeSlot: value.runtimeSlot, authGeneration: value.authGeneration, enabled: true, background: false }, expected);
+        }
         const operation = {
             controller: new AbortController(), bound: value, close: undefined as (() => Promise<void>) | undefined
         };
@@ -382,7 +389,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                         catalogAt = 0;
                         const oldGrant = grant(value.computerId);
                         const nextGrant = {
-                            ...oldGrant, revision: oldGrant.revision + 1, enabled: false, background: false
+                            ...oldGrant, revision: oldGrant.revision + 1, enabled: true, background: false
                         };
                         await save(value, {
                             ...record, activeAccountId: accountId, accounts: selected ? record.accounts.map(item => item.id === selected.id ? account : item) : [...record.accounts, account], grants: [...record.grants.filter(item => item.computerId !== value.computerId), nextGrant].slice(-16)
@@ -403,7 +410,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         return snapshot(value);
     }
     async function cancel(input: ChatgptPlanSession) { const value = bound(input); await ensure(value); const previous = pending; cancelAll(); await previous?.close?.(); return snapshot(value); }
-    async function setGrant(input: z.infer<typeof CHATGPT_PLAN_INVOKE['chatgpt-plan:set-grant']['request']>) {
+    async function setGrant(input: z.infer<typeof CHATGPT_PLAN_INVOKE['chatgpt-plan:set-grant']['request']>, expected?: { accountId: string; generation: number }) {
         const parsed = CHATGPT_PLAN_INVOKE['chatgpt-plan:set-grant'].request.parse(input);
         const value = bound(parsed);
         await ensure(value);
@@ -413,12 +420,15 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             throw new Error('background not permitted');
         if (parsed.enabled && (!active()?.tokens || !models.length))
             throw new Error('not connected');
+        if (expected && (expected.generation !== generation || active()?.id !== expected.accountId || !current(value)))
+            throw new Error('source changed');
         generation += 1;
+        const epoch = generation;
         for (const controller of requests)
             controller.abort();
         await peer.stop();
         await mutate(async () => {
-            if (!record || pending || !current(value))
+            if (!record || pending || !current(value) || expected && (epoch !== generation || active()?.id !== expected.accountId))
                 throw new Error('connection changed');
             const existing = grant(value.computerId);
             const next = {

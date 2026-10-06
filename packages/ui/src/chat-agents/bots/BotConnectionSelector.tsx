@@ -14,7 +14,7 @@ export function BotConnectionSelector({connections, pending, onSetup, value, sho
      {!["computer", MATRIX_PI_CHAT_INSTANCE_ID, MATRIX_CHATGPT_PLAN_INSTANCE_ID].includes(value) ? <option value={value} disabled>Saved connection · {value}</option> : null}
      {showSubscription ? <option value={MATRIX_CHATGPT_PLAN_INSTANCE_ID}>ChatGPT subscription · this device{subscriptionAvailable ? "" : " · unavailable"}</option> : null}
    </select></label>
-   {value === MATRIX_CHATGPT_PLAN_INSTANCE_ID && !subscriptionAvailable ? <p className="text-xs" style={chatAgentMutedStyle}>{plan?.unavailableReason === "authorization_required" ? "Allow interactive Bot use in Agents & providers." : "Connect ChatGPT on your personal Electron device and allow interactive Bot use."} This device must stay connected to this Computer.</p> : null}
+   {value === MATRIX_CHATGPT_PLAN_INSTANCE_ID && !subscriptionAvailable ? <p className="text-xs" style={chatAgentMutedStyle}>{plan?.unavailableReason === "authorization_required" ? "Reconnect ChatGPT in Agents & providers." : "Connect ChatGPT on your personal Electron device."} This device must stay connected to this Computer.</p> : null}
    <p className="text-xs" style={chatAgentMutedStyle}>This connection funds the bot’s coordinator. Choosing a task executor does not change it.</p>
    {onSetup ? <button type="button" className="justify-self-start text-xs underline" disabled={pending} onClick={onSetup}>Connect in Agents & providers</button> : null}
  </div>;

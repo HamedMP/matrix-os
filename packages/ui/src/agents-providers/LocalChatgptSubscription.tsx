@@ -10,8 +10,6 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, onChanged
   const [receipt, setReceipt] = useState<{ client: LocalChatgptPlanClient; status: LocalChatgptPlanStatus } | null>(null);
   const [error, setError] = useState<{ client: LocalChatgptPlanClient; text: string } | null>(null);
   const [active, setActive] = useState<{ client: LocalChatgptPlanClient; kind: "connect" | "action" } | null>(null);
-  const [consent, setConsent] = useState(false);
-  const [grantConsent, setGrantConsent] = useState(false);
   const scope = useRef<{ client: LocalChatgptPlanClient; lifetime: AbortController; revision: number; pending: boolean } | null>(null);
   const changed = useRef(onChanged);
   useEffect(() => { changed.current = onChanged; }, [onChanged]);
@@ -20,7 +18,6 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, onChanged
   const connecting = status?.state === "connecting" || busy && active?.kind === "connect";
 
   useEffect(() => {
-    setConsent(false); setGrantConsent(false);
     if (!client) return;
     const lifetime = new AbortController();
     const current = { client, lifetime, revision: 0, pending: false }; scope.current = current;
@@ -67,7 +64,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, onChanged
     return () => { stopped = true; clearTimeout(timer); };
   }, [client, awaitingDevice, busy]);
 
-  async function act(action: (signal: AbortSignal) => Promise<LocalChatgptPlanStatus>, kind: "connect" | "action" | "cancel" = "action", announce = true) {
+  async function act(action: (signal: AbortSignal) => Promise<LocalChatgptPlanStatus>, kind: "connect" | "action" | "cancel" = "action") {
     const current = scope.current;
     if (!client || !current || current.client !== client || current.lifetime.signal.aborted || current.pending && kind !== "cancel" || disabled || readOnly) return;
     const revision = ++current.revision; current.pending = true;
@@ -75,8 +72,8 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, onChanged
     try {
       const value = await action(current.lifetime.signal);
       if (current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
-      setReceipt({ client, status: value }); setGrantConsent(false);
-      if (announce) onChanged();
+      setReceipt({ client, status: value });
+      onChanged();
     } catch (caught) {
       console.warn("[chatgpt-plan] Action unavailable:", caught instanceof Error ? caught.name : typeof caught);
       if (!current.lifetime.signal.aborted && scope.current === current && current.revision === revision) setError({ client, text: ACTION_ERROR });
@@ -92,28 +89,21 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, onChanged
     <div className="matrix-ap-subscription-head"><strong>Codex · ChatGPT subscription</strong>
       <span className="matrix-ap-status-chip" data-state={connected ? "ready" : "attention"}><i aria-hidden="true"/>{label}</span>
     </div>
-    <p className="matrix-ap-help">Use your own ChatGPT plan. Sign-in and model requests stay on this device; it must stay connected while your Matrix Bot runs.</p>
+    <p className="matrix-ap-help">Use your ChatGPT plan for Matrix Bots. Keep this device connected while your Bot runs.</p>
     {!client ? <p className="matrix-ap-help">Available in Electron Desktop on your personal device. Native Codex login and API keys are managed separately.</p> : null}
     {connected ? <><p className="matrix-ap-help">{status.account!.label}</p>
-      <p className="matrix-ap-help">Subscription usage is separate from Matrix AI credit. Usage unavailable.</p>
-      <p className="matrix-ap-help">{status.bridgeConnected ? !status.models.length ? "No subscription models are available. Check subscription models." : status.grant.enabled ? "Available for interactive Bots on this Computer." : "Connected. Allow Bot use separately below." : "Device connection to this Computer is unavailable. Bot requests cannot start."}</p>
+      <p className="matrix-ap-help">{status.bridgeConnected ? !status.models.length ? "No subscription models are available. Check subscription models." : status.grant.enabled ? "Available for interactive Bots on this Computer." : "Reconnect ChatGPT to resume interactive Bots on this Computer." : "Device connection to this Computer is unavailable. Bot requests cannot start."}</p>
     </> : null}
     {status?.revocation === "unconfirmed" ? <p className="matrix-ap-help" role="status">Local access stopped. Provider sign-out could not be confirmed; check your ChatGPT connected apps.</p> : null}
     {error && error.client === client ? <p className="matrix-ap-help" role="alert">{error.text}</p> : null}
     {client && !readOnly ? <div className="matrix-ap-workflow-actions matrix-ap-subscription-actions">
       {connecting ? <button className="matrix-ap-button" type="button" disabled={disabled || readOnly} onClick={() => void act(signal => client.cancel(signal), "cancel")}>Cancel ChatGPT connection</button>
-        : !connected ? <>
-          <label className="matrix-ap-help"><input type="checkbox" checked={consent} disabled={blocked} onChange={event => setConsent(event.target.checked)}/> Use my ChatGPT plan on this personal device</label>
-          <button type="button" className="matrix-ap-button" disabled={blocked || !status || !consent} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Continue with ChatGPT</button>
-        </> : <>
-          {!status.grant.enabled ? <>
-            <label className="matrix-ap-help"><input type="checkbox" checked={grantConsent} disabled={blocked || !status.bridgeConnected} onChange={event => setGrantConsent(event.target.checked)}/> Allow interactive Bots on this Computer to use this account while this device is connected</label>
-            <button className="matrix-ap-button" type="button" disabled={blocked || !grantConsent || !status.bridgeConnected || !status.models.length} onClick={() => void act(signal => client.setGrant({ enabled: true, background: false }, signal))}>Use for Bots</button>
-          </> : <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.setGrant({ enabled: false, background: false }, signal))}>Stop Bot use</button>}
-          <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.refreshModels(signal))}>Check subscription models</button>
+        : !connected ? <button type="button" className="matrix-ap-button" disabled={blocked || !status} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Continue with ChatGPT</button>
+        : <>
+          {!status.grant.enabled ? <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Reconnect ChatGPT</button> : null}
+          {!status.models.length ? <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.refreshModels(signal))}>Check subscription models</button> : null}
           <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.disconnect(signal))}>Disconnect ChatGPT</button>
         </>}
-      <button type="button" className="matrix-ap-link-button" disabled={blocked} onClick={() => void act(signal => client.status(signal), "action", false)}>Check connection</button>
     </div> : null}
     {readOnly ? <p className="matrix-ap-help">Only this Computer’s owner can manage Bot connections.</p> : null}
   </article>;
