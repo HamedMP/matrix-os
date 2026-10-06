@@ -7,7 +7,7 @@ import { createCanonicalProviderCatalogFixture } from '../../contracts/fixtures/
 const catalog=createCanonicalProviderCatalogFixture();
 const base=catalog.instances[0]!;
 catalog.instances=[{...base,id:'matrix_pi_default',driverKind:'matrix_pi',displayName:'Pi',connectionLabel:'Matrix AI',models:[{...base.models[0]!,id:'sonnet',displayName:'Sonnet'}]}];
-const bot={id:'bot_writer01',revision:3,name:'Writer Rabbit',selection:{instanceId:'matrix_pi_default',model:'sonnet'}};
+const bot={recipeRef:{recipeId:'writer',version:'1'},id:'bot_writer01',revision:3,name:'Writer Rabbit',selection:{instanceId:'matrix_pi_default',model:'sonnet'}};
 const makeClient=()=>({list:vi.fn(async()=>({enabled:true,agents:[bot]})),update:vi.fn(async(_id:string,input:unknown)=>({...bot,revision:4,selection:(input as {selection:unknown}).selection}))});
 afterEach(cleanup);
 it('opens the upward model menu from the keyboard and returns focus on Escape',async()=>{

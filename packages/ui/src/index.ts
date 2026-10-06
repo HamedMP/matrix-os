@@ -220,3 +220,6 @@ export type { RailOrderPreference, RailSortMode } from "./chat/rail-order.js";
 export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js";
 export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
 export type { ProviderWorkflowClient } from "./agents-providers/types.js";
+
+export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
+export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";

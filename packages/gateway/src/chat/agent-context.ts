@@ -18,6 +18,7 @@ import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_SELECTION } from "../bots/selection.
 /** Finds the recipe bot whose live direct chat this is, if any. */
 export interface BotChatLookup {
   directBot(owner: ChatOwner, chatId: string): Promise<string | null>;
+  ensureDirectChat?(owner: ChatOwner, agentId: string): Promise<string>;
   directChat?(owner: ChatOwner, agentId: string): Promise<string | null>;
 }
 
@@ -113,26 +114,34 @@ export class ChatAgentContext {
     // A recipe bot's direct chat always runs that bot, whatever the client selected. Its
     // authority is the bot's capability set and grants, not the Chat permission mode.
     const directBotId = await this.options.botChats?.directBot(owner, chatId);
+    let directAgent: ChatAgent | undefined;
     if (directBotId) {
-      if (references.some((reference) => reference.kind === "agent" || reference.kind === "chat")) {
+      const bot = await this.agent(owner, directBotId);
+      const agentReferences = references.filter(reference => reference.kind === "agent");
+      if (references.some(reference => reference.kind === "chat") || agentReferences.length > 1
+        || agentReferences.some(reference => reference.id !== bot.id || reference.revision !== String(bot.revision))
+        || (bot.recipeRef && agentReferences.length)
+        || (!bot.recipeRef && input.permissionMode === "full_access" && !agentReferences.length)) {
         throw new ChatAgentContextError("context_unavailable");
       }
-      const bot = await this.agent(owner, directBotId);
+      if (!bot.recipeRef) directAgent = bot;
+      else {
       const concrete = input.selection.instanceId === "matrix_pi_default" || (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID && input.selection.model !== "auto")
         ? input.selection : bot.selection.instanceId === "matrix_pi_default" ? bot.selection : undefined;
       if (concrete && Object.keys(concrete.options ?? {}).length) throw new ChatAgentContextError("context_unavailable");
       return { selection: concrete ? { instanceId: MATRIX_BOT_INSTANCE_ID, model: concrete.model } : MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
+      }
     }
     // Only a bot's own chat can run the bot runtime.
-    if (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
+    if (!directAgent && input.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
     const agentReference = references.find((reference) => reference.kind === "agent");
     const chatReferences = references.filter((reference) => reference.kind === "chat");
     const driveReferences = references.flatMap((reference) => reference.kind === "organization_drive" && reference.drive ? [reference.drive] : []);
-    if ((agentReference || chatReferences.length || driveReferences.length) && !this.options.enabled()) {
+    if ((directAgent || agentReference || chatReferences.length || driveReferences.length) && !this.options.enabled()) {
       throw new ChatAgentContextError("feature_disabled");
     }
     if (chatReferences.some((reference) => reference.id === chatId)) throw new ChatAgentContextError("context_unavailable");
-    const agent = agentReference ? await this.agent(owner, agentReference.id) : undefined;
+    const agent = directAgent ?? (agentReference ? await this.agent(owner, agentReference.id) : undefined);
     // Recipe bots are reached only through their own direct chat.
     if (agent?.recipeRef || agent?.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
     if (agent?.recipe?.skills.includes("matrix-jev-email-triage") &&
@@ -201,6 +210,10 @@ export class ChatAgentContext {
     if ((context.agent || context.chats.length || context.drives?.length) && !this.options.enabled()) throw new ChatAgentContextError("feature_disabled");
     if (context.agent) {
       const currentAgent = await this.agent(owner, context.agent.id);
+      const boundId = await this.options.botChats?.directBot(owner, chatId);
+      if (boundId && (boundId !== context.agent.id || currentAgent.revision !== context.agent.revision || currentAgent.recipeRef)) {
+        throw new ChatAgentContextError("context_unavailable");
+      }
       const admittedJev = context.agent.recipe?.skills.some((skill) => skill.id === "matrix-jev-email-triage") ?? false;
       const currentJev = currentAgent.recipe?.skills.includes("matrix-jev-email-triage") ?? false;
       if (admittedJev || currentJev) {
