@@ -1,4 +1,5 @@
 import {
+  ChatPresentation,
   mergeCanonicalChatRecord,
   isChatUnread,
   chatReadAction,
@@ -32,7 +33,7 @@ import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 import { createDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
 
-type SectionKey = "pinned" | "projects" | "recents";
+type SectionKey = "pinned" | "projects" | "recents" | "voice";
 const MAX_CHAT_PAGES = 10;
 
 function applyProjectedChats(
@@ -88,7 +89,7 @@ async function loadWorkRailChats(client: CanonicalChatClient, unreadOnly = false
   const records: CanonicalChatRecord[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_CHAT_PAGES; page += 1) {
-    const response = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), limit: 100, ...(cursor ? { cursor } : {}) });
+    const response = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), limit: 100, conversationKind: "all", ...(cursor ? { cursor } : {}) });
     records.push(...response.items);
     if (!response.nextCursor || response.nextCursor === cursor) break;
     cursor = response.nextCursor;
@@ -152,6 +153,7 @@ export function WorkRail({
     pinned: true,
     projects: true,
     recents: true,
+    voice: true,
   });
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [pinning, setPinning] = useState<Record<string, boolean>>({});
@@ -175,7 +177,9 @@ export function WorkRail({
       generation: routeScopeRef.current.generation + 1,
     };
   }
-  const model = useMemo(() => buildWorkRailModel(unreadOnly ? records.filter(isChatUnread) : records, projects), [projects, records, unreadOnly]);
+  const visibleRecords = useMemo(() => unreadOnly ? records.filter(isChatUnread) : records, [records, unreadOnly]);
+  const model = useMemo(() => buildWorkRailModel(visibleRecords.filter(record => record.chat.conversationKind !== "voice"), projects), [projects, visibleRecords]);
+  const voiceRecords = useMemo(() => visibleRecords.filter(record => record.chat.conversationKind === "voice"), [visibleRecords]);
   const projectGroups = useMemo(
     () => [...model.pinnedProjects, ...model.projects],
     [model],
@@ -407,8 +411,37 @@ export function WorkRail({
     );
   };
 
+  const renderHistoryRow = (record: CanonicalChatRecord, placement: "recent" | "pinned" = "recent") => (
+            <WorkRailChatRow
+              key={record.chat.id}
+              record={record}
+              placement={placement}
+              active={record.chat.id === activeChatId}
+              pinning={Boolean(pinning[record.chat.id])}
+              renaming={renamingChatId === record.chat.id}
+              renamePending={renamePending && renamingChatId === record.chat.id}
+              renameDisabled={renamePending}
+              onToggleRead={() => { void toggleRead(record); }}
+              readPending={readPending}
+              onRenameStart={() => {
+                if (renamePending) return;
+                setRenameError(null);
+                setRenamingChatId(record.chat.id);
+              }}
+              onRenameCommit={(title) => { void renameChat(record, title); }}
+              onRenameCancel={() => setRenamingChatId(null)}
+              onSelect={() => onSelectChat(record)}
+              onPin={() => updatePinned(record)}
+              onDelete={() => {
+                setDeleteChatError(null);
+                setDeleteChatTarget(record);
+              }}
+            />
+  );
+
   return (
-    <nav
+    <ChatPresentation
+      role="navigation"
       aria-label="Chat navigation"
       className={`flex min-h-0 shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-2 ${className}`}
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
@@ -493,33 +526,11 @@ export function WorkRail({
           divider={false}
 
         >
-          {model.recents.map((record) => (
-            <WorkRailChatRow
-              key={record.chat.id}
-              record={record}
-              placement="recent"
-              active={record.chat.id === activeChatId}
-              pinning={Boolean(pinning[record.chat.id])}
-              renaming={renamingChatId === record.chat.id}
-              renamePending={renamePending && renamingChatId === record.chat.id}
-              renameDisabled={renamePending}
-              onToggleRead={() => { void toggleRead(record); }}
-              readPending={readPending}
-              onRenameStart={() => {
-                if (renamePending) return;
-                setRenameError(null);
-                setRenamingChatId(record.chat.id);
-              }}
-              onRenameCommit={(title) => { void renameChat(record, title); }}
-              onRenameCancel={() => setRenamingChatId(null)}
-              onSelect={() => onSelectChat(record)}
-              onPin={() => updatePinned(record)}
-              onDelete={() => {
-                setDeleteChatError(null);
-                setDeleteChatTarget(record);
-              }}
-            />
-          ))}
+          {model.recents.map(record => renderHistoryRow(record))}
+        </WorkRailSection>
+        <WorkRailSection label="Voice conversations" expanded={sections.voice} onToggle={() => toggleSection("voice")} divider={false}>
+          {voiceRecords.map(record => renderHistoryRow(record))}
+          {status === "ready" && voiceRecords.length === 0 ? <p className="px-3 py-2 text-xs">No voice conversations yet.</p> : null}
         </WorkRailSection>
         {status === "loading" && records.length === 0 ? (
           <p role="status" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading chats…</p>
@@ -567,6 +578,6 @@ export function WorkRail({
           else onSelectChat(record);
         }}
       />
-    </nav>
+    </ChatPresentation>
   );
 }

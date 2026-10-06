@@ -62,6 +62,7 @@ export const chatWidget = {
     muted: "#6E6969",
     placeholder: "#999494",
     composer: "#FFFFFF",
+    secondary: "#F3F2F0",
   },
 } as const;
 

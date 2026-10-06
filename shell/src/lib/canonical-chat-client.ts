@@ -43,7 +43,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface CanonicalShellChatClient {
   agents?: ChatAgentClient;
-  list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
+  list(input?: { conversationKind?: "chat" | "voice" | "all"; unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
@@ -195,6 +195,7 @@ export function createCanonicalShellChatClient(options: {
     },
     async list(input = {}) {
       const query = new URLSearchParams({ limit: "100", scope: "global" });
+      if (input.conversationKind) query.set("conversationKind", input.conversationKind);
       if (input.unreadOnly) query.set("unread", "true");
       if (input.cursor) query.set("cursor", input.cursor);
       return CanonicalChatListResponseSchema.parse(await request(`/api/chats?${query}`));

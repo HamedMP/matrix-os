@@ -268,19 +268,14 @@ describe("CanonicalChatWorkspace", () => {
     );
 
     const heading = screen.getByRole("heading", { name: "Chats" });
-    expect(heading.className).toContain("text-[16px]");
+    expect(heading.className).toContain("text-[14px]");
     expect(heading.className).toContain("font-medium");
-    expect(heading.className).toContain("leading-[16px]");
-    expect(heading.className).toContain("tracking-[-0.4px]");
-
+    expect(heading.className).toContain("leading-[20px]");
     const chat = await screen.findByRole("button", { name: snapshot.chat.title });
     const chatTitle = within(chat).getByText(snapshot.chat.title);
-    const activity = chat.parentElement?.querySelector("time");
     expect(chatTitle.className).toContain("text-[14px]");
     expect(chatTitle.className).toContain("leading-[20px]");
-    expect(activity?.className).toContain("text-[12px]");
-    expect(activity?.className).toContain("leading-[16px]");
-    expect(activity?.className).toContain("tracking-[0.12px]");
+    expect(document.querySelector('[data-matrix-chat]')?.getAttribute("style")).toContain("--chat-surface: #FFFEFC");
 
     const starter = screen.getByRole("button", { name: "Explore and understand code" });
     const starterLabel = within(starter).getByText("Explore and understand code");
@@ -395,8 +390,8 @@ describe("CanonicalChatWorkspace", () => {
     fireEvent.click(existingChat);
     expect(screen.getByRole("complementary", { name: "Global chats" })).toBeTruthy();
     expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
-    expect(existingChat.getAttribute("aria-current")).toBe("true");
-    expect(existingChat.style.background).toBe("var(--bg-selected)");
+    expect(existingChat.getAttribute("aria-current")).toBe("page");
+    expect(existingChat.closest("[data-active]")?.getAttribute("data-active")).toBe("true");
   });
 
   it("focuses the prompt when the surrounding Chat shell requests it", async () => {

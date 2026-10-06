@@ -160,6 +160,8 @@ export { FilePreviewContent, type FilePreviewContentProps } from "./files/FilePr
 
 export { resolveRecipeHandoff } from "./chat-agents/recipe-handoff.js";
 export { generatedChatTitle } from "./generated-chat-title";
+export { ChatHistory, type ChatHistoryItem, type ChatHistoryProps } from "./chat/ChatHistory.js";
+export { ChatPresentation, MatrixChatAvatar } from "./chat/ChatPresentation.js";
 
 export { mergeCanonicalChatRecord, compareCanonicalChatActivity } from "./canonical-chat-record";
 export { useChatReadState } from "./chat/use-chat-read-state.js";
@@ -174,3 +176,5 @@ export { createTerminalNativeHistory } from "./terminal/terminal-native-history.
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
 
 export { ConversationSubagentActivity } from "./chat/subagent-activity";
+
+export { ChatStarterCards } from "./chat/ChatStarterCards.js";

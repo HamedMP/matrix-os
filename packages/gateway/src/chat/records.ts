@@ -156,6 +156,7 @@ export function toChatRecord(
     ownerScope: { type: row.owner_type, ownerId: row.owner_id },
     title: row.title,
     titleVersion: Number(row.title_version),
+    conversationKind: row.conversation_kind ?? "chat",
     activityAt: asIso(row.activity_at),
     lifecycle: row.lifecycle,
     attention: row.attention,

@@ -144,7 +144,7 @@ export class AoedeBootstrapService {
       } else {
         const identity = hash({ owner: key.owner, runtime: this.runtimeScope, scope: key.projectScope, request: request.clientRequestId });
         record = await repository.chats.create(key.owner, {
-          id: `chat_aoede_${identity}`, clientRequestId: `req_aoede_${identity}`, title: "Aoede",
+          id: `chat_aoede_${identity}`, clientRequestId: `req_aoede_${identity}`, title: "Voice conversation", conversationKind: "voice",
           ...(request.projectId ? { projectId: request.projectId } : {}), currentSelection: readiness.selection,
         });
         await repository.bind(key, record.chat.id);

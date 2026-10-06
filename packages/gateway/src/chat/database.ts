@@ -1,4 +1,5 @@
 import { bootstrapChatMetadata } from "./metadata-schema.js";
+import { bootstrapVoiceHistory } from "./voice-history-schema.js";
 import { bootstrapChatAttribution } from "./attribution-repair.js";
 import { sql, type ColumnType, type Generated, type Kysely } from "kysely";
 import { bootstrapMessagePurpose, type ChatMessagePurpose } from "./message-purpose.js";
@@ -16,6 +17,7 @@ export interface ChatsTable {
   title: string;
   title_version: Generated<number>;
   title_manual: Generated<boolean>;
+  conversation_kind: Generated<"chat" | "voice">;
   activity_at: Timestamp;
   lifecycle: "active" | "archived";
   attention: "none" | "approval_required" | "input_required" | "failed";
@@ -779,6 +781,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   `.execute(db);
 
   await bootstrapChatMetadata(db);
+  await bootstrapVoiceHistory(db);
   await bootstrapChatAttribution(db);
 
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_updated ON chats(owner_type, owner_id, lifecycle, updated_at DESC, id)`.execute(db);

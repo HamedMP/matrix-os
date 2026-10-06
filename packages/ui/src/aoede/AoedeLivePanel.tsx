@@ -2,13 +2,11 @@
 import "./aoede-live.css";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { chatWidget, desktopPalette } from "@matrix-os/brand/tokens";
-import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import { SHELL_Z_INDEX, DESKTOP_Z_INDEX } from "../shell-layering.js";
 import type { AoedePanelProps } from "./AoedePanel.js";
 import { aoedeErrorCopy, aoedeReadinessCopy, AOEDE_STATUS_LABELS, boundedAoedeText } from "./presentation.js";
-import { minusIcon, expandIcon, micIcon, sendIcon } from "./widget-icons.js";
-
-const rabbit = `data:image/svg+xml,${encodeURIComponent(rabbitMarkSvg('matrix-mark').replace('currentColor', 'white'))}`;
+import { MatrixChatAvatar } from "../chat/ChatPresentation.js";
+import { ChatIcon } from "../chat/ChatIcon.js";
 /** Compact canonical chat follows the approved onboarding widget. Voice adds a
  * pointer-transparent edge halo; readiness never changes the presentation.
  */
@@ -56,11 +54,11 @@ export function AoedeLivePanel(props: AoedePanelProps & { pushToTalkControl?: Re
       if (event.key === "Escape") { event.stopPropagation(); props.commands.dismiss(); }
     }}>
       <header className="matrix-aoede-live__header">
-        <span className="matrix-aoede-live__avatar"><img src={rabbit} alt="" /></span>
+        <MatrixChatAvatar className="matrix-aoede-live__avatar" />
         <strong>Matrix</strong>
-        <button type="button" aria-label="More options" aria-expanded={more} onClick={() => setMore(v => !v)}>···</button>
-        <button type="button" aria-label="Dismiss Aoede" onClick={props.commands.dismiss}><img src={minusIcon} alt="" /></button>
-        <button type="button" aria-label="Expand conversation" disabled={!props.commands.viewHistory || props.canOpenConversation === false} onClick={props.commands.viewHistory}><img src={expandIcon} alt="" /></button>
+        <button type="button" aria-label="More options" aria-expanded={more} onClick={() => setMore(v => !v)}><ChatIcon name="more" size={14} /></button>
+        <button type="button" aria-label="Dismiss Aoede" onClick={props.commands.dismiss}><ChatIcon name="minimize" size={14} /></button>
+        <button type="button" aria-label="Expand conversation" disabled={!props.commands.viewHistory || props.canOpenConversation === false} onClick={props.commands.viewHistory}><ChatIcon name="expand" size={14} /></button>
       </header>
       <div className="matrix-aoede-live__body">
         <div className="matrix-aoede-live__meta"><span role="status">{props.capability || active ? AOEDE_STATUS_LABELS[props.status] : props.status === "failed" ? "Connection unavailable" : "Connecting"}</span><span>{boundedAoedeText(props.scopeLabel, 160)}</span></div>
@@ -95,8 +93,8 @@ export function AoedeLivePanel(props: AoedePanelProps & { pushToTalkControl?: Re
       <form className="matrix-aoede-live__composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
         <input aria-label="Message Matrix" placeholder="Or type what you need…" value={draft} maxLength={8000} disabled={!props.canSendText}
           onChange={event => { draftRevision.current++; setDraft(event.target.value); }} />
-        <button type="button" aria-label={active ? "End voice capture" : "Turn microphone on"} disabled={!active && !ready} onClick={active ? props.commands.end : props.commands.start}><img src={micIcon} alt="" /></button>
-        <button className="matrix-aoede-live__send" type="submit" aria-label="Send message" disabled={sending || !props.canSendText || !draft.trim()}><img src={sendIcon} alt="" /></button>
+        <button type="button" aria-label={active ? "End voice capture" : "Turn microphone on"} disabled={!active && !ready} onClick={active ? props.commands.end : props.commands.start}><ChatIcon name="microphone" /></button>
+        <button className="matrix-aoede-live__send" type="submit" aria-label="Send message" disabled={sending || !props.canSendText || !draft.trim()}><ChatIcon name="send" /></button>
       </form>
       <p className="matrix-aoede-live__privacy">{props.microphoneActive ? "Microphone active" : "Microphone off"}</p>
     </section>

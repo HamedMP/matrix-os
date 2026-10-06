@@ -1,3 +1,4 @@
+import { searchChats } from "./search-repository.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { projectChatReadState, writeChatReadState } from "./read-state-repository.js";
@@ -135,6 +136,8 @@ export interface CreateChatInput {
   id: string;
   clientRequestId: string;
   title: string;
+  /** Internal only; ordinary create routes cannot choose the voice category. */
+  conversationKind?: "chat" | "voice";
   projectId?: string;
   currentSelection?: CanonicalChatModelSelection;
 }
@@ -694,6 +697,7 @@ export class ChatRepository {
         title: input.title,
         title_version: 0,
         title_manual: false,
+        conversation_kind: input.conversationKind ?? "chat",
         activity_at: timestamp,
         lifecycle: "active",
         attention: "none",
@@ -719,6 +723,7 @@ export class ChatRepository {
         project_id: input.projectId ?? null,
         title: candidate.chat.title,
         title_manual: false,
+        conversation_kind: input.conversationKind ?? "chat",
         lifecycle: candidate.chat.lifecycle,
         attention: candidate.chat.attention,
         revision: 0,
@@ -954,7 +959,7 @@ export class ChatRepository {
     };
   }
 
-  async list(owner: ChatOwner, input: { unreadOnly?: boolean; limit: number; lifecycle?: "active" | "archived"; projectId?: string | null; cursor?: ChatListCursor }): Promise<ChatListPage> {
+  async list(owner: ChatOwner, input: { conversationKind?: "chat" | "voice"; unreadOnly?: boolean; limit: number; lifecycle?: "active" | "archived"; projectId?: string | null; cursor?: ChatListCursor }): Promise<ChatListPage> {
     return listChats(this.metadataDependencies(), owner, input);
   }
 
@@ -1630,25 +1635,12 @@ export class ChatRepository {
     queryInput: string,
     limitInput = 20,
     projectId?: string | null,
+    conversationKind?: "chat" | "voice",
   ): Promise<ChatRecord[]> {
     const owner = validateOwner(ownerInput);
-    const searchText = queryInput.trim().slice(0, 200);
-    if (!searchText) return [];
-    let query = this.kysely.selectFrom("chats")
-      .innerJoin("chat_messages", "chat_messages.chat_id", "chats.id")
-      .selectAll("chats")
-      .distinct()
-      .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
-      .where("chat_messages.state", "=", "committed")
-      .where(sql<boolean>`to_tsvector('simple', chat_messages.search_text) @@ plainto_tsquery('simple', ${searchText})`);
-    if (projectId !== undefined) {
-      query = projectId === null
-        ? query.where("chats.project_id", "is", null)
-        : query.where("chats.project_id", "=", requireSafeRef(projectId));
-    }
-    const rows = await query.orderBy("chats.updated_at", "desc")
-      .limit(Math.max(1, Math.min(100, Math.trunc(limitInput)))).execute();
-    return Promise.all(rows.map((row) => toPrincipalRecord(this.kysely, owner, row)));
+    const rows = await searchChats(this.kysely, owner, queryInput, limitInput,
+      projectId == null ? projectId : requireSafeRef(projectId), conversationKind);
+    return Promise.all(rows.map(row => toPrincipalRecord(this.kysely, owner, row)));
   }
 
   async exportChat(ownerInput: ChatOwner, chatId: string): Promise<ChatExport | null> {

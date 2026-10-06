@@ -1,0 +1,43 @@
+import { ChatIcon } from "./ChatIcon.js";
+
+const STARTERS = [
+  { label: "Explore and understand code", icon: "search", tone: "var(--success)" },
+  { label: "Build a new feature, app, or tool", icon: "hammer", tone: "var(--info)" },
+  { label: "Review code and suggest changes", icon: "check", tone: "var(--success)" },
+  { label: "Fix issues and failures", icon: "bug", tone: "var(--warning)" },
+] as const;
+
+export function ChatStarterCards({
+  layout = "responsive",
+  density = "regular",
+  onSelect,
+}: {
+  layout?: "responsive" | "two-by-two";
+  density?: "regular" | "compact";
+  onSelect: (prompt: string) => void;
+}) {
+  const columns = density === "compact"
+    ? "grid-cols-1"
+    : `grid-cols-2 ${layout === "responsive" ? "sm:grid-cols-4" : ""}`;
+  return (
+    <div className={`grid gap-3 ${columns}`} data-slot="chat-starter-cards">
+      {STARTERS.map(({ label, icon, tone }) => (
+        <button
+          key={label}
+          type="button"
+          aria-label={label}
+          onClick={() => onSelect(label)}
+          className={`flex flex-col items-start justify-between rounded-xl border text-left outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${density === "compact" ? "min-h-20 p-3" : "min-h-32 p-4"}`}
+          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+        >
+          <span className="flex size-8 items-center justify-center rounded-lg" style={{ background: "var(--bg-sunken)", color: tone }}>
+            <ChatIcon name={icon} size={17} />
+          </span>
+          <span className="max-w-32 text-[13px] font-medium leading-[18px]" style={{ color: "var(--text-primary)" }}>
+            {label}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
