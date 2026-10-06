@@ -138,7 +138,7 @@ export function OrganizationSectionView({
         )) : null}
       </section>
 
-      {admin && lastAdmin ? <section className="mt-8 rounded-xl px-4 py-3" style={{ background: "var(--bg-subtle, var(--bg-hover))" }}>
+      {admin && lastAdmin ? <section className="mt-8 rounded-xl px-4 py-3" style={{ background: "var(--bg-hover)" }}>
         <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>You’re the only Admin. Make someone else an Admin before you leave.</p>
         <div className="mt-2 flex items-center gap-2">
           <Button variant="ghost" className="border" style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }} disabled={!onMakeSomeoneAdmin} onClick={onMakeSomeoneAdmin}>Make someone Admin</Button>

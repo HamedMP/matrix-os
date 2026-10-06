@@ -8,6 +8,12 @@ import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import type { useWindowManager, AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ userId: null }),
+  useOrganization: () => ({ organization: null }),
+  useOrganizationList: () => ({ isLoaded: false, setActive: undefined }),
+}));
+
 const { terminalRender } = vi.hoisted(() => ({
   terminalRender: vi.fn(() => <div>Terminal content</div>),
 }));
