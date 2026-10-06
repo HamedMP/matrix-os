@@ -1,16 +1,17 @@
-import { CollaborationGrantSchema, CollaborationScopeSchema, type CollaborationScope } from "@matrix-os/contracts";
+import {
+  CollaborationGrantSchema,
+  CollaborationScopeSchema,
+  OrganizationManagementMembersPageSchema,
+  type CollaborationScope,
+} from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
 import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
-const MembersPageSchema = z.object({
-  members: z.array(z.object({ actorId: z.string().min(1).max(160), role: z.string().min(1).max(80), joinedAt: z.iso.datetime() }).strict()).max(50),
-  nextCursor: z.string().min(1).max(2_048).optional(),
-}).strict();
 const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
-type Member = z.infer<typeof MembersPageSchema>["members"][number];
+type Member = z.infer<typeof OrganizationManagementMembersPageSchema>["members"][number];
 
 export function AudienceGrantPicker({ api, scope, onRefresh }: {
   api: CollaborationApi;
@@ -39,7 +40,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
       api.get(base),
     ]).then(([memberPage, grantRows, scopeValue]) => {
       if (!active) return;
-      const page = MembersPageSchema.parse(memberPage);
+      const page = OrganizationManagementMembersPageSchema.parse(memberPage);
       const currentScope = CollaborationScopeSchema.parse(scopeValue);
       if (currentScope.id !== scope.id || currentScope.organizationId !== orgId || currentScope.role !== "owner") {
         throw new Error("Scope owner mismatch");
@@ -59,7 +60,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
     if (!orgId || !cursor || pending) return;
     setPending(true);
     try {
-      const page = MembersPageSchema.parse(await api.get(`/api/organizations/${encodeURIComponent(orgId)}/members?cursor=${encodeURIComponent(cursor)}`));
+      const page = OrganizationManagementMembersPageSchema.parse(await api.get(`/api/organizations/${encodeURIComponent(orgId)}/members?cursor=${encodeURIComponent(cursor)}`));
       setMembers((current) => {
         const byActor = new Map(current.map((member) => [member.actorId, member]));
         for (const member of page.members) if (member.actorId !== scope.ownerId) byActor.set(member.actorId, member);

@@ -1558,6 +1558,20 @@ export async function getPlatformUserByClerkId(
   return row ? mapPlatformUser(row) : undefined;
 }
 
+export async function listPlatformUsersByClerkIds(
+  db: PlatformDB,
+  clerkIds: readonly string[],
+): Promise<PlatformUserRecord[]> {
+  if (clerkIds.length === 0) return [];
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('users')
+    .selectAll()
+    .where('clerk_id', 'in', [...new Set(clerkIds)])
+    .execute();
+  return rows.map(mapPlatformUser);
+}
+
 export async function getPlatformUserByHandle(
   db: PlatformDB,
   handle: string,

@@ -123,7 +123,7 @@ describe("Chat collaboration sharing", () => {
     const collaborationApi = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async (path: string) => path.startsWith("/api/organizations/")
-        ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
+        ? { members: [{ actorId: "user_ada", displayName: "Ada", role: "org:member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
         : path.endsWith("/grants") ? [] : path.endsWith("/members") ? { members: [] } : scope),
       post: vi.fn(async (path: string, body: { audience?: unknown; preset?: string }) => {
         if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "4", confirmationToken: "a".repeat(64) };
