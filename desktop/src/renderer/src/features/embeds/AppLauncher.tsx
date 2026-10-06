@@ -7,6 +7,7 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
 import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
+import { MatrixChatAvatar } from "@matrix-os/ui";
 import { useOptionalAoedeController } from "@matrix-os/ui/aoede";
 import {
   OS_VIEW_DESTINATION_PATHS,
@@ -351,7 +352,7 @@ export default function AppLauncher({
                   ) : entry.type === "os-view" ? (
                     <OsViewDestinationIcon path={entry.key} />
                   ) : entry.type === "aoede" ? (
-                    <AppIcon url={null} name="Aoede" large />
+                    <MatrixChatAvatar className="matrix-chat-avatar--launcher" />
                   ) : entry.type === "fixed" ? (
                     <span className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]" style={{ background: entry.app.color, color: entry.app.iconColor }}>
                       {entry.app.iconUrl

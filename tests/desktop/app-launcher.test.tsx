@@ -50,7 +50,9 @@ describe("AppLauncher", () => {
     const onCloseLauncher = vi.fn();
     render(<AppLauncher presentation="launchpad" onCloseLauncher={onCloseLauncher} />);
     fireEvent.change(screen.getByLabelText("Search apps"), { target: { value: "Aoede" } });
-    fireEvent.click(screen.getByRole("button", { name: "Aoede" }));
+    const launcher = screen.getByRole("button", { name: "Aoede" });
+    expect(launcher.querySelector(".matrix-chat-avatar img")).not.toBeNull();
+    fireEvent.click(launcher);
     expect(focus).toHaveBeenCalledOnce();
     expect(onCloseLauncher).toHaveBeenCalledOnce();
     expect(useTabs.getState().tabs).toEqual([]);

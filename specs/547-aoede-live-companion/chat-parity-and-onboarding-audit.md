@@ -25,7 +25,7 @@ The missing onboarding paths must ship with real app permissions, connected-app 
 
 ## Shared presentation
 
-`@matrix-os/brand` owns the verified Geist face and Figma paper, ink, border, muted and secondary tokens. `ChatPresentation`, `ChatHistory`, `ChatStarterCards`, the rabbit avatar, and Hugeicons geometry live in `@matrix-os/ui`. Web Chat and Electron Chat compose these shared components; native window chrome may adapt. Transcript and composer semantics remain canonical. The corner widget uses the same brand tokens, avatar, icon geometry and stable caption type through streaming/completion.
+`@matrix-os/brand` owns the verified Geist face and Figma paper, ink, border, muted and secondary tokens. `ChatPresentation`, `ChatHistory`, `ChatStarterCards`, the rabbit avatar, and Hugeicons geometry live in `@matrix-os/ui`. Web Chat and Electron Chat compose these shared components; native window chrome may adapt. Transcript and composer semantics remain canonical. The corner widget uses the same brand tokens, avatar, icon geometry and stable caption type through streaming/completion. Shared starter cards own their grid, spacing and type in the shared stylesheet, so a renderer’s utility-class scan cannot remove their layout. The Electron assistant launcher also uses the rabbit avatar.
 
 Web and Electron preserve editable offline drafts, exact harness/access-source selection, attachments, approval/input controls, search, unread/read actions, rename, deletion confirmation and same-conversation selection. This presentation work does not claim completed onboarding, universal app automation, or physical microphone qualification.
 

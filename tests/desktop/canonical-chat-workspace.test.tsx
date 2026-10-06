@@ -279,9 +279,7 @@ describe("CanonicalChatWorkspace", () => {
 
     const starter = screen.getByRole("button", { name: "Explore and understand code" });
     const starterLabel = within(starter).getByText("Explore and understand code");
-    expect(starterLabel.className).toContain("text-[13px]");
-    expect(starterLabel.className).toContain("font-medium");
-    expect(starterLabel.className).toContain("leading-[18px]");
+    expect(starterLabel.className).toBe("matrix-chat-starters__label");
   });
 
   it("uses the same explicit typography contract in the Project Chat rail", async () => {
@@ -337,8 +335,8 @@ describe("CanonicalChatWorkspace", () => {
     expect(workspace?.getAttribute("data-layout")).toBe("narrow");
     expect(workspace?.className).toContain("flex-col");
     expect(index?.getAttribute("data-layout")).toBe("narrow");
-    expect(starters?.className).toContain("grid-cols-1");
-    expect(screen.getByRole("button", { name: "Explore and understand code" }).className).toContain("min-h-20");
+    expect(starters?.getAttribute("data-density")).toBe("compact");
+    expect(screen.getByRole("button", { name: "Explore and understand code" }).className).toBe("matrix-chat-starters__card");
     expect(starterScroll?.className).toContain("overflow-y-auto");
     expect(starterScroll?.className).toContain("items-start");
     expect(starterStack?.className).toContain("my-auto");
