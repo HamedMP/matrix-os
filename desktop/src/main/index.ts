@@ -68,7 +68,7 @@ import {
 import { windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
-import { safeExternalHttpUrl } from "./external-url";
+import { safeExternalHttpUrl, safeChatgptAuthorizationUrl } from "./external-url";
 import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./renderer-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 import { createNativeAppOpenResolver } from "./embeds/native-app-open";
@@ -265,7 +265,11 @@ if (!gotLock) {
       await auth.init();
       chatgptPlan = createNativeChatgptPlanService({
         auth, vault: createPlanVault({ dir: userData, safeStorage }),
-        openBrowser: openExternalHttpUrl,
+        openBrowser: async url => {
+          const authorizationUrl = safeChatgptAuthorizationUrl(url);
+          if (!authorizationUrl) throw new Error("invalid authorization URL");
+          await shell.openExternal(authorizationUrl);
+        },
       });
       chatgptPlan.resume();
       registerChatgptPlanIpc(ipcMain, chatgptPlan, rawEvent => {
