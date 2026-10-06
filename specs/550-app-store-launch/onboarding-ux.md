@@ -46,9 +46,12 @@ Labels and Personal/Work designations can be edited later. They are presentation
 
 Example copy, with fictional identities used only in design evidence:
 
-> Gmail connected: alex@example.com  
-> What should we call this account?  
-> Name: Personal Gmail · Use for: Personal  
+> Gmail connected: alex@example.com
+>
+> What should we call this account?
+>
+> Name: Personal Gmail · Use for: Personal
+>
 > This name helps you choose accounts. It does not change who can access your data.
 
 Cancellation keeps existing connections and returns to the selected app. A timeout offers **Check connection again** and **Back to app**; it does not report failure as proof that consent was revoked. A failed check uses **We couldn't check this connection. Try again.** and preserves the previous known snapshot as stale, rather than showing it as newly missing.
@@ -93,9 +96,12 @@ The review step lists exact selected accounts, source actions, date range and de
 
 Example confirmation for an owner-chosen range, using fictional account labels:
 
-> Import receipts into Folio  
-> Read selected Gmail accounts: Personal Gmail and Work Gmail.  
-> Range: 1 July–30 September 2026.  
+> Import receipts into Folio
+>
+> Read selected Gmail accounts: Personal Gmail and Work Gmail.
+>
+> Range: 1 July–30 September 2026.
+>
 > Matrix will read matching source messages, keep evidence and save records in Folio. It will not send messages or change Gmail. Your existing corrections will be kept.
 
 Use **Import selected sources** as the explicit processing action. If accounts, identity snapshots, permissions or runtime selection change before or during processing, stop future reads and ask for reselection. Review changed selections again rather than silently retrying against a replacement account.

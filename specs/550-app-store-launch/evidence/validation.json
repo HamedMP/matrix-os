@@ -1,0 +1,42 @@
+{
+  "artifact": "Local React design walkthrough, fictional examples only",
+  "date": "2026-10-06",
+  "productionRuntimeVerified": false,
+  "nativeMobileVerified": false,
+  "checks": {
+    "typescript": "passed",
+    "productionViteBuild": "passed",
+    "walkthroughWidths": [
+      360,
+      390,
+      600,
+      820,
+      1024,
+      1440
+    ],
+    "walkthrough": "search/empty, consent, optional per-account designation, existing connections preserved, selected phone preview restored, explicit permission review, optional stars; passed",
+    "demoApps": [
+      "folio",
+      "atlas",
+      "agenda",
+      "subscriptions",
+      "focus",
+      "meeting-briefs",
+      "projects",
+      "revenue"
+    ],
+    "demoWidths": [
+      360,
+      390
+    ],
+    "directAndEmbeddedDemoFlowsPassed": 32,
+    "demoFlow": "physical create/save/reload/reopen/edit; fixture reset; no document overflow; enabled primary/editor controls >=44px",
+    "opaqueOrigin": true,
+    "parentAndLocalStorageAccessDenied": true,
+    "externalOrPostRequests": 0,
+    "nativeFormPostsBlockedByCsp": true,
+    "javascriptErrors": 0,
+    "privilegedApiRequests": 0,
+    "dependencyFreeFixtureCrudCasBounds": "passed"
+  }
+}
