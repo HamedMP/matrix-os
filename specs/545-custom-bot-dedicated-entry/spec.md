@@ -26,7 +26,7 @@ POST uses streaming body limit 64 KiB, strict empty-object JSON schema and valid
 
 ## Applicable surfaces and verification
 
-Shared presentation derivation covers Web Canvas, Web Desktop, Web Mobile and Electron Desktop. Native Mobile uses the same execution presentation and exact revision consent semantics through its native controls. Canonical server behavior is headless and common to all clients.
+Shared presentation derivation covers Web Canvas, Web Desktop, Web Mobile and Electron Desktop. Canonical server behavior is headless and common to all clients. Native Mobile parity is the dependent [ENG-144](https://linear.app/matrix-os/issue/ENG-144) delivery layer: it must reuse the same execution presentation and exact revision consent semantics, display only supported permission choices, and pass real-device acceptance before shipping. This core layer leaves existing Native Mobile behavior unchanged; Native parity is not claimed as delivered until that gate passes.
 
 Regression evidence must exercise transaction rollback and pooled Postgres concurrent creation/archive serialization, retained saved harness execution and multi-turn history, queue/retry revalidation, no grants/file changes, foreign owner and archived identity rejection, navigation/draft preservation, unavailable saved routes, focused editing, recipe capability read suppression and consent reset across applicable surfaces. Preview VPS and Electron Desktop acceptance must use an exact immutable head and verify ordinary Chats independently.
 
