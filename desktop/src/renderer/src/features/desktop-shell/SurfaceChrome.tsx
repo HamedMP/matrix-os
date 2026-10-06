@@ -18,6 +18,9 @@ export interface SurfaceChromeHost {
 
 export const SurfaceChromeContext = createContext<SurfaceChromeHost | null>(null);
 
+/** Full app content target lets Details span the Chat toolbar without viewport offsets. */
+export const BotDetailsContext = createContext<HTMLElement | null>(null);
+
 /** Only the verified Bot route supplies a target in the existing Chat toolbar. */
 export const BotHeaderContext = createContext<HTMLElement | null>(null);
 

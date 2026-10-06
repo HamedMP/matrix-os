@@ -20,18 +20,18 @@ export function WorkRailSection({
 }) {
   return (
     <section className="mb-1 flex flex-col gap-0.5">
-      <div data-slot="chat-sidebar-section-heading" className="flex items-center">
+      <div data-slot="chat-sidebar-section-heading" className="work-rail-section-heading flex items-center">
         <button
           type="button"
           aria-label={label}
           aria-expanded={expanded}
-          className="flex h-7 min-w-0 flex-1 items-center rounded-md pl-2.5 pr-0 py-0 text-left text-xs leading-none font-semibold uppercase tracking-wide outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          style={{ color: "var(--text-tertiary)" }}
+          className="flex h-7 min-w-0 flex-1 items-center rounded-md pl-2.5 pr-2 py-0 text-left text-xs leading-none font-semibold uppercase tracking-wide outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}
           onClick={onToggle}
         >
           <span>{label}</span>
-          <span className="ml-auto mr-2.5 text-[10px] font-normal tabular-nums" aria-hidden>{count || null}</span>
-          <span className="grid w-8 shrink-0 place-items-center"><ChevronRight size={12} aria-hidden className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} /></span>
+          <span className="ml-auto mr-2.5 text-[11px] font-normal tabular-nums" aria-hidden>{count || null}</span>
+          <span className="work-rail-section-disclosure grid size-6 shrink-0 place-items-center"><ChevronRight size={12} aria-hidden className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} /></span>
         </button>
         {action}
       </div>

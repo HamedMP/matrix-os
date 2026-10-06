@@ -15,13 +15,7 @@ export interface CanonicalComposerSelection {
   permissionMode: string;
 }
 
-export interface CanonicalSlashEntry {
-  id: string;
-  kind: "skill" | "command";
-  displayName: string;
-  description: string;
-  invocation: string;
-}
+export { listCanonicalSlashEntries, type CanonicalSlashEntry } from "@matrix-os/ui";
 
 export interface CanonicalComposerPreference {
   model?: string;
@@ -142,16 +136,6 @@ export function applyCanonicalComposerPreference(
   return instance.supports.permissionModes.includes(preference.permissionMode)
     ? { ...next, permissionMode: preference.permissionMode }
     : next;
-}
-
-export function listCanonicalSlashEntries(
-  instance: CanonicalProviderInstanceDescriptor | undefined,
-): CanonicalSlashEntry[] {
-  if (!instance) return [];
-  return [
-    ...instance.skills.map((entry) => ({ ...entry, kind: "skill" as const })),
-    ...instance.commands.map((entry) => ({ ...entry, kind: "command" as const })),
-  ];
 }
 
 export function providerInstanceIsLocked(chat: CanonicalChatSummary | undefined): boolean {
