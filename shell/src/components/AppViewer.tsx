@@ -1,5 +1,7 @@
 "use client";
 
+import { APP_READ_JOB_PATHS, prepareAppReadJobRequest } from "./app-read-job-request";
+import { prepareAppIntegrationRequest } from "./app-integration-request";
 import { prepareAppAiRequest } from "./app-ai-request";
 import { FileResourceSharing } from "./file-browser/FileResourceSharing";
 import { APP_AI_TIMEOUT_MS } from "@matrix-os/contracts";
@@ -67,11 +69,18 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
     let requestInit = init && typeof init === "object" ? init as RequestInit : {};
     const isAi = url === "/api/bridge/ai";
     if (isAi) requestInit = prepareAppAiRequest(appName, requestInit);
-    const response = await fetch(`${getGatewayUrl()}${url}`, {
+    if (APP_READ_JOB_PATHS.includes(url)) requestInit = prepareAppReadJobRequest(appName, url, requestInit);
+    let requestUrl = url;
+    const isIntegration = url === "/api/bridge/integrations";
+    if (isIntegration) {
+      const bound = prepareAppIntegrationRequest(appName, url, requestInit);
+      requestUrl = bound.url; requestInit = bound.init;
+    }
+    const response = await fetch(`${getGatewayUrl()}${requestUrl}`, {
       method: requestInit.method,
       headers: requestInit.headers,
       body: requestInit.body,
-      signal: AbortSignal.timeout(isAi ? APP_AI_TIMEOUT_MS + 2_000 : BRIDGE_FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(isAi || isIntegration ? APP_AI_TIMEOUT_MS + 2_000 : BRIDGE_FETCH_TIMEOUT_MS),
       redirect: "error",
     });
     const body = await response.json().catch((err: unknown) => {

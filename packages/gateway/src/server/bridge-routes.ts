@@ -1,3 +1,4 @@
+import { isReadJobTableMutation } from "../app-read-jobs/protected-tables.js";
 /** Legacy app data bridge routes retained during gateway startup extraction. */
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
@@ -79,6 +80,8 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
     const action = body.action;
     const appSlug = action === "listApps" ? "" : body.app;
     const safeTable = "table" in body ? body.table : "";
+
+    if (isReadJobTableMutation(safeTable, action)) return c.json({ error: "App read job data is read-only" }, 403);
 
     // Ensure the app's Postgres schema exists before querying. Apps built in-OS
     // after gateway startup aren't in the startup registration pass; provision

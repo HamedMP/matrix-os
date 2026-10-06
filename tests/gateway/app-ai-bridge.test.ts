@@ -13,7 +13,7 @@ describe("app AI bridge", () => {
     const response = await app.request("/", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ text: "Summary" });
-    expect(generate).toHaveBeenCalledWith(expect.objectContaining(payload), expect.any(AbortSignal));
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining(payload), expect.any(AbortSignal), expect.objectContaining({ req: expect.anything() }));
   });
   it("denies access before invoking a model", async () => {
     const { app, generate } = setup(false);

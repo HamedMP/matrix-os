@@ -14,6 +14,7 @@ const ReadCallBodySchema = z.strictObject({
   service: z.string().min(1).max(100),
   action: z.string().min(1).max(100),
   label: z.string().trim().min(1).max(100),
+  connectionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
   binding: JevReadBindingSchema.optional(),
 });
@@ -41,8 +42,8 @@ export function createIntegrationReadCallRoutes(options: {
     }
     const parsed = ReadCallBodySchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid request body" }, 400);
-    const { service, action, label, params, binding } = parsed.data;
-    if (binding && (service !== "gmail" || label !== binding.accountLabel)) {
+    const { service, action, label, params, binding, connectionId } = parsed.data;
+    if (binding && (connectionId || service !== "gmail" || label !== binding.accountLabel)) {
       return c.json({ error: "Action not permitted" }, 403);
     }
     const def = getService(service);
@@ -55,7 +56,10 @@ export function createIntegrationReadCallRoutes(options: {
       return c.json({ error: "Invalid action parameters" }, 400);
     }
 
-    const selected = resolveIntegrationConnection(await options.db.listConnectedServices(uid), service, label);
+    const connections = await options.db.listConnectedServices(uid);
+    const selected = resolveIntegrationConnection(
+      connectionId ? connections.filter((item) => item.id === connectionId) : connections, service, label,
+    );
     if (selected.kind === "ambiguous") return c.json({ error: "Integration account label is ambiguous" }, 409);
     if (selected.kind === "missing") return c.json({ error: "Integration account unavailable" }, 400);
     const user = await options.db.getUserById(uid);

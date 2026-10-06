@@ -170,11 +170,11 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
       }, signal);
     },
     /** Runs one action on the account with `label`. Reads use the read-only route, which never syncs. */
-    async call(ownerId: string, input: { service: string; action: string; label: string; params: Record<string, unknown>; read: boolean }, signal?: AbortSignal) {
+    async call(ownerId: string, input: { service: string; action: string; label: string; params: Record<string, unknown>; connectionId?: string; read: boolean }, signal?: AbortSignal) {
       return send(ownerId, {
         method: "POST",
         path: input.read ? "/read-call" : "/call",
-        body: { service: input.service, action: input.action, label: input.label, params: input.params },
+        body: { service: input.service, action: input.action, label: input.label, params: input.params, ...(input.read && input.connectionId ? { connectionId: input.connectionId } : {}) },
         readScope: input.read,
       }, CALL_TIMEOUT_MS, async (response, bounded) => {
         const result = CallResultSchema.safeParse(await readJson(response, MAX_CALL_BYTES, bounded));

@@ -409,6 +409,30 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
       }
     },
 
+    configureReadJob: function(jobId, settings) {
+      return parentFetch("/api/app-read-jobs/configure", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: jobId, settings: settings }) }, 10000).then(function(r) { return r.json(); });
+    },
+    readJobStatus: function(jobId) {
+      return parentFetch("/api/app-read-jobs/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: jobId }) }, 10000).then(function(r) { return r.json(); });
+    },
+    runReadJob: function(jobId) {
+      return parentFetch("/api/app-read-jobs/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: jobId }) }, 10000).then(function(r) { return r.json(); });
+    },
+    pauseReadJob: function(jobId, paused) {
+      return parentFetch("/api/app-read-jobs/pause", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: jobId, paused: paused }) }, 10000).then(function(r) { return r.json(); });
+    },
+
+    integrationReads: function() {
+      return parentFetch("/api/bridge/integrations", {}, 30000).then(function(r) { return r.json(); });
+    },
+
+    serviceRead: function(service, action, params, connectionId, label) {
+      return parentFetch("/api/bridge/integrations", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: service, action: action, params: params || {}, connectionId: connectionId, label: label })
+      }, 30000).then(function(r) { return r.json(); });
+    },
+
     integrations: function() {
 	      return parentFetch("/api/bridge/service", {}, 10000)
 	        .then(function(r) { return r.json(); })

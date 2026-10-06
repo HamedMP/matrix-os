@@ -4,7 +4,7 @@ import { APP_AI_TIMEOUT_MS, AppAiRequestSchema, AppAiResultSchema, type AppAiReq
 
 interface Options {
   authorize: (context: Context, app: string) => Promise<boolean>;
-  generate: (request: AppAiRequest, signal: AbortSignal) => Promise<AppAiResult>;
+  generate: (request: AppAiRequest, signal: AbortSignal, context: Context) => Promise<AppAiResult>;
 }
 
 /** Mounted behind gateway auth; authorize additionally enforces owner and app grant. */
@@ -36,7 +36,7 @@ export function createAppAiRoutes(options: Options): Hono {
       let onAbort: (() => void) | undefined;
       // Keep the slot until the underlying operation ends, even if a driver
       // ignores cancellation. A timed-out driver cannot create unbounded work.
-      const pending = Promise.resolve().then(() => options.generate(parsed.data, signal))
+      const pending = Promise.resolve().then(() => options.generate(parsed.data, signal, c))
         .finally(() => { inFlight--; });
       const cancelled = new Promise<never>((_resolve, reject) => {
         onAbort = () => reject(new Error("App AI request cancelled"));

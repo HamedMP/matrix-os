@@ -1,3 +1,5 @@
+import { APP_READ_JOB_CHANNEL, AppReadJobInvokeSchema, type AppReadJobInvoke } from "@matrix-os/contracts";
+import { APP_INTEGRATION_CHANNEL, AppIntegrationRequestSchema, AppIntegrationAppSchema, type AppIntegrationRequest } from "@matrix-os/contracts";
 import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, APP_AI_TIMEOUT_MS, AppAiInputSchema, AppAiResultSchema, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { z } from "zod/v4";
@@ -61,6 +63,8 @@ interface NativeAppBridgeOptions {
   generate: (app: string, context: string) => void;
   aiRequest: (slug: string, input: AppAiInput) => Promise<unknown>;
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
+  readJobRequest?: (slug: string, request: AppReadJobInvoke) => Promise<unknown>;
+  integrationRequest?: (slug: string, request: AppIntegrationRequest) => Promise<unknown>;
   gatewayRequest: (slug: string, request: NativeAppGatewayRequest) => Promise<unknown>;
   gatewayOrigin: () => string;
   resolveApp?: (request: NativeAppOpenRequest) => Promise<NativeAppOpenTarget>;
@@ -166,6 +170,46 @@ export function createNativeAppGatewayRequester(
   };
 }
 
+export function createNativeAppReadJobRequester(options: NativeAppQueryRequesterOptions) {
+  const fetchFn = options.fetchFn ?? fetch;
+  return async (slug: string, rawRequest: AppReadJobInvoke) => {
+    const app = AppIntegrationAppSchema.parse(slug);
+    const request = AppReadJobInvokeSchema.parse(rawRequest);
+    const token = options.getToken();
+    if (!token) throw new Error("desktop authentication required");
+    const origin = new URL(options.getGatewayOrigin());
+    if (!["https:", "http:"].includes(origin.protocol)) throw new Error("invalid gateway origin");
+    const response = await fetchFn(new URL(`/api/app-read-jobs/${request.action}`, origin).toString(), {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ app, ...request.input }),
+    });
+    if (!response.ok) throw new Error("App read job is unavailable");
+    return readBoundedJson(response);
+  };
+}
+
+export function createNativeAppIntegrationRequester(options: NativeAppQueryRequesterOptions) {
+  const fetchFn = options.fetchFn ?? fetch;
+  return async (slug: string, rawRequest: AppIntegrationRequest) => {
+    const app = AppIntegrationAppSchema.parse(slug);
+    const request = AppIntegrationRequestSchema.parse(rawRequest);
+    const token = options.getToken();
+    if (!token) throw new Error("desktop authentication required");
+    const origin = new URL(options.getGatewayOrigin());
+    if (!["https:", "http:"].includes(origin.protocol)) throw new Error("invalid gateway origin");
+    const path = "/api/bridge/integrations" + (request.type === "inventory" ? `?app=${encodeURIComponent(app)}` : "");
+    const response = await fetchFn(new URL(path, origin).toString(), {
+      method: request.type === "inventory" ? "GET" : "POST",
+      redirect: "error", signal: AbortSignal.timeout(30_000),
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      ...(request.type === "call" ? { body: JSON.stringify({ app, ...request.input }) } : {}),
+    });
+    if (!response.ok) throw new Error("App integration read is unavailable");
+    return readBoundedJson(response);
+  };
+}
+
 export function createNativeAppAiRequester(options: NativeAppQueryRequesterOptions) {
   const fetchFn = options.fetchFn ?? fetch;
   return async (slug: string, rawInput: AppAiInput) => {
@@ -259,6 +303,24 @@ export class NativeAppBridge {
     return this.options.gatewayRequest(identity.appIdentity, parsed.data);
   }
 
+  async readJob(sender: NativeAppSender, rawRequest: unknown): Promise<unknown> {
+    const identity = this.senders.get(sender.id);
+    if (!identity || identity.authGeneration !== this.options.authGeneration()
+      || identity.appIdentity !== identity.routeSlug
+      || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) throw new Error("not authorized");
+    if (!this.options.readJobRequest) throw new Error("App read job is unavailable");
+    return this.options.readJobRequest(identity.appIdentity, AppReadJobInvokeSchema.parse(rawRequest));
+  }
+
+  async integrationRead(sender: NativeAppSender, rawRequest: unknown): Promise<unknown> {
+    const identity = this.senders.get(sender.id);
+    if (!identity || identity.authGeneration !== this.options.authGeneration()
+      || identity.appIdentity !== identity.routeSlug
+      || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) throw new Error("not authorized");
+    if (!this.options.integrationRequest) throw new Error("App integration read is unavailable");
+    return this.options.integrationRequest(identity.appIdentity, AppIntegrationRequestSchema.parse(rawRequest));
+  }
+
   async aiGenerate(sender: NativeAppSender, rawInput: unknown): Promise<unknown> {
     const identity = this.senders.get(sender.id);
     if (!identity || identity.authGeneration !== this.options.authGeneration() || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
@@ -316,6 +378,28 @@ export class NativeAppBridge {
         } catch (error: unknown) {
           console.warn("[native-app-bridge] launch failed:", error instanceof Error ? error.name : "UnknownError");
           throw new Error("App launch is unavailable");
+        }
+      });
+    }
+    if (this.options.readJobRequest) {
+      ipcMain.handle(APP_READ_JOB_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
+        try {
+          if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+          return await this.readJob({ id: event.sender.id, url: event.sender.getURL() }, rawRequest);
+        } catch (error: unknown) {
+          console.warn("[native-app-bridge] read job failed:", error instanceof Error ? error.name : "UnknownError");
+          throw new Error("App read job is unavailable");
+        }
+      });
+    }
+    if (this.options.integrationRequest) {
+      ipcMain.handle(APP_INTEGRATION_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
+        try {
+          if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+          return await this.integrationRead({ id: event.sender.id, url: event.sender.getURL() }, rawRequest);
+        } catch (error: unknown) {
+          console.warn("[native-app-bridge] integration read failed:", error instanceof Error ? error.name : "UnknownError");
+          throw new Error("App integration read is unavailable");
         }
       });
     }

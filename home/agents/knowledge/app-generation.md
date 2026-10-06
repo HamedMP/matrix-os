@@ -255,9 +255,17 @@ const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxRe
 - **gmail**: `list_messages`, `get_message`, `send_email`, `search`, `list_labels`
 - **google_calendar**: `list_events`, `create_event`, `update_event`, `delete_event`
 - **google_drive**: `list_files`, `get_file`, `upload_file`, `share_file`
-- **github**: `list_repos`, `list_issues`, `create_issue`, `list_prs`
-- **slack**: `send_message`, `list_channels`, `list_messages`, `search`
+- **github**: `list_repos`, `list_issues`, `create_issue`, `list_prs`, `get_pr`, `list_pr_reviews`, `list_check_runs`, `get_combined_status`
+- **slack**: `send_message`, `list_channels`, `list_messages`, `list_thread_replies`, `search`
 - **discord**: `send_message`, `list_servers`, `list_channels`, `list_messages`
+
+Read capability parameters:
+- GitHub `get_pr` / `list_pr_reviews`: `{repo: "owner/repo", pull_number: 1}`. Reviews accept bounded `page` / `per_page`.
+- GitHub `list_check_runs` / `get_combined_status`: `{repo, sha}` with a full immutable 40- or 64-hex commit SHA from the PR head; accept `page` / `per_page`. Preserve `head_sha`, pending states and pagination. Empty checks, unknown mergeability and a merged PR do not establish successful CI or deployment.
+- Slack `list_thread_replies`: `{channel: "C0123456789", ts: "1712345678.123456", cursor?, limit?}`. Uses a selected channel ID, includes the thread parent, defaults to 15 replies, and preserves `response_metadata.next_cursor`. Access needs the connected account's channel-history scope; errors are not empty threads.
+- PostHog `list_tickets`, `get_ticket`, `list_ticket_messages` use the existing PostHog connection with `ticket:read`. Required scope is `{region: "eu" | "us", projectId: positiveInteger}`; ticket reads require `ticketId: UUID`. Lists accept `limit` (1–100) / `offset` (0–1000000), returning unmodified `count`, `next`, and `results`. Continue by offset; never submit a provider `next` URL. These are Support tickets, not analytics or AI assistant conversations. Scope-denied responses must remain unavailable, not zero tickets.
+
+For production owner apps, use `MatrixOS.integrationReads()` and `MatrixOS.serviceRead(service, action, params, connectionId, label)` with owner-controlled grants; the legacy `MatrixOS.service()` production path remains denied. See [App integration reads](./app-integrations.md) for the exact permission, selection and grant contracts.
 
 ### MatrixOS Bridge
 Apps run as sandboxed `srcdoc` iframes. Direct `fetch()` calls to `/api/bridge/*` are blocked by

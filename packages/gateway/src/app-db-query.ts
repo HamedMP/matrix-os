@@ -1,3 +1,4 @@
+import { assertAppTableWritable } from "./app-read-jobs/protected-tables.js";
 import type { AppDb } from "./app-db.js";
 import { parseSafeName, type FilterOp, type FilterValue } from "./app-db-types.js";
 
@@ -128,6 +129,7 @@ export function createQueryEngine(db: AppDb): QueryEngine {
     async insert(schema, table, data) {
       parseSafeName(schema, "schema");
       parseSafeName(table, "table");
+      assertAppTableWritable(table);
       const cols = Object.keys(data).filter((c) => {
         parseSafeName(c, "column");
         return true;
@@ -147,6 +149,7 @@ export function createQueryEngine(db: AppDb): QueryEngine {
     async bulkInsert(schema, table, rows) {
       parseSafeName(schema, "schema");
       parseSafeName(table, "table");
+      assertAppTableWritable(table);
       if (rows.length === 0) return { ids: [] };
       if (rows.length > 200) throw new Error("bulkInsert: too many rows");
 
@@ -185,6 +188,7 @@ export function createQueryEngine(db: AppDb): QueryEngine {
     async update(schema, table, id, data) {
       parseSafeName(schema, "schema");
       parseSafeName(table, "table");
+      assertAppTableWritable(table);
       const cols = Object.keys(data).filter((c) => {
         parseSafeName(c, "column");
         return true;
@@ -202,6 +206,7 @@ export function createQueryEngine(db: AppDb): QueryEngine {
     async bulkUpdate(schema, table, updates) {
       parseSafeName(schema, "schema");
       parseSafeName(table, "table");
+      assertAppTableWritable(table);
       if (updates.length === 0) return;
       // Parameter count scales with row count and changed column count
       // (up to 2 * rows * columns + rows), so keep this cap conservative.
@@ -257,6 +262,7 @@ export function createQueryEngine(db: AppDb): QueryEngine {
     async delete(schema, table, id) {
       parseSafeName(schema, "schema");
       parseSafeName(table, "table");
+      assertAppTableWritable(table);
       await db.raw(`DELETE FROM ${qualifiedTable(schema, table)} WHERE id = $1`, [id]);
     },
 

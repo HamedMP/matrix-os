@@ -42,7 +42,7 @@ import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
-import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
+import { createRuntimeAppAiRoutes, createRuntimeAppAiService } from "./app-ai/runtime.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
@@ -228,6 +228,8 @@ import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
 import type { CanvasRepository } from "./canvas/repository.js";
 import type { CanvasService } from "./canvas/service.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
+import { createAppIntegrationReadRoutes, createRuntimeAppIntegrationReadService } from "./integrations/app-read-bridge.js";
+import { createAppReadJobRuntime } from "./app-read-jobs/runtime.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
 import { proxyIntegrationRequest } from "./integrations/platform-proxy.js";
 import type { PlatformDb } from "./platform-db.js";
@@ -1361,12 +1363,25 @@ export async function createGateway(config: GatewayConfig) {
     logUnexpectedJsonParseFailure,
   });
 
+  const appOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
+    .filter((id): id is string => Boolean(id?.trim())).map(id => id.trim());
+  const appAiService = createRuntimeAppAiService({ homePath, ownerIds: appOwnerIds, fundedCredentialProvider });
   app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
-    homePath,
-    ownerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
-      .filter((id): id is string => Boolean(id)),
-    fundedCredentialProvider,
+    homePath, ownerIds: appOwnerIds, fundedCredentialProvider, service: appAiService,
   }));
+  const appIntegrationReadService = createRuntimeAppIntegrationReadService({
+    homePath, ownerIds: appOwnerIds,
+    transport: internalIntegrationBaseUrl && internalPlatformToken
+      ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
+      : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null,
+  });
+  app.route("/api/bridge/integrations", createAppIntegrationReadRoutes({
+    homePath, ownerIds: appOwnerIds, client: null, service: appIntegrationReadService,
+  }));
+  const appReadJobRuntime = createAppReadJobRuntime({
+    app, homePath, ownerIds: appOwnerIds, db: kyselyInstance, registry: appRegistry,
+    ensureAppProvisioned, readService: appIntegrationReadService, ai: appAiService,
+  });
 
   app.route("/api/bridge/service", createIntegrationBridgeRoutes({
     platformDb,
@@ -1910,6 +1925,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await appReadJobRuntime.stop();
       await localChatImportLifecycle.close();
       await closeNativeProviderWorkflowConnections([
         () => providerWorkflowLifecycle.close(),

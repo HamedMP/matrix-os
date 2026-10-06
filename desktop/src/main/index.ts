@@ -20,6 +20,8 @@ import {
   createNativeAppQueryRequester,
   createNativeAppGatewayRequester,
   createNativeAppAiRequester,
+  createNativeAppIntegrationRequester,
+  createNativeAppReadJobRequester,
 } from "./embeds/native-app-bridge";
 import {
   abortCodingAgentThread,
@@ -290,6 +292,14 @@ if (!gotLock) {
           sendEvent("app:generate", { app, context, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
         },
         aiRequest: createNativeAppAiRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
+        readJobRequest: createNativeAppReadJobRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
+        integrationRequest: createNativeAppIntegrationRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
           getToken: () => auth.getToken(),
         }),

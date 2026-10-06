@@ -73,3 +73,30 @@ it("exposes the one-way installed-app launch request in native app views", async
   expect(() => bridge.openApp("Settings", "__settings__")).toThrow("Invalid app launch");
   expect(electron.ipcRenderer.invoke).toHaveBeenCalledTimes(1);
 });
+
+it("exposes typed integration reads through dedicated IPC without generic gateway access", async () => {
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
+  electron.ipcRenderer.invoke.mockResolvedValue({ connections: [] });
+  await import("../../desktop/src/preload/index.js");
+  const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  await expect(bridge.integrationReads()).resolves.toEqual({ connections: [] });
+  expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("native-app:integration-read", { type: "inventory" });
+  expect(Object.hasOwn(bridge, "gatewayFetch")).toBe(false);
+  electron.ipcRenderer.invoke.mockResolvedValue({ data: [] });
+  await expect(bridge.serviceRead("github", "list_prs", { repo: "example/project" }, "owned", "Work")).resolves.toEqual({ data: [] });
+  expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith("native-app:integration-read", {
+    type: "call", input: { service: "github", action: "list_prs", params: { repo: "example/project" }, connectionId: "owned", label: "Work" },
+  });
+});
+
+it("exposes typed app job controls on dedicated IPC", async () => {
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
+  electron.ipcRenderer.invoke.mockResolvedValue({ jobId: "daily", state: null });
+  await import("../../desktop/src/preload/index.js");
+  const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  await expect(bridge.readJobStatus("daily")).resolves.toEqual({ jobId: "daily", state: null });
+  expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("native-app:read-job", { action: "status", input: { jobId: "daily" } });
+  await expect(bridge.configureReadJob("daily", { intervalMs: 1800000 })).resolves.toEqual({ jobId: "daily", state: null });
+  expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith("native-app:read-job", { action: "configure", input: { jobId: "daily", settings: { intervalMs: 1800000 } } });
+  expect(Object.hasOwn(bridge, "gatewayFetch")).toBe(false);
+});
