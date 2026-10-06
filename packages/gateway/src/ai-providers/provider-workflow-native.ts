@@ -2,12 +2,10 @@ import type { createGenericNativeWriter, GenericNativeWriterProfile } from "./ge
 import type { createHermesSettingsConnection } from "./hermes-settings-auth.js";
 import { nativeWorkflowConnectionOptions } from "./native-workflow-options.js";
 import { authenticatedNativeHarness } from "./native-workflow-account.js";
-import { supportsCodexTerminalLogin } from "./provider-codex-terminal-login.js";
 import type { createPiSettingsConnection } from "./pi-settings-auth.js";
 import type { createOpenClawSettingsConnection } from "./openclaw-settings-auth.js";
 import type { createOpenCodeSettingsConnection } from "./opencode-settings-auth.js";
 import type { createClaudeSettingsLogin } from "./provider-workflow-browser.js";
-import type { createCodexSettingsLogin } from "./provider-workflow-codex-login.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import type { ProviderKeyVerifier } from "./provider-workflow-key.js";
 import { execFile } from 'node:child_process';
@@ -38,7 +36,6 @@ export async function createNativeProviderWorkflowAdapters(options: {
   hermesCodexReuse?: () => Promise<void>;
   hermesConnection?: ReturnType<typeof createHermesSettingsConnection>;
   claudeBrowserLogin?: ReturnType<typeof createClaudeSettingsLogin>;
-  codexSettingsLogin?: ReturnType<typeof createCodexSettingsLogin>;
   piConnection?: ReturnType<typeof createPiSettingsConnection>;
   openclawConnection?: ReturnType<typeof createOpenClawSettingsConnection>;
   opencodeConnection?: ReturnType<typeof createOpenCodeSettingsConnection>;
@@ -113,15 +110,13 @@ export async function createNativeProviderWorkflowAdapters(options: {
     if (harness.harness === "hermes" && harness.installState === "installed" && options.hermesConnection) opencodeCapability = await options.hermesConnection.capabilities();
     const settingsConnection = harness.harness === "hermes" ? options.hermesConnection : harness.harness === "openclaw" ? options.openclawConnection : harness.harness === "pi" ? options.piConnection : options.opencodeConnection;
     const packageName = harness.harness in packages ? packages[harness.harness as keyof typeof packages] : null;
-    const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && ['codex', 'claude'].includes(harness.harness);
+    const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && harness.harness === 'claude';
     const canBrowserLogin = canLogin && harness.harness === 'claude' && !!options.claudeBrowserLogin;
-    const canTerminalLogin = canLogin && (harness.harness !== 'codex' || await supportsCodexTerminalLogin(prefix));
     const system = harness.harness === 'hermes' || harness.harness === 'openclaw';
     const keyAdapter = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
     const loginMethods: NonNullable<ProviderWorkflowStart['method']>[] = [
       ...(canBrowserLogin ? ['browser' as const] : []),
-      ...(canLogin && harness.harness === 'codex' && options.codexSettingsLogin ? ['device_code' as const] : []),
-      ...(canTerminalLogin ? ['terminal' as const] : []),
+      ...(canLogin ? ['terminal' as const] : []),
     ];
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
       ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
@@ -144,15 +139,12 @@ export async function createNativeProviderWorkflowAdapters(options: {
         await enableConnectedKey(harness.id, `key-connect-${randomUUID()}`, key.providerId);
       } } : {}),
       async start({ request, connectionOption, publish, registerCleanup }) {
-        // V1 keeps its DTO shape but cannot bypass V2 provider qualification.
-        if (request.kind === 'login' && !['codex', 'claude'].includes(harness.harness)) throw new ProviderWorkflowNotStartedError();
+        // Hosted subscription login is permitted only for the native Claude client.
+        // V1 and direct adapter callers cannot bypass this provider boundary.
+        if (request.kind === 'login' && harness.harness !== 'claude') throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && (!request.method || !loginMethods.includes(request.method))) throw new ProviderWorkflowNotStartedError();
         if (connectionOption && (connectionOption.availability !== "available" || connectionOption.providerId !== (harness.harness === "claude" ? "anthropic" : "openai"))) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription' || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
-        if (request.kind === 'login' && request.method === 'device_code' && harness.harness === 'codex') {
-          if (!canLogin || !options.codexSettingsLogin) throw new ProviderWorkflowNotStartedError();
-          return options.codexSettingsLogin({ publish, registerCleanup, onSuccess: () => confirmNativeLogin(request.idempotencyKey) });
-        }
         if (request.kind === 'login' && request.method === 'browser') {
           if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
           return options.claudeBrowserLogin({ publish, registerCleanup, onSuccess: async () => {

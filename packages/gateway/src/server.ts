@@ -1446,7 +1446,7 @@ export async function createGateway(config: GatewayConfig) {
     homePath,
     registry: providerLoginTerminalRegistry,
     enabledHarnesses: codingAgentWorkspaceAgents.filter(
-      (agent): agent is "codex" | "claude" => agent === "codex" || agent === "claude",
+      (agent): agent is "claude" => agent === "claude",
     ),
   });
   const providerAccountLifecycle = createDefaultProviderCliAccountLifecycleCoordinator({

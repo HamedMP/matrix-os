@@ -8,9 +8,12 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const state = useHarnessWorkflowController(props);
   const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, failure, setFailure, connected, setDisconnectOpen, uninstall, setUninstall, connectionPanel, pendingStart, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
   const terminalOnly = !capability.connectionOptions && capability.loginMethods.includes("terminal") && !inlineLogin;
+  const canChangeAccount = capability.connectionOptions
+    ? capability.connectionOptions.some(option => option.availability === "available" && (option.authKind === "api_key" ? Boolean(client.submitConnectionKey) : Boolean(client.startConnection)))
+    : inlineLogin || terminalOnly || (capability.apiKeyProviders.length > 0 && Boolean(client.submitKey));
   const changeAccountAction =
     connected &&
-    (capability.connectionOptions?.length || inlineLogin || terminalOnly || capability.apiKeyProviders.length) ? (
+    canChangeAccount ? (
       <button
         type="button"
         className="matrix-ap-button"
@@ -102,7 +105,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
         <>
           {harness.authState === "expired" && !connecting ? (
             <div className="matrix-ap-notice" data-tone="warning">
-              <span>Sign-in expired. Reconnect to continue.</span>
+              <span>{harness.harness === "codex" ? "Connection expired. Connect with a supported API key to continue." : "Sign-in expired. Reconnect to continue."}</span>
               {inlineLogin ? (
                 <button
                   type="button"
@@ -153,7 +156,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
             </>
           ) : null}
       <WorkflowKeyForm state={state} />
-      <WorkflowLoginProgress state={state} />
+      {harness.harness === "claude" ? <WorkflowLoginProgress state={state} /> : null}
         </>
       )}
       {failed && operation ? (
@@ -167,14 +170,14 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   ? "Uninstall couldn't complete. Try again."
                   : "Couldn't connect. Try again."}
           </span>
-          <button
+          {!(harness.harness !== "claude" && operation.kind === "login") ? <button
             type="button"
             className="matrix-ap-button"
             disabled={disabled || pending}
             onClick={() => void start(operation.kind)}
           >
             Try again
-          </button>
+          </button> : null}
           <button type="button" className="matrix-ap-button" onClick={back}>
             {operation.kind === "login" ? "Choose another way" : "Back"}
           </button>
@@ -235,7 +238,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
             Cancel
           </button>
         ) : null}
-        {operation?.terminalSessionId && (operation.kind !== "login" || operation.connectionOption?.method === "terminal") ? (
+        {operation?.terminalSessionId && (operation.kind !== "login" || (harness.harness === "claude" && operation.connectionOption?.method === "terminal")) ? (
           <button
             type="button"
             className="matrix-ap-link-button"

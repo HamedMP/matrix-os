@@ -12,6 +12,7 @@ import { AccountLifecycleActions } from "./AccountLifecycleActions.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
 import { YourSubscriptions } from "./YourSubscriptions.js";
+import { managedConnectionCapability } from "./managed-connection-capability.js";
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
 import { useHarnessEnablement } from "./use-harness-enablement.js";
 import { ConnectedAccountCard } from "./ConnectedAccountCard.js";
@@ -63,7 +64,7 @@ export function AgentsProvidersView({
     if (!workflowClient) return;
     const controller = new AbortController();
     void workflowClient.capabilities(controller.signal).then(value => {
-      if (!controller.signal.aborted) {setWorkflowCapabilities(value); setWorkflowPermission("available");}
+      if (!controller.signal.aborted) {setWorkflowCapabilities(value.map(managedConnectionCapability)); setWorkflowPermission("available");}
     }).catch(caught => {
       if (controller.signal.aborted) return;
       console.warn("[provider-settings] Workflow capabilities unavailable:", caught instanceof Error ? caught.name : typeof caught);
@@ -249,6 +250,7 @@ export function AgentsProvidersView({
             );
             const guided = Boolean(workflowClient && capability);
             const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
+            const allowedSavedConnection = harness.harness !== "codex" || source?.fundingKind === "owner_api_key" || selectedAccount?.authMethod === "api_key";
             const connected = hasConfiguredConnection(harness, source);
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
@@ -274,7 +276,7 @@ export function AgentsProvidersView({
                   entry={catalog ?? { harness: harness.harness as "pi" | "opencode" | "hermes" | "openclaw", displayName: harness.displayName, installState: "missing", available: false, runnable: false, setupAction: "none", safeReason: "runtime_unavailable" }}
                   disabled={mutationsDisabled} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} /> : null}
                 {!guided ? <>{connected ? connectionCard() : <ConnectionFallback harness={harness} source={source} workflowPermission={workflowPermission} disabled={mutationsDisabled} onRefresh={refreshSettings} onSetupHarness={onSetupHarness} />}</> : null}
-                {!guided && (!workflowClient || workflowPermission === "available")
+                {!guided && allowedSavedConnection && (!workflowClient || workflowPermission === "available")
                   && supports("set_harness_enabled") && (harness.configuredEnabled ?? harness.enabled) === false
                   && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source) ?
                   <button type="button" className="matrix-ap-button"
@@ -285,11 +287,6 @@ export function AgentsProvidersView({
                     action={() => onMutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false })}
                     onSuccess={refreshSettings} /> : null}
                 {!guided && harness.installState === "installed" ? <details className="matrix-ap-advanced"><summary>Advanced configuration</summary>
-                  {(harness.harness === "pi" || harness.harness === "opencode") && catalog?.available && catalog.setupAction === "open_terminal"
-                    && !(supports("start_login") && harness.loginMethods.length > 0)
-                    && workflowPermission !== "forbidden" && onSetupHarness ?
-                    <RetainedHarnessAction scopeKey={`${harness.harness}:${harness.id}:terminal`} scopeOwner={workflowClient} label="Connect in Terminal" disabled={mutationsDisabled}
-                      action={() => onSetupHarness(harness.harness)} /> : null}
                   <HarnessEditor snapshot={snapshot} harness={harness} disabled={mutationsDisabled}
                     canUpdate={genericConfiguration && supports("update_harness")} canSetRoute={genericConfiguration && supports("set_route")}
                     canSelectSource={genericConfiguration && supports("select_access_source")} canSelectAccount={genericConfiguration && supports("select_account")}
@@ -325,7 +322,7 @@ export function AgentsProvidersView({
                       disabled={operationDisabled || workflowPermission === "forbidden"}
                       canLogout={supports("logout_account")} canRemove={supports("remove_account")} canReassign={supports("reassign_account")}
                       onMutate={onMutate} onRefresh={refreshSettings} />}
-                    onConnectSaved={supports("set_harness_enabled") && (harness.configuredEnabled ?? harness.enabled) === false && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source) ? () => enablement.connectSaved(harness) : undefined}
+                    onConnectSaved={allowedSavedConnection && supports("set_harness_enabled") && (harness.configuredEnabled ?? harness.enabled) === false && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source) ? () => enablement.connectSaved(harness) : undefined}
                     connectSavedDisabled={workflowPermission === "forbidden" || !onRefreshForConnection}
                     source={source}
                     harness={harness}

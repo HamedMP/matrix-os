@@ -11,7 +11,6 @@ import { discoverPiSettingsAuth, createPiSettingsConnection } from "../ai-provid
 import { createOpenClawSettingsConnection } from "../ai-providers/openclaw-settings-auth.js";
 import { openOpenCodeAuthSession, createOpenCodeSettingsConnection, enableOpenCodeConnectedRoute, enableNativeSettingsConnectedRoute } from "../ai-providers/opencode-settings-auth.js";
 import { createClaudeSettingsLogin } from "../ai-providers/provider-workflow-browser.js";
-import { createCodexSettingsLogin } from "../ai-providers/provider-workflow-codex-login.js";
 import { createNativeProviderWorkflowAdapters, closeNativeProviderWorkflowConnections } from "../ai-providers/provider-workflow-native.js";
 import { createCodexKeySaver, createProviderKeyVerifier } from "../ai-providers/provider-workflow-key.js";
 import { registerProviderWorkflowRuntime } from "./provider-workflow-runtime.js";
@@ -57,8 +56,6 @@ export async function createNativeProviderWorkflowRuntime(options: {
       genericWriter,
       hermesConnection: hermesSettingsConnection,
       claudeBrowserLogin: createClaudeSettingsLogin({ command: "claude", cwd: homePath, env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("claude", { kind: "write", durable: true }) }),
-      codexSettingsLogin: createCodexSettingsLogin({ command: join(process.env.MATRIX_NODE_PREFIX ?? "/opt/matrix/runtime/node", "bin/codex"), cwd: homePath,
-        env: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) }, acquire: () => nativeProviderProfileGuard.acquire("codex", { kind: "write", durable: true }) }),
       opencodeConnection: opencodeSettingsConnection,
       piConnection: piSettingsConnection,
       openclawConnection: openclawSettingsConnection,

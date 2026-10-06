@@ -2,6 +2,7 @@ import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
 import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { usageLines } from "./utils.js";
+import { managedConnectionCapability } from "./managed-connection-capability.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability } from "./types.js";
 
 type Props = {
@@ -30,10 +31,12 @@ export function YourSubscriptions({snapshot, capabilities, client, operationIds,
         const name = kind === "codex" ? "Codex" : "Claude";
         const nativeName = kind === "codex" ? "Codex" : "Claude Code";
         const rows = targets.length ? targets : [{id: kind, harness: undefined, capability: undefined}];
-        return rows.map(({id, harness, capability}) => {
+        return rows.map(({id, harness, capability: advertisedCapability}) => {
+          const capability = advertisedCapability ? managedConnectionCapability(advertisedCapability) : undefined;
           const {account, source} = harness ? resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources) : {account: undefined, source: undefined};
-          const connected = harness ? hasConfiguredConnection(harness, source) : false;
-          const retained = harness ? hasConfiguredConnection({...harness, enabled: true, configuredEnabled: true}, source) : false;
+          const keyAccount = source?.fundingKind === "owner_api_key" || account?.authMethod === "api_key";
+          const connected = harness && (kind === "claude" || keyAccount) ? hasConfiguredConnection(harness, source) : false;
+          const retained = harness && (kind === "claude" || keyAccount) ? hasConfiguredConnection({...harness, enabled: true, configuredEnabled: true}, source) : false;
           const status = harness ? resolvedWorkflowRowStatus(harness, source, workflowStatus[id]) : workflowStatus[id] ?? "Not connected";
           const continuing = ["Connecting", "Installing", "Uninstalling"].includes(status)
             || Boolean(operationIds[id] || capability?.activeOperationId);
@@ -43,16 +46,20 @@ export function YourSubscriptions({snapshot, capabilities, client, operationIds,
           const canLogin = capability && installState === "installed" && (options
             ? Boolean(client?.startConnection && options.some(option => option.providerId === (kind === "codex" ? "openai" : "anthropic") && option.authKind === "subscription" && option.availability === "available"))
             : Boolean(client && capability.loginMethods.length));
+          const canKey = kind === "codex" && capability && installState === "installed" && (options
+            ? Boolean(client?.submitConnectionKey && options.some(option => option.providerId === "openai" && option.authKind === "api_key" && option.availability === "available"))
+            : Boolean(client?.submitKey && capability.apiKeyProviders.includes("openai")));
           const writable = !forbidden && snapshot.access.mode !== "read_only";
-          const action = continuing && writable ? `Continue ${name} connection` : connected || retained ? `Manage ${name} connection`
+          const action = continuing && writable ? `${kind === "codex" ? "Review" : "Continue"} ${name} connection` : connected || retained || (kind === "codex" && account && canKey) ? `Manage ${name} connection`
             : !writable ? null
-            : canInstall ? `Install ${name}` : canLogin ? `Connect ${name}` : null;
+            : canInstall ? `Install ${name}` : canLogin || canKey ? `Connect ${name}` : null;
           const usage = source?.fundingKind === "owner_subscription" && source.usage.kind === "subscription_allowance" ? usageLines(source.usage) : null;
           return <article className="matrix-ap-subscription" key={`${kind}:${id}`}>
             <div className="matrix-ap-subscription-head"><strong>{nativeName}{rows.length > 1 ? ` · ${harness?.displayName ?? capability?.displayName}` : ""}</strong>
-              <span className="matrix-ap-status-chip" data-state={connected ? "ready" : "attention"}><i aria-hidden="true"/>{continuing ? status === "Not connected" ? "Connecting" : status : connected ? "Connected" : retained ? "Saved connection" : installState === "missing" ? "Not installed" : "Not connected"}</span>
+              <span className="matrix-ap-status-chip" data-state={connected ? "ready" : "attention"}><i aria-hidden="true"/>{continuing ? status === "Not connected" ? "Connecting" : status : connected ? "Connected" : retained ? "Saved connection" : kind === "codex" && account ? "Saved account" : installState === "missing" ? "Not installed" : "Not connected"}</span>
             </div>
-            <p className="matrix-ap-help">{kind === "codex" ? "Use your ChatGPT plan through official Codex." : "Use your Claude plan through official Claude Code. Bot task permission is configured separately."}</p>
+            <p className="matrix-ap-help">{kind === "codex" ? "Codex subscription connections are not currently supported on managed Computers." : "Use your Claude plan through official Claude Code. Bot task permission is configured separately."}</p>
+            {kind === "codex" && canKey ? <p className="matrix-ap-help">Connect with an OpenAI API key, billed per request by OpenAI. Matrix AI credit is separate.</p> : null}
             {account || source ? <p className="matrix-ap-help">{account?.connectionDetails?.email ?? account?.displayName ?? source?.displayName}</p> : null}
             {connected || retained ? <p className="matrix-ap-help">{source?.fundingKind === "owner_api_key" ? "API key connected · billed by your provider" : usage?.primary ?? "Usage unavailable"}{usage?.secondary ? ` · ${usage.secondary}` : ""}</p> : null}
             {action ? <button type="button" className="matrix-ap-button" disabled={disabled} aria-controls={`matrix-ap-details-${id}`}

@@ -7,6 +7,7 @@ import type {
 } from "@matrix-os/contracts";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { hasConfiguredConnection } from "./harness-connection.js";
+import { managedConnectionCapability } from "./managed-connection-capability.js";
 import { useWorkflowPolling } from "./use-workflow-polling.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability, ProviderWorkflowUIOperation } from "./types.js";
@@ -44,7 +45,7 @@ export type HarnessWorkflowPanelProps = {
 export function useHarnessWorkflowController({
   harness,
   source,
-  capability,
+  capability: advertisedCapability,
   client,
   disabled,
   onRefresh,
@@ -61,6 +62,7 @@ export function useHarnessWorkflowController({
   advancedConfiguration,
   connectRequest = 0,
 }: HarnessWorkflowPanelProps) {
+  const capability = managedConnectionCapability(advertisedCapability);
   const [operation, setOperation] = useState<ProviderWorkflowUIOperation | null>(null);
   const [selectedOption, setSelectedOption] = useState<ProviderWorkflowConnectionOption | null>(null);
   const [method, setMethod] = useState<"key" | "account" | null>(null);
@@ -207,6 +209,7 @@ export function useHarnessWorkflowController({
   };
   const start = (kind: "login" | "install" | "uninstall", terminal = false, option?: ProviderWorkflowConnectionOption) =>
     run(async (signal) => {
+      if (kind === "login" && harness.harness !== "claude") throw new Error("connection unavailable");
       const exactOption = option ?? (kind === "login" ? selectedOption ?? operation?.connectionOption ?? undefined : undefined);
       if (kind === "login" && capability.connectionOptions && (!exactOption || !client.startConnection
         || !capability.connectionOptions.some(item => item.id === exactOption.id && item.availability === "available" && item.authKind === "subscription")))
@@ -311,7 +314,7 @@ export function useHarnessWorkflowController({
     : 0;
   const connecting = active(operation);
   const reuseCodex = capability.loginMethods.includes("existing_codex");
-  const browserLogin = (operation?.connectionOption ? operation.connectionOption.method === "browser" : capability.loginMethods.includes("browser")) && !!client.submitCode;
+  const browserLogin = harness.harness === "claude" && (operation?.connectionOption ? operation.connectionOption.method === "browser" : capability.loginMethods.includes("browser")) && !!client.submitCode;
   const inlineLogin = capability.loginMethods.includes("device_code") || reuseCodex || browserLogin;
   const hasSubscription =
     harness.harness === "codex" || harness.harness === "claude";

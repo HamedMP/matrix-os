@@ -8,10 +8,10 @@ import { HarnessWorkflowPanel } from "../../packages/ui/src/agents-providers/Har
 import { ProviderWorkflowClientError } from "../../packages/ui/src/agents-providers/provider-workflow-client";
 import type { ProviderWorkflowClient } from "../../packages/ui/src/agents-providers/types";
 afterEach(cleanup);
-const harness = { id: "codex", harness: "codex", displayName: "Codex", installState: "installed", authState: "unauthenticated" } as ProviderHarnessInstance;
-const capability: ProviderWorkflowCapability = { harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["terminal"], apiKeyProviders: [], install: false, uninstall: false, logs: false };
+const harness = { id: "claude", harness: "claude", displayName: "Claude Code", installState: "installed", authState: "unauthenticated" } as ProviderHarnessInstance;
+const capability: ProviderWorkflowCapability = { harnessInstanceId: "claude", harness: "claude", displayName: "Claude Code", installState: "installed", loginMethods: ["terminal"], apiKeyProviders: [], install: false, uninstall: false, logs: false };
 function setup(options: { state?: ProviderWorkflow["state"]; capability?: ProviderWorkflowCapability; forbidden?: boolean; disabled?: boolean } = {}) {
-  const operation: ProviderWorkflow = { id: "restored-login", harnessInstanceId: "codex", kind: "login", state: options.state ?? "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_owner:tt_login", deviceCode: null, authorizationUrl: null, safeFailure: null };
+  const operation: ProviderWorkflow = { id: "restored-login", harnessInstanceId: "claude", kind: "login", state: options.state ?? "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_owner:tt_login", deviceCode: null, authorizationUrl: null, safeFailure: null };
   const api = { get: options.forbidden ? vi.fn().mockRejectedValue(new ProviderWorkflowClientError("forbidden")) : vi.fn().mockResolvedValue(operation), start: vi.fn(), cancel: vi.fn(), capabilities: vi.fn(), submitKey: vi.fn(), logs: vi.fn() } satisfies ProviderWorkflowClient;
   const onOpenTerminal = vi.fn();
   render(<HarnessWorkflowPanel harness={harness} capability={options.capability ?? capability} client={api} disabled={options.disabled ?? false} onRefresh={vi.fn()} onOpenTerminal={onOpenTerminal} operationId={operation.id} />);

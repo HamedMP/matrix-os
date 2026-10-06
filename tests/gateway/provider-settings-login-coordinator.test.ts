@@ -1,5 +1,4 @@
 import { createNativeProviderProfileGuard } from "../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
-import { CODEX_TERMINAL_LOGIN_COMMAND } from "../../packages/gateway/src/ai-providers/provider-codex-terminal-login.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,12 +75,12 @@ describe("provider terminal login coordinator", () => {
     });
   }
 
-  it("creates a visible canonical session with the allowlisted Codex device-login command", async () => {
+  it("creates a visible canonical session with the allowlisted Claude login command", async () => {
     const login = coordinator();
     expect(login.supportedMethods({
-      id: "harness_codex",
-      driverId: "codex",
-      harness: "codex",
+      id: "harness_claude",
+      driverId: "claude_code",
+      harness: "claude",
       installState: "installed",
     })).toEqual(["terminal"]);
 
@@ -89,23 +88,23 @@ describe("provider terminal login coordinator", () => {
       mutation: {
         type: "start_login",
         expectedRevision: 0,
-        idempotencyKey: "login_codex_1",
-        harnessInstanceId: "harness_codex",
+        idempotencyKey: "login_claude_1",
+        harnessInstanceId: "harness_claude",
         accountId: null,
         method: "terminal",
       },
       harness: {
-        id: "harness_codex",
-        driverId: "codex",
-        harness: "codex",
-        providerId: "openai",
-        modelId: "gpt-5",
+        id: "harness_claude",
+        driverId: "claude_code",
+        harness: "claude",
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
         installState: "installed",
       },
     });
 
     expect(attempt).toMatchObject({
-      harnessInstanceId: "harness_codex",
+      harnessInstanceId: "harness_claude",
       method: "terminal",
       state: "pending",
       action: { kind: "open_terminal" },
@@ -125,13 +124,13 @@ describe("provider terminal login coordinator", () => {
     expect(registry.create).toHaveBeenCalledWith(expect.objectContaining({
       name: attempt.action.kind === "open_terminal" ? attempt.action.terminalSessionId : "",
       cwd: "~",
-      agent: "codex",
+      agent: "claude",
       exclusive: false,
-      cmd: CODEX_TERMINAL_LOGIN_COMMAND,
+      cmd: expect.stringContaining("; claude"),
     }));
   });
 
-  it("supports only installed, server-enabled Codex and Claude terminal login", () => {
+  it("supports only installed, server-enabled native Claude terminal login", () => {
     const login = coordinator(["claude"]);
     expect(login.supportedMethods({
       id: "harness_kernel",

@@ -9,28 +9,28 @@ import type { ProviderWorkflowClient, ProviderWorkflowUICapability } from "../..
 afterEach(cleanup);
 function setup(overrides: Partial<ProviderWorkflowUICapability> = {}) {
  const option = {id:"codex:openai:terminal", providerId:"openai", authKind:"subscription", method:"terminal", billingKind:"subscription", executionKind:"native", availability:"available"} as const;
- const capability: ProviderWorkflowUICapability = {harnessInstanceId:"codex", harness:"codex", displayName:"Codex", installState:"installed", loginMethods:["terminal"], apiKeyProviders:[], install:false, uninstall:false, logs:false, connectionOptions:[option], ...overrides};
+ const capability: ProviderWorkflowUICapability = {harnessInstanceId:"codex", harness:"codex", displayName:"Codex", installState:"installed", loginMethods:["terminal"], install:false, uninstall:false, logs:false, connectionOptions:[option, {id:"codex:openai:key", providerId:"openai",authKind:"api_key",billingKind:"api_key",executionKind:"native",availability:"available"}], apiKeyProviders:["openai"], ...overrides};
  const snapshot = {harnesses:[{id:"codex",harness:"codex",displayName:"Codex",installState:capability.installState,authState:"unauthenticated",connectivity:"online",enabled:true,configuredEnabled:true,accessSourceId:null,accountIds:[],selectedAccountId:null,loginMethods:["terminal"],route:{kind:"fixed",providerId:"openai",modelId:"selected-in-codex"}}], accounts:[],accessSources:[],modelProviders:[],gatewayPolicy:null,configurationHarnessKinds:[],supportedActions:[],access:{mode:"writable"},refreshedAt:"2026-10-06T00:00:00Z"} as unknown as ProviderSettingsSnapshot;
  const receipt = {id:"login",harnessInstanceId:"codex",kind:"login",state:"running",expiresAt:new Date(Date.now()+60000).toISOString(),terminalSessionId:"tws_1:tt_1",deviceCode:null,authorizationUrl:null,safeFailure:null,connectionOption:option};
- const client = {capabilities:vi.fn().mockResolvedValue([capability]),start:vi.fn().mockResolvedValue({...receipt, connectionOption:undefined}),startConnection:vi.fn().mockResolvedValue(receipt),get:vi.fn().mockResolvedValue(receipt),cancel:vi.fn(),submitKey:vi.fn(),logs:vi.fn()} as unknown as ProviderWorkflowClient;
+ const client = {capabilities:vi.fn().mockResolvedValue([capability]),start:vi.fn().mockResolvedValue({...receipt, connectionOption:undefined}),startConnection:vi.fn().mockResolvedValue(receipt),get:vi.fn().mockResolvedValue(receipt),cancel:vi.fn(),submitKey:vi.fn(),submitConnectionKey:vi.fn().mockResolvedValue({verified:true}),logs:vi.fn()} as unknown as ProviderWorkflowClient;
  const props = {snapshot,selectedHarnessId:"codex",onSelectHarness:vi.fn(),onMutate:vi.fn(),onRefresh:vi.fn(),onOpenTerminal:vi.fn(),onOpenBrowser:vi.fn(),onAddCredit:vi.fn(),workflowClient:client};
  return {props, client, capability};
 }
-it("opens the canonical official chooser from Matrix AI without implicitly starting login", async () => {
+it("connects Codex with a qualified API key and omits stale subscription choices", async () => {
  const {props,client} = setup(); render(<AgentsProvidersView {...props}/>);
  const subscriptions = await screen.findByRole("region",{name:"Your subscriptions"});
- expect(within(screen.getByRole("region",{name:"Matrix AI"})).getByRole("region",{name:"Your subscriptions"})).toBe(subscriptions);
  fireEvent.click(await within(subscriptions).findByRole("button",{name:"Connect Codex"}));
  expect(screen.getByRole("heading",{name:"Connect Codex with"})).toBeVisible();
  expect(screen.getByRole("button",{name:/^Codex.*Not connected/})).toHaveFocus();
+ expect(screen.queryByRole("button",{name:/ChatGPT account/})).toBeNull();
+ expect(screen.getByText(/Codex subscription connections are not currently supported/)).toBeVisible();
+ expect(within(subscriptions).getByText(/OpenAI API key.*billed per request/)).toBeVisible();
+ fireEvent.click(screen.getByRole("button",{name:/OpenAI API key/}));
+ fireEvent.change(screen.getByLabelText("Paste your OpenAI API key"),{target:{value:"synthetic-key-only"}});
+ fireEvent.click(screen.getByRole("button",{name:"Connect"}));
+ await waitFor(()=>expect(client.submitConnectionKey).toHaveBeenCalledWith({harnessInstanceId:"codex",optionId:"codex:openai:key",apiKey:"synthetic-key-only"},expect.any(AbortSignal)));
  expect(client.startConnection).not.toHaveBeenCalled();
- fireEvent.click(screen.getByRole("button",{name:/ChatGPT account · Log in in Terminal/}));
- await waitFor(()=>expect(props.onOpenTerminal).toHaveBeenCalledWith("tws_1:tt_1"));
- expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:"codex",optionId:"codex:openai:terminal"}),expect.any(AbortSignal));
  expect(client.start).not.toHaveBeenCalled();
- expect(within(subscriptions).getByRole("button",{name:"Continue Codex connection"})).toBeEnabled();
- fireEvent.click(within(subscriptions).getByRole("button",{name:"Continue Codex connection"}));
- expect(client.startConnection).toHaveBeenCalledOnce();
 });
 it("reuses the exact connected native account instead of repeating authorization", async () => {
  const {props,client} = setup(); Object.assign(props.snapshot.harnesses[0]!,{authState:"authenticated",accessSourceId:"native",selectedAccountId:"owner",accountIds:["owner"]});
@@ -39,9 +39,9 @@ it("reuses the exact connected native account instead of repeating authorization
  render(<AgentsProvidersView {...props}/>);
  const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
  fireEvent.click(await within(subscriptions).findByRole("button",{name:"Manage Codex connection"}));
- expect(within(subscriptions).getByText("Connected")).toBeInTheDocument();
+ expect(within(subscriptions).getByText("Saved account")).toBeInTheDocument();
  expect(within(subscriptions).getByText("Current owner")).toBeInTheDocument();
- expect(within(subscriptions).getByText("Usage unavailable")).toBeInTheDocument();
+ expect(within(subscriptions).getByText(/Codex subscription connections are not currently supported/)).toBeInTheDocument();
  expect(screen.queryByRole("button",{name:/ChatGPT account ·/})).not.toBeInTheDocument();
  expect(client.startConnection).not.toHaveBeenCalled();
 });
@@ -54,21 +54,24 @@ it("opens real installation when available and never fabricates an unavailable C
  expect(within(subscriptions).queryByRole("button",{name:"Connect Claude"})).not.toBeInTheDocument();
  expect(within(subscriptions).getByText(/Claude Code connection is unavailable/)).toBeInTheDocument();
 });
-it("reuses legacy official methods but does not advertise unqualified or forbidden login", async () => {
- const {props,client}=setup({connectionOptions:undefined,loginMethods:["device_code"]}); render(<AgentsProvidersView {...props}/>);
+it("preserves legacy Codex key entry while suppressing old subscription methods", async () => {
+ const {props,client}=setup({connectionOptions:undefined,loginMethods:["device_code","terminal"]}); render(<AgentsProvidersView {...props}/>);
  const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
  fireEvent.click(await within(subscriptions).findByRole("button",{name:"Connect Codex"}));
- fireEvent.click(screen.getByRole("button",{name:/ChatGPT account Recommended/}));
- await waitFor(()=>expect(client.start).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:"codex",method:"device_code"}),expect.any(AbortSignal)));
+ expect(screen.queryByRole("button",{name:/ChatGPT account/})).toBeNull();
+ expect(screen.queryByRole("button",{name:"Log in in Terminal"})).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:/^API key/}));
+ expect(screen.getByLabelText("Paste your OpenAI API key")).toBeVisible();
+ expect(client.start).not.toHaveBeenCalled();
 });
 it("clears a prior Computer's shortcut operation and fences late capability discovery", async () => {
  const {props,client}=setup({activeOperationId:"login"}); const view=render(<AgentsProvidersView {...props}/>);
  const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
- fireEvent.click(await within(subscriptions).findByRole("button",{name:"Continue Codex connection"}));
+ fireEvent.click(await within(subscriptions).findByRole("button",{name:"Review Codex connection"}));
  await waitFor(()=>expect(client.get).toHaveBeenCalled());
  const replacement={...client,capabilities:vi.fn().mockResolvedValue([]),get:vi.fn()} as ProviderWorkflowClient;
  await act(async()=>view.rerender(<AgentsProvidersView {...props} snapshot={{...props.snapshot,harnesses:[]}} workflowClient={replacement}/>));
- expect(within(screen.getByRole("region",{name:"Your subscriptions"})).queryByRole("button",{name:"Continue Codex connection"})).not.toBeInTheDocument();
+ expect(within(screen.getByRole("region",{name:"Your subscriptions"})).queryByRole("button",{name:"Review Codex connection"})).not.toBeInTheDocument();
  expect(replacement.get).not.toHaveBeenCalled();
 });
 it("opens Claude's advertised official browser flow separately from Codex and Bot consent", async () => {
@@ -107,12 +110,37 @@ it("rejects late previous-Computer capabilities rather than reintroducing Connec
  expect(oldSignal?.aborted).toBe(true);
  expect(within(screen.getByRole("region",{name:"Your subscriptions"})).queryByRole("button",{name:"Connect Codex"})).toBeNull();
 });
-it("makes legacy Terminal-only native login accessible without advanced menus", async () => {
- const {props,client}=setup({connectionOptions:undefined,loginMethods:["terminal"]}); render(<AgentsProvidersView {...props}/>);
- const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
- fireEvent.click(await within(subscriptions).findByRole("button",{name:"Connect Codex"}));
- const terminal=screen.getByRole("button",{name:"Log in in Terminal"});
- expect(terminal.closest("details")).toBeNull();
- fireEvent.click(terminal);
- await waitFor(()=>expect(client.start).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:"codex",method:"terminal"}),expect.any(AbortSignal)));
+it("does not offer a Codex Terminal subscription workaround or a dead Connect button", async () => {
+ const {props,client}=setup({connectionOptions:undefined,loginMethods:["terminal"],apiKeyProviders:[]}); render(<AgentsProvidersView {...props}/>);
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ const subscriptions=screen.getByRole("region",{name:"Your subscriptions"});
+ expect(within(subscriptions).queryByRole("button",{name:"Connect Codex"})).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:/^Codex/}));
+ expect(screen.queryByRole("button",{name:"Log in in Terminal"})).toBeNull();
+ expect(screen.queryByRole("button",{name:"Reconnect"})).toBeNull();
+ expect(client.start).not.toHaveBeenCalled();
+});
+it("keeps saved Codex metadata without promising unavailable account changes", async () => {
+ const {props,client}=setup({connectionOptions:[],apiKeyProviders:[]});
+ Object.assign(props.snapshot.harnesses[0]!,{authState:"authenticated",accessSourceId:"native",accountIds:["owner"],selectedAccountId:"owner"});
+ props.snapshot.accounts=[{id:"owner",accessSourceId:"native",displayName:"Recorded owner",authState:"authenticated",authMethod:"terminal",dependencies:{activeChatCount:0,resumableChatCount:0,harnessInstanceCount:1}}] as never;
+ props.snapshot.accessSources=[{id:"native",kind:"provider_account",fundingKind:"owner_subscription",providerId:"openai",accountId:"owner",displayName:"Recorded account",eligibleModelIds:[],readiness:{state:"ready"},usage:{kind:"unavailable",reason:"unknown"}}] as never;
+ render(<AgentsProvidersView {...props}/>); await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ const subscriptions=screen.getByRole("region",{name:"Your subscriptions"});
+ expect(within(subscriptions).getByText("Recorded owner")).toBeVisible();
+ expect(within(subscriptions).queryByRole("button",{name:"Manage Codex connection"})).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:/^Codex/}));
+ expect(screen.queryByRole("button",{name:"Change account"})).toBeNull();
+ expect(screen.queryByRole("button",{name:"Reconnect"})).toBeNull();
+ expect(client.startConnection).not.toHaveBeenCalled();
+});
+it("omits the legacy generic Terminal auth shortcut while keeping supported key entry", async () => {
+ const {props,client}=setup({harnessInstanceId:"pi",harness:"pi",displayName:"Pi",connectionOptions:[],loginMethods:[],apiKeyProviders:[]});
+ Object.assign(props.snapshot.harnesses[0]!,{id:"pi",harness:"pi",displayName:"Pi",loginMethods:[]});
+ props.snapshot.harnessCatalog=[{harness:"pi",displayName:"Pi",installState:"installed",available:true,runnable:true,setupAction:"open_terminal",safeReason:null}];
+ vi.mocked(client.capabilities).mockResolvedValue([]);
+ const onSetupHarness=vi.fn(); render(<AgentsProvidersView {...props} onSetupHarness={onSetupHarness}/>);
+ await act(async()=>{}); fireEvent.click(screen.getByRole("button",{name:/^Pi/}));
+ expect(screen.queryByText("Connect in Terminal")).toBeNull();
+ expect(onSetupHarness).not.toHaveBeenCalled();
 });
