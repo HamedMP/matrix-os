@@ -93,7 +93,7 @@ suite("Electron Desktop Chat onboarding", () => {
     try {
       expect(await chat.count()).toBe(1);
       await chat.getByRole("button", { name: "Connect Claude Code", exact: true }).waitFor();
-      expect(await chat.getByRole("button", { name: "Connect Codex", exact: true }).isEnabled()).toBe(false);
+      expect(await chat.getByRole("button", { name: "Connect Codex", exact: true }).count()).toBe(0);
       const draft = chat.getByRole("textbox", { name: "Start a chat", exact: true });
       await draft.fill("Keep this onboarding draft");
       await page.screenshot({ path: join(output, "electron-disconnected.png") });
