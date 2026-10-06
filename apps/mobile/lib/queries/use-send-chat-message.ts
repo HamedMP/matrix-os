@@ -21,7 +21,6 @@ interface SendChatMessageInput {
   /** Must be modes the selected instance's `supports` actually declares -- see defaultTurnModes. */
   interactionMode: string;
   permissionMode: string;
-  botResource?: import("@matrix-os/contracts").CanonicalChatResourceReference;
   /** Only applied when creating a new chat (chatId is null) -- see ProjectPicker. */
   projectId: string | null;
   /**
@@ -47,7 +46,7 @@ export function useSendChatMessage() {
       text,
       selection,
       interactionMode,
-      permissionMode, botResource,
+      permissionMode,
       projectId,
       chatRequestId,
       turnRequestId,
@@ -79,7 +78,7 @@ export function useSendChatMessage() {
       const admission = await admitChatTurn(token, gatewayUrl, targetChatId, {
         clientRequestId: turnRequestId,
         baseRevision: revision,
-        parts: [{ type: "text", text }, ...(botResource ? [{ type: "resource_reference" as const, resource: botResource }] : [])],
+        parts: [{ type: "text", text }],
         selection,
         interactionMode,
         permissionMode,

@@ -1,4 +1,4 @@
-import { useNativeBotExecution } from "@/lib/bot-execution";
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
 import { ChatToolActivity } from "@/components/ChatToolActivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -81,9 +81,11 @@ export default function ChatScreen() {
   const sendMessage = useSendChatMessage();
 
   const directBot = Boolean(botChat.snapshot);
-  const providerCatalogLoading = botChat.identityUnknown || (!directBot && (catalogPending || catalogFetching));
-  const ordinarySelection = selectionOverride ?? detail?.record.chat.currentSelection ?? defaultCatalogSelection(catalog);
-
+  const providerCatalogLoading = !directBot && (catalogPending || catalogFetching);
+  const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
+    ?? detail?.record.chat.currentSelection
+    ?? defaultCatalogSelection(catalog);
+  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
 
   const messages = useMemo(() => buildTranscript(detail), [detail]);
   const busy = sendMessage.isPending || (detail?.runs.some(
@@ -91,9 +93,6 @@ export default function ChatScreen() {
   ) ?? false);
 
   const [draft, setDraft] = useState("");
-  const botExecution = useNativeBotExecution(botChat.snapshot, catalog, `${user?.id ?? "owner"}:${gatewayUrl}:${activeChatId}`, draft);
-  const selection = directBot ? botExecution.presentation?.selection ?? null : ordinarySelection;
-  const turnModes = directBot ? botExecution.presentation ? { interactionMode: botExecution.presentation.interactionMode, permissionMode: botExecution.permissionMode ?? "default" } : null : defaultTurnModes(catalog, selection);
   const [inputFocused, setInputFocused] = useState(false);
   // Tapping the model picker itself blurs the TextInput a beat before its
   // native menu opens — delay hiding on blur, and cancel the hide entirely
@@ -129,11 +128,11 @@ export default function ChatScreen() {
 
   const isConnected = Boolean(isSignedIn);
   const hasDraftText = draft.trim().length > 0;
-  const canSend = !providerCatalogLoading && hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && (!directBot || Boolean(botExecution.presentation?.available)) && (!botExecution.presentation?.requiresFullAccess || botExecution.confirmed) && !busy;
+  const canSend = !providerCatalogLoading && hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
 
   const send = useCallback(() => {
     const trimmed = draft.trim();
-    if (providerCatalogLoading || !trimmed || !selection || !turnModes || (directBot && !botExecution.presentation?.available) || (botExecution.presentation?.requiresFullAccess && !botExecution.confirmed)) return;
+    if (providerCatalogLoading || !trimmed || !selection || !turnModes) return;
     // Clear the draft only once the send actually succeeds -- a failed token
     // fetch, computer resolution, chat creation, or turn admission leaves the
     // typed text in place so the user can retry instead of losing it. The
@@ -160,13 +159,11 @@ export default function ChatScreen() {
       selection,
       interactionMode: turnModes.interactionMode,
       permissionMode: turnModes.permissionMode,
-      ...(botChat.snapshot?.kind === "custom" ? { botResource: { kind: "agent" as const, id: botChat.snapshot.agentId, label: botChat.snapshot.name, revision: String(botChat.snapshot.revision) } } : {}),
       projectId: selectedProjectId,
       chatRequestId,
       turnRequestId,
     }, {
       onSuccess: () => {
-        botExecution.reset();
         if (pendingSendRef.current?.text === trimmed) pendingSendRef.current = null;
         setDraft((current) => (current === trimmed ? "" : current));
       },
@@ -238,7 +235,6 @@ export default function ChatScreen() {
             setShowBotRecipes(false);
             void chats.invalidate();
           }} /> : null}
-      {botExecution.presentation?.kind === "custom" ? <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: botExecution.confirmed }} onPress={() => botExecution.confirm(!botExecution.confirmed)}><Text>Allow Full access on this computer for this Bot request.</Text></Pressable> : null}
       {botChat.snapshot ? <BotChatControls catalog={catalog} snapshot={botChat.snapshot} actionsAvailable={!botChat.isError}
         onSelectionChange={botChat.updateModel} onResolve={botChat.resolve}
         onRevoke={botChat.revoke} onMemory={botChat.memory} onRefresh={botChat.refresh}
@@ -322,7 +318,7 @@ export default function ChatScreen() {
               />
               <View style={styles.composerControlsRight}>
                 <View onTouchStart={handlePickerTouchStart}>
-                  {!directBot && !botChat.identityUnknown ? <ModelPicker
+                  {!directBot ? <ModelPicker
                     catalog={catalog}
                     catalogLoading={providerCatalogLoading}
                     selection={selection}

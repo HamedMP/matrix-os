@@ -3,22 +3,19 @@ import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { blockedNativeBotModelRows } from "@/lib/bot-model-discovery";
 import {
-  botExecutionPresentation, canonicalProviderModelRouteLabel, managedPiBotModelChoices, MATRIX_BOT_SELECTION, botModelRoutingLabel, botInteractionCard, botTaskStatusCopy, groupBotAuthority,
+  managedPiBotModelChoices, MATRIX_BOT_SELECTION, botModelRoutingLabel, botInteractionCard, botTaskStatusCopy, groupBotAuthority,
   type CanonicalChatModelSelection, type CanonicalProviderCatalog, type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest,
   type BotTaskSummary, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
 
 export interface BotChatSnapshot {
-  kind?: "recipe" | "custom";
-  instructions?: string;
-  recipeRef?: import("@matrix-os/contracts").BotRecipeRef;
   agentId: string;
   name: string;
   selection?: CanonicalChatModelSelection;
   revision?: number;
   interactions: BotInteraction[];
   tasks: BotTaskSummary[];
-  authority: BotAuthorityView | null;
+  authority: BotAuthorityView;
 }
 
 interface BotChatControlsProps {
@@ -197,16 +194,14 @@ export function BotChatControls({ snapshot, catalog, onSelectionChange, actionsA
     }
   };
   const authority = snapshot.authority;
-  const custom = snapshot.kind === "custom";
-  const modelLabel = custom && snapshot.selection ? botExecutionPresentation({ selection: snapshot.selection }, catalog).modelLabel : botModelRoutingLabel(snapshot.selection, catalog);
   return <View style={styles.panel}>
     <View style={styles.header}>
-      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text><Text style={styles.muted}>Your bot&apos;s Chat</Text><Text style={styles.muted}>Model: {modelLabel}</Text></View>
+      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text><Text style={styles.muted}>Your bot&apos;s Chat</Text><Text style={styles.muted}>Model: {botModelRoutingLabel(snapshot.selection, catalog)}</Text></View>
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: showAuthority }} style={styles.button}
-        onPress={() => setShowAuthority((value) => !value)}><Text style={styles.text}>{custom ? "Details" : "Access & memory"}</Text></Pressable>
+        onPress={() => setShowAuthority((value) => !value)}><Text style={styles.text}>Access &amp; memory</Text></Pressable>
     </View>
     <ScrollView style={styles.scroller} contentContainerStyle={styles.group} nestedScrollEnabled>
-      {!custom && onSelectionChange && snapshot.revision ? <View style={styles.group}>
+      {onSelectionChange && snapshot.revision ? <View style={styles.group}>
         <Text style={styles.heading}>Bot model</Text>
         <Pressable accessibilityRole="button" disabled={!!pending || !actionsAvailable} style={styles.button}
           onPress={() => void change("model", () => onSelectionChange(MATRIX_BOT_SELECTION))}>
@@ -218,15 +213,11 @@ export function BotChatControls({ snapshot, catalog, onSelectionChange, actionsA
         {blockedNativeBotModelRows(catalog).map(row => <Text key={`${row.instanceId}:${row.modelId}`}
           accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.muted}>{row.label}</Text>)}
       </View> : null}
-      {custom && onSelectionChange && snapshot.revision ? <View style={styles.group}><Text style={styles.heading}>Bot model</Text>
-        {catalog?.instances.filter(instance => instance.availability === "available").flatMap(instance => instance.models.filter(model => model.availability === "available").map(model => <Pressable key={`${instance.id}:${model.id}`} accessibilityRole="button" disabled={!!pending || !actionsAvailable} style={styles.button} onPress={() => void change("model", () => onSelectionChange({ instanceId: instance.id, model: model.id }))}><Text style={styles.text}>{canonicalProviderModelRouteLabel(instance, model.displayName)}</Text></Pressable>))}
-      </View> : null}
-      {custom && showAuthority ? <View style={styles.card}><Text style={styles.heading}>Instructions</Text><Text style={styles.text}>{snapshot.instructions ?? "Bot instructions unavailable"}</Text><Text style={styles.muted}>This bot keeps its saved runtime and request permissions. Recipe task, app access and memory controls are unavailable.</Text></View> : null}
       {snapshot.interactions.map((interaction) => <BotInteractionControl key={interaction.interactionId}
         interaction={interaction} actionsAvailable={actionsAvailable}
         onResolve={onResolve} onRefresh={onRefresh} onConnectUrl={onConnectUrl} />)}
       {snapshot.tasks.map((task) => <Text key={task.taskId} style={styles.muted}>{botTaskStatusCopy(task)}</Text>)}
-      {showAuthority && authority && !custom ? <View style={styles.card}>
+      {showAuthority ? <View style={styles.card}>
         <Text style={styles.heading}>What this bot can access</Text>
         {groupBotAuthority(authority).map((group) => <View key={group.service} style={styles.group}>
           <Text style={styles.text}>{group.service.replaceAll("_", " ")} · {group.state.replaceAll("_", " ")}</Text>
