@@ -1,11 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { agendaGroups, dateText } from "../model";
 import { Actions, Badge, Empty, type ViewProps } from "./common";
 export default function Agenda(props: ViewProps) {
   const [day, setDay] = useState("");
-  const grouped = agendaGroups(props.records).filter(
-    (g) => !day || g.date === day,
-  );
+  const groups = useMemo(() => agendaGroups(props.records), [props.records]);
+  const grouped = groups.filter((g) => !day || g.date === day);
   return (
     <>
       <div className="date-nav">

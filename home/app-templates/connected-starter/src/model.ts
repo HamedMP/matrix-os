@@ -261,21 +261,19 @@ export function receivablesSummary(records: OwnerRecord[]) {
   return obligationSummary(records, ["Sent", "Overdue"], false);
 }
 export function agendaGroups(records: OwnerRecord[]) {
-  const dates = Array.from(
-    new Set(
-      records.map((r) =>
-        validDate(r.fields.date) ? r.fields.date : "Undated",
-      ),
-    ),
-  ).sort((a, b) =>
-    a === "Undated" ? 1 : b === "Undated" ? -1 : a.localeCompare(b),
-  );
-  return dates.map((date) => ({
-    date,
-    records: records.filter(
-      (r) => (validDate(r.fields.date) ? r.fields.date : "Undated") === date,
-    ),
-  }));
+  // Request-scoped buckets contain each supplied record once; owner reads cap
+  // the supplied collection at 1,000 records. No registry survives this call.
+  const buckets: Record<string, OwnerRecord[]> = {};
+  for (const record of records) {
+    const value = record.fields.date;
+    const date = validDate(value) ? value : "Undated";
+    (buckets[date] ??= []).push(record);
+  }
+  return Object.keys(buckets)
+    .sort((a, b) =>
+      a === "Undated" ? 1 : b === "Undated" ? -1 : a.localeCompare(b),
+    )
+    .map((date) => ({ date, records: buckets[date] }));
 }
 export function exportRecords(app: Definition, records: OwnerRecord[]): string {
   const cell = (v: unknown) => {
