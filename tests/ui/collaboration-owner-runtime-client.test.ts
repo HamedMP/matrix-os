@@ -75,6 +75,104 @@ describe("owner runtime direct client", () => {
     ]);
   });
 
+  it("stops using the owner setup key for a project once its own confirmation is accepted", async () => {
+    // Production 2026-10-03: after "Share whole project" the client kept signing reads of the now
+    // shared project with the owner setup key, which a home only honors for private projects, so
+    // Manage collaborators failed with "Organization access is unavailable".
+    const scopeId = "10000000-0000-4000-8000-000000000922";
+    const ownerSigned: string[] = [];
+    const scopeTickets: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/collaboration/owner-runtime/connections") {
+        const proofPublicKey = (JSON.parse(String(init?.body)) as { proofPublicKey: string }).proofPublicKey;
+        const ticket = {
+          protocolVersion: 2, ticketId: "10000000-0000-4000-8000-000000000002", nonce: "b".repeat(64),
+          actorId: ownerId, organizationId, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
+          runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 },
+          proofKeyThumbprint: createHash("sha256").update(Buffer.from(proofPublicKey, "base64url")).digest("base64url"),
+          maxActions: 32, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+        };
+        return Response.json({ signedTicket: { ticket, keyId: "platform", signature: "a".repeat(86) },
+          endpoint: { origin: platform, protocolVersion: 2 } }, { status: 201 });
+      }
+      if (url.pathname === "/api/collaboration/owner-runtime/sessions") {
+        const proofPublicKey = (JSON.parse(String(init?.body)) as { proofPublicKey: string }).proofPublicKey;
+        return Response.json({
+          protocolVersion: 2, id: "20000000-0000-4000-8000-000000000002", actorId: ownerId,
+          organizationId, runtimeId: logicalRuntimeId, authorityGeneration: 1, purpose: "owner_runtime",
+          proofKeyThumbprint: createHash("sha256").update(Buffer.from(proofPublicKey, "base64url")).digest("base64url"),
+          issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 300_000).toISOString(),
+          evidenceExpiresAt: new Date(now.getTime() + 20_000).toISOString(), renewAfter: new Date(now.getTime() + 240_000).toISOString(),
+        }, { status: 201 });
+      }
+      if (url.pathname === "/api/collaboration/connections") {
+        // The scope key's ticket request; the share is still publishing, so no scope is routable yet.
+        scopeTickets.push((JSON.parse(String(init?.body)) as { scopeId: string }).scopeId);
+        return Response.json({ error: "Collaboration resource not found" }, { status: 404 });
+      }
+      ownerSigned.push(`${init?.method} ${url.pathname}`);
+      if (url.pathname.endsWith("/scopes/preflight")) return Response.json({ eligible: true, resourceRevision: "1", existingScopeId: scopeId, existingLifecycle: "private" });
+      if (url.pathname.endsWith("/project/confirm")) return Response.json({ status: "prepared" }, { status: 202 });
+      return Response.json({ id: scopeId, kind: "project" });
+    });
+    const api = createCollaborationDirectApi({ platformBaseUrl: platform, fetchImpl: fetchImpl as typeof fetch,
+      getHeaders: async () => ({ Authorization: "Bearer owner" }), clientOrigin: platform, now: () => now });
+    await api.post(`/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
+      { kind: "project", resourceId: "project_shared", organizationId });
+    await api.post(`/api/collaboration/scopes/${scopeId}/project/confirm`, { clientRequestId: "50000000-0000-4000-8000-000000000002" });
+    await expect(api.get(`/api/collaboration/scopes/${scopeId}`)).rejects.toThrow();
+
+    expect(ownerSigned).toEqual([
+      `POST /api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
+      `POST /api/collaboration/scopes/${scopeId}/project/confirm`,
+    ]);
+    expect(scopeTickets).toEqual([scopeId]);
+  });
+
+  it("keeps the owner setup key when a confirmation is refused", async () => {
+    const scopeId = "10000000-0000-4000-8000-000000000923";
+    const ownerSigned: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/collaboration/owner-runtime/connections") {
+        const proofPublicKey = (JSON.parse(String(init?.body)) as { proofPublicKey: string }).proofPublicKey;
+        const ticket = {
+          protocolVersion: 2, ticketId: "10000000-0000-4000-8000-000000000003", nonce: "c".repeat(64),
+          actorId: ownerId, organizationId, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
+          runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 },
+          proofKeyThumbprint: createHash("sha256").update(Buffer.from(proofPublicKey, "base64url")).digest("base64url"),
+          maxActions: 32, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+        };
+        return Response.json({ signedTicket: { ticket, keyId: "platform", signature: "a".repeat(86) },
+          endpoint: { origin: platform, protocolVersion: 2 } }, { status: 201 });
+      }
+      if (url.pathname === "/api/collaboration/owner-runtime/sessions") {
+        const proofPublicKey = (JSON.parse(String(init?.body)) as { proofPublicKey: string }).proofPublicKey;
+        return Response.json({
+          protocolVersion: 2, id: "20000000-0000-4000-8000-000000000003", actorId: ownerId,
+          organizationId, runtimeId: logicalRuntimeId, authorityGeneration: 1, purpose: "owner_runtime",
+          proofKeyThumbprint: createHash("sha256").update(Buffer.from(proofPublicKey, "base64url")).digest("base64url"),
+          issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 300_000).toISOString(),
+          evidenceExpiresAt: new Date(now.getTime() + 20_000).toISOString(), renewAfter: new Date(now.getTime() + 240_000).toISOString(),
+        }, { status: 201 });
+      }
+      expect(url.pathname).not.toBe("/api/collaboration/connections");
+      ownerSigned.push(`${init?.method} ${url.pathname}`);
+      if (url.pathname.endsWith("/scopes/preflight")) return Response.json({ eligible: true, resourceRevision: "1", existingScopeId: scopeId, existingLifecycle: "private" });
+      // A changed inventory: the project stays private and the owner reviews and confirms again.
+      if (url.pathname.endsWith("/project/confirm")) return Response.json({ error: "conflict" }, { status: 409 });
+      return Response.json({ scopeId, projectId: "project_private" });
+    });
+    const api = createCollaborationDirectApi({ platformBaseUrl: platform, fetchImpl: fetchImpl as typeof fetch,
+      getHeaders: async () => ({ Authorization: "Bearer owner" }), clientOrigin: platform, now: () => now });
+    await api.post(`/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
+      { kind: "project", resourceId: "project_private", organizationId });
+    await expect(api.post(`/api/collaboration/scopes/${scopeId}/project/confirm`, { clientRequestId: "50000000-0000-4000-8000-000000000003" })).rejects.toThrow();
+    await api.get(`/api/collaboration/scopes/${scopeId}/project/inventory`);
+    expect(ownerSigned.at(-1)).toBe(`GET /api/collaboration/scopes/${scopeId}/project/inventory`);
+  });
+
   it("obtains a scope-free ticket and signs only the exact encoded owner setup route", async () => {
     let proofPublicKey = "";
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

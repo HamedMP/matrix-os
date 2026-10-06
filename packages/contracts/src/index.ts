@@ -8,6 +8,8 @@ export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
+export * from "#chat-event-wire";
+export * from "#bots";
 export * from "#chat-artifacts";
 export * from "#file-preview";
 import { z } from "zod/v4";
@@ -1449,3 +1451,6 @@ export { normalizeTerminalSnapshot } from "#terminal-snapshot";
 export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type ChatSubagent } from "#chat-subagent";
 
 export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type ImportedChatAssetRef } from "#canonical-chat-import-parts";
+export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryEntry, type AiCreditHistoryResponse } from "#ai-credit-history";
+
+export * from "#provider-workflows";

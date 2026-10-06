@@ -32,6 +32,15 @@ const RUNTIME_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes$`)],
 ];
 const SCOPE_PATH = new RegExp(`^/api/collaboration/scopes/(${UUID})(?:/|$)`);
+/**
+ * The owner-runtime session's setup requests on a private project (the home's OWNER_PROJECT_PATH).
+ * A private project is not in the platform directory until it becomes active, so these are the
+ * only scope requests that may be routed by the owner's runtime instead.
+ */
+const OWNER_PROJECT_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
+  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}(?:/members|/project/inventory)?$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/project/confirm$`)],
+];
 const INVITATION_PATH = new RegExp(`^/api/collaboration/invitations/(${UUID})(?:/|$)`);
 const DIRECT_SOCKET_PATH = new RegExp(`^/ws/collaboration/direct/scopes/(${UUID})/(events|terminal)$`);
 const SESSION_HEADER = "x-matrix-collaboration-session";
@@ -175,6 +184,11 @@ export class CollaborationRelay {
     resolveRuntimeHome(actorId: string, runtimeId: string): Promise<RelayHome | null>;
     /** Session lifecycle routes: the home named by the logical runtime id in `x-matrix-collaboration-runtime`, which the ticket binds and the home re-verifies. */
     resolveSessionHome(logicalRuntimeId: string): Promise<RelayHome | null>;
+    /**
+     * A private project owner's setup request whose scope has no directory route: the home of the
+     * named logical runtime, but only when `actorId` owns it. Absent means no such fallback.
+     */
+    resolveOwnerRuntimeHome?(actorId: string, logicalRuntimeId: string): Promise<RelayHome | null>;
     fetchImpl?: typeof fetch;
     limits?: Partial<RelayLimits>;
     now?: () => number;
@@ -226,7 +240,9 @@ export class CollaborationRelay {
       finish(413, "limit", null);
       return plain("Collaboration request too large", 413);
     }
-    const home = await this.resolveHome(input.actorId, route, input.headers.get(RELAY_RUNTIME_HEADER));
+    const home = await this.resolveHome(input.actorId, route, input.headers.get(RELAY_RUNTIME_HEADER), {
+      method: input.method, path: input.path, ownerRuntime: input.headers.get(OWNER_RUNTIME_HEADER) === "1",
+    });
     if (!home) {
       finish(404, "unroutable", null);
       return plain("Collaboration route not found", 404);
@@ -424,9 +440,25 @@ export class CollaborationRelay {
     return { homes, actors };
   }
 
-  private async resolveHome(actorId: string, route: RelayRoute, runtimeHeader: string | null): Promise<RelayHome | null> {
+  private async resolveHome(
+    actorId: string,
+    route: RelayRoute,
+    runtimeHeader: string | null,
+    request: { method: string; path: string; ownerRuntime: boolean },
+  ): Promise<RelayHome | null> {
     try {
-      if (route.kind === "scope") return await this.options.resolveScopeHome(route.identifier!);
+      if (route.kind === "scope") {
+        const home = await this.options.resolveScopeHome(route.identifier!);
+        if (home) return home;
+        // A private project is not published to the directory until it becomes active, so its
+        // owner's setup requests would otherwise be unroutable. Route only those, only by a
+        // well-formed runtime id, and only to the caller's own runtime; the home still requires
+        // the owner-runtime session.
+        if (!this.options.resolveOwnerRuntimeHome || !request.ownerRuntime) return null;
+        if (!runtimeHeader || !LOGICAL_RUNTIME_ID.test(runtimeHeader)) return null;
+        if (!OWNER_PROJECT_ROUTES.some(([method, pattern]) => method === request.method && pattern.test(request.path))) return null;
+        return await this.options.resolveOwnerRuntimeHome(actorId, runtimeHeader);
+      }
       if (route.kind === "invitation") return await this.options.resolveInvitationHome(actorId, route.identifier!);
       if (route.kind === "runtime") return await this.options.resolveRuntimeHome(actorId, route.identifier!);
       if (!runtimeHeader || !LOGICAL_RUNTIME_ID.test(runtimeHeader)) return null;

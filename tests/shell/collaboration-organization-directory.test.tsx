@@ -48,7 +48,10 @@ function organizationRoutes() {
   };
   return createPlatformOrganizationRoutes({
     repository: repository as never,
-    projection: { isCurrentMember: async (input: { organizationId: string; actorId: string }) => input.organizationId === organizationId && memberIds.includes(input.actorId) } as never,
+    projection: {
+      discoverOrganizationsForActor: async () => ({ complete: true }),
+      isCurrentMember: async (input: { organizationId: string; actorId: string }) => input.organizationId === organizationId && memberIds.includes(input.actorId),
+    } as never,
     controlAuthority: {} as never,
     // The platform resolves the actor from the credential the client sent.
     resolveActor: async (c: Context) => c.req.header("authorization") === ACTOR_TOKEN ? actorId : null,

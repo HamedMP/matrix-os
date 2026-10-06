@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { JEV_EMAIL_TRIAGE_ANSWER_IDS, JEV_MODEL_ID, FundedAiRuntimeFundingSummaryResponseSchema,
+import { JEV_EMAIL_TRIAGE_ANSWER_IDS, JEV_MODEL_ID, JEV_PRICING_VERSION, FundedAiRuntimeChatFundingSummaryResponseSchema,
   FundedAiRouteReadinessReceiptSchema, type ChatAgent } from "@matrix-os/contracts";
 import type { JevService } from "../../packages/gateway/src/jev/service.js";
 import { createProductionJevInboxRuntime } from "../../packages/gateway/src/jev/inbox-production.js";
@@ -22,7 +22,7 @@ import { createFundedModelProbeService } from "../../packages/platform/src/ai-fu
 import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/proxy/src/funded-relay.js";
 import { buildPlatformRuntimeVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-credential-manager.js";
-import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
+import { createFundedAiFundingSummaryClient, type FundedAiFundingSummaryReader } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
 
 beforeEach(() => {
@@ -90,10 +90,11 @@ async function fixture(mode = "ready") {
     remainingBalanceMicrousd: 5_000_000, remainingBudgetMicrousd: 10_000_000 };
   const policy = { enabled: mode !== "unfunded", globalRevision: 1, runtimeRevision: 1, allowedModelIds: mode === "unfunded" ? [] : [JEV_MODEL_ID],
     monthlyBudgetMicrousd: 10_000_000, checkedAt: new Date(now).toISOString(), staleAfter: new Date(now + 60_000).toISOString() };
-  const summary = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, funding, policy });
+  const summary = FundedAiRuntimeChatFundingSummaryResponseSchema.parse({ contractVersion: 1, funding, policy,
+    chatAvailability: { contractVersion: 1, asOf: funding.asOf, eligibleBalanceMicrousd: mode === "speech_only" ? 0 : 5_000_000, availableBalanceMicrousd: mode === "speech_only" ? 0 : 5_000_000 } });
   const receipt = FundedAiRouteReadinessReceiptSchema.parse({ contractVersion: 1, globalRevision: 1, runtimeRevision: 1,
     checkedAt: policy.checkedAt, staleAfter: new Date(now + 30_000).toISOString(), readyModelIds: policy.allowedModelIds });
-  let summaryReader = { getFundingSummary: async () => summary };
+  let summaryReader: FundedAiFundingSummaryReader = { getFundingSummary: async () => mode === "legacy" ? { funding: summary.funding, policy: summary.policy } : summary };
   let routeReader = { getRouteReadiness: async () => receipt };
   let closePlatform = async () => undefined;
   let operationalProbe = vi.fn(async (_model: string, _call?: unknown) => ({ ready: true, checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 30_000).toISOString() }));
@@ -114,7 +115,11 @@ async function fixture(mode = "ready") {
     const relay = createFundedRelay({ ...resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: "true", MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
       CLOUDFLARE_AI_GATEWAY_URL: "https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/fixture/anthropic",
       CLOUDFLARE_AI_GATEWAY_TOKEN: "g".repeat(32), CLOUDFLARE_WORKERS_AI_TOKEN: "w".repeat(32), PLATFORM_INTERNAL_URL: "https://platform.example.test",
-      AI_RELAY_CONTROL_TOKEN: control, AI_RELAY_METADATA_SECRET: "m".repeat(32) })!,
+      AI_RELAY_CONTROL_TOKEN: control, AI_RELAY_METADATA_SECRET: "m".repeat(32),
+      // Attestation belongs to this test's shared observation epoch, not a calendar cutoff.
+      MATRIX_JEV_PRICING_REVIEW_VERSION: JEV_PRICING_VERSION,
+      MATRIX_JEV_PRICING_REVIEWED_AT: new Date(now - 60_000).toISOString(),
+      MATRIX_JEV_PRICING_VALID_THROUGH: new Date(now + 86_400_000).toISOString() })!,
       fetch: (async (raw, init) => {
         if (String(raw).startsWith("https://platform.example.test/")) return platform.request(String(raw), init);
         const body = JSON.parse(String(init?.body));
@@ -194,7 +199,7 @@ it.each(["ready", "native"])("composes production %s credentials/readiness, acti
     expect(f.runtime.launch.summary("owner_fixture", f.scope)).toBeNull(); expect(f.evaluate).toHaveBeenCalledOnce();
   } finally { await f.close(); }
 });
-it.each(["unsupported", "unfunded"])("blocks production %s route before mailbox reads or any evaluation", async mode => {
+it.each(["unsupported", "unfunded", "speech_only", "legacy"])("blocks production %s route before mailbox reads or any evaluation", async mode => {
   const f = await fixture(mode);
   try {
     await expect(f.runtime.admit("owner_fixture", f.agent)).rejects.toMatchObject({ code: mode === "unsupported" ? "workflow_setup_required" : "workflow_funding_required" });

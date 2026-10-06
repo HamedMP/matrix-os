@@ -14,6 +14,19 @@ import { describe, expect, it, vi } from "vitest";
 import { OSWindow, OSWindowSafeView, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow.js";
 
 describe("Electron OS window chrome", () => {
+  it("leaves the maximized sidebar New chat hit target outside empty chrome overlays", () => {
+    const onNew = vi.fn();
+    const { container } = render(<OSWindow surfaceId="chat-maximized" sidebarWidth={280} safeAreaLayout="sidebar" topBarReservesSafeArea={false}
+      sidebar={<button type="button" onClick={onNew}>New chat</button>}
+      topBar={<TopBar showWindowControls={false} leftPaneWidth={280} showSidebarTrigger rightActions={<button>Share</button>}/>}/>);
+    const overlay = container.querySelector('[data-os-window-top-bar-overlay]') as HTMLElement;
+    expect(overlay.style.pointerEvents).toBe('none');
+    expect((overlay.firstElementChild as HTMLElement).style.pointerEvents).toBe('none');
+    expect(container.querySelector('[data-os-window-gesture-layer]')).toBeNull();
+    expect(screen.getByRole('button', {name:'Share'}).closest('[data-os-window-actions]')?.className).toContain('pointer-events-auto');
+    fireEvent.click(screen.getByRole('button', {name:'New chat'}));
+    expect(onNew).toHaveBeenCalledOnce();
+  });
   it("places resize controls above the entire frame, outside the content and sidebar", () => {
     const { container } = render(<OSWindow surfaceId="terminal" sidebarWidth={240}
       sidebar={<div>Sessions</div>} frameControls={<div data-testid="resize-controls" />}>

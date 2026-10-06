@@ -19,7 +19,7 @@ export function createJevInboxRuntime(options: {
   ownerId: string;
   getAgent: (ownerId: string, agentId: string) => Promise<ChatAgent | null>;
   resolveCredentials: (ownerId: string, selection: unknown, signal: AbortSignal) => Promise<JevHermesCredentials>;
-  verifyRuntime: (root: string, signal: AbortSignal) => Promise<void>;
+  verifyRuntime: (root: string, signal: AbortSignal, apiMode: JevHermesCredentials["apiMode"]) => Promise<void>;
   fundedPolicyReady: (signal: AbortSignal) => Promise<boolean>;
   fundedReady: (signal: AbortSignal) => Promise<boolean>;
   read: Parameters<typeof createJevInboxBroker>[0]["read"];

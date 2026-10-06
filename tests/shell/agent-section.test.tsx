@@ -2,7 +2,7 @@
 
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSection } from "../../shell/src/components/settings/sections/AgentSection.js";
 import { IdentityPersonalitySection } from "../../shell/src/components/settings/sections/IdentityPersonalitySection.js";
@@ -15,7 +15,8 @@ const providerControllerState = vi.hoisted(() => ({
   addCredit: null as null | ((source: string, packageId: "usd_5", requestId: string) => Promise<void>),
 }));
 
-vi.mock("@matrix-os/ui", () => ({
+vi.mock("@matrix-os/ui", async () => ({
+  ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   AgentsProvidersView: ({
     onOpenTerminal,
     onOpenBrowser,
@@ -68,6 +69,30 @@ afterEach(() => {
 });
 
 describe("Canvas settings sections", () => {
+  it("preserves the active checkout callback and settlement across ordinary snapshot rerenders", async () => {
+    window.history.replaceState({}, "", "/vm/alice?runtime=studio");
+    let release!: (response: Response) => void;
+    const fetcher = vi.fn<typeof fetch>(() => new Promise(resolve => { release = resolve; }));
+    vi.stubGlobal("fetch", fetcher);
+    const navigate = vi.fn();
+    const realCheckout = checkoutActions.openWebAiCreditCheckout;
+    vi.spyOn(checkoutActions, "openWebAiCreditCheckout").mockImplementation(input => realCheckout({...input, navigate}));
+    const view = render(<AgentSection />);
+    const original = providerControllerState.addCredit!;
+    const pending = original("matrix", "usd_5", crypto.randomUUID()).then(() => true, () => false);
+    providerControllerState.snapshot = {revision: 2};
+    view.rerender(<AgentSection />);
+    expect(providerControllerState.addCredit).toBe(original);
+    release(Response.json({url: "https://checkout.stripe.com/c/pay/cs_same_scope"}));
+    expect(await pending).toBe(true);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("https://checkout.stripe.com/c/pay/cs_same_scope");
+    window.history.replaceState({}, "", "/vm/alice?runtime=other");
+    view.rerender(<AgentSection />);
+    expect(providerControllerState.addCredit).not.toBe(original);
+    await expect(original("matrix", "usd_5", crypto.randomUUID())).rejects.toThrow("Checkout is unavailable.");
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it.each(["runtime", "computer", "unmount"])(
     "cancels checkout and rejects a late URL after %s changes in the rendered caller",
     async (change) => {

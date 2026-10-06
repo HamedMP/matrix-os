@@ -17,7 +17,24 @@ import {
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { createConnection } from "node:net";
-import { RuntimeHandleSchema, ScopeHandleSchema, ScopeRuntimeResponseSchema } from "./protocol.js";
+import {
+  RuntimeHandleSchema,
+  ScopeHandleSchema,
+  ScopeRuntimeBotWorkerReplySchema,
+  ScopeRuntimeResponseSchema,
+  type ScopeRuntimeBotCommand,
+  type ScopeRuntimeBotWorkerReply,
+} from "./protocol.js";
+import {
+  BOT_RUNTIME_ENTRY,
+  SCOPE_RUNTIME_BOT_ADAPTER_ID,
+  SCOPE_RUNTIME_BOT_HARNESS_VERSION,
+  SCOPE_RUNTIME_BOT_PROFILE_ID,
+  piProfileIdentity,
+  isBotAdapter,
+  materializeBotSystemdProperties,
+  type ScopeRuntimeBotProfilePaths,
+} from "./bot-profile.js";
 import {
   FIXED_SYSTEMD_ENVIRONMENT,
   SCOPE_RUNTIME_CODEX_VERSION,
@@ -33,7 +50,7 @@ import type {
   ScopeRuntimeLauncher,
   ScopeRuntimeReconciledRuntime,
 } from "./supervisor.js";
-import { scopeRuntimeWorkerFailureForExitCode } from "./worker.js";
+import { scopeRuntimeWorkerFailureForExitCode } from "./worker-common.js";
 import {
   SCOPE_RUNTIME_SANDBOX_CAPABILITY,
   assertSandboxEnvironment,
@@ -52,6 +69,11 @@ const MAX_PROVENANCE_BYTES = 2_048;
 const EXECUTION_GENERATION = /^(0|[1-9][0-9]{0,19})$/;
 const WORKER_SOCKET_FILE = "worker.sock";
 const MAX_WORKER_FRAME_BYTES = 128 * 1024;
+/** A bot turn may run until the unit's RuntimeMaxSec; control commands answer quickly. */
+const BOT_RUN_TIMEOUT_MS = 930_000;
+const BOT_CONTROL_TIMEOUT_MS = 15_000;
+const MAX_BOT_REPLY_FRAME_BYTES = 32 * 1024;
+const BOT_WORKER_ENTRY_FILE = "bot-worker.mjs";
 
 export interface ScopeRuntimeCommandRunner {
   (command: string, args: readonly string[]): Promise<{ stdout: string }>;
@@ -67,6 +89,18 @@ interface LauncherPaths {
   codexBinary?: string;
   /** S07: host directories under which sandbox worktrees may be bound. Empty means no sandboxed launch. */
   sandboxRoots?: readonly string[];
+  /** Host directory holding the bundled bot worker; absent disables the bot profile. */
+  botRuntimeDirectory?: string;
+  /** Bot workspaces a `bot_agent` workload may bind; shared-chat roots never apply to bots. */
+  botSandboxRoots?: readonly string[];
+  /** Ordinary managed Chat roots; recipe Bot launches never use this allowlist. */
+  managedPiSandboxRoots?: readonly string[];
+}
+
+type ResolvedLauncherPaths = Required<Omit<LauncherPaths, "botRuntimeDirectory">> & { botRuntimeDirectory?: string };
+
+function isPiLaunch(input: { profileId?: string }): boolean {
+  return piProfileIdentity(input.profileId) !== undefined;
 }
 
 function unitName(runtimeHandle: string): string {
@@ -88,7 +122,8 @@ export function buildFixedSystemdRunArgs(
   const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
   const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
   // The advertised sandbox workloads are exactly what this launcher can start (no PTY adapter is installed).
-  if (!SCOPE_RUNTIME_SANDBOX_CAPABILITY.workloads.includes(input.workload) || !isFixedChatAdapter(input.adapterId, input.harnessVersion)) {
+  if ((input.profileId !== undefined && input.profileId !== SCOPE_RUNTIME_PROFILE_ID)
+    || input.workload !== "chat_ai" || !isFixedChatAdapter(input.adapterId, input.harnessVersion)) {
     throw new Error("Unsupported scope runtime adapter");
   }
   assertSandboxEnvironment(FIXED_SYSTEMD_ENVIRONMENT);
@@ -118,6 +153,54 @@ export function buildFixedSystemdRunArgs(
     ...FIXED_SYSTEMD_ENVIRONMENT,
     assertTrustedAbsolutePath(paths.nodeBinary),
     "/opt/matrix/scope-runtime/worker.mjs",
+    runtimeHandle,
+    scopeHandle,
+    input.workload,
+    input.adapterId,
+    input.harnessVersion,
+    input.executionGeneration,
+  ];
+}
+
+/**
+ * Shared pinned Pi worker arguments. Both trusted profiles require a sandbox;
+ * the launcher selects their distinct root allowlists before building these.
+ */
+export function buildBotSystemdRunArgs(
+  input: ScopeRuntimeLaunchRequest,
+  paths: ScopeRuntimeBotProfilePaths & { nodeBinary: string },
+  options: { sandboxProperties: readonly string[] },
+): string[] {
+  const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
+  const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
+  if (!isPiLaunch(input) || input.workload !== "bot_agent" || !isBotAdapter(input.adapterId, input.harnessVersion)) {
+    throw new Error("Unsupported scope runtime adapter");
+  }
+  if (options.sandboxProperties.length === 0) throw new Error("Bot workloads require a sandbox");
+  assertSandboxEnvironment(FIXED_SYSTEMD_ENVIRONMENT);
+  for (const property of options.sandboxProperties) {
+    if (property.includes("\n") || property.includes("\0")) throw new Error("Invalid sandbox property");
+  }
+  const properties = materializeBotSystemdProperties({
+    scopeRoot: assertTrustedAbsolutePath(paths.scopeRoot),
+    botRuntimeDirectory: assertTrustedAbsolutePath(paths.botRuntimeDirectory),
+    brokerSocket: assertTrustedAbsolutePath(paths.brokerSocket),
+    readinessFile: assertTrustedAbsolutePath(paths.readinessFile),
+    commandDirectory: assertTrustedAbsolutePath(paths.commandDirectory),
+  });
+  return [
+    `--unit=${unitName(runtimeHandle)}`,
+    "--quiet",
+    "--no-block",
+    ...properties.map((property) => `--property=${property}`),
+    ...options.sandboxProperties.map((property) => `--property=${property}`),
+    ...FIXED_SYSTEMD_ENVIRONMENT.map((entry) => `--setenv=${entry}`),
+    "--",
+    "/usr/bin/env",
+    "-i",
+    ...FIXED_SYSTEMD_ENVIRONMENT,
+    assertTrustedAbsolutePath(paths.nodeBinary),
+    BOT_RUNTIME_ENTRY,
     runtimeHandle,
     scopeHandle,
     input.workload,
@@ -163,6 +246,10 @@ async function prepareRuntimeRoot(
   const commandDirectory = join(runtimeRoot, "command");
   await mkdir(commandDirectory, { mode: 0o733 });
   await chmod(commandDirectory, 0o733);
+  const bot = isPiLaunch(request);
+  const mountPoints = bot
+    ? ["opt/matrix/scope-sdk/bot-runtime"]
+    : ["opt/matrix/scope-sdk/native", "opt/matrix/scope-sdk/sdk", "opt/matrix/scope-runtime"];
   const directories = [
     "dev",
     "lib",
@@ -171,9 +258,7 @@ async function prepareRuntimeRoot(
     "opt/matrix",
     "opt/matrix/runtime",
     "opt/matrix/scope-sdk",
-    "opt/matrix/scope-sdk/native",
-    "opt/matrix/scope-sdk/sdk",
-    "opt/matrix/scope-runtime",
+    ...mountPoints,
     "proc",
     "run",
     "run/matrix-scope",
@@ -197,9 +282,9 @@ async function prepareRuntimeRoot(
   const provenance = `${JSON.stringify({
     version: 1,
     runtimeHandle,
-    profileId: SCOPE_RUNTIME_PROFILE_ID,
-    profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
-    profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+    ...(piProfileIdentity(request.profileId) ?? {
+      profileId: SCOPE_RUNTIME_PROFILE_ID, profileVersion: SCOPE_RUNTIME_PROFILE_VERSION, profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+    }),
     workload: request.workload,
     adapterId: request.adapterId,
     harnessVersion: request.harnessVersion,
@@ -214,9 +299,11 @@ async function prepareRuntimeRoot(
   const readinessTargetHandle = await open(readinessTarget, "wx", 0o644);
   await readinessTargetHandle.close();
   await chmod(readinessTarget, 0o644);
-  const workerTarget = join(root, "opt/matrix/scope-runtime/worker.mjs");
-  const workerHandle = await open(workerTarget, "wx", 0o644);
-  await workerHandle.close();
+  if (!bot) {
+    const workerTarget = join(root, "opt/matrix/scope-runtime/worker.mjs");
+    const workerHandle = await open(workerTarget, "wx", 0o644);
+    await workerHandle.close();
+  }
   const environmentTarget = join(root, "usr/bin/env");
   const environmentHandle = await open(environmentTarget, "wx", 0o755);
   await environmentHandle.close();
@@ -295,19 +382,25 @@ async function readRuntimeProvenance(
     const parsed: unknown = JSON.parse(await handle.readFile("utf8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
     const value = parsed as Record<string, unknown>;
+    const pi = typeof value.profileId === "string" ? piProfileIdentity(value.profileId) : undefined;
+    const bot = pi !== undefined;
     if (Object.keys(value).length !== 9
       || value.version !== 1
       || value.runtimeHandle !== runtimeHandle
-      || value.profileId !== SCOPE_RUNTIME_PROFILE_ID
-      || value.profileVersion !== SCOPE_RUNTIME_PROFILE_VERSION
-      || value.profileDigest !== SCOPE_RUNTIME_PROFILE_DIGEST
-      || value.workload !== "chat_ai"
+      || value.profileId !== (pi?.profileId ?? SCOPE_RUNTIME_PROFILE_ID)
+      || value.profileVersion !== (pi?.profileVersion ?? SCOPE_RUNTIME_PROFILE_VERSION)
+      || value.profileDigest !== (pi?.profileDigest ?? SCOPE_RUNTIME_PROFILE_DIGEST)
+      || value.workload !== (bot ? "bot_agent" : "chat_ai")
       || typeof value.adapterId !== "string"
       || typeof value.harnessVersion !== "string"
-      || !isFixedChatAdapter(value.adapterId, value.harnessVersion)
+      || !(bot ? isBotAdapter : isFixedChatAdapter)(value.adapterId, value.harnessVersion)
       || typeof value.executionGeneration !== "string"
       || !EXECUTION_GENERATION.test(value.executionGeneration)) return undefined;
-    return { runtimeHandle, executionGeneration: value.executionGeneration };
+    return {
+      runtimeHandle,
+      executionGeneration: value.executionGeneration,
+      ...(pi ? { profileId: pi.profileId } : {}),
+    };
   } catch (error: unknown) {
     if (error instanceof SyntaxError) return undefined;
     throw error;
@@ -322,7 +415,7 @@ function isFixedChatAdapter(adapterId: string, harnessVersion: string): boolean 
 }
 
 async function validateRuntimeSources(
-  paths: Required<LauncherPaths>,
+  paths: ResolvedLauncherPaths,
   adapterId?: string,
   runCommand?: ScopeRuntimeCommandRunner,
 ): Promise<{
@@ -330,13 +423,6 @@ async function validateRuntimeSources(
   nativeDirectory: string;
   workerFile: string;
 }> {
-  // The gateway owns the broker socket and starts after this supervisor. Only
-  // require the socket when launching a workload, not while advertising the
-  // fixed adapters during supervisor startup.
-  if (adapterId) {
-    const broker = await lstat(paths.brokerSocket);
-    if (!broker.isSocket() || broker.isSymbolicLink()) throw new Error("Scope runtime broker unavailable");
-  }
   const worker = await lstat(paths.workerFile);
   if (!worker.isFile() || worker.isSymbolicLink()) throw new Error("Scope runtime worker unavailable");
   const sdkDirectory = await realpath(paths.sdkDirectory);
@@ -348,6 +434,67 @@ async function validateRuntimeSources(
   await access(paths.nodeBinary, constants.X_OK);
   if (adapterId === "codex") await verifyCodexBinary(paths.codexBinary, runCommand ?? defaultRunCommand);
   return { sdkDirectory, nativeDirectory, workerFile };
+}
+
+/** The bundled bot worker: a real directory holding a regular entry file, never a symbolic link. */
+async function validateBotRuntimeSources(paths: ResolvedLauncherPaths): Promise<{ botRuntimeDirectory: string }> {
+  if (!paths.botRuntimeDirectory) throw new Error("Bot runtime is not installed");
+  const botRuntimeDirectory = await realpath(paths.botRuntimeDirectory);
+  const directory = await lstat(botRuntimeDirectory);
+  if (!directory.isDirectory()) throw new Error("Bot runtime is unavailable");
+  const entry = await lstat(join(botRuntimeDirectory, BOT_WORKER_ENTRY_FILE));
+  if (!entry.isFile() || entry.isSymbolicLink()) throw new Error("Bot runtime is unavailable");
+  await access(join(botRuntimeDirectory, BOT_WORKER_ENTRY_FILE), constants.R_OK);
+  await access("/usr/bin/env", constants.X_OK);
+  await access(paths.nodeBinary, constants.X_OK);
+  return { botRuntimeDirectory };
+}
+
+async function validateBrokerSocket(path: string): Promise<void> {
+  const broker = await lstat(path);
+  if (!broker.isSocket() || broker.isSymbolicLink()) throw new Error("Scope runtime broker unavailable");
+}
+
+async function runWorkerBotCommand(
+  socketPath: string,
+  input: { runtimeHandle: string; executionGeneration: string; command: ScopeRuntimeBotCommand },
+): Promise<ScopeRuntimeBotWorkerReply> {
+  const frame = `${JSON.stringify({ version: 1, type: "runtime.bot", ...input })}\n`;
+  if (Buffer.byteLength(frame, "utf8") > MAX_WORKER_FRAME_BYTES) {
+    throw new Error("Scope runtime bot command exceeds capacity");
+  }
+  const timeoutMs = input.command.kind === "bot.run" ? BOT_RUN_TIMEOUT_MS : BOT_CONTROL_TIMEOUT_MS;
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ path: socketPath });
+    let response = "";
+    let settled = false;
+    const finish = (error?: Error, reply?: ScopeRuntimeBotWorkerReply) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error || !reply) reject(error ?? new Error("Scope runtime bot command failed"));
+      else resolve(reply);
+    };
+    socket.setEncoding("utf8");
+    socket.setTimeout(timeoutMs, () => finish(new Error("Scope runtime bot command timed out")));
+    socket.once("connect", () => socket.end(frame));
+    socket.once("error", () => finish(new Error("Scope runtime worker unavailable")));
+    socket.on("data", (chunk) => {
+      response += chunk;
+      if (Buffer.byteLength(response, "utf8") > MAX_BOT_REPLY_FRAME_BYTES) {
+        finish(new Error("Scope runtime bot reply exceeds capacity"));
+      }
+    });
+    socket.once("end", () => {
+      try {
+        finish(undefined, ScopeRuntimeBotWorkerReplySchema.parse(JSON.parse(response.trim())));
+      } catch (error: unknown) {
+        finish(new Error(error instanceof SyntaxError
+          ? "Scope runtime bot reply is invalid"
+          : "Scope runtime bot command failed"));
+      }
+    });
+  });
 }
 
 async function verifyCodexBinary(
@@ -475,7 +622,7 @@ async function cleanupOrphanedRuntimeRoots(
 export function createSystemdScopeRuntimeLauncher(
   input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner },
 ): ScopeRuntimeLauncher {
-  const paths: Required<LauncherPaths> = {
+  const paths: ResolvedLauncherPaths = {
     stateRoot: assertTrustedAbsolutePath(input.stateRoot),
     sdkDirectory: assertTrustedAbsolutePath(input.sdkDirectory),
     nativeDirectory: assertTrustedAbsolutePath(input.nativeDirectory),
@@ -484,11 +631,35 @@ export function createSystemdScopeRuntimeLauncher(
     nodeBinary: assertTrustedAbsolutePath(input.nodeBinary ?? "/opt/matrix/runtime/node/bin/node"),
     codexBinary: assertTrustedAbsolutePath(input.codexBinary ?? "/opt/matrix/runtime/node/bin/codex"),
     sandboxRoots: (input.sandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
+    botSandboxRoots: (input.botSandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
+    managedPiSandboxRoots: (input.managedPiSandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
+    ...(input.botRuntimeDirectory ? { botRuntimeDirectory: assertTrustedAbsolutePath(input.botRuntimeDirectory) } : {}),
   };
   const runCommand = input.runCommand ?? defaultRunCommand;
 
+  function commandSocketPath(runtimeHandle: string): string {
+    const handle = RuntimeHandleSchema.parse(runtimeHandle);
+    return join(paths.stateRoot, "runtimes", handle.slice("runtime_".length), "command", WORKER_SOCKET_FILE);
+  }
+
   return {
-    async supportedAdapters() {
+    async supportedAdapters(profileId?: string) {
+      if (piProfileIdentity(profileId)) {
+        const roots = profileId === SCOPE_RUNTIME_BOT_PROFILE_ID ? paths.botSandboxRoots : paths.managedPiSandboxRoots;
+        if (!paths.botRuntimeDirectory || roots.length === 0) return [];
+        try {
+          await validateBotRuntimeSources(paths);
+          return [{
+            adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID,
+            harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION,
+            workloads: ["bot_agent" as const],
+          }];
+        } catch (error: unknown) {
+          console.warn("[scope-runtime] bot profile disabled:", error instanceof Error ? error.name : "UnknownError");
+          return [];
+        }
+      }
+      if (profileId !== undefined && profileId !== SCOPE_RUNTIME_PROFILE_ID) return [];
       await validateRuntimeSources(paths);
       const adapters = [{
         adapterId: "claude-code",
@@ -507,6 +678,25 @@ export function createSystemdScopeRuntimeLauncher(
           error instanceof Error ? error.name : "UnknownError");
       }
       return adapters;
+    },
+    async active(): Promise<ReadonlySet<string>> {
+      const { stdout } = await runCommand("/usr/bin/systemctl", [
+        "list-units",
+        "--type=service",
+        "--state=active",
+        "--plain",
+        "--no-legend",
+        `${UNIT_PREFIX}*.service`,
+      ]);
+      const running = new Set<string>();
+      for (const line of stdout.split("\n")) {
+        const name = line.trim().split(/\s+/, 1)[0];
+        const match = name ? /^matrix-scope-runtime-([a-f0-9]{32})\.service$/.exec(name) : null;
+        if (!match) continue;
+        running.add(`runtime_${match[1]}`);
+        if (running.size > MAX_RECONCILED_ENTRIES) throw new Error("Scope runtime liveness exceeds capacity");
+      }
+      return running;
     },
     async list(): Promise<ScopeRuntimeReconciledRuntime[]> {
       const { stdout } = await runCommand("/usr/bin/systemctl", [
@@ -551,26 +741,31 @@ export function createSystemdScopeRuntimeLauncher(
       return handles;
     },
     async start(request: ScopeRuntimeLaunchRequest): Promise<void> {
+      // Capability discovery runs before the gateway opens this socket. Only
+      // an actual workload launch requires the broker to be listening.
+      await validateBrokerSocket(paths.brokerSocket);
       const { root, readinessFile, commandDirectory } = await prepareRuntimeRoot(paths.stateRoot, request);
       let submitted = false;
       try {
-        const sources = await validateRuntimeSources(paths, request.adapterId, runCommand);
+        const bot = isPiLaunch(request);
+        const chatSources = bot ? undefined : await validateRuntimeSources(paths, request.adapterId, runCommand);
+        const botSources = bot ? await validateBotRuntimeSources(paths) : undefined;
         const sandboxProperties = request.sandbox
           ? buildSandboxSystemdProperties(
               request.sandbox,
-              await validateSandboxMountSources(request.sandbox, { allowedRoots: paths.sandboxRoots }),
+              await validateSandboxMountSources(request.sandbox, {
+                allowedRoots: bot
+                  ? request.profileId === SCOPE_RUNTIME_BOT_PROFILE_ID ? paths.botSandboxRoots : paths.managedPiSandboxRoots
+                  : paths.sandboxRoots,
+              }),
             )
           : undefined;
-        const args = buildFixedSystemdRunArgs(request, {
-          scopeRoot: root,
-          sdkDirectory: sources.sdkDirectory,
-          nativeDirectory: sources.nativeDirectory,
-          workerFile: sources.workerFile,
-          brokerSocket: paths.brokerSocket,
-          readinessFile,
-          commandDirectory,
-          nodeBinary: paths.nodeBinary,
-        }, sandboxProperties ? { sandboxProperties } : {});
+        const common = { scopeRoot: root, brokerSocket: paths.brokerSocket, readinessFile, commandDirectory, nodeBinary: paths.nodeBinary };
+        const args = botSources
+          ? buildBotSystemdRunArgs(request, { ...common, botRuntimeDirectory: botSources.botRuntimeDirectory }, {
+              sandboxProperties: sandboxProperties ?? [],
+            })
+          : buildFixedSystemdRunArgs(request, { ...common, ...chatSources! }, sandboxProperties ? { sandboxProperties } : {});
         submitted = true;
         await runCommand("/usr/bin/systemd-run", args);
         await waitUntilReady(
@@ -587,18 +782,16 @@ export function createSystemdScopeRuntimeLauncher(
       }
     },
     async runChat(input): Promise<{ text: string }> {
-      const handle = RuntimeHandleSchema.parse(input.runtimeHandle);
       if (!EXECUTION_GENERATION.test(input.executionGeneration)) {
         throw new Error("Invalid scope runtime generation");
       }
-      const socketPath = join(
-        paths.stateRoot,
-        "runtimes",
-        handle.slice("runtime_".length),
-        "command",
-        WORKER_SOCKET_FILE,
-      );
-      return runWorkerChat(socketPath, input);
+      return runWorkerChat(commandSocketPath(input.runtimeHandle), input);
+    },
+    async runBot(input): Promise<ScopeRuntimeBotWorkerReply> {
+      if (!EXECUTION_GENERATION.test(input.executionGeneration)) {
+        throw new Error("Invalid scope runtime generation");
+      }
+      return runWorkerBotCommand(commandSocketPath(input.runtimeHandle), input);
     },
     async stop(runtimeHandle: string): Promise<void> {
       const handle = RuntimeHandleSchema.parse(runtimeHandle);

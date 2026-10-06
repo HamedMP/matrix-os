@@ -73,4 +73,36 @@ describe("shared Chat route synchronization", () => {
     act(() => result.current.switchConversation("chat_regular"));
     expect(window.location.pathname).toBe("/settings");
   });
+
+  it("opens a shared project in the Chat view and keeps its address in browser history", async () => {
+    window.history.replaceState(null, "", "/shared");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/events?")) return new Response(new ReadableStream());
+      if (url.includes("/api/chats?")) return Response.json({ items: [record] });
+      throw new Error("UnexpectedRequest");
+    }));
+    const projectScope = "10000000-0000-4000-8000-000000000a01";
+
+    const { result } = renderHook(() => useCanonicalChatState({
+      initialCollaborationView: { kind: "home" },
+    }));
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+
+    act(() => result.current.openSharedProject!(projectScope));
+    expect(window.location.pathname).toBe(`/shared/project/${projectScope}`);
+    expect(result.current.collaborationView).toEqual({ kind: "project", scopeId: projectScope });
+
+    act(() => result.current.openSharedChat!(scopeId));
+    act(() => {
+      window.history.pushState(null, "", `/shared/project/${projectScope}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(result.current.collaborationView).toEqual({ kind: "project", scopeId: projectScope });
+
+    act(() => {
+      window.history.pushState(null, "", "/shared/project/not-a-scope");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(result.current.collaborationView).toBeUndefined();
+  });
 });

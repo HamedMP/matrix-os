@@ -1,3 +1,4 @@
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -38,9 +39,11 @@ export function orderCanonicalProviderInstancesForDefault(
   return instances
     .map((instance, index) => ({ instance, index }))
     .sort((left, right) => {
+      const managedPiPriority = Number(right.instance.driverKind === "matrix_pi" && right.instance.availability === "available")
+        - Number(left.instance.driverKind === "matrix_pi" && left.instance.availability === "available");
       const priority = Number(isManagedGlmInstance(right.instance))
         - Number(isManagedGlmInstance(left.instance));
-      return priority || left.index - right.index;
+      return managedPiPriority || priority || left.index - right.index;
     })
     .map(({ instance }) => instance);
 }
@@ -67,33 +70,19 @@ function selectedOptionsFor(
   });
 }
 
-const UNAVAILABLE_LABELS: Record<
-  NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]>,
-  string
-> = {
-  disabled_in_settings: "Disabled in Settings",
-  settings_unavailable: "Settings unavailable",
-  runtime_not_runnable: "Not supported in this runtime",
-  runtime_inactive: "Runtime inactive",
-  runtime_unavailable: "Runtime unavailable",
-  not_installed: "Not installed",
-  authentication_required: "Authentication required",
-  multiple_profiles_unsupported: "Choose one enabled account",
-};
+export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
+  if (isLegacyMatrixSdkProvider(instance)) return "Unavailable";
+  const label = canonicalProviderAvailabilityReasonLabel(instance);
+  return label === "Available" && (instance.driverKind === "codex" || instance.localObservation !== undefined)
+    ? codexLocalObservationLabel(instance.localObservation) : label;
+}
 
-export function canonicalProviderAvailabilityLabel(
-  instance: CanonicalProviderInstanceDescriptor,
-): string {
-  if (instance.unavailabilityReason !== "disabled_in_settings" && instance.unavailabilityReason !== "settings_unavailable") {
-    if (instance.connectionState === "credit_required") return "Matrix AI credit required";
-    if (instance.connectionState === "unavailable") return "Matrix AI unavailable";
-  }
-  if (instance.availability === "available") return (instance.driverKind === "codex" || instance.localObservation !== undefined)
-    ? codexLocalObservationLabel(instance.localObservation)
-    : "Available";
-  if (instance.unavailabilityReason) return UNAVAILABLE_LABELS[instance.unavailabilityReason];
-  if (instance.availability === "setup_required") return "Setup required";
-  if (instance.availability === "auth_required") return "Authentication required";
+/** Preserve a bound route while reporting why it cannot execute. */
+export function canonicalProviderUnavailableSelectionLabel(instance?: CanonicalProviderInstanceDescriptor | null, modelId?: string): string {
+  if (!instance || isLegacyMatrixSdkProvider(instance) || !instance.models.some(model => model.id === modelId)) return "Unavailable";
+  const fundingState = canonicalProviderFundingState(instance);
+  if (fundingState === "credit_reserved") return "Credit reserved";
+  if (fundingState === "budget_exceeded") return "Monthly budget reached";
   return "Unavailable";
 }
 
@@ -114,14 +103,16 @@ export function deriveCanonicalProviderChoices(
   catalog: CanonicalProviderCatalog,
 ): CanonicalProviderChoice[] {
   return orderCanonicalProviderInstancesForDefault(catalog.instances).flatMap((instance) => {
-    if (instance.availability !== "available") return [];
+    if (isLegacyMatrixSdkProvider(instance) || instance.availability !== "available") return [];
     const interactionMode = instance.supports.interactionModes[0];
     const permissionMode = instance.supports.permissionModes[0];
     if (!interactionMode || !permissionMode) return [];
+    const managedExecution = instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default";
+    const harnessLabel = managedExecution ? "Matrix AI" : instance.displayName;
     return instance.models.flatMap((model) => model.availability === "available" ? [{
       instanceId: instance.id,
       driverKind: instance.driverKind,
-      harnessLabel: instance.displayName,
+      harnessLabel,
       ...(instance.connectionLabel ? { connectionLabel: instance.connectionLabel } : {}),
       modelId: model.id,
       modelLabel: model.displayName,

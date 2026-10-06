@@ -1,3 +1,4 @@
+import { createNativeProviderProfileGuard } from "../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,7 +49,7 @@ describe("provider login exited-terminal recovery", () => {
     writes.count = 0; writes.failAt = 0;
   });
   afterEach(async () => { await rm(homePath, { recursive: true, force: true }); });
-  function login() { return createProviderTerminalLoginCoordinator({ homePath, registry, enabledHarnesses: ["codex"], now: () => clock }); }
+  function login() { return createProviderTerminalLoginCoordinator({ homePath, registry, profileGuard: createNativeProviderProfileGuard({ homePath, registry }), enabledHarnesses: ["codex"], now: () => clock }); }
   const retry = { ...input, mutation: { ...input.mutation, expectedRevision: 1, idempotencyKey: "retry" } };
 
   it.each([false, true])("preserves ended login output and starts a fresh login when expired=%s", async expired => {
@@ -88,14 +89,17 @@ describe("provider login exited-terminal recovery", () => {
     expect(registry.delete).not.toHaveBeenCalled();
   });
 
-  it("retains the old terminal when creating the replacement fails and recovers on retry", async () => {
+  it("retains ended output and fences an ambiguous replacement-create failure", async () => {
     const service = login(); await service.startLogin(input); liveness = "stopped";
     registry.create.mockRejectedValueOnce(new Error("unavailable"));
     await expect(service.startLogin(retry)).rejects.toThrow();
     expect(terminals.size).toBe(1);
     expect([...terminals][0]).toMatch(/^provider-auth-ended-/);
-    const recovered = await service.startLogin(retry);
-    expect(recovered.state).toBe("pending"); expect(terminals.size).toBe(2);
+    // A lost create reply may precede native session visibility. Neither the
+    // ended historical pane nor an absent replacement proves no writer ran.
+    await expect(service.startLogin(retry)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    await expect(login().startLogin(retry)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    expect(terminals.size).toBe(1); expect(registry.create).toHaveBeenCalledTimes(2);
     expect(registry.archiveStopped).toHaveBeenCalledOnce();
     expect(registry.delete).not.toHaveBeenCalled();
   });
@@ -104,7 +108,9 @@ describe("provider login exited-terminal recovery", () => {
     const service = login(); const first = await service.startLogin(input);
     clock = new Date(Date.parse(first.expiresAt) - 1);
     liveness = "stopped";
-    if (crossesExpiry) registry.observeAgentLiveness.mockImplementationOnce(async () => {
+    // Both admission observations occur before the serialized recovery read.
+    // Cross expiry at the actual recovery observation, not either preflight.
+    if (crossesExpiry) registry.observeAgentLiveness.mockResolvedValueOnce("stopped").mockResolvedValueOnce("stopped").mockImplementationOnce(async () => {
       clock = new Date(clock.getTime() + 2); return "stopped";
     });
     const second = await service.startLogin(retry);
@@ -118,8 +124,13 @@ describe("provider login exited-terminal recovery", () => {
     expect(registry.create).toHaveBeenCalledTimes(2);
   });
 
-  it.each([1, 2, 3, 4])("recovers after replacement persistence boundary %s fails", async boundary => {
+  it.each([1, 2, 3, 4])("recovers after replacement persistence boundary %s fails with proven drain", async boundary => {
     const service = login(); const first = await service.startLogin(input); liveness = "stopped";
+    // At boundary4 the replacement was launched. Closing its tab alone does
+    // not prove drain; this positive fixture separately observes child exit.
+    if (boundary === 4) registry.delete.mockImplementationOnce(async name => {
+      terminals.delete(name); liveness = "stopped";
+    });
     writes.failAt = writes.count + boundary;
     await expect(service.startLogin(retry)).rejects.toThrow();
     {
@@ -136,6 +147,22 @@ describe("provider login exited-terminal recovery", () => {
     const creates = registry.create.mock.calls.length;
     await service.startLogin({ ...retry, mutation: { ...retry.mutation, idempotencyKey: "third", expectedRevision: 2 } });
     expect(registry.create).toHaveBeenCalledTimes(creates);
+  });
+
+  it.each(["running", "unknown", "missing"] as const)("retains replacement admission after receipt failure and tab deletion when child state is %s", async state => {
+    const service = login(); await service.startLogin(input); liveness = "stopped";
+    registry.delete.mockImplementationOnce(async name => {
+      terminals.delete(name);
+      if (state === "missing") registry.observeAgentLiveness.mockRejectedValueOnce(Object.assign(new Error("missing"), { code: "session_not_found" }));
+      else liveness = state;
+    });
+    writes.failAt = writes.count + 4;
+    await expect(service.startLogin(retry)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    expect(registry.delete).toHaveBeenCalledOnce(); expect(registry.create).toHaveBeenCalledTimes(2);
+    expect([...terminals]).toEqual([expect.stringMatching(/^provider-auth-ended-/)]);
+    await expect(service.startLogin({ ...retry, mutation: { ...retry.mutation, idempotencyKey: "no_early_retry" } })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    await expect(login().startLogin(retry)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    expect(registry.create).toHaveBeenCalledTimes(2);
   });
 
   it("does not resolve an old attempt to a replacement when its original terminal disappeared", async () => {

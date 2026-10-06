@@ -54,6 +54,13 @@ export type CanonicalChatContentFrame = z.infer<typeof CanonicalChatContentFrame
 export const CanonicalChatTransportFrameSchema = z.union([CanonicalChatStreamServerFrameSchema, CanonicalChatContentFrameSchema]);
 export type CanonicalChatTransportFrame = z.infer<typeof CanonicalChatTransportFrameSchema>;
 
+/** Older strict Chat parsers cannot read new funding error codes. */
+export const ChatFundingWireVersionSchema = z.enum(["0", "1"]).default("0");
+export function chatFundingVersionUrl(path: string): string {
+  if (/[?&]fundingVersion=/.test(path)) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}fundingVersion=1`;
+}
+
 /** Reviewed renderer copy keyed only by the bounded wire error code. */
 const CANONICAL_CHAT_FAILURE_COPY: Record<CanonicalChatSafeError["code"], string> = {
   chat_not_found: "This Chat no longer exists. Start a new Chat.",
@@ -73,6 +80,9 @@ const CANONICAL_CHAT_FAILURE_COPY: Record<CanonicalChatSafeError["code"], string
   history_window_required: "This Chat needs more recent history before it can continue. Refresh and try again.",
   migration_in_progress: "This Chat is being upgraded. Wait a moment and try again.",
   run_failed: "The agent could not complete its reply. Try again or check Agents & providers.",
+  insufficient_credit: "There is not enough credit available for this Chat. Check Matrix AI credit in Settings or choose another connection.",
+  credit_reserved: "Chat credit is currently reserved for earlier AI requests. Check Matrix AI in Settings or choose another connection.",
+  budget_exceeded: "The monthly AI budget has been reached. Check Matrix AI in Settings or choose another connection.",
   resource_unavailable: "One of the referenced files or resources is unavailable.",
   authorization_failed: "You do not have permission to send this message.",
   service_unavailable: "Chat service is temporarily unavailable. Try again.",
@@ -98,6 +108,7 @@ export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalCha
       .reduce<(typeof detail.activities)[number] | undefined>((latest, activity) =>
         !latest || (activity.sequence ?? 0) >= (latest.sequence ?? 0) ? activity : latest, undefined);
     return [{ id: `${run.id}:terminal`, runId: run.id,
+      ...(run.status === "failed" && runError?.type === "run.error" ? { code: runError.error.code } : {}),
       beforeMessageId: inputs[index + 1]?.turn.inputMessageId,
       text: run.status === "failed"
         ? canonicalChatSafeFailureReason(runError?.type === "run.error" ? runError.error.code : undefined)

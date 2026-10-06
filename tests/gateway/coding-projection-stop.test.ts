@@ -108,7 +108,7 @@ describe("Codex projection shutdown ownership", () => {
       async resumeTurn({ thread, signal, nextEventId, now, publishEvents }) {
         nativeSignal = signal;
         await publishEvents!({ events: [{ threadId: thread.id, eventId: nextEventId(), occurredAt: now().toISOString(),
-          type: "assistant.text.delta", messageId: "msg_resume", delta: "Resumed" }] });
+          type: "assistant.text.delta", messageId: "msg_resume", delta: "Resumed " }] });
         await finish.promise;
         return { events: [], outcome: "aborted" };
       },

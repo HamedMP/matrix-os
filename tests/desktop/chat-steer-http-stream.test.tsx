@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import { startCanonicalChatAfterReplay } from "./canonical-chat-stream-test-utils";
 import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
@@ -57,7 +58,9 @@ it.each([
     })), { headers: response.headers });
   });
   const source = createCanonicalChatEventSource({ openStream });
-  const getDetail = vi.fn(async () => initial);
+  let reconcileLiveSnapshot = false;
+  const getDetail = vi.fn(async () => reconcileLiveSnapshot
+    ? (await repository.getDetailPage(owner, chatId, { limit: 200 }))! : initial);
   let firstRequest = true;
   const steer = async () => {
       const suffix = !firstRequest && repeat === "accepted" ? "_second" : "";
@@ -87,11 +90,13 @@ it.each([
     steerRun: steer,
     steerQueuedTurn: steer,
   } as CanonicalChatClient;
+  await startCanonicalChatAfterReplay(source);
   const hook = renderHook(() => useCanonicalChatRouteController({ client, projectId: null,
     active: true, initialChatId: chatId, eventSource: source }));
   try {
-    await act(async () => { await source.start(); });
     await waitFor(() => expect(hook.result.current.detail?.record.chat.revision).toBe(initial.record.chat.revision));
+    expect(getDetail).toHaveBeenCalledTimes(1);
+    const initialDetailCalls = getDetail.mock.calls.length;
     deliveryGate = new Promise<void>((resolve) => { release = resolve; });
     await act(async () => {
       expect(await (mode === "queued" ? hook.result.current.steerQueuedTurn("qturn_stream")
@@ -124,7 +129,9 @@ it.each([
     });
     await waitFor(() => expect(hook.result.current.detail?.messages.find((message) => message.id === "msg_streaming")?.parts)
       .toEqual([{ type: "text", text: "hello world live" }]));
+    expect(getDetail).toHaveBeenCalledTimes(initialDetailCalls);
     if (reconnect) {
+      reconcileLiveSnapshot = true;
       await act(async () => { disconnect?.(); });
       await act(async () => {
         await repository.appendAssistantDelta(owner, { chatId, runId: run.id,
@@ -140,9 +147,9 @@ it.each([
     });
     await waitFor(() => expect(hook.result.current.detail?.record.activeRun).toBeUndefined());
     expect(hook.result.current.detail?.runs.find((candidate) => candidate.id === run.id)?.status).toBe("completed");
-    // One initial snapshot; reconnection deliberately reconciles once. Healthy
+    // One route load plus one bounded refresh per replay checkpoint. Healthy
     // steering/content delivery never uses per-event polling or reload.
-    expect(getDetail).toHaveBeenCalledTimes(reconnect ? 2 : 1);
+    expect(getDetail).toHaveBeenCalledTimes(initialDetailCalls + (reconnect ? 1 : 0));
   } finally {
     release?.(); hook.unmount(); source.dispose(); stream.shutdown(); await repository.kysely.destroy();
   }

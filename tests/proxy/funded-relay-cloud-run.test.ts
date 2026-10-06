@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -7,6 +8,7 @@ import {
   createFundedRelayService,
   requireFundedRelayServiceConfig,
 } from "../../packages/proxy/src/funded-main-app.js";
+import { FUNDED_PRICING_VERSIONS } from "../../packages/proxy/src/funded-pricing-review.js";
 
 const root = process.cwd();
 
@@ -23,6 +25,17 @@ function enabledEnv(): NodeJS.ProcessEnv {
 }
 
 describe("funded relay Cloud Run service", () => {
+  it("preserves reviewed pricing attestations in the candidate deployment", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+    for (const model of ["SONNET", "GLM"]) {
+      for (const field of ["REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH"]) {
+        const name = `MATRIX_FUNDED_${model}_PRICING_${field}`;
+        expect(workflow).toContain(`${name}: \${{ vars.${name} }}`);
+        expect(workflow).toContain(`${name}=\${${name}}`);
+      }
+    }
+    expect(workflow).not.toContain('date -u +');
+  });
   it("fails closed unless the dedicated funded relay is explicitly enabled", () => {
     expect(() => requireFundedRelayServiceConfig({})).toThrow(
       "MATRIX_FUNDED_AI_ENABLED must be true for the dedicated relay service",
@@ -145,6 +158,9 @@ describe("funded relay Cloud Run service", () => {
       "utf8",
     );
 
+    const triggers = workflow.split("permissions:")[0]!;
+    expect(triggers).toContain("workflow_dispatch:");
+    expect(triggers).not.toMatch(/^  (push|pull_request|workflow_run):/m);
     expect(dockerfile).toContain('CMD ["node", "packages/proxy/dist/funded-main.js"]');
     expect(dockerfile).toContain("COPY patches patches");
     expect(dockerfile).not.toContain("packages/platform");
@@ -232,4 +248,50 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("${funded_ai_env_bindings}");
     expect(workflow).toContain("${funded_ai_secret_bindings}");
   });
+});
+
+function runDeploymentValidation(reviewedAt: string, validThrough: string) {
+  const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+  const block = workflow.split("- name: Validate preview deployment configuration")[1]!
+    .split("- name: Authenticate to Google Cloud")[0]!.split("run: |\n")[1]!;
+  const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
+  return spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 10_000, env: {
+    ...process.env, DEPLOY_ENVIRONMENT: "staging", GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
+    ARTIFACT_REPOSITORY: "fixture", AI_RELAY_CLOUD_RUN_SERVICE: "fixture",
+    AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture", PLATFORM_INTERNAL_URL: "https://platform.example.test",
+    CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,
+    MATRIX_JEV_PRICING_REVIEW_VERSION: "typesafe-jev-input-2026-09",
+    MATRIX_JEV_PRICING_REVIEWED_AT: reviewedAt, MATRIX_JEV_PRICING_VALID_THROUGH: validThrough,
+    MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["anthropic/claude-sonnet-5"],
+    MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/zai-org/glm-5.3-flash"],
+    MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT: new Date(Date.now() - dayMs).toISOString(),
+    MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: new Date(Date.now() + dayMs).toISOString(),
+    MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT: new Date(Date.now() - dayMs).toISOString(),
+    MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH: new Date(Date.now() + dayMs).toISOString(),
+  } });
+}
+it("rejects a format-correct nonexistent review date before Cloud Run authentication", () => {
+  expect(runDeploymentValidation("2026-02-30T00:00:00.000Z", "2026-03-31T00:00:00.000Z").status).not.toBe(0);
+});
+
+const dayMs = 24 * 60 * 60_000;
+it.each([
+  ["expired", -2, -1],
+  ["future", 1, 2],
+  ["reversed", -1, -2],
+  ["empty", -1, -1],
+  ["overlong", -1, 90],
+] as const)("rejects %s review windows before Cloud Run authentication", (_label, startDays, endDays) => {
+  const now = Date.now();
+  const result = runDeploymentValidation(new Date(now + startDays * dayMs).toISOString(),
+    new Date(now + endDays * dayMs).toISOString());
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("current window of at most 90 days");
+});
+it("accepts a current bounded deployment review without altering its attested timestamps", () => {
+  const now = Date.now();
+  const result = runDeploymentValidation(new Date(now - dayMs).toISOString(), new Date(now + dayMs).toISOString());
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
 });

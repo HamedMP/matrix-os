@@ -14,7 +14,7 @@ import {
   SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
   SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
 } from "@matrix-os/scope-runtime/sandbox";
-import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
+import type { ScopeRuntimeSandboxManifest, ScopeRuntimeWorkload } from "@matrix-os/scope-runtime";
 import type { Kysely } from "kysely";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import {
@@ -47,7 +47,8 @@ import {
 import type { CollaborationChatScopeService } from "./chat-scope.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationEventRegistry } from "./events.js";
-import { createScopeRuntimeBroker, createScopeRuntimeBrokerServer } from "./scope-runtime-broker.js";
+import { createScopeRuntimeHost, type ScopeRuntimeHost } from "../scope-runtime-host/index.js";
+import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { createSandboxReadinessProbe, type SandboxReadinessProbe } from "./sandbox-readiness.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
 import { createScopeRuntimeChatProviderAdapter } from "./scope-runtime-chat-adapter.js";
@@ -73,6 +74,7 @@ import {
 import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import type { SharedRunOwnerSource, SharedRunOwnerSourceDecision } from "./shared-run-owner-source.js";
+import { SHARED_RUN_SELECTION_REQUIREMENTS, resolveSharedProviderReadiness } from "./shared-provider-readiness.js";
 import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
 const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
@@ -183,7 +185,10 @@ export async function createSharedAiRuntime(options: {
   serviceToken: string;
   homePath: string;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  fundedAdmission?: FundedAdmissionQueue;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
+  /** The gateway's shared scope-runtime host; without it this runtime owns a private one. */
+  host?: ScopeRuntimeHost;
   supervisorSocket?: string;
   brokerSocket?: string;
   fetchImpl?: typeof fetch;
@@ -203,22 +208,29 @@ export async function createSharedAiRuntime(options: {
   /** S09: resolves a rooted Chat's project/worktree to the host path the sandbox mounts. */
   executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
 }) {
-  const client = createScopeRuntimeClient({
-    socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
+  // One broker socket per gateway: use the shared host, or own a private one (tests, legacy wiring).
+  const ownedHost = options.host ? undefined : await createScopeRuntimeHost({
+    homePath: options.homePath,
     profileCatalog: SHARED_AI_PROFILE_CATALOG,
+    supervisorSocket: options.supervisorSocket ?? SUPERVISOR_SOCKET,
+    brokerSocket: options.brokerSocket ?? BROKER_SOCKET,
+    ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),
+    ...(options.fundedAdmission ? { fundedAdmission: options.fundedAdmission } : {}),
   });
+  const host = options.host ?? ownedHost!;
+  const client = host.client;
   const capability = await client.refreshCapability();
-  if (!capability.available) {
+  if (!capability.available || !host.available) {
     await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
     return {
       available: false as const,
-      async shutdown(): Promise<void> { await client.close(); },
+      async shutdown(): Promise<void> { await ownedHost?.close(); },
     };
   }
   const executionGeneration = Number(capability.executionGeneration);
   if (!Number.isSafeInteger(executionGeneration) || executionGeneration < 1) {
     await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
-    await client.close();
+    await ownedHost?.close();
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
   const sandboxProbe: SandboxReadinessProbe = createSandboxReadinessProbe({ client });
@@ -239,7 +251,7 @@ export async function createSharedAiRuntime(options: {
   const eligibility = await deriveSharedAiEligibility({ client, sandboxManifests });
   if (!eligibility) {
     await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
-    await client.close();
+    await ownedHost?.close();
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
   await options.chatScope.reconcileExecutionEligibility({ executionGeneration, eligibility });
@@ -460,9 +472,10 @@ export async function createSharedAiRuntime(options: {
     runLoss: options.runLoss,
   });
 
-  const broker = createScopeRuntimeBroker({
-    homePath: options.homePath,
-    fundedCredentialProvider: options.fundedCredentialProvider,
+  // Frames from runtimes this registry bound are authorized here; the host routes them.
+  const unregisterAuthorizer = host.registerAuthorizer({
+    id: "shared_ai",
+    owns: (request) => registry.lookup(request) !== null,
     authorize: async (request) => {
       const binding = registry.lookup(request);
       if (!binding) return { allowed: false };
@@ -483,21 +496,6 @@ export async function createSharedAiRuntime(options: {
       }
     },
   });
-  const brokerServer = createScopeRuntimeBrokerServer({
-    socketPath: options.brokerSocket ?? BROKER_SOCKET,
-    broker,
-  });
-  try {
-    await brokerServer.start();
-  } catch (error: unknown) {
-    console.warn("[collaboration] shared AI broker unavailable",
-      error instanceof Error ? error.name : "UnknownError");
-    registry.shutdown();
-    await brokerServer.close();
-    await client.close();
-    await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
-    return { available: false as const, async shutdown(): Promise<void> {} };
-  }
   let stopped = false;
   let wakeInFlight: Promise<void> | undefined;
   let lostRunsMarked = false;
@@ -581,127 +579,18 @@ export async function createSharedAiRuntime(options: {
       stopped = true;
       clearInterval(wakeTimer);
       await wakeInFlight;
+      unregisterAuthorizer();
       registry.shutdown();
-      await brokerServer.close();
-      await client.close();
+      await ownedHost?.close();
     },
   };
 }
 
-const SHARED_RUN_SELECTION_REQUIREMENTS = { interactionMode: "default", permissionMode: "supervised" } as const;
-
-export type SharedProviderReadiness = "ready" | "reconnect_required" | "unavailable";
-
-interface SharedProviderReadinessInput {
-  resolveCredentialSources(): Promise<KernelCredentialSources>;
-  codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
-  providerCatalog?: Pick<ChatProviderCatalogService, "getCatalog">;
-}
-
-/**
- * Readiness follows the immutable bound driver, never an Instance id: the
- * catalog does not reserve ids per driver, so a Claude binding may legitimately
- * use any Instance id. An unbound Chat has no bound driver yet, so its candidate
- * selection is classified through the trusted server-side catalog (a `codex`
- * Instance takes the Codex route); without a catalog it follows the Claude
- * default, and first-binding authority still requires a catalog to bind.
- */
-export async function resolveSharedProviderReadiness(
-  input: SharedProviderReadinessInput,
-  ownerId: string,
-  selection?: CanonicalChatModelSelection | null,
-  boundDriverKind?: CanonicalProviderDriverKind | null,
-): Promise<SharedProviderReadiness> {
-  if (boundDriverKind === "codex") {
-    return selection ? resolveCodexProviderReadiness(input, ownerId, selection) : "unavailable";
-  }
-  if (boundDriverKind || !input.providerCatalog || !selection) {
-    return resolveClaudeProviderReadiness(input, ownerId, selection);
-  }
-  const catalog = await input.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
-  const cached = { getCatalog: async () => catalog };
-  const candidate = catalog.instances.find((instance) => instance.id === selection.instanceId);
-  return candidate?.driverKind === "codex"
-    ? resolveCodexProviderReadiness({ providerCatalog: cached }, ownerId, selection)
-    : resolveClaudeProviderReadiness({ ...input, providerCatalog: cached }, ownerId, selection);
-}
-
-/**
- * Codex owner identity lives in the owner's Codex auth file and is refreshed by
- * the scope broker at inference time, so readiness is verified only through the
- * trusted server-side provider catalog. Without a catalog it fails closed. An
- * unauthenticated Codex Instance reports generic unavailability: the owner
- * reconnect guidance names Claude credentials and must not be shown for Codex.
- */
-async function resolveCodexProviderReadiness(
-  input: Pick<SharedProviderReadinessInput, "providerCatalog">,
-  ownerId: string,
-  selection: CanonicalChatModelSelection,
-): Promise<SharedProviderReadiness> {
-  if (!input.providerCatalog) return "unavailable";
-  const catalog = await input.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
-  const validated = validateChatProviderSelection({
-    catalog,
-    selection,
-    requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
-  });
-  return validated.ok && validated.instance.driverKind === "codex" ? "ready" : "unavailable";
-}
-
-/**
- * Readiness follows the kernel credential access source the scoped run will
- * actually use (see `scope-runtime-broker`): Matrix-included access, the owner's
- * API key, or the owner's Claude profile. Matrix-included access is platform
- * managed and needs no probe. Owner routes are never ready on credential material
- * alone: the trusted server-side provider catalog must validate the complete
- * bound selection (Instance, model, options, shared-run requirements), and an
- * `authentication_required` Instance maps to reconnect guidance. Without a
- * catalog, the owner-profile route falls back to the Claude login state and the
- * owner API key route fails closed.
- */
-export async function resolveClaudeProviderReadiness(
-  input: SharedProviderReadinessInput,
-  ownerId: string,
-  selection?: CanonicalChatModelSelection | null,
-): Promise<SharedProviderReadiness> {
-  const sources = await input.resolveCredentialSources();
-  if (sources.selectedAccessSourceId === "matrix_included") {
-    return sources.matrixIncluded.state === "ready" ? "ready" : "unavailable";
-  }
-  const observed = sources.selectedAccessSourceId === "owner_anthropic_key"
-    ? sources.ownerApiKey.state
-    : sources.ownerProfile.state;
-  if (!usableCredentialState(observed)) return "unavailable";
-  if (input.providerCatalog && selection) {
-    // Validate the complete canonical selection (Instance, model, options, and
-    // shared-run requirements) exactly as the first-binding path does, so a
-    // removed or disabled model never reports ready.
-    const catalog = await input.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
-    const validated = validateChatProviderSelection({
-      catalog,
-      selection,
-      requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
-    });
-    if (validated.ok) return validated.instance.driverKind === "claude_code" ? "ready" : "unavailable";
-    const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
-    return instance?.driverKind === "claude_code" && instance.unavailabilityReason === "authentication_required"
-      ? "reconnect_required"
-      : "unavailable";
-  }
-  if (sources.selectedAccessSourceId === "owner_anthropic_profile" && input.codingProviders) {
-    const summaries = await input.codingProviders.listProviders({ userId: ownerId, source: "jwt" });
-    const claude = summaries.find((provider) => provider.id === "claude" || provider.kind === "claude");
-    if (claude?.availability === "available" && claude.authStatus === "authenticated") return "ready";
-    if (claude?.availability === "auth_required" || claude?.authStatus === "expired") {
-      return "reconnect_required";
-    }
-  }
-  return "unavailable";
-}
-
-function usableCredentialState(state: KernelCredentialObservationState): boolean {
-  return state === "ready" || state === "unverified";
-}
+export {
+  resolveClaudeProviderReadiness,
+  resolveSharedProviderReadiness,
+  type SharedProviderReadiness,
+} from "./shared-provider-readiness.js";
 
 export async function recoverSharedAiQueue(options: {
   reconcilePendingApprovals(): Promise<void>;
@@ -944,7 +833,7 @@ export async function createSharedChatSandboxManifest(input: {
   run: SharedDispatchRun;
   scopeId: string;
   actorId: string;
-  capability: { available: boolean; sandbox?: { workloads: readonly ("chat_ai" | "terminal")[] } };
+  capability: { available: boolean; sandbox?: { workloads: readonly ScopeRuntimeWorkload[] } };
   executionRoots: Pick<ChatExecutionRootResolver, "resolve"> | undefined;
   owner: { type: "personal"; ownerId: string };
   homePath: string;

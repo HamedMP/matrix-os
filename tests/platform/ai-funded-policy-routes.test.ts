@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FundedAiAuthorizationResponseSchema,
+  JEV_MODEL_ID,
   FundedAiOperatorGlobalPolicyResponseSchema,
   FundedAiOperatorRuntimePolicyResponseSchema,
   FundedAiPromotionalGrantResponseSchema,
@@ -8,6 +9,7 @@ import {
   FundedAiPolicyCheckResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
+  FundedAiRuntimeChatFundingSummaryResponseSchema,
   FundedAiRouteReadinessReceiptSchema,
   FundedAiSettlementResponseSchema,
   FundedAiStartResponseSchema,
@@ -72,10 +74,15 @@ describe("funded AI policy routes", () => {
     vi.restoreAllMocks();
   });
 
-  async function createTestApp(options: { promotionalGrantEnabled?: boolean; topUpEnabled?: boolean; routeProbes?: FundedModelProbeService } = {}) {
+  async function createTestApp(options: {
+    promotionalGrantEnabled?: boolean;
+    topUpEnabled?: boolean;
+    routeProbes?: FundedModelProbeService;
+    tokenIdFactory?: () => string;
+  } = {}) {
     const repository = createAiFundedPolicyRepository({
       db, credentialHashSecret: hashSecret, now: () => new Date(now),
-      tokenIdFactory: () => "credential_123", tokenSecretFactory: () => "s".repeat(43),
+      tokenIdFactory: options.tokenIdFactory ?? (() => "credential_123"), tokenSecretFactory: () => "s".repeat(43),
       issueCooldownMs: 60_000,
     });
     await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
@@ -610,6 +617,50 @@ describe("funded AI policy routes", () => {
     })).status).toBe(401);
   });
 
+  it("issues class-bound credentials with per-class cooldowns and keeps the legacy shape", async () => {
+    let counter = 0;
+    const { app } = await createTestApp({ tokenIdFactory: () => `credential_class_${++counter}` });
+    const issue = (body: string) => app.request(fundedCredentialPath(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body,
+    });
+
+    const background = await issue(JSON.stringify({ requestClass: "background" }));
+    expect(background.status).toBe(200);
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.parse(await background.json()).requestClass).toBe("background");
+    const legacy = await issue("{}");
+    expect(legacy.status).toBe(200);
+    expect(await legacy.json()).not.toHaveProperty("requestClass");
+    expect((await issue(JSON.stringify({ requestClass: "interactive" }))).status).toBe(429);
+    expect((await issue(JSON.stringify({ requestClass: "background" }))).status).toBe(429);
+    const invalid = await issue(JSON.stringify({ requestClass: "urgent" }));
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ error: { code: "invalid_request", message: "Invalid request" } });
+  });
+
+  it("returns the allowlisted priority reason on a rate-limited authorization", async () => {
+    const { app } = await createTestApp();
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await (await app.request(fundedCredentialPath(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: JSON.stringify({ requestClass: "background" }),
+    })).json());
+    await db.executor.insertInto("ai_funded_priority_claims").values({
+      owner_id: "user_alice", machine_id: "machine_other", runtime_slot: "primary", billing_mode: "usage",
+      created_at: now, expires_at: new Date(Date.parse(now) + 120_000).toISOString(),
+    }).execute();
+
+    const response = await app.request("/internal/ai/funded/authorize", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, requestId: "request_held", modelId, maxCostMicrousd: 100 }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: { code: "rate_limited", message: "Try again later", reason: "priority_hold" } });
+  });
+
   it("rejects the prior runtime token after this machine's epoch advances", async () => {
     const { app } = await createTestApp();
     await db.executor.updateTable("user_machines")
@@ -666,6 +717,23 @@ describe("funded AI policy routes", () => {
       machineId: "machine_staging",
       runtimeSlot: "staging",
     });
+  });
+
+  it("negotiates an identity-free Chat projection while retaining the exact legacy response", async () => {
+    const { app } = await createTestApp();
+    const request = (body: unknown, authorization = `Bearer ${bearerFor("alice")}`) => app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST", headers: { authorization, "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    const legacy = await (await request({})).json();
+    const response = await request({ includeChatAvailability: true });
+    expect(response.status).toBe(200);
+    const modern = FundedAiRuntimeChatFundingSummaryResponseSchema.parse(await response.json());
+    expect(modern).toEqual({ ...legacy, chatAvailability: { contractVersion: 1, asOf: now, eligibleBalanceMicrousd: 1_500, availableBalanceMicrousd: 1_500 } });
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.safeParse(modern).success).toBe(false);
+    expect((await request({ includeChatAvailability: true }, "Bearer invalid")).status).toBe(401);
+    expect((await request({ includeChatAvailability: true, ownerId: "spoof" })).status).toBe(400);
+    expect((await request({ includeChatAvailability: false })).status).toBe(400);
+    expect(JSON.stringify(modern.chatAvailability)).not.toMatch(/user_alice|machine_123|token|credential/);
   });
 
   it("returns the exact identity-free Postgres funding summary for the authenticated runtime", async () => {
@@ -879,6 +947,34 @@ describe("funded AI policy routes", () => {
     expect(finalized.status).toBe(200);
     expect(FundedAiFinalizationResponseSchema.parse(await finalized.json()))
       .toMatchObject({ finalizationMode: "conservative", actualCostMicrousd: 100, releasedMicrousd: 0 });
+  });
+
+  it("limits no-dispatch zero settlement to the trusted relay and bound Jev request", async () => {
+    const { app, repository } = await createTestApp();
+    const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" };
+    await repository.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
+    await repository.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
+      allowedModelIds: [modelId, JEV_MODEL_ID], monthlyBudgetMicrousd: 1_000, expiresAt: null });
+    const credential = (await repository.issueRuntimeCredential(identity)).credential;
+    const authorization = await repository.authorize({ credential: credential.token, requestId: "jev_no_dispatch_route",
+      modelId: JEV_MODEL_ID, maxCostMicrousd: 500, billingMode: "usage", jevPricingVersion: "typesafe-jev-input-2026-09" });
+    const locator = { reservationId: authorization.reservation.reservationId, tokenId: credential.tokenId };
+    await repository.startReservation(locator);
+    const request = { ...locator, mode: "not_dispatched", expectedRequestId: "jev_no_dispatch_route",
+      jevPricingVersion: "typesafe-jev-input-2026-09" };
+    const finalize = (body = request, authorization = relayControlToken) => app.request("/internal/ai/funded/finalize", {
+      method: "POST", headers: { authorization: `Bearer ${authorization}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    for (const caller of ["", credential.token, bearerFor("alice")]) expect((await finalize(request, caller)).status).toBe(401);
+    expect((await finalize({ ...request, expectedRequestId: "wrong_request" })).status).toBe(409);
+    expect(await repository.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 500 });
+    const result = await finalize();
+    expect(result.status).toBe(200);
+    const settled = await result.json();
+    expect(settled).toMatchObject({ status: "settled", actualCostMicrousd: 0, chargedCostMicrousd: 0,
+      releasedMicrousd: 500, finalizationMode: "exact" });
+    expect(await (await finalize()).json()).toEqual(settled);
   });
 
   it("returns temporary unavailability for unresolved usage instead of disabling access", async () => {

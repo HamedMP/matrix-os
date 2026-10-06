@@ -1,3 +1,5 @@
+import { createAccountDeletionRoutes } from './account-deletion/routes.js';
+import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -51,6 +53,10 @@ import {
   getRuntimeAccessDecision,
 } from './billing.js';
 import { getRuntimeEntitlementDecision, getRuntimeEntitlementDecisionForUser, resolveEffectiveBillingEntitlement, stripeBillingEntitlementsEnabled } from './runtime-entitlement.js';
+import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
+import { createAccountDeletionBillingWebhookGuard } from './account-deletion/billing-webhook-guard.js';
+import { getAccountDeletionAdmission } from './account-deletion/admission.js';
+import { createAccountDeletionGuardedStripeClient } from './account-deletion/billing-admission.js';
 import { createBillingRoutes } from './billing-routes.js';
 import { createRedditConversionsClient } from './reddit-conversions.js';
 import { createPrebillingProvisioningCoordinator } from './prebilling-provisioning.js';
@@ -260,9 +266,11 @@ export function createApp(deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  whatsappRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
+  accountDeletion?: AccountDeletionRuntime;
   customerVpsService?: CustomerVpsService;
   /** Overrides the collaboration organization projection for Private Preview membership. */
   privatePreviewMembership?: PrivatePreviewMembershipCheck;
@@ -379,6 +387,12 @@ export function createApp(deps: {
     }
   });
 
+  app.route('/', createAccountDeletionRoutes({service:deps.accountDeletion?.service,
+    verify:async(token)=>{const result=await clerkAuth?.verify(token);return result?.authenticated?result.userId??null:null;},
+    webhookSecret:appEnv.CLERK_USER_WEBHOOK_SIGNING_SECRET, publishableKey:appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+    exportData:deps.accountDeletion?.exportData,exportPlatformData:deps.accountDeletion?.exportPlatformData,
+    registerAppleAuthorization:deps.accountDeletion?.registerAppleAuthorization}));
+
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
 
@@ -456,6 +470,7 @@ export function createApp(deps: {
     );
   }
 
+  if (deps.whatsappRoutes) app.route('/', deps.whatsappRoutes);
   app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
   app.route('/', createComputerRoutes({
     db,
@@ -511,11 +526,21 @@ export function createApp(deps: {
     getGatewayUrlForHandle,
   }));
 
+  const billingStripe=createAccountDeletionGuardedStripeClient(db, appEnv.STRIPE_SECRET_KEY
+    ? createStripeBillingClient({secretKey:appEnv.STRIPE_SECRET_KEY})
+    : createUnavailableStripeBillingClient(),appEnv);
+  app.use('/billing/webhooks/stripe',createAccountDeletionBillingWebhookGuard({db,stripe:billingStripe,env:appEnv}));
+  app.use('/billing/*',async(c,next)=>{
+    if(c.req.method!=='POST'||c.req.path==='/billing/webhooks/stripe')return next();
+    const owner=await resolveBillingClerkUserId(c);
+    if(!owner)return c.json({error:'Unauthorized'},401);
+    try{if(!(await getAccountDeletionAdmission(db,owner,appEnv)).newWorkAllowed)return c.json({error:'Billing changes are unavailable while account deletion is pending.'},409);}
+    catch(error:unknown){logPlatformRouteError('account-deletion billing admission',error);return c.json({error:'Billing unavailable'},503);}
+    await next();
+  });
   app.route('/billing', createBillingRoutes({
     db,
-    stripe: appEnv.STRIPE_SECRET_KEY
-      ? createStripeBillingClient({ secretKey: appEnv.STRIPE_SECRET_KEY })
-      : createUnavailableStripeBillingClient(),
+    stripe:billingStripe,
     env: appEnv,
     resolveClerkUserId: resolveBillingClerkUserId,
     captureEvent: captureFunnelEvent,
@@ -681,6 +706,9 @@ export function createApp(deps: {
     logRouteError: logPlatformRouteError,
   }));
 
+  const integrationDeletionGuard=createAccountDeletionMutationGuard({db,env:appEnv,resolveOwner:c=>c.get('platformUserId') as string|undefined});
+  app.use('/api/integrations/*',(c,next)=>c.req.path==='/api/integrations/webhook/connected'
+    || (c.req.method==='GET' && c.req.path==='/api/integrations/available') ? next() : integrationDeletionGuard(c,next));
   app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
   registerCustomMcpRoutes(app, {
     db,

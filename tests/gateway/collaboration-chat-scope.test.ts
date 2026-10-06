@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
+import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
   CollaborationChatScopeError,
@@ -20,21 +21,35 @@ const executionEligibility = collaborationExecutionEligibility();
 describe("CollaborationChatScopeService", () => {
   let fixture: CollaborationTestDatabase;
   let service: CollaborationChatScopeService;
+  let published: Array<{ ownerId: string; eventType: string; revision: number }>;
+  let delivered: Array<{ ownerId: string; eventType: string; revision: number }>;
+  let liveChatRepository: ChatRepository;
 
   beforeEach(async () => {
+    published = [];
+    delivered = [];
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     await seedChat(fixture);
+    liveChatRepository = new ChatRepository(fixture.db);
+    liveChatRepository.registerOutboxSink(({ owner, event }) => { delivered.push({
+      ownerId: owner.ownerId, eventType: event.eventType, revision: event.revision,
+    }); });
     service = new CollaborationChatScopeService(fixture.db, {
       runtimeId: collaborationIds.runtime,
       preflightSecret: "0123456789abcdef0123456789abcdef",
       now: () => new Date(now),
       createScopeId: () => collaborationIds.scope,
+      onChatShared: (ownerId, event) => {
+        published.push({ ownerId, eventType: event.eventType, revision: event.revision });
+        liveChatRepository.publishCommittedExternalOutbox({ type: "personal", ownerId }, event);
+      },
     });
   });
 
   afterEach(async () => {
+    await liveChatRepository.release();
     await fixture.destroy();
   });
 
@@ -95,6 +110,40 @@ describe("CollaborationChatScopeService", () => {
       recipient_actor_ids: [{ actorId: collaborationActors.owner }],
       discovery_state: "accepted",
     }]);
+  });
+
+  it("atomically clears persisted credential reveal choices when converting to live collaboration", async () => {
+    await seedActiveRun(fixture);
+    await fixture.db.updateTable("chat_runs").set({ status: "completed", outcome: "completed", completed_at: now })
+      .where("id", "=", "run_active").execute();
+    await fixture.db.updateTable("chat_turns").set({ status: "completed" })
+      .where("id", "=", "cturn_active").execute();
+    await fixture.db.insertInto("chat_messages").values({
+      id: "msg_private_secret", chat_id: collaborationIds.chat, seq: 2, role: "assistant",
+      state: "committed", purpose: "assistant", turn_id: "cturn_active", run_id: "run_active", actor_id: null,
+      parts: JSON.stringify([{ type: "text", text: "[redacted credential]" }]), byte_count: 36,
+      search_text: "[redacted credential]", created_at: now,
+    }).execute();
+    await fixture.db.insertInto("chat_credentials").values({
+      id: "cred_0123456789abcdef0123456789abcdef", chat_id: collaborationIds.chat,
+      message_id: "msg_private_secret", run_id: "run_active", owner_id: collaborationActors.owner,
+      safe_offset: 0, placeholder_length: "[redacted credential]".length, envelope: JSON.stringify({ version: 1 }),
+      revealed: true, created_at: now,
+    }).execute();
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team", chatId: collaborationIds.chat });
+    expect(preflight.eligible).toBe(true);
+    await service.shareChat({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team",
+      chatId: collaborationIds.chat, clientRequestId: "50000000-0000-4000-8000-000000000011",
+      payloadHash: "a".repeat(64), expectedChatRevision: 0,
+      confirmationToken: preflight.confirmationToken! });
+    const row = await fixture.db.selectFrom("chat_credentials").select("revealed")
+      .where("chat_id", "=", collaborationIds.chat).executeTakeFirstOrThrow();
+    expect(row.revealed).toBe(false);
+    expect(published).toEqual([{ ownerId: collaborationActors.owner, eventType: "chat.updated", revision: 1 }]);
+    expect(delivered).toEqual([{ ownerId: collaborationActors.owner, eventType: "chat.updated", revision: 1 }]);
+    expect(await fixture.db.selectFrom("chat_outbox").select(["event_type", "revision"])
+      .where("chat_id", "=", collaborationIds.chat).execute()).toEqual([{ event_type: "chat.updated", revision: 1 }]);
   });
 
   it("returns the existing logical scope for an idempotent retry without reusing preflight authority", async () => {

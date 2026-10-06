@@ -3,12 +3,26 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 
+export type ChatContextMenuAction = { label: string; disabled?: boolean; danger?: boolean; onSelect?: () => void; children?: ChatContextMenuAction[] };
+
+const menuItemClass = "cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent data-[disabled]:opacity-40";
+function MenuActions({ items, zIndex }: { items: ChatContextMenuAction[]; zIndex: number }) {
+  return items.map(item => item.children ? <ContextMenu.Sub key={item.label}>
+    <ContextMenu.SubTrigger disabled={item.disabled} className={`${menuItemClass} flex items-center gap-3`}>
+      <span>{item.label}</span><span className="ml-auto" aria-hidden>›</span>
+    </ContextMenu.SubTrigger>
+    <ContextMenu.Portal><ContextMenu.SubContent className="min-w-[180px] rounded-xl border p-1 shadow-lg" style={{zIndex,background:"var(--bg-overlay, var(--popover))",color:"var(--text-primary, var(--popover-foreground))",borderColor:"var(--border-default, var(--border))"}}>
+      <MenuActions items={item.children} zIndex={zIndex} />
+    </ContextMenu.SubContent></ContextMenu.Portal>
+  </ContextMenu.Sub> : <ContextMenu.Item key={item.label} disabled={item.disabled} onSelect={item.onSelect} className={menuItemClass} style={item.danger ? {color:"var(--danger, var(--destructive))"} : undefined}>{item.label}</ContextMenu.Item>);
+}
+
 export function ChatContextMenu({ chatId, children, primaryAction, items = [], zIndex = 100 }: {
   chatId?: string | null;
   children: ReactElement;
   zIndex?: number;
   primaryAction?: { label: string; disabled?: boolean; onSelect: () => void };
-  items?: { label: string; disabled?: boolean; danger?: boolean; onSelect: () => void }[];
+  items?: ChatContextMenuAction[];
 }) {
   const [feedback, setFeedback] = useState<"pending" | "copied" | "failed" | null>(null);
   const [selectedText, setSelectedText] = useState("");
@@ -60,9 +74,7 @@ export function ChatContextMenu({ chatId, children, primaryAction, items = [], z
             {feedback === "failed" ? `Could not copy ${copyTarget}. Try again.`
               : feedback === "copied" ? (copyTarget === "chat ID" ? "Chat ID copied" : "Text copied") : "Copying…"}
           </div>}
-          {items.map((item) => <ContextMenu.Item key={item.label} disabled={item.disabled} onSelect={item.onSelect}
-            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent data-[disabled]:opacity-40"
-            style={item.danger ? { color: "var(--danger, var(--destructive))" } : undefined}>{item.label}</ContextMenu.Item>)}
+          <MenuActions items={items} zIndex={zIndex} />
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>

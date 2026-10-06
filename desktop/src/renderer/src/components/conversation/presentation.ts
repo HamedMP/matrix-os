@@ -1,5 +1,6 @@
 import type { ChatSubagent, CanonicalChatApprovalDecision, ImportedChatAssetRef } from "@matrix-os/contracts";
 import type { ChatRunContext, CanonicalChatExecutionRootRef, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
+import type { ReactNode } from "react";
 export type ConversationMessageRole = "user" | "assistant";
 
 export interface ConversationAttachmentPresentation {
@@ -76,6 +77,7 @@ export interface ConversationNoticePresentation {
   kind: "notice";
   id: string;
   phase: "commentary" | "final";
+  failureCode?: import("@matrix-os/contracts").CanonicalChatSafeError["code"];
   tone: "neutral" | "info" | "success" | "warning" | "stopped" | "failed";
   label: string;
   markdown: string;
@@ -135,6 +137,7 @@ export interface ConversationTurnPresentation {
 }
 
 export interface ConversationPresentationCallbacks {
+  renderCredentialMarker?: (message: ConversationMessagePresentation, offset: number, marker: string, number: number) => ReactNode;
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
   loadFileImage?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => Promise<Blob>;

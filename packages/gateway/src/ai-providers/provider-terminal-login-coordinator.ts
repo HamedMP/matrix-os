@@ -1,3 +1,4 @@
+import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -135,7 +136,7 @@ function legacyLoginSessionName(harness: "codex" | "claude", legacyPayloadHash: 
 
 function matchesLegacyLoginPayload(
   input: LoginInput,
-  receipt: ReceiptDocument["receipts"][number],
+  receipt: Pick<ReceiptDocument["receipts"][number], "recoveryHash" | "key" | "payloadHash">,
 ): boolean {
   if (receipt.recoveryHash !== undefined) return false;
   // Legacy receipts did not persist their recovery identity. Recompute the exact
@@ -186,6 +187,7 @@ export function createProviderTerminalLoginCoordinator(options: {
   homePath: string;
   registry: ProviderLoginRegistry;
   enabledHarnesses: readonly ("codex" | "claude")[];
+  profileGuard?: NativeProviderProfileGuard;
   now?: () => Date;
   persistReceipt?: ReceiptWriter;
 }): ProviderLoginCoordinator & { resolveTerminalIdentity(attempt: ProviderConnectionAttempt): Promise<string> } {
@@ -246,7 +248,15 @@ export function createProviderTerminalLoginCoordinator(options: {
     },
 
     async startLogin(input) {
-      return await serialize(async () => {
+      let requestedSession: string | undefined;
+      let confirmedSession = false;
+      const createSession = async (request: Parameters<ProviderLoginRegistry["create"]>[0]) => {
+        requestedSession = request.name; // Set before RPC: a lost reply is not a no-start proof.
+        const session = await options.registry.create(request);
+        confirmedSession = session.name === request.name;
+        return session;
+      };
+      const start = () => serialize(async () => {
         if (input.harness.id !== input.mutation.harnessInstanceId
           || input.mutation.method !== "terminal"
           || !supportsHarness(enabledHarnesses, input.harness)) {
@@ -342,7 +352,7 @@ export function createProviderTerminalLoginCoordinator(options: {
               await options.registry.get(attempt.action.terminalSessionId);
             } catch (error) {
               if (!isMissingSession(error)) throw error;
-              await options.registry.create({
+              await createSession({
                 name: attempt.action.terminalSessionId,
                 cwd: "~",
                 cmd: command.command,
@@ -549,7 +559,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         const session = adoptedExpiredSession
           ? { name: sessionName }
-          : await options.registry.create({
+          : await createSession({
             name: sessionName,
             cwd: "~",
             cmd: command.command,
@@ -581,6 +591,24 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         return attempt;
       });
+      if (options.profileGuard && (input.harness.harness === "codex" || input.harness.harness === "claude")) {
+        // Preserve the historical conflict response before profile admission.
+        // This is a read-only preflight; the serialized path rechecks receipts.
+        const known = (await Promise.all([readReceipts(receiptsPath), readReceipts(recoveryPath)]))
+          .flatMap(document => document.receipts).filter(receipt => receipt.key === input.mutation.idempotencyKey);
+        if (known.some(receipt => receipt.payloadHash !== payloadHash(input))) {
+          throw new ProviderSettingsStoreError("idempotency_conflict", 409);
+        }
+        const profile = input.harness.harness;
+        return options.profileGuard.run(profile, { kind: "login", recoveryKey: recoveryIdentityHash(input),
+          matchesLegacyReceipt: (key, hash) => matchesLegacyLoginPayload(input, { key, payloadHash: hash }),
+          // Closing a tab is not a native-child drain acknowledgement.
+          // Missing/ambiguous command observations retain durable admission.
+          confirmDrained: async () => !requestedSession || confirmedSession
+            && await options.registry.observeAgentLiveness(requestedSession, profile) === "stopped",
+        }, start);
+      }
+      return start();
     },
   };
 }

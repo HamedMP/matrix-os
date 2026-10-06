@@ -1,5 +1,6 @@
 import {
   FundedAiRuntimeCredentialIssueResponseSchema,
+  type FundedAiRequestClass,
   type FundedAiRuntimeCredentialIssueResponse,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -10,6 +11,8 @@ const MIN_RUN_MS = 60_000;
 const MAX_RUN_MS = 10 * 60_000;
 const EXPIRY_SAFETY_MS = 60_000;
 const MAX_REFRESH_JITTER_MS = 30_000;
+/** How long to keep using legacy `{}` issuance after the platform rejects request classes. */
+const LEGACY_ISSUANCE_REPROBE_MS = 10 * 60_000;
 const MAX_RESPONSE_BYTES = 16 * 1024;
 const MAX_ATTEMPTS = 3;
 const SAFE_MESSAGE = "Matrix AI is temporarily unavailable";
@@ -36,12 +39,15 @@ export interface FundedAiCredentialLease {
   expiresAt: string;
   relayBaseUrl: string;
   maxRunMs: number;
+  /** Class the platform bound to this credential; legacy issuance is always interactive. */
+  requestClass: FundedAiRequestClass;
 }
 
 export interface MatrixFundedCredentialProvider {
   readonly enabled: true;
   readonly maxRunMs: number;
-  getCredential(options?: {
+  getCredential(options: {
+    requestClass: FundedAiRequestClass;
     minValidityMs?: number;
     forceRefresh?: boolean;
     signal?: AbortSignal;
@@ -247,8 +253,10 @@ export function createFundedAiCredentialManager(
   const random = dependencies.random ?? Math.random;
   const sleep = dependencies.sleep ?? defaultSleep;
   const makeTimeoutSignal = dependencies.makeTimeoutSignal ?? AbortSignal.timeout;
-  let cached: FundedAiCredentialLease | undefined;
-  let inFlight: Promise<FundedAiCredentialLease> | undefined;
+  // One lease per class; both maps hold at most two entries.
+  const cached = new Map<FundedAiRequestClass, FundedAiCredentialLease>();
+  const inFlight = new Map<FundedAiRequestClass, Promise<FundedAiCredentialLease>>();
+  let legacyIssuanceUntil = 0;
   let closed = false;
   const lifetime = new AbortController();
 
@@ -269,16 +277,24 @@ export function createFundedAiCredentialManager(
       expiresAt: value.credential.expiresAt,
       relayBaseUrl: config.relayBaseUrl,
       maxRunMs: config.maxRunMs,
+      requestClass: value.requestClass ?? "interactive",
     };
   }
 
-  async function acquire(minValidityMs: number, callerSignal?: AbortSignal): Promise<FundedAiCredentialLease> {
+  async function acquire(
+    requestClass: FundedAiRequestClass,
+    minValidityMs: number,
+    callerSignal?: AbortSignal,
+  ): Promise<FundedAiCredentialLease> {
     const callerAndLifetime = callerSignal
       ? AbortSignal.any([callerSignal, lifetime.signal])
       : lifetime.signal;
     const signal = abortSignal(callerAndLifetime, config.requestTimeoutMs, makeTimeoutSignal);
     let lastTransient = false;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      // Until every platform accepts classes, a rejected class body falls back to
+      // legacy issuance (an interactive credential) and is re-probed later.
+      const legacy = now() < legacyIssuanceUntil;
       try {
         const response = await fetchFn(config.issueUrl, {
           method: "POST",
@@ -289,10 +305,15 @@ export function createFundedAiCredentialManager(
             "content-type": "application/json",
             accept: "application/json",
           },
-          body: "{}",
+          body: legacy ? "{}" : JSON.stringify({ requestClass }),
         });
         if (!response.ok) {
           await discardResponse(response);
+          if (response.status === 400 && !legacy) {
+            legacyIssuanceUntil = now() + LEGACY_ISSUANCE_REPROBE_MS;
+            console.warn("[funded-ai-credentials] platform does not accept request classes; using legacy issuance");
+            continue;
+          }
           lastTransient = [429, 502, 503, 504].includes(response.status);
           if (!lastTransient) throw new FundedAiCredentialError();
         } else {
@@ -326,36 +347,44 @@ export function createFundedAiCredentialManager(
   return {
     enabled: true,
     maxRunMs: config.maxRunMs,
-    async getCredential(options = {}) {
+    async getCredential(options) {
       if (closed) throw new FundedAiCredentialError();
+      const requestClass = options.requestClass;
       const minValidityMs = Math.max(
         options.minValidityMs ?? config.maxRunMs + EXPIRY_SAFETY_MS,
         EXPIRY_SAFETY_MS,
       );
       const refreshJitter = Math.floor(random() * MAX_REFRESH_JITTER_MS);
-      if (!options.forceRefresh && cached
-        && Date.parse(cached.expiresAt) - now() >= minValidityMs + refreshJitter) {
-        return cached;
+      const current = cached.get(requestClass);
+      // A legacy lease stands in for another class; once the fallback window ends, re-probe for a real class.
+      const legacyExpired = current !== undefined && current.requestClass !== requestClass && now() >= legacyIssuanceUntil;
+      if (!options.forceRefresh && current && !legacyExpired
+        && Date.parse(current.expiresAt) - now() >= minValidityMs + refreshJitter) {
+        return current;
       }
-      if (!inFlight) {
-        inFlight = acquire(minValidityMs, options.signal)
+      let pending = inFlight.get(requestClass);
+      if (!pending) {
+        pending = acquire(requestClass, minValidityMs, options.signal)
           .then((lease) => {
             if (closed) throw new FundedAiCredentialError();
-            cached = lease;
+            cached.set(requestClass, lease);
             return lease;
           })
           .finally(() => {
-            inFlight = undefined;
+            inFlight.delete(requestClass);
           });
+        inFlight.set(requestClass, pending);
       }
-      return await inFlight;
+      return await pending;
     },
     invalidate(tokenId) {
-      if (!tokenId || cached?.tokenId === tokenId) cached = undefined;
+      for (const [requestClass, lease] of cached) {
+        if (!tokenId || lease.tokenId === tokenId) cached.delete(requestClass);
+      }
     },
     close() {
       closed = true;
-      cached = undefined;
+      cached.clear();
       lifetime.abort();
     },
   };

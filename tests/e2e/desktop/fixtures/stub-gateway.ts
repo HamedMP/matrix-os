@@ -3,7 +3,7 @@
 // Device auth approves instantly; one project with tasks; one fake zellij echo
 // session with sequence-numbered output; scripted kernel stream.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import { resolve } from "node:path";
 import { readBuildSource } from "../../../../scripts/release/build-source.mjs";
 import { terminalSnapshotFrame } from "./terminal-snapshot";
@@ -16,6 +16,7 @@ import {
   type ProjectAgentWorkspace,
   type RuntimeSummary,
   type SpeechCapabilitiesResponse,
+  type TaskAgentSummary,
 } from "@matrix-os/contracts";
 
 export interface StubGateway {
@@ -142,7 +143,7 @@ const TASKS = [
     linkedSessionId: null,
     linkedWorktreeId: null,
     previewIds: [],
-    tags: [],
+    tags: [] as string[],
     updatedAt: new Date(0).toISOString(),
     revision: 1,
   },
@@ -181,7 +182,9 @@ function codingAgentTaskThread(
   };
 }
 
-export function codingAgentProjectWorkspace(tasks = TASKS): ProjectAgentWorkspace {
+export function codingAgentProjectWorkspace(
+  tasks: readonly (Pick<TaskAgentSummary, "id" | "revision"> & { status: unknown })[] = TASKS,
+): ProjectAgentWorkspace {
   const authTask = tasks.find((task) => task.id === "task_auth") ?? TASKS[0];
   const polishTask = tasks.find((task) => task.id === "task_polish") ?? TASKS[1];
   return ProjectAgentWorkspaceSchema.parse({
@@ -788,6 +791,14 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         hasMore: false,
         limit: 20,
       });
+      return;
+    }
+
+    // The fixture account is intentionally individual. A complete empty
+    // listing exercises Electron's authoritative no-organization state instead
+    // of leaving organization-only surfaces in their outage/loading fallback.
+    if (req.method === "GET" && path === "/api/organizations") {
+      json(res, 200, { complete: true, organizations: [] });
       return;
     }
 

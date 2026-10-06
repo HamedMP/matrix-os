@@ -338,6 +338,26 @@ export const CollaborationProjectSchema = z.object({
   }).strict()).max(100_000),
 }).strict();
 
+/** Most Chats a shared project overview lists; larger projects show the most recently updated. */
+export const COLLABORATION_PROJECT_OVERVIEW_MAX_CHATS = 200;
+
+/**
+ * A shared project as its members see it: its name and the Chats they can open. Each Chat is its
+ * own inherited scope, so members open it through `scopeId` with access derived from the project.
+ */
+export const CollaborationProjectOverviewSchema = z.object({
+  projectId: CollaborationResourceIdSchema,
+  scopeId: CollaborationIdSchema,
+  name: boundedDisplayText(200, 1_024),
+  status: z.enum(["active", "archived"]),
+  chats: z.array(z.object({
+    scopeId: CollaborationIdSchema,
+    chatId: CollaborationResourceIdSchema,
+    title: boundedDisplayText(200, 1_024),
+    updatedAt: z.iso.datetime({ offset: true }),
+  }).strict()).max(COLLABORATION_PROJECT_OVERVIEW_MAX_CHATS),
+}).strict();
+
 const CollaborationExportMemberSchema = z.object({
   actorId: CollaborationActorIdSchema,
   role: CollaborationRoleSchema,
@@ -631,6 +651,8 @@ export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
       z.object({
         scope: CollaborationScopeSchema.refine((scope) => scope.kind === "project"),
         project: CollaborationProjectSchema,
+        /** The project's name and Chats, read by the client from the home; absent from an older home. */
+        overview: CollaborationProjectOverviewSchema.optional(),
       }).strict(),
     ]).optional(),
     home: CollaborationDiscoveryHomeStateSchema.optional(),
@@ -812,7 +834,16 @@ export const CollaborationDirectoryEventSchema = z.object({
     status: z.enum(["invited", "accepted", "revoked"]),
     invitationId: CollaborationIdSchema.optional(),
   }).strict()).max(8),
-}).strict();
+  /**
+   * A shared project's Chat: the platform routes it to the same home and admits its tickets from
+   * the parent project's membership, so it carries no recipients or audience of its own.
+   */
+  parentScopeId: CollaborationIdSchema.optional(),
+}).strict().refine((event) => !event.parentScopeId
+  || (event.kind === "chat" && event.recipients.length === 0 && !event.audience && !event.organizationGrantId
+    && event.organizationId !== undefined && event.parentScopeId !== event.scopeId), {
+  message: "A project Chat route carries only its parent project",
+});
 
 const CollaborationEventBaseSchema = z.object({
   version: z.literal(1),
@@ -883,6 +914,7 @@ export type CollaborationProjectConfirmRequest = z.infer<typeof CollaborationPro
 export type CollaborationProjectInventory = z.infer<typeof CollaborationProjectInventorySchema>;
 export type CollaborationProjectInventoryItem = z.infer<typeof CollaborationProjectInventoryItemSchema>;
 export type CollaborationProject = z.infer<typeof CollaborationProjectSchema>;
+export type CollaborationProjectOverview = z.infer<typeof CollaborationProjectOverviewSchema>;
 export type CollaborationProjectMembershipEffect = z.infer<typeof CollaborationProjectMembershipEffectSchema>;
 export type CollaborationProjectTransition = z.infer<typeof CollaborationProjectTransitionSchema>;
 export type CollaborationRole = z.infer<typeof CollaborationRoleSchema>;

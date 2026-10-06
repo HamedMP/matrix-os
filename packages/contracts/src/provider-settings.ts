@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
+import { FundedAiChatAvailabilitySchema } from "#funded-ai";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -52,7 +53,7 @@ export const ProviderSourceReadinessSchema = z.object({
   checkedAt: IsoTimestampSchema.nullable(),
   staleAfter: IsoTimestampSchema.nullable(),
   action: z.enum(["none", "connect", "enter_api_key", "open_terminal", "retry", "contact_owner"]),
-  safeReason: z.enum(["auth", "timeout", "rate_limited", "provider_unavailable", "policy", "credit_required", "unknown"]).nullable(),
+  safeReason: z.enum(["auth", "timeout", "rate_limited", "provider_unavailable", "policy", "credit_required", "credit_reserved", "budget_exceeded", "unknown"]).nullable(),
 }).strict().superRefine((readiness, ctx) => {
   if (readiness.state === "ready" && readiness.action !== "none") {
     ctx.addIssue({ code: "custom", path: ["action"], message: "Ready sources cannot require an action" });
@@ -69,6 +70,7 @@ export const ProviderModelViewSchema = z.object({
   id: ProviderModelReferenceSchema,
   displayName: DisplayNameSchema,
   enabled: z.boolean(),
+  capabilities: z.array(z.enum(["tools", "vision", "reasoning", "long_context", "audio"])).max(5).refine(unique).optional(),
 }).strict();
 export const ProviderModelProviderSchema = z.object({
   id: ProviderIdSchema,
@@ -146,7 +148,14 @@ export const ProviderUsageSchema = z.discriminatedUnion("kind", [
     asOf: IsoTimestampSchema,
     credit: ProviderManagedCreditSchema,
     budget: ProviderManagedBudgetSchema,
+    /** Opt-in ordinary Chat projection; legacy aggregate credit remains unchanged. */
+    chatAvailability: FundedAiChatAvailabilitySchema.optional(),
   }).strict().superRefine((usage, ctx) => {
+    if (usage.chatAvailability && (usage.chatAvailability.asOf !== usage.asOf
+      || usage.chatAvailability.eligibleBalanceMicrousd > usage.credit.creditBalanceMicrousd
+      || usage.chatAvailability.availableBalanceMicrousd > usage.credit.remainingBalanceMicrousd)) {
+      ctx.addIssue({ code: "custom", path: ["chatAvailability"], message: "Chat funding must match the protected ledger observation" });
+    }
     if (usage.limitMicrousd !== usage.budget.monthlyBudgetMicrousd
       || usage.usedMicrousd !== usage.budget.settledThisMonthMicrousd
       || usage.remainingMicrousd !== Math.min(
@@ -237,7 +246,13 @@ export const ProviderDependencyCountsSchema = z.object({
   resumableChatCount: DependencyCountSchema,
   harnessInstanceCount: DependencyCountSchema,
 }).strict();
+/** Owner-only native identity, emitted only after explicit GET negotiation. */
+export const ProviderConnectionDetailsSchema = z.object({
+  email: z.email().max(120).optional(),
+  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu"]).optional(),
+}).strict();
 export const ProviderAccountSchema = z.object({
+  connectionDetails: ProviderConnectionDetailsSchema.optional(),
   id: ReferenceIdSchema,
   providerId: ProviderIdSchema,
   displayName: DisplayNameSchema,
@@ -395,6 +410,10 @@ export const ProviderSettingsSnapshotSchema = z.object({
   accessSources: z.array(ProviderAccessSourceSchema).max(64),
   accounts: z.array(ProviderAccountSchema).max(128),
   harnesses: z.array(ProviderHarnessInstanceSchema).max(128),
+  /** Policy-authorized offered inventory; never execution permission. Negotiated model metadata only. */
+  matrixModelInventory: z.array(ProviderModelViewSchema.extend({
+    providerId: ProviderIdSchema, accessSourceId: ReferenceIdSchema,
+  })).max(256).optional(),
   gatewayPolicy: ProviderGatewayPolicySchema.nullable(),
 }).strict().superRefine((snapshot, ctx) => {
   const collections = [
@@ -445,6 +464,14 @@ export const ProviderSettingsSnapshotSchema = z.object({
     provider.models.map((model) => [model.id, { ...model, providerId: provider.id }] as const)));
   const sources = new Map(snapshot.accessSources.map((value) => [value.id, value]));
   const accounts = new Map(snapshot.accounts.map((value) => [value.id, value]));
+  snapshot.matrixModelInventory?.forEach((model, index) => {
+    const source = sources.get(model.accessSourceId);
+    const catalogModel = models.get(model.id);
+    if (source?.kind !== "matrix_gateway" || source.providerId !== model.providerId
+      || catalogModel?.providerId !== model.providerId || !catalogModel.enabled) {
+      ctx.addIssue({ code: "custom", path: ["matrixModelInventory", index], message: "Offered model requires its Matrix gateway source and enabled provider catalog model" });
+    }
+  });
   if (models.size !== snapshot.modelProviders.reduce((count, provider) => count + provider.models.length, 0)) {
     ctx.addIssue({ code: "custom", path: ["modelProviders"], message: "Model ids must be globally unique" });
   }

@@ -17,12 +17,46 @@ it("advertises only the receipt-bound Inbox broker", async () => {
   try { expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["jev_inbox_preview"]); }
   finally { await close(); }
 });
+it("publishes operation and batch arguments in the actual MCP tool catalog", async () => {
+  const { client, close } = await connect(vi.fn<GatewayFetcher>());
+  try {
+    const tool = (await client.listTools()).tools[0]!;
+    expect(tool.inputSchema.required).toContain("operation");
+    expect(tool.inputSchema.properties).toMatchObject({
+      operation: { enum: expect.arrayContaining(["discover", "batch_start", "batch_next", "batch_status"]) },
+      maxThreads: { type: "integer", minimum: 1, maximum: 10000 },
+      jobId: { type: "string" },
+      revision: { type: "integer", minimum: 1 },
+    });
+  } finally { await close(); }
+});
+it("explains each operation's required arguments to clients through tools/list", async () => {
+  const { client, close } = await connect(vi.fn<GatewayFetcher>());
+  try {
+    const tool = (await client.listTools()).tools[0]!;
+    expect(tool.description).toContain("select requires receipt and threadId");
+    expect(tool.description).toContain("evaluate requires receipt");
+    expect(tool.description).toContain("batch_next requires jobId and revision");
+    expect(tool.description).toContain("batch_resume requires jobId");
+    expect(tool.description).toContain("discover takes no other arguments");
+    expect(tool.description).toContain("batch_start accepts optional maxThreads");
+    expect(tool.description).toContain("batch_status accepts optional jobId");
+    expect(tool.inputSchema.properties).toMatchObject({
+      receipt: { description: expect.stringContaining("Required for select and evaluate") },
+      threadId: { description: expect.stringContaining("Required for select") },
+      jobId: { description: expect.stringContaining("Required for batch_next and batch_resume") },
+      revision: { description: expect.stringContaining("Required for batch_next") },
+    });
+  } finally { await close(); }
+});
 it.each([
   { operation: "discover", ownerId: "forged" },
   { operation: "discover", verified: true },
   { operation: "select", receipt: "a".repeat(64) },
   { operation: "evaluate", receipt: "a".repeat(64), state: "forged content" },
   { operation: "write", threadId: "abc" },
+  { operation: "batch_start", receipt: "a".repeat(64), maxThreads: 3 },
+  { operation: "batch_next", jobId: "jev_batch_" + "a".repeat(32) },
 ])("denies untrusted authority/input %j before contacting Gateway", async (input) => {
   const fetcher = vi.fn<GatewayFetcher>();
   const { client, close } = await connect(fetcher);

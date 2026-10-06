@@ -15,6 +15,47 @@ const scopeId = "10000000-0000-4000-8000-000000000001";
 const chatId = "chat_one";
 
 describe("Chat collaboration sharing", () => {
+  it("can reserve accepted shared projects for the Chats rail while keeping project invitations visible", async () => {
+    const projectScopeId = "10000000-0000-4000-8000-000000000101";
+    const projectInvitationId = "30000000-0000-4000-8000-000000000101";
+    const projectScope = {
+      id: projectScopeId, ownerId: "user_owner", kind: "project", resourceId: "project_shared",
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    } as const;
+    const projectInvitation = {
+      id: projectInvitationId, scopeId: projectScopeId,
+      owner: { actorId: "user_owner", displayName: "Nima" },
+      target: { actorId: "user_editor", displayName: "Ada" }, scopeKind: "project" as const,
+      role: "editor" as const, status: "pending" as const,
+      expiresAt: "2026-10-12T12:00:00.000Z", revision: "1",
+    };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path.endsWith("/inbox")
+        ? { items: [{ scopeId: projectScopeId, runtimeId: "runtime_owner", ownerId: "user_owner",
+          kind: "project", authorityGeneration: 1, status: "invited", invitationId: projectInvitationId,
+          resource: projectInvitation }] }
+        : { items: [{ scopeId: projectScopeId, runtimeId: "runtime_owner", ownerId: "user_owner",
+          kind: "project", authorityGeneration: 1, status: "accepted", resource: {
+            scope: projectScope,
+            project: { id: "project_shared", scopeId: projectScopeId, status: "active", resources: [] },
+            overview: { projectId: "project_shared", scopeId: projectScopeId, name: "Rail only project",
+              status: "active", chats: [] },
+          } }] }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" hideAcceptedProjects />);
+
+    expect(await screen.findByText("Nima invited you")).toBeVisible();
+    expect(screen.getByText(/Accepted projects live in the Projects rail/)).toBeVisible();
+    expect(screen.queryByText("Rail only project")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open project" })).toBeNull();
+  });
+
   it("keeps snapshot sharing and live invitations as distinct choices", () => {
     const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={api} runtimeId="runtime_owner" organizationId="org_matrix_team" chatId={chatId}
@@ -261,7 +302,7 @@ describe("Chat collaboration sharing", () => {
     expect(await screen.findByText("Watching only")).toBeVisible();
   });
 
-  it("opens an accepted whole project with inherited resources and read-only role state", async () => {
+  it("opens an accepted whole project by name with its Chats and live role state", async () => {
     const projectScope = {
       id: scopeId, ownerId: "user_owner", kind: "project" as const, resourceId: "proj_launch",
       membershipMode: "direct" as const, lifecycle: "shared" as const, revision: "5", authEpoch: "2",
@@ -271,10 +312,12 @@ describe("Chat collaboration sharing", () => {
     };
     const project = {
       id: "proj_launch", scopeId, status: "active" as const,
-      resources: [
-        { kind: "file" as const, id: "README.md", revision: "0", readiness: "ready" as const },
-        { kind: "chat" as const, id: "chat_launch", revision: "4", readiness: "ready" as const },
-      ],
+      resources: [{ kind: "chat" as const, id: "chat_launch", revision: "4", readiness: "ready" as const }],
+    };
+    const chatScope = "10000000-0000-4000-8000-0000000000c1";
+    const overview = {
+      projectId: "proj_launch", scopeId, name: "Launch", status: "active" as const,
+      chats: [{ scopeId: chatScope, chatId: "chat_launch", title: "Launch checklist", updatedAt: "2026-10-03T12:00:00.000Z" }],
     };
     let currentProjectScope = { ...projectScope, role: projectScope.role as "owner" | "editor" | "viewer" };
     let refreshProject = () => undefined;
@@ -283,8 +326,9 @@ describe("Chat collaboration sharing", () => {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async (path: string) => path.endsWith("/inbox") ? { items: [] } : path.endsWith("/shared")
         ? { items: [{ scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "project",
-          authorityGeneration: 2, status: "accepted", resource: { scope: projectScope, project } }] }
-        : path.endsWith(`/scopes/${scopeId}`) ? currentProjectScope : project),
+          authorityGeneration: 2, status: "accepted", resource: { scope: projectScope, project, overview } }] }
+        : path.endsWith("/project/overview") ? overview
+          : path.endsWith(`/scopes/${scopeId}`) ? currentProjectScope : project),
       post: vi.fn(), delete: vi.fn(),
       subscribe: vi.fn((_scopeId: string, onEvent: () => void, onUnavailable: () => void) => {
         refreshProject = onEvent;
@@ -293,17 +337,21 @@ describe("Chat collaboration sharing", () => {
       }),
     };
     const openProject = vi.fn();
+    const openChat = vi.fn();
     const { rerender } = render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_viewer"
       openProject={openProject} />);
-    expect(await screen.findByText("proj_launch")).toBeVisible();
+    expect(await screen.findByText("Launch")).toBeVisible();
+    expect(screen.queryByText("proj_launch")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open project" }));
     expect(openProject).toHaveBeenCalledWith(scopeId);
 
     rerender(<ChatCollaboration view={{ kind: "project", scopeId }} api={api} actorId="user_viewer"
-      openProject={openProject} />);
-    expect(await screen.findByRole("heading", { name: "proj_launch" })).toBeVisible();
-    expect(screen.getByText("README.md")).toBeVisible();
+      openProject={openProject} openChat={openChat} />);
+    expect(await screen.findByRole("heading", { name: "Launch" })).toBeVisible();
+    expect(screen.queryByText("proj_launch")).toBeNull();
     expect(screen.getByText(/Viewer · read only/i)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Launch checklist/ }));
+    expect(openChat).toHaveBeenCalledWith(chatScope, "chat_launch", "Launch checklist");
     currentProjectScope = {
       ...projectScope,
       revision: "6",
@@ -314,7 +362,29 @@ describe("Chat collaboration sharing", () => {
     expect(await screen.findByText(/Editor · can edit/i)).toBeVisible();
     act(() => revokeProject());
     expect(await screen.findByText("Shared project unavailable")).toBeVisible();
-    expect(screen.queryByText("README.md")).toBeNull();
+    expect(screen.queryByText("Launch checklist")).toBeNull();
+  });
+
+  it("shows an empty shared project as onboarding, and refuses an overview for another project", async () => {
+    const scope = {
+      id: scopeId, ownerId: "user_owner", kind: "project" as const, resourceId: "proj_empty",
+      membershipMode: "direct" as const, lifecycle: "shared" as const, revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "editor" as const,
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    };
+    let overview = { projectId: "proj_empty", scopeId, name: "Empty", status: "active" as const, chats: [] as never[] };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path.endsWith("/project/overview") ? overview : scope),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    const { unmount } = render(<ChatCollaboration view={{ kind: "project", scopeId }} api={api} actorId="user_editor" />);
+    expect(await screen.findByText("No Chats yet")).toBeVisible();
+    unmount();
+    overview = { ...overview, projectId: "proj_other" };
+    render(<ChatCollaboration view={{ kind: "project", scopeId }} api={api} actorId="user_editor" />);
+    expect(await screen.findByText("Shared project unavailable")).toBeVisible();
   });
 
   it("renders attributed canonical history in the ordinary shared Chat surface", async () => {

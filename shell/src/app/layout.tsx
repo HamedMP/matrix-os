@@ -12,6 +12,8 @@ import "./globals.css";
 import { PwaRegister } from "@/components/pwa/PwaRegister";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { PostHogIdentify } from "@/components/PostHogIdentify";
+import { DefaultOrganization } from "@/components/DefaultOrganization";
+import { OrganizationStateProvider } from "@/lib/collaboration-organization-state";
 import { Toaster } from "@/components/ui/sonner";
 import { AppProviders } from "./providers";
 
@@ -60,7 +62,8 @@ export default function RootLayout({
 }>) {
   const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
   const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
-  const renderDocument = (includePostHogIdentify: boolean) => (
+  const app = <AppProviders>{children}</AppProviders>;
+  const renderDocument = (includePostHogIdentify: boolean, content: React.ReactNode) => (
     <html
       lang="en"
       data-matrix-self-hosted={selfHostedMode ? "1" : undefined}
@@ -70,7 +73,7 @@ export default function RootLayout({
       data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
     >
       <body className="matrix-shell-fonts">
-        <AppProviders>{children}</AppProviders>
+        {content}
         {includePostHogIdentify ? <PostHogIdentify /> : null}
         <PwaRegister />
         <InstallPrompt />
@@ -80,8 +83,14 @@ export default function RootLayout({
   );
 
   if (selfHostedMode || localAuthBypass) {
-    return renderDocument(false);
+    return renderDocument(false, (
+      <OrganizationStateProvider value={{ status: selfHostedMode ? "none" : "loading", organizationId: null }}>
+        {app}
+      </OrganizationStateProvider>
+    ));
   }
+
+  const content = <DefaultOrganization>{app}</DefaultOrganization>;
 
   return (
     // ClerkProvider reads NEXT_PUBLIC_CLERK_SIGN_IN_URL / _SIGN_UP_URL to keep
@@ -90,7 +99,7 @@ export default function RootLayout({
     // back to the hosted Account Portal (accounts.matrix-os.com).
     <ClerkProvider>
       {/* react-doctor-disable-next-line react-doctor/no-render-in-render -- pre-existing document helper selects whether PostHog identity is included while preserving one shared html/body definition; it returns only this request's static document tree and owns no component state. */}
-      {renderDocument(true)}
+      {renderDocument(true, content)}
     </ClerkProvider>
   );
 }

@@ -21,6 +21,7 @@ import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } 
 import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "./database.js";
 import { CollaborationDiscussionError } from "./discussion-error.js";
 import { CollaborationRepositoryError } from "./repository.js";
+import { redactAssistantParts, redactSharedAssistantText } from "../chat/safe-activity-projection.js";
 
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -217,7 +218,7 @@ export class CollaborationChatAdapter {
         actor: message.actorId
           ? authors.get(message.actorId) ?? { actorId: message.actorId, displayName: "Unknown participant" }
           : systemAuthor(message.role),
-        parts: sanitizeParts(message.parts),
+        parts: sanitizeParts(message.parts, message.role),
         createdAt: message.createdAt,
       };
     });
@@ -312,7 +313,7 @@ export class CollaborationChatAdapter {
       lifecycle: chat.lifecycle,
       revision: String(chat.revision),
       messageCount: String(chat.message_count),
-      ...(chat.last_message_preview ? { lastMessagePreview: chat.last_message_preview } : {}),
+      ...(chat.last_message_preview ? { lastMessagePreview: redactSharedAssistantText(chat.last_message_preview) } : {}),
     });
   }
 
@@ -610,8 +611,9 @@ function canonicalMessage(row: {
   });
 }
 
-function sanitizeParts(parts: CanonicalChatMessagePart[]): CanonicalChatMessagePart[] {
-  return parts.map((part) => {
+function sanitizeParts(parts: CanonicalChatMessagePart[], role: SharedChatMessage["role"]): CanonicalChatMessagePart[] {
+  const source = role === "assistant" ? redactAssistantParts(parts) : parts;
+  return source.map((part) => {
     if (part.type === "attachment_reference") {
       const { ownerReference: _ownerReference, ...safe } = part;
       return safe;

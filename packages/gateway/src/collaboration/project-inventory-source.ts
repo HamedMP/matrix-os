@@ -85,9 +85,7 @@ interface Dependencies {
 }
 
 function unavailable(error: unknown): never {
-  if (!(error instanceof z.ZodError)) {
-    console.warn("[collaboration-project] canonical inventory source failed", error instanceof Error ? error.name : "UnknownError");
-  }
+  console.warn("[collaboration-project] canonical inventory source failed", error instanceof Error ? error.name : "UnknownError");
   throw new GatewayProjectInventorySourceError("unavailable");
 }
 

@@ -11,9 +11,8 @@ import {
   type Updateable,
 } from 'kysely';
 import pg from 'pg';
-import { runPlatformMigration } from './migration-runner.js';
-import { PLATFORM_SCHEMA_REVISION } from './database/migration-revision.js';
-import { migratePlatformSchema } from './database/migrate.js';
+import { wrapPlatformDb } from './database/transaction-scope.js';
+import { runPlatformStartupMigrations } from './database/run-migrations.js';
 import { parseStringArray } from './database/json.js';
 import { mapUserMachine, type UserMachineProvisioningClass } from './database/user-machine-records.js';
 import { z } from 'zod/v4';
@@ -119,6 +118,7 @@ export interface AiFundedRuntimePoliciesTable {
   monthly_budget_microusd: number;
   expires_at: string | null;
   next_issue_at: string;
+  next_background_issue_at: Generated<string>;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -135,9 +135,22 @@ export interface AiRuntimeCredentialsTable {
   issued_at: string;
   expires_at: string;
   revoked_at: string | null;
+  request_class: Generated<"interactive" | "background">;
+}
+
+export interface AiFundedPriorityClaimsTable {
+  owner_id: string;
+  machine_id: string;
+  runtime_slot: string;
+  claim_key: Generated<string>;
+  billing_mode: "usage" | "hold";
+  created_at: string;
+  expires_at: string;
 }
 
 export interface AiFundedUsageReservationsTable {
+  execution_admission_release: Generated<string | null>;
+  execution_recovery_slot: Generated<0 | 1>;
   reservation_id: string;
   request_id: string;
   payload_hash: string;
@@ -756,7 +769,7 @@ interface BillingTrialAccountsTable {
   updated_at: string;
 }
 
-interface OnboardingFirstRunTable {
+export interface OnboardingFirstRunTable {
   clerk_user_id: string;
   completed_at: string;
   goal: string | null;
@@ -773,13 +786,33 @@ interface OnboardingJourneyEventsTable {
   at: string;
 }
 
+export interface AccountDeletionJobsTable {
+  accounting_summary: Generated<Record<string, number | string> | null>;
+  owner_hash: string;
+  status: 'scheduled' | 'processing' | 'completed' | 'cancelled';
+  encrypted_context: string | null;
+  due_at: string;
+  next_attempt_at: string;
+  next_step: number;
+  billing_stopped: boolean;
+  attempts: number;
+  lease_token: string | null;
+  lease_expires_at: string | null;
+  last_error_code: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
 export interface PlatformDatabase {
+  account_deletion_jobs: AccountDeletionJobsTable;
   users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
+  ai_funded_priority_claims: AiFundedPriorityClaimsTable;
   ai_funded_usage_reservations: AiFundedUsageReservationsTable;
   ai_funded_reservation_promotional_allocations: AiFundedReservationPromotionalAllocationsTable;
   ai_funded_credit_ledger: AiFundedCreditLedgerTable;
@@ -1243,43 +1276,6 @@ export interface NewProviderDeletionQueueRecord {
   completedAt?: string | null;
 }
 
-function wrapDb(
-  kysely: Kysely<PlatformDatabase>,
-  executor: Executor,
-  ready: Promise<void>,
-  destroyFn: () => Promise<void>,
-  transactionScoped = false,
-): PlatformDB {
-  const wrapped: PlatformDB = {
-    kysely,
-    executor,
-    ready,
-    async transaction(fn) {
-      await ready;
-      if (transactionScoped) return fn(wrapped);
-      return kysely.transaction().execute((trx) =>
-        fn(wrapDb(kysely, trx, Promise.resolve(), destroyFn, true)),
-      );
-    },
-    // The root PlatformDB owns Kysely/the pool. A transaction-scoped wrapper
-    // may be passed through several repository layers, but must never close
-    // that shared resource.
-    destroy: transactionScoped ? async () => undefined : destroyFn,
-  };
-  return wrapped;
-}
-
-async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
-  await runPlatformMigration(db, migrateSchema, {
-    revision: PLATFORM_SCHEMA_REVISION,
-    deadlockAttempts: 12,
-  });
-}
-
-async function migrateSchema(db: Executor): Promise<void> {
-  await migratePlatformSchema(db);
-}
-
 export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_PLATFORM_DB_URL ?? ''): PlatformDB {
   if (typeof opts === 'string' && !opts) {
     throw new Error('Platform Postgres URL is required: set PLATFORM_DATABASE_URL or POSTGRES_URL');
@@ -1296,8 +1292,8 @@ export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_P
       })()
     : new Kysely<PlatformDatabase>({ dialect: opts.dialect as never });
 
-  const ready = migrate(kysely);
-  return wrapDb(kysely, kysely, ready, async () => {
+  const ready = runPlatformStartupMigrations(kysely);
+  return wrapPlatformDb(kysely, kysely, ready, async () => {
     await kysely.destroy();
     try {
       await pool?.end();
@@ -1590,148 +1586,7 @@ export async function listActivePlatformUsersByNormalizedHandle(
   return rows.map(mapPlatformUser);
 }
 
-function parseFirstRunSteps(raw: string): Record<string, unknown> {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch (err: unknown) {
-    // Corrupt persisted JSON → treat as no steps rather than failing the read.
-    void err;
-    return {};
-  }
-}
-
-function mapFirstRun(row: OnboardingFirstRunTable): OnboardingFirstRunRecord {
-  return {
-    clerkUserId: row.clerk_user_id,
-    completedAt: row.completed_at,
-    goal: row.goal,
-    steps: parseFirstRunSteps(row.steps),
-    source: row.source,
-  };
-}
-
-export async function getOnboardingFirstRun(
-  db: PlatformDB,
-  clerkUserId: string,
-): Promise<OnboardingFirstRunRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .selectFrom('onboarding_first_run')
-    .selectAll()
-    .where('clerk_user_id', '=', clerkUserId)
-    .executeTakeFirst();
-  return row ? mapFirstRun(row) : undefined;
-}
-
-/** Authoritative write-behind from the gateway: latest completion wins. */
-export async function upsertOnboardingFirstRun(
-  db: PlatformDB,
-  record: NewOnboardingFirstRun,
-): Promise<void> {
-  await db.ready;
-  const values = {
-    clerk_user_id: record.clerkUserId,
-    completed_at: record.completedAt,
-    goal: record.goal ?? null,
-    steps: JSON.stringify(record.steps ?? {}),
-    source: record.source,
-  };
-  await db.executor
-    .insertInto('onboarding_first_run')
-    .values(values)
-    .onConflict((oc) =>
-      oc.column('clerk_user_id').doUpdateSet({
-        completed_at: values.completed_at,
-        goal: values.goal,
-        steps: values.steps,
-        source: values.source,
-      }),
-    )
-    .execute();
-}
-
-/** Best-effort legacy backfill: only fills a missing record, never overwrites
- * an authoritative gateway write-behind (spec 092 R4). */
-export async function insertOnboardingFirstRunIfAbsent(
-  db: PlatformDB,
-  record: NewOnboardingFirstRun,
-): Promise<void> {
-  await db.ready;
-  await db.executor
-    .insertInto('onboarding_first_run')
-    .values({
-      clerk_user_id: record.clerkUserId,
-      completed_at: record.completedAt,
-      goal: record.goal ?? null,
-      steps: JSON.stringify(record.steps ?? {}),
-      source: record.source,
-    })
-    .onConflict((oc) => oc.column('clerk_user_id').doNothing())
-    .execute();
-}
-
-/** Running machines whose owner has no first-run record yet (backfill candidates). */
-export async function listRunningMachinesMissingFirstRun(
-  db: PlatformDB,
-  limit: number,
-): Promise<UserMachineRecord[]> {
-  await db.ready;
-  const rows = await db.executor
-    .selectFrom('user_machines')
-    .selectAll('user_machines')
-    .leftJoin('onboarding_first_run', 'onboarding_first_run.clerk_user_id', 'user_machines.clerk_user_id')
-    .where('user_machines.status', '=', 'running')
-    .where('user_machines.deleted_at', 'is', null)
-    .where('onboarding_first_run.clerk_user_id', 'is', null)
-    .orderBy('user_machines.provisioned_at')
-    .limit(limit)
-    .execute();
-  return rows.map(mapUserMachine);
-}
-
-export async function getLatestJourneyEvent(
-  db: PlatformDB,
-  clerkUserId: string,
-): Promise<OnboardingJourneyEventRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .selectFrom('onboarding_journey_events')
-    .selectAll()
-    .where('clerk_user_id', '=', clerkUserId)
-    .orderBy('at', 'desc')
-    .executeTakeFirst();
-  return row
-    ? {
-        id: row.id,
-        clerkUserId: row.clerk_user_id,
-        fromPhase: row.from_phase,
-        toPhase: row.to_phase,
-        detail: row.detail,
-        at: row.at,
-      }
-    : undefined;
-}
-
-export async function appendJourneyEvent(
-  db: PlatformDB,
-  record: { id: string; clerkUserId: string; fromPhase: string | null; toPhase: string; detail: string | null; at: string },
-): Promise<void> {
-  await db.ready;
-  await db.executor
-    .insertInto('onboarding_journey_events')
-    .values({
-      id: record.id,
-      clerk_user_id: record.clerkUserId,
-      from_phase: record.fromPhase,
-      to_phase: record.toPhase,
-      detail: record.detail,
-      at: record.at,
-    })
-    .execute();
-}
+export { getOnboardingFirstRun, upsertOnboardingFirstRun, insertOnboardingFirstRunIfAbsent, listRunningMachinesMissingFirstRun, getLatestJourneyEvent, appendJourneyEvent } from './database/onboarding.js';
 
 export async function allocatePort(db: PlatformDB, basePort: number, handle: string): Promise<number> {
   await db.ready;

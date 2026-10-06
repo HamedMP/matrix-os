@@ -1,10 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import type {
-  FundedAiCredentialLease,
-  MatrixFundedCredentialProvider,
-} from "./funded-ai-credential-manager.js";
+import type { FundedAiRequestClass } from "@matrix-os/contracts";
+import type { MatrixFundedCredentialProvider } from "./funded-ai-credential-manager.js";
 
 export type KernelCredentialMode = "platform" | "api_key" | "claude_login";
 export const KernelCredentialAccessSourceIdSchema = z.enum([
@@ -55,18 +53,10 @@ function observationForReadFailure(err: unknown): KernelCredentialObservationSta
   return err instanceof SyntaxError ? "invalid" : "unavailable";
 }
 
-function applyFundedCredential(
-  env: Record<string, string | undefined>,
-  lease: FundedAiCredentialLease,
-): void {
-  env.ANTHROPIC_API_KEY = lease.token;
-  env.ANTHROPIC_BASE_URL = lease.relayBaseUrl;
-  delete env.ANTHROPIC_AUTH_TOKEN;
-  delete env.MATRIX_AUTH_TOKEN;
-  delete env.UPGRADE_TOKEN;
-  delete env.MATRIX_CODE_PROXY_TOKEN;
-  delete env.AI_RELAY_CONTROL_TOKEN;
-  delete env.CF_AIG_AUTHORIZATION;
+/** Funded request class and optional turn identity for owner-wide interactive priority. */
+export interface KernelFundingContext {
+  requestClass: FundedAiRequestClass;
+  claimKey?: string;
 }
 
 async function resolveKernelCredentials(
@@ -76,7 +66,14 @@ async function resolveKernelCredentials(
   fundedProvider?: MatrixFundedCredentialProvider,
   acquireFundedCredential = true,
 ): Promise<KernelCredentialResolution> {
+  if (acquireFundedCredential && requestedAccessSourceId === "matrix_included") {
+    throw new Error("Selected AI access is unavailable");
+  }
   const env = { ...baseEnv };
+  // Owner SDK launches must not inherit another account or a funded claim header.
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete env.ANTHROPIC_CUSTOM_HEADERS;
   const matrixState = fundedProvider?.enabled ? "ready" as const : "disabled" as const;
   let apiKeyState: KernelCredentialObservationState = "setup_required";
   let profileState: KernelCredentialObservationState = "setup_required";
@@ -129,12 +126,6 @@ async function resolveKernelCredentials(
     ownerProfile: { state: profileState },
   };
 
-  if (requestedAccessSourceId === "matrix_included") {
-    if (!fundedProvider) throw new Error("Selected AI access is unavailable");
-    const lease = await fundedProvider.getCredential();
-    applyFundedCredential(env, lease);
-    return { mode: "platform", env, sources, fundedRunTimeoutMs: lease.maxRunMs };
-  }
   if (requestedAccessSourceId === "owner_anthropic_key") {
     if (ownerApiKey === undefined) throw new Error("Selected AI access is unavailable");
     env.ANTHROPIC_API_KEY = ownerApiKey;
@@ -160,11 +151,8 @@ async function resolveKernelCredentials(
     delete env.ANTHROPIC_BASE_URL;
     return { mode: selectedMode, env, sources };
   }
-  if (fundedProvider && acquireFundedCredential) {
-    const lease = await fundedProvider.getCredential();
-    applyFundedCredential(env, lease);
-    return { mode: selectedMode, env, sources, fundedRunTimeoutMs: lease.maxRunMs };
-  }
+  // Never fall through to ambient SDK credentials or acquire Matrix funding.
+  if (acquireFundedCredential) throw new Error("Selected AI access is unavailable");
   return { mode: selectedMode, sources };
 }
 
@@ -173,17 +161,22 @@ export interface KernelCredentialLaunch {
   fundedRunTimeoutMs?: number;
 }
 
+/** SDK launches require owner credentials; Matrix funding belongs to the owned Pi worker. */
 export async function buildKernelCredentialLaunch(
   homePath: string,
-  baseEnv: NodeJS.ProcessEnv = process.env,
-  requestedAccessSourceId?: KernelCredentialAccessSourceId,
-  fundedProvider?: MatrixFundedCredentialProvider,
+  baseEnv: NodeJS.ProcessEnv,
+  requestedAccessSourceId: KernelCredentialAccessSourceId | undefined,
+  fundedProvider: MatrixFundedCredentialProvider | undefined,
+  funding: KernelFundingContext,
 ): Promise<KernelCredentialLaunch> {
+  // Retain the caller contract for legacy launches without acquiring a funded lease.
+  void funding;
   const resolved = await resolveKernelCredentials(
     homePath,
     baseEnv,
     requestedAccessSourceId,
     fundedProvider,
+    true,
   );
   return { env: resolved.env, fundedRunTimeoutMs: resolved.fundedRunTimeoutMs };
 }
@@ -193,17 +186,19 @@ export async function buildKernelEnv(
   baseEnv: NodeJS.ProcessEnv = process.env,
   requestedAccessSourceId?: KernelCredentialAccessSourceId,
   fundedProvider?: MatrixFundedCredentialProvider,
+  funding: KernelFundingContext = { requestClass: "interactive" },
 ): Promise<Record<string, string | undefined> | undefined> {
   return (await buildKernelCredentialLaunch(
     homePath,
     baseEnv,
     requestedAccessSourceId,
     fundedProvider,
+    funding,
   )).env;
 }
 
 export async function resolveKernelCredentialMode(homePath: string): Promise<KernelCredentialMode> {
-  return (await resolveKernelCredentials(homePath)).mode;
+  return (await resolveKernelCredentials(homePath, process.env, undefined, undefined, false)).mode;
 }
 
 export async function resolveKernelCredentialSources(
