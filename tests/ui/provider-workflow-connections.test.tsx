@@ -36,22 +36,23 @@ it("keeps unsupported runtime options unavailable with safe copy", () => {
  expect(client.submitConnectionKey).not.toHaveBeenCalled();
 });
 
-it("starts the selected subscription method and preserves its account identity in progress", async () => {
- const client = setup();
- vi.mocked(client.startConnection!).mockResolvedValue({id: "connection", harnessInstanceId: "pi", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null, connectionOption: options[0]});
- fireEvent.click(screen.getByRole("button", {name: /ChatGPT account · Sign in with a code/}));
- await screen.findByText("Finish signing in to ChatGPT");
- expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId: "pi", optionId: "pi:openai:device"}), expect.any(AbortSignal));
+it("starts the selected official Claude browser method with its exact identity", async () => {
+ const option={...options[0],id:"claude:anthropic:browser",providerId:"anthropic" as const,method:"browser" as const};
+ const client={capabilities:vi.fn(),start:vi.fn(),get:vi.fn(),cancel:vi.fn(),submitKey:vi.fn(),logs:vi.fn(),submitCode:vi.fn(),startConnection:vi.fn().mockResolvedValue({id:"connection",harnessInstanceId:"claude",kind:"login",state:"running",expiresAt:new Date(Date.now()+60000).toISOString(),terminalSessionId:null,deviceCode:null,authorizationUrl:null,safeFailure:null,connectionOption:option})} as unknown as ProviderWorkflowClient;
+ render(<HarnessWorkflowPanel harness={{id:"claude",harness:"claude",displayName:"Claude Code",installState:"installed",authState:"unauthenticated"}} capability={{...capability,harnessInstanceId:"claude",harness:"claude",displayName:"Claude Code",loginMethods:["browser"],connectionOptions:[option]}} client={client} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()}/>);
+ fireEvent.click(screen.getByRole("button",{name:/Claude account · Sign in in browser/}));
+ await screen.findByText("Finish signing in to Claude");
+ expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:"claude",optionId:option.id}),expect.any(AbortSignal));
  expect(client.start).not.toHaveBeenCalled();
 });
 
 it("offers qualified Terminal methods on the primary connection path", async () => {
- const terminalOption = {...options[0], id: "pi:openai:terminal", method: "terminal" as const};
- const client = {capabilities: vi.fn(), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), submitKey: vi.fn(), logs: vi.fn(), startConnection: vi.fn().mockResolvedValue({id: "terminal", harnessInstanceId: "pi", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null, connectionOption: terminalOption})} as unknown as ProviderWorkflowClient;
+ const terminalOption = {...options[0], id: "claude:anthropic:terminal", providerId: "anthropic" as const, method: "terminal" as const};
+ const client = {capabilities: vi.fn(), start: vi.fn(), get: vi.fn(), cancel: vi.fn(), submitKey: vi.fn(), logs: vi.fn(), startConnection: vi.fn().mockResolvedValue({id: "terminal", harnessInstanceId: "claude", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null, connectionOption: terminalOption})} as unknown as ProviderWorkflowClient;
  const openTerminal = vi.fn();
- render(<HarnessWorkflowPanel harness={{id: "pi", harness: "pi", displayName: "Pi", installState: "installed", authState: "unauthenticated"}} capability={{...capability, loginMethods: ["terminal"], apiKeyProviders: [], connectionOptions: [terminalOption]}} client={client} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
+ render(<HarnessWorkflowPanel harness={{id: "claude", harness: "claude", displayName: "Claude Code", installState: "installed", authState: "unauthenticated"}} capability={{...capability, harnessInstanceId:"claude", harness:"claude", displayName:"Claude Code", loginMethods: ["terminal"], apiKeyProviders: [], connectionOptions: [terminalOption]}} client={client} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
  expect(screen.queryByText("Advanced configuration")).not.toBeInTheDocument();
- fireEvent.click(screen.getByRole("button", {name: /ChatGPT account · Log in in Terminal/}));
+ fireEvent.click(screen.getByRole("button", {name: /Claude account · Log in in Terminal/}));
  await waitFor(() => expect(openTerminal).toHaveBeenCalledWith("tws_1:tt_1"));
  expect(screen.getByRole("button", {name: "Continue in Terminal"})).toBeInTheDocument();
 });
@@ -63,7 +64,7 @@ it("keeps valid connected native authorization without opening another login", (
  expect(screen.queryByRole("button", {name: /ChatGPT account/})).not.toBeInTheDocument();
  expect(client.startConnection).not.toHaveBeenCalled();
  fireEvent.click(screen.getByRole("button", {name: "Change account"}));
- expect(screen.getByRole("button", {name: /ChatGPT account/})).toBeEnabled();
+ expect(screen.getByRole("button", {name: /Anthropic API key/})).toBeEnabled();
  expect(client.startConnection).not.toHaveBeenCalled();
 });
 
