@@ -19,6 +19,8 @@ node checks/check-demos.mjs
 
 The browser check uses the existing Playwright dependency and a separately launched headless Google Chrome profile. It never attaches to the user's browser. `PREVIEW_ORIGIN` can point it at another locally running preview. Browser launch and local-server access must be permitted by the execution environment. The check closes every context and browser in `finally`.
 
+`check-demos.mjs` reproduces the 16 embedded flows: eight apps at outer 360/390 pixels, with the actual measured frame widths, physical create/edit/reopen/reset, 44-pixel controls, opaque isolation and browser-enforced blocked form POSTs. The adjacent design evidence also records 16 earlier direct-page phone checks, giving 32 recorded runs; this committed harness focuses on the stronger embedded boundary. `verify.mjs` independently checks temporary data/CAS/bounds and exact copied-asset digests. Local Check records usability is checked through physical browser clicks, not a disconnected mock button.
+
 Vite's relative build base allows the built artifact to be served under a directory. Serve `dist/` over HTTP; opening HTML directly from a file URL is not supported. The root build ignores this design artifact; it adds no production route, package, migration or runtime dependency.
 
 ## Asset provenance

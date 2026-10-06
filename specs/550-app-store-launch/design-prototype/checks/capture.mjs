@@ -12,7 +12,7 @@ try {
     try {
       const page = await context.newPage();
       await page.goto(origin, { waitUntil: 'networkidle', timeout: 20000 });
-      await page.evaluate(async () => { await document.fonts.ready; await Promise.all([...document.images].map(image => image.decode().catch(() => null))); });
+      await page.evaluate(async () => { await document.fonts.ready; await Promise.all([...document.images].map(image => image.decode())); });
       await page.screenshot({ path: `${output}/storefront-${width === 1440 ? 'desktop' : 'phone'}.png` });
       if (width === 390) {
         await page.getByRole('button', { name: 'Try onboarding', exact: true }).click();
