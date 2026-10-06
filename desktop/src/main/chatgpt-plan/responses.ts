@@ -1,7 +1,7 @@
 import { ChatGptPlanWireSchema } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 import { PlanFailure, logPlanFailure, safePlanResponseDiagnostic, type PlanResponseDiagnostic } from './diagnostics';
-import { boundedText, PLAN_RESOURCE } from './oauth';
+import { PLAN_RESOURCE } from './oauth';
 const DIAGNOSTIC_BYTE_LIMIT = 16 * 1024;
 function sseCompletion(text: string): boolean {
     return text.replace(/\r\n/g, '\n').split('\n\n').some(frame => {
@@ -16,51 +16,60 @@ function sseCompletion(text: string): boolean {
         }
     });
 }
-/** Read a small diagnostic sample once. MIME rejection remains a failure; no replay. */
-async function unexpectedResponseDiagnostic(response: Response, parentSignal: AbortSignal): Promise<PlanResponseDiagnostic> {
-    const mime = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
-    const result: Record<string, unknown> = { mime: mime === 'application/json' || mime?.endsWith('+json') ? 'json'
-        : mime === 'text/html' ? 'html' : mime === 'text/plain' ? 'plain' : 'other', bodyRead: 'complete' };
+type BodyRead = { text: string; outcome: NonNullable<PlanResponseDiagnostic['bodyRead']> };
+/** The body deadline also covers custom streams that do not observe fetch abort. */
+async function readResponseBody(response: Response, parentSignal: AbortSignal, limit: number, deadlineMs: number): Promise<BodyRead> {
     let text = '';
-    if (response.body) {
-        const reader = response.body.getReader();
-        const deadline = new AbortController();
-        const timeout = setTimeout(() => deadline.abort(new DOMException('Diagnostic deadline', 'TimeoutError')), 1500);
-        const signal = AbortSignal.any([parentSignal, deadline.signal]);
-        let interrupted!: () => void;
-        const interruption = new Promise<never>((_, reject) => { interrupted = () => reject(signal.reason); });
-        signal.addEventListener('abort', interrupted, { once: true });
-        const decoder = new TextDecoder();
-        let bytes = 0;
-        try {
-            while (true) {
-                signal.throwIfAborted();
-                const chunk = await Promise.race([reader.read(), interruption]);
-                signal.throwIfAborted();
-                if (chunk.done) break;
-                const available = DIAGNOSTIC_BYTE_LIMIT - bytes;
-                text += decoder.decode(chunk.value.subarray(0, available), { stream: true });
-                bytes += chunk.value.byteLength;
-                if (bytes > DIAGNOSTIC_BYTE_LIMIT) { result.bodyRead = 'oversize'; break; }
-            }
-            text += decoder.decode();
-        } catch (error: unknown) {
-            result.bodyRead = signal.aborted ? signal.reason instanceof DOMException && signal.reason.name === 'TimeoutError' ? 'timeout' : 'cancelled'
-                : error instanceof DOMException && error.name === 'AbortError' ? 'cancelled' : 'failed';
-        } finally {
-            clearTimeout(timeout); signal.removeEventListener('abort', interrupted);
-            // Do not let an uncertain stream cancellation replace the original MIME/status
-            // failure or extend its bounded read deadline. Only coarse cleanup errors log.
-            try {
-                void reader.cancel().catch((error: unknown) => logPlanFailure('response_diagnostic_cleanup', error));
-            } catch (error: unknown) {
-                logPlanFailure('response_diagnostic_cleanup', error);
-            } finally {
-                try { reader.releaseLock(); }
-                catch (error: unknown) { logPlanFailure('response_diagnostic_cleanup', error); }
-            }
+    if (!response.body) return { text, outcome: 'complete' };
+    let reader: ReadableStreamDefaultReader<Uint8Array>;
+    try { reader = response.body.getReader(); }
+    catch (error: unknown) {
+        if (error instanceof TypeError) return { text, outcome: 'failed' };
+        throw error;
+    }
+    let outcome: BodyRead['outcome'] = 'complete';
+    const deadline = new AbortController();
+    const timeout = setTimeout(() => deadline.abort(new DOMException('Response deadline', 'TimeoutError')), deadlineMs);
+    const signal = AbortSignal.any([parentSignal, deadline.signal]);
+    let interrupted!: () => void;
+    const interruption = new Promise<never>((_, reject) => { interrupted = () => reject(signal.reason); });
+    signal.addEventListener('abort', interrupted, { once: true });
+    const decoder = new TextDecoder();
+    let bytes = 0;
+    try {
+        while (true) {
+            signal.throwIfAborted();
+            const chunk = await Promise.race([reader.read(), interruption]);
+            signal.throwIfAborted();
+            if (chunk.done) break;
+            text += decoder.decode(chunk.value.subarray(0, limit - bytes), { stream: true });
+            bytes += chunk.value.byteLength;
+            if (bytes > limit) { outcome = 'oversize'; break; }
+        }
+        text += decoder.decode();
+    } catch (error: unknown) {
+        outcome = signal.aborted ? signal.reason instanceof DOMException && signal.reason.name === 'TimeoutError' ? 'timeout' : 'cancelled'
+            : error instanceof DOMException && error.name === 'AbortError' ? 'cancelled' : 'failed';
+    } finally {
+        clearTimeout(timeout); signal.removeEventListener('abort', interrupted);
+        // Drain/cancel without waiting on an uncertain underlying cancel promise.
+        // Releasing the reader also rejects a pending read after Stop or deadline.
+        try { void reader.cancel().catch((error: unknown) => logPlanFailure('response_stream_cleanup', error)); }
+        catch (error: unknown) { logPlanFailure('response_stream_cleanup', error); }
+        finally {
+            try { reader.releaseLock(); }
+            catch (error: unknown) { logPlanFailure('response_stream_cleanup', error); }
         }
     }
+    return { text, outcome };
+}
+/** Diagnostic output remains allowlisted and capped even after reading a full stream. */
+function responseDiagnostic(response: Response, read: BodyRead): PlanResponseDiagnostic {
+    const mime = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+    const truncated = Buffer.byteLength(read.text) > DIAGNOSTIC_BYTE_LIMIT;
+    const text = truncated ? Buffer.from(read.text).subarray(0, DIAGNOSTIC_BYTE_LIMIT).toString('utf8') : read.text;
+    const result: Record<string, unknown> = { mime: mime === 'application/json' || mime?.endsWith('+json') ? 'json'
+        : mime === 'text/html' ? 'html' : mime === 'text/plain' ? 'plain' : 'other', bodyRead: read.outcome === 'complete' && truncated ? 'oversize' : read.outcome };
     result.sseFraming = /^(?:data|event):/m.test(text);
     result.sseCompleted = sseCompletion(text);
     if (result.bodyRead === 'complete') {
@@ -118,29 +127,47 @@ export async function requestPlanResponse(input: {
         const category = input.signal.aborted ? input.signal.reason instanceof DOMException && input.signal.reason.name === 'TimeoutError' ? 'timeout' : 'cancelled' : 'network_error';
         throw new PlanFailure('responses', category);
     }
-    const mime = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
-    if (!response.ok || mime !== 'text/event-stream') {
-        const diagnostic = await unexpectedResponseDiagnostic(response, input.signal);
-        throw new PlanFailure('responses', response.ok ? 'invalid_content_type' : 'http_error', response.status, diagnostic);
+    if (!response.ok) {
+        const read = await readResponseBody(response, input.signal, DIAGNOSTIC_BYTE_LIMIT, 1500);
+        throw new PlanFailure('responses', 'http_error', response.status, responseDiagnostic(response, read));
     }
-    const text = await boundedText(response, 1024 * 1024);
+    // Official streaming Responses parsing is based on SSE frames, not MIME.
+    // A labelled JSON/HTML body cannot pass the same event/completion checks.
+    const read = await readResponseBody(response, input.signal, 1024 * 1024, 120000);
+    const fail = (category: string): never => { throw new PlanFailure('responses', category, response.status, responseDiagnostic(response, read)); };
+    if (read.outcome !== 'complete') fail(read.outcome === 'oversize' ? 'response_too_large' : read.outcome === 'failed' ? 'invalid_stream' : read.outcome);
     input.validate();
+    const normalized = read.text.replace(/\r\n?/g, '\n');
+    const frames = normalized.split('\n\n');
+    const tail = frames.pop();
+    if (tail?.trim()) fail(/^(?:data|event):/m.test(normalized) ? 'incomplete_stream' : 'invalid_stream');
     let completed = false;
-    for (const frame of text.replace(/\r\n/g, '\n').split('\n\n')) {
-        const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
-        if (!data || data === '[DONE]')
-            continue;
-        const event = z.object({ type: z.string() }).passthrough().parse(JSON.parse(data));
-        if (completed || ['response.failed', 'response.incomplete', 'error'].includes(event.type))
-            throw new PlanFailure('responses', 'incomplete_stream');
-        if (event.type === 'response.completed') {
-            z.object({
-                status: z.literal('completed'), model: z.literal(input.model)
-            }).parse(event.response);
-            completed = true;
+    let sawData = false;
+    try {
+        for (const frame of frames) {
+            const lines = frame.split('\n').filter(Boolean);
+            if (lines.some(line => !line.startsWith(':') && !/^(?:data|event|id|retry)(?::|$)/.test(line))) fail('invalid_stream');
+            const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n');
+            if (!data) continue;
+            sawData = true;
+            if (data === '[DONE]') continue;
+            const event = z.object({ type: z.string().max(128).regex(/^(?:response\.[a-z0-9_.]+|error)$/) }).passthrough().parse(JSON.parse(data));
+            const eventNames = lines.filter(line => line.startsWith('event:')).map(line => line.slice(6).trim());
+            if (eventNames.some(name => name && name !== event.type)) fail('invalid_stream');
+            if (completed || ['response.failed', 'response.incomplete', 'error'].includes(event.type)) fail('incomplete_stream');
+            if (event.type === 'response.output_text.delta') z.object({ delta: z.string() }).parse(event);
+            if (event.type === 'response.completed') {
+                z.object({ status: z.literal('completed'), model: z.literal(input.model) }).parse(event.response);
+                completed = true;
+            }
         }
+    } catch (error: unknown) {
+        if (error instanceof PlanFailure) throw error;
+        if (error instanceof SyntaxError || error instanceof z.ZodError) fail('invalid_stream');
+        throw error;
     }
-    if (!completed)
-        throw new PlanFailure('responses', 'incomplete_stream');
-    return text;
+    if (!completed) fail(sawData ? 'incomplete_stream' : 'invalid_stream');
+    // Lone CR is valid SSE framing. Normalize it for the Gateway completion
+    // boundary, while retaining existing LF/CRLF framing and all event data.
+    return read.text.replace(/\r(?!\n)/g, '\n');
 }

@@ -10,7 +10,7 @@ async function run(response:Response, signal:AbortSignal=new AbortController().s
  expect(fetchFn).toHaveBeenCalledOnce();
  expect(result).toBeInstanceOf(PlanFailure);
  const failure=result as PlanFailure;
- expect(failure).toMatchObject({stage:'responses',category:response.ok?'invalid_content_type':'http_error',httpStatus:response.status});
+ expect(failure).toMatchObject({stage:'responses',category:response.ok?'invalid_stream':'http_error',httpStatus:response.status});
  return failure;
 }
 describe('bounded unexpected Responses MIME diagnostics',()=>{
@@ -47,20 +47,20 @@ describe('bounded unexpected Responses MIME diagnostics',()=>{
   expect(failure).toHaveProperty('responseDiagnostic',expect.objectContaining({mime,bodyRead:'complete',bodyShape,sseFraming:false,sseCompleted:false}));
   expect(JSON.stringify(failure)).not.toContain(secret);
  });
- it('records fixed SSE framing/completion booleans for a mislabelled stream while still rejecting it',async()=>{
-  const failure=await run(new Response(`event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","model":"fixture-model","output":"${secret}"}}\n\n`,{headers:{'content-type':'text/plain'}}));
+ it('records fixed SSE framing/completion booleans for a failed HTTP stream',async()=>{
+  const failure=await run(new Response(`event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","model":"fixture-model","output":"${secret}"}}\n\n`,{status:403,headers:{'content-type':'text/plain'}}));
   expect(failure).toHaveProperty('responseDiagnostic',expect.objectContaining({mime:'plain',bodyShape:'non_json',sseFraming:true,sseCompleted:true}));
   expect(JSON.stringify(failure)).not.toContain(secret);
  });
- it('rejects an unexpected MIME suffix even when its body contains a completed SSE response',async()=>{
-  const response=new Response('data: {"type":"response.completed","response":{"status":"completed","model":"fixture-model"}}\n\n',{headers:{'content-type':'text/event-stream-private'}});
+ it('rejects unframed JSON even under a MIME suffix resembling an event stream',async()=>{
+  const response=new Response('{"object":"response","status":"completed","model":"fixture-model"}',{headers:{'content-type':'text/event-stream-private'}});
   const failure=await run(response);
-  expect(failure).toHaveProperty('responseDiagnostic',expect.objectContaining({mime:'other',sseFraming:true,sseCompleted:true}));
+  expect(failure).toHaveProperty('responseDiagnostic',expect.objectContaining({mime:'other',sseFraming:false,sseCompleted:false}));
  });
  it('releases the sampled stream lock even when underlying cancellation never settles',async()=>{
   const cancel=vi.fn(()=>new Promise<void>(()=>{}));
   const stream=new ReadableStream({start(controller){controller.enqueue(new Uint8Array(16*1024+1));},cancel});
-  const failure=await run(new Response(stream,{headers:{'content-type':'application/json'}}));
+  const failure=await run(new Response(stream,{status:403,headers:{'content-type':'application/json'}}));
   expect(failure).toHaveProperty('responseDiagnostic.bodyRead','oversize');expect(cancel).toHaveBeenCalledOnce();
   expect(stream.locked).toBe(false);
  });
@@ -72,19 +72,19 @@ describe('bounded unexpected Responses MIME diagnostics',()=>{
  it('retains the MIME/status diagnostic on a failed body stream and ignores cancellation failure text',async()=>{
   const stream=new ReadableStream({start(controller){controller.error(new Error(secret));}});
   const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
-  const failure=await run(new Response(stream,{headers:{'content-type':'application/json'}}));
+  const failure=await run(new Response(stream,{status:403,headers:{'content-type':'application/json'}}));
   expect(failure).toHaveProperty('responseDiagnostic.bodyRead','failed');logPlanFailure('responses',failure);
   expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
  });
  it('stops a hanging diagnostic read when the inference is aborted',async()=>{
   const controller=new AbortController(),cancel=vi.fn();const stream=new ReadableStream({cancel});
-  const pending=run(new Response(stream,{headers:{'content-type':'application/json'}}),controller.signal);
+  const pending=run(new Response(stream,{status:403,headers:{'content-type':'application/json'}}),controller.signal);
   await Promise.resolve();await Promise.resolve();controller.abort();
   const failure=await pending;expect(failure).toHaveProperty('responseDiagnostic.bodyRead','cancelled');expect(cancel).toHaveBeenCalledOnce();
  });
  it('bounds diagnostic reads independently of a hanging provider stream',async()=>{
   vi.useFakeTimers();const cancel=vi.fn(),stream=new ReadableStream({cancel});
-  const pending=run(new Response(stream,{headers:{'content-type':'application/json'}}));
+  const pending=run(new Response(stream,{status:403,headers:{'content-type':'application/json'}}));
   await vi.advanceTimersByTimeAsync(1500);const failure=await pending;
   expect(failure).toHaveProperty('responseDiagnostic.bodyRead','timeout');expect(cancel).toHaveBeenCalledOnce();
  });
