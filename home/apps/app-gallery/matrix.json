@@ -1,0 +1,34 @@
+{
+  "name": "App Gallery",
+  "description": "Thoughtfully designed apps for your life and work.",
+  "slug": "app-gallery",
+  "version": "1.0.0",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "scope": "personal",
+  "icon": "app-gallery",
+  "category": "productivity",
+  "build": {
+    "install": "pnpm install --frozen-lockfile",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "public/**",
+      "index.html",
+      "matrix.json",
+      "vite.config.ts",
+      "sync-contract.mjs",
+      "package.json",
+      "pnpm-lock.yaml",
+      "tsconfig.json",
+      "pnpm-workspace.yaml",
+      "../../../packages/contracts/src/app-gallery.ts"
+    ]
+  },
+  "storage": {
+    "tables": {}
+  }
+}
