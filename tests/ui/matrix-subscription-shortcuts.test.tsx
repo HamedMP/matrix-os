@@ -144,3 +144,77 @@ it("omits the legacy generic Terminal auth shortcut while keeping supported key 
  expect(screen.queryByText("Connect in Terminal")).toBeNull();
  expect(onSetupHarness).not.toHaveBeenCalled();
 });
+
+it.each([false, true])("does not present legacy Matrix-funded Claude as a native subscription (enabled=%s)", async enabled => {
+ const {props,client,capability}=setup();
+ Object.assign(props.snapshot.harnesses[0]!,{id:"claude",harness:"claude",displayName:"Claude Code",authState:"authenticated",enabled,configuredEnabled:enabled,accessSourceId:"matrix_credit",accountIds:["funded"],selectedAccountId:"funded",route:{kind:"fixed",providerId:"anthropic",modelId:"native"}});
+ props.snapshot.accounts=[{id:"funded",accessSourceId:"matrix_credit",displayName:"Matrix AI",authMethod:"terminal",authState:"authenticated",dependencies:{activeChatCount:0,resumableChatCount:0,harnessInstanceCount:1}}] as never;
+ props.snapshot.accessSources=[{id:"matrix_credit",kind:"matrix_gateway",fundingKind:"matrix_included",providerId:"anthropic",accountId:null,displayName:"Matrix AI",eligibleModelIds:[],readiness:{state:"ready"},usage:{kind:"unavailable",reason:"unknown"}}] as never;
+ props.snapshot.supportedActions=["set_harness_enabled"];
+ vi.mocked(client.capabilities).mockResolvedValue([{...capability,harnessInstanceId:"claude",harness:"claude",displayName:"Claude Code",loginMethods:["terminal"],connectionOptions:[{id:"claude:anthropic:terminal",providerId:"anthropic",authKind:"subscription",method:"terminal",billingKind:"subscription",executionKind:"native",availability:"available"}]}]);
+ render(<AgentsProvidersView {...props} onRefreshForConnection={vi.fn()}/>);
+ const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
+ fireEvent.click(await within(subscriptions).findByRole("button",{name:"Connect Claude"}));
+ expect(within(subscriptions).getAllByText("Not connected")[0]).toBeVisible();
+ expect(within(subscriptions).queryByText("Saved connection")).toBeNull();
+ expect(within(subscriptions).queryByText("Connected")).toBeNull();
+ expect(within(subscriptions).queryByText("Matrix AI")).toBeNull();
+ expect(within(subscriptions).queryByText("Usage unavailable")).toBeNull();
+ expect(screen.queryByRole("button",{name:"Connect saved connection"})).toBeNull();
+ expect(client.startConnection).not.toHaveBeenCalled();
+ expect(props.onMutate).not.toHaveBeenCalled();
+});
+it.each(["owner_subscription", "owner_api_key"] as const)("retains matched native Claude %s connections without another login", async fundingKind => {
+ const {props,client,capability}=setup();
+ Object.assign(props.snapshot.harnesses[0]!,{id:"claude",harness:"claude",displayName:"Claude Code",authState:"authenticated",enabled:false,configuredEnabled:false,accessSourceId:"native",accountIds:["owner"],selectedAccountId:"owner",route:{kind:"fixed",providerId:"anthropic",modelId:"native"}});
+ props.snapshot.accounts=[{id:"owner",accessSourceId:"native",displayName:"Native Claude owner",authMethod:fundingKind === "owner_api_key" ? "api_key" : "terminal",authState:"authenticated",dependencies:{activeChatCount:0,resumableChatCount:0,harnessInstanceCount:1}}] as never;
+ props.snapshot.accessSources=[{id:"native",kind:"provider_account",fundingKind,providerId:"anthropic",accountId:"owner",displayName:"Native Claude source",eligibleModelIds:[],readiness:{state:"ready"},usage:{kind:"unavailable",reason:"unknown"}}] as never;
+ props.snapshot.supportedActions=["set_harness_enabled"];
+ vi.mocked(client.capabilities).mockResolvedValue([{...capability,harnessInstanceId:"claude",harness:"claude",displayName:"Claude Code",loginMethods:["terminal"],connectionOptions:[]}]);
+ render(<AgentsProvidersView {...props} onRefreshForConnection={vi.fn()}/>);
+ const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
+ fireEvent.click(await within(subscriptions).findByRole("button",{name:"Manage Claude connection"}));
+ expect(within(subscriptions).getByText("Saved connection")).toBeVisible();
+ expect(within(subscriptions).getByText("Native Claude owner")).toBeVisible();
+ expect(screen.getByRole("button",{name:"Connect saved connection"})).toBeEnabled();
+ expect(client.startConnection).not.toHaveBeenCalled();
+ expect(client.start).not.toHaveBeenCalled();
+});
+it("does not borrow a different native account when the configured Claude source account is missing", async () => {
+ const {props,client,capability}=setup();
+ Object.assign(props.snapshot.harnesses[0]!,{id:"claude",harness:"claude",displayName:"Claude Code",authState:"authenticated",enabled:false,configuredEnabled:false,accessSourceId:"configured",accountIds:["other"],selectedAccountId:"other",route:{kind:"fixed",providerId:"anthropic",modelId:"native"}});
+ props.snapshot.accounts=[{id:"other",accessSourceId:"unrelated",displayName:"Another Claude owner",authMethod:"terminal",authState:"authenticated",dependencies:{activeChatCount:0,resumableChatCount:0,harnessInstanceCount:1}}] as never;
+ props.snapshot.accessSources=[{id:"configured",kind:"provider_account",fundingKind:"owner_subscription",providerId:"anthropic",accountId:"expected",displayName:"Unmatched Claude account",eligibleModelIds:[],readiness:{state:"ready"},usage:{kind:"unavailable",reason:"unknown"}}] as never;
+ props.snapshot.supportedActions=["set_harness_enabled"];
+ vi.mocked(client.capabilities).mockResolvedValue([{...capability,harnessInstanceId:"claude",harness:"claude",displayName:"Claude Code",loginMethods:["terminal"],connectionOptions:[]}]);
+ render(<AgentsProvidersView {...props} onRefreshForConnection={vi.fn()}/>);
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ const subscriptions=screen.getByRole("region",{name:"Your subscriptions"});
+ expect(within(subscriptions).queryByText("Another Claude owner")).toBeNull();
+ expect(within(subscriptions).queryByText("Unmatched Claude account")).toBeNull();
+ expect(within(subscriptions).queryByText("Saved connection")).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:/^Claude Code/}));
+ expect(screen.queryByRole("button",{name:"Connect saved connection"})).toBeNull();
+ expect(client.startConnection).not.toHaveBeenCalled();
+});
+it.each(["anthropic", "openai"])("checks source-absent legacy Claude account provider identity (%s)", async providerId => {
+ const {props,client,capability}=setup();
+ Object.assign(props.snapshot.harnesses[0]!,{id:"claude",harness:"claude",displayName:"Claude Code",authState:"unknown",enabled:false,configuredEnabled:false,accessSourceId:null,accountIds:["owner"],selectedAccountId:"owner",localObservation:{state:"present_unverified",checkedAt:new Date().toISOString(),staleAfter:"2099-10-03T00:00:00Z"},route:{kind:"fixed",providerId:"anthropic",modelId:"native"}});
+ props.snapshot.accounts=[{id:"owner",providerId,accessSourceId:"native",displayName:"Legacy native owner",authMethod:"terminal",authState:"authenticated",dependencies:{activeChatCount:0,resumableChatCount:0,harnessInstanceCount:1}}] as never;
+ props.snapshot.supportedActions=["set_harness_enabled"];
+ vi.mocked(client.capabilities).mockResolvedValue([{...capability,harnessInstanceId:"claude",harness:"claude",displayName:"Claude Code",loginMethods:["terminal"],connectionOptions:[]}]);
+ render(<AgentsProvidersView {...props} onRefreshForConnection={vi.fn()}/>);
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ const subscriptions=screen.getByRole("region",{name:"Your subscriptions"});
+ if (providerId === "anthropic") {
+  fireEvent.click(await within(subscriptions).findByRole("button",{name:"Manage Claude connection"}));
+  expect(within(subscriptions).getByText("Legacy native owner")).toBeVisible();
+  expect(screen.getByRole("button",{name:"Connect saved connection"})).toBeEnabled();
+ } else {
+  expect(within(subscriptions).queryByText("Legacy native owner")).toBeNull();
+  expect(within(subscriptions).queryByText("Saved connection")).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:/^Claude Code/}));
+  expect(screen.queryByRole("button",{name:"Connect saved connection"})).toBeNull();
+ }
+ expect(client.startConnection).not.toHaveBeenCalled();
+});

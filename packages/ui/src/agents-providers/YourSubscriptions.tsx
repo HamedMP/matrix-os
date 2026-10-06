@@ -1,5 +1,5 @@
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
-import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
+import { hasConfiguredConnection, resolveHarnessConnection, isNativeAccountSource } from "./harness-connection.js";
 import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { usageLines } from "./utils.js";
 import { managedConnectionCapability } from "./managed-connection-capability.js";
@@ -33,10 +33,13 @@ export function YourSubscriptions({snapshot, capabilities, client, operationIds,
         const rows = targets.length ? targets : [{id: kind, harness: undefined, capability: undefined}];
         return rows.map(({id, harness, capability: advertisedCapability}) => {
           const capability = advertisedCapability ? managedConnectionCapability(advertisedCapability) : undefined;
-          const {account, source} = harness ? resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources) : {account: undefined, source: undefined};
+          const {account: routeAccount, source: routeSource} = harness ? resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources) : {account: undefined, source: undefined};
+          const nativeSource = isNativeAccountSource(kind, routeSource, routeAccount);
+          const account = nativeSource ? routeAccount : undefined;
+          const source = nativeSource ? routeSource : undefined;
           const keyAccount = source?.fundingKind === "owner_api_key" || account?.authMethod === "api_key";
-          const connected = harness && (kind === "claude" || keyAccount) ? hasConfiguredConnection(harness, source) : false;
-          const retained = harness && (kind === "claude" || keyAccount) ? hasConfiguredConnection({...harness, enabled: true, configuredEnabled: true}, source) : false;
+          const connected = harness && nativeSource && (kind === "claude" || keyAccount) ? hasConfiguredConnection(harness, source) : false;
+          const retained = harness && nativeSource && (kind === "claude" || keyAccount) ? hasConfiguredConnection({...harness, enabled: true, configuredEnabled: true}, source) : false;
           const status = harness ? resolvedWorkflowRowStatus(harness, source, workflowStatus[id]) : workflowStatus[id] ?? "Not connected";
           const continuing = ["Connecting", "Installing", "Uninstalling"].includes(status)
             || Boolean(operationIds[id] || capability?.activeOperationId);
