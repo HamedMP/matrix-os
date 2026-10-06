@@ -13,7 +13,9 @@ describe('owner Bot authorization routes', () => {
     const denied = createBotProviderConnectionRoutes({ getPrincipal: () => { throw new MissingRequestPrincipalError(); } });
     expect((await denied.request('/api/bot-connections')).status).toBe(401);
     const { app, service } = fixture(); const result = await app.request('/api/bot-connections');
-    expect(result.headers.get('cache-control')).toBe('private, no-store'); expect(await result.json()).toEqual(catalog); expect(service.connections).toHaveBeenCalledWith('owner');
+    expect(result.headers.get('cache-control')).toBe('private, no-store'); expect(await result.json()).toEqual(catalog); expect(service.connections).toHaveBeenCalledWith('owner', false);
+    await app.request('/api/bot-connections?includeChatgptPlan=true');
+    expect(service.connections).toHaveBeenLastCalledWith('owner', true);
     expect((await createBotProviderConnectionRoutes({ getPrincipal: () => ({ userId: 'owner' }) as never }).request('/api/bot-connections')).status).toBe(503);
   });
   it('rejects unknown options, malformed bodies and oversized writes before calling a service', async () => {

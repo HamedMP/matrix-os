@@ -73,7 +73,7 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
   const savedRow = blockedRows.find(row => row.instanceId === selection?.instanceId && row.modelId === selection.model);
   const selectedInstance = catalog?.instances.find(instance => instance.id === selection?.instanceId);
   const reserved = savedRow && selectedInstance && canonicalProviderFundingState(selectedInstance) === "credit_reserved";
-  const managedInstance = catalog?.instances.find(instance => instance.id === sourceId);
+  const managedInstance = catalog?.instances.find(instance => instance.id === (sourceId === "computer" ? MATRIX_PI_CHAT_INSTANCE_ID : sourceId));
   const unavailableReason = managedInstance ? canonicalProviderAvailabilityReasonLabel(managedInstance) : sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription unavailable" : "Matrix AI unavailable";
   const noModels = !catalogLoading && choices.length === 0;
   const sourceName = sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription" : "Matrix AI";
