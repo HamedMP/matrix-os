@@ -34,7 +34,7 @@ export interface GalleryReadiness {
 
 /** Null inventory represents a failed/unavailable read, never an empty account list. */
 export function deriveGalleryReadiness(app: Pick<GalleryApp, "services">, connections: readonly GalleryConnection[] | null): GalleryReadiness {
-  const services = app.services.map(service => ({ id: service.id, name: service.name, accounts: (connections ?? []).filter(account => account.service === service.id && account.status === "connected") }));
+  const services = app.services.map(service => ({ id: service.id, name: service.name, accounts: (connections ?? []).filter(account => account.service === service.id && account.status === "active") }));
   if (services.length === 0) return { status: "ready", services };
   if (connections === null) return { status: "unknown", services };
   if (services.some(service => service.accounts.length === 0)) return { status: "needs_connection", services };

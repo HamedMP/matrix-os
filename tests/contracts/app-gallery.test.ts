@@ -24,9 +24,9 @@ describe("curated gallery contract", () => {
     const app = (await catalog()).apps.find(a => a.id === "folio")!;
     expect(deriveGalleryReadiness(app, null).status).toBe("unknown");
     expect(deriveGalleryReadiness(app, []).status).toBe("needs_connection");
-    expect(deriveGalleryReadiness(app, [{ service: "gmail", account_label: "Work", status: "connected" }]).status).toBe("ready");
+    expect(deriveGalleryReadiness(app, [{ service: "gmail", account_label: "Work", status: "active" }]).status).toBe("ready");
     expect(deriveGalleryReadiness(app, [{ service: "gmail", account_label: "Work", status: "disconnected" }]).status).toBe("needs_connection");
-    const multiple = deriveGalleryReadiness(app, [{ service: "gmail", account_label: "Work", status: "connected" }, { service: "gmail", account_label: "Personal", status: "connected" }]);
+    const multiple = deriveGalleryReadiness(app, [{ service: "gmail", account_label: "Work", status: "active" }, { service: "gmail", account_label: "Personal", status: "active" }]);
     expect(multiple.status).toBe("choose_accounts");
     expect(multiple.services[0].accounts).toHaveLength(2);
   });
