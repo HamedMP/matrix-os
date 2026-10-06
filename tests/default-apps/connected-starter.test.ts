@@ -304,6 +304,7 @@ describe("portable connected starter", () => {
   });
   it("requires explicit exact connected labels and bounded read-only import context", () => {
     const connection = {
+      id: "chosen_connection",
       service: "gmail",
       account_label: "chosen",
       account_email: "owner@example.com",
@@ -319,7 +320,7 @@ describe("portable connected starter", () => {
     const prompt = importPrompt(
       folio,
       {
-        accounts: [{ service: "gmail", label: "chosen" }],
+        accounts: [{ service: "gmail", label: "chosen", connectionId: "chosen_connection", expectedEmail: "owner@example.com" }],
         start: "2026-01-01",
         end: "2026-12-31",
         context: "",
@@ -341,7 +342,7 @@ describe("portable connected starter", () => {
       importPrompt(
         folio,
         {
-          accounts: [{ service: "gmail", label: "wrong" }],
+          accounts: [{ service: "gmail", label: "wrong", connectionId: "chosen_connection", expectedEmail: "owner@example.com" }],
           start: "2026-01-01",
           end: "2026-12-31",
           context: "",
@@ -353,7 +354,7 @@ describe("portable connected starter", () => {
       importPrompt(
         folio,
         {
-          accounts: [{ service: "gmail", label: "chosen" }],
+          accounts: [{ service: "gmail", label: "chosen", connectionId: "chosen_connection", expectedEmail: "owner@example.com" }],
           start: "2026-01-01",
           end: "2026-12-31",
           context: "",
@@ -365,7 +366,7 @@ describe("portable connected starter", () => {
       importPrompt(
         folio,
         {
-          accounts: [{ service: "gmail", label: "chosen" }],
+          accounts: [{ service: "gmail", label: "chosen", connectionId: "chosen_connection", expectedEmail: "owner@example.com" }],
           start: "2020-01-01",
           end: "2026-12-31",
           context: "",

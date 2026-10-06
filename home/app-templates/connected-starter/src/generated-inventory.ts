@@ -1,6 +1,7 @@
 // Generated from packages/contracts/src/app-gallery-inventory.ts. Do not edit.
 /** Dependency-free inventory boundary shared by the Gallery and portable starters. */
 export interface GalleryInventoryEntry {
+  id?: string;
   service: string;
   account_label: string;
   account_email?: string | null;
@@ -27,6 +28,8 @@ export function parseGalleryInventory(raw: unknown): GalleryInventoryEntry[] {
       throw new Error("Connection inventory unavailable");
     const row = value as Record<string, unknown>;
     if (
+      (row.id !== undefined &&
+        (typeof row.id !== "string" || !/^[A-Za-z0-9_-]{1,256}$/.test(row.id))) ||
       !safeText(row.service, 64) ||
       !safeText(row.account_label, 160) ||
       !safeText(row.status, 64) ||
@@ -34,6 +37,7 @@ export function parseGalleryInventory(raw: unknown): GalleryInventoryEntry[] {
     )
       throw new Error("Connection inventory unavailable");
     return {
+      ...(row.id === undefined ? {} : { id: row.id as string }),
       service: row.service,
       account_label: row.account_label,
       status: row.status,

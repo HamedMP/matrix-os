@@ -274,12 +274,14 @@ describe("visible conflict and account safety", () => {
       {
         service: "gmail",
         account_label: "same",
+        id: "first_connection",
         account_email: "one@example.test",
         status: "active",
       },
       {
         service: "gmail",
         account_label: "same",
+        id: "second_connection",
         account_email: "two@example.test",
         status: "active",
       },
@@ -288,7 +290,7 @@ describe("visible conflict and account safety", () => {
       importPrompt(
         folio,
         {
-          accounts: [{ service: "gmail", label: "same" }],
+          accounts: [{ service: "gmail", label: "same", connectionId: "first_connection", expectedEmail: "one@example.test" }],
           start: "2026-01-01",
           end: "2026-12-31",
           context: "",

@@ -53,7 +53,12 @@ export function ImportDialog({
         );
       const accounts = inventory
         .filter((c) => selectedKeys.has(`${c.service}:${c.account_label}`))
-        .map((c) => ({ service: c.service, label: c.account_label }));
+        .map((c) => ({
+          service: c.service,
+          label: c.account_label,
+          connectionId: c.id ?? "",
+          expectedEmail: c.account_email ?? null,
+        }));
       const prompt = importPrompt(
         app,
         { accounts, start, end, context, scope },
@@ -128,7 +133,7 @@ export function ImportDialog({
                           <label className="check" key={key}>
                             <input
                               type="checkbox"
-                              disabled={ambiguous}
+                              disabled={ambiguous || !account.id}
                               checked={selectedKeys.has(key)}
                               onChange={(e) =>
                                 setChosen(
@@ -141,10 +146,12 @@ export function ImportDialog({
                             <span>
                               {account.account_label}
                               <small>
-                                {ambiguous
-                                  ? "This label matches multiple accounts. Give each account a unique label in Matrix Settings."
-                                  : (account.account_email ??
-                                    "Connected account")}
+                                {!account.id
+                                  ? "This computer cannot verify the account identity. Update Matrix before importing."
+                                  : ambiguous
+                                    ? "This label matches multiple accounts. Give each account a unique label in Matrix Settings."
+                                    : (account.account_email ??
+                                      "Connected account")}
                               </small>
                             </span>
                           </label>

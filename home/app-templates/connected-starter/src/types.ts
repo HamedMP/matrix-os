@@ -34,6 +34,10 @@ export interface Account {
   label: string;
   email?: string;
 }
+export interface ImportAccount extends Account {
+  connectionId: string;
+  expectedEmail: string | null;
+}
 export type Connection = import("./generated-inventory").GalleryInventoryEntry;
 export interface Evidence {
   id: string;
