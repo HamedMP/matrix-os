@@ -781,8 +781,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   `.execute(db);
 
   await bootstrapChatMetadata(db);
-  await bootstrapVoiceHistory(db);
   await bootstrapChatAttribution(db);
+  await bootstrapVoiceHistory(db);
 
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_updated ON chats(owner_type, owner_id, lifecycle, updated_at DESC, id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_project ON chats(owner_type, owner_id, project_id)`.execute(db);

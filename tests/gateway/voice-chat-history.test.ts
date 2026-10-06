@@ -46,6 +46,18 @@ describe("voice conversations have separate durable history and titles", () => {
     expect((await service.search(owner, { query: "Launch", limit: 1 })).items.map(record => record.chat.id)).toEqual(["chat_normal"]);
     expect((await service.search(owner, { query: "Launch", limit: 1, conversationKind: "voice" })).items.map(record => record.chat.id)).toEqual(["chat_voice"]);
   });
+  it("upgrades databases whose existing attribution migration already owns version two", async () => {
+    await create("previous_release", "chat");
+    await sql`DELETE FROM chat_schema_migrations WHERE version = 3`.execute(repository.kysely);
+    await sql`INSERT INTO chat_schema_migrations(version) VALUES (2) ON CONFLICT DO NOTHING`.execute(repository.kysely);
+    await sql`ALTER TABLE chats DROP COLUMN conversation_kind CASCADE`.execute(repository.kysely);
+    await repository.bootstrap();
+    expect((await repository.list(owner, { limit: 10, conversationKind: "chat" })).items[0]?.chat).toMatchObject({
+      id: "chat_previous_release", conversationKind: "chat",
+    });
+    expect((await sql<{ version: number }>`SELECT version FROM chat_schema_migrations ORDER BY version`
+      .execute(repository.kysely)).rows).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+  });
   it("migrates only durable assistant bootstrap records and preserves owner renames", async () => {
     await create("legacy", "chat"); await create("renamed", "chat"); await create("unrelated", "chat");
     await repository.kysely.updateTable("chats").set({ title: "Aoede" }).where("id", "in", ["chat_legacy", "chat_unrelated"]).execute();
@@ -54,7 +66,7 @@ describe("voice conversations have separate durable history and titles", () => {
       await sql`INSERT INTO aoede_bootstrap_requests(owner_type, owner_id, runtime_scope, request_id, semantic_hash, created_chat_id)
         VALUES ('personal', ${owner.ownerId}, 'runtime', ${id}, 'hash', ${`chat_${id}`})`.execute(repository.kysely);
     }
-    await sql`DELETE FROM chat_schema_migrations WHERE version = 2`.execute(repository.kysely);
+    await sql`DELETE FROM chat_schema_migrations WHERE version = 3`.execute(repository.kysely);
     await sql`ALTER TABLE chats DROP COLUMN conversation_kind CASCADE`.execute(repository.kysely);
     await bootstrapVoiceHistory(repository.kysely);
     await bootstrapVoiceHistory(repository.kysely);
@@ -70,7 +82,7 @@ describe("voice conversations have separate durable history and titles", () => {
     await history.journal({ id: "topic", role: "user", text: "Plan my launch week" });
     await sql`INSERT INTO aoede_bootstrap_requests(owner_type, owner_id, runtime_scope, request_id, semantic_hash, created_chat_id)
       VALUES ('personal', ${owner.ownerId}, 'runtime', 'old_topic', 'hash', 'chat_old_topic')`.execute(repository.kysely);
-    await sql`DELETE FROM chat_schema_migrations WHERE version = 2`.execute(repository.kysely);
+    await sql`DELETE FROM chat_schema_migrations WHERE version = 3`.execute(repository.kysely);
     await sql`ALTER TABLE chats DROP COLUMN conversation_kind CASCADE`.execute(repository.kysely);
     await bootstrapVoiceHistory(repository.kysely);
     expect((await repository.get(owner, "chat_old_topic"))?.chat).toMatchObject({ conversationKind: "voice", title: "Plan my launch week", titleVersion: 1 });

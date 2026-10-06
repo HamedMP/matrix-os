@@ -6,11 +6,12 @@ import type { ChatDatabase } from "./database.js";
  * heuristic, to recognize previous assistant conversations. Owner renames survive.
  */
 export async function bootstrapVoiceHistory<Database extends ChatDatabase>(db: Kysely<Database>): Promise<void> {
-  const applied = await sql`SELECT version FROM chat_schema_migrations WHERE version = 2`.execute(db);
+  // Version 2 belongs to the existing owner-attribution repair.
+  const applied = await sql`SELECT version FROM chat_schema_migrations WHERE version = 3`.execute(db);
   if (applied.rows.length) return;
   await db.transaction().execute(async trx => {
     await sql`LOCK TABLE chats IN ACCESS EXCLUSIVE MODE`.execute(trx);
-    const existing = await sql`SELECT version FROM chat_schema_migrations WHERE version = 2`.execute(trx);
+    const existing = await sql`SELECT version FROM chat_schema_migrations WHERE version = 3`.execute(trx);
     if (existing.rows.length) return;
     await sql`ALTER TABLE chats ADD COLUMN IF NOT EXISTS conversation_kind TEXT NOT NULL DEFAULT 'chat'
       CHECK (conversation_kind IN ('chat', 'voice'))`.execute(trx);
@@ -42,6 +43,6 @@ export async function bootstrapVoiceHistory<Database extends ChatDatabase>(db: K
     }
     await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_kind_activity
       ON chats(owner_type, owner_id, conversation_kind, lifecycle, activity_at DESC, id)`.execute(trx);
-    await sql`INSERT INTO chat_schema_migrations(version) VALUES (2)`.execute(trx);
+    await sql`INSERT INTO chat_schema_migrations(version) VALUES (3)`.execute(trx);
   });
 }
