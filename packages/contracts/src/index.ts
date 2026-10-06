@@ -44,7 +44,7 @@ export * from "#agent-thread-contracts";
 export * from "#aoede";
 export * from "#canonical-action";
 export * from "#canonical-chat";
-export { generatedChatTitle, generatedVoiceChatTitle } from "./generated-chat-title.js";
+export { generatedChatTitle, generatedVoiceChatTitle } from "#generated-chat-title";
 export * from "#chat-agents";
 export * from "#chat-agent-context";
 export * from "#chat-agent-recipe";

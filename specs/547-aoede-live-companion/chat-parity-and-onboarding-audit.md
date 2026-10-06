@@ -59,3 +59,5 @@ The large Chat repository remains a composition entrypoint: indexed search/categ
 Regression checks cover real PGlite migration, owner isolation, filtering before pagination, default/voice/all list and search, greeting boundaries, bounded titles, session-finish naming, replay, manual rename preservation, ordinary Chat used with voice, route validation, keyboard tab navigation, search/read actions and failed rename drafts. Existing host tests exercise Web Chat and Electron Chat wiring, including Electron Work navigation. Production Web and Electron builds are required before deployment. Physical Electron audio acceptance is a separate release gate.
 
 Public documentation is updated separately in the private `FinnaAI/matrix-os-site` repository (Aoede preview documentation PR). Release status must distinguish implementation checks from deployment and actual user interaction evidence.
+
+Production loading is checked without TypeScript development path remapping. The shared title helper uses the contracts package's native Node import map, and the host bundle smoke check loads contracts and the terminal runtime in a separate native Node process before publication.
