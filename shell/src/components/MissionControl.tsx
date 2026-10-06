@@ -288,6 +288,7 @@ function LauncherGrid({
         <AppTile
           name={app.name}
           createApp={app.path === CREATE_APP.path}
+          matrixAssistant={app.path === "__aoede__"}
           onAddToDesktop={!isOsViewDestination && app.path !== CREATE_APP.path && onAddToDesktop
             ? () => void addToDesktop(app)
             : undefined}
