@@ -332,6 +332,10 @@ describe("portable connected starter", () => {
     expect(prompt).toContain("never send");
     expect(prompt).toContain("manualFields");
     expect(prompt).toContain("source_id");
+    expect(prompt).toContain("POST /api/bridge/query");
+    expect(prompt).toContain("expectedPayload");
+    expect(prompt).toContain("authenticated kernel");
+    expect(prompt).not.toContain("existing app data tools");
     expect(prompt).toContain("null");
     expect(() =>
       importPrompt(
