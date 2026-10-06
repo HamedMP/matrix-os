@@ -174,6 +174,18 @@ describe("loadCustomAgents", () => {
 
 const home = `${process.cwd()}/home`;
 describe("registered builder product style direction", () => {
+  it("distinguishes live integration viewers from saved imports and owner annotations", () => {
+    const knowledge = readFileSync(`${home}/agents/knowledge/app-generation.md`, "utf8");
+    const section = knowledge.split("### Integration data and saved owner records")[1]?.split("## Best Practices")[0];
+    expect(section).toBeDefined();
+    const guidance = section!.replace(/\s+/g, " ");
+    expect(guidance).toContain("read-only live service viewer");
+    expect(guidance).toContain("without caching them");
+    expect(guidance).toContain("For saved imports, owner annotations or workflows, declare `storage.tables`");
+    expect(guidance).toContain("persist through the authenticated MatrixOS database bridge");
+    expect(guidance).not.toMatch(/do not declare.*storage\.tables/i);
+  });
+
   it("requires real mobile save/reopen evidence from every registered builder source", () => {
     const sources = [
       ["core builder", getCoreAgents("/test/owner").builder.prompt],
