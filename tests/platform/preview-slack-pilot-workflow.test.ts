@@ -34,7 +34,8 @@ describe("protected Slack preview connection", () => {
     expect(workflow).toContain("MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins");
     expect(workflow).toContain('scripts/preview-collaboration-guard.py 10000 prepare "$nonce"');
     expect(workflow).toContain("--on-active=300s");
-    expect(workflow).toContain("scripts/preview-collaboration-home.py 15000 apply");
+    expect(workflow).toContain('scripts/preview-collaboration-home.py 15000 "$nonce" "$handle" "$PREVIEW_RUNTIME_OWNER_ID" "$PREVIEW_MACHINE_ID" "$binding"');
+    expect(workflow).not.toContain("scripts/preview-collaboration-home.py 15000 apply");
     expect(workflow).toContain('"matrix-gateway.service"');
     expect(workflow).toContain("The armed guard will restore the original environment.");
     expect(workflow).toContain("MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins");
