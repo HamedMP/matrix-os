@@ -66,4 +66,25 @@ App detail → permissions/target review → installation confirmation → exact
 
 The prototype has strict TypeScript and a production Vite build. Its browser flow check covers 360, 390, 600, 820, 1024 and 1440 pixels: search/empty state, connection walkthrough, optional account designation, preserved existing connections, return to the selected phone preview, permission review before example completion, optional stars and no private API requests. The actual demo fixtures have separate bounded CRUD/CAS/reset and network-policy checks.
 
+The runnable source is in [prototype PR #2220](https://github.com/HamedMP/matrix-os/pull/2220), under `specs/550-app-store-launch/design-prototype`. Screenshots were captured from commit `e07fdaa59d1c53a4eb9b05f3ed295eeb04437aed`; the updated check harness is at `c98715de5cb250ea62a2d208f5eb06723d837697`. Both have the same `src` tree, `91e90ea90ee12b44de669688d892db2a906053cd`. These immutable revisions identify the evidence even if the review stack is restacked. [validation.json](evidence/validation.json) records the locations, checks and limitations.
+
+To reproduce, use the prototype PR checkout with Node.js 24+ and pnpm 10.33.4. Run `pnpm install --frozen-lockfile` from the repository root, then run these commands from the prototype directory. The browser checks require the repository-locked Playwright dependency, an installed Google Chrome browser and a separate running local server. They launch an independent headless profile.
+
+```sh
+pnpm exec tsc -p tsconfig.json
+pnpm exec vite build
+node public/demos/verify.mjs
+pnpm exec vite --host 127.0.0.1 --port 3036
+```
+
+With the server running, use another terminal in the same directory:
+
+```sh
+node checks/check-ui.mjs
+node checks/check-demos.mjs
+node checks/capture.mjs
+```
+
+The committed walkthrough check covers six widths; the committed demo check reproduces 16 embedded app flows at 360/390 pixels. The evidence also records 16 historical direct app flows, for 32 total; those direct checks are not included in the committed harness. The capture command regenerates the three screenshots from the current checkout; use the pinned screenshot-tested revision to reproduce the recorded source exactly.
+
 See [spec.md](spec.md) and [plan.md](plan.md) for production launch gates. The prototype is not OAuth, installation, a public demo endpoint, rating persistence or Native Mobile capability implementation. Those remain implementation units, with exact release/client evidence required. The mobile app-building policy is a separate change that requires phone-first composition and real authenticated save/reopen checks; policy text is not host implementation.

@@ -37,6 +37,32 @@
     "nativeFormPostsBlockedByCsp": true,
     "javascriptErrors": 0,
     "privilegedApiRequests": 0,
-    "dependencyFreeFixtureCrudCasBounds": "passed"
+    "dependencyFreeFixtureCrudCasBounds": "passed",
+    "committedEmbeddedDemoFlowsPassed": 16
+  },
+  "prototype": {
+    "pullRequest": "https://github.com/HamedMP/matrix-os/pull/2220",
+    "location": "specs/550-app-store-launch/design-prototype",
+    "screenshotsTestedCommit": "e07fdaa59d1c53a4eb9b05f3ed295eeb04437aed",
+    "sourceTree": "91e90ea90ee12b44de669688d892db2a906053cd",
+    "verificationHarnessCommit": "c98715de5cb250ea62a2d208f5eb06723d837697",
+    "note": "The screenshot-tested and verification-harness commits have the same src tree. The prototype PR may be restacked; the immutable commits identify the recorded evidence."
+  },
+  "reproduction": {
+    "prerequisites": "Node.js 24+, pnpm 10.33.4; pnpm install --frozen-lockfile from the repository root. Use the prototype PR checkout.",
+    "cwd": "specs/550-app-store-launch/design-prototype",
+    "commands": [
+      "pnpm exec tsc -p tsconfig.json",
+      "pnpm exec vite build",
+      "node public/demos/verify.mjs"
+    ],
+    "browserServer": "pnpm exec vite --host 127.0.0.1 --port 3036",
+    "browserChecks": [
+      "node checks/check-ui.mjs",
+      "node checks/check-demos.mjs",
+      "node checks/capture.mjs"
+    ],
+    "browserPrerequisite": "An installed Google Chrome browser; the checks use the repository-locked Playwright dependency with channel: chrome in an independent headless profile.",
+    "historicalScope": "32 direct and embedded flows were recorded. The committed check-demos.mjs reproduces the 16 embedded flows; the 16 historical direct flows are not part of that harness."
   }
 }
