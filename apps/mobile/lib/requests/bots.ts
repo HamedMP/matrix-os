@@ -12,13 +12,16 @@ import {
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
 
 export interface NativeBotChatSnapshot {
+  kind?: "recipe" | "custom";
+  instructions?: string;
+  recipeRef?: import("@matrix-os/contracts").BotRecipeRef;
   agentId: string;
   name: string;
   selection?: CanonicalChatModelSelection;
   revision?: number;
   interactions: BotInteraction[];
   tasks: BotTaskSummary[];
-  authority: BotAuthorityView;
+  authority: BotAuthorityView | null;
 }
 
 const interactionsSchema = z.object({ interactions: z.array(BotInteractionSchema).max(32) }).strict();
@@ -59,29 +62,19 @@ export async function fetchNativeBotChat(token: string, gatewayUrl: string, chat
     token, schema: BotDirectChatResponseSchema, errorMessage: STATUS_ERROR });
   if (!direct.agentId) return null;
   const agentId = direct.agentId;
-  const [interactions, tasks, authority, library] = await Promise.allSettled([
-    fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/interactions`),
-      token, schema: interactionsSchema, errorMessage: STATUS_ERROR }),
-    fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/bot-tasks`),
-      token, schema: BotTaskListResponseSchema, errorMessage: STATUS_ERROR }),
-    fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${agentPath(agentId)}/authority`),
-      token, schema: BotAuthorityViewSchema, errorMessage: STATUS_ERROR }),
-    fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, "/api/chat-agents"),
-      token, schema: ChatAgentListResponseSchema, errorMessage: STATUS_ERROR }),
+  const library = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, "/api/chat-agents"),
+    token, schema: ChatAgentListResponseSchema, errorMessage: STATUS_ERROR });
+  const agent = library.enabled ? library.agents.find(candidate => candidate.id === agentId && !candidate.archived) : undefined;
+  if (!agent) throw new Error(STATUS_ERROR);
+  const identity = { agentId, name: agent.name, selection: agent.selection, revision: agent.revision, instructions: agent.instructions, recipeRef: agent.recipeRef };
+  if (!agent.recipeRef) return { ...identity, kind: "custom", interactions: [], tasks: [], authority: null };
+  const [interactions, tasks, authority] = await Promise.all([
+    fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/interactions`), token, schema: interactionsSchema, errorMessage: STATUS_ERROR }),
+    fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/bot-tasks`), token, schema: BotTaskListResponseSchema, errorMessage: STATUS_ERROR }),
+    fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${agentPath(agentId)}/authority`), token, schema: BotAuthorityViewSchema, errorMessage: STATUS_ERROR }),
   ]);
-  if (interactions.status === "rejected" || tasks.status === "rejected" || authority.status === "rejected") {
-    throw new Error(STATUS_ERROR);
-  }
-  const agent = library.status === "fulfilled" ? library.value.agents.find((candidate) => candidate.id === agentId) : undefined;
-  return {
-    agentId,
-    ...(agent ? { selection: agent.selection, revision: agent.revision } : {}),
-    name: library.status === "fulfilled"
-      ? library.value.agents.find((agent) => agent.id === agentId)?.name ?? "Your bot" : "Your bot",
-    interactions: interactions.value.interactions,
-    tasks: tasks.value.tasks,
-    authority: authority.value,
-  };
+  return { ...identity, kind: "recipe", interactions: interactions.interactions, tasks: tasks.tasks, authority };
+
 }
 
 export function resolveNativeBotInteraction(token: string, gatewayUrl: string, chatId: string,

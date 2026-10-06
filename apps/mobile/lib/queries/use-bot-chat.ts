@@ -28,6 +28,7 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
   return {
     snapshot: query.data ?? null,
     isError: query.isError,
+    identityUnknown: enabled && (query.isPending || query.isError),
     refresh: async () => {
       const result = await query.refetch();
       if (result.isError) throw new Error("Bot status could not be loaded. Try again.");

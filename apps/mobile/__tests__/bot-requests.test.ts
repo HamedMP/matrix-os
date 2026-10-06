@@ -8,22 +8,20 @@ const gatewayUrl = "https://app.matrix-os.com/vm/pr-2022";
 const token = "test-token";
 afterEach(() => jest.restoreAllMocks());
 
-it("returns owner-scoped bot status even when the agent library is unavailable", async () => {
-  const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input) => {
-    const path = new URL(String(input)).pathname;
-    const body = path.endsWith("/bot") ? { agentId: "bot_research1" }
-      : path.endsWith("/interactions") ? { interactions: [] }
-        : path.endsWith("/bot-tasks") ? { tasks: [] }
-          : path.endsWith("/authority") ? { agentId: "bot_research1", revision: 1,
-            grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } }
-            : { invalid: "library unavailable" };
-    return { ok: true, json: async () => body } as Response;
-  });
-  const snapshot = await fetchNativeBotChat(token, gatewayUrl, "chat_research");
-  expect(snapshot?.name).toBe("Your bot");
-  expect(snapshot?.authority.agentId).toBe("bot_research1");
-  expect(fetchMock.mock.calls.every((call) => (call[1]?.headers as Record<string, string>)?.Authorization === `Bearer ${token}`)).toBe(true);
-  expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/chats/chat_research/bot"))).toBe(true);
+it("keeps unknown Bot configuration fail closed rather than guessing recipe capabilities", async () => {
+  const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async input => ({ ok: true,
+    json: async () => String(input).endsWith("/bot") ? { agentId: "bot_research1" } : { invalid: "library unavailable" },
+  } as Response));
+  await expect(fetchNativeBotChat(token, gatewayUrl, "chat_research")).rejects.toThrow("Bot status could not be loaded");
+  expect(fetchMock.mock.calls).toHaveLength(2);
+});
+it("reopens a custom Bot with its saved model without querying recipe-only authority or tasks", async () => {
+  const agent = { id: "bot_research1", revision: 3, name: "My custom bot", description: "", instructions: "Read only", selection: { instanceId: "codex_default", model: "gpt-5.6-sol" }, archived: false, createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" };
+  const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async input => ({ ok: true,
+    json: async () => String(input).endsWith("/bot") ? { agentId: agent.id } : { enabled: true, agents: [agent] },
+  } as Response));
+  expect(await fetchNativeBotChat(token, gatewayUrl, "chat_research")).toMatchObject({ kind: "custom", agentId: agent.id, selection: agent.selection, authority: null, interactions: [], tasks: [] });
+  expect(fetchMock.mock.calls).toHaveLength(2);
 });
 
 it("sends a revision-bound answer and uses DELETE for grant revocation", async () => {
