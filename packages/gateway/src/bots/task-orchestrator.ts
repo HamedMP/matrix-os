@@ -46,7 +46,7 @@ const MAX_QUEUED_EVENTS = 1_000;
 /** Tools the broker serves today; the rest of a recipe's set arrives with later layers. */
 const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
   "artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search",
-  "integration.inventory", "integration.call",
+  "integration.inventory", "integration.call", "jev.inbox",
 ];
 
 export type BotTurnEvent =

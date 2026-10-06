@@ -77,6 +77,7 @@ export * from "#kernel-conversations";
 export * from "#provider-settings";
 export * from "#funded-ai";
 export * from "#jev";
+export * from "#jev-inbox";
 export * from "#getting-started";
 export * from "#safe-client-error";
 export * from "#speech";

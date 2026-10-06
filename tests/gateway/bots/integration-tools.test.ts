@@ -64,7 +64,7 @@ beforeEach(async () => {
 });
 afterEach(async () => destroy());
 
-function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>, assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>, homePath?: string) {
+function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>, assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>, homePath?: string, recipe = RECIPE) {
   const baseTransact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
   let transactions = 0;
   const transact: BotStateTransactions = async (ownerId, work) => {
@@ -73,7 +73,7 @@ function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject
   };
   const client = { inventory: vi.fn(async () => connected), call };
   const tools = createBotIntegrationTools({
-    client, transact, ...(homePath ? { homePath } : {}), recipes: createBotRecipeCatalog([RECIPE]), assertSource,
+    client, transact, ...(homePath ? { homePath } : {}), recipes: createBotRecipeCatalog([recipe]), assertSource,
     agents: { get: vi.fn(async () => ({ id: BOT, recipeRef: { recipeId: "mail-helper", version: "1" } }) as never) },
     now: () => toolClock,
   });
@@ -81,7 +81,7 @@ function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject
   return { tools, client, call, interactions };
 }
 
-async function grant(connection: BotIntegrationConnection, effects: Array<"read" | "write" | "send"> = ["read", "send"]) {
+async function grant(connection: BotIntegrationConnection, effects: Array<"read" | "write" | "send" | "label"> = ["read", "send"]) {
   return (await createBotGrantsRepository(db).grant({
     ownerId: OWNER, botId: BOT, service: connection.service, connectionId: connection.connectionId, accountLabel: connection.label,
     effects, audience: "direct", grantedByActorId: OWNER, now: AT,
@@ -96,6 +96,32 @@ const read = { service: "gmail", action: "list_threads", connectionId: "conn_wor
 const send = { service: "gmail", action: "send_email", connectionId: "conn_work", params: { to: "a@example.com", subject: "Hi", body: "Hello" } };
 
 describe("bot integration tools", () => {
+  it("discloses narrow labeling access and rejects an old undisclosed account choice", async () => {
+    const recipe = { ...RECIPE, integrations: [{ service: "gmail", effects: ["read", "label"] as const, required: true }] };
+    const { tools, interactions, call } = setup(undefined, undefined, undefined, undefined, recipe);
+    await tools.ensureAccess(binding, "gmail", ["read", "label"]);
+    const [choice] = await pending();
+    expect(choice?.payload).toMatchObject({ access: ["read", "label"] });
+    const payload = choice!.payload as { access?: string[] };
+    delete payload.access;
+    await db.updateTable("bot_interactions").set({ payload }).where("interaction_id", "=", choice!.interaction_id).execute();
+    await expect(interactions.resolve(OWNER, CHAT, choice!.interaction_id, { kind: "account_choice", baseRevision: 1, connectionId: "conn_work" }))
+      .rejects.toMatchObject({ code: "invalid_request" });
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("grants read+label without granting arbitrary Gmail writes or sending", async () => {
+    const recipe = { ...RECIPE, integrations: [{ service: "gmail", effects: ["read", "label"] as const, required: true }] };
+    const { tools, interactions, call } = setup(undefined, undefined, undefined, undefined, recipe);
+    await tools.ensureAccess(binding, "gmail", ["read", "label"]);
+    const [choice] = await pending();
+    await interactions.resolve(OWNER, CHAT, choice!.interaction_id, { kind: "account_choice", baseRevision: 1, connectionId: "conn_work" });
+    await expect(tools.ensureAccess(binding, "gmail", ["read", "label"])).resolves.toBeNull();
+    await expect(tools.call(binding, { ...read, action: "modify_message" })).rejects.toMatchObject({ code: "denied" });
+    await expect(tools.call(binding, send)).rejects.toMatchObject({ code: "denied" });
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it("classifies effects from the registry", () => {
     expect(effectOf("gmail", "list_threads")).toBe("read");
     expect(effectOf("gmail", "send_email")).toBe("send");

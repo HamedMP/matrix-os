@@ -207,7 +207,9 @@ export function createBotBrokerActions(deps: {
       await checkpoints.markObserved({ ...id, now: now().toISOString() });
       throw new BotBrokerActionError("stale_generation");
     }
-    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(request.capability === 'agent.task' ? 120000 : toolTimeoutMs)]);
+    const deadline = request.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(request.args.operation)
+      ? 10 * 60_000 : request.capability === "agent.task" ? 120_000 : toolTimeoutMs;
+    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(deadline)]);
     try {
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
       await checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });

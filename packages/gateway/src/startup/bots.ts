@@ -1,5 +1,7 @@
 import { createChatGptPlanPeers, type ChatGptPlanPeers } from '../bots/chatgpt-plan-peers.js';
 import { createCustomBotChats } from "../bots/custom-direct-chat.js";
+import { createBotJevTools, type JevBotWorkflowDependencies } from "../bots/jev-tools.js";
+import { createBotGrantsRepository } from "../bots/repositories/grants.js";
 import { createManagedPiOwnerTools } from "../chat/managed-pi-owner-tools.js";
 import { createManagedPiAdmission } from "../chat/managed-pi-admission.js";
 import { createManagedPiRuntime } from "../chat/managed-pi-runtime.js";
@@ -142,6 +144,7 @@ export async function startBots(options: {
   host?: ScopeRuntimeHost;
   /** How the gateway reaches the owner's integrations; without it bots have no integration tools. */
   integrations?: BotIntegrationTransport;
+  jev?: JevBotWorkflowDependencies;
   managedMcp?: { client: import("../chat/managed-pi-mcp-client.js").ManagedPiMcpClient; approvals: import("../chat/custom-mcp-approval-client.js").CustomMcpApprovalClient };
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
@@ -309,6 +312,11 @@ export async function startBots(options: {
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
     registry, profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
+  const jevTools = options.jev ? createBotJevTools({ agents: options.agents, recipes, workflow: options.jev,
+    signalFor: binding => registry.inferenceSignal(binding) ?? undefined,
+    listGrants: (ownerId, botId) => createBotGrantsRepository(db).listLive({ ownerId, botId, audience: "direct", now: now().toISOString() }),
+    ...(integrationTools ? { ensureAccess: (binding: import("../bots/runtime-registry.js").BotRuntimeBinding, signal: AbortSignal) => integrationTools.ensureAccess(binding, "gmail", ["read", "label"], signal) } : {}),
+  }) : undefined;
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry });
   const managedCapabilities: import("@matrix-os/contracts").BotToolCapability[] = [
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
@@ -344,12 +352,15 @@ export async function startBots(options: {
     admission,
     registry,
     client: host.client,
-    onRunFinished: (runId) => forgetRun(runId),
+    onRunFinished: (runId) => {
+      jevTools?.finishRun(runId);
+      forgetRun(runId);
+    },
   });
   const managed = createManagedPiRuntime({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
-    homePath: options.homePath, managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
+    homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateAnthropicSource,
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
   });
@@ -416,6 +427,10 @@ export async function startBots(options: {
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
     async close() {
       chatgptPlanPeers?.close();
+      lifetime.abort();
+      unregister();
+      registry.shutdown();
+      await jevTools?.close();
       if (checkpointTimer) clearInterval(checkpointTimer);
       clearInterval(saveSweepTimer);
       await reconciling;
@@ -423,11 +438,8 @@ export async function startBots(options: {
       await stopConnections();
       await stopSweep();
       await reconciler.stop();
-      lifetime.abort();
       await nativeTasks?.close();
       await managed.close();
-      unregister();
-      registry.shutdown();
     },
   };
 }
