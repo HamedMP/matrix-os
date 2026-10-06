@@ -36,7 +36,7 @@ describe("canonical shell Chat client", () => {
       "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1",
       expect.objectContaining({
         method: "GET",
-        headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "1" },
+        headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "2" },
         signal: expect.any(AbortSignal),
       }),
     );
@@ -105,7 +105,7 @@ describe("canonical shell Chat client", () => {
     expect(fetchFn).toHaveBeenNthCalledWith(
       2,
       "https://matrix.test/api/chats?readStateVersion=1",
-      expect.objectContaining({ method: "POST", headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "1" } }),
+      expect.objectContaining({ method: "POST", headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "2" } }),
     );
   });
 
@@ -122,7 +122,7 @@ describe("canonical shell Chat client", () => {
       "https://matrix.test/api/chats/chat_shell_test/title?readStateVersion=1",
       expect.objectContaining({
         method: "PATCH",
-        headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "1" },
+        headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "2" },
         body: JSON.stringify({ expectedTitleVersion: 0, title: "Release plan" }),
         signal: expect.any(AbortSignal),
       }),

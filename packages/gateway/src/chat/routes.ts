@@ -335,8 +335,8 @@ export function createCanonicalChatRoutes(options: {
     if (!metadataVersion.success) return validationError(context);
     await next();
     context.header("Vary", "X-Matrix-Chat-Metadata", { append: true });
-    if (metadataVersion.data === "0" && context.res.headers.get("content-type")?.includes("application/json")) {
-      const payload = projectChatMetadata(await context.res.json(), "0");
+    if (metadataVersion.data !== "2" && context.res.headers.get("content-type")?.includes("application/json")) {
+      const payload = projectChatMetadata(await context.res.json(), metadataVersion.data);
       const headers = new Headers(context.res.headers);
       headers.delete("content-length");
       context.res = new Response(JSON.stringify(payload), { status: context.res.status, headers });

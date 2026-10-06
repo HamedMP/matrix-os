@@ -45,7 +45,7 @@ export function createAoedeApi(options: { baseUrl: string; fetcher?: typeof fetc
   const request = async (path: string, body?: unknown, method = "POST", timeoutMs = 10_000): Promise<unknown> => {
     const response = await fetcher(`${base}${path}`, {
       method: body === undefined ? "GET" : method,
-      headers: { "X-Matrix-Chat-Metadata": "1", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+      headers: { "X-Matrix-Chat-Metadata": "2", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
@@ -71,7 +71,7 @@ export function createAoedeApi(options: { baseUrl: string; fetcher?: typeof fetc
     events() {
       return createSharedCanonicalChatEventSource({ openStream: ({ cursor, signal }) => fetcher(
         `${base}${chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events"))}`,
-        { headers: { Accept: "text/event-stream", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "1", ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }) },
+        { headers: { Accept: "text/event-stream", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "2", ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }) },
           signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60 * 1000)]) },
       ) });
     },
