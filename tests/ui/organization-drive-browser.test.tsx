@@ -9,6 +9,7 @@ const files = [file("README.md"), file("reports/2026/annual.md"), file("reports/
 const props = { name: "Authority", files, usedBytes: 8192, reservedBytes: 0, quotaBytes: 1_000_000_000_000, busy: false, canUpload: true, folder: "", onFolderChange: vi.fn(), onDownload: vi.fn() };
 afterEach(cleanup);
 describe("shared organization drive browser", () => {
+ it("presents a shared library without implying personal memory ingestion",()=>{render(<OrganizationDriveBrowser {...props}/>);expect(screen.getByText("Shared library")).toBeTruthy();expect(screen.getByText("Original files · organization permissions apply")).toBeTruthy();});
  it("hands off root, folder and pinned file selections as unsent Chat context",()=>{
   const context=vi.fn();render(<OrganizationDriveBrowser {...props} onChatContext={context}/>);
   fireEvent.click(screen.getByRole("button",{name:"Ask about this drive"}));expect(context).toHaveBeenLastCalledWith({kind:"drive"});
