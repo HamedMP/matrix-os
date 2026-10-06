@@ -12,7 +12,9 @@
     "./codex-chat-import-client": "./src/codex-chat-import-client.ts",
     "./local-chat-import": "./src/local-chat-import/index.ts",
     "./bots": "./src/bots/index.ts",
-    "./app-gallery": "./src/app-gallery.ts"
+    "./app-gallery": "./src/app-gallery.ts",
+    "./app-gallery-bridge-policy": "./src/app-gallery-bridge-policy.ts",
+    "./app-gallery-inventory": "./src/app-gallery-inventory.ts"
   },
   "imports": {
     "#canonical-chat-import-parts": "./src/canonical-chat-import-parts.ts",

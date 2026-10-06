@@ -11,7 +11,8 @@ import {
 import {
   NATIVE_APP_GATEWAY_CHANNEL,
   NativeAppGatewayRequestSchema,
-  isNativeAppActivityIdentity,
+  isAllowedNativeAppGatewayRequest,
+  nativeAppGatewayTimeout,
   type NativeAppGatewayRequest,
 } from "../../shared/native-app-gateway";
 
@@ -35,6 +36,8 @@ function parseQueryResponse(query: NativeAppQuery, value: unknown): unknown {
         return z.strictObject({ id: z.string().min(1).max(512) });
       case "bulkInsert":
         return z.strictObject({ ids: z.array(z.string().min(1).max(512)).max(200) });
+      case "compareAndSwap":
+        return z.strictObject({ ok: z.boolean() });
       case "update":
       case "bulkUpdate":
       case "delete":
@@ -147,8 +150,8 @@ export function createNativeAppGatewayRequester(
 ): (slug: string, request: NativeAppGatewayRequest) => Promise<unknown> {
   const fetchFn = options.fetchFn ?? fetch;
   return async (slug, rawRequest) => {
-    if (slug !== "resource-manager") throw new Error("not authorized");
     const request = NativeAppGatewayRequestSchema.parse(rawRequest);
+    if (!isAllowedNativeAppGatewayRequest(slug, slug, request)) throw new Error("not authorized");
     const token = options.getToken();
     if (!token) throw new Error("desktop authentication required");
     const origin = new URL(options.getGatewayOrigin());
@@ -156,12 +159,13 @@ export function createNativeAppGatewayRequester(
       throw new Error("invalid gateway origin");
     }
     const response = await fetchFn(new URL(request.url, origin).toString(), {
-      method: "GET",
+      method: request.init?.method ?? "GET",
       redirect: "error",
-      headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: { authorization: `Bearer ${token}`, ...(request.init?.method === "POST" ? { "content-type": "application/json" } : {}) },
+      ...(request.init?.body !== undefined ? { body: request.init.body } : {}),
+      signal: AbortSignal.timeout(nativeAppGatewayTimeout(request)),
     });
-    if (!response.ok) throw new Error(`activity request failed (${response.status})`);
+    if (!response.ok) throw new Error(`gateway request failed (${response.status})`);
     return readBoundedJson(response);
   };
 }
@@ -251,11 +255,11 @@ export class NativeAppBridge {
   async gatewayFetch(sender: NativeAppSender, rawRequest: unknown): Promise<unknown> {
     const identity = this.senders.get(sender.id);
     if (
-      !identity || identity.authGeneration !== this.options.authGeneration() || !isNativeAppActivityIdentity(identity.appIdentity, identity.routeSlug)
+      !identity || identity.authGeneration !== this.options.authGeneration()
       || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)
     ) throw new Error("not authorized");
     const parsed = NativeAppGatewayRequestSchema.safeParse(rawRequest);
-    if (!parsed.success) throw new Error("invalid request");
+    if (!parsed.success || !isAllowedNativeAppGatewayRequest(identity.appIdentity, identity.routeSlug, parsed.data)) throw new Error("invalid request");
     return this.options.gatewayRequest(identity.appIdentity, parsed.data);
   }
 
@@ -350,6 +354,7 @@ export class NativeAppBridge {
     });
     ipcMain.handle(NATIVE_APP_QUERY_CHANNEL, async (event: IpcMainInvokeEvent, rawQuery: unknown) => {
       try {
+        if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
         return await this.query({ id: event.sender.id, url: event.sender.getURL() }, rawQuery);
       } catch (error: unknown) {
         console.warn(

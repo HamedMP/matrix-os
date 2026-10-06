@@ -37,6 +37,7 @@ const queryUnion = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("insert"), table: SafeNameSchema, data: DataSchema }),
   z.strictObject({ action: z.literal("bulkInsert"), table: SafeNameSchema, rows: z.array(DataSchema).max(200) }),
   z.strictObject({ action: z.literal("update"), table: SafeNameSchema, id: IdSchema, data: DataSchema }),
+  z.strictObject({ action: z.literal("compareAndSwap"), table: SafeNameSchema, id: IdSchema, expectedPayload: z.record(z.string(), z.json()), data: DataSchema }),
   z.strictObject({
     action: z.literal("bulkUpdate"),
     table: SafeNameSchema,
@@ -70,6 +71,7 @@ export interface NativeAppDatabase {
   insert(table: string, data: Record<string, unknown>): Promise<{ id: string }>;
   bulkInsert(table: string, rows: Array<Record<string, unknown>>): Promise<unknown>;
   update(table: string, id: string, data: Record<string, unknown>): Promise<unknown>;
+  compareAndSwap(table: string, id: string, expectedPayload: Record<string, unknown>, data: Record<string, unknown>): Promise<{ ok: boolean }>;
   bulkUpdate(table: string, updates: Array<{ id: string; data: Record<string, unknown> }>): Promise<unknown>;
   delete(table: string, id: string): Promise<unknown>;
   count(table: string, filter?: Record<string, unknown>): Promise<number>;
@@ -122,6 +124,11 @@ export function createNativeAppDatabase(invoke: NativeAppQueryInvoke): NativeApp
     insert: (table, data) => mutate(table, { action: "insert", table, data }) as Promise<{ id: string }>,
     bulkInsert: (table, rows) => mutate(table, { action: "bulkInsert", table, rows }),
     update: (table, id, data) => mutate(table, { action: "update", table, id, data }),
+    compareAndSwap: async (table, id, expectedPayload, data) => {
+      const result = z.strictObject({ ok: z.boolean() }).parse(await validatedInvoke(invoke, { action: "compareAndSwap", table, id, expectedPayload, data }));
+      if (result.ok) notify(table);
+      return result;
+    },
     bulkUpdate: (table, updates) => mutate(table, { action: "bulkUpdate", table, updates }),
     delete: (table, id) => mutate(table, { action: "delete", table, id }),
     count: async (table, filter) => {

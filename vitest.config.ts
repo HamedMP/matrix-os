@@ -49,6 +49,8 @@ export default defineConfig({
       "@matrix-os/brand/marks": path.resolve(__dirname, "packages/brand/src/marks.ts"),
       "@matrix-os/brand": path.resolve(__dirname, "packages/brand/src/index.ts"),
       "@matrix-os/contracts/chat-subagent": path.resolve(__dirname, "packages/contracts/src/chat-subagent.ts"),
+      "@matrix-os/contracts/app-gallery-bridge-policy": path.resolve(__dirname, "packages/contracts/src/app-gallery-bridge-policy.ts"),
+      "@matrix-os/contracts/app-gallery-inventory": path.resolve(__dirname, "packages/contracts/src/app-gallery-inventory.ts"),
       "@matrix-os/contracts/app-gallery": path.resolve(__dirname, "packages/contracts/src/app-gallery.ts"),
       "@matrix-os/contracts/codex-chat-import": path.resolve(__dirname, "packages/contracts/src/codex-chat-import.ts"),
       "@matrix-os/contracts/codex-chat-import-client": path.resolve(__dirname, "packages/contracts/src/codex-chat-import-client.ts"),

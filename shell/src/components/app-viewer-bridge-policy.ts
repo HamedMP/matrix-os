@@ -1,3 +1,5 @@
+import { isAllowedAppGalleryBridgeRequest } from "@matrix-os/contracts/app-gallery-bridge-policy";
+
 const RESOURCE_MANAGER_ACTIVITY_PATH = /^\/api\/system\/activity(?:[?#]|$)/;
 
 function appSlugFromName(appName: string): string {
@@ -18,18 +20,7 @@ export function isAllowedBridgeFetchUrl(
   )
     return false;
   const slug = appSlugFromName(appName);
-  if (slug === "app-gallery") {
-    if (url === "/api/app-gallery") return method === "GET";
-    if (/^\/api\/app-gallery\/[a-z][a-z0-9-]{0,47}\/install$/.test(url))
-      return method === "POST";
-    if (
-      parsed.pathname === "/api/bridge/service" ||
-      parsed.pathname.startsWith("/api/bridge/service/")
-    ) {
-      return url === "/api/bridge/service" && method === "GET";
-    }
-    return false;
-  }
+  if (slug === "app-gallery") return isAllowedAppGalleryBridgeRequest(url, method);
   if (
     parsed.pathname === "/api/bridge/ai" ||
     parsed.pathname.startsWith("/api/bridge/ai/")
