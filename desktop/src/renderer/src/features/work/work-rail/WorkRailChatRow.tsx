@@ -20,7 +20,7 @@ const railStateLabel: Record<Exclude<WorkRailAgentState, "idle">, string> = {
   approval_required: "Approval required",
   input_required: "Waiting for your reply",
   running: "Working…",
-  failed: "Needs retry",
+  failed: "Needs attention",
   unseen_completion: "Completed",
 };
 

@@ -18,12 +18,14 @@ function fixture(status: "failed" | "aborted", retry = false): CanonicalChatDeta
 
 describe("terminal notice parity", () => {
   it.each([
-    ["insufficient_credit", "There is not enough credit available for this Chat. Check Matrix AI credit in Settings or choose another connection."],
-    ["budget_exceeded", "The monthly AI budget has been reached. Check Matrix AI in Settings or choose another connection."],
+    ["insufficient_credit", "Not enough Matrix AI credit. Add credit in Settings."],
+    ["budget_exceeded", "Monthly AI budget reached. Switch connection."],
+    ["provider_unavailable", "Sign-in required. Reconnect in Agents & providers on this computer."],
+    ["run_failed", "Usage limit reached. Wait for reset or switch connection."],
   ])("shows trusted %s with the same safe copy on Web and Native Mobile", (code, text) => {
     const detail = fixture("failed");
     detail.activities = [{ type: "run.error", runId: "run_first", sequence: 1,
-      error: { code, safeMessage: "PRIVATE UPSTREAM TEXT", retryable: false } }] as CanonicalChatDetailResponse["activities"];
+      error: { code, safeMessage: ["provider_unavailable", "run_failed"].includes(code) ? text : "PRIVATE UPSTREAM TEXT", retryable: false } }] as CanonicalChatDetailResponse["activities"];
     expect(projectCanonicalTranscript(detail).map((message) => message.content)).toEqual(["Prompt 1", text, "Prompt 2"]);
     expect(buildTranscript(detail).reverse().map((message) => message.text)).toEqual(["Prompt 1", text, "Prompt 2"]);
   });
@@ -32,7 +34,7 @@ describe("terminal notice parity", () => {
     const expected = [
       "Prompt 1",
       status === "failed"
-        ? "The agent could not complete its reply. Try again or check Agents & providers."
+        ? "The agent could not finish. Try again."
         : "Agent work stopped.",
       "Prompt 2",
     ];
