@@ -29,6 +29,7 @@ const OTHER_CONTEXT_WINDOW = 128_000;
 export interface ResolvedBotRoute {
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
+  subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
 }
 
 export class BotRouteError extends Error {

@@ -12,6 +12,7 @@ import {
   type ScopeRuntimeBrokerResponse,
 } from "@matrix-os/scope-runtime/broker-protocol";
 import { z } from "zod/v4";
+import { forwardChatGptPlanInference } from "./chatgpt-plan-inference.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { FundedAiCredentialError, type MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import {
@@ -43,6 +44,7 @@ const BotInferenceBodySchema = z.object({
 
 export interface BotInferenceDependencies {
   homePath: string;
+  chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
   lifetime: AbortSignal;
   /** Exact registry-owned run lifetime; combined with subsystem shutdown. */
   runSignal?: AbortSignal;
@@ -114,6 +116,11 @@ export async function forwardBotInference(
   const authorization = authorize(modelId);
   if (!authorization.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
     return failure(request.requestId, "action_denied");
+  }
+  if (authorization.accessSourceId === "matrix_chatgpt_plan") {
+    if (!deps.chatgptPlan) return failure(request.requestId, "provider_unavailable");
+    return forwardChatGptPlanInference(request, binding, { authority: deps.chatgptPlan, signal: lifecycle,
+      stillAuthorized: () => { const current = authorize(modelId); return !lifecycle.aborted && current.allowed && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId); } });
   }
   // Subscription custody stays with the explicit native task executor. Own Matrix SIWC is not qualified.
   if (authorization.accessSourceId === "owner_openai_profile" || authorization.accessSourceId === "owner_anthropic_profile"

@@ -265,6 +265,23 @@ describe("server-resolved Chat mention context", () => {
         .rejects.toMatchObject({ code: "context_unavailable" });
     });
 
+    it("preserves exact owner subscription options through the canonical direct Bot adapter", async () => {
+      const plan = { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [
+        { id: "accountId", value: "account_own" }, { id: "grantRevision", value: "3" },
+      ] };
+      const id = "bot_0123456789abcdef01234567";
+      await agents.createRecipeBot(owner, { id, createHash: "c".repeat(64),
+        fields: { name: "Subscription Bot", description: "", instructions: "Revise.", selection: plan },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" },
+      });
+      const bots = botContext(chatId => chatId === "chat_current" ? id : null);
+      await expect(bots.prepare(owner, "chat_current", request)).resolves.toMatchObject({
+        selection: { ...plan, instanceId: "matrix_bot_default" }, permissionMode: "default",
+      });
+      await expect(context.prepare(owner, "chat_source", { ...request, selection: plan }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+    });
+
     it("refuses the bot runtime in any other chat, directly or through a mention", async () => {
       const bots = botContext(() => null);
       await expect(bots.prepare(owner, "chat_current", { ...request, selection: botSelection }))

@@ -12,7 +12,7 @@ import { MatrixBotModelField } from './MatrixBotModelField.js';
 export function BotRecipeSetup({ botClient, creationRetained = false, onSetup, recipe, pending, createDisabled, error, selection, models, catalog, catalogLoading, onSelectionChange, onCreate, onClose }: {
   onSetup?:()=>void; botClient?: BotClient; creationRetained?: boolean; recipe: BotRecipeSummary; pending: boolean; createDisabled?: boolean; error: string; selection: CanonicalChatModelSelection | null;
   models: readonly CanonicalProviderChoice[]; catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
-  onSelectionChange(selection: CanonicalChatModelSelection): void;
+  onSelectionChange(selection: CanonicalChatModelSelection | null): void;
   onCreate(name: string, executor?:BotExecutorSelection | null): void; onClose(): void;
 }) {
   const connections = useBotConnections(botClient?.connections ? botClient as Required<Pick<BotClient,"connections">> : undefined);

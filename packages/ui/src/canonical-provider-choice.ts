@@ -1,4 +1,4 @@
-import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -108,7 +108,7 @@ export function deriveCanonicalProviderChoices(
     const permissionMode = instance.supports.permissionModes[0];
     if (!interactionMode || !permissionMode) return [];
     const managedExecution = instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default";
-    const harnessLabel = managedExecution ? "Matrix AI" : instance.displayName;
+    const harnessLabel = managedExecution ? "Matrix AI" : isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "ChatGPT subscription" : instance.displayName;
     return instance.models.flatMap((model) => model.availability === "available" ? [{
       instanceId: instance.id,
       driverKind: instance.driverKind,

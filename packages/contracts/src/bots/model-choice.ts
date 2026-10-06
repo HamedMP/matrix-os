@@ -3,6 +3,30 @@ import type { CanonicalChatModelSelection } from "#canonical-chat";
 import { MATRIX_BOT_SELECTION } from "#bots/selection";
 
 export const MATRIX_PI_CHAT_INSTANCE_ID = "matrix_pi_default";
+export const MATRIX_CHATGPT_PLAN_INSTANCE_ID = "matrix_chatgpt_plan";
+
+export function isChatgptPlanBotRoute(route: { instanceId: string; driverKind: string }): boolean {
+  return route.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID && route.driverKind === "matrix_bot";
+}
+
+export function isPiBotCoordinatorRoute(route: { instanceId: string; driverKind: string }): boolean {
+  return isManagedPiBotRoute(route) || isChatgptPlanBotRoute(route);
+}
+
+/** Nonsecret source binding must survive account switches and grant revocation. */
+export function chatgptPlanSelectionBinding(options?: CanonicalChatModelSelection["options"]): { accountId: string; grantRevision: string } | null {
+  if (options?.length !== 2) return null;
+  const accountId = options.find(option => option.id === "accountId")?.value;
+  const grantRevision = options.find(option => option.id === "grantRevision")?.value;
+  return typeof accountId === "string" && accountId.length > 0 && accountId.length <= 160
+    && typeof grantRevision === "string" && /^(0|[1-9][0-9]{0,15})$/.test(grantRevision)
+    && Number.isSafeInteger(Number(grantRevision)) ? { accountId, grantRevision } : null;
+}
+
+export function sameChatgptPlanSelectionBinding(left?: CanonicalChatModelSelection["options"], right?: CanonicalChatModelSelection["options"]): boolean {
+  const a = chatgptPlanSelectionBinding(left), b = chatgptPlanSelectionBinding(right);
+  return !!a && !!b && a.accountId === b.accountId && a.grantRevision === b.grantRevision;
+}
 
 export function isManagedPiBotRoute(route: { instanceId: string; driverKind: string; connectionLabel?: string }): boolean {
   // Connection labels are optional negotiated presentation, not route identity.
@@ -35,6 +59,12 @@ export function botModelRoutingLabel(selection: CanonicalChatModelSelection | nu
   if (isAutomaticBotSelection(selection)) return "Model routing: automatic";
   const instance = catalog?.instances.find((candidate) => candidate.id === selection.instanceId);
   const model = instance?.models.find((candidate) => candidate.id === selection.model);
+  if (selection.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID) {
+    const unavailable = !instance || instance.availability !== "available" || model?.availability !== "available"
+      || !isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })
+      || !sameChatgptPlanSelectionBinding(selection.options, instance.defaultSelection?.options);
+    return `ChatGPT subscription · ${model?.displayName ?? selection.model}${unavailable ? " · unavailable" : ""}`;
+  }
   if (selection.instanceId !== MATRIX_PI_CHAT_INSTANCE_ID) {
     return `${canonicalProviderModelRouteLabel(instance, model?.displayName ?? selection.model)} · unavailable`;
   }
@@ -84,6 +114,7 @@ export function canonicalProviderAvailabilityReasonLabel(
 export function canonicalProviderModelRouteLabel(instance: CanonicalProviderInstanceDescriptor | undefined,
   modelLabel: string): string {
   if (!instance) return modelLabel;
+  if (isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })) return `${modelLabel} · ChatGPT subscription`;
   if (isManagedPiBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isLegacyMatrixSdkProvider(instance)) {
     return `${modelLabel} · Matrix AI`;
   }

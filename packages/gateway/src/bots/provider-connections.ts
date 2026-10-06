@@ -16,6 +16,7 @@ export function createBotProviderConnections(deps: {
   db: BotExecutor; ownerId: string; computerId: string;
   agentExists(ownerId: string, botId: string): Promise<boolean>;
   observeClaude(): Promise<ClaudeTaskObservation>;
+  chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
 }) {
   const scope = (owner: string) => {
     if (!deps.ownerId || !deps.computerId) throw new BotProviderConnectionError('unavailable');
@@ -42,12 +43,12 @@ export function createBotProviderConnections(deps: {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`bot-provider:${deps.ownerId}:${deps.computerId}`}, 0))`.execute(db);
   }
   const service = {
-    async connections(owner: string): Promise<BotProviderConnections> {
+    async connections(owner: string, includeChatgptPlan = false): Promise<BotProviderConnections> {
       scope(owner);
       const [observed, saved] = await Promise.all([deps.observeClaude(), grant()]);
       const enabled = Boolean(saved?.enabled && observed.available && saved.fingerprint === observed.fingerprint);
       return BotProviderConnectionsSchema.parse({ connections: [
-        { id: 'matrix_chatgpt_plan', providerId: 'openai', executionKind: 'direct_pi', availability: 'unavailable', unavailableReason: 'provider_access_required',
+        includeChatgptPlan && deps.chatgptPlan ? await deps.chatgptPlan.observe(owner) : { id: 'matrix_chatgpt_plan', providerId: 'openai', executionKind: 'direct_pi', availability: 'unavailable', unavailableReason: 'provider_access_required',
           models: [], authorization: { revision: 0, enabled: false, background: false }, coordinatorFunding: 'separate' },
         { id: 'claude_code_tasks', providerId: 'anthropic', executionKind: 'native_task',
           availability: !observed.available ? 'unavailable' : enabled ? 'available' : 'setup_required',

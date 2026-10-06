@@ -2,7 +2,7 @@ import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
 import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import type {BotClient} from "./bots/client.js";
 import { BotRecipeSetup } from "./bots/BotRecipeSetup.js";
-import { isAutomaticBotSelection, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
+import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { CanonicalProviderChoice } from "../canonical-provider-choice.js";
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
@@ -43,7 +43,7 @@ export function AgentRecipesPanel({ onSetup, botClient, onStartChat, onCreateJev
   const [query, setQuery] = useState("");
   const [selectedGmail, setSelectedGmail] = useState("");
   const [labeling, setLabeling] = useState(false);
-  const [chosenBotSelection, setBotSelection] = useState<CanonicalChatModelSelection | undefined>(undefined);
+  const [chosenBotSelection, setBotSelection] = useState<CanonicalChatModelSelection | null | undefined>(undefined);
   const [botPending, setBotPending] = useState<string | null>(null);
   const [botError, setBotError] = useState("");
   const mounted = useRef(false);
@@ -60,7 +60,7 @@ export function AgentRecipesPanel({ onSetup, botClient, onStartChat, onCreateJev
   }
   const botSelection = chosenBotSelection ?? null;
   const botModelAvailable = Boolean(botSelection && (isAutomaticBotSelection(botSelection) || selectableModels.some((choice) =>
-    choice.instanceId === botSelection.instanceId && choice.modelId === botSelection.model)));
+    botModelChoiceMatchesSelection(choice, botSelection))));
   const createBot = async (recipe: BotRecipeSummary, name = recipe.name, executor:BotExecutorSelection | null = null) => {
     if (!onInstantiateBot || !onOpenBotChat || botPending || !botSelection || !botModelAvailable || catalogLoading) return;
     const scope=owner.current, current=()=>mounted.current && owner.current===scope;

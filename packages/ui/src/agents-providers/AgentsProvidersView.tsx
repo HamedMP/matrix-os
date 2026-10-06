@@ -49,6 +49,7 @@ export function AgentsProvidersView({
   onAddCredit,
   onSetupHarness,
   workflowClient,
+  localChatgptClient,
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
 }: AgentsProvidersViewProps) {
@@ -186,6 +187,7 @@ export function AgentsProvidersView({
           onChooseAgent={(id) => { setExpandedRowId(id); setExpandedRowKind(snapshot.harnesses.find(item => item.id === id)?.harness ?? null); onSelectHarness(id); }}
           onUseGateway={useGateway}
           subscriptions={<YourSubscriptions snapshot={snapshot} capabilities={workflowCapabilities} client={workflowClient}
+            localChatgptClient={localChatgptClient}
             operationIds={operationIds} workflowStatus={workflowStatus} forbidden={workflowPermission === "forbidden"}
             disabled={busy || gatewayPending || enablement.pending} onRefresh={refreshSettings}
             onOpen={(id, kind) => { setExpandedRowId(id); setExpandedRowKind(kind); setSubscriptionTarget(id); if (snapshot.harnesses.some(item => item.id === id)) onSelectHarness(id); }} />}

@@ -192,6 +192,7 @@ export interface BotSchemaMigrationsTable {
 }
 
 export interface BotDatabase {
+  bot_chatgpt_plan_devices: { owner_id: string; computer_id: string; device_id: string; public_key: string; };
   bot_provider_authorizations: {
     owner_id: string; computer_id: string; connection_id: 'claude_code_tasks'; fingerprint: string;
     enabled: boolean; background: boolean; revision: number | string;

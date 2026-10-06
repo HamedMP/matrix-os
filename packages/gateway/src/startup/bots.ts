@@ -1,3 +1,4 @@
+import { createChatGptPlanPeers, type ChatGptPlanPeers } from '../bots/chatgpt-plan-peers.js';
 import { createManagedPiOwnerTools } from "../chat/managed-pi-owner-tools.js";
 import { createManagedPiAdmission } from "../chat/managed-pi-admission.js";
 import { createManagedPiRuntime } from "../chat/managed-pi-runtime.js";
@@ -106,6 +107,7 @@ export async function runConnectionReconciliationPass(
 
 export interface BotServices {
   providerConnections?: BotProviderConnectionsService;
+  chatgptPlanPeers?: ChatGptPlanPeers;
   recipes: BotRecipeCatalog;
   instantiation: BotInstantiation;
   authority: BotAuthority;
@@ -153,7 +155,9 @@ export async function startBots(options: {
     return undefined;
   }
   const recipes = createBotRecipeCatalog();
-  const providerConnections = createBotProviderConnections({ db, ownerId: options.runtimeOwnerId ?? '', computerId: options.computerId ?? '',
+  const chatgptPlanPeers = options.runtimeOwnerId && options.computerId
+    ? createChatGptPlanPeers({ db, ownerId: options.runtimeOwnerId, computerId: options.computerId }) : undefined;
+  const providerConnections = createBotProviderConnections({ ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, ownerId: options.runtimeOwnerId ?? '', computerId: options.computerId ?? '',
     agentExists: async (ownerId, botId) => { const agent = await options.agents.get({ type: 'personal', ownerId }, botId); return Boolean(agent?.recipeRef && !agent.archived); },
     observeClaude: options.nativeProfileGuard && options.host?.available ? createClaudeTaskObserver({ homePath: options.homePath, providers: options.providers })
       : async () => ({ available: false, reason: 'unsupported_runtime' }),
@@ -164,9 +168,12 @@ export async function startBots(options: {
     chats: options.repository,
     agents: options.agents,
     recipes,
-    validateSelection: async (_ownerId, selection) => {
+    validateSelection: async (ownerId, selection) => {
       if (!options.host?.available) throw new BotInstantiationError("unavailable");
-      try { resolveManagedPiRoute(await options.providers.getSnapshot(), selection); }
+      try {
+        if (selection.instanceId === "matrix_chatgpt_plan" && chatgptPlanPeers) await chatgptPlanPeers.resolve(selection, ownerId, "interactive");
+        else resolveManagedPiRoute(await options.providers.getSnapshot(), selection);
+      }
       catch (error: unknown) { console.warn("[bots] selected managed model unavailable", error instanceof Error ? error.name : "UnknownError"); throw new BotInstantiationError("invalid_request"); }
     },
     ensureWorkspace: (botId) => ensureBotWorkspace(options.homePath, botId),
@@ -246,8 +253,9 @@ export async function startBots(options: {
   const host = options.host;
   if (!host?.available) {
     return {
-      recipes, instantiation, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler, providerConnections,
+      recipes, instantiation, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler, providerConnections, chatgptPlanPeers,
       async close() {
+        chatgptPlanPeers?.close();
         await stopConnections();
         await stopSweep();
         await reconciler.stop();
@@ -317,6 +325,8 @@ export async function startBots(options: {
     recipes,
     resolveRoute: createBotModelRouteResolver({
       providers: options.providers,
+      ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
+      ownerId: options.runtimeOwnerId ?? undefined,
       lifetime: lifetime.signal,
       ...(process.env.MATRIX_BOT_CODEX_MODEL !== undefined ? { codexModel: process.env.MATRIX_BOT_CODEX_MODEL } : {}),
     }),
@@ -351,6 +361,7 @@ export async function startBots(options: {
       ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
     }),
     inference: {
+      ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
       homePath: options.homePath,
       onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
       revalidateBinding: async (binding) => {
@@ -378,12 +389,14 @@ export async function startBots(options: {
     grants,
     authority,
     providerConnections,
+    chatgptPlanPeers,
     startConnectionReconciler,
     botChats,
     tasks,
     adapter,
     managedAdapter: managed.adapter,
     async close() {
+      chatgptPlanPeers?.close();
       if (checkpointTimer) clearInterval(checkpointTimer);
       clearInterval(saveSweepTimer);
       await reconciling;

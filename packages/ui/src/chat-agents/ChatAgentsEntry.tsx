@@ -2,7 +2,7 @@ import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
 import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import { Dialog } from "../Dialog.js";
 import { BotEditorApps } from "./bots/BotEditorApps.js";
-import { isAutomaticBotSelection, matrixBotModelChoices, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
+import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotModelChoices, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
 import { isChatAgentDriver } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -60,7 +60,7 @@ function DailyBriefCreation({ onSetup, recipe, client, models, catalog, catalogL
   const attempt = useRef<{ key: string; requestId: string; chatId?:string; executorAttempted?:boolean } | null>(null);
   useEffect(() => {attempt.current=null; setPending(false); return () => { generation.current += 1; opening.current = false; };}, [client]);
   const available = Boolean(selection && (isAutomaticBotSelection(selection) || matrixBotSelectableModelChoices(models, catalog)
-    .some(choice => choice.instanceId === selection.instanceId && choice.modelId === selection.model)));
+    .some(choice => botModelChoiceMatchesSelection(choice, selection))));
   const create = async (name: string, executor:BotExecutorSelection | null = null) => {
     if (!client.bots || opening.current || !selection || !available || catalogLoading) return;
     const fields = { recipe: { recipeId: recipe.recipeId, version: recipe.version }, name, selection };
@@ -254,7 +254,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       });
   };
   const edit = (agent: ChatAgent | "new") => {
-    const choice = matrixBotSelectableModelChoices(models, state.catalog)[0];
+    const choice = matrixBotSelectableModelChoices(models, state.catalog, agent !== "new" && !!agent.recipeRef)[0];
     const selection: CanonicalChatModelSelection | null = choice ? matrixBotModelSelection(choice) : null;
     patch({ editing: agent, notice: "", error: "", draft: agent === "new" ? {
       name: "", description: "", instructions: "", requestId: requestId(),

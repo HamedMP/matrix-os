@@ -1,3 +1,5 @@
+import { withChatGptPlanProviderInstance } from "../../../packages/gateway/src/bots/chatgpt-plan-provider-instance.js";
+import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { managedPiChatInstances } from "../../../packages/gateway/src/chat/managed-chat-catalog.js";
 import { makeAiProviderSnapshot } from "../../fixtures/ai-provider-snapshot.js";
 import { KyselyPGlite } from "kysely-pglite";
@@ -17,7 +19,7 @@ let orchestrator: CanonicalChatOrchestrator;
 let finishBlockedRun: (() => void) | undefined;
 let blockedRun: Promise<void> | undefined;
 let getCatalog: ReturnType<typeof vi.fn>;
-let savedSelection = { instanceId: "matrix_bot_default", model: "auto" };
+let savedSelection: CanonicalChatModelSelection = { instanceId: "matrix_bot_default", model: "auto" };
 let started: Array<{ selection: unknown; permissionMode: string }>;
 
 beforeEach(async () => {
@@ -149,5 +151,40 @@ it("keeps a saved managed bot choice and its exact per-turn model in canonical a
 it("refuses an unavailable explicit bot model without falling back to Automatic", async () => {
   await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_concrete_bad", baseRevision: 0,
     parts: [{ type: "text", text: "Hi" }], selection: { instanceId: "matrix_pi_default", model: "forged-model" }, interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400 });
+  expect(started).toEqual([]);
+});
+
+const planSelection = { instanceId: "matrix_chatgpt_plan", model: "gpt-account-model",
+  options: [{ id: "accountId", value: "account-own" }, { id: "grantRevision", value: "3" }] };
+function installPlanCatalog() {
+  const wrapped = withChatGptPlanProviderInstance({ getCatalog: async () => ({ revision: "base_plan", drivers: [], instances: [] }) }, {
+    observe: async () => ({ id: "matrix_chatgpt_plan", providerId: "openai", executionKind: "direct_pi", availability: "available",
+      accountId: "account-own", models: [{ id: "gpt-account-model", displayName: "Account model" }],
+      authorization: { revision: 3, enabled: true, background: false }, coordinatorFunding: "subscription" }),
+  });
+  getCatalog.mockImplementation((actor, selection) => wrapped.getCatalog(actor, selection));
+}
+it("admits a saved subscription Bot through real catalog projection and preserves exact account/grant", async () => {
+  savedSelection = planSelection;
+  installPlanCatalog();
+  const admitted = await orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_plan_actual_descriptor", baseRevision: 0,
+    parts: [{ type: "text", text: "Hello" }], selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default" });
+  expect(admitted.run.selection).toEqual({ ...planSelection, instanceId: "matrix_bot_default" });
+  await vi.waitFor(() => expect(started).toHaveLength(1));
+  expect(started[0]?.selection).toEqual({ ...planSelection, instanceId: "matrix_bot_default" });
+});
+it("refuses stale account/grant subscription intent without substituting the managed Bot route", async () => {
+  savedSelection = planSelection;
+  installPlanCatalog();
+  await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_plan_stale_grant", baseRevision: 0,
+    parts: [{ type: "text", text: "Hello" }], selection: { ...planSelection, options: [{ id: "accountId", value: "account-own" }, { id: "grantRevision", value: "2" }] },
+    interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400 });
+  expect(started).toEqual([]);
+});
+it("refuses private subscription source in ordinary Chat before catalog or adapter dispatch", async () => {
+  installPlanCatalog();
+  await expect(orchestrator.admitTurn(principal, owner, "chat_ordinary", { clientRequestId: "req_plan_nonbot", baseRevision: 0,
+    parts: [{ type: "text", text: "Hello" }], selection: planSelection, interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400 });
+  expect(getCatalog).not.toHaveBeenCalled();
   expect(started).toEqual([]);
 });

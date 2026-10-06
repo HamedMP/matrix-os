@@ -219,3 +219,4 @@ export type { RailOrderPreference, RailSortMode } from "./chat/rail-order.js";
 export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js";
 export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
 export type { ProviderWorkflowClient } from "./agents-providers/types.js";
+export type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./agents-providers/local-chatgpt-plan-client.js";

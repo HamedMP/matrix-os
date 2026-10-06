@@ -8,12 +8,18 @@ import { BotRouteError, resolveBotRoute, resolveManagedPiRoute, type ResolvedBot
  */
 export function createBotModelRouteResolver(options: {
   codexModel?: string;
+  chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
+  ownerId?: string;
   providers: AiProviderSnapshotReader;
   /** Compatibility only; native Codex identity must never fund a Pi coordinator. */
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   lifetime?: AbortSignal;
 }): (selection?: CanonicalChatModelSelection) => Promise<ResolvedBotRoute> {
   return async (selection) => {
+    if (selection?.instanceId === "matrix_chatgpt_plan") {
+      if (!options.chatgptPlan || !options.ownerId) throw new BotRouteError("model_unavailable");
+      return options.chatgptPlan.resolve(selection, options.ownerId, "interactive");
+    }
     if (selection) return resolveManagedPiRoute(await options.providers.getSnapshot(), selection);
     if (options.codexModel !== undefined) throw new BotRouteError("model_unavailable");
     return resolveBotRoute(await options.providers.getSnapshot());

@@ -21,7 +21,9 @@ export function createBotProviderConnectionRoutes(options: { service?: BotProvid
     console.warn('[bot-connections] Request unavailable:', error instanceof Error ? error.name : 'UnknownError'); return unavailable(c);
   });
   routes.get('/api/bot-connections', async c => {
-    const principal = options.getPrincipal(c); return options.service ? c.json(await options.service.connections(principal.userId)) : unavailable(c);
+    const principal = options.getPrincipal(c); const flag = c.req.query('includeChatgptPlan');
+    if (flag !== undefined && flag !== 'true' && flag !== 'false') return invalid(c);
+    return options.service ? c.json(await options.service.connections(principal.userId, flag === 'true')) : unavailable(c);
   });
   routes.post('/api/bot-connections/:id/authorization', async c => {
     const principal = options.getPrincipal(c); const id = BotProviderConnectionIdSchema.safeParse(c.req.param('id'));

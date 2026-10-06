@@ -10,6 +10,7 @@
  */
 import { sql, type Transaction } from "kysely";
 import { migrateManagedPiState } from "../chat/managed-pi-migration.js";
+import { migrateChatGptPlanDevices } from './chatgpt-plan-device-migration.js';
 import { migrateBotProviderConnections } from './provider-connections-migration.js';
 import type { OwnerBotDatabase } from "./database.js";
 
@@ -327,4 +328,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 3, name: "bot_connect_retry_schedule", up: migrateConnectRetryScheduleV3 },
   { version: 4, name: "managed_pi_state", up: migrateManagedPiState },
   { version: 5, name: "bot_provider_connections", up: migrateBotProviderConnections },
+  { version: 6, name: "bot_chatgpt_plan_devices", up: migrateChatGptPlanDevices },
 ];

@@ -118,13 +118,16 @@ export class ChatAgentContext {
         throw new ChatAgentContextError("context_unavailable");
       }
       const bot = await this.agent(owner, directBotId);
+      const localPlan = input.selection.instanceId === "matrix_chatgpt_plan" ? input.selection
+        : input.selection.instanceId !== "matrix_pi_default" && bot.selection.instanceId === "matrix_chatgpt_plan" ? bot.selection : undefined;
+      if (localPlan) return { selection: { ...localPlan, instanceId: MATRIX_BOT_INSTANCE_ID }, interactionMode: "default", permissionMode: "default" };
       const concrete = input.selection.instanceId === "matrix_pi_default" || (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID && input.selection.model !== "auto")
         ? input.selection : bot.selection.instanceId === "matrix_pi_default" ? bot.selection : undefined;
       if (concrete && Object.keys(concrete.options ?? {}).length) throw new ChatAgentContextError("context_unavailable");
       return { selection: concrete ? { instanceId: MATRIX_BOT_INSTANCE_ID, model: concrete.model } : MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
     }
     // Only a bot's own chat can run the bot runtime.
-    if (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
+    if ([MATRIX_BOT_INSTANCE_ID, "matrix_chatgpt_plan"].includes(input.selection.instanceId)) throw new ChatAgentContextError("context_unavailable");
     const agentReference = references.find((reference) => reference.kind === "agent");
     const chatReferences = references.filter((reference) => reference.kind === "chat");
     const driveReferences = references.flatMap((reference) => reference.kind === "organization_drive" && reference.drive ? [reference.drive] : []);

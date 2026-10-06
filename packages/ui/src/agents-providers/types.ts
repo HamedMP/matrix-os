@@ -60,6 +60,7 @@ export interface AgentsProvidersViewProps {
   onRefreshForConnection?: () => Promise<ProviderSettingsSnapshot | null>;
   onMutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean> | void;
   workflowClient?: ProviderWorkflowClient;
+  localChatgptClient?: import("./local-chatgpt-plan-client.js").LocalChatgptPlanClient;
   onOpenAuthorizationUrl?: (url: string) => void;
   onLoadUsageHistory?: (cursor: string | null, signal: AbortSignal) => Promise<import("@matrix-os/contracts").AiCreditHistoryResponse>;
   onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;

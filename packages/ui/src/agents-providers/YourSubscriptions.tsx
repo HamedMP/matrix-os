@@ -4,11 +4,14 @@ import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { usageLines } from "./utils.js";
 import { managedConnectionCapability } from "./managed-connection-capability.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability } from "./types.js";
+import { LocalChatgptSubscription } from "./LocalChatgptSubscription.js";
+import type { LocalChatgptPlanClient } from "./local-chatgpt-plan-client.js";
 
 type Props = {
   snapshot: ProviderSettingsSnapshot;
   capabilities: readonly ProviderWorkflowUICapability[];
   client?: ProviderWorkflowClient;
+  localChatgptClient?: LocalChatgptPlanClient;
   operationIds: Readonly<Record<string, string>>;
   workflowStatus: Readonly<Record<string, string>>;
   forbidden: boolean;
@@ -18,12 +21,16 @@ type Props = {
 };
 
 /** Display-only shortcuts into the single native workflow; never initiate auth here. */
-export function YourSubscriptions({snapshot, capabilities, client, operationIds, workflowStatus, forbidden, disabled, onOpen, onRefresh}: Props) {
+export function YourSubscriptions({snapshot, capabilities, client, localChatgptClient, operationIds, workflowStatus, forbidden, disabled, onOpen, onRefresh}: Props) {
   return <section className="matrix-ap-subscriptions" aria-label="Your subscriptions">
     <h3>Your subscriptions</h3>
     <p className="matrix-ap-help">Connect your accounts on this Computer. Subscription usage is separate from Matrix AI credit.</p>
     <div className="matrix-ap-subscription-list">
+      <LocalChatgptSubscription client={localChatgptClient} disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/>
       {(["codex", "claude"] as const).flatMap(kind => {
+        // Native Codex key/account shortcuts remain a separate route. Never
+        // substitute that account for an explicit local subscription connection.
+        if (kind === "codex" && localChatgptClient) return [];
         const saved = snapshot.harnesses.filter(item => item.harness === kind);
         const inventory = saved.length ? [] : capabilities.filter(item => item.harness === kind);
         const targets = [...saved.map(harness => ({id: harness.id, harness, capability: capabilities.find(item => item.harnessInstanceId === harness.id)})),

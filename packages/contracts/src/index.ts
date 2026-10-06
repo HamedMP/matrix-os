@@ -1454,3 +1454,5 @@ export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type Imported
 export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryEntry, type AiCreditHistoryResponse } from "#ai-credit-history";
 
 export * from "#provider-workflows";
+export * from './chatgpt-plan-peer.js';
+export * from './chatgpt-plan-wire.js';

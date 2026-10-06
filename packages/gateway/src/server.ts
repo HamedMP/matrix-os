@@ -1,3 +1,4 @@
+import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-instance.js";
 import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
 import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
 import { createCodexNativeAccountMetadataReader } from "./ai-providers/codex-native-account-metadata.js";
@@ -1499,7 +1500,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/",chatDriveContext.routes);
   app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
   const {
-    catalog: canonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
+    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
   } = createGatewayChatProviderCatalog({
     homePath,
     codexExecutable,
@@ -1513,6 +1514,7 @@ export async function createGateway(config: GatewayConfig) {
     credentialedDriverKinds: ["pi", "opencode"],
     driveContextReady: () => chatDriveContext.service !== null,
   });
+  let canonicalChatProviderCatalog = baseCanonicalChatProviderCatalog;
   if (chatRepository && canonicalChatExecutionRoots) {
     // Extraction plan for this 1,000+ line composition entrypoint:
     // specs/536-conversational-bots/plan.md#gateway-entrypoint-extraction.
@@ -1539,6 +1541,11 @@ export async function createGateway(config: GatewayConfig) {
       ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       ...(fundedAdmission ? { fundedAdmission } : {}),
     });
+    if (botServices?.chatgptPlanPeers) {
+      const enhanced = withChatGptPlanProviderInstance(baseCanonicalChatProviderCatalog, botServices.chatgptPlanPeers);
+      canonicalChatProviderCatalog = { ...baseCanonicalChatProviderCatalog, getCatalog: enhanced.getCatalog,
+        refresh: async (principal, readOptions) => { await baseCanonicalChatProviderCatalog.refresh(principal, readOptions); return enhanced.getCatalog(principal); } };
+    }
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),

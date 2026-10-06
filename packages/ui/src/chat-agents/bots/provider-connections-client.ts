@@ -39,7 +39,7 @@ export function createBotConnectionClient(request: (path: string, method: "GET" 
    connections: async signal => {
      if (signal?.aborted) throw new Error("Bot connections are unavailable. Check again.");
      if (!cached || Date.now() >= cached.until) {
-       if (!pending) {const epoch=cacheEpoch; const task:Promise<BotProviderConnections> = call("/api/bot-connections", "GET", BotProviderConnectionsSchema).then(value => {
+       if (!pending) {const epoch=cacheEpoch; const task:Promise<BotProviderConnections> = call("/api/bot-connections?includeChatgptPlan=true", "GET", BotProviderConnectionsSchema).then(value => {
          if(epoch===cacheEpoch) cached={value,until:Date.now()+15_000}; return value;
        }).finally(() => {if(pending===task) pending=null;}); pending=task;}
        const value = await pending;
