@@ -13,6 +13,12 @@ import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib
 import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 import { appKeys, type ApiAppEntry } from "../../shell/src/api/apps.js";
 
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ userId: null }),
+  useOrganization: () => ({ organization: null }),
+  useOrganizationList: () => ({ isLoaded: false, setActive: undefined }),
+}));
+
 const fileWatcher = vi.hoisted(() => ({ callback: null as null | ((path: string, event: string) => void) }));
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: (callback: (path: string, event: string) => void) => { fileWatcher.callback = callback; },
