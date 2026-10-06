@@ -16,7 +16,7 @@ export function resolveWithinHome(
   return null;
 }
 
-const DENIED_FILE_API_PREFIXES = ["data/browser-profiles"];
+const DENIED_FILE_API_PREFIXES = ["data/browser-profiles", "data/app-gallery-staging"];
 
 // OS-owned subtrees that must never receive user-created folders. Mirrors
 // project-manager.ts's folder-project guard: the home root itself, every
