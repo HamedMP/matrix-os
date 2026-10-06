@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 const root = fileURLToPath(new URL("../", import.meta.url)),
   template = resolve(root, "home/app-templates/connected-starter");
 const vite = resolve(root, "node_modules/vite/bin/vite.js");
+await import(
+  pathToFileURL(resolve(template, "scripts/sync-inventory.mjs")).href
+);
 await stat(vite);
 await new Promise((accept, reject) => {
   const child = spawn(process.execPath, [vite, "build"], {

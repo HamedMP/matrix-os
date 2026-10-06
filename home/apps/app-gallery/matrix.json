@@ -25,7 +25,8 @@
       "pnpm-lock.yaml",
       "tsconfig.json",
       "pnpm-workspace.yaml",
-      "../../../packages/contracts/src/app-gallery.ts"
+      "../../../packages/contracts/src/app-gallery.ts",
+      "../../../packages/contracts/src/app-gallery-inventory.ts"
     ]
   },
   "storage": {

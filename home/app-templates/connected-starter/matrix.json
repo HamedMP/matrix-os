@@ -20,6 +20,12 @@
     "command": "vite build --base ./ --outDir dist",
     "output": "dist",
     "timeout": 180,
-    "sourceGlobs": ["src/**", "index.html", "vite.config.ts", "matrix.json"]
+    "sourceGlobs": [
+      "src/**",
+      "scripts/sync-inventory.mjs",
+      "index.html",
+      "vite.config.ts",
+      "matrix.json"
+    ]
   }
 }

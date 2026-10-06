@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.33.4",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build"
+    "build": "node scripts/sync-inventory.mjs && tsc --noEmit && vite build"
   },
   "dependencies": {
     "react": "19.2.6",

@@ -1,3 +1,4 @@
+import { parseGalleryInventory } from "./generated-inventory";
 import { useEffect, useMemo, useState } from "react";
 import { importPrompt, uniqueConnection } from "./import";
 import Sheet from "./Sheet";
@@ -30,20 +31,8 @@ export function ImportDialog({
         if (!window.MatrixOS?.integrations)
           throw new Error("Connections unavailable");
         const data = await window.MatrixOS.integrations();
-        if (!Array.isArray(data) || data.length > 100)
-          throw new Error("Invalid connections");
-        if (alive)
-          setInventory(
-            data
-              .filter(
-                (c) =>
-                  typeof c.service === "string" &&
-                  typeof c.account_label === "string" &&
-                  c.account_label.length <= 200 &&
-                  c.status === "active",
-              )
-              .slice(0, 100),
-          );
+        const parsed = parseGalleryInventory(data);
+        if (alive) setInventory(parsed.filter((c) => c.status === "active"));
       } catch (cause) {
         console.error("Connection inventory failed", cause);
         if (alive) setInventory(null);

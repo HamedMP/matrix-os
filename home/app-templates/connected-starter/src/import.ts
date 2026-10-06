@@ -1,3 +1,4 @@
+import { parseGalleryInventory } from "./generated-inventory";
 import { validDate } from "./model";
 import type { Account, Connection, Definition } from "./types";
 export interface ImportSelection {
@@ -12,6 +13,7 @@ export function importPrompt(
   selection: ImportSelection,
   inventory: Connection[],
 ): string {
+  inventory = parseGalleryInventory(inventory);
   if (
     !validDate(selection.start) ||
     !validDate(selection.end) ||

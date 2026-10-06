@@ -1,3 +1,4 @@
+import { parseGalleryInventory } from "./generated-inventory";
 import {
   GalleryAppSchema,
   deriveGalleryReadiness,
@@ -44,7 +45,10 @@ export function parseListing(raw: unknown): GalleryAppListing[] {
     const app = GalleryAppSchema.safeParse(definition);
     if (!app.success || typeof installed !== "boolean")
       throw new Error("Gallery unavailable");
-    if (launchPath !== undefined && (!safePath(launchPath) || launchPath !== `apps/${app.data.id}`))
+    if (
+      launchPath !== undefined &&
+      (!safePath(launchPath) || launchPath !== `apps/${app.data.id}`)
+    )
       throw new Error("Gallery unavailable");
     if (
       installedName !== undefined &&
@@ -63,27 +67,6 @@ export function parseListing(raw: unknown): GalleryAppListing[] {
   if (new Set(apps.map((app) => app.id)).size !== apps.length)
     throw new Error("Gallery unavailable");
   return apps;
-}
-function parseConnections(raw: unknown): GalleryConnection[] | null {
-  if (!Array.isArray(raw) || raw.length > 2000) return null;
-  const valid = raw.every(
-    (row) =>
-      row &&
-      typeof row === "object" &&
-      typeof row.service === "string" &&
-      typeof row.status === "string" &&
-      typeof row.account_label === "string" &&
-      row.account_label.length <= 120 &&
-      (row.account_email == null || typeof row.account_email === "string"),
-  );
-  return valid
-    ? raw.map((row) => ({
-        service: row.service,
-        account_label: row.account_label,
-        account_email: row.account_email ?? null,
-        status: row.status,
-      }))
-    : null;
 }
 export function visibleApps(
   apps: readonly GalleryAppListing[],
@@ -111,9 +94,7 @@ export async function loadGallery(bridge: GalleryBridge) {
   return {
     apps: parseListing(catalog.value),
     connections:
-      inventory.status === "fulfilled"
-        ? parseConnections(inventory.value)
-        : null,
+      inventory.status === "fulfilled" ? knownInventory(inventory.value) : null,
   };
 }
 export async function installGalleryApp(
@@ -137,7 +118,8 @@ export async function installGalleryApp(
     if (
       !["installed", "already_installed"].includes(result.status) ||
       result.slug !== id ||
-      (!safePath(result.path) || result.path !== `apps/${id}`) ||
+      !safePath(result.path) ||
+      result.path !== `apps/${id}` ||
       typeof result.name !== "string" ||
       !result.name.trim() ||
       result.name.length > 80
@@ -159,4 +141,13 @@ export async function openGalleryApp(
   if (!bridge.openApp || !app.installed || !safePath(app.launchPath))
     throw new Error("App unavailable");
   await bridge.openApp(app.installedName ?? app.name, app.launchPath);
+}
+
+function knownInventory(raw: unknown): GalleryConnection[] | null {
+  try {
+    return parseGalleryInventory(raw);
+  } catch (cause) {
+    console.warn("Gallery connection inventory unavailable", cause);
+    return null;
+  }
 }
