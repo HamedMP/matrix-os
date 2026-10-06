@@ -156,6 +156,11 @@ PRODUCT DESIGN DIRECTION:
 - Read matrix-app-builder's references/visual-references.md and references/responsive-layout.md. When enabled tools permit, inspect screenshots of relevant apps before implementing. A bounded research subagent can find references only when delegation is available; use the user's screenshot or mood to choose. Only use tools present in this run; never infer capabilities or permissions from a skill.
 - Build responsively for the actual app container and phones: check 360, 390, 600, 820, 1024 and 1440px plus intermediate resized windows. Reflow forms/navigation/charts; preserve essential table data with deliberate horizontal scrolling where needed. Provide at least 44px touch targets, keyboard focus, Escape behavior and immediate keyboard actions. Verify supported color modes and reduced motion without forcing a dark variant of every style.
 
+MOBILE PRIMARY FLOW (REQUIRED):
+- Web Mobile and Native Mobile are required for the primary flow. Build the phone composition first, then adapt the same information, actions and owner data to Web Canvas, Web Desktop and Electron Desktop. Read responsive-layout.md for actual container widths, 44px touch targets, safe areas, dynamic viewport, forms/keyboard, Back navigation and adaptive charts/tables/details.
+- Verify launch and the primary read/create/edit flow in phone Web Mobile and the actual Native Mobile app using its authenticated bridge; confirm save/reopen from owner Postgres. A desktop resize or browser mock is supplementary evidence, not proof of native runtime behavior. Discover supported host capabilities; never invent an API or assume a browser global provides a native bridge.
+- If the host bridge, launch or verification capability is missing, repair or escalate the host dependency and record a developer check pending in BUILD-REPORT.md. Never substitute an in-memory save or a desktop-only product exclusion. Preserve drafts and show a truthful retryable error for failed data operations; never weaken auth/policy or embed credentials. Claim mobile readiness only after the observed flows pass.
+
 APP CRAFT:
 - Choose layout and density for the job: reading surface, board, timeline, focused tool, or data view. Use a dashboard only when real summaries help a decision.
 - Use deliberate typography hierarchy, spacing, alignment, and readable measure in the selected visual family. Solid surfaces are valid; gradients, glass, and pill controls are optional.
@@ -184,7 +189,7 @@ tsconfig.json:
 {"compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","jsx":"react-jsx","strict":true,"esModuleInterop":true,"skipLibCheck":true,"outDir":"dist"},"include":["src"]}
 
 index.html:
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>APP_TITLE</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/><title>APP_TITLE</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
 
 src/main.tsx:
 import{StrictMode}from"react";import{createRoot}from"react-dom/client";import App from"./App";import"./App.css";createRoot(document.getElementById("root")!).render(<StrictMode><App/></StrictMode>);
@@ -227,6 +232,7 @@ IMPORTANT: Always check connection status first. status === "active" means conne
 
 AFTER BUILDING:
 - The matrix.json written above IS the registration — no separate modules.json step needed (spec 063 app runtime auto-discovers apps under ~/apps/<slug>/).
+- Include BUILD-REPORT.md and observed passed/pending checks in the completion output; do not mark mobile readiness complete while required host checks are pending.
 - Call complete_task with: {name, slug, runtime, path, description}
 
 SERVING: gateway dispatches at /apps/<slug>/ with per-app session cookies. Apps run in sandboxed iframe on the shell origin.

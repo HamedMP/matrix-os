@@ -2,7 +2,7 @@
 triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app"]
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.2.0
+version: 1.3.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
@@ -29,6 +29,7 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Always create or update `matrix.json`. For apps built for the owner, include `listingTrust: "first_party"` and `scope: "personal"`; missing trust blocks launch even if the build succeeds. Never relabel downloaded/store/community apps to bypass policy.
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
+- Web Mobile and Native Mobile are required for the primary flow. Compose the phone experience first; desktop layout is an adaptation of the same actions, state and owner data. Follow [Responsive layout and verification](references/responsive-layout.md), including actual mobile launch and persistence evidence.
 - Use injected Matrix theme variables and iframe-safe sizing. Choose a coherent product style from the brief, mood and references; use app-local semantic tokens for its palette/materials, with inherited Matrix tokens as the baseline when no direction is chosen.
 - For UI, read `matrix-design-system`, `matrix-app-ui-patterns`, and [App craft](references/app-craft.md). Discover relevant installed skills through the active harness catalog (or `load_skill` in kernel routes). Read `emil-design-eng` for polish, `apple-design` for direct manipulation, and `animate` for specific motion work; load supporting references only for the chosen task. Preserve Matrix integration/runtime rules and choose typography, shapes, borders, layout, materials, color and motion for the app’s actual purpose.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
@@ -39,9 +40,9 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 ## Design workflow
 
 1. Read [Visual references and style intake](references/visual-references.md), the craft reference, and the user’s images/links or existing DESIGN.md. Invite a style or inspiration screenshot when the direction is unclear. When available, delegate bounded similar-app screenshot research to one or two subagents, inspect the actual images, and select a task-appropriate direction. Offer annotated alternatives when useful or requested; continue independent work and use the user’s delegated default without a mandatory approval checkpoint.
-2. Save a short app `DESIGN.md`: primary task, visual family and palette, layout and density, semantic tokens, typography/spacing, true data and state behavior, and one useful motion recipe with a reduced-motion variant. Keep it updated as the implementation changes.
+2. Save a short app `DESIGN.md`: primary task and phone happy path, visual family and palette, layout and density, semantic tokens, typography/spacing, true data and state behavior, and one useful motion recipe with a reduced-motion variant. Keep it updated as the implementation changes.
 3. Build one complete vertical slice against the owner's real Postgres through `window.MatrixOS.db`: read → create/edit → confirm or restore on failure → reopen. Verify it before expanding secondary screens. Never use convincing fake records to conceal a missing data path.
-4. Inspect the running app in the available Matrix surfaces, refine the largest hierarchy or interaction problem, and inspect again. Check keyboard and reduced motion, not just the default screenshot. Record skills loaded, surface, viewport, theme, states, persistence result, and screenshot/recording evidence; report unavailable evidence explicitly.
+4. Inspect the running app in Web Mobile and the actual Native Mobile app, then the other Matrix surfaces, refine the largest hierarchy or interaction problem, and inspect again. A desktop resize is supplementary evidence. Check keyboard and reduced motion, not just the default screenshot. Record skills loaded, surface, viewport, theme, states, persistence result, and screenshot/recording evidence; report unavailable evidence explicitly as a developer check pending; repair or escalate the host dependency before claiming mobile readiness.
 
 For apps and matching landing pages, read [Responsive layout and verification](references/responsive-layout.md). Compose for actual app container width across varied Matrix windows and mobile screens; verify the listed widths and retain all meaningful fields/actions.
 
@@ -138,9 +139,9 @@ only for system chrome or simple compatibility fallbacks, not for newly generate
 
 ## Data (Postgres via the MatrixOS bridge)
 
-Apps run in a sandboxed, null-origin iframe (CSP `connect-src 'self'`), so a direct `fetch()` to
+In the Web/Electron app runtime, apps run in a sandboxed, null-origin iframe (CSP `connect-src 'self'`), so a direct `fetch()` to
 `/api/bridge/*` is **blocked** and `localStorage` throws `SecurityError`. Persist ONLY through the
-injected bridge:
+injected authenticated bridge. Discover the actual Native Mobile bridge contract before using its capabilities; this skill does not implement that runtime:
 
 - Declare your tables in `matrix.json` `storage.tables` (above). The gateway provisions the Postgres
   schema automatically — at startup for shipped apps, and **lazily on first query** for apps you build
@@ -254,9 +255,9 @@ Resolve the skill directory from the SKILL.md you loaded; the script ships besid
 
 ### Launch and authentication
 
-Matrix supplies owner authentication. Do not build a separate login page or read/copy gateway credentials into the app. The native launcher obtains a short-lived token through `POST /api/apps/<slug>/session-token`; the launch is `/apps/<slug>/`. Missing or unknown `listingTrust` yields `403 install_blocked_by_policy`, not an expired login. An existing app you just built for the owner can have its missing metadata corrected after checking its origin; never silently promote an imported app. `401` means authentication, `403` policy, `409` scope/acknowledgment, `404` discovery, and `5xx` a server failure. Report failures accurately instead of recommending sign-in for all of them. Do not disable authentication, weaken policy, restart the VPS, or add a server to work around a launch failure.
+Matrix supplies owner authentication. Do not build a separate login page or read/copy gateway credentials into the app. The authenticated Matrix launcher obtains a short-lived token through `POST /api/apps/<slug>/session-token`; the launch is `/apps/<slug>/`. Missing or unknown `listingTrust` yields `403 install_blocked_by_policy`, not an expired login. An existing app you just built for the owner can have its missing metadata corrected after checking its origin; never silently promote an imported app. `401` means authentication, `403` policy, `409` scope/acknowledgment, `404` discovery, and `5xx` a server failure. Report failures accurately instead of recommending sign-in for all of them. Do not disable authentication, weaken policy, restart the VPS, or add a server to work around a launch failure.
 
-Then open the app from the Matrix launcher using the existing authenticated session. Verify app assets, icon, bridge operations, a save/reopen round trip, and the craft reference's visual/state checks. If browser access is unavailable, report launch and visual verification as pending rather than claiming the app works. Check browser console/network for:
+Then open the app from the Matrix launcher using the existing authenticated session. Verify app assets, icon, bridge operations, a save/reopen round trip, and the craft reference's visual/state checks in Web Mobile and the actual Native Mobile app. Use the installed development client or an authorized simulator/device; a resized desktop browser is not Native Mobile evidence. If a required host capability or tool is missing, repair or escalate the host dependency and record a developer check pending in BUILD-REPORT.md. Never substitute an in-memory save, copy credentials, weaken auth/policy, invent a bridge API, or put a desktop-only exclusion in product copy. Keep the app requirement open until real launch, authenticated bridge persistence and Back/keyboard flows pass; report the observed result rather than claiming mobile readiness. Check browser console/network for:
 
 - `needs_build`
 - 404s for app bundle or icon paths

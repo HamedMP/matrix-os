@@ -16,7 +16,7 @@ Matrix's runtime, integration, security, and accessibility requirements still ap
 ## Before coding
 
 Write a short design direction in the app `DESIGN.md`: who uses this, their primary action,
-the content that deserves the most space, the appropriate density, and one detail
+the phone happy path, the content that deserves the most space, the appropriate density, and one detail
 that makes this particular app useful and memorable. Style should change type, shapes, borders, spacing, materials, imagery and interaction character—not only an accent color. Use the user’s mood and chosen family; a calm product can still be bright. Choose sensible defaults without
 turning this into a questionnaire. Follow user-provided references and existing app style.
 Offer two or three reference-based directions only when the user asks or a materially
@@ -148,7 +148,13 @@ open/close and failures with normal and reduced motion.
 Follow [Responsive layout and verification](responsive-layout.md) for container-based composition, accessible compact navigation, essential table scrolling and the required multi-width checks. Record responsive decisions in DESIGN.md and observed viewport/container evidence in BUILD-REPORT.md.
 
 Run the app in Matrix, not only a standalone preview. Check Web Canvas, Web Desktop,
-and Electron Desktop where available; include Web Mobile and Native Mobile when supported.
+and Electron Desktop, plus phone Web Mobile and the actual Native Mobile app.
+Web Mobile and Native Mobile are required for the primary flow; a desktop resize
+is supplementary evidence. Verify the authenticated bridge and save/reopen on
+each required mobile surface. If a host capability is missing, repair or escalate
+the host dependency and record a developer check pending; this guidance does
+not implement that bridge. Never substitute an in-memory save or a desktop-only
+product exclusion.
 At minimum inspect a narrow window, the normal working size, both theme modes, and
 reduced motion. Test keyboard focus, Escape, labeled icon buttons, long text, empty,
 loading, failure/retry, populated, and saving states. Touch hit areas must be at least

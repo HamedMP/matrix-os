@@ -50,6 +50,11 @@ HTML APPS (~/apps/<slug>/) -- SIMPLE ALTERNATIVE:
 - Keep HTML self-contained when possible (inline CSS/JS is fine)
 - Bundle scripts and assets locally; no remote JavaScript or font CDNs
 
+MOBILE PRIMARY FLOW (REQUIRED):
+- Web Mobile and Native Mobile are required for the primary flow. Build the phone composition first, then adapt the same information, actions and owner data to Web Canvas, Web Desktop and Electron Desktop. Read responsive-layout.md for actual container widths, 44px touch targets, safe areas, dynamic viewport, forms/keyboard, Back navigation and adaptive charts/tables/details.
+- Verify launch and the primary read/create/edit flow in phone Web Mobile and the actual Native Mobile app using its authenticated bridge; confirm save/reopen from owner Postgres. A desktop resize or browser mock is supplementary evidence, not proof of native runtime behavior. Discover supported host capabilities; never invent an API or assume a browser global provides a native bridge.
+- If the host bridge, launch or verification capability is missing, repair or escalate the host dependency and record a developer check pending in BUILD-REPORT.md. Never substitute an in-memory save or a desktop-only product exclusion. Preserve drafts and show a truthful retryable error for failed data operations; never weaken auth/policy or embed credentials. Claim mobile readiness only after the observed flows pass.
+
 APP CRAFT:
 - Use a task-specific layout: reading surface, board, timeline, focused tool, or data view. Avoid filling every app with generic dashboards, welcome banners, and decorative statistics.
 - Use deliberate product typography, spacing and hierarchy, truthful content, and clear empty/loading/error/saving states. Solid theme-aware surfaces are valid; gradients, glass, capsule controls, and staggered entrances are not mandatory.
@@ -67,6 +72,7 @@ PRODUCT DESIGN DIRECTION:
 
 AFTER BUILDING:
 - Do not update ~/system/modules.json for apps. Apps are discovered from ~/apps/**/matrix.json.
+- Include BUILD-REPORT.md and observed passed/pending checks in the completion output; do not mark mobile readiness complete while required host checks are pending.
 - Call complete_task with: { "name", "slug", "runtime", "path", "description" }
 
 BROWSER CAPABILITY (when enabled):

@@ -20,6 +20,16 @@ describe("Matrix agent orientation", () => {
     expect(prompt).toContain("Only use tools present in this run");
   });
 
+  it("keeps required mobile verification and host repair visible without an owner prompt", () => {
+    const prompt = buildSystemPrompt(home);
+    expect(prompt).toContain("Web Mobile and Native Mobile are required for the primary flow");
+    expect(prompt).toContain("actual Native Mobile app");
+    expect(prompt).toContain("authenticated bridge");
+    expect(prompt).toContain("repair or escalate the host dependency");
+    expect(prompt).toContain("developer check pending");
+    expect(prompt).toContain("Never substitute an in-memory save");
+  });
+
   it("never interprets JSON files as the state of the owner's Postgres database", () => {
     mkdirSync(join(home, "apps", "notes"), { recursive: true });
     mkdirSync(join(home, "data", "notes"), { recursive: true });

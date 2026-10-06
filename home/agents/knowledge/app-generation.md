@@ -20,6 +20,12 @@ the user needs another login. Do not promote imported apps or expose gateway cre
 Run the builder skill’s `scripts/verify-app.mjs` against the app directory, then open it
 from Matrix and verify assets, bridge operations, persistence, and visual states.
 
+### Mobile primary flow
+
+- Web Mobile and Native Mobile are required for the primary flow. Build the phone composition first, then adapt the same information, actions and owner data to Web Canvas, Web Desktop and Electron Desktop. Read responsive-layout.md for actual container widths, 44px touch targets, safe areas, dynamic viewport, forms/keyboard, Back navigation and adaptive charts/tables/details.
+- Verify launch and the primary read/create/edit flow in phone Web Mobile and the actual Native Mobile app using its authenticated bridge; confirm save/reopen from owner Postgres. A desktop resize or browser mock is supplementary evidence, not proof of native runtime behavior. Discover supported host capabilities; never invent an API or assume a browser global provides a native bridge.
+- If the host bridge, launch or verification capability is missing, repair or escalate the host dependency and record a developer check pending in BUILD-REPORT.md. Never substitute an in-memory save or a desktop-only product exclusion. Preserve drafts and show a truthful retryable error for failed data operations; never weaken auth/policy or embed credentials. Claim mobile readiness only after the observed flows pass.
+
 ### Scaffold Steps
 
 1. Create app directory: `~/apps/<slug>/`
@@ -109,7 +115,7 @@ export default defineConfig({
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Todo App</title>
 </head>
 <body>
@@ -266,10 +272,11 @@ the shell CORS/CSP boundary, so always use the injected bridge:
 - `MatrixOS.integrations()` → same as GET /api/bridge/service
 - `MatrixOS.service(service, action, params)` → same as POST /api/bridge/service
 
-### IMPORTANT: Integration apps do NOT need storage tables
-Apps that display data from external services (Gmail, Calendar, etc.) should fetch data live through
-`window.MatrixOS.service`. Do NOT declare `storage.tables` to cache service data locally -- that's
-wasteful and stale.
+### Integration data and saved owner records
+A read-only live service viewer can display supported service responses without caching them.
+For saved imports, owner annotations or workflows, declare `storage.tables` and persist through
+the authenticated MatrixOS database bridge. Verify save/reopen on both required mobile surfaces;
+service reads and successful in-memory edits do not prove persistence.
 
 ## Best Practices
 - Default to Vite React apps with `~/apps/<slug>/matrix.json` and built `dist/index.html`

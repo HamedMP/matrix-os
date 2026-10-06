@@ -174,6 +174,22 @@ describe("loadCustomAgents", () => {
 
 const home = `${process.cwd()}/home`;
 describe("registered builder product style direction", () => {
+  it("requires real mobile save/reopen evidence from every registered builder source", () => {
+    const sources = [
+      ["core builder", getCoreAgents("/test/owner").builder.prompt],
+      ["template builder", loadCustomAgents(`${home}/agents/custom`, "/test/owner").builder.prompt],
+      ["runtime knowledge", readFileSync(`${home}/agents/knowledge/app-generation.md`, "utf8")],
+    ];
+    for (const [name, prompt] of sources) {
+      expect(prompt, name).toContain("Web Mobile and Native Mobile are required for the primary flow");
+      expect(prompt, name).toContain("actual Native Mobile app");
+      expect(prompt, name).toContain("authenticated bridge");
+      expect(prompt, name).toContain("save/reopen");
+      expect(prompt, name).toContain("repair or escalate the host dependency");
+      expect(prompt, name).toContain("developer check pending");
+      expect(prompt, name).toContain("Never substitute an in-memory save");
+    }
+  });
   it.each([
     ["core builder", () => getCoreAgents("/test/owner").builder.prompt],
     ["template builder", () => loadCustomAgents(`${home}/agents/custom`, "/test/owner").builder.prompt],
