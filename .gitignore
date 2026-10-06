@@ -45,6 +45,9 @@ logs/
 # Local platform data
 packages/platform/data/
 
+# Generated local parity credentials, host bundles, and VM images
+/.amp/in/local-production-parity/
+
 # Test artifacts
 shell/test-results/
 shell/e2e/test-results/
