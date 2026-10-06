@@ -88,7 +88,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   const effective = { ...input, ...prepared };
   const catalog = await options.catalog.getCatalog(options.principal, effective.selection);
   const requirements = chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
-    part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
+    part.type !== "resource_reference" || !["agent", "chat", "memory_source"].includes(part.resource.kind)) : input.parts });
   const validated = validateChatProviderSelection({
     catalog,
     selection: effective.selection,

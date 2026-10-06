@@ -11,6 +11,7 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
   homePath: string;
   recipeSkillsRoot?: string;
   enabled?: () => boolean;
+  memories?: ConstructorParameters<typeof ChatAgentContext>[0]["memories"];
   drives?: ConstructorParameters<typeof ChatAgentContext>[0]["drives"];
   assertChatReferenceAllowed?: ConstructorParameters<typeof ChatAgentContext>[0]["assertChatReferenceAllowed"];
   admitJevWorkflow?: ConstructorParameters<typeof ChatAgentContext>[0]["admitJevWorkflow"];
@@ -29,6 +30,7 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
     repository: options.repository, agents, recipes, enabled: options.enabled ?? (() => true),
     admitJevWorkflow: options.admitJevWorkflow,
     drives: options.drives,
+    memories: options.memories,
     assertChatReferenceAllowed: options.assertChatReferenceAllowed,
     ...(options.botChats ? { botChats: options.botChats } : {}),
   });
