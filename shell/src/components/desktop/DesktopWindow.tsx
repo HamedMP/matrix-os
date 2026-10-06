@@ -16,6 +16,7 @@ import {
 import { ActivityMonitorApp } from "@/components/system-activity/ActivityMonitorApp";
 import { AppViewer } from "@/components/AppViewer";
 import { ChatApp } from "@/components/ChatApp";
+import { MemoryWorkspaceApp } from "@/components/memory-workspace/MemoryWorkspaceApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
@@ -203,6 +204,8 @@ export function DesktopWindow({
               },
             }}
           />
+        ) : win.path === "__memory-workspace__" ? (
+          <MemoryWorkspaceApp />
         ) : win.path === "__file-browser__" ? (
           <FileBrowser windowId={win.id} />
         ) : win.path === "__preview-window__" ? (

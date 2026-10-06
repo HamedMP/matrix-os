@@ -7,11 +7,13 @@ export type ClientApiErrorCategory = "unauthorized" | "offline" | "timeout" | "n
 export class ClientApiError extends Error {
   readonly category: ClientApiErrorCategory;
   readonly detail?: string;
+  readonly status?: number;
 
-  constructor(category: ClientApiErrorCategory, options?: { cause?: unknown; detail?: string }) {
+  constructor(category: ClientApiErrorCategory, options?: { cause?: unknown; detail?: string; status?: number }) {
     super(clientErrorMessage(category), options);
     this.name = "ClientApiError";
     this.category = category;
+    if (Number.isInteger(options?.status) && options!.status! >= 400 && options!.status! <= 599) this.status = options!.status;
     this.detail = options?.detail;
   }
 }
@@ -54,6 +56,7 @@ export function createShellApiClient(options: ShellApiClientOptions = {}): Shell
     if (!response.ok) {
       throw new ClientApiError(classifyHttpStatus(response.status), {
         detail: await safeErrorDetail(response),
+        status: response.status,
       });
     }
 

@@ -6,6 +6,7 @@ export const FIXED_APP_ANALYTICS_KINDS: Record<DesktopAppId, DesktopAppKind> = {
   work: "chat",
   terminal: "terminal",
   files: "files",
+  memory: "memory",
   editor: "editor",
   vscode: "vscode",
   settings: "settings",
@@ -18,6 +19,7 @@ export const FIXED_APP_ANALYTICS_KINDS: Record<DesktopAppId, DesktopAppKind> = {
 const TAB_ANALYTICS_KINDS: Partial<Record<TabKind, DesktopAppKind>> = {
   browser: "browser",
   files: "files",
+  memory: "memory",
   editor: "editor",
   vscode: "vscode",
   notes: "notes",

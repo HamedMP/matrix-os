@@ -120,7 +120,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       } catch {
         // Non-JSON / empty body — no detail to surface.
       }
-      throw new AppError(classifyHttpStatus(response.status), detail ? { detail } : undefined);
+      throw new AppError(classifyHttpStatus(response.status), { detail, status: response.status });
     }
     return response;
   }
