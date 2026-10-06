@@ -4,6 +4,8 @@ import { X_SERVICE_REGISTRY } from "./registry-x.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { GMAIL_SERVICE } from "./gmail.js";
 import { GOOGLE_SERVICES } from "./google.js";
+import { GITHUB_READ_ACTIONS } from "./github-read.js";
+import { SLACK_READ_ACTIONS } from "./slack-read.js";
 import { listValidation } from "./list-validation.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
@@ -98,6 +100,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     // with an "Integration call failed" message -- not ideal UX, but safer
     // than smuggling arbitrary path segments into a real URL.
     actions: {
+      ...GITHUB_READ_ACTIONS,
       // GitHub API: GET /user/repos. Defaults to sort=updated so the most
       // active repos surface first; matches what `gh repo list` does.
       list_repos: {
@@ -528,6 +531,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     // conversations.list etc. Channel param accepts either a channel ID (C...)
     // or a `#channelname` string -- Slack resolves both.
     actions: {
+      ...SLACK_READ_ACTIONS,
       // Slack Web API: chat.postMessage. JSON body works as long as the
       // token is passed via Authorization header (Pipedream's proxy handles
       // that). Channel can be either a channel ID (C012AB34) or a public
