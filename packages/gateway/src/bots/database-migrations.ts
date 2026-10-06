@@ -10,6 +10,7 @@
  */
 import { sql, type Transaction } from "kysely";
 import { migrateManagedPiState } from "../chat/managed-pi-migration.js";
+import { migrateBotProviderConnections } from "./provider-connections-migration.js";
 import type { OwnerBotDatabase } from "./database.js";
 
 const OWNER = "owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 128)";
@@ -325,4 +326,6 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 2, name: "bot_approvals_by_task", up: migrateApprovalsByTaskV2 },
   { version: 3, name: "bot_connect_retry_schedule", up: migrateConnectRetryScheduleV3 },
   { version: 4, name: "managed_pi_state", up: migrateManagedPiState },
+  // Already deployed by #2198; reserve its exact identity before other v5 features.
+  { version: 5, name: "bot_provider_connections", up: migrateBotProviderConnections },
 ];
