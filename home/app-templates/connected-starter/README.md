@@ -1,0 +1,15 @@
+# Connected starter
+
+This portable Vite/React application supports the 24 first-party gallery definitions. It starts empty and uses the app-scoped `MatrixOS.db` bridge for owner PostgreSQL records. It contains no customer data, credentials, sample records, browser persistence or direct service execution.
+
+The installer writes its validated definition to `src/definition.json` and replaces the single `__MATRIX_APP_DEFINITION__` placeholder in built `dist/index.html` with JSON escaped for `<` and Unicode separators. The installed source remains rebuildable without monorepo imports. Source builds use the source definition when the placeholder is still present.
+
+Views include a currency-separated settlement chart and ledger, travel itineraries, dated agenda, definition-specific status boards, libraries, notes, seven-day habit check-ins and a focus timer. Subscriptions separates active recurring costs by currency and cadence; Cashflow separates sent/overdue receivables from paid funds. Only saved records contribute metrics. Unknowns are nullable; unpaid, refunded and pending amounts do not count as settled funds. Manual edits are recorded in `manualFields`. Archive preserves the payload in owner storage and hides it from normal reads and exports.
+
+Connect & import reads the owner integration inventory, requires exact account labels and bounded dates, and requires context for repository/project/channel/document sources. It submits a read-only request through `MatrixOS.generate`. The UI says a request was sent, never that an import completed. Check records reloads saved data; imports must deduplicate source IDs, preserve manual fields and report coverage. `MatrixOS.service` is not called.
+
+Web Canvas, Web Desktop, Electron Desktop and Web Mobile provide the existing Matrix bridge. Native Mobile currently loads a raw app-session URL without that bridge; the kit presents a precise message to use a supported view, disables save/import actions, and does not claim that unknown records are empty.
+
+Save/archive failures retain records and drafts, with stable draft IDs on retry. Record updates use the existing whole-payload app bridge and are intended for one active writer; cross-window or concurrent kernel edits require a future atomic revision-aware bridge before collaboration is supported. CSV exports contain the filtered record fields, escape quotes and neutralize spreadsheet formula prefixes. Source evidence links allow HTTPS without embedded credentials. Records are capped at 1,000 visible rows, 100 evidence entries per record and 16 source accounts; the UI discloses the record cap.
+
+From this directory use `pnpm install --frozen-lockfile` then `pnpm build`. Host packaging builds the kit once with `node scripts/build-app-gallery-template.mjs`; installers copy compiled output without running caller-provided commands. Behavioral tests live in `tests/default-apps/connected-starter.test.ts`. The kit does not provide automatic schedules or organization sharing.

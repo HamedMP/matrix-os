@@ -1,0 +1,205 @@
+.date-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+.date-nav h2 {
+  font-size: 26px;
+}
+.date-nav label {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.date-nav input {
+  width: 150px;
+}
+.agenda {
+  display: grid;
+  gap: 30px;
+}
+.agenda-date {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.agenda-date > span {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  background: var(--tint);
+  border-radius: 10px;
+  color: var(--brand);
+  font-size: 22px;
+  font-weight: 500;
+}
+.agenda-event {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) auto;
+  gap: 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 20px;
+  margin-bottom: 10px;
+}
+.event-time {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.agenda-event h3 {
+  margin-bottom: 7px;
+}
+.agenda-event p {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.agenda-event > .badge {
+  align-self: start;
+}
+.travel-list {
+  display: grid;
+  gap: 22px;
+}
+.trip-journey {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  padding: 24px;
+  gap: 24px;
+}
+.route-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--tint);
+  color: var(--brand);
+  border-radius: 11px;
+  padding: 20px;
+  min-height: 180px;
+}
+.route-mark span {
+  font-size: 25px;
+}
+.route-mark i {
+  width: 1px;
+  border-left: 1px dashed var(--brand);
+  height: 65px;
+  margin: 9px;
+}
+.trip-journey h2 {
+  font-size: 28px;
+  margin: 8px 0 20px;
+}
+.trip-journey p {
+  font-size: 12px;
+  line-height: 1.8;
+}
+.journey-dates {
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.journey-dates small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-bottom: 5px;
+}
+.journey-dates strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.journey-dates > span {
+  color: var(--muted);
+}
+.habit-table {
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--card);
+  padding: 12px;
+}
+.habit-table th,
+.habit-table td {
+  text-align: center;
+  padding: 14px;
+  min-width: 55px;
+}
+.habit-table th:first-child {
+  text-align: left;
+  min-width: 150px;
+  color: var(--fg);
+}
+.habit-mark {
+  height: 34px;
+  width: 34px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.habit-mark.done {
+  background: var(--brand);
+  color: var(--brand-fg);
+  border-color: var(--brand);
+}
+.habit-gap {
+  color: var(--muted);
+  font-size: 24px;
+}
+.focus-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 25px;
+  padding: 40px 20px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: radial-gradient(ellipse at center, var(--tint), var(--card));
+  margin-bottom: 30px;
+}
+.focus-stage > input {
+  font-size: 20px;
+  text-align: center;
+  max-width: 500px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 15px;
+}
+.timer {
+  font-size: 90px;
+  font-weight: 350;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.06em;
+  line-height: 1.2;
+}
+.timer > span {
+  color: var(--brand);
+  opacity: 0.5;
+}
+.focus-stage > label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.focus-stage select {
+  width: 120px;
+  background: var(--card);
+}

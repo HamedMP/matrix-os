@@ -1,0 +1,176 @@
+@media (max-width: 1000px) {
+  .workbench {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+  .sidebar {
+    padding: 24px 16px;
+  }
+  .topbar {
+    padding: 0 22px;
+  }
+  .topbar > span {
+    display: none;
+  }
+  main {
+    padding: 25px;
+  }
+  .finance-overview {
+    grid-template-columns: 1fr;
+  }
+  .balance {
+    min-height: 190px;
+  }
+  .balance h2 {
+    margin: 10px 0;
+  }
+  .balance select {
+    margin-top: 12px;
+  }
+  .balance p {
+    max-width: 100%;
+  }
+  .board-column {
+    min-width: 235px;
+  }
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .workbench {
+    display: block;
+  }
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 18px;
+    gap: 16px;
+  }
+  .brand {
+    margin: 0;
+  }
+  .brand-mark {
+    width: 31px;
+    height: 31px;
+    font-size: 20px;
+  }
+  .sidebar-label,
+  .nav-active,
+  .connection-card,
+  .sidebar footer {
+    display: none;
+  }
+  .sidebar-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .sidebar-filters > label:first-child {
+    grid-column: 1/-1;
+  }
+  .sidebar-filters > button {
+    grid-column: 1/-1;
+  }
+  .topbar {
+    height: auto;
+    min-height: 65px;
+    padding: 12px 18px;
+  }
+  .topbar > div {
+    flex-wrap: wrap;
+    width: 100%;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .topbar button {
+    padding: 9px 10px;
+    font-size: 11px;
+  }
+  main {
+    padding: 24px 18px;
+  }
+  .page-heading h1 {
+    font-size: 34px;
+  }
+  .page-heading {
+    gap: 15px;
+    margin-bottom: 22px;
+  }
+  .record-count strong {
+    font-size: 25px;
+  }
+  .record-count span {
+    font-size: 9px;
+  }
+  .page-heading p {
+    font-size: 12px;
+  }
+  .balance,
+  .chart-card,
+  .ledger {
+    padding: 20px;
+  }
+  .chart-card .section-heading {
+    gap: 10px;
+  }
+  .chart-card h3 {
+    font-size: 13px;
+  }
+  .date-nav {
+    flex-wrap: wrap;
+  }
+  .date-nav h2 {
+    font-size: 23px;
+  }
+  .agenda-event {
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+  }
+  .event-time {
+    grid-column: 1/-1;
+  }
+  .trip-journey {
+    grid-template-columns: 36px 1fr;
+    padding: 18px;
+    gap: 16px;
+  }
+  .route-mark {
+    padding: 10px;
+  }
+  .journey-dates {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .journey-dates strong {
+    font-size: 12px;
+  }
+  .timer {
+    font-size: 75px;
+  }
+  .sheet {
+    padding: 22px;
+  }
+  .sheet > header h2 {
+    font-size: 23px;
+  }
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+  .section-heading h2 {
+    font-size: 22px;
+  }
+  .finance-overview {
+    gap: 15px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  button:active {
+    transform: none;
+  }
+}

@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import Views from "../../home/app-templates/connected-starter/src/Views";
+import App from "../../home/app-templates/connected-starter/src/App";
 import { Editor } from "../../home/app-templates/connected-starter/src/Dialogs";
 import {
   act,
@@ -68,6 +71,48 @@ describe("portable connected starter", () => {
       weeks: {},
     });
     expect(agendaGroups([])).toEqual([]);
+  });
+  it("renders every useful view empty with no sample records or invented metrics", () => {
+    for (const app of catalog.apps) {
+      const html = renderToStaticMarkup(
+        createElement(Views, {
+          app: app as Definition,
+          records: [],
+          onEdit: () => {},
+          onEvidence: () => {},
+          onAdd: () => {},
+          onSave: async () => {},
+        }),
+      );
+      expect(html).toMatch(/Add|Begin focus/);
+      expect(html).not.toMatch(
+        /Sample receipt|London|Acme Inc|seeded|Import completed/,
+      );
+    }
+  });
+  it("shows a precise supported-view message and disables record/import actions without the bridge", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    delete window.MatrixOS;
+    render(createElement(App, { app: folio }));
+    expect(
+      screen.getByText(
+        /Open this app in Web Desktop, Web Canvas or Electron Desktop/,
+      ),
+    ).toBeDefined();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "+ Add expense",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Connect & import",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
   });
   it("validates unknown numbers, currencies, enums and real calendar dates", () => {
     expect(
@@ -362,6 +407,48 @@ describe("portable connected starter", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save record" }));
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
     expect(save.mock.calls[0][0].id).toBe(save.mock.calls[1][0].id);
+  });
+  it("keeps one completed focus session identity through uncertain save retries", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const save = vi.fn().mockRejectedValue(new Error("uncertain response"));
+    const focus = catalog.apps.find((a) => a.id === "focus") as Definition;
+    render(
+      createElement(Views, {
+        app: focus,
+        records: [],
+        onEdit: () => {},
+        onEvidence: () => {},
+        onAdd: () => {},
+        onSave: save,
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Focus task"), {
+      target: { value: "Review records" },
+    });
+    fireEvent.change(screen.getByLabelText("Session"), {
+      target: { value: "5" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Begin focus" }));
+    await act(async () => {
+      vi.advanceTimersByTime(300000);
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Log completed session" }),
+      );
+    });
+    expect(screen.getByRole("alert").textContent).toContain(
+      "could not be saved",
+    );
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Log completed session" }),
+      );
+    });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[0][0].id).toBe(save.mock.calls[1][0].id);
+    expect(save.mock.calls[0][0].fields.minutes).toBe(5);
   });
   it("preserves input record on failed save or archive and omits undefined payload values", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
