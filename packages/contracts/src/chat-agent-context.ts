@@ -16,6 +16,23 @@ export const ChatContextSnapshotSchema = z.object({
   truncated: z.boolean(),
 }).strict();
 
+export const ChatMemorySnapshotSchema = z.object({
+  sourceId: z.uuid(), revision: z.number().int().positive(),
+  title: canonicalSafeLabel(300, 1200), text: canonicalBoundedText(16_000, 24_000),
+  truncated: z.boolean(),
+}).strict();
+export type ChatMemorySnapshot = z.infer<typeof ChatMemorySnapshotSchema>;
+
+const chatMemoryLabelSchema = canonicalSafeLabel(280, 1120);
+/** Chat receipts share safe labels; the owner-controlled source title remains intact. */
+export function chatMemoryTitle(title: string): string {
+  const label = title.slice(0, 280);
+  return ChatMemorySnapshotSchema.shape.title.safeParse(title).success &&
+    chatMemoryLabelSchema.safeParse(label).success
+    ? label
+    : "Memory source";
+}
+
 /** Written only by the gateway after owner-scoped resolution, never accepted from a client. */
 export const ChatRunContextSchema = z.object({
   version: z.literal(1),
@@ -30,6 +47,7 @@ export const ChatRunContextSchema = z.object({
   chats: z.array(ChatContextSnapshotSchema).max(3),
   drives: z.array(OrganizationDriveContextReferenceSchema).min(1).max(3).optional(),
   history: ChatContextSnapshotSchema.optional(),
+  memories: z.array(ChatMemorySnapshotSchema).min(1).max(8).optional(),
 }).strict().refine((value) => canonicalEncodedByteLength(value) <= 64 * 1024, {
   message: "Resolved Chat context exceeds its byte limit",
 });

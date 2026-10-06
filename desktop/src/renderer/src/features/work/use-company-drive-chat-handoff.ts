@@ -16,6 +16,6 @@ export function useCompanyDriveChatHandoff(active: boolean, tabId: string | unde
         if (!applicableDesktopCompanyDriveDraft(request, identity, tabId))
             return;
         useDesktopCompanyDriveChatDraft.getState().consume(request);
-        startDraft("", [request.reference]);
+        startDraft("", request.references ?? [request.reference]);
     }, [active, identity, request, tabId, startDraft]);
 }

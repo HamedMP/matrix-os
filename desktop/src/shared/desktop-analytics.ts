@@ -24,6 +24,7 @@ export const DesktopAppKindSchema = z.enum([
   "chat",
   "terminal",
   "files",
+  "memory",
   "editor",
   "vscode",
   "settings",

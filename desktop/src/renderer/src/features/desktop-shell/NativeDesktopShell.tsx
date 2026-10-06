@@ -255,6 +255,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       work: () => openRoot(openChatIndex),
       terminal: () => openRoot(openTerminalIndex),
       files: () => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC)),
+      memory: () => openRoot(() => openTab({kind:"memory",title:"Memory"})),
       editor: () => openRoot(() => openTab(EDITOR_WORKSPACE_TAB_SPEC)),
       vscode: () => openRoot(() => openTab({
         kind: "vscode",

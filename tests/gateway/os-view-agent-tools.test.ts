@@ -86,9 +86,12 @@ describe("OS-view agent tools", () => {
 
     const apps = await tools.listPlaceableApps();
     expect(apps.map((app) => app.appId)).toEqual([
-      "chat", "terminal", "files", "editor", "vscode",
+      "chat", "terminal", "files", "memory", "editor", "vscode",
       "settings", "plugins", "browser", "notes", "whiteboard",
     ]);
+    expect(apps.find((app) => app.appId === "memory")).toEqual({
+      appId: "memory", name: "Memory", path: "__memory-workspace__",
+    });
   });
 
   it("rebases a conflict against the newest owner revision", async () => {

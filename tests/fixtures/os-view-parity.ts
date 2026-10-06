@@ -9,6 +9,7 @@ export const OS_VIEW_FIXED_APP_NAMES = [
   "Chat",
   "Terminal",
   "Files",
+  "Memory",
   "Editor",
   "VS Code",
   "Settings",
@@ -17,6 +18,8 @@ export const OS_VIEW_FIXED_APP_NAMES = [
   "Notes",
   "Whiteboard",
 ] as const;
+
+export const OS_VIEW_LAUNCHER_APP_NAMES = OS_VIEW_FIXED_APP_NAMES;
 
 export const OS_VIEW_PARITY_SURFACES = [
   "Web Canvas",

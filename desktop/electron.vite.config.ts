@@ -63,6 +63,9 @@ export default defineConfig((): UserConfig => ({
       dedupe: ["react", "react-dom"],
       alias: {
         "@renderer": resolve(__dirname, "src/renderer/src"),
+        // Shared UI consumes canonical tokens from source, including clean
+        // checkout renderer tests that have no generated brand/dist yet.
+        "@matrix-os/brand/tokens": resolve(__dirname, "../packages/brand/src/tokens.ts"),
       },
     },
     build: {

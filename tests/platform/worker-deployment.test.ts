@@ -114,7 +114,14 @@ describe("platform worker deployment", () => {
     expect(workflow.includes("PLATFORM_MAX_INSTANCES: '30'")).toBe(true);
     expect(workflow.includes("render-platform-worker-service.mjs")).toBe(true);
     expect(workflow.includes("Verify dedicated platform worker")).toBe(true);
-    expect(workflow.includes("PLATFORM_BACKGROUND_WORKERS_ENABLED=false,CUSTOMER_VPS_IMAGE_VERSION")).toBe(true);
+    const productionDeployment = workflow.split("- name: Deploy production-role revision")[1]?.split("\n      - name:")[0];
+    const bindings = productionDeployment?.match(/--update-env-vars "([^"]+)"/)?.[1].split(",");
+    expect(bindings).toContain("PLATFORM_BACKGROUND_WORKERS_ENABLED=false");
+    expect(bindings).toContain("CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION}");
+    expect(bindings).toContain("MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID}");
+    for (const name of ["PLATFORM_BACKGROUND_WORKERS_ENABLED", "CUSTOMER_VPS_IMAGE_VERSION", "MATRIX_INTERNAL_CLERK_ORG_ID"]) {
+      expect(bindings?.filter(binding => binding.startsWith(`${name}=`))).toHaveLength(1);
+    }
     expect(workflow.includes('"PLATFORM_BACKGROUND_WORKERS_ENABLED=false"')).toBe(true);
     expect(workflow.indexOf("Verify dedicated platform worker")).toBeLessThan(workflow.indexOf("- name: Promote revision"));
     expect(workflow.indexOf("- name: Promote revision")).toBeLessThan(workflow.indexOf("Remove legacy worker tags"));

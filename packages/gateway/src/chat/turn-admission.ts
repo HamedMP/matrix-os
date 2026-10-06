@@ -67,7 +67,7 @@ export async function admitCanonicalTurn(
     const effective = { ...input, ...prepared };
     const catalog = await deps.catalog.getCatalog(principal, effective.selection);
     const requirements = requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
-      part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
+      part.type !== "resource_reference" || !["agent", "chat", "memory_source"].includes(part.resource.kind)) : input.parts });
     const validated = validateChatProviderSelection({
       catalog,
       selection: effective.selection,
