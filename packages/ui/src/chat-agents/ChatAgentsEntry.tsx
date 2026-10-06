@@ -3,7 +3,7 @@ import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import { Dialog } from "../Dialog.js";
 import { BotEditorApps } from "./bots/BotEditorApps.js";
 import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotModelChoices, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
-import { isChatAgentDriver } from "@matrix-os/contracts";
+import { isChatAgentDriver, MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type BotRecipeSummary, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
@@ -178,8 +178,12 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     patch({ error: "" });
     setDailyRecipe({ client, recipe: { ...recipe, name: "Personal Daily Brief" } });
   };
-  const models = useMemo(() => state.catalog ? deriveCanonicalProviderChoices(state.catalog).filter((choice) =>
-    isChatAgentDriver(choice.driverKind) && choice.interactionModes.includes("default") && choice.permissionModes.includes("full_access")) : [], [state.catalog]);
+  const providerModels = useMemo(() => state.catalog ? deriveCanonicalProviderChoices(state.catalog) : [], [state.catalog]);
+  // Ordinary Agents request Full access; recipe Bots use the coordinator's own
+  // permission contract and must retain account/grant-bound subscription choices.
+  const models = useMemo(() => providerModels.filter((choice) => isChatAgentDriver(choice.driverKind) && choice.instanceId !== MATRIX_CHATGPT_PLAN_INSTANCE_ID
+    && choice.interactionModes.includes("default") && choice.permissionModes.includes("full_access")), [providerModels]);
+  const botModels = useMemo(() => matrixBotModelChoices(providerModels), [providerModels]);
   const [jevPending, setJevPending] = useState(false);
   const [jevError, setJevError] = useState("");
   const jevSelection = jevAgentSelection(state.catalog ?? undefined);
@@ -254,7 +258,8 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       });
   };
   const edit = (agent: ChatAgent | "new") => {
-    const choice = matrixBotSelectableModelChoices(models, state.catalog, agent !== "new" && !!agent.recipeRef)[0];
+    const recipeBot = agent !== "new" && !!agent.recipeRef;
+    const choice = matrixBotSelectableModelChoices(recipeBot ? botModels : models, state.catalog, recipeBot)[0];
     const selection: CanonicalChatModelSelection | null = choice ? matrixBotModelSelection(choice) : null;
     patch({ editing: agent, notice: "", error: "", draft: agent === "new" ? {
       name: "", description: "", instructions: "", requestId: requestId(),
@@ -316,17 +321,18 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       <h2 ref={heading} tabIndex={-1} className="text-sm font-semibold outline-none">{title}</h2>
       {!hostedChrome ? <button type="button" aria-label="Close Agents" className={`${button} shrink-0`} disabled={state.pending} onClick={onClose}>×</button> : null}
     </header>
-    {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation onSetup={onSetup} recipe={dailyRecipe.recipe} client={client} models={matrixBotModelChoices(models)} catalog={state.catalog} catalogLoading={state.loading}
+    {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation onSetup={onSetup} recipe={dailyRecipe.recipe} client={client} models={botModels} catalog={state.catalog} catalogLoading={state.loading}
       onOpen={async chatId => { await onOpenBotChat(chatId); onClose(); }} onClose={() => setDailyRecipe(null)} /> : null}
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <AgentRecipesPanel onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
-      matrixModels={matrixBotModelChoices(models)} catalog={state.catalog} catalogLoading={state.loading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}
+      matrixModels={botModels} catalog={state.catalog} catalogLoading={state.loading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}
       onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection, name) =>
         (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}), ...(name ? { name } : {}) })).chatId : undefined}
       onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
-    <AgentLibraryBody state={state} client={client} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
-      ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model) : models}
+    <AgentLibraryBody state={state} client={client} models={state.editing && state.editing !== "new" && state.editing.recipeRef ? botModels
+      : state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
+        ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model) : models}
       openDailyBrief={client.bots && onOpenBotChat ? openDailyBrief : undefined}
       edit={edit} change={change} save={save} archive={archive}
       back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes}
