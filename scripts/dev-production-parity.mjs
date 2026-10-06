@@ -722,8 +722,6 @@ export function platformEnvironment(state, clerkJwtKey) {
   const clerkSecret = configuredClerkSecret(localEnv.CLERK_SECRET_KEY);
   const hasClerkCredential = clerkSecret.length > 0;
   return {
-    PATH: process.env.PATH,
-    HOME: process.env.HOME,
     ...publicBuildEnvironment(),
     AUTH_SHELL_ENABLED: String(hasClerkCredential),
     AUTH_SHELL_CLERK_SECRET_KEY: clerkSecret,
@@ -777,7 +775,7 @@ export function platformContainerArguments(env, options = {}) {
 }
 
 function startPlatformContainer(env) {
-  run("docker", platformContainerArguments(env), { env });
+  run("docker", platformContainerArguments(env), { env: { ...process.env, ...env } });
 }
 
 async function up() {
@@ -829,6 +827,7 @@ async function up() {
     const env = platformEnvironment(state, clerkJwtKey);
     run("pnpm", ["exec", "tsx", "scripts/dev-production-parity-seed.ts"], {
       env: {
+        ...process.env,
         ...env,
         PLATFORM_DATABASE_URL: "postgresql://matrixos:matrixos@127.0.0.1:5432/matrixos_platform",
       },

@@ -1,12 +1,17 @@
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { recoverLocalParity } from "../../scripts/local-production-parity/recovery.mjs";
 import { resolveParityStateDirectory } from "../../scripts/local-production-parity/config.mjs";
 
 const checkouts: string[] = [];
-afterEach(() => { for (const root of checkouts.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  for (const root of checkouts.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 function savedEnvironment() {
   const root = mkdtempSync(resolve(tmpdir(), "parity-recovery-"));
@@ -22,6 +27,7 @@ function savedEnvironment() {
   }
   writeFileSync(resolve(saved, "state.json"), JSON.stringify(state));
   const containers = new Map<string, { owner: string; running: boolean }>();
+  const containerEnvironments = new Map<string, Record<string, string | undefined>>();
   const effects: string[] = [];
   const services = new Set(["matrix-gateway", "matrix-shell"]);
   let volumeMissing = false;
@@ -61,6 +67,12 @@ function savedEnvironment() {
       if (name === "matrix-os-parity-platform") {
         expect(options.env?.PLATFORM_SECRET).toBe(state.platformSecret);
         expect(options.env?.PLATFORM_JWT_SECRET).toBe(state.platformJwtSecret);
+        // Docker --env NAME copies only named variables from the CLI environment.
+        const forwarded: Record<string, string | undefined> = {};
+        for (let index = 0; index < args.length; index++) {
+          if (args[index] === "--env") forwarded[args[index + 1]] = options.env?.[args[index + 1]];
+        }
+        containerEnvironments.set(name, forwarded);
       }
       containers.set(name, { owner: root, running: true }); effects.push(key); return "";
     }
@@ -77,7 +89,7 @@ function savedEnvironment() {
     sleep: async () => {}, log: () => {} };
   const original = ["state.json", ...files].map(file => [file, readFileSync(resolve(saved, file))] as const);
   const preserved = () => { for (const [file, content] of original) expect(readFileSync(resolve(saved, file))).toEqual(content); };
-  return { root, saved, options, containers, effects, services, preserved,
+  return { root, saved, options, containers, containerEnvironments, effects, services, preserved,
     missingVolume: () => { volumeMissing = true; }, brokenRoute: () => { routeFailure = true; },
     restoreRoute: () => { routeFailure = false; },
     duplicateVm: () => { processes = `10 qemu-system-x86_64 -drive file=${saved}/runtime/disk.qcow2\n11 qemu-system-x86_64 -drive file=${saved}/runtime/disk.qcow2`; },
@@ -95,6 +107,26 @@ it("resumes the same owner VM and credentials, and retry does not launch a dupli
     `docker compose -f ${env.root}/docker-compose.dev.yml up --detach --no-recreate --no-build --wait --wait-timeout 120 postgres minio`,
     `docker compose -f ${env.root}/docker-compose.dev.yml up --detach --no-recreate --no-build --wait --wait-timeout 120 postgres minio`,
   ]);
+});
+
+it("recreates the platform with retained credentials without leaking host secrets or macOS paths", async () => {
+  const env = savedEnvironment();
+  vi.stubEnv("HOST_PRIVATE_TOKEN", "host-only-secret");
+  vi.stubEnv("TMPDIR", "/host-only/temp/");
+  vi.stubEnv("SSH_AUTH_SOCK", "/host-only/ssh-agent");
+  vi.stubEnv("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", `pk_test_${Buffer.from("clerk.example.com$").toString("base64url")}`);
+  const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  vi.stubGlobal("fetch", async () => Response.json({ keys: [publicKey.export({ format: "jwk" })] }));
+
+  // Use production environment selection; fake only the JWKS and process I/O.
+  await recoverLocalParity({ ...env.options, loadPlatformEnv: undefined });
+  const forwarded = env.containerEnvironments.get("matrix-os-parity-platform")!;
+  expect(forwarded.PLATFORM_SECRET).toBe("retained-platform-secret");
+  expect(forwarded.PLATFORM_JWT_SECRET).toBe("retained-jwt-secret");
+  for (const hostOnly of ["HOST_PRIVATE_TOKEN", "TMPDIR", "SSH_AUTH_SOCK", "HOME", "PATH"]) {
+    expect(forwarded).not.toHaveProperty(hostOnly);
+  }
+  env.preserved();
 });
 
 it.each(["foreign platform", "foreign database", "missing volume", "missing disk", "duplicate VM", "occupied VM port"])(

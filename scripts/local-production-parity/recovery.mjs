@@ -22,7 +22,7 @@ async function savedPlatformEnvironment(state) {
   const publicEnv = publicBuildEnvironment();
   if (!publicEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) throw new Error("Restore this checkout's Clerk configuration before resuming its platform");
   const key = await fetchConfiguredClerkJwtKey(publicEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
-  return { ...process.env, ...platformEnvironment(state, key) };
+  return platformEnvironment(state, key);
 }
 
 // Serialized into the platform container. No imports or captured bindings.
@@ -118,7 +118,8 @@ export async function recoverLocalParity({ root = projectRoot, saved = resolvePa
   log("Resuming retained dependencies, VM and credentials without provisioning or rebuilding");
   run("docker", [...compose, "up", "--detach", "--no-recreate", "--no-build", "--wait", "--wait-timeout", "120", "postgres", "minio"], { cwd: root });
   for (const [name, args] of proxies) run("docker", existing.has(name) ? ["start", name] : args);
-  run("docker", platformEnv ? platformContainerArguments(platformEnv, { owner: root }) : ["start", platform], { env: platformEnv });
+  run("docker", platformEnv ? platformContainerArguments(platformEnv, { owner: root }) : ["start", platform],
+    { env: platformEnv ? { ...process.env, ...platformEnv } : process.env });
   if (pids.length === 0) run("qemu-system-x86_64", [...qemuRuntimeArguments({ diskPath: resolve(runtime, "disk.qcow2"),
     seedPath: resolve(runtime, "cidata.iso"), logPath: resolve(runtime, "serial.log") }), "-daemonize", "-pidfile", resolve(runtime, "qemu.pid")]);
   const remote = input => run("ssh", sshArguments(["sudo", "-n", "bash", "-s"], { runtime, strict: true }), { input, timeout: 600_000 });
