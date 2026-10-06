@@ -37,7 +37,7 @@ it.skipIf(process.env.MATRIX_PROVIDER_AUTH_ELECTRON !== "1")(
       await page.getByText("Connected on this computer", { exact: true }).waitFor();
       expect(await page.getByLabel("Paste your Anthropic API key").count()).toBe(0);
       await page.getByRole("button", { name: "Change account", exact: true }).click();
-      await page.getByRole("button", { name: /Claude account · Sign in in Terminal/ }).click();
+      await page.getByRole("button", { name: /Claude account · Log in in Terminal/ }).click();
       await page.getByRole("button", { name: "Continue in Terminal", exact: true }).waitFor();
       await expect.poll(() => page.getByRole("status").filter({ hasText: "Terminal opened: tws_fixture:tt_fixture" }).count()).toBe(1);
       await expect.poll(evidence).toMatchObject({
