@@ -165,7 +165,10 @@ a live VM's files or delete credentials to make the launcher proceed.
 
 Use `resume` after closing the provisioning launcher or restarting your computer.
 It reuses the saved disk, identity, SSH/TLS keys, dependency volumes and platform
-image. It refuses missing retained files/volumes, foreign containers, occupied VM
+image. `dev:full` refuses to replace a retained disk before changing identity or
+credentials. To deliberately provision a fresh disposable machine, run
+`dev:parity:down` first; that deletes the guest and its local owner data.
+Recovery refuses missing retained files/volumes, foreign containers, occupied VM
 ports and duplicate QEMU processes. It never reseeds the database, rotates
 credentials, rebuilds images or installs source changes. `restart` additionally
 interrupts active runs and connections; close browser tabs first. Both commands
@@ -175,7 +178,8 @@ foreground bundle/metadata server needed for provisioning or bundle updates.
 
 Preflight makes no paid provider calls and requires neither Codex nor an existing
 Chat or speech configuration. Missing optional integrations warn; failed required
-service, TLS or owner-authenticated checks exit nonzero. A successful preflight
+service, TLS, platform-container-to-VM routed health or owner-authenticated checks
+exit nonzero. A successful preflight
 does not establish browser sign-in, microphone or complete AI-turn correctness.
 Public docs in `FinnaAI/matrix-os-site` should receive this command reference in a
 separate documentation PR when this workflow is adopted.

@@ -5,6 +5,7 @@ import { resolve, dirname } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { recoverLocalParity } from "../../scripts/local-production-parity/recovery.mjs";
 import { resolveParityStateDirectory } from "../../scripts/local-production-parity/config.mjs";
+import { loadState } from "../../scripts/dev-production-parity.mjs";
 
 const checkouts: string[] = [];
 afterEach(() => {
@@ -107,6 +108,20 @@ it("resumes the same owner VM and credentials, and retry does not launch a dupli
     `docker compose -f ${env.root}/docker-compose.dev.yml up --detach --no-recreate --no-build --wait --wait-timeout 120 postgres minio`,
     `docker compose -f ${env.root}/docker-compose.dev.yml up --detach --no-recreate --no-build --wait --wait-timeout 120 postgres minio`,
   ]);
+});
+
+it("refuses replacement before rotating a retained VM's identity or credentials, leaving it resumable", async () => {
+  const env = savedEnvironment();
+  vi.stubEnv("MATRIX_LOCAL_CLERK_USER_ID", "owner");
+  expect(() => loadState({ projectRoot: env.root })).toThrow(/resume.*restart/);
+  env.preserved();
+  await recoverLocalParity(env.options);
+  env.preserved();
+  expect(env.containerEnvironments.get("matrix-os-parity-platform")?.PLATFORM_SECRET).toBe("retained-platform-secret");
+  rmSync(resolve(env.saved, "runtime"), { recursive: true });
+  const replacement = loadState({ projectRoot: env.root });
+  expect(replacement.previousMachineId).toBe("saved-machine");
+  expect(replacement.machineId).not.toBe("saved-machine");
 });
 
 it("recreates the platform with retained credentials without leaking host secrets or macOS paths", async () => {

@@ -50,6 +50,17 @@ it("fails a required transport check even if all API probes succeed", async () =
     .toEqual(["storage-tls"]);
 });
 
+it("cannot report ready when host health succeeds but the platform-to-VM route is unreachable", async () => {
+  const server = await healthServer("ok");
+  const result = await runPreflight({ platformUrl: server.url,
+    command: async (id: string) => id !== "routed-health",
+    authenticatedGet: async () => ({ status: 200, json: {} }) });
+  expect(result.exitCode).toBe(1);
+  expect(result.checks.filter((check: { level: string }) => check.level === "FAIL").map((check: { id: string }) => check.id))
+    .toEqual(["routed-health"]);
+  expect(server.requests).toEqual(["GET /health"]);
+});
+
 it("rejects HTTP success without gateway readiness on the actual routed health contract", async () => {
   const server = await healthServer("starting");
   await expect(waitForParityRoute((_url: string, options: RequestInit) => fetch(server.url, options), async () => {}, 2))

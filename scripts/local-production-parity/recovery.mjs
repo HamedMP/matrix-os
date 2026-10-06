@@ -39,6 +39,14 @@ export async function waitForParityRoute(fetchImpl, sleep = ms => new Promise(re
   throw new Error("Platform -> router -> VM health did not become ready; services and saved data were left intact");
 }
 
+export function parityRouteProbeScript(attempts = 24) {
+  return `import { fetch, Agent } from 'undici';
+const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+try { await (${waitForParityRoute.toString()})((url, options) => fetch(url, { ...options, dispatcher }), undefined, ${attempts}); }
+finally { await dispatcher.close(); }
+`;
+}
+
 const startServices = `set -euo pipefail
 wait_http() {
   local url="$1" deadline=$((SECONDS + $2))
@@ -134,11 +142,7 @@ export async function recoverLocalParity({ root = projectRoot, saved = resolvePa
     remote(startServices);
     restoreServices = false;
     run("docker", ["exec", "-i", platform, "node", "--input-type=module"], { timeout: 270_000,
-      input: `import { fetch, Agent } from 'undici';
-const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
-try { await (${waitForParityRoute.toString()})((url, options) => fetch(url, { ...options, dispatcher })); }
-finally { await dispatcher.close(); }
-` });
+      input: parityRouteProbeScript() });
     log("Ready: VM services and platform -> router -> gateway health. Browser auth and provider turns are not verified.");
   } finally {
     if (restoreServices) remote("set -e\nsystemctl start matrix-gateway matrix-shell\n");

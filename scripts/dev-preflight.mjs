@@ -5,9 +5,10 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { root, platformPort, storageTlsPort, storageTlsCertificatePath, LOCAL_PARITY_OWNER_LABEL } from "./local-production-parity/config.mjs";
 import { sshArguments } from "./local-production-parity/runtime.mjs";
+import { parityRouteProbeScript } from "./local-production-parity/recovery.mjs";
 
 const exec = promisify(execFile);
-const required = ["docker", "platform-container", "vm-ssh", "runtime-services", "gateway-health", "storage-tls", "shell-proxy"];
+const required = ["docker", "platform-container", "vm-ssh", "runtime-services", "gateway-health", "storage-tls", "shell-proxy", "routed-health"];
 const check = (id, ok, detail) => ({ id, level: ok ? "PASS" : "FAIL", detail });
 
 export async function runPreflight({ command = commandCheck, authenticatedGet = ownerGet,
@@ -57,6 +58,7 @@ async function commandCheck(id) {
     "gateway-health": ["ssh", sshArguments(["curl", "--fail", "--silent", "--max-time", "5", "http://127.0.0.1:4000/health"], { strict: true })],
     "storage-tls": ["curl", ["--fail", "--silent", "--max-time", "5", "--cacert", storageTlsCertificatePath, "--resolve", `10.0.2.2:${storageTlsPort}:127.0.0.1`, `https://10.0.2.2:${storageTlsPort}/minio/health/live`]],
     "shell-proxy": ["curl", ["--insecure", "--fail", "--silent", "--max-time", "5", "--output", "/dev/null", "--write-out", "%{content_type}", "https://127.0.0.1:8443/sign-in"]],
+    "routed-health": ["docker", ["exec", "matrix-os-parity-platform", "node", "--input-type=module", "--eval", parityRouteProbeScript(1)]],
   };
   const [command, args] = commands[id];
   const output = await execute(command, args);

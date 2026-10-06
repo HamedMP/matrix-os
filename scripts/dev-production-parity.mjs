@@ -493,13 +493,18 @@ export function pendingLocalParityMachineId(previous) {
     : undefined;
 }
 
-function loadState() {
-  const env = { ...parseEnvFile(resolve(root, ".env.docker")), ...parseEnvFile(resolve(root, ".env")), ...process.env };
+export function loadState({ projectRoot = root } = {}) {
+  const directory = resolveParityStateDirectory(projectRoot);
+  const path = resolve(directory, "state.json");
+  if (existsSync(resolve(directory, "runtime/disk.qcow2"))) {
+    throw new Error("A retained VM disk exists. Use resume or restart; run dev:parity:down explicitly before provisioning a replacement");
+  }
+  const env = { ...parseEnvFile(resolve(projectRoot, ".env.docker")), ...parseEnvFile(resolve(projectRoot, ".env")), ...process.env };
   const clerkUserId = env.MATRIX_LOCAL_CLERK_USER_ID?.trim();
   if (!clerkUserId) {
     throw new Error("MATRIX_LOCAL_CLERK_USER_ID is required so production auth routes the signed-in user to the local machine");
   }
-  const previous = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+  const previous = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
   const seededMachineId = lastSuccessfullySeededMachineId(previous);
   const pendingMachineId = pendingLocalParityMachineId(previous);
   const state = {
@@ -517,8 +522,8 @@ function loadState() {
     registrationTokenExpiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
     postgresPassword: randomBytes(24).toString("base64url"),
   };
-  mkdirSync(stateDirectory, { recursive: true });
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   return state;
 }
 
