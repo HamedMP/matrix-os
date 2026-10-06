@@ -2,7 +2,7 @@ import { RailCollapse } from "./RailCollapse";
 import { WorkRailOrderItem } from "./WorkRailOrderItem";
 import { useRef } from "react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { ChevronRight, Folder, FolderOpen, PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2 } from "@renderer/lib/hugeicons";
+import { ChevronRight, Folder, FolderOpen, PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2, UsersIcon } from "@renderer/lib/hugeicons";
 import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
 import { ProjectEditDialog } from "./ProjectActionDialogs";
 import { useProjectActions } from "./use-project-actions";
@@ -14,6 +14,7 @@ import { projectShareMenuItems } from "./project-share-action";
 
 export function WorkRailProjectGroup({
   group,
+  shared = false,
   expanded,
   activeProjectSlug,
   activeChatId,
@@ -38,6 +39,7 @@ export function WorkRailProjectGroup({
   movingChatId,
 }: {
   group: WorkRailProjectGroupModel;
+  shared?: boolean;
   expanded: boolean;
   activeProjectSlug?: string;
   activeChatId?: string;
@@ -91,6 +93,9 @@ export function WorkRailProjectGroup({
               ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: activeProjectSlug === group.slug ? "var(--accent)" : "var(--text-tertiary)" }} />
               : <Folder size={15} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />}
             <span className="truncate">{group.name}</span>
+            {shared ? <span role="img" aria-label="Shared project" title="Shared with others" className="ml-auto flex shrink-0" style={{ color: "var(--text-tertiary)" }}>
+              <UsersIcon size={13} aria-hidden />
+            </span> : null}
           </button>
           <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100">
             <ProjectActionsButton buttonRef={actionButtonRef} name={group.name} items={items} />
