@@ -1,53 +1,34 @@
 #!/usr/bin/env node
 
 import { createHash, createHmac, createPublicKey, randomBytes, randomUUID } from "node:crypto";
-import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createConnection, createServer as createTcpServer } from "node:net";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  root, stateDirectory, statePath, cloudInitPath, bundlePath, bundleChecksumPath,
+  machineName, launcherLockPath, runtimeDirectory, runtimeDiskPath, runtimeSeedPath,
+  runtimeLogPath, runtimeSshKeyPath, storageTlsDirectory, storageTlsCertificatePath,
+  storageTlsKeyPath, baseImagePath, baseImageChecksumPath, artifactPort, platformPort,
+  storageTlsPort, guestHostAddress, fixturePublicAddress, localPlatformUrl,
+  localArtifactUrl, ubuntuImageUrl, fixtureRouterName, storageTlsProxyName,
+  platformContainerName, platformImageName, LOCAL_PARITY_OWNER_LABEL,
+} from "./local-production-parity/config.mjs";
+import {
+  readRuntimePid, runtimeProcessIsOwned, runtimeProcessPids, startQemuRuntime,
+  stopQemuRuntime, sshArguments, waitForRuntimeSsh, waitForRuntimeReadiness,
+} from "./local-production-parity/runtime.mjs";
+export { qemuRuntimeArguments, runtimeProcessIsOwned, runtimeProcessPids } from "./local-production-parity/runtime.mjs";
+export { LOCAL_PARITY_OWNER_LABEL } from "./local-production-parity/config.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcherLockHelperPath = resolve(root, "scripts/dev-production-parity-lock.py");
-const stateDirectory = resolve(root, ".amp/in/local-production-parity");
-const statePath = resolve(stateDirectory, "state.json");
-const bundleDirectory = resolve(stateDirectory, "host-bundle");
-const cloudInitPath = resolve(stateDirectory, "cloud-init.yaml");
-const bundlePath = resolve(bundleDirectory, "matrix-host-bundle.tar.gz");
-const bundleChecksumPath = `${bundlePath}.sha256`;
-const machineName = process.env.MATRIX_PARITY_MACHINE_NAME ?? "matrix-os-local";
 export function localParityBuilderName(projectRoot, runtimeName) {
   const checkoutId = createHash("sha256").update(projectRoot).digest("hex").slice(0, 12);
   return `${runtimeName}-builder-${checkoutId}`;
 }
 const builderName = localParityBuilderName(root, machineName);
-const launcherLockPath = resolve(stateDirectory, "launcher.lock");
-const runtimeDirectory = resolve(stateDirectory, "runtime");
-const runtimeDiskPath = resolve(runtimeDirectory, "disk.qcow2");
-const runtimeSeedPath = resolve(runtimeDirectory, "cidata.iso");
-const runtimePidPath = resolve(runtimeDirectory, "qemu.pid");
-const runtimeLogPath = resolve(runtimeDirectory, "serial.log");
-const runtimeSshKeyPath = resolve(runtimeDirectory, "operator_ed25519");
-const storageTlsDirectory = resolve(stateDirectory, "storage-tls");
-const storageTlsCertificatePath = resolve(storageTlsDirectory, "certificate.pem");
-const storageTlsKeyPath = resolve(storageTlsDirectory, "key.pem");
-const baseImagePath = resolve(stateDirectory, "ubuntu-24.04-amd64.qcow2");
-const baseImageChecksumPath = `${baseImagePath}.sha256`;
-const artifactPort = Number(process.env.MATRIX_PARITY_ARTIFACT_PORT ?? 9876);
-// Keep parity isolated from the source/HMR platform's conventional port 9000.
-const platformPort = Number(process.env.MATRIX_PARITY_PLATFORM_PORT ?? 9003);
-const storageTlsPort = Number(process.env.MATRIX_PARITY_STORAGE_TLS_PORT ?? 9444);
-const guestHostAddress = "10.0.2.2";
-const fixturePublicAddress = "192.0.2.2";
-const localPlatformUrl = `http://${guestHostAddress}:${platformPort}`;
-const localArtifactUrl = `http://${guestHostAddress}:${artifactPort}`;
-const ubuntuImageUrl = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img";
-const fixtureRouterName = "matrix-os-parity-router";
-const storageTlsProxyName = "matrix-os-parity-storage-tls";
-const platformContainerName = "matrix-os-parity-platform";
-const platformImageName = "matrix-os-parity-platform:working-tree";
-export const LOCAL_PARITY_OWNER_LABEL = "com.matrix-os.local-production-parity.root";
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -218,32 +199,6 @@ function machineExists(name) {
   return spawnSync("orb", ["info", name, "--format", "json"], { stdio: "ignore" }).status === 0;
 }
 
-function readRuntimePid() {
-  if (!existsSync(runtimePidPath)) return null;
-  const pid = Number(readFileSync(runtimePidPath, "utf8").trim());
-  return Number.isSafeInteger(pid) && pid > 1 ? pid : null;
-}
-
-export function runtimeProcessIsOwned(options = {}) {
-  const pid = options.pid ?? readRuntimePid();
-  const diskPath = options.diskPath ?? runtimeDiskPath;
-  const processCommand = options.processCommand ?? ((candidatePid) => {
-    const result = spawnSync("ps", ["-p", String(candidatePid), "-o", "command="], { encoding: "utf8" });
-    return result.status === 0 ? result.stdout.trim() : "";
-  });
-  return pid !== null && processCommand(pid).includes(diskPath);
-}
-
-export function runtimeProcessPids(options = {}) {
-  const diskPath = options.diskPath ?? runtimeDiskPath;
-  const processList = options.processList ?? (() => run("ps", ["-axo", "pid=,command="], { capture: true }));
-  return processList().split("\n").flatMap((line) => {
-    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
-    if (!match || !match[2].includes("qemu-system-x86_64") || !match[2].includes(`file=${diskPath}`)) return [];
-    return [Number(match[1])];
-  });
-}
-
 export function assertLocalParityContainerOwnership(name, owner, expectedOwner = root) {
   if (owner !== expectedOwner) {
     throw new Error(`${name} belongs to another checkout; refusing to remove it`);
@@ -397,39 +352,6 @@ function prepareRuntimeFiles(renderedCloudInit, instanceId) {
   run("qemu-img", ["create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", baseImagePath, runtimeDiskPath, "64G"]);
 }
 
-export function qemuRuntimeArguments(options = {}) {
-  const diskPath = options.diskPath ?? runtimeDiskPath;
-  const seedPath = options.seedPath ?? runtimeSeedPath;
-  const logPath = options.logPath ?? runtimeLogPath;
-  return [
-    "-name", machineName,
-    "-machine", "q35,accel=tcg",
-    "-cpu", "max",
-    "-smp", "2",
-    "-m", "4096",
-    "-display", "none",
-    "-serial", `file:${logPath}`,
-    "-drive", `if=virtio,format=qcow2,file=${diskPath}`,
-    "-drive", `if=virtio,format=raw,readonly=on,file=${seedPath}`,
-    "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:8443-:443",
-    "-device", "virtio-net-pci,netdev=net0,mac=52:54:00:4d:58:01",
-  ];
-}
-
-function startQemuRuntime() {
-  const output = openSync(resolve(runtimeDirectory, "qemu.log"), "a");
-  // QEMU resolves firmware relative to its installation. Run the installed
-  // executable rather than copying it away from Homebrew's share/qemu data.
-  const qemuExecutable = run("which", ["qemu-system-x86_64"], { capture: true });
-  const child = spawn(qemuExecutable, qemuRuntimeArguments(), {
-    cwd: root,
-    stdio: ["ignore", output, output],
-  });
-  closeSync(output);
-  if (!child.pid) throw new Error("QEMU did not return a process id");
-  writeFileSync(runtimePidPath, `${child.pid}\n`, { mode: 0o600 });
-}
-
 function fixtureAddressIsInstalled() {
   return run("ifconfig", ["lo0"], { capture: true }).includes(`inet ${fixturePublicAddress} `);
 }
@@ -502,39 +424,6 @@ function stopPlatformContainer() {
   stopOwnedContainer(platformContainerName);
 }
 
-async function stopQemuRuntime() {
-  const candidates = runtimeProcessPids();
-  if (candidates.length > 1) {
-    throw new Error(`Multiple QEMU processes use ${runtimeDiskPath}; refusing automatic cleanup`);
-  }
-  const pid = candidates[0];
-  if (!pid) {
-    const recordedPid = readRuntimePid();
-    if (recordedPid) {
-      try {
-        process.kill(recordedPid, 0);
-      } catch (error) {
-        if (error && typeof error === "object" && "code" in error && error.code === "ESRCH") return;
-        throw error;
-      }
-      throw new Error(`Process ${recordedPid} is still alive but does not match ${runtimeDiskPath}; refusing to remove the runtime disk`);
-    }
-    return;
-  }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch (error) {
-    if (!(error && typeof error === "object" && "code" in error && error.code === "ESRCH")) throw error;
-  }
-  const deadline = Date.now() + 30_000;
-  while (runtimeProcessPids().includes(pid) && Date.now() < deadline) {
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
-  }
-  if (runtimeProcessPids().includes(pid)) {
-    throw new Error(`QEMU pid ${pid} did not stop; refusing to remove its disk`);
-  }
-}
-
 export async function cleanupLocalParityResources(options = {}) {
   const stopRuntime = options.stopRuntime ?? stopQemuRuntime;
   const stopContainers = options.stopContainers ?? [stopFixtureRouter, stopStorageTlsProxy, stopPlatformContainer];
@@ -556,49 +445,6 @@ export async function cleanupLocalParityResources(options = {}) {
   }
   if (runtimeStopped) removeRuntime();
   if (errors.length > 0) throw new AggregateError(errors, "Failed to clean up local parity resources safely");
-}
-
-function sshArguments(command) {
-  return [
-    "-i", runtimeSshKeyPath,
-    "-o", "BatchMode=yes",
-    "-o", "IdentitiesOnly=yes",
-    "-o", "ConnectTimeout=5",
-    "-p", "2222",
-    "-o", "StrictHostKeyChecking=no",
-    "-o", `UserKnownHostsFile=${resolve(runtimeDirectory, "known_hosts")}`,
-    "matrix-local-operator@127.0.0.1",
-    ...command,
-  ];
-}
-
-async function waitForRuntimeSsh(timeoutMs = 15 * 60_000, signal) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    signal?.throwIfAborted();
-    const result = spawnSync("ssh", sshArguments(["true"]), { cwd: root, stdio: "ignore" });
-    if (result.status === 0) return;
-    if (!runtimeProcessIsOwned()) throw new Error(`QEMU exited during startup; inspect ${runtimeLogPath}`);
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000));
-  }
-  throw new Error(`Timed out waiting for the production VM; inspect ${runtimeLogPath}`);
-}
-
-async function waitForRuntimeReadiness(timeoutMs = 30 * 60_000, signal) {
-  const deadline = Date.now() + timeoutMs;
-  const probe = [
-    "sudo", "test", "-f", "/opt/matrix/register-complete", "&&",
-    "sudo", "systemctl", "is-active", "--quiet",
-    "nginx", "matrix-gateway", "matrix-shell", "matrix-scope-runtime", "matrix-terminal-runtime",
-  ];
-  while (Date.now() < deadline) {
-    signal?.throwIfAborted();
-    const result = spawnSync("ssh", sshArguments(probe), { cwd: root, stdio: "ignore" });
-    if (result.status === 0) return;
-    if (!runtimeProcessIsOwned()) throw new Error(`QEMU exited during readiness checks; inspect ${runtimeLogPath}`);
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000));
-  }
-  throw new Error("Timed out waiting for production registration and runtime services");
 }
 
 function runInRuntime(command, options = {}) {

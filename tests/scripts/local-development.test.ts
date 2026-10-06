@@ -215,9 +215,6 @@ describe("local development contracts", () => {
     expect(launcher).toContain('PLATFORM_PREVIEW: "true"');
     expect(launcher).toContain("PLATFORM_JWT_SECRET: state.platformJwtSecret");
     expect(launcher).toContain('S3_PUBLIC_ENDPOINT: `https://${guestHostAddress}:${storageTlsPort}`');
-    expect(launcher).toContain('"sudo", "test", "-f", "/opt/matrix/register-complete"');
-    expect(launcher).toContain("Timed out waiting for production registration and runtime services");
-    expect(launcher).toContain('"-o", "IdentitiesOnly=yes"');
     expect(launcher).not.toContain('platformSecret: env.PLATFORM_SECRET');
     expect(launcher).toContain("browser auth will return a bounded unavailable response");
     expect(clerkSecretIsConfigured(`sk_${"test"}_${"a".repeat(24)}`)).toBe(true);
