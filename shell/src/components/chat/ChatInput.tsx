@@ -1,4 +1,7 @@
 "use client";
+import type { CanonicalProviderInstanceDescriptor } from "@matrix-os/contracts";
+import { matchChatSlashToken } from "@matrix-os/ui";
+import { ChatSlashPicker } from "./ChatSlashPicker";
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
 import {
   BOT_ATTACHMENT_HANDOFF_REASON,
@@ -30,7 +33,7 @@ import {
   PlatformSpeechRecorderError,
 } from "@/lib/platform-speech-recorder";
 export function ChatInput({
-  composer, agentClient, scope, permissionMode, onOpenBotMention,
+  composer, agentClient, scope, permissionMode, onOpenBotMention, slashInstance, slashCatalogLoading = false,
   connected,
   busy,
   activeRunId,
@@ -48,6 +51,8 @@ export function ChatInput({
   speechCaptureAdapter,
 }: {
   composer: ChatComposerDraft;
+  slashInstance?: CanonicalProviderInstanceDescriptor;
+  slashCatalogLoading?: boolean;
   onOpenBotMention?: (chatId: string, text: string) => boolean | Promise<boolean>;
   agentClient?: ChatAgentClient;
   scope: string;
@@ -74,6 +79,13 @@ export function ChatInput({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dismissedQuery, setDismissedQuery] = useState<string | null>(null);
+  const [cursor, setCursor] = useState(input.length);
+  const [slashDismissal, setSlashDismissal] = useState<string|null>(null);
+  const slashToken = matchChatSlashToken(input,cursor);
+  const slashKey = `${scope}:${slashInstance?.id ?? ""}:${input}:${slashToken?.start ?? ""}`;
+  const slashQuery = slashToken && slashDismissal !== slashKey ? slashToken.query : null;
+  const slashListRef = useRef<HTMLDivElement|null>(null);
+  const slashAnchorRef = useRef<HTMLDivElement|null>(null);
   const queryMatch = /(?:^|\s)@([^\s@]*)$/.exec(input);
   const query = queryMatch && dismissedQuery !== input ? queryMatch[1]! : null;
   const permissionResources = botConsentResources.length ? botConsentResources : resources;
@@ -85,6 +97,7 @@ export function ChatInput({
   const mentionListRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputRef = useRef(input);
+  const pendingCursor = useRef<number|null>(null);
   const consumedDraftRequest = useRef<number | null>(null);
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
   const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention, attachments.length ? BOT_ATTACHMENT_HANDOFF_REASON : undefined);
@@ -108,7 +121,12 @@ export function ChatInput({
   const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length, text: input, attachments: attachments.length });
 
   useEffect(() => {
+    if (inputRef.current !== input) setCursor(input.length);
     inputRef.current = input;
+    if (pendingCursor.current !== null) {
+      textareaRef.current?.setSelectionRange(pendingCursor.current,pendingCursor.current);
+      pendingCursor.current = null;
+    }
   }, [input]);
 
   useEffect(() => {
@@ -168,7 +186,18 @@ export function ChatInput({
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
       {speech.error ? <p role="alert" className="text-xs text-destructive">{speech.error}</p> : null}
       <Attachments attachments={attachments} onRemove={removeFile} />
-      <div className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
+      <div ref={slashAnchorRef} className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
+        <ChatSlashPicker instance={slashInstance} loading={slashCatalogLoading} query={slashQuery} listRef={slashListRef} anchorRef={slashAnchorRef} inputRef={textareaRef}
+          onOutsideDismiss={()=>setSlashDismissal(slashKey)}
+          onDismiss={()=>{setSlashDismissal(slashKey);textareaRef.current?.focus();}} onSelect={entry=>{
+            if (!slashToken) return;
+            // Matching stops at the caret for filtering; replacement consumes the rest of the same token.
+            const suffixLength=input.slice(slashToken.end).match(/^[a-z0-9_-]*/i)?.[0].length ?? 0;
+            const next=input.slice(0,slashToken.start)+entry.invocation+" "+input.slice(slashToken.end+suffixLength);
+            const nextCursor=slashToken.start+entry.invocation.length+1;
+            inputRef.current=next;pendingCursor.current=nextCursor;setCursor(nextCursor);setInput(next);
+            setSlashDismissal(slashKey);textareaRef.current?.focus();
+          }}/>
         <AttachmentButton
           onFilesSelected={addFiles}
           disabled={!connected || !attachmentsEnabled}
@@ -179,8 +208,20 @@ export function ChatInput({
           aria-label="Message chat"
           ref={textareaRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(event) => handleChatInputKey(event, { query, mentionListRef, onDismiss: () => setDismissedQuery(input), onSubmit: () => void handleSubmit() })}
+          onChange={(e) => {inputRef.current=e.target.value;setInput(e.target.value);setCursor(e.target.selectionStart);}}
+          onSelect={e=>setCursor(e.currentTarget.selectionStart)}
+          onKeyDown={(event) => {
+            if (slashQuery !== null && !event.nativeEvent.isComposing) {
+              if (event.key === "Escape") {event.preventDefault();setSlashDismissal(slashKey);return;}
+              if (event.key === "ArrowDown" || event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                const first=slashListRef.current?.querySelector<HTMLButtonElement>('button[role="option"]');
+                if (event.key === "Enter") first?.click(); else first?.focus();
+                return;
+              }
+            }
+            handleChatInputKey(event, { query, mentionListRef, onDismiss: () => setDismissedQuery(input), onSubmit: () => void handleSubmit() });
+          }}
           placeholder={speech.phase === "requesting_permission"
             ? "Waiting for microphone permission..."
             : speech.phase === "transcribing"

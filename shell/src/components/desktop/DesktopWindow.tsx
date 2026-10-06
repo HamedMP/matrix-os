@@ -218,6 +218,7 @@ export function DesktopWindow({
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 active={focusedWindowId === win.id && !win.minimized}
+                visible={!win.minimized}
                 readState={chat.readState}
                 displayedThroughSeq={chat.displayedThroughSeq}
                 onUpdateReadState={chat.updateReadState}

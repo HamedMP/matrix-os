@@ -44,6 +44,7 @@ describe("Web Chat Agents page", () => {
     const view = render(<ChatApp {...props} />);
     const sourceDraft = await screen.findByRole("textbox", { name: "Message chat" });
     fireEvent.change(sourceDraft, { target: { value: "Keep the ordinary Chat draft" } });
+    if (mobile) fireEvent.click(screen.getByRole("button", { name: "Open Chat sidebar" }));
     fireEvent.click(await screen.findByRole("button", { name: `Chat with ${saved.name}` }));
     await waitFor(() => expect(props.onSwitchConversation).toHaveBeenCalledWith(botChatId));
     expect(botRequest).toHaveBeenCalledWith(`/api/chat-agents/${saved.id}/direct-chat`, "POST", {});
@@ -90,6 +91,7 @@ describe("Web Chat Agents page", () => {
     const draft = screen.getByRole("textbox", { name: "Message chat" });
     fireEvent.change(draft, { target: { value: "Keep this draft" } });
     await waitFor(() => expect((draft as HTMLTextAreaElement).disabled).toBe(false));
+    if (mobile) fireEvent.click(screen.getByRole("button", { name: "Open Chat sidebar" }));
     fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Message chat" })).toBeNull();
@@ -102,7 +104,8 @@ describe("Web Chat Agents page", () => {
     expect((draft as HTMLTextAreaElement).value).toBe("Keep this draft");
     expect(screen.getByText("Original message")).toBeTruthy();
     expect(screen.getByText("Arrived while editing")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Agents", exact: true }));
+    if (mobile) fireEvent.click(screen.getByRole("button", { name: "Open Chat sidebar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Agents", exact: true }));
     expect(await screen.findByRole("region", { name: "Agents", exact: true })).toBeTruthy();
     expect(await screen.findByRole("button", { name: `Edit ${saved.name}` })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Agent recipes" })).toBeNull();

@@ -11,6 +11,7 @@ import { InviteMembersDialog } from "./OrganizationDialogs";
 import { OrganizationMark } from "./OrganizationMark";
 import { useShellOrganizations } from "./useShellOrganizations";
 import { useShellOrganizationActions } from "./useShellOrganizationActions";
+import { isSelfHostedRuntime } from "@/lib/self-host-mode";
 
 const MENU_ITEM = "flex min-h-9 cursor-default items-center gap-2.5 rounded-lg px-2 text-[13px] outline-none transition-colors data-[highlighted]:bg-foreground/[0.06]";
 
@@ -65,6 +66,12 @@ export function OrganizationSwitcherView({ organizations, organizationId, onSele
 }
 
 export function OrganizationSwitcher({ onOpenSettings }: { onOpenSettings: (section: "organization") => void }) {
+  // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- the root layout supplies the same self-hosted flag in the server env and browser document
+  if (isSelfHostedRuntime() || process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1") return null;
+  return <ClerkOrganizationSwitcher onOpenSettings={onOpenSettings} />;
+}
+
+function ClerkOrganizationSwitcher({ onOpenSettings }: { onOpenSettings: (section: "organization") => void }) {
   const { userId } = useAuth();
   const { organization } = useOrganization();
   const { isLoaded, setActive } = useOrganizationList();
