@@ -1661,7 +1661,7 @@ jobs:
           send "$claim" || { echo "Could not claim the rollback guard; host configuration is unchanged." >&2; exit 1; }
           guard_armed=true
           binding="$(jq -cn --arg url "$PREVIEW_TAG_URL" --arg token "$preview_token" --arg origins "$PREVIEW_CLIENT_ORIGINS" '{PLATFORM_INTERNAL_URL:$url,UPGRADE_TOKEN:$token,MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins}')"
-          apply="$(script_command root scripts/preview-collaboration-home.py 15000 apply "$nonce" "$handle" "$PREVIEW_RUNTIME_OWNER_ID" "$PREVIEW_MACHINE_ID" "$binding")"
+          apply="$(script_command root scripts/preview-collaboration-home.py 15000 "$nonce" "$handle" "$PREVIEW_RUNTIME_OWNER_ID" "$PREVIEW_MACHINE_ID" "$binding")"
           send "$apply" || fail_and_restore "Could not bind the preview VM to the isolated PR backend."
           health="$(script_command user scripts/preview-collaboration-probe.py 30000 health)"
           send "$health" || fail_and_restore "The Matrix gateway health check failed."
