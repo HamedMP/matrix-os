@@ -19,7 +19,7 @@ Verification: focused contract/unit/integration tests and package type checks. R
 
 ### U2 — Gallery and widget design preview
 Goal: replace the current gallery's repeated dashboard presentation with the reference direction while retaining genuine packaged app previews, search, useful personal/business filtering, connections and comparison views. Add an interactive desktop widget design view with add/remove/rearrange and subject-specific cards; clearly fictional demo data.
-Files: specs/550-app-store-launch/design-prototype/** in /private/tmp/matrix-gallery-widget-design only. Own source, CSS, demo catalog tests and preview documentation. No changes to production shell, kernel or owner records.
+Files: specs/550-app-store-launch/design-prototype/** in /private/tmp/matrix-gallery-widget-design-integrated only. Own source, CSS, demo catalog tests and preview documentation. No changes to production shell, kernel or owner records.
 Approach: four generous preview columns on wide screens, adaptive one/two-column phone/tablet view; pill navigation for Gallery, Tools and widget preview. Expressive original icons and each subject's own layout. Preserve existing real source preview documents and source provenance. Avoid fabricated screenshots, ratings, install claims or community listings.
 Execution note: test-first for new navigation/filter/widget state; source checks and production build for visuals. Browser access to the gallery target has been denied: no browser/CDP/Playwright/curl/screenshots of that target or alternatives to bypass it. Rendered and native checks remain pending.
 Patterns: Storefront.tsx, DesignReview.tsx, DemoFrame.tsx and PreviewDocument.tsx in the prototype.
@@ -37,7 +37,7 @@ Verification: site test suite and production build. Rendered checks pending if t
 
 ### U4 — Widget architecture and integration review (parent)
 Goal: concrete widget implementation spec for shared Web Desktop/Electron Desktop/Web Canvas, plus mobile presentation, updates/cache/permissions and owner persistence. Read actual desktop config and app bridges before designing it. Integrate and review U1–U3 and open scoped PRs.
-Files: specs/552-gallery-widgets-platform-images/{spec.md,plan.md,verification.md}; scoped integration fixes after workers finish.
+Files: separate specification dependency PR with specs/552-gallery-widgets-platform-images/{spec.md,plan.md,verification.md} and builder capability guidance; scoped integration fixes after workers finish.
 Execution note: architecture verification from actual source, focused regression tests for integration fixes.
 Verification: auth matrix, runtime wiring, explicit release gates, source review, required automated review, separate public docs PR. No fabricated platform/Expo support.
 
