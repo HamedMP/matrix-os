@@ -20,7 +20,7 @@ export function fenceSharedChatAuthority(
   context: AuthorizedCollaborationContext,
   actorId: string,
   action: "read",
-  now?: Date,
+  clock?: () => Date,
 ): Promise<"owner" | "editor" | "viewer">;
 export function fenceSharedChatAuthority(
   trx: Transaction<OwnerCollaborationDatabase>,
@@ -28,7 +28,7 @@ export function fenceSharedChatAuthority(
   context: AuthorizedCollaborationContext,
   actorId: string,
   action: Exclude<SharedChatAction, "read">,
-  now?: Date,
+  clock?: () => Date,
 ): Promise<"owner" | "editor">;
 export async function fenceSharedChatAuthority(
   trx: Transaction<OwnerCollaborationDatabase>,
@@ -36,7 +36,7 @@ export async function fenceSharedChatAuthority(
   context: AuthorizedCollaborationContext,
   actorId: string,
   action: SharedChatAction,
-  at: Date = new Date(),
+  clock: () => Date = () => new Date(),
 ): Promise<"owner" | "editor" | "viewer"> {
   if (scope.kind !== "chat" || scope.lifecycle !== "shared"
     || context.scopeId !== scope.id || context.resourceId !== scope.resource_id
@@ -68,7 +68,7 @@ export async function fenceSharedChatAuthority(
   const member = await trx.selectFrom("collaboration_members").selectAll()
     .where("scope_id", "=", membershipScope.id).where("actor_id", "=", actorId)
     .forUpdate().executeTakeFirst();
-  const now = at.getTime();
+  const now = clock().getTime();
   const legacyRole = member?.status === "accepted" && member.dispositioned_at === null
     && (member.expires_at === null || new Date(member.expires_at).getTime() > now)
     && (actorId === membershipScope.owner_id || !await hasRetiredLegacyAuthority(trx, membershipScope.id))

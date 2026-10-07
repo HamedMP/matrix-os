@@ -314,14 +314,7 @@ export class ChatQueueRepository {
         throw new SharedChatQueueError("unavailable");
       }
       if (authority) {
-        await fenceSharedChatAuthority(
-          trx,
-          scope,
-          authority,
-          requestingActorId,
-          "request_ai",
-          new Date(acceptedAt),
-        );
+        await fenceSharedChatAuthority(trx, scope, authority, requestingActorId, "request_ai");
       } else {
         if (scope.membership_mode !== "direct") throw new SharedChatQueueError("unavailable");
         const member = await trx.selectFrom("collaboration_members").select(["role", "status", "expires_at"])
@@ -910,14 +903,8 @@ export class ChatQueueRepository {
             sharedAdmission = "unauthorized";
           } else {
             try {
-              await fenceSharedChatAuthority(
-                sharedTrx,
-                sharedScope,
-                freshAuthority,
-                authorizedCandidate.requesting_actor_id,
-                "request_ai",
-                new Date(claimedAt),
-              );
+              await fenceSharedChatAuthority(sharedTrx, sharedScope, freshAuthority,
+                authorizedCandidate.requesting_actor_id, "request_ai");
             } catch (error: unknown) {
               if (!(error instanceof CollaborationAuthorizationError)) throw error;
               sharedAdmission = "unauthorized";

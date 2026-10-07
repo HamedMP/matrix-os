@@ -98,7 +98,7 @@ export class CollaborationChatCommands {
     const requestId = CanonicalChatQueuedTurnIdSchema.parse(input.requestId);
     const authority = await this.options.authorize?.(identity.scopeId, identity.actorId, "control_execution");
     const reserved = await this.options.db.transaction().execute(async (trx) => {
-      const authorized = await authorizeCommand(trx, identity, "cancel", requestId, this.now(), authority);
+      const authorized = await authorizeCommand(trx, identity, "cancel", requestId, this.now, authority);
       const replay = await replayCommand(trx, identity, "cancel");
       if (replay) return { result: replay, dispatch: false as const };
       requireExpectedRevision(identity, authorized.chatRevision);
@@ -187,7 +187,7 @@ export class CollaborationChatCommands {
     const newRequestId = CanonicalChatQueuedTurnIdSchema.parse(input.newRequestId);
     const authority = await this.options.authorize?.(identity.scopeId, identity.actorId, "control_execution");
     return this.options.db.transaction().execute(async (trx) => {
-      const authorized = await authorizeCommand(trx, identity, "retry", requestId, this.now(), authority);
+      const authorized = await authorizeCommand(trx, identity, "retry", requestId, this.now, authority);
       const replay = await replayCommand(trx, identity, "retry");
       if (replay) return replay;
       requireExpectedRevision(identity, authorized.chatRevision);
@@ -268,7 +268,7 @@ export class CollaborationChatCommands {
     await this.reconcileApprovalReplay(identity);
     const authority = await this.options.authorize?.(identity.scopeId, identity.actorId, "control_execution");
     const reserved = await this.options.db.transaction().execute(async (trx) => {
-      const authorized = await authorizeCommand(trx, identity, "approval", undefined, this.now(), authority);
+      const authorized = await authorizeCommand(trx, identity, "approval", undefined, this.now, authority);
       // Locked rule: the requesting member or the scope owner answers a tool approval; nobody else.
       const requester = await trx.selectFrom("chat_queued_turns").select(["id", "requesting_actor_id"])
         .where("chat_id", "=", authorized.chatId)
@@ -477,7 +477,7 @@ async function authorizeCommand(
   identity: CommandIdentity,
   _kind: "approval" | "cancel" | "retry",
   _requestId: string | undefined,
-  now: Date,
+  clock: () => Date,
   authority?: Awaited<ReturnType<SharedChatAuthorizer>>,
 ) {
   const scope = await trx.selectFrom("collaboration_scopes").selectAll()
@@ -494,7 +494,7 @@ async function authorizeCommand(
       authority,
       identity.actorId,
       "control_execution",
-      now,
+      clock,
     );
   } else {
     if (scope.membership_mode !== "direct") throw new CollaborationChatCommandError("unavailable");
@@ -502,8 +502,9 @@ async function authorizeCommand(
       .where("scope_id", "=", identity.scopeId)
       .where("actor_id", "=", identity.actorId)
       .forUpdate().executeTakeFirst();
+    const membershipCheckedAt = clock();
     if (!member || member.status !== "accepted"
-      || (member.expires_at !== null && new Date(member.expires_at).getTime() <= now.getTime())) {
+      || (member.expires_at !== null && new Date(member.expires_at).getTime() <= membershipCheckedAt.getTime())) {
       throw new CollaborationChatCommandError("not_found");
     }
     if (member.role === "viewer") throw new CollaborationChatCommandError("forbidden");
@@ -529,7 +530,7 @@ async function authorizeCommand(
     authorityGeneration: Number(scope.authority_generation),
     executionGeneration: scope.execution_generation === null ? null : Number(scope.execution_generation),
     executionEligibility: scope.execution_eligibility,
-    at: now.toISOString(),
+    at: clock().toISOString(),
   };
 }
 
