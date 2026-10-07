@@ -9,6 +9,14 @@ const items = [
   { id: "chat_voice", title: "Plan my week", updatedAt: 2, unread: true, conversationKind: "voice" as const },
 ];
 describe("shared Chat history presentation", () => {
+  it("blocks private titles and search text when rendered without a wrapper", () => {
+    render(<ChatHistory items={items} onSelect={vi.fn()} onNewChat={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Launch website" }).closest(".ph-no-capture")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+    const search = screen.getByRole("searchbox");
+    fireEvent.change(search, { target: { value: "private topic" } });
+    expect(search.closest(".ph-no-capture")).not.toBeNull();
+  });
   it("retains server content matches outside the title and latest preview", () => {
     render(<ChatHistory items={items} searchMode="remote" onSelect={vi.fn()} onNewChat={vi.fn()} onQueryChange={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
