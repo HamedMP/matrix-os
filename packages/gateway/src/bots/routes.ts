@@ -5,7 +5,6 @@
  * with allowlisted codes and generic messages, and responses are private.
  */
 import { BotChatBindingResponseSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, type BotTaskSummary } from "@matrix-os/contracts";
-import { z } from "zod/v4";
 import { BotEntryError } from "./custom-direct-chat.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
