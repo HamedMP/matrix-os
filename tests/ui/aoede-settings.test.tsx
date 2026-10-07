@@ -56,6 +56,27 @@ describe("Aoede settings", () => {
     fireEvent.change(agent, { target: { value: "codex_fixture" } });
     await waitFor(() => expect(controller.setSelection).toHaveBeenCalledWith({ instanceId: "codex_fixture", model: "gpt-5.6-sol" }));
   });
+  it("serializes all media settings and recovers after a rejected change", async () => {
+    const controller = makeController();
+    let reject!: (error: Error) => void;
+    vi.mocked(controller.setTurnMode).mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+    render(<AoedeSettings controller={controller} snapshot={makeSnapshot()} />);
+    await screen.findByLabelText("Voice input");
+    fireEvent.click(screen.getByLabelText("Push to talk"));
+    // Programmatic events also test the synchronous guard, independent of disabled controls.
+    fireEvent.change(screen.getByLabelText("Spoken language"), { target: { value: "auto" } });
+    fireEvent.change(screen.getByLabelText("Voice input"), { target: { value: "mic_usb" } });
+    expect(controller.setPreferredLanguage).not.toHaveBeenCalled();
+    expect(controller.setInputDevice).not.toHaveBeenCalled();
+    for (const label of ["Hands free", "Spoken language", "Model", "Voice input", "Audio output"]) {
+      expect(screen.getByLabelText(label)).toBeDisabled();
+    }
+    reject(new Error("private provider detail"));
+    await screen.findByText("The change could not be applied. Try again.");
+    expect(screen.getByLabelText("Spoken language")).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Spoken language"), { target: { value: "auto" } });
+    await waitFor(() => expect(controller.setPreferredLanguage).toHaveBeenCalledWith("auto"));
+  });
   it("shows the spoken language and routes Automatic through the controller", async () => {
     const controller = makeController();
     render(<AoedeSettings controller={controller} snapshot={makeSnapshot({ preferredLanguage: "ur" })} />);
@@ -105,8 +126,9 @@ describe("Aoede settings", () => {
     const input = await screen.findByLabelText("Voice input");
     const output = screen.getByLabelText("Audio output");
     fireEvent.change(input, { target: { value: "mic_usb" } });
-    fireEvent.change(output, { target: { value: "spk_hdmi" } });
     await waitFor(() => expect(controller.setInputDevice).toHaveBeenCalledWith("mic_usb"));
+    await waitFor(() => expect(output).toBeEnabled());
+    fireEvent.change(output, { target: { value: "spk_hdmi" } });
     await waitFor(() => expect(controller.setOutputDevice).toHaveBeenCalledWith("spk_hdmi"));
   });
   it("shows truthful recovery states when catalog or enumeration is unavailable", async () => {

@@ -8,6 +8,7 @@ export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
+export * from "#chat-run-wire";
 export * from "#chat-event-wire";
 export * from "#bots";
 export * from "#chat-artifacts";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { VoiceSessionDevice } from "../voice-session/client-types.js";
 import type { AoedeController, AoedeSnapshot } from "./controller.js";
@@ -22,6 +22,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
   const [catalog, setCatalog] = useState<CanonicalProviderCatalog | "loading" | null>("loading");
   const [devices, setDevices] = useState<VoiceSessionDevice[] | "loading" | null>("loading");
   const [note, setNote] = useState<string | null>(null);
+  const busyRef = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
   const selection = snapshot.binding?.selection;
   const capability = snapshot.binding?.capability;
@@ -46,36 +47,43 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
   const inputs = devices !== "loading" && devices !== null ? devices.filter(device => device.kind === "audioinput").slice(0, 32) : [];
   const outputs = devices !== "loading" && devices !== null ? devices.filter(device => device.kind === "audiooutput").slice(0, 32) : [];
   const turnModes = capability?.turnModes ?? ["hands_free", "push_to_talk"];
-  const run = (key: string, work: Promise<unknown>, revert?: () => void) => {
-    if (busy) return;
+  const run = (key: string, work: () => Promise<unknown>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(key); setNote(null);
-    void work.then((result) => { if (result === false || result === null || result === "unavailable") revert?.(); }).finally(() => setBusy(null));
+    void (async () => {
+      try { await work(); }
+      catch (error: unknown) {
+        console.warn("[aoede/settings] Change failed:", error instanceof Error ? error.name : "UnknownError");
+        setNote("The change could not be applied. Try again.");
+      } finally { busyRef.current = false; setBusy(null); }
+    })();
   };
 
   return <div className="matrix-aoede-settings">
-    <fieldset className="matrix-aoede-settings__group" disabled={busy === "turn_mode"}>
+    <fieldset className="matrix-aoede-settings__group" disabled={busy !== null}>
       <legend className="matrix-aoede-settings__legend">Turn mode</legend>
       {turnModes.map(mode => <label key={mode} className="matrix-aoede-settings__option">
         <input type="radio" name={`${id}-turn`} checked={snapshot.turnMode === mode}
-          onChange={() => run("turn_mode", controller.setTurnMode(mode))} />
+          onChange={() => run("turn_mode", () => controller.setTurnMode(mode))} />
         <span>{mode === "push_to_talk" ? "Push to talk" : "Hands free"}</span>
       </label>)}
       <p className="matrix-aoede-settings__hint">Changing the mode ends any live voice session so the next Start applies it.</p>
     </fieldset>
 
-    <fieldset className="matrix-aoede-settings__group" disabled={busy === "language"}>
+    <fieldset className="matrix-aoede-settings__group" disabled={busy !== null}>
       <legend className="matrix-aoede-settings__legend">Recognition</legend>
       <label className="matrix-aoede-settings__field">
         <span>Spoken language</span>
         <select value={snapshot.preferredLanguage} aria-describedby={`${id}-language-hint`}
-          onChange={(event) => run("language", controller.setPreferredLanguage(event.target.value))}>
+          onChange={(event) => { const value = event.target.value; run("language", () => controller.setPreferredLanguage(value)); }}>
           {AOEDE_SPEECH_LANGUAGES.map(language => <option key={language.code} value={language.code}>{language.label}</option>)}
         </select>
       </label>
       <p id={`${id}-language-hint`} className="matrix-aoede-settings__hint">Choose the language you speak to reduce detection mistakes. Automatic detects each turn. Changing it ends the live voice session.</p>
     </fieldset>
 
-    <fieldset className="matrix-aoede-settings__group" disabled={busy === "selection"}>
+    <fieldset className="matrix-aoede-settings__group" disabled={busy !== null}>
       <legend className="matrix-aoede-settings__legend">{nativeConversation ? "Tasks" : "Model"}</legend>
       {nativeConversation ? <p className="matrix-aoede-settings__hint">Voice is paid by Matrix and works without an AI subscription. Choose an agent below to run tasks.</p> : null}
       {catalog === "loading" ? <p className="matrix-aoede-settings__hint">Loading providers…</p> : null}
@@ -91,7 +99,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
               const next = catalog.instances.find(item => item.id === event.target.value);
               const model = next?.defaultSelection?.model ?? next?.models.find(item => item.availability === "available")?.id;
               if (!next || !model) return;
-              run("selection", controller.setSelection({ instanceId: next.id, model }));
+              run("selection", () => controller.setSelection({ instanceId: next.id, model }));
             }}>
             {instance === null ? <option value="" disabled>{nativeConversation ? "Choose task agent" : "Choose provider"}</option> : null}
             {catalog.instances.filter(item => item.availability === "available").slice(0, 64).map(item =>
@@ -105,7 +113,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
             onChange={(event) => {
               const model = event.target.value;
               if (!instance || !model) return;
-              run("selection", controller.setSelection({ instanceId: instance.id, model }));
+              run("selection", () => controller.setSelection({ instanceId: instance.id, model }));
             }}>
             {savedModelUnavailable ? <option value={selection!.model} disabled>Saved model unavailable</option> : null}
             {availableModels.length === 0 ? <option value="" disabled>No available models</option> : null}
@@ -116,7 +124,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
       </> : null}
     </fieldset>
 
-    <fieldset className="matrix-aoede-settings__group" disabled={busy === "input" || busy === "output"}>
+    <fieldset className="matrix-aoede-settings__group" disabled={busy !== null}>
       <legend className="matrix-aoede-settings__legend">Devices</legend>
       {devices === "loading" ? <p className="matrix-aoede-settings__hint">Loading devices…</p> : null}
       {devices === null ? <p className="matrix-aoede-settings__hint" role="status">Device list unavailable. Enumeration may be denied or unsupported; saved choices are kept.</p> : null}
@@ -124,7 +132,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
         <label className="matrix-aoede-settings__field">
           <span>Voice input</span>
           <select value={snapshot.inputDeviceId ?? ""} disabled={capability?.supportsInputSelection === false}
-            onChange={(event) => run("input", controller.setInputDevice(event.target.value || null).then((result) => {
+            onChange={(event) => run("input", () => controller.setInputDevice(event.target.value || null).then((result) => {
               if (!result) { setNote("Voice input could not be applied; the saved choice still applies to the next session."); }
               return result;
             }))}>
@@ -137,7 +145,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
         <label className="matrix-aoede-settings__field">
           <span>Audio output</span>
           <select value={snapshot.outputDeviceId ?? ""} disabled={capability?.supportsOutputSelection === false}
-            onChange={(event) => run("output", controller.setOutputDevice(event.target.value || null).then((result) => {
+            onChange={(event) => run("output", () => controller.setOutputDevice(event.target.value || null).then((result) => {
               if (result === "unsupported") { setNote("Output routing is not supported in this browser."); return result; }
               if (result === "unavailable") { setNote("Audio output could not be applied; the saved choice still applies to the next session."); }
               return result;

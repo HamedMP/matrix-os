@@ -1,6 +1,6 @@
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
-import { chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { chatEventVersionUrl, chatRunVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalChatQueueAdmissionResponseSchema, CanonicalChatQueueCancellationResponseSchema,
   CanonicalQueueChatTurnRequestSchema, CanonicalCancelQueuedChatTurnRequestSchema, CanonicalChatQueuedTurnIdSchema,
@@ -167,7 +167,7 @@ export function createCanonicalShellChatClient(options: {
   createId?: () => string;
 }): CanonicalShellChatClient {
   const fetchFn = options.fetchFn ?? fetch;
-  const request = (path: string, init: RequestInit = {}) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatFundingVersionUrl(chatReadStateVersionUrl(path)) : path}`, {
+  const request = (path: string, init: RequestInit = {}) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatRunVersionUrl(chatFundingVersionUrl(chatReadStateVersionUrl(path))) : path}`, {
     ...init,
     ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
       headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "2" },
@@ -180,7 +180,7 @@ export function createCanonicalShellChatClient(options: {
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     })),
     async openEventStream({ cursor, signal }) {
-      const response = await fetchFn(chatFundingVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`)))), {
+      const response = await fetchFn(chatRunVersionUrl(chatFundingVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`))))), {
         method: "GET",
         headers: {
           Accept: "text/event-stream",
