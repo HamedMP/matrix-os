@@ -17,12 +17,12 @@ const { createOnShouldStartLoadWithRequest } = require("react-native-webview/lib
 const runtime = "https://app.matrix-os.com/apps/notes/?session=token";
 let open: jest.SpyInstance;
 
-function navigate(url: string) {
+function navigate(url: string, isTopFrame?: boolean) {
   const props = screen.getByTestId("webview").props;
   const load = jest.fn();
   act(() => createOnShouldStartLoadWithRequest(
     load, props.originWhitelist, props.onShouldStartLoadWithRequest,
-  )({ nativeEvent: { url, lockIdentifier: 1 } }));
+  )({ nativeEvent: { url, isTopFrame, lockIdentifier: 1 } }));
   return load;
 }
 
@@ -55,6 +55,34 @@ describe("app runtime frame", () => {
     for (const target of [runtime, "https://app.matrix-os.com/apps/notes/", "https://app.matrix-os.com/apps/notes/page#saved"]) {
       expect(navigate(target)).toHaveBeenCalledWith(true, target, 1);
     }
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "about:blank",
+    "https://app.matrix-os.com/apps/notes/embedded",
+    "https://embedded.example/document",
+  ])("leaves an iOS subframe alone without a notice or external opener: %s", (target) => {
+    const authorize = jest.fn(() => true);
+    render(<AppRuntimeFrame url={runtime} title="Notes" canOpenExternalUrl={authorize} />);
+    expect(navigate(target, false)).toHaveBeenCalledWith(true, target, 1);
+    expect(open).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
+    expect(screen.queryByText("This link is unavailable in this app preview.")).toBeNull();
+  });
+
+  it("does not let subframe activity dismiss a top-level blocked notice", () => {
+    render(<AppRuntimeFrame url={runtime} title="Notes" />);
+    navigate("https://outside.example/", true);
+    navigate("https://app.matrix-os.com/apps/notes/embedded", false);
+    expect(screen.getByText("This link is unavailable in this app preview.")).toBeTruthy();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("still confines an explicitly identified top-level request", () => {
+    render(<AppRuntimeFrame url={runtime} title="Notes" />);
+    expect(navigate("https://outside.example/", true)).toHaveBeenCalledWith(false, "https://outside.example/", 1);
+    expect(screen.getByText("This link is unavailable in this app preview.")).toBeTruthy();
     expect(open).not.toHaveBeenCalled();
   });
 

@@ -520,7 +520,7 @@ Manual checks in the SDK 57 dev client:
 ## Native Mobile App Preview Navigation
 
 Installed Apps open a remote web runtime in Native Mobile. The default preview
-allows navigation only within the current app's origin and `/apps/<slug>` path
+allows top-level navigation only within the current app's origin and `/apps/<slug>` path
 (including the selected `/vm/<handle>` prefix when present). The initial session
 URL may redirect to the same app without its query token; trailing slashes, app
 routes, and hashes continue to work. Sibling Apps, same-origin system pages,
@@ -532,7 +532,11 @@ callback. In react-native-webview 13.16.1, a narrow `originWhitelist` can otherw
 open a rejected URL through `Linking` without consulting that callback. New-window
 requests use the separate `onOpenWindow` path; Native Mobile does not open them.
 The initial source is also validated because Android skips the callback for its
-first load. Only a host-supplied `canOpenExternalUrl` callback can authorize a
+first load. iOS iframe navigations (`isTopFrame: false`) are left to the WebView;
+they neither open the native browser nor change the top-level blocked-link
+notice. This preserves embedded documents, including `about:blank`, without
+claiming to filter their content or network access. Only a host-supplied
+`canOpenExternalUrl` callback can authorize a
 normal navigation to a reviewed cross-origin HTTP(S) destination; the installed
 App preview does not supply one. Such authorization needs its own purpose,
 privacy, and storefront review and does not grant a payment entitlement.

@@ -26,7 +26,11 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl }: App
   const [linkBlocked, setLinkBlocked] = useState(false);
 
   const shouldStartLoad = useCallback(
-    (request: { url?: string }) => {
+    (request: { url?: string; isTopFrame?: boolean }) => {
+      // iOS also sends iframe navigations here. This policy contains the app's
+      // top-level page; embedded documents must not launch a native browser or
+      // change its blocked-link notice. Android emits top-frame requests only.
+      if (request.isTopFrame === false) return true;
       const decision = appRuntimeNavigation(url, request.url ?? "", canOpenExternalUrl);
       if (decision === "internal") {
         setLinkBlocked(false);
