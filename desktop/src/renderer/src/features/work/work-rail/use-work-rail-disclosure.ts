@@ -4,6 +4,7 @@ import { useConnection } from "../../../stores/connection";
 export const DEFAULT_RAIL_DISCLOSURE = { agents: true, pinned: true, projects: true, needsYou: true, working: true, done: true };
 export type RailDisclosureKey = keyof typeof DEFAULT_RAIL_DISCLOSURE;
 type Disclosure = Record<RailDisclosureKey, boolean>;
+type StoredDisclosure = { identity: string; sections: Disclosure; unsaved: Partial<Disclosure> };
 
 function readDisclosure(scope: string | null, fallback: Disclosure = DEFAULT_RAIL_DISCLOSURE): Disclosure {
   if (!scope) return { ...fallback };
@@ -33,11 +34,11 @@ export function useWorkRailDisclosure() {
   const signedIn = useConnection(state => state.status === "signed-in");
   const scope = signedIn && userId ? `matrix-chat-rail-disclosure:${JSON.stringify([host, userId, slot])}` : null;
   const identity = JSON.stringify([scope, generation]);
-  const [stored, setStored] = useState(() => ({ identity, sections: readDisclosure(scope) }));
+  const [stored, setStored] = useState<StoredDisclosure>(() => ({ identity, sections: readDisclosure(scope), unsaved: {} }));
   // Like rail order, reset synchronously before painting a new viewer's preferences.
   let current = stored;
   if (stored.identity !== identity) {
-    current = { identity, sections: readDisclosure(scope) };
+    current = { identity, sections: readDisclosure(scope), unsaved: {} };
     setStored(current);
   }
   const setExpanded = (key: RailDisclosureKey, expanded: boolean) => {
@@ -45,11 +46,16 @@ export function useWorkRailDisclosure() {
     if (live.userId !== userId || live.platformHost !== host || live.runtimeSlot !== slot
       || live.authGeneration !== generation || (live.status === "signed-in") !== signedIn) return;
     // Retained rails share this scope; preserve their newer saved choices before changing one key.
-    const next = { ...readDisclosure(scope, current.sections), [key]: expanded };
-    setStored({ identity, sections: next });
-    if (!scope) return;
-    try { window.localStorage.setItem(scope, JSON.stringify(next)); }
-    catch (error: unknown) { console.warn("[work] Rail disclosure save failed:", error instanceof Error ? error.name : "UnknownError"); }
+    const pending = { ...current.unsaved, [key]: expanded };
+    const next = { ...readDisclosure(scope, current.sections), ...pending };
+    let unsaved: Partial<Disclosure> = scope ? pending : {};
+    if (scope) {
+      try { window.localStorage.setItem(scope, JSON.stringify(next)); unsaved = {}; }
+      catch (error: unknown) { console.warn("[work] Rail disclosure save failed:", error instanceof Error ? error.name : "UnknownError"); }
+    }
+    // Readable storage may still contain old choices after a failed write.
+    // Retain only unsaved keys until persisted or the authenticated scope resets.
+    setStored({ identity, sections: next, unsaved });
   };
   return { sections: current.sections, setExpanded };
 }

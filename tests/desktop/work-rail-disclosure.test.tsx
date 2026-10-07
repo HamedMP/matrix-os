@@ -139,3 +139,37 @@ it.each(['{', '[]', '{"done":"yes","unknown":true}', "x".repeat(513)])("retains 
   expect(saved).toEqual({ agents: false, pinned: true, projects: true, needsYou: true, working: true, done: false });
   expect(localStorage.getItem(key)!.length).toBeLessThanOrEqual(512);
 });
+
+
+it("preserves unsaved local choices over readable existing preferences after failed writes", () => {
+  signIn();
+  const key = 'matrix-chat-rail-disclosure:["https://platform.test","viewer-a","primary"]';
+  localStorage.setItem(key, '{"done":true,"agents":true}');
+  const view = renderHook(useWorkRailDisclosure);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Quota reached", "QuotaExceededError"); });
+  act(() => view.result.current.setExpanded("done", false));
+  act(() => view.result.current.setExpanded("agents", false));
+  expect(view.result.current.sections).toMatchObject({ done: false, agents: false });
+  expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ done: true, agents: true });
+});
+
+it("persists pending choices with another rail's newer values then releases the local overlay", () => {
+  signIn();
+  const key = 'matrix-chat-rail-disclosure:["https://platform.test","viewer-a","primary"]';
+  localStorage.setItem(key, '{"done":true,"projects":true}');
+  const first = renderHook(useWorkRailDisclosure);
+  const second = renderHook(useWorkRailDisclosure);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => { throw new DOMException("Quota reached", "QuotaExceededError"); });
+  act(() => first.result.current.setExpanded("done", false));
+  act(() => second.result.current.setExpanded("projects", false));
+  act(() => first.result.current.setExpanded("working", false));
+  expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ done: false, projects: false, working: false });
+  act(() => second.result.current.setExpanded("done", true));
+  act(() => first.result.current.setExpanded("agents", false));
+  expect(first.result.current.sections).toMatchObject({ done: true, projects: false, working: false, agents: false });
+  first.unmount(); second.unmount();
+  const reopened = renderHook(useWorkRailDisclosure);
+  expect(reopened.result.current.sections).toMatchObject({ done: true, projects: false, working: false, agents: false });
+});
