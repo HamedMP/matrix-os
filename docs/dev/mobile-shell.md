@@ -323,6 +323,21 @@ Auto-submit uploads to App Store Connect using the stored API key; Apple then
 takes about 5-10 minutes to process before the build appears in TestFlight.
 Verify at https://appstoreconnect.apple.com/apps/6785629815/testflight/ios.
 
+### Legal Links (App Review)
+
+App Store Review Guideline 5.1.1(i) requires the privacy policy to be reachable
+inside the app, not only from the App Store Connect listing. Native Mobile links
+it from two places, both driven by `apps/mobile/lib/legal-links.ts`:
+
+- the signed-out sign-in screen, in the consent line under the sign-in options,
+  so it is reachable without an account;
+- **Settings → Help → Privacy Policy** for signed-in users.
+
+Both open `https://matrix-os.com/privacy` in the system browser. Terms of Service
+(`https://matrix-os.com/terms`) sits next to it in both places. Keep the App
+Store Connect "Privacy Policy URL" field pointing at the same page, and if either
+page moves, change `legal-links.ts` instead of adding a second copy of the URL.
+
 ## Android Store Release
 
 Use a clean manual worktree based on the latest `origin/main`. From the mobile
