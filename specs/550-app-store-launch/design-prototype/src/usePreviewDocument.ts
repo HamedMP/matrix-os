@@ -31,7 +31,7 @@ export function usePreviewDocument(id: string, edition: Edition, enabled = true,
       if (!value.fictionalOnly || typeof value.html !== 'string' || value.html.length > 2_000_000) throw new Error('Invalid review document');
       setDocument({ key, html: value.html, error: '' });
     }).catch(cause => {
-      console.error('Design example load failed', cause);
+      console.error('Design example load failed', cause instanceof Error ? cause.name : typeof cause);
       if (!cancelled) setDocument({ key, html: '', error: 'The example could not be loaded. Reopen it to try again.' });
     }).finally(() => clearTimeout(timeout));
     return () => { cancelled = true; clearTimeout(timeout); };
