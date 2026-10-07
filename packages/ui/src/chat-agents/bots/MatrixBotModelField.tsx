@@ -39,7 +39,7 @@ export function matrixBotModelSelection(choice: CanonicalProviderChoice): Canoni
 
 function modelSelectionKey(selection: CanonicalChatModelSelection): string {
   return selection.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID || selection.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID
-    ? JSON.stringify([selection.instanceId, selection.model, selection.options ?? []])
+    ? JSON.stringify([selection.instanceId, selection.model, [...(selection.options ?? [])].sort((a, b) => a.id.localeCompare(b.id))])
     : JSON.stringify([selection.instanceId, selection.model]);
 }
 

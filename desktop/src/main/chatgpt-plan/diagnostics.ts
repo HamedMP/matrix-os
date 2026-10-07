@@ -26,6 +26,21 @@ export function safePlanResponseDiagnostic(value: unknown): PlanResponseDiagnost
     }
     return result as PlanResponseDiagnostic;
 }
+const LOCAL_FAILURE_CATEGORIES = {
+    'invalid plan credential': 'invalid_plan_credential',
+    'invalid identity': 'invalid_identity',
+    'missing identity': 'missing_identity',
+    'expired credential': 'expired_credential',
+    'OS credential protection unavailable': 'credential_protection_unavailable',
+    'invalid credential file': 'invalid_credential_file',
+    'credential owner mismatch': 'credential_owner_mismatch',
+    'not connected': 'not_connected',
+    'response too large': 'response_oversize',
+} as const;
+function localFailureCategory(error: unknown): string {
+    return error instanceof Error && Object.hasOwn(LOCAL_FAILURE_CATEGORIES, error.message)
+        ? LOCAL_FAILURE_CATEGORIES[error.message as keyof typeof LOCAL_FAILURE_CATEGORIES] : 'local_failure';
+}
 /** Only fixed stages/categories/statuses reach trusted diagnostics, never provider text. */
 export class PlanFailure extends Error {
     constructor(readonly stage: string, readonly category: string, readonly httpStatus?: number, readonly responseDiagnostic?: PlanResponseDiagnostic) {
@@ -43,7 +58,7 @@ export function logPlanFailure(stage: string, error: unknown): void {
                 : error instanceof Error && [
                     'connection changed', 'source changed', 'credential changed', 'stale authorization'
                 ].includes(error.message) ? 'stale_source'
-                    : error instanceof Error && error.message === 'background not permitted' ? 'background_denied' : 'local_failure');
+                    : error instanceof Error && error.message === 'background not permitted' ? 'background_denied' : localFailureCategory(error));
     const diagnostic = failure?.responseDiagnostic ? safePlanResponseDiagnostic(failure.responseDiagnostic) : null;
     console.warn(`[chatgpt-plan] ${failure?.stage ?? stage}: ${category}${failure?.httpStatus !== undefined ? ` (http ${failure.httpStatus})` : ''}${diagnostic ? ` ${JSON.stringify(diagnostic)}` : ''}`);
 }
