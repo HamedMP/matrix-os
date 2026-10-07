@@ -439,7 +439,7 @@ function ChatAppContent({
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
-        <div className="px-2 pb-2"><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        <div className="px-2 pb-2"><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} client={agentClient} menuZIndex={SHELL_Z_INDEX.popover} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
         {mobile ? <div className="flex gap-2 px-3 pb-2 text-xs">
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
