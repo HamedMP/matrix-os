@@ -10,6 +10,8 @@ import { CanonicalProviderRunEventSchema, type CanonicalProviderRunEvent } from 
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import type { ManagedPiMcpClient } from "./managed-pi-mcp-client.js";
+import {withMailReadDefaults,type MailReadRequest} from '@matrix-os/contracts';
+import {wrapExternalContent} from '@matrix-os/kernel/security/external-content';
 
 const MAX_RUNS = 64;
 const MAX_ACTIONS = 60;
@@ -43,11 +45,13 @@ export function createManagedPiOwnerTools(deps: {
   integrations?: Pick<BotIntegrationClient, "inventory" | "describe" | "call">;
   mcp?: ManagedPiMcpClient;
   approvals?: CustomMcpApprovalClient;
+  mail?(owner:string,input:MailReadRequest,signal:AbortSignal):Promise<unknown>;
 }) {
   const runs = new Map<string, Run>(); // capacity64, close on terminal/cancel; run deadline bounds lifetime.
   const capabilities: BotToolCapability[] = [
     ...(deps.integrations ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(deps.mcp && deps.approvals ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
+    ...(deps.mail ? ['mail.read'] as const : []),
   ];
   function revoke(run: Run): Promise<boolean> {
     if (!run.generation) return Promise.resolve(false);
@@ -170,6 +174,19 @@ export function createManagedPiOwnerTools(deps: {
       const prepared = run.prepared.get(request.toolCallId);
       run.prepared.delete(request.toolCallId);
       if (!prepared || prepared.args !== JSON.stringify(request.args)) throw new BotBrokerActionError("denied");
+      if(request.capability==='mail.read') {
+        try {
+          const result=await deps.mail!(binding.ownerId,withMailReadDefaults(request.args,true),AbortSignal.any([signal,AbortSignal.timeout(10000)]));
+          await live(binding,signal);
+          const encoded=JSON.stringify(result);if(Buffer.byteLength(encoded)>MAX_RESULT_BYTES-8192)throw new BotBrokerActionError('unavailable');
+          const untrusted=wrapExternalContent(encoded,{source:'email',includeWarning:true});
+          return text({retainedEmail:untrusted});
+        } catch(error) {
+          if(error instanceof BotBrokerActionError)throw error;
+          console.warn('[managed-pi] Retained mail unavailable',error instanceof Error?error.name:'UnknownError');
+          throw new BotBrokerActionError('unavailable');
+        }
+      }
       if (request.capability === "integration.inventory") {
         const rows = await deps.integrations!.inventory(binding.ownerId, signal);
         return text(rows.filter(row => !request.args.service || row.service === request.args.service));

@@ -44,6 +44,7 @@ const TOOL_LABELS: Record<string, string> = {
   "integration.inventory": "Checking connected services",
   "integration.call": "Using a connected service",
   "integration.describe": "Describing a connected service",
+  "mail.read": "Reading retained email",
   "mcp.inventory": "Listing MCP servers",
   "mcp.describe": "Describing an MCP tool",
   "mcp.call": "Using an MCP tool",

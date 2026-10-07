@@ -62,3 +62,6 @@ describe("Hermes integration capability", () => {
     } finally { second.revoke(); }
   });
 });
+it('allows archive reads while excluding source mutations and recipe-specific bearers',()=>{
+ const general=issueHermesIntegrationCapability('user_a');try{expect(resolveHermesIntegrationCapability(general.token,'POST','/api/mail/read')).toBe('user_a');expect(resolveHermesIntegrationCapability(general.token,'POST','/api/mail/action')).toBeNull();expect(resolveHermesIntegrationCapability(general.token,'GET','/api/mail/read')).toBeNull();}finally{general.revoke();}
+});

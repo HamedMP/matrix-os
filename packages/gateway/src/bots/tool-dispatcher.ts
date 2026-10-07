@@ -58,6 +58,7 @@ const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "integration.inventory": "read",
   "integration.call": "write",
   "integration.describe": "read",
+  "mail.read": "read",
   "mcp.inventory": "read",
   "mcp.describe": "read",
   "mcp.call": "write",

@@ -136,3 +136,7 @@ describe("Claude Custom MCP Run capability", () => {
     registry.close();
   });
 });
+it('limits archive access for a scoped read bearer to the exact read-only endpoint',()=>{
+ const registry=createMatrixMcpCapabilityRegistry({configuredOwnerId:owner.ownerId});const capability=registry.issue({owner,runId:'run_mail',scope:'integration_read'})!;
+ try{expect(registry.resolve(capability.token,'POST','/api/mail/read')).toBe(owner.ownerId);for(const path of ['/api/mail/action','/api/mail/read/','/api/mail/%72ead'])expect(registry.resolve(capability.token,'POST',path)).toBeNull();expect(registry.resolve(capability.token,'GET','/api/mail/read')).toBeNull();}finally{capability.revoke();registry.close();}
+});

@@ -194,6 +194,9 @@ export function createClaudeChatProviderAdapter(options: {
       scope: mcpScope,
       ...(input.context?.drives?.length ? {driveContext:true} : {}),
     }) ?? null;
+    // Separate readonly bearer; the custom-MCP capability cannot read mail.
+    const mailCapability=capability ? options.matrixMcpCapabilityIssuer?.issue({owner:input.owner,runId:input.runId,scope:'integration_read'})??null : null;
+    const revokeCapabilities=()=>{capability?.revoke();mailCapability?.revoke();};
     if (input.context?.drives?.length && !capability) throw new Error("Company drive tools unavailable");
     const recipeGuidance = input.context?.agent?.recipe
       ? "Selected integration dependencies are unavailable through this route. "
@@ -228,6 +231,7 @@ export function createClaudeChatProviderAdapter(options: {
         claudeIncludePartialMessages: true,
         matrixCustomMcp: capability !== null,
         matrixDriveContext: Boolean(input.context?.drives?.length),
+        matrixMailRead:mailCapability!==null,
         matrixCustomMcpScope: mcpScope,
       });
       if (resumeState) {
@@ -262,7 +266,7 @@ export function createClaudeChatProviderAdapter(options: {
         }
       }
     } catch (error: unknown) {
-      capability?.revoke();
+      revokeCapabilities();
       throw error;
     }
     const credentialEnv = credentialLaunch.env;
@@ -275,6 +279,8 @@ export function createClaudeChatProviderAdapter(options: {
       delete runEnv.MATRIX_AUTH_TOKEN;
       runEnv.MATRIX_AGENT_INTEGRATIONS_TOKEN = capability.token;
     }
+    delete runEnv.MATRIX_AGENT_MAIL_TOKEN;
+    if(mailCapability)runEnv.MATRIX_AGENT_MAIL_TOKEN=mailCapability.token;
 
     const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
     let buffered = "";
@@ -303,7 +309,7 @@ export function createClaudeChatProviderAdapter(options: {
     let finalRevokePromise: Promise<void> | undefined;
     let clearApprovalPromise: Promise<boolean> | undefined;
     const revokeApproval = (reason: "final" | "steer" = "final") => {
-      capability?.revoke();
+      revokeCapabilities();
       approvalControl?.close();
       if (reason === "steer") {
         if (approvalClient && registeredGeneration && !clearApprovalPromise) {
@@ -738,7 +744,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       flushPendingDelta();
       if (steerPrompt && emittedState && !input.signal.aborted) {
-        capability?.revoke();
+        revokeCapabilities();
         const cleared = await (clearApprovalPromise ?? Promise.resolve(true));
         if (cancellationRequested || input.signal.aborted || activeRuns.get(input.runId) !== activeRun) {
           releaseActiveRun();
@@ -808,7 +814,7 @@ export function createClaudeChatProviderAdapter(options: {
       }));
       queue.finish();
     }).finally(() => { if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
-      capability?.revoke(); approvalControl?.close();
+      revokeCapabilities(); approvalControl?.close();
     } else revokeApproval(); });
 
     let streamCompleted = false;
@@ -824,9 +830,9 @@ export function createClaudeChatProviderAdapter(options: {
         revokeApproval();
         await finalRevokePromise;
       } else if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
-        capability?.revoke(); approvalControl?.close();
+        revokeCapabilities(); approvalControl?.close();
       } else revokeApproval();
-      capability?.revoke();
+      revokeCapabilities();
     }
   }
 

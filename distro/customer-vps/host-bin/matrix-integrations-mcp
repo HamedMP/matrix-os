@@ -16,7 +16,7 @@ for arg in "$@"; do
         exit 3
       fi
       require_scoped=true ;;
-    --tool-surface=full|--tool-surface=custom-mcp-call|--tool-surface=custom-mcp-discovery|--tool-surface=custom-mcp-call-drive|--tool-surface=custom-mcp-discovery-drive|--tool-surface=jev-inbox-preview)
+    --tool-surface=full|--tool-surface=custom-mcp-call|--tool-surface=custom-mcp-discovery|--tool-surface=custom-mcp-call-drive|--tool-surface=custom-mcp-discovery-drive|--tool-surface=jev-inbox-preview|--tool-surface=mail-read)
       if [ "$surface_seen" = true ]; then
         echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
         exit 3
@@ -28,6 +28,14 @@ for arg in "$@"; do
       exit 3 ;;
   esac
 done
+
+# Native mail uses its own read-only Run bearer. Never substitute the custom
+# MCP or host machine bearer when this capability is absent or malformed.
+capability_key="MATRIX_AGENT_INTEGRATIONS_TOKEN"
+if [ "$tool_surface" = "mail-read" ]; then
+  capability_key="MATRIX_AGENT_MAIL_TOKEN"
+  require_scoped=true
+fi
 
 read_host_value() {
   local key value
@@ -58,7 +66,7 @@ read_ancestor_capability() {
     if [ -r "/proc/$pid/environ" ]; then
       while IFS= read -r -d '' entry; do
         case "$entry" in
-          MATRIX_AGENT_INTEGRATIONS_TOKEN=*) printf '%s' "${entry#*=}"; return 0 ;;
+          "$capability_key"=*) printf '%s' "${entry#*=}"; return 0 ;;
         esac
       done < "/proc/$pid/environ"
     fi
@@ -76,8 +84,8 @@ has_hermes_chat_ancestor() {
   done
   return 1
 }
-if [ "${MATRIX_AGENT_INTEGRATIONS_TOKEN+x}" = x ]; then
-  scoped_token="$MATRIX_AGENT_INTEGRATIONS_TOKEN"
+if [ "${!capability_key+x}" = x ]; then
+  scoped_token="${!capability_key}"
   if [[ ! "$scoped_token" =~ ^[a-f0-9]{64}$ ]]; then
     echo "matrix-integrations-mcp: run capability or runtime is invalid" >&2
     exit 3

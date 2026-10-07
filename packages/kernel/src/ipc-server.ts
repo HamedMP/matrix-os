@@ -1,3 +1,4 @@
+import {readMailArchiveHandler} from "./tools/mail-archive.js";
 import { z } from "zod/v4";
 import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -1093,6 +1094,10 @@ export async function createIpcServer(
 
       ...(await createWebTools(homePath, tool)),
 
+      // Archive logic is extracted; this large entrypoint only registers the tool.
+      tool("read_mail_archive", "Read retained email before requesting external history. Requires an installed Edition, Folio or Atlas account grant; cannot clean inboxes or grant access.",
+        {appId:z.enum(["edition","folio","atlas"]),action:z.enum(["sources","messages","message"]),payload:z.record(z.string(),z.unknown())},
+        async input=>readMailArchiveHandler(input)),
       tool(
         "list_integration_inventory",
         "List the user's connected external-service capabilities. Use this at the start of a conversation when an external service may help; it returns account labels and status only, never provider content.",

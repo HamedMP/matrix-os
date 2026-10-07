@@ -131,6 +131,8 @@ import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
 import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
+import { createMailRuntime } from "./mail/runtime.js";
+import { createMailRoutes, MailRequestError } from "./mail/routes.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -1188,6 +1190,26 @@ export async function createGateway(config: GatewayConfig) {
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken, db: platformDb, pipedream: pipedreamClient,
   }) : null;
 
+  // Mail composition owns worker cancellation and archive cleanup; this entry
+  // point injects the existing owner database, connector and funded authority.
+  let mailRuntime: Awaited<ReturnType<typeof createMailRuntime>> | null = null;
+  const mailOwners = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
+    .filter((id): id is string => Boolean(id));
+  if (jevInboxOwnerId && kyselyInstance) {
+    try {
+      mailRuntime = await createMailRuntime({ homePath, ownerId: jevInboxOwnerId,
+        ownerIds: mailOwners, db: kyselyInstance, internalBaseUrl: internalIntegrationBaseUrl,
+        machineToken: internalPlatformToken, platformDb, pipedream: pipedreamClient,
+        jev: jevService, fundedOwnerId: fundedAiRuntimeConfig?.identity.ownerId,
+        summary: fundedAiFundingSummaryReader,
+        routes: fundedAiRuntimeConfig ? createFundedAiRouteReadinessClient(fundedAiRuntimeConfig) : undefined,
+        notify: () => broadcast({ type: "data:change", app: "edition", key: "mail" }),
+      });
+    } catch (error) {
+      console.error("[mail] Runtime initialization failed", { errorName: error instanceof Error ? error.name : "UnknownError" });
+    }
+  }
+
   watcher.on((change) => {
     broadcast(change);
     if (change.path === "system/setup-plan.json") {
@@ -1238,6 +1260,11 @@ export async function createGateway(config: GatewayConfig) {
       })
     : undefined;
   app.route("/api/speech", speechRuntime.routes);
+  app.route("/api/mail", mailRuntime?.routes ?? createMailRoutes({
+    resolveOwner: c => { const owner = requireRequestPrincipal(c, { isLocalDevelopment: false }).userId; return mailOwners.includes(owner) ? owner : null; },
+    installed: async () => true,
+    handle: async () => { throw new MailRequestError(503); },
+  }));
   app.route("/api/internal/platform-speech", createPlatformSpeechHostConfigRoutes());
   const fundedOwnerIds = new Set([
     fundedAiRuntimeConfig?.identity.ownerId,
@@ -1532,6 +1559,7 @@ export async function createGateway(config: GatewayConfig) {
       homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
       providers: aiProviderService,
+      ...(mailRuntime ? { managedMail: mailRuntime.read } : {}),
       managedMcp: managedPiMcpDependencies({ env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
         ownerId: process.env.MATRIX_USER_ID, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID }),
       ...(internalIntegrationBaseUrl && internalPlatformToken
@@ -1853,6 +1881,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await mailRuntime?.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
