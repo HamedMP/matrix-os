@@ -8,12 +8,13 @@ import { BotRuntimeRegistry, isManagedPiBinding, type ManagedPiRuntimeBinding } 
 import type { BotExecutor } from "../bots/repositories/shared.js";
 import type { ResolvedBotRoute } from "../bots/route-resolver.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
-import { resolveManagedPiPlan, sameManagedPiRoute } from "./managed-pi-route.js";
+import { resolveManagedPiPlan, resolveManagedPiAnthropic, sameManagedPiRoute } from "./managed-pi-route.js";
 import { managedPiWorkspace } from "./managed-pi-workspace.js";
 
 export function createManagedPiAdmission(deps: {
   db: BotExecutor; homePath: string; host: ScopeRuntimeHost; registry: BotRuntimeRegistry;
   chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
+  matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   toolCapabilities?: readonly BotToolCapability[];
   roots: Pick<ChatExecutionRootResolver, "resolve">;
 }) {
@@ -23,7 +24,7 @@ export function createManagedPiAdmission(deps: {
       .where("run.id", "=", input.runId).where("chat.id", "=", input.chatId)
       .where("chat.owner_id", "=", input.ownerId).where("chat.owner_type", "=", "personal")
       .where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active")
-      .where("run.driver_kind", "=", "matrix_pi").where("run.instance_id", "in", ["matrix_pi_default", MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID])
+      .where("run.driver_kind", "=", "matrix_pi").where("run.instance_id", "in", ["matrix_pi_default", MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, "matrix_pi_anthropic_api"])
       .where("run.status", "in", allowPending ? ["accepted", "running", "waiting_for_approval"] : ["accepted", "running"])
       .where((eb) => eb.not(eb.exists(eb.selectFrom("bot_chat_bindings as binding").select("binding.chat_id")
         .whereRef("binding.chat_id", "=", "chat.id").where("binding.removed_at", "is", null))))
@@ -37,12 +38,15 @@ export function createManagedPiAdmission(deps: {
     if (selection.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) {
       const current = await resolveManagedPiPlan(selection, ownerId, deps.chatgptPlan);
       if (!sameManagedPiRoute(current, resolved)) throw new BotAdmissionError("not_found");
+    } else if (selection.instanceId === "matrix_pi_anthropic_api") {
+      const current = await resolveManagedPiAnthropic(selection, ownerId, deps.matrixAnthropic);
+      if (!sameManagedPiRoute(current, resolved)) throw new BotAdmissionError("not_found");
     } else if (selection.instanceId !== "matrix_pi_default" || selection.options?.length
-      || resolved.subscription || resolved.accessSourceId !== "matrix_included" || resolved.route.api === "openai-responses") {
+      || resolved.subscription || resolved.anthropicApi || resolved.accessSourceId !== "matrix_included" || resolved.route.api === "openai-responses") {
       throw new BotAdmissionError("not_found");
     }
   }
-  async function workspace(binding: Pick<ManagedPiRuntimeBinding, "ownerId" | "chatId" | "runId" | "workspace" | "rootFingerprint" | "runtimeHandle" | "executionGeneration" | "route" | "accessSourceId" | "subscription">): Promise<string> {
+  async function workspace(binding: Pick<ManagedPiRuntimeBinding, "ownerId" | "chatId" | "runId" | "workspace" | "rootFingerprint" | "runtimeHandle" | "executionGeneration" | "route" | "accessSourceId" | "subscription" | "anthropicApi">): Promise<string> {
     const owned = deps.registry.lookupRun(binding);
     if (!owned || !isManagedPiBinding(owned) || owned.ownerId !== binding.ownerId || owned.chatId !== binding.chatId) throw new BotAdmissionError("not_found");
     const row = await authority(binding, true);
@@ -101,7 +105,7 @@ export function createManagedPiAdmission(deps: {
       const binding: ManagedPiRuntimeBinding = { runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration,
         kind: "managed_chat", ownerId: input.ownerId, chatId: input.chatId,
         runId: input.runId, workspace: workspaceRef, rootFingerprint: root.fingerprint, route: input.resolved.route,
-        accessSourceId: input.resolved.accessSourceId, ...(input.resolved.subscription ? { subscription: input.resolved.subscription } : {}), capabilities, requestClass: "interactive" };
+        accessSourceId: input.resolved.accessSourceId, ...(input.resolved.subscription ? { subscription: input.resolved.subscription } : {}), ...(input.resolved.anthropicApi ? { anthropicApi: input.resolved.anthropicApi } : {}), capabilities, requestClass: "interactive" };
       try { deps.registry.bind(binding); }
       catch (error: unknown) { await deps.host.client.stopRuntime({ runtimeHandle: runtime.runtimeHandle }); throw error; }
       return binding;

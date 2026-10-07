@@ -47,6 +47,7 @@ export interface PrivateBotRunRequest {
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
+  anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
   capabilities: readonly BotToolCapability[];
   requestClass: "interactive" | "background";
   /** The fingerprint stored with the task; a drift blocks the run as `root_changed`. */
@@ -144,6 +145,7 @@ export function createPrivateBotAdmission(deps: {
           route: input.route,
           accessSourceId: input.accessSourceId,
           ...(input.subscription ? { subscription: input.subscription } : {}),
+          ...(input.anthropicApi ? { anthropicApi: input.anthropicApi } : {}),
           capabilities: input.capabilities,
           requestClass: input.requestClass,
         });

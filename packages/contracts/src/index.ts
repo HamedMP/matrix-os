@@ -1457,3 +1457,4 @@ export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistory
 export * from "#provider-workflows";
 export * from '#chatgpt-plan-peer';
 export * from '#chatgpt-plan-wire';
+export * from '#matrix-anthropic-connection';

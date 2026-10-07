@@ -3,6 +3,7 @@ import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primit
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
 import { FundedAiChatAvailabilitySchema } from "#funded-ai";
+import { MatrixAnthropicConnectionSchema } from "./matrix-anthropic-connection.js";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -395,6 +396,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   contractVersion: z.literal(1),
   /** Returned only to clients opting into extended runtime capabilities. */
   atomicConnectSupported: z.boolean().optional(),
+  matrixAnthropicConnection: MatrixAnthropicConnectionSchema.optional(),
   projectionOf: z.object({
     contract: z.literal("AiProviderSnapshotV3"),
     contractVersion: z.literal(3),

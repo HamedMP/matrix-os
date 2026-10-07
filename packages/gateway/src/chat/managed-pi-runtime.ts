@@ -40,6 +40,7 @@ interface Active {
 /** Two policies use one pinned worker/broker. Ordinary Chat has no recipe or bot grants. */
 export function createManagedPiRuntime(deps: {
   chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
+  matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   ownerTools?: import("./managed-pi-owner-tools.js").ManagedPiOwnerTools;
   admission: ManagedPiAdmission; host: ScopeRuntimeHost; providers: AiProviderSnapshotReader; lifetime: AbortSignal;
   forgetRun(runId: string): void;

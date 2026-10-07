@@ -33,7 +33,7 @@ import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { createPrivateBotAdmission } from "../bots/admission.js";
-import { createBotBrokerActions, registerBotBroker } from "../bots/broker-actions.js";
+import { BotBrokerActionError, createBotBrokerActions, registerBotBroker, type BotToolDispatcher } from "../bots/broker-actions.js";
 import { createMatrixBotChatProviderAdapter, type BotChatState } from "../bots/chat-adapter.js";
 import { bootstrapBotDatabase } from "../bots/database.js";
 import { createBotInstantiation, ensureBotWorkspace, ownerBotExecutor, type BotInstantiation } from "../bots/instantiation.js";
@@ -109,6 +109,7 @@ export async function runConnectionReconciliationPass(
 export interface BotServices {
   providerConnections?: BotProviderConnectionsService;
   chatgptPlanPeers?: ChatGptPlanPeers;
+  cancelAnthropicInference?(): void;
   recipes: BotRecipeCatalog;
   instantiation: BotInstantiation;
   authority: BotAuthority;
@@ -132,6 +133,7 @@ export async function startBots(options: {
   runtimeOwnerId?: string | null;
   computerId?: string | null;
   nativeProfileGuard?: NativeProviderProfileGuard;
+  matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
   repository: Pick<ChatRepository, "kysely" | "withTransaction">;
   agents: ChatAgentStore;
@@ -172,7 +174,10 @@ export async function startBots(options: {
     validateSelection: async (ownerId, selection) => {
       if (!options.host?.available) throw new BotInstantiationError("unavailable");
       try {
-        if (selection.instanceId === "matrix_chatgpt_plan" && chatgptPlanPeers) await chatgptPlanPeers.resolve(selection, ownerId, "interactive");
+        if (selection.instanceId === "matrix_anthropic_api") {
+          if (!options.matrixAnthropic) throw new BotInstantiationError("unavailable");
+          await options.matrixAnthropic.resolve(selection, ownerId, "interactive");
+        } else if (selection.instanceId === "matrix_chatgpt_plan" && chatgptPlanPeers) await chatgptPlanPeers.resolve(selection, ownerId, "interactive");
         else resolveManagedPiRoute(await options.providers.getSnapshot(), selection);
       }
       catch (error: unknown) { console.warn("[bots] selected managed model unavailable", error instanceof Error ? error.name : "UnknownError"); throw new BotInstantiationError("invalid_request"); }
@@ -301,7 +306,7 @@ export async function startBots(options: {
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
   ];
-  const managedAdmission = createManagedPiAdmission({ ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots, toolCapabilities: managedCapabilities });
+  const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots, toolCapabilities: managedCapabilities });
   const ownerTools = createManagedPiOwnerTools({ authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
     ...(integrationClient ? { integrations: integrationClient } : {}),
     ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });
@@ -314,6 +319,7 @@ export async function startBots(options: {
     agents: options.agents,
     recipes,
     resolveRoute: createBotModelRouteResolver({
+      ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
       providers: options.providers,
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
       ownerId: options.runtimeOwnerId ?? undefined,
@@ -332,8 +338,31 @@ export async function startBots(options: {
     client: host.client,
     onRunFinished: (runId) => forgetRun(runId),
   });
-  const managed = createManagedPiRuntime({ ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
+  const tools = createBotToolDispatcher({
+    homePath: options.homePath, managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
+    ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
+  });
+  // Native key writers do not necessarily cancel this run. Recipe tools must
+  // independently fence the captured source before approvals and side effects.
+  const revalidateRecipeSource = async (binding: import("../bots/runtime-registry.js").PiRuntimeBinding, signal: AbortSignal) => {
+    if (isManagedPiBinding(binding) || !binding.anthropicApi) return;
+    const currentSignal = AbortSignal.any([signal, lifetime.signal]);
+    if (currentSignal.aborted || !options.matrixAnthropic || !await options.matrixAnthropic.revalidate(binding, currentSignal)
+      || currentSignal.aborted) throw new BotBrokerActionError("stale_generation");
+  };
+  const qualifiedTools: BotToolDispatcher = {
+    effectClass: request => tools.effectClass(request),
+    async prepare(binding, request, signal) {
+      await revalidateRecipeSource(binding, signal);
+      await tools.prepare?.(binding, request, signal);
+    },
+    async dispatch(binding, request, signal) {
+      await revalidateRecipeSource(binding, signal);
+      return tools.dispatch(binding, request, signal);
+    },
+  };
   const actions = createBotBrokerActions({
     db,
     registry,
@@ -346,11 +375,9 @@ export async function startBots(options: {
       readImageChunk: (binding, request) => isManagedPiBinding(binding) ? managed.runs.readImageChunk(binding, request) : orchestrator.runSource.readImageChunk(binding, request),
     },
     events: { publish: (binding, event) => isManagedPiBinding(binding) ? managed.events.publish(binding, event) : orchestrator.eventSink.publish(binding, event) },
-    tools: createBotToolDispatcher({
-      homePath: options.homePath, managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory, ...(integrationTools ? { integrations: integrationTools } : {}),
-      ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
-    }),
+    tools: qualifiedTools,
     inference: {
+      ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
       homePath: options.homePath,
       onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
@@ -385,6 +412,7 @@ export async function startBots(options: {
     tasks,
     adapter,
     managedAdapter: managed.adapter,
+    cancelAnthropicInference: () => registry.cancelAnthropicInference(),
     async close() {
       chatgptPlanPeers?.close();
       if (checkpointTimer) clearInterval(checkpointTimer);

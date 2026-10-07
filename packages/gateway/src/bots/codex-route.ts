@@ -9,6 +9,7 @@ import { BotRouteError, resolveBotRoute, resolveManagedPiRoute, type ResolvedBot
 export function createBotModelRouteResolver(options: {
   codexModel?: string;
   chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
+  matrixAnthropic?: import("./matrix-anthropic-api.js").MatrixAnthropicAuthority;
   ownerId?: string;
   providers: AiProviderSnapshotReader;
   /** Compatibility only; native Codex identity must never fund a Pi coordinator. */
@@ -16,6 +17,10 @@ export function createBotModelRouteResolver(options: {
   lifetime?: AbortSignal;
 }): (selection?: CanonicalChatModelSelection) => Promise<ResolvedBotRoute> {
   return async (selection) => {
+    if (selection?.instanceId === "matrix_anthropic_api") {
+      if (!options.matrixAnthropic || !options.ownerId) throw new BotRouteError("model_unavailable");
+      return options.matrixAnthropic.resolve(selection, options.ownerId, "interactive");
+    }
     if (selection?.instanceId === "matrix_chatgpt_plan") {
       if (!options.chatgptPlan || !options.ownerId) throw new BotRouteError("model_unavailable");
       return options.chatgptPlan.resolve(selection, options.ownerId, "interactive");
