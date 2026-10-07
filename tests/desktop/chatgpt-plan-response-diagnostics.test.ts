@@ -95,3 +95,21 @@ describe('bounded unexpected Responses MIME diagnostics',()=>{
   const log=JSON.stringify(warn.mock.calls);expect(log).toContain('json');expect(log).not.toContain(secret);expect(log).not.toContain('extra');
  });
 });
+
+it.each([
+ ['invalid plan credential', 'invalid_plan_credential'],
+ ['invalid identity', 'invalid_identity'],
+ ['missing identity', 'missing_identity'],
+ ['expired credential', 'expired_credential'],
+ ['OS credential protection unavailable', 'credential_protection_unavailable'],
+ ['invalid credential file', 'invalid_credential_file'],
+ ['credential owner mismatch', 'credential_owner_mismatch'],
+ ['not connected', 'not_connected'],
+ ['response too large', 'response_oversize'],
+ [secret, 'local_failure'],
+])('classifies fixed local failure %s without exposing arbitrary error messages', (message, category) => {
+ const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+ logPlanFailure('catalog', new Error(message));
+ expect(warn).toHaveBeenCalledExactlyOnceWith(`[chatgpt-plan] catalog: ${category}`);
+ expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+});

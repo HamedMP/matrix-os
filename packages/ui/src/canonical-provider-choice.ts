@@ -1,4 +1,4 @@
-import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, sameChatgptPlanSelectionBinding } from "@matrix-os/contracts";
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicChatRoute, isMatrixAnthropicBotRoute, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID, sameMatrixAnthropicSelectionBinding, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, sameChatgptPlanSelectionBinding } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -75,6 +75,13 @@ export function canonicalChatSubscriptionSelectionMatches(
   instance: CanonicalProviderInstanceDescriptor | undefined,
   options?: CanonicalProviderChoice["selectedOptions"],
 ): boolean {
+  if (instance?.id === MATRIX_PI_ANTHROPIC_API_INSTANCE_ID || instance?.id === MATRIX_ANTHROPIC_API_INSTANCE_ID) {
+    return (isMatrixAnthropicChatRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isMatrixAnthropicBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }))
+      && instance.defaultSelection?.instanceId === instance.id
+      && sameMatrixAnthropicSelectionBinding(options, instance.defaultSelection.options)
+      && instance.options.length === 2
+      && options?.every(option => instance.options.some(descriptor => descriptor.id === option.id && descriptor.kind === "enum" && descriptor.values?.some(value => value.value === option.value))) === true;
+  }
   if (instance?.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return true;
   return isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })
     && instance.supports.rootChat
@@ -87,7 +94,7 @@ export function canonicalChatSubscriptionSelectionMatches(
 
 /** Personal subscription is an explicit source choice, never an automatic default. */
 export function canonicalProviderChoiceCanBeDefault(choice: { instanceId: string }): boolean {
-  return choice.instanceId !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID;
+  return choice.instanceId !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && choice.instanceId !== MATRIX_PI_ANTHROPIC_API_INSTANCE_ID && choice.instanceId !== MATRIX_ANTHROPIC_API_INSTANCE_ID;
 }
 
 export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
@@ -129,7 +136,8 @@ export function deriveCanonicalProviderChoices(
     if (!interactionMode || !permissionMode) return [];
     const managedExecution = instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default";
     const personalChat = isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind });
-    const harnessLabel = managedExecution || personalChat ? "Matrix AI" : isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "ChatGPT subscription" : instance.displayName;
+    const apiPaid = isMatrixAnthropicChatRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isMatrixAnthropicBotRoute({ instanceId: instance.id, driverKind: instance.driverKind });
+    const harnessLabel = managedExecution || personalChat || apiPaid ? "Matrix AI" : isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "ChatGPT subscription" : instance.displayName;
     return instance.models.flatMap((model) => model.availability === "available" && canonicalChatSubscriptionSelectionMatches(instance, selectedOptionsFor(instance, model.id)) ? [{
       instanceId: instance.id,
       driverKind: instance.driverKind,

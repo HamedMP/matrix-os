@@ -17,6 +17,7 @@ const providerControllerState = vi.hoisted(() => ({
 
 vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
+  ...await import("../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js"),
   AgentsProvidersView: ({
     onOpenTerminal,
     onOpenBrowser,

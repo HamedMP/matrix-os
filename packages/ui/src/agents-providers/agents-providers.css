@@ -410,6 +410,7 @@
 /* Matrix credit overview and bounded billing dialogs. */
 .matrix-ap-gateway { padding: 0; background: transparent; border: 0; }
 .matrix-ap-gateway .matrix-ap-panel-head { margin-bottom: 12px; }
+.matrix-ap-gateway > .matrix-ap-help { margin-bottom: 12px; }
 .matrix-ap-beta { border: 1px solid var(--matrix-ap-border); border-radius: 26px; color: var(--matrix-ap-muted); font-size: 11px; font-weight: 400; padding: 2px 8px; }
 .matrix-ap-gateway .matrix-ap-credit-row { padding: 20px; margin: 0; background: var(--matrix-ap-surface); border: 1px solid var(--matrix-ap-border); border-radius: 12px 12px 0 0; }
 .matrix-ap-credit-row strong { font-size: 24px; font-weight: 600; line-height: 35px; }
@@ -549,7 +550,7 @@
 .matrix-ap-chevron svg { width: 16px; height: 16px; transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1); }
 .matrix-ap-chevron[data-expanded="true"] svg { transform: rotate(180deg); }
 
-.matrix-ap-subscriptions { border: 1px solid var(--matrix-ap-border); border-top: 0; padding: 18px 24px; background: var(--matrix-ap-surface); }
+.matrix-ap-subscriptions { border: 1px solid var(--matrix-ap-border); border-top: 0; border-radius: 0 0 12px 12px; padding: 18px 24px; background: var(--matrix-ap-surface); }
 .matrix-ap-subscriptions h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .matrix-ap-subscription-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); margin: 16px 0; }
 .matrix-ap-subscription { display: flex; flex-direction: column; border: 1px solid var(--matrix-ap-border); border-radius: 10px; padding: 16px; min-width: 0; }

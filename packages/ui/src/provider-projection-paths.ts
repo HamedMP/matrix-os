@@ -4,7 +4,7 @@ export function canonicalChatProviderCatalogPath(refresh = false, settingsSetup 
 }
 
 export function providerSettingsSnapshotPath(refresh = false): string {
-  return `/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true${refresh ? "&refresh=true" : ""}`;
+  return `/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true${refresh ? "&refresh=true" : ""}`;
 }
 
-export const providerSettingsActionsPath = "/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true";
+export const providerSettingsActionsPath = "/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeMatrixAnthropicConnection=true";

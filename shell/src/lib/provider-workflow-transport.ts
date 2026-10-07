@@ -1,5 +1,5 @@
 import { AiCreditHistoryQuerySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryResponse } from "@matrix-os/contracts";
-import { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, ProviderWorkflowClientError, providerWorkflowTimeoutMs } from "@matrix-os/ui";
+import { createProviderWorkflowClient, createMatrixAnthropicConnectionClient, isProviderWorkflowAuthorizationUrl, ProviderWorkflowClientError, providerWorkflowTimeoutMs, type ProviderWorkflowRequest } from "@matrix-os/ui";
 import { getGatewayUrl } from "./gateway";
 import { boundedProviderSettingsJson } from "./provider-settings-transport";
 
@@ -43,12 +43,20 @@ async function requestJson(input: {
   return value;
 }
 
-export function createWebProviderWorkflowClient(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean } = {}) {
+function scopedProviderRequest(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean }) {
   const gateway = getGatewayUrl();
-  return createProviderWorkflowClient(input => requestJson({
+  return (input: ProviderWorkflowRequest) => requestJson({
     ...input, path: `${gateway}${input.path}`, fetcher: options.fetcher ?? fetch,
     isIdentityCurrent: () => getGatewayUrl() === gateway && options.isIdentityCurrent?.() !== false,
-  }));
+  });
+}
+
+export function createWebProviderWorkflowClient(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean } = {}) {
+  return createProviderWorkflowClient(scopedProviderRequest(options));
+}
+
+export function createWebMatrixAnthropicClient(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean } = {}) {
+  return createMatrixAnthropicConnectionClient(scopedProviderRequest(options));
 }
 
 export async function loadWebAiCreditHistory(input: {
