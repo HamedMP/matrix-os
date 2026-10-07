@@ -66,6 +66,7 @@ export function buildWorkRailSearchResults(
     ].filter((value): value is string => Boolean(value)).join("\n").toLocaleLowerCase();
     if (normalized && !safeSearchText.includes(normalized)) continue;
     const contextLabel = [
+      record.chat.conversationKind === "voice" ? "Voice" : undefined,
       project?.name ?? "Global",
       driverKind ? providerLabel(driverKind) : undefined,
     ].filter(Boolean).join(" · ");

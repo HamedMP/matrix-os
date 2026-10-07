@@ -152,8 +152,10 @@ export function WorkRail({
   const recordIds = useMemo(() => records.map(record => record.chat.id), [records]);
   const botSummaries = useBotConversationSummaries(client?.agents, recordIds, active, botRefreshKey);
   const excludedChatIds = useMemo(() => [...botSummaries.unresolvedChatIds, ...botSummaries.conversations.map(bot => bot.chatId)], [botSummaries.unresolvedChatIds, botSummaries.conversations]);
-  const ordinaryRecords = useMemo(() => recordsClientRef.current === client ? records.filter(record => !excludedChatIds.includes(record.chat.id) && record.chat.conversationKind !== "voice") : [], [client, records, excludedChatIds]);
-  const voiceRecords = useMemo(() => records.filter(record => record.chat.conversationKind === "voice"), [records]);
+  const searchableRecords = useMemo(() => recordsClientRef.current === client
+    ? records.filter(record => !excludedChatIds.includes(record.chat.id)) : [], [client, records, excludedChatIds]);
+  const ordinaryRecords = useMemo(() => searchableRecords.filter(record => record.chat.conversationKind !== "voice"), [searchableRecords]);
+  const voiceRecords = useMemo(() => searchableRecords.filter(record => record.chat.conversationKind === "voice"), [searchableRecords]);
   const order = useWorkRailOrder(ordinaryRecords, projects);
   const model = useMemo(() => buildWorkRailModel(order.chats, order.projects), [order.chats, order.projects]);
   const projectGroups = useMemo(
@@ -506,7 +508,7 @@ export function WorkRail({
       ) : null}
       <WorkRailSearchDialog
         open={searchOpen}
-        records={ordinaryRecords}
+        records={searchableRecords}
         projects={projects}
         status={status}
         onSelectProject={(project) => { setSearchOpen(false); onSelectProject(project); }}

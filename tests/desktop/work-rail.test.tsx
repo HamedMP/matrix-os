@@ -154,6 +154,24 @@ describe("WorkRail", () => {
     expect(client.list).toHaveBeenCalledWith({ limit: 100, conversationKind: "all" });
   });
 
+  it("finds and opens a saved voice conversation through Work search", async () => {
+    const voice = record("chat_voice_search", "Plan my week", {});
+    voice.chat.conversationKind = "voice";
+    const client = { list: vi.fn(async () => ({ items: [recent, voice] })) } as unknown as CanonicalChatClient;
+    const onSelectChat = vi.fn();
+    render(<WorkRail client={client} projects={[]} active
+      onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()}
+      onSelectChat={onSelectChat} onCollapse={vi.fn()} />);
+    await screen.findByRole("button", { name: "Plan my week" });
+    fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), {
+      target: { value: "plan my week" },
+    });
+    fireEvent.click(screen.getByRole("option", { name: "Plan my week, Voice · Global" }));
+    expect(onSelectChat).toHaveBeenCalledWith(voice);
+    expect(screen.queryByRole("dialog", { name: "Search chats" })).toBeNull();
+  });
+
   it("refreshes shared project discovery immediately after a canonical Chat is created", async () => {
     const events = eventHarness();
     const client = { list: vi.fn(async () => ({ items: [] })) } as unknown as CanonicalChatClient;
