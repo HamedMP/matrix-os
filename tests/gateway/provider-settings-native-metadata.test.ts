@@ -1,6 +1,7 @@
 import { bindNativeAccountMetadata, verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { describe, expect, it, vi } from 'vitest';
 import { ProviderAccountSchema } from '@matrix-os/contracts';
+import { z } from 'zod/v4';
 import { createProviderSettingsRoutes } from '../../packages/gateway/src/ai-providers/provider-settings-routes.js';
 import { projectProviderSettings } from '../../packages/gateway/src/ai-providers/provider-settings-projector.js';
 import { initialProviderSettingsConfiguration } from '../../packages/gateway/src/ai-providers/provider-settings-persistence.js';
@@ -160,4 +161,33 @@ describe('owner native account enrichment', () => {
     const after = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(after).toEqual(before);
   });
+});
+
+
+it("negotiates Claude plan names without breaking historical account details clients or leaking collaborator identity", async () => {
+  const canonical = providerSettingsCanonicalFixture();
+  const snapshot = await projectProviderSettings({ canonical, config: initialProviderSettingsConfiguration(canonical), now, supportedActions: [] });
+  const account = snapshot.accounts[0]!;
+  Object.assign(account, { id: "owner_claude_profile", accessSourceId: "owner_claude_profile", displayName: "synthetic@example.invalid", connectionDetails: { email: "synthetic@example.invalid", planName: "Claude Max" } });
+  const store = { getSnapshot: vi.fn(async () => ({ ...snapshot, accounts: snapshot.accounts.map(value => ({ ...value })) })), mutate: vi.fn() };
+  const owner = createProviderSettingsRoutes({ store, getPrincipal: () => true, canReadNativeAccountMetadata: () => true });
+  const legacy = ProviderAccountSchema.extend({ connectionDetails: z.object({ email: z.email().max(120).optional(), planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu"]).optional() }).strict().optional() });
+  const [oldResponse, currentResponse] = await Promise.all([
+    owner.request("/provider-settings?includeAccountDetails=true"),
+    owner.request("/provider-settings?includeAccountDetails=true&includeClaudeAccountDetails=true"),
+  ]);
+  const old = (await oldResponse.json()).accounts[0];
+  expect(old.connectionDetails).toEqual({ email: "synthetic@example.invalid" });
+  expect(legacy.safeParse(old).success).toBe(true);
+  const current = (await currentResponse.json()).accounts[0];
+  expect(current.connectionDetails).toEqual({ email: "synthetic@example.invalid", planName: "Claude Max" });
+  expect(account.connectionDetails).toEqual(current.connectionDetails);
+  expect(ProviderAccountSchema.safeParse(current).success).toBe(true);
+  const unrequested = (await (await owner.request("/provider-settings?includeClaudeAccountDetails=true")).json()).accounts[0];
+  expect(unrequested.connectionDetails).toBeUndefined();
+  expect((await owner.request("/provider-settings?includeClaudeAccountDetails=bogus")).status).toBe(400);
+  const collaborator = createProviderSettingsRoutes({ store, getPrincipal: () => true, canReadNativeAccountMetadata: () => false });
+  const hidden = (await (await collaborator.request("/provider-settings?includeAccountDetails=true&includeClaudeAccountDetails=true")).json()).accounts[0];
+  expect(hidden.connectionDetails).toBeUndefined();
+  expect(hidden.displayName).toBe("Claude account");
 });

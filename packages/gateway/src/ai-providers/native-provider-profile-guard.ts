@@ -9,6 +9,16 @@ import { ProviderSettingsStoreError } from './provider-settings-errors.js';
 
 /** Saver proves rejection preceded any native writer or profile mutation. */
 export class NativeProviderWriteNotStartedError extends ProviderWorkflowError { constructor() { super('unavailable'); } }
+/** Admission failed before a writer lease, or its exact acquired lease was released.
+ * No caller received admission, so no native child can have been launched.
+ */
+export class NativeProviderAdmissionNotStartedError extends ProviderSettingsStoreError {
+  constructor(readonly reason: 'busy' | 'unavailable' = 'unavailable') { super('lifecycle_unavailable', 503); }
+}
+/** A managed operation has positively observed running liveness. */
+class NativeProviderProfileBusyError extends ProviderSettingsStoreError {
+  constructor() { super('lifecycle_unavailable', 503); }
+}
 /** Native writer drained and exact previous profile bytes/absence were restored. */
 export class NativeProviderWriteRestoredError extends ProviderWorkflowError { constructor() { super('unavailable'); } }
 export type NativeProviderProfile = 'codex' | 'claude';
@@ -66,24 +76,32 @@ export function createNativeProviderProfileGuard(options: {
       // Exact canonical replay/adoption may read the already-running session.
       // No generic writer and no different instance/account may replace it.
       if (identity === profile && admission.kind === 'login' && (receipt.recoveryHash === admission.recoveryKey || receipt.recoveryHash === undefined && receipt.key && receipt.payloadHash && name === `provider-login-${profile}-${receipt.payloadHash.slice(0, 16)}` && admission.matchesLegacyReceipt?.(receipt.key, receipt.payloadHash))) { recoverable.add(name); continue; }
+      if (liveness === 'running') throw new NativeProviderProfileBusyError();
       throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
     }
     // Registry discovery also protects receipt-evicted historical sessions.
     for (const session of managed) {
       if (session.agent && session.agent !== profile) continue;
-      if (await options.registry.observeAgentLiveness(session.name, profile) === 'stopped') continue;
+      const liveness = await options.registry.observeAgentLiveness(session.name, profile);
+      if (liveness === 'stopped') continue;
       if (admission.kind === 'login' && recoverable.has(session.name)) continue;
+      if (liveness === 'running') throw new NativeProviderProfileBusyError();
       throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
     }
   }
   async function acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void | Promise<void>> {
     const slot = slots[profile];
-    if (!slot || slot.queued > 0) throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
+    if (!slot) throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
+    // This caller has not acquired admission or a lease. The existing in-process
+    // operation remains protected; this rejected attempt has nothing to drain.
+    if (slot.queued > 0) throw new NativeProviderAdmissionNotStartedError('busy');
     slot.queued = 1;
     let releaseLease: (() => Promise<void>) | undefined;
+    let leaseMayExist = false;
     try {
       await assertAvailable(profile, admission);
       if (admission.kind === "login" || admission.durable) {
+        leaseMayExist = true;
         releaseLease = await leases.acquire(profile);
         // A prior admission can finish between the idle preflight and this
         // exclusive create. Recheck live receipts/registry under our own lease.
@@ -91,8 +109,11 @@ export function createNativeProviderProfileGuard(options: {
       }
     } catch (error) {
       // The caller has not received admission, so no writer started here.
-      try { await releaseLease?.(); }
-      finally { slot.queued = 0; }
+      let drained = !leaseMayExist;
+      try {
+        if (releaseLease) { await releaseLease(); drained = true; }
+      } finally { slot.queued = 0; }
+      if (drained) throw new NativeProviderAdmissionNotStartedError(error instanceof NativeProviderProfileBusyError ? 'busy' : 'unavailable');
       throw error;
     }
     let released = false;

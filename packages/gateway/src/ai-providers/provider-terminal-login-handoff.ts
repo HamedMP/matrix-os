@@ -20,6 +20,11 @@ export function createProviderTerminalLoginHandoff(
     throw new Error("Provider login attempt resolver is required");
   }
   return {
+    // Production native workflows use this facade too. Preserve server-only
+    // completion without rerouting it through the public Terminal mutation path.
+    ...(typeof store.completeClaudeNativeLogin === "function" ? {
+      completeClaudeNativeLogin: (input: Parameters<NonNullable<ProviderSettingsStoreWriter["completeClaudeNativeLogin"]>>[0]) => store.completeClaudeNativeLogin!(input),
+    } : {}),
     getSnapshot: (options) => store.getSnapshot(options),
     async mutate(mutation) {
       const result = await store.mutate(mutation);

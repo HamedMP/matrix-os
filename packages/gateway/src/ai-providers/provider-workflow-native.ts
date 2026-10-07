@@ -121,7 +121,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
       ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
     const confirmNativeLogin = async (idempotencyKey: string) => {
-      const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true });
+      const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
       const exact = authenticatedNativeHarness(fresh, harness.id, harness.harness);
       if (!exact) throw new ProviderWorkflowError('unavailable');
       if (!exact.enabled) await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: exact.id,
@@ -148,11 +148,22 @@ export async function createNativeProviderWorkflowAdapters(options: {
         if (request.kind === 'login' && request.method === 'browser') {
           if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
           return options.claudeBrowserLogin({ publish, registerCleanup, onSuccess: async () => {
-            const fresh = await options.store.getSnapshot({ refresh: true });
-            const exact = fresh.harnesses.find(row => row.id === harness.id);
-            if (!exact || !(exact.authState === 'authenticated' || exact.localObservation?.state === 'present_unverified'))
-              throw new ProviderWorkflowError('unavailable');
-            await enableConnectedHarness(harness.id, `connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}`);
+            const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+            const exact = fresh.harnesses.find(row => row.id === harness.id && row.harness === 'claude');
+            const source = fresh.accessSources.find(row => row.id === 'owner_claude_profile'
+              && row.providerId === 'anthropic' && row.kind === 'provider_account');
+            const account = fresh.accounts.find(row => row.id === source?.accountId
+              && row.providerId === 'anthropic' && row.accessSourceId === source?.id
+              && row.authMethod === 'terminal' && row.authState === 'authenticated');
+            if (!exact || exact.installState !== 'installed' || fresh.access.mode !== 'writable'
+              || !source || !account || exact.route.providerId !== 'anthropic'
+              || !source.eligibleModelIds.includes(exact.route.modelId)) throw new ProviderWorkflowError('unavailable');
+            // Consent selects its exact account even if a saved API-key/Matrix
+            // route was active before login. Do not enable that previous source.
+            if (!options.store.completeClaudeNativeLogin) throw new ProviderWorkflowError('unavailable');
+            await options.store.completeClaudeNativeLogin({ harnessInstanceId: exact.id,
+              expectedRevision: fresh.revision,
+              idempotencyKey: `connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}` });
           } });
         }
         let releaseProfile: (() => void | Promise<void>) | undefined;

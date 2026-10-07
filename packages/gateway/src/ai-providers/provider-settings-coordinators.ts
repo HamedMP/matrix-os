@@ -62,6 +62,8 @@ export interface ProviderSettingsRuntimeMutationInput {
   canonical: AiProviderSnapshotV3;
   /** Exact public source truth used to validate credential portability. */
   snapshot?: ProviderSettingsSnapshot;
+  /** Trusted server completion, never populated from a public mutation request. */
+  claudeNativeCompletion?: boolean;
 }
 
 /** Applies settings to the real runtime/control plane and durably deduplicates the key. */

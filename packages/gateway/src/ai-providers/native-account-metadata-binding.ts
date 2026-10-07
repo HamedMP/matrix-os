@@ -7,7 +7,7 @@ export function bindNativeAccountMetadata(value: CodexNativeAccountMetadata, ver
   bindings.set(value, verifyCurrent);
   return value;
 }
-export async function verifyNativeAccountMetadata(value: CodexNativeAccountMetadata | null | undefined): Promise<CodexNativeAccountMetadata | null> {
+export async function verifyNativeAccountMetadata<T extends CodexNativeAccountMetadata>(value: T | null | undefined): Promise<T | null> {
   if (!value) return null;
   const verify = bindings.get(value);
   if (!verify) return null;

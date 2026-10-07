@@ -1,3 +1,5 @@
+import { projectClaudeNativeAccount } from "./claude-native-account-projection.js";
+import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
 import { projectMatrixModelInventory } from "./provider-matrix-model-inventory.js";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import { projectHermesNativeRouteObservation } from "./hermes-native-route-observation.js";
@@ -320,6 +322,7 @@ async function projectAccounts(input: {
 
 function projectHarness(input: {
   nativeAuthenticatedAccountId?: string;
+  claudeAuthenticatedAccountId?: string;
   stored: HarnessConfiguration;
   canonical: AiProviderSnapshotV3;
   modelProviders: ProviderSettingsSnapshot["modelProviders"];
@@ -387,6 +390,11 @@ function projectHarness(input: {
     && routeSourceEligible && source?.id === "owner_openai_profile" && source.kind === "provider_account"
     && source.accountId === input.nativeAuthenticatedAccountId
     && input.stored.selectedAccountId === input.nativeAuthenticatedAccountId;
+  const claudeCredentialAuthenticated = input.claudeAuthenticatedAccountId !== undefined
+    && input.stored.harness === "claude" && driverId === "claude_code" && driver?.installState === "installed"
+    && routeSourceEligible && source?.id === "owner_claude_profile" && source.kind === "provider_account"
+    && source.accountId === input.claudeAuthenticatedAccountId
+    && input.stored.selectedAccountId === input.claudeAuthenticatedAccountId;
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)
     : input.loginMethods(input.stored);
@@ -403,7 +411,7 @@ function projectHarness(input: {
     version: null,
     installState: driver?.installState ?? "missing",
     ...projectHermesNativeRouteObservation({ driver, stored: input.stored, source, accounts: input.accounts, now: input.now }),
-    authState: nativeCredentialAuthenticated ? "authenticated"
+    authState: nativeCredentialAuthenticated || claudeCredentialAuthenticated ? "authenticated"
       : projectMissingCredentialAuth({ canonical: input.canonical, stored: input.stored, source, driver, now: input.now }) ?? authState(readiness),
     loginMethods: [...visibleMethods],
     recommendedLoginMethod: visibleMethods[0] ?? null,
@@ -420,6 +428,7 @@ function projectHarness(input: {
 }
 
 export async function projectProviderSettings(input: {
+  claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
   codexNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   canonical: AiProviderSnapshotV3;
@@ -469,6 +478,7 @@ export async function projectProviderSettings(input: {
     sourceIds: new Set(sources.map((source) => source.id)),
     dependencies: input.dependencies,
   });
+  const claudeAuthenticatedAccountId = projectClaudeNativeAccount({ canonical: input.canonical, accounts, sources, metadata: input.claudeNativeAccountMetadata, now: input.now });
   const metadata = input.codexNativeAccountMetadata;
   const nativeSource = sources.find(source => source.id === "owner_openai_profile");
   const nativeAccount = accounts.find(account => account.accessSourceId === "owner_openai_profile");
@@ -569,6 +579,7 @@ export async function projectProviderSettings(input: {
   const harnesses = input.config.harnesses.flatMap((stored) => {
     const harness = projectHarness({
       nativeAuthenticatedAccountId,
+      claudeAuthenticatedAccountId,
       stored,
       canonical: input.canonical,
       modelProviders,

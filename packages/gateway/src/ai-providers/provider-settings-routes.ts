@@ -16,14 +16,21 @@ const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
 function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeModels = false,
-  includeInventory = false, includeFundingState = false, includeAccountDetails = false, includeChatFunding = false, includeMatrixConnection = false): ProviderSettingsSnapshot {
+  includeInventory = false, includeFundingState = false, includeAccountDetails = false, includeChatFunding = false, includeMatrixConnection = false, includeClaudeAccountDetails = false): ProviderSettingsSnapshot {
   const { matrixModelInventory, matrixAnthropicConnection, ...baseSnapshot } = snapshot;
   const publicSnapshot = {
     ...baseSnapshot,
     ...(includeMatrixConnection && matrixAnthropicConnection ? { matrixAnthropicConnection } : {}),
-    accounts: snapshot.accounts.map(({ connectionDetails, ...account }) => ({
-      ...account, ...(includeAccountDetails && connectionDetails ? { connectionDetails } : {}),
-    })),
+    accounts: snapshot.accounts.map(({ connectionDetails, ...account }) => {
+      // Historical details clients have a closed ChatGPT-only plan enum. Email
+      // remains compatible; new Claude plan names require their own opt-in.
+      let details = connectionDetails;
+      if (details?.planName?.startsWith("Claude ") && !includeClaudeAccountDetails) {
+        details = { ...details };
+        delete details.planName;
+      }
+      return { ...account, ...(includeAccountDetails && details ? { connectionDetails: details } : {}) };
+    }),
     ...(includeInventory && matrixModelInventory ? { matrixModelInventory } : {}),
     modelProviders: snapshot.modelProviders.map(provider => ({ ...provider,
       models: provider.models.map(({ capabilities, ...model }) => includeModels
@@ -177,13 +184,14 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (authError) return authError;
     const refresh = RefreshQuerySchema.safeParse(context.req.query("refresh"));
     const accountDetails = RefreshQuerySchema.safeParse(context.req.query("includeAccountDetails"));
+    const claudeAccountDetails = RefreshQuerySchema.safeParse(context.req.query("includeClaudeAccountDetails"));
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
     const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
     const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
     const chatFunding = RefreshQuerySchema.safeParse(context.req.query("includeChatFunding"));
     const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
     const matrixConnection = RefreshQuerySchema.safeParse(context.req.query("includeMatrixAnthropicConnection"));
-    if (!accountDetails.success || !refresh.success || !capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success) return invalidRequest(context);
+    if (!claudeAccountDetails.success || !accountDetails.success || !refresh.success || !capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success) return invalidRequest(context);
     try {
       const ownerMetadata = options.canReadNativeAccountMetadata?.(context) === true;
       const snapshot = await options.store.getSnapshot({ refresh: refresh.data === "true", ...(ownerMetadata ? { includeNativeAccountMetadata: true } : {}) });
@@ -192,10 +200,12 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
           || source.kind === "harness_profile" && source.harness === "hermes"
           ? { ...source, displayName: source.kind === "harness_profile" ? "Hermes account" : source.displayName,
               usage: { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "account", reason: "read_only", asOf: null } } : source);
-        snapshot.accounts = snapshot.accounts.map(account => account.accessSourceId === "owner_openai_profile"
-          ? { ...account, displayName: account.authMethod === "api_key" ? "API key" : "Codex account" } : account);
+        snapshot.accounts = snapshot.accounts.map(account => account.accessSourceId === "owner_claude_profile"
+          ? { ...account, displayName: "Claude account" }
+          : account.accessSourceId === "owner_openai_profile"
+            ? { ...account, displayName: account.authMethod === "api_key" ? "API key" : "Codex account" } : account);
       }
-      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", ownerMetadata && accountDetails.data === "true", chatFunding.data === "true", ownerMetadata && matrixConnection.data === "true"));
+      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", ownerMetadata && accountDetails.data === "true", chatFunding.data === "true", ownerMetadata && matrixConnection.data === "true", ownerMetadata && claudeAccountDetails.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }
