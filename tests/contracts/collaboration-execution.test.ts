@@ -46,14 +46,14 @@ const policy = {
 };
 
 describe("collaboration execution contracts (S02 T012/T013)", () => {
-  it("resolves the effective submit mode fail-closed from organization metadata and project policy", () => {
+  it("lets Contributor policy govern submission without a second organization switch", () => {
     expect(CollaborationSubmitModeSchema.options).toEqual(["follow_organization", "owner_only"]);
     expect(CollaborationEffectiveSubmitModeSchema.options).toEqual(["members", "owner_only"]);
     expect(resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: "members", submitMode: "follow_organization" })).toBe("members");
-    expect(resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: "members", submitMode: "owner_only" })).toBe("owner_only");
-    expect(resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: "owner_only", submitMode: "follow_organization" })).toBe("owner_only");
-    expect(resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: "absent", submitMode: "follow_organization" })).toBe("owner_only");
-    expect(resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: "unknown", submitMode: "follow_organization" })).toBe("owner_only");
+    expect(resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: "members", submitMode: "owner_only" })).toBe("members");
+    expect(resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: "owner_only", submitMode: "follow_organization" })).toBe("members");
+    expect(resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: "absent", submitMode: "follow_organization" })).toBe("members");
+    expect(resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: "unknown", submitMode: "follow_organization" })).toBe("members");
   });
 
   it("stores one owner-selected V3 source per execution scope, project or standalone Chat", () => {
@@ -62,8 +62,8 @@ describe("collaboration execution contracts (S02 T012/T013)", () => {
     expect(CollaborationExecutionScopeRefSchema.safeParse({ kind: "project_chat", scopeId, chatId: "chat_x" }).success).toBe(false);
     expect(CollaborationExecutionPolicySchema.parse(policy)).toEqual(policy);
     expect(CollaborationExecutionPolicySchema.parse({ ...policy, scope: chatScope }).scope).toEqual(chatScope);
-    expect(CollaborationExecutionPolicySchema.safeParse({ ...policy, effectiveSubmitMode: "members", submitMode: "owner_only" }).success).toBe(false);
-    expect(CollaborationExecutionPolicySchema.safeParse({ ...policy, effectiveSubmitMode: "members", organizationAiSubmission: "absent" }).success).toBe(false);
+    expect(CollaborationExecutionPolicySchema.safeParse({ ...policy, effectiveSubmitMode: "members", submitMode: "owner_only" }).success).toBe(true);
+    expect(CollaborationExecutionPolicySchema.safeParse({ ...policy, effectiveSubmitMode: "members", organizationAiSubmission: "absent" }).success).toBe(true);
     expect(CollaborationExecutionPolicySchema.safeParse({ ...policy, providerTermsAcknowledgedAt: null, effectiveSubmitMode: "members" }).success).toBe(false);
     expect(CollaborationExecutionPolicySchema.parse({ ...policy, providerTermsAcknowledgedAt: null, effectiveSubmitMode: "owner_only", submitMode: "owner_only" }).effectiveSubmitMode).toBe("owner_only");
     expect(CollaborationExecutionPolicySchema.safeParse({ ...policy, source: { ...policy.source, harness: "hermes" } }).success).toBe(false);

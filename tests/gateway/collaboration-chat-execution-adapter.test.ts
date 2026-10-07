@@ -174,6 +174,35 @@ describe("CollaborationChatExecutionAdapter", () => {
     expect(resolveProviderReadiness).toHaveBeenCalledWith(collaborationActors.owner, selection, "claude_code");
   });
 
+  it("queues the owner-policy model selected by the trusted server authority", async () => {
+    const policySelection = { ...selection, model: "sonnet" };
+    const canonicalProviderAuthority = { driverKind: "claude_code" as const, selection: policySelection };
+    const enqueueSharedQueuedTurn = vi.fn(async () => ({
+      ...queued, selection: policySelection, pendingCount: 1, alreadyAccepted: false, resourceRevision: 13,
+    }));
+    const resolveProviderReadiness = vi.fn(async () => "ready" as const);
+    const adapter = createAdapter({
+      enqueueSharedQueuedTurn,
+      resolveCanonicalProviderAuthority: vi.fn(async () => canonicalProviderAuthority),
+      resolveProviderReadiness,
+    });
+
+    await expect(adapter.submit(context, {
+      clientRequestId: queued.clientRequestId,
+      expectedRevision: "12",
+      text: "Use the owner's configured model",
+    })).resolves.toMatchObject({ request: { selection: policySelection } });
+    expect(enqueueSharedQueuedTurn).toHaveBeenCalledWith(
+      { type: "personal", ownerId: collaborationActors.owner },
+      expect.objectContaining({ canonicalProviderAuthority }),
+    );
+    expect(resolveProviderReadiness).toHaveBeenCalledWith(
+      collaborationActors.owner,
+      policySelection,
+      "claude_code",
+    );
+  });
+
   it("surfaces expired Claude readiness only as an actionable owner state", async () => {
     const adapter = createAdapter({
       resolveProviderReadiness: vi.fn(async () => "reconnect_required"),
@@ -193,7 +222,7 @@ describe("CollaborationChatExecutionAdapter", () => {
       });
   });
 
-  it("lets only the owner submit validated canonical authority for a first binding", async () => {
+  it("lets a Contributor establish the first binding only through validated owner-policy authority", async () => {
     const enqueueSharedQueuedTurn = vi.fn(async () => ({
       ...queued, pendingCount: 1, alreadyAccepted: false, resourceRevision: 13,
     }));
@@ -206,13 +235,7 @@ describe("CollaborationChatExecutionAdapter", () => {
       })),
       resolveCanonicalProviderAuthority: vi.fn(async () => canonicalProviderAuthority),
     });
-    const ownerContext = {
-      ...context,
-      actorId: collaborationActors.owner,
-      role: "owner" as const,
-    };
-
-    await expect(adapter.submit(ownerContext, {
+    await expect(adapter.submit(context, {
       clientRequestId: queued.clientRequestId,
       expectedRevision: "12",
       text: "Establish the canonical binding",
@@ -221,11 +244,6 @@ describe("CollaborationChatExecutionAdapter", () => {
       { type: "personal", ownerId: collaborationActors.owner },
       expect.objectContaining({ canonicalProviderAuthority }),
     );
-    await expect(adapter.submit(context, {
-      clientRequestId: "50000000-0000-4000-8000-000000000004",
-      expectedRevision: "13",
-      text: "Editors cannot establish provider authority",
-    })).rejects.toMatchObject({ code: "unavailable" });
   });
 
   it("refuses a member submission before the queue when the scope is owner-only", async () => {
@@ -307,8 +325,10 @@ function createAdapter(overrides: Record<string, unknown> = {}) {
       boundDriverKind: "claude_code" | "codex" | null,
     ) => Promise<"ready" | "reconnect_required" | "unavailable">) ?? (async () => "ready"),
     resolveCanonicalProviderAuthority: (overrides.resolveCanonicalProviderAuthority as (
+      scopeId: string,
       ownerId: string,
       selection: typeof queued.selection,
+      boundDriverKind: "claude_code" | "codex" | null,
     ) => Promise<{ driverKind: "claude_code"; selection: typeof queued.selection } | null>)
       ?? (async () => ({ driverKind: "claude_code", selection })),
     onCommitted: overrides.onCommitted as ((scopeId: string) => Promise<void>) | undefined,
