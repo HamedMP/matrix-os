@@ -63,9 +63,10 @@ function PlanRequired({ detail, plansUrl, onOpenUrl, onRefresh, onSignOut }: Pla
     return (
       <Centered>
         <Title>No active plan</Title>
-        <Body>This account doesn’t have an active Matrix OS plan yet.</Body>
+        <Body>This account doesn’t have an active Matrix computer plan. If you expected access, check again or sign in with another account.</Body>
         <PrimaryButton label="Check again" testID="journey-refresh" onPress={onRefresh} />
         <PrimaryButton label="Sign out" testID="journey-sign-out" onPress={onSignOut} />
+        <PrimaryButton label="Contact support" testID="journey-support" onPress={() => onOpenUrl(SUPPORT_URL)} />
       </Centered>
     );
   }

@@ -26,7 +26,11 @@ export default function AppsScreen() {
   }, [apps, query]);
 
   return (
-    <Page title="Apps" subtitle={`Experiences installed on ${computer?.handle ?? "your computer"}`}>
+    <Page title="Apps" subtitle={`Web apps on ${computer?.handle ?? "your computer"}`}>
+      <Text style={styles.statusText}>
+        Apps that use workspace data or connected accounts may not work here yet. Open those apps on the web or desktop.
+      </Text>
+      <Spacer size="md" />
       <SearchField placeholder="Search apps" value={query} onChangeText={setQuery} />
       <Spacer size="xl" />
       {isPending ? <GridTileSkeletonGrid testID="app-tile-skeleton" /> : null}

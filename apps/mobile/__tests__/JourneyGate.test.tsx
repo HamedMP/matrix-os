@@ -112,7 +112,7 @@ describe("JourneyGate", () => {
       );
 
       expect(getByText("No active plan")).toBeTruthy();
-      expect(getByText("This account doesn’t have an active Matrix OS plan yet.")).toBeTruthy();
+      expect(getByText("This account doesn’t have an active Matrix computer plan. If you expected access, check again or sign in with another account.")).toBeTruthy();
       expect(queryByText(SERVER_DETAIL)).toBeNull();
       expect(queryByText("Choose your plan")).toBeNull();
       expect(queryByText("View plans")).toBeNull();
@@ -132,6 +132,17 @@ describe("JourneyGate", () => {
       );
       fireEvent.press(getByTestId("journey-refresh"));
       expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["ios", "android"] as const)("offers support without sending the user to checkout on %s", (os) => {
+      jest.replaceProperty(Platform, "OS", os);
+      const onOpenUrl = jest.fn();
+      const { getByTestId } = render(
+        <JourneyGate result={planRequired()} onRetry={noop} onOpenUrl={onOpenUrl} />,
+      );
+      fireEvent.press(getByTestId("journey-support"));
+      expect(onOpenUrl).toHaveBeenCalledTimes(1);
+      expect(onOpenUrl).toHaveBeenCalledWith("mailto:support@matrix-os.com");
     });
 
     it("offers Sign out so the user can switch accounts", () => {
