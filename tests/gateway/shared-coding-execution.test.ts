@@ -92,7 +92,7 @@ describe("shared coding execution (S09)", () => {
       expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
     });
 
-    it("uses the parent project authority for an inherited Chat's queue and controls", async () => {
+    it("lets a directly granted project contributor queue and control an inherited Chat prompt", async () => {
       const parentId = "79000000-0000-4000-8000-000000000999";
       await fixture.db.insertInto("collaboration_scopes").values({
         id: parentId, owner_type: "personal", owner_id: collaborationActors.owner,
@@ -103,9 +103,35 @@ describe("shared coding execution (S09)", () => {
       }).execute();
       await fixture.db.updateTable("collaboration_members").set({ scope_id: parentId })
         .where("scope_id", "=", collaborationIds.scope).execute();
+      await fixture.db.deleteFrom("collaboration_members")
+        .where("scope_id", "=", parentId).where("actor_id", "=", collaborationActors.editor).execute();
+      await fixture.db.insertInto("collaboration_grants").values({
+        id: "79000000-0000-4000-8000-000000000997", scope_id: parentId,
+        organization_id: "org_collaboration_primary", audience_kind: "member",
+        audience_actor_id: collaborationActors.editor, preset: "contributor", state: "active",
+        policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null,
+        created_by: collaborationActors.owner, created_at: now, updated_at: now, revoked_at: null,
+      }).execute();
       await fixture.db.updateTable("collaboration_scopes")
         .set({ parent_scope_id: parentId, membership_mode: "inherited" })
         .where("id", "=", collaborationIds.scope).execute();
+      await fixture.db.updateTable("chats").set({ collaboration: null })
+        .where("id", "=", collaborationIds.chat).execute();
+      await fixture.db.insertInto("collaboration_resource_bindings").values({
+        id: "79000000-0000-4000-8000-000000000996",
+        project_scope_id: parentId,
+        resource_scope_id: collaborationIds.scope,
+        resource_kind: "chat",
+        resource_id: collaborationIds.chat,
+        authority_runtime_id: collaborationIds.runtime,
+        authority_generation: 1,
+        revision: 1,
+        readiness: "ready",
+        blocker: null,
+        incarnation: null,
+        created_at: now,
+        updated_at: now,
+      }).execute();
       const authorize = async (scopeId: string, actorId: string, action: "request_ai" | "control_execution") => ({
         ...readContext(actorId), scopeId, actorId, membershipScopeId: parentId, capability: action,
         resourceAuthEpoch: 1, membershipAuthEpoch: 1,
@@ -119,6 +145,21 @@ describe("shared coding execution (S09)", () => {
       expect(await loss.listDecisions(queued.id)).toMatchObject([
         { kind: "cancel", actorId: collaborationActors.editor, relation: "requester" },
       ]);
+      await fixture.db.updateTable("collaboration_grants").set({ preset: "viewer", updated_at: now })
+        .where("scope_id", "=", parentId).where("audience_actor_id", "=", collaborationActors.editor).execute();
+      await expect(repository.enqueueSharedQueuedTurn(
+        owner,
+        aiRequest(78, collaborationActors.editor, await revision()),
+      )).rejects.toMatchObject({ code: "forbidden" });
+      await fixture.db.updateTable("collaboration_grants").set({ preset: "contributor", updated_at: now })
+        .where("scope_id", "=", parentId).where("audience_actor_id", "=", collaborationActors.editor).execute();
+      await fixture.db.updateTable("collaboration_resource_bindings")
+        .set({ readiness: "blocked", blocker: "test_blocked" })
+        .where("resource_scope_id", "=", collaborationIds.scope).execute();
+      await expect(repository.enqueueSharedQueuedTurn(
+        owner,
+        aiRequest(77, collaborationActors.editor, await revision()),
+      )).rejects.toMatchObject({ code: "unavailable" });
     });
 
     it("admits a standalone Chat Contributor with an S04 grant and no legacy member row", async () => {
@@ -430,7 +471,7 @@ describe("shared coding execution (S09)", () => {
       ]);
     });
 
-    it("reports Shared AI unavailable to a member on an owner-only scope before submission", async () => {
+    it("reports Shared AI unavailable to a member when owner terms are not acknowledged", async () => {
       const adapter = new CollaborationChatExecutionAdapter({
         repository, commands: createCommands(),
         resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
