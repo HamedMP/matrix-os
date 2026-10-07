@@ -43,6 +43,7 @@ const CallBodySchema = z.object({
   service: z.string().min(1),
   action: z.string().min(1),
   label: LabelField.optional(),
+  connectionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -154,6 +155,7 @@ export interface IntegrationRoutesOpts {
       service: ServiceDefinition;
       actionId: string;
       params?: Record<string, unknown>;
+      connectionId?: string;
     }): Promise<unknown>;
     disconnect(userId: string, connectionId: string): Promise<boolean>;
   };
@@ -163,7 +165,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
-  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId }));
+  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 
   // Pending labels from /connect that need to survive the OAuth round-trip.
@@ -512,7 +514,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: `Unknown service: ${service}` }, 400);
     }
 
-    if (def.connectorKind === "mcp_preset") {
+    if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Service connection unavailable" }, 503);
       try {
         const result = await mcpPresetBroker.connect(uid, def);
@@ -577,7 +579,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
     }
 
-    const { service, action, label, params } = parsed.data;
+    const { service, action, label, params, connectionId } = parsed.data;
 
     const def = getService(service);
     if (!def) {
@@ -600,14 +602,24 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }, 400);
     }
 
-    if (def.connectorKind === "mcp_preset") {
+    if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Integration service unavailable" }, 503);
       try {
+        // Immutable selection cannot follow a label onto a replacement account.
+        // Legacy callers without an ID keep their existing broker behavior.
+        if (connectionId) {
+          const selected = resolveIntegrationConnection(
+            (await mcpPresetBroker.listConnections(uid)).filter(row => row.status === "active"), service, label,
+          );
+          if (selected.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
+          if (selected.kind !== "found" || selected.connection.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
+        }
         const data = await mcpPresetBroker.call({
           userId: uid,
           service: def,
           actionId: action,
           params,
+          ...(connectionId ? { connectionId } : {}),
         });
         return c.json({ data, service, action });
       } catch (err) {
@@ -638,6 +650,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let selection = resolveIntegrationConnection(connections, service, label);
     if (selection.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
     let connection = selection.kind === "found" ? selection.connection : undefined;
+    // A bot's saved grant names a specific row. Never sync/reselect a missing
+    // row, because the same label may now belong to a different account.
+    if (connectionId && connection?.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
 
     if (!connection) {
       try {

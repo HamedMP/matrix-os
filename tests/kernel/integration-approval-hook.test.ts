@@ -9,6 +9,39 @@ import {
 } from "../../packages/kernel/src/hooks.js";
 
 describe("integration native approval hook", () => {
+  const expandedWrites = [
+    ["google_sheets", "add_sheet"], ["google_sheets", "append_values"],
+    ["google_sheets", "create_spreadsheet"], ["google_sheets", "update_values"],
+    ["todoist", "complete_task"], ["todoist", "create_task"], ["todoist", "update_task"],
+    ["zendesk", "update_ticket"],
+  ] as const;
+
+  it.each(expandedWrites)("requires native consent for %s/%s and honors both decisions", async (service, action) => {
+    const input = {
+      hook_event_name: "PreToolUse" as const, tool_name: "mcp__matrix-os-ipc__call_service",
+      tool_input: { service, action, params: { reviewed: "exact action arguments" } }, session_id: "s",
+    };
+    const request = vi.fn(async () => false);
+    const hook = createIntegrationApprovalHook("/tmp/missing", request);
+    const denied = await hook(input);
+    expect(denied.hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(request).toHaveBeenCalledExactlyOnceWith(input.tool_name, input.tool_input);
+    request.mockResolvedValueOnce(true);
+    expect(await hook(input)).toEqual({});
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenLastCalledWith(input.tool_name, input.tool_input);
+  });
+
+  it.each([
+    ["google_sheets", "get_values"], ["todoist", "get_task"], ["zendesk", "get_ticket"],
+  ])("permits the corresponding %s/%s read without asking for write consent", async (service, action) => {
+    const request = vi.fn(async () => false);
+    const hook = createIntegrationApprovalHook("/tmp/missing", request);
+    expect(await hook({ hook_event_name: "PreToolUse", tool_name: "mcp__matrix-os-ipc__call_service",
+      tool_input: { service, action }, session_id: "s" })).toEqual({});
+    expect(request).not.toHaveBeenCalled();
+    expect(listServices().find(item => item.id === service)?.actions[action]?.risk).toBe("read");
+  });
   it("requires approval for Gmail label writes but not mailbox history reads", async () => {
     const request = vi.fn(async () => false);
     const hook = createIntegrationApprovalHook("/tmp/missing", request);

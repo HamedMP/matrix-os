@@ -10,7 +10,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { BOT_ARTIFACT_MAX_BYTES, type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
+import { type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
+import { readBotArtifact } from "./artifact-read.js";
 import { BotAdmissionError } from "./admission.js";
 import { ChatExecutionRootError } from "../chat/execution-root.js";
 import { resolveBotWorkspaceRoot } from "../chat/bot-workspace-root.js";
@@ -301,12 +302,7 @@ export function createBotToolDispatcher(deps: {
       throw error;
     }
     try {
-      const info = await file.stat();
-      if (!info.isFile() || info.size > BOT_ARTIFACT_MAX_BYTES) throw new BotBrokerActionError("invalid_arguments");
-      const buffer = Buffer.alloc(BOT_ARTIFACT_MAX_BYTES + 1);
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-      if (bytesRead > BOT_ARTIFACT_MAX_BYTES) throw new BotBrokerActionError("invalid_arguments");
-      return textResult(buffer.subarray(0, bytesRead).toString("utf8"));
+      return textResult(await readBotArtifact(file, request.args));
     } finally {
       await file.close();
     }

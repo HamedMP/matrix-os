@@ -99,6 +99,17 @@ describe("bot agent loop", () => {
     expect(saves[0]!.messages.map((message) => message.role)).toEqual(["system", "user", "assistant", "toolResult", "assistant"]);
   });
 
+  it("advertises and forwards attachment chunk reads to the broker", async () => {
+    const chunk = { offset: 32768, length: 32768, sha256: "b".repeat(64) };
+    const { route } = scripted([
+      fauxAssistantMessage(fauxToolCall("read_artifact", { path: "gmail-attachment-00.bin", chunk }, { id: "call_chunk" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxText("Read the next part.")),
+    ]);
+    const { broker, tools } = memoryBroker();
+    expect(await run({ broker, route })).toMatchObject({ status: "completed", toolActions: 1 });
+    expect(tools).toEqual([{ toolCallId: "call_chunk", capability: "artifact.read", args: { relPath: "gmail-attachment-00.bin", chunk } }]);
+  });
+
   it("joins composite Pi tool progress to broker receipts while keeping original transcript IDs", async () => {
     const sdkId = "call_write|fc_item_1";
     const bridgeId = "call_dccaeae1358650916bbee4bce1dcb6fa436cee72d8b4eacd222cc18e5c299a18";

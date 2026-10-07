@@ -1,4 +1,4 @@
-// Genuine catalog/vendor assets verified on 2026-10-06.
+// Genuine catalog/vendor assets verified on 2026-10-07.
 // Keep these available even when authenticated catalog enrichment is unavailable.
 export const INTEGRATION_LOGOS: Readonly<Record<string, string>> = {
   "airtable": "https://pipedream.com/s.v0/app_XBxhAl/logo/96",
@@ -14,6 +14,17 @@ export const INTEGRATION_LOGOS: Readonly<Record<string, string>> = {
   "google_docs": "https://pipedream.com/s.v0/app_1pbh98/logo/96",
   "google_drive": "https://pipedream.com/s.v0/app_1lxhk1/logo/96",
   "google_slides": "https://pipedream.com/s.v0/app_OD5h5x/logo/96",
+  "google_contacts": "https://pipedream.com/s.v0/app_1xohBe/logo/96",
+  "google_sheets": "https://pipedream.com/s.v0/app_168hvn/logo/96",
+  "microsoft_outlook_calendar": "https://pipedream.com/s.v0/app_XbPhEP/logo/96",
+  "quickbooks": "https://pipedream.com/s.v0/app_m02hWG/logo/96",
+  "xero_accounting_api": "https://pipedream.com/s.v0/app_1dBh9j/logo/96",
+  "zendesk": "https://pipedream.com/s.v0/app_1pbhGX/logo/96",
+  "intercom": "https://pipedream.com/s.v0/app_1pbh0B/logo/96",
+  "loops": "https://pipedream.com/s.v0/app_WnhP8N/logo/96",
+  "lemlist": "https://pipedream.com/s.v0/app_1gKhnN/logo/96",
+  "bokio": "https://www.bokio.se/assets/images/icons/favicon.ico",
+  "posthog_oauth": "https://pipedream.com/s.v0/app_mo7h7A/logo/96",
   "granola": "https://www.granola.ai/favicon/favicon-96x96.png",
   "hubspot": "https://pipedream.com/s.v0/app_OkrhlP/logo/96",
   "jira": "https://pipedream.com/s.v0/app_mArhw1/logo/96",

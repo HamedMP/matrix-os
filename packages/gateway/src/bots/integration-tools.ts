@@ -13,6 +13,7 @@
  * network call.
  */
 import { createHash } from "node:crypto";
+import { storeBotGmailAttachment } from "./integration-attachment.js";
 import type { BotEffect, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import { getAction, getService } from "../integrations/registry.js";
@@ -74,6 +75,7 @@ function serviceName(service: string): string {
 
 export function createBotIntegrationTools(deps: {
   client: BotIntegrationClient;
+  homePath?: string;
   transact: BotStateTransactions;
   recipes: BotRecipeCatalog;
   agents: Pick<ChatAgentStore, "get">;
@@ -289,8 +291,12 @@ export function createBotIntegrationTools(deps: {
       });
       try {
         const result = await deps.client.call(binding.ownerId, {
-          service: args.service, action: args.action, label: grant.accountLabel, params: args.params, read: effect === "read",
+          service: args.service, action: args.action, label: grant.accountLabel, connectionId: grant.connectionId, params: args.params, read: effect === "read",
         }, signal);
+        if (args.service === "gmail" && args.action === "get_attachment") {
+          const reference = await storeBotGmailAttachment(deps.homePath, binding, result.data, signal);
+          return text(JSON.stringify(reference));
+        }
         const body = JSON.stringify(result.data) ?? "null";
         const shown = body.length > MAX_RESULT_CHARS ? `${body.slice(0, MAX_RESULT_CHARS)}\n[${body.length - MAX_RESULT_CHARS} characters left out.]` : body;
         return text(result.summary ? `${result.summary}\n\n${shown}` : shown);
