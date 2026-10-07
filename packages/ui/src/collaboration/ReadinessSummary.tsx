@@ -28,7 +28,7 @@ export function ReadinessSummary({ readiness }: { readiness: CollaborationReadin
     </ul> : null}
     {execution ? <div className="mt-2 space-y-1">
       <p>AI source: {readiness.sourceKind ? sourceLabels[readiness.sourceKind] : "Unavailable"}</p>
-      <p>{readiness.effectiveSubmitMode === "members" ? "Contributors may submit AI requests"
+      <p>{readiness.effectiveSubmitMode === "members" ? "Editors may submit AI requests"
         : readiness.effectiveSubmitMode === "owner_only" ? "Owner approves AI requests" : "AI submit mode unavailable"}</p>
       {rooted && gitIdentity?.item === "git_identity" && gitIdentity.status === "ready"
         ? <p>Git identity: {gitIdentity.identityLabel ?? "Owner Git identity ready"}</p> : null}

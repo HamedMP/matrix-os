@@ -4,6 +4,7 @@ import {
   CollaborationGrantSchema,
   CollaborationIdSchema,
   CollaborationPatchGrantRequestSchema,
+  CollaborationProjectAccessPresentationSchema,
   CollaborationReadinessSchema,
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
@@ -27,6 +28,7 @@ const OWNER_RUNTIME_HEADER = "x-matrix-collaboration-owner-runtime";
 type CapabilityRouteOptions = Pick<
   CollaborationRouteOptions,
   "verifier" | "directSessions" | "onScopeCommitted" | "repository" | "readinessProbes" | "ownerRuntimeSessions" | "runtimeId"
+  | "resolveParticipant"
 > & {
   capabilities?: CollaborationCapabilityRepository;
   capabilityEvaluator?: CollaborationCapabilityEvaluator;
@@ -68,6 +70,54 @@ async function grantManager(
 }
 
 export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteOptions): void {
+  routes.get("/api/collaboration/scopes/:scopeId/project/access", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    await grantManager(options, c, new Uint8Array(), "manage_members", scopeId);
+    const scope = await requireScope(options.repository, scopeId);
+    if (scope.kind !== "project") throw new CollaborationAuthorizationError("not_found", "Project scope not found");
+    const { grants } = requireCapabilities(options);
+    const live = (await grants.listGrants(scopeId)).filter((grant) => grant.state === "active" || grant.state === "pending");
+    const organizationGrant = live.find((grant) => grant.audience.kind === "organization") ?? null;
+    const activations = organizationGrant ? (await grants.listActivations(organizationGrant.grantId))
+      .filter((activation) => activation.state === "active") : [];
+    const byActor = new Map<string, {
+      status: "pending" | "active";
+      effectivePreset: "viewer" | "contributor";
+      inherited: boolean;
+      directGrant?: { grantId: string; preset: "viewer" | "contributor"; revision: string };
+    }>();
+    for (const activation of activations) {
+      if (activation.actorId === scope.ownerId || !organizationGrant) continue;
+      byActor.set(activation.actorId, {
+        status: "active", effectivePreset: organizationGrant.preset, inherited: true,
+      });
+    }
+    for (const grant of live) {
+      if (grant.audience.kind !== "member" || grant.audience.actorId === scope.ownerId) continue;
+      const inherited = byActor.get(grant.audience.actorId);
+      const effectivePreset = inherited?.effectivePreset === "contributor" || grant.preset === "contributor"
+        ? "contributor" : "viewer";
+      byActor.set(grant.audience.actorId, {
+        status: inherited?.status === "active" || grant.state === "active" ? "active" : "pending",
+        effectivePreset,
+        inherited: Boolean(inherited && (inherited.effectivePreset === "contributor" || grant.preset === "viewer")),
+        directGrant: { grantId: grant.grantId, preset: grant.preset, revision: String(grant.grantRevision) },
+      });
+    }
+    const people = await Promise.all([...byActor.entries()].sort(([left], [right]) => left.localeCompare(right))
+      .map(async ([actorId, access]) => ({ actor: await options.resolveParticipant(actorId), ...access })));
+    return c.json(CollaborationProjectAccessPresentationSchema.parse({
+      scopeId,
+      revision: String(scope.revision),
+      owner: await options.resolveParticipant(scope.ownerId),
+      generalAccess: organizationGrant ? {
+        grantId: organizationGrant.grantId,
+        preset: organizationGrant.preset,
+        revision: String(organizationGrant.grantRevision),
+      } : null,
+      people,
+    }));
+  }));
   routes.post(`${GRANTS_PATH}/:grantId/accept`, async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const grantId = CollaborationIdSchema.parse(c.req.param("grantId"));

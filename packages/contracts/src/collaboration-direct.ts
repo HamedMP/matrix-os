@@ -443,6 +443,7 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("POST", `${SCOPE}/chat/approvals/:approvalId/decision`, { request: "CollaborationToolApprovalDecisionRequestSchema" }),
   home("GET", `${SCOPE}/project`, { response: "CollaborationProjectSchema" }),
   home("GET", `${SCOPE}/project/inventory`, { response: "CollaborationProjectInventorySchema" }),
+  home("GET", `${SCOPE}/project/access`, { response: "CollaborationProjectAccessPresentationSchema" }),
   home("POST", `${SCOPE}/project/confirm`, { request: "CollaborationProjectConfirmRequestSchema" }),
   home("POST", `${SCOPE}/project/chats`),
   home("POST", `${SCOPE}/project/terminals`),

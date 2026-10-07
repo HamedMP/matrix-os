@@ -51,10 +51,10 @@ function accessCoverage(kind: Scope["kind"], resourceLabel: string): string {
 }
 
 function presetMeaning(kind: Scope["kind"]): string {
-  if (kind === "terminal") return "Viewers watch only. Contributors may request input control. Owners may take over control.";
-  if (kind === "file" || kind === "folder" || kind === "app") return "Viewers can read this resource. Contributors may make changes within its exact scope.";
-  if (kind === "project") return "Contributors can work across shared project contents. Viewers have read-only access. Owners manage membership and AI approvals.";
-  return "Contributors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals.";
+  if (kind === "terminal") return "Viewers watch only. Editors may request input control. Owners may take over control.";
+  if (kind === "file" || kind === "folder" || kind === "app") return "Viewers can read this resource. Editors may make changes within its exact scope.";
+  if (kind === "project") return "Editors can work across shared project contents. Viewers have read-only access. Owners manage membership and AI approvals.";
+  return "Editors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals.";
 }
 
 function useScopeReadiness(api: CollaborationApi, scope: Scope): CollaborationReadiness | null {
@@ -101,13 +101,13 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
     const next = await onRefresh();
     setCurrentMembers(next.members);
   };
-  return <Dialog open onClose={onClose} aria-label="Invite collaborators"
+  return <Dialog open onClose={onClose} aria-label="Manage access"
     className="ph-no-capture flex max-h-[85vh] w-[min(92vw,640px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6"
     style={{ background: "var(--bg-surface, var(--matrix-card, #FCFCF8))", color: "var(--text-primary, var(--matrix-card-fg, #32352E))",
       borderColor: "var(--border-default, var(--matrix-border, #D8D6C7))" }}>
     <div className="flex items-start justify-between gap-4">
       <div>
-        <h2 className="text-lg font-semibold">Invite collaborators</h2>
+        <h2 className="text-lg font-semibold">Manage access</h2>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
           {accessCoverage(scope.kind, resourceLabel)}
         </p>
@@ -125,12 +125,12 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
         {currentMembers.length === 0 ? <div className="rounded-xl border p-5 text-center">
           <div aria-hidden className="text-xl">◇</div>
           <p className="mt-1 font-medium">No collaborators yet</p>
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose Viewer or Contributor above.</p>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose Viewer or Editor above.</p>
         </div> : currentMembers.map((member) => <div key={member.actor.actorId} className="flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{member.actor.displayName}</p>
             <p className="truncate text-xs" style={{ color: "var(--text-secondary)" }}>{member.status === "pending"
-              ? "Access pending" : member.role === "editor" ? "Contributor" : member.role === "viewer" ? "Viewer" : "Owner"}</p>
+              ? "Access pending" : member.role === "editor" ? "Editor" : member.role === "viewer" ? "Viewer" : "Owner"}</p>
           </div>
         </div>)}
       </div>

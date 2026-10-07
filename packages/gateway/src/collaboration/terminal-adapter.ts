@@ -112,13 +112,36 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
     reason?: "unsupported" | "unavailable";
     resourceRevision: number;
     confirmationToken?: string;
+    existingScopeId?: string;
+    existingLifecycle?: CollaborationScopeRecord["lifecycle"];
   }> {
     let session = await this.readSession(input.terminalId);
     session = await this.repairOrphanedPrivateBinding(input.ownerId, input.terminalId, session);
     const resourceRevision = session?.executionGeneration ?? 0;
     if (!session) return { eligible: false, reason: "unavailable", resourceRevision };
-    if (!eligiblePrivateSession(session, input.ownerId)
-      && !await this.matchesSharedScope(session, input.ownerId, input.terminalId)) {
+    const existing = await this.matchingSharedScope(session, input.ownerId, input.terminalId);
+    if (existing) {
+      if (existing.organizationId !== input.organizationId) {
+        return { eligible: false, reason: "unsupported", resourceRevision };
+      }
+      const payload = PreflightPayloadSchema.parse({
+        version: 1,
+        ownerId: input.ownerId,
+        organizationId: input.organizationId,
+        terminalId: input.terminalId,
+        incarnation: session.sessionIncarnation,
+        executionGeneration: session.executionGeneration,
+        expiresAt: new Date(this.now().getTime() + PREFLIGHT_LIFETIME_MS).toISOString(),
+      });
+      return {
+        eligible: true,
+        resourceRevision,
+        confirmationToken: signPreflight(payload, this.options.preflightSecret),
+        existingScopeId: existing.id,
+        existingLifecycle: existing.lifecycle,
+      };
+    }
+    if (!eligiblePrivateSession(session, input.ownerId)) {
       return { eligible: false, reason: "unsupported", resourceRevision };
     }
     const payload = PreflightPayloadSchema.parse({
@@ -318,10 +341,6 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       );
       return session;
     }
-  }
-
-  private async matchesSharedScope(session: RegistrySession, ownerId: string, terminalId: string): Promise<boolean> {
-    return Boolean(await this.matchingSharedScope(session, ownerId, terminalId));
   }
 
   private async matchingSharedScope(

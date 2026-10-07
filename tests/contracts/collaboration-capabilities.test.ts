@@ -9,6 +9,7 @@ import {
   CollaborationGrantSchema,
   CollaborationPatchGrantRequestSchema,
   CollaborationPresetSchema,
+  CollaborationProjectAccessPresentationSchema,
   CollaborationReadinessSchema,
   CollaborationResourceKindSchema,
   expandCollaborationPreset,
@@ -121,6 +122,32 @@ describe("collaboration capability contracts (S02 T013)", () => {
     expect(CollaborationGrantActivationSchema.safeParse({ ...activation, state: "left" }).success).toBe(false);
     expect(CollaborationGrantActivationSchema.safeParse({ ...activation, membershipEvidenceEpoch: -1 }).success).toBe(false);
     expect(CollaborationGrantActivationSchema.safeParse({ ...activation, activatedBy: "user_owner" }).success).toBe(false);
+  });
+
+  it("projects one bounded project access manager without changing wire presets", () => {
+    const presentation = {
+      scopeId,
+      revision: "7",
+      owner: { actorId: "user_owner", displayName: "Nima" },
+      generalAccess: { grantId, preset: "contributor", revision: "3" },
+      people: [{
+        actor: { actorId: "user_ada", displayName: "Ada" },
+        status: "active",
+        effectivePreset: "contributor",
+        inherited: true,
+      }, {
+        actor: { actorId: "user_maya", displayName: "Maya" },
+        status: "pending",
+        effectivePreset: "viewer",
+        inherited: false,
+        directGrant: { grantId: "40000000-0000-4000-8000-000000000002", preset: "viewer", revision: "1" },
+      }],
+    };
+    expect(CollaborationProjectAccessPresentationSchema.parse(presentation)).toEqual(presentation);
+    expect(CollaborationProjectAccessPresentationSchema.safeParse({
+      ...presentation,
+      generalAccess: { ...presentation.generalAccess, preset: "editor" },
+    }).success).toBe(false);
   });
 
   it("bounds grant mutations to idempotent conditional writes", () => {

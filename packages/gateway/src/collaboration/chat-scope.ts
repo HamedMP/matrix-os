@@ -68,6 +68,8 @@ export class CollaborationChatScopeService {
     reason?: "active_work" | "unsupported";
     chatRevision: number;
     confirmationToken?: string;
+    existingScopeId?: string;
+    existingLifecycle?: CollaborationScopeRecord["lifecycle"];
   }> {
     const chat = await this.db.selectFrom("chats")
       .select(["revision", "collaboration"])
@@ -78,6 +80,21 @@ export class CollaborationChatScopeService {
       .executeTakeFirst();
     if (!chat) throw new CollaborationChatScopeError("not_found", "Chat not found");
     const chatRevision = Number(chat.revision);
+    const binding = parseBinding(chat.collaboration);
+    if (binding) {
+      const existing = await this.db.selectFrom("collaboration_scopes").selectAll()
+        .where("id", "=", binding.scopeId).where("deleted_at", "is", null).executeTakeFirst();
+      if (existing?.owner_id === input.ownerId && existing.organization_id === input.organizationId
+        && existing.kind === "chat" && existing.resource_id === input.chatId && existing.lifecycle !== "deleted") {
+        return {
+          eligible: true,
+          chatRevision,
+          existingScopeId: existing.id,
+          existingLifecycle: existing.lifecycle,
+        };
+      }
+      return { eligible: false, reason: "unsupported", chatRevision };
+    }
     if (await hasCompanyDriveMaterial(this.db, input.chatId)) return {eligible:false,reason:"unsupported",chatRevision};
     if (await hasActiveWork(this.db, input.chatId)) {
       return { eligible: false, reason: "active_work", chatRevision };

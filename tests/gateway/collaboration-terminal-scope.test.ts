@@ -145,7 +145,12 @@ describe("CollaborationTerminalAdapter scope binding", () => {
       confirmationToken: firstPreflight.confirmationToken!,
     });
     const nextPreflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
-    expect(nextPreflight).toMatchObject({ eligible: true, resourceRevision: 4 });
+    expect(nextPreflight).toMatchObject({
+      eligible: true,
+      resourceRevision: 4,
+      existingScopeId: first.id,
+      existingLifecycle: "shared",
+    });
     const reopened = await adapter.shareTerminal({
       ownerId: collaborationActors.owner,
       organizationId: "org_matrix_team",

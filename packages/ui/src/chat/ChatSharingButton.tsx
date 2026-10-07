@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
 
 
 import { ChatShareDialog } from "./ChatShareDialog.js";
 import { ChatCollaboratorsDialog, type CollaborationApi } from "../collaboration/ChatCollaboratorsDialog.js";
-import { ShareChoiceDialog } from "../collaboration/ShareChoiceDialog.js";
 import { CollaborationMemberSchema, CollaborationScopePreflightResponseSchema, CollaborationScopeSchema } from "@matrix-os/contracts";
 
 const PreviewSchema = z.object({
@@ -32,7 +31,7 @@ export function ChatSharingButton({ api, collaborationEnabled, collaborationApi,
   const [notice, setNotice] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
-  const [surface, setSurface] = useState<"choice" | "snapshot" | "collaborators" | null>(null);
+  const [surface, setSurface] = useState<"snapshot" | "collaborators" | null>(null);
   const [scope, setScope] = useState<z.infer<typeof CollaborationScopeSchema> | null>(null);
   const [members, setMembers] = useState<z.infer<typeof CollaborationMemberSchema>[]>([]);
   const collaborationAvailable = collaborationEnabled && Boolean(collaborationApi && runtimeId && organizationId);
@@ -52,7 +51,7 @@ export function ChatSharingButton({ api, collaborationEnabled, collaborationApi,
       if (alive.current) setError(true);
     } finally { if (alive.current) setPending(false); }
   };
-  const refreshCollaborators = async (scopeId: string) => {
+  const refreshCollaborators = useCallback(async (scopeId: string) => {
     if (!collaborationApi) throw new Error("CollaborationUnavailable");
     const [nextScope, result] = await Promise.all([
       collaborationApi.get(`/api/collaboration/scopes/${scopeId}`),
@@ -62,27 +61,27 @@ export function ChatSharingButton({ api, collaborationEnabled, collaborationApi,
     const parsedMembers = z.object({ members: z.array(CollaborationMemberSchema).max(8) }).parse(result).members;
     if (alive.current) { setScope(parsedScope); setMembers(parsedMembers); }
     return { scope: parsedScope, members: parsedMembers };
-  };
+  }, [collaborationApi]);
+  useEffect(() => {
+    if (!collaborationAvailable || !collaborationApi || !runtimeId || !organizationId) return;
+    let active = true;
+    void collaborationApi.post(
+      `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
+      { kind: "chat", resourceId: chatId, organizationId },
+    ).then(async (value) => {
+      const preflight = CollaborationScopePreflightResponseSchema.parse(value);
+      if (!active || !preflight.existingScopeId) return;
+      await refreshCollaborators(preflight.existingScopeId);
+    }).catch((failure: unknown) => {
+      console.warn("[chat-collaboration] legacy access lookup failed", failure instanceof Error ? failure.name : "UnknownError");
+    });
+    return () => { active = false; };
+  }, [chatId, collaborationApi, collaborationAvailable, organizationId, refreshCollaborators, runtimeId]);
   const openCollaborators = async () => {
-    if (!collaborationApi || !runtimeId) return;
+    if (!scope || !collaborationApi) return;
     setPending(true); setError(false); setNotice("");
     try {
-      const preflight = CollaborationScopePreflightResponseSchema.parse(await collaborationApi.post(
-        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
-        { kind: "chat", resourceId: chatId, organizationId },
-      ));
-      if (!preflight.eligible || !preflight.confirmationToken) throw new Error("ChatActivityMustSettle");
-      const created = CollaborationScopeSchema.parse(await collaborationApi.post(
-        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes`,
-        {
-          kind: "chat",
-          resourceId: chatId, organizationId,
-          clientRequestId: crypto.randomUUID(),
-          expectedRevision: preflight.resourceRevision,
-          confirmationToken: preflight.confirmationToken,
-        },
-      ));
-      await refreshCollaborators(created.id);
+      await refreshCollaborators(scope.id);
       if (alive.current) setSurface("collaborators");
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] setup failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -94,12 +93,11 @@ export function ChatSharingButton({ api, collaborationEnabled, collaborationApi,
     {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">Sharing unavailable. Try again.</span> : null}
     <button type="button" disabled={pending} aria-expanded={surface !== null} onClick={() => {
       if (surface) close();
-      else if (collaborationAvailable) setSurface("choice");
       else void openSnapshot();
     }}
       className="rounded-lg px-3 py-1.5 hover:bg-[var(--bg-hover)] disabled:opacity-50">{pending ? "Loading share…" : "Share"}</button>
-    {surface === "choice" ? <ShareChoiceDialog collaborationAvailable={collaborationAvailable} pending={pending}
-      onClose={close} onSnapshot={() => void openSnapshot()} onCollaborate={() => void openCollaborators()} /> : null}
+    {scope && surface === null ? <button type="button" className="rounded-lg px-3 py-1.5 hover:bg-[var(--bg-hover)]"
+      onClick={() => void openCollaborators()}>Manage access</button> : null}
     {surface === "snapshot" && preview ? <ChatShareDialog confirmationKey={`${preview.fingerprint}:${preview.revision}`} notice={notice} title={preview.title} messages={preview.messages} existing={existing} copyText={copyText}
       onClose={close} revoke={async (id) => { await api.delete(`${path}/${encodeURIComponent(id)}`); }}
       createLink={async () => {

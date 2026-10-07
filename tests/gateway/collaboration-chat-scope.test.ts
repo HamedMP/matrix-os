@@ -157,6 +157,15 @@ describe("CollaborationChatScopeService", () => {
       expectedChatRevision: 0,
       confirmationToken: preflight.confirmationToken!,
     });
+    await expect(service.preflight({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      chatId: collaborationIds.chat,
+    })).resolves.toMatchObject({
+      eligible: true,
+      existingScopeId: first.id,
+      existingLifecycle: "shared",
+    });
     const repeated = await service.shareChat({
       ownerId: collaborationActors.owner,
       organizationId: "org_matrix_team",

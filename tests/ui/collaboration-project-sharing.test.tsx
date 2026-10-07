@@ -47,13 +47,14 @@ describe("whole-project sharing confirmation", () => {
 
   it("creates one private project scope before showing the complete inventory", async () => {
     const api = apiFixture();
-    api.post
-      .mockResolvedValueOnce({ eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) })
-      .mockResolvedValueOnce(scope);
-    api.get
-      .mockResolvedValueOnce(scope)
-      .mockResolvedValueOnce({ members: [] })
-      .mockResolvedValueOnce(completeInventory());
+    api.post.mockImplementation(async (path: string) => {
+      if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) };
+      if (path.endsWith("/scopes")) return scope;
+      if (path.endsWith("/grants")) return defaultOrganizationGrant();
+      throw new Error(`unexpected POST ${path}`);
+    });
+    api.get.mockImplementation(async (path: string) => path.endsWith("/project/inventory") ? completeInventory()
+      : path.endsWith("/grants") ? [] : scope);
     render(<ProjectSharingButton api={api} runtimeId="vps:runtime" organizationId="org_matrix_team" projectId="proj_launch" projectName="Launch" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Share project" }));
@@ -74,8 +75,8 @@ describe("whole-project sharing confirmation", () => {
   it("shows one complete no-exclusions inventory and separates external references", () => {
     renderDialog({ inventory: completeInventory() });
     expect(screen.getByRole("heading", { name: "Share the whole Launch project?" })).toBeVisible();
-    expect(screen.getByText(/Everything owned by this project shares together/i)).toBeVisible();
-    expect(screen.getByText(/You can't exclude individual files, Chats, apps, layout, or terminals/i)).toBeVisible();
+    expect(screen.getByText(/All current and future project contents share together/i)).toBeVisible();
+    expect(screen.getByText(/every project Chat and its history/i)).toBeVisible();
     expect(screen.getByText("README.md")).toBeVisible();
     expect(screen.getAllByText("Launch discussion").length).toBeGreaterThan(0);
     expect(screen.getByText("Roadmap app")).toBeVisible();
@@ -144,7 +145,7 @@ describe("whole-project sharing confirmation", () => {
       onRefresh={async () => ({ scope: privateScope, members: [] })} onClose={vi.fn()} />);
 
     expect(await screen.findByRole("heading", { name: "Choose who gets access" })).toBeVisible();
-    expect(screen.getByText(/if you choose no one, everyone in your organization gets contributor access/i)).toBeVisible();
+    expect(screen.getByText(/if you choose no one, everyone in your organization gets Editor access/i)).toBeVisible();
     await waitFor(() => expect(screen.getByRole("button", { name: "Grant access" })).toBeEnabled());
     fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "user_ada" } });
     fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
@@ -259,6 +260,7 @@ describe("whole-project sharing confirmation", () => {
       api.post.mockImplementation(async (path: string) => {
         if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) };
         if (path.endsWith("/scopes")) return scope;
+        if (path.endsWith("/grants")) return defaultOrganizationGrant();
         if (path.endsWith("/policy/preflight")) return undefined;
         if (path.endsWith("/project/confirm")) {
           return { id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id, status: "prepared", inventoryRevision: "7",
@@ -269,7 +271,7 @@ describe("whole-project sharing confirmation", () => {
       api.get.mockImplementation(async (path: string) => {
         if (path.endsWith("/members")) return { members: [] };
         if (path.endsWith("/project/inventory")) return completeInventory();
-        if (path.endsWith("/grants")) return { grants: [] };
+        if (path.endsWith("/grants")) return [];
         if (path.startsWith("/api/organizations/")) return { members: [] };
         scopeReads += 1;
         if (scopeReads === 1) return scope;
@@ -283,10 +285,10 @@ describe("whole-project sharing confirmation", () => {
       expect(await screen.findByText(/Preparing the shared project/i)).toBeVisible();
 
       await vi.advanceTimersByTimeAsync(1_500);
-      expect(screen.queryByRole("dialog", { name: "Invite collaborators" })).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "Manage access" })).toBeNull();
       published = true;
       await vi.advanceTimersByTimeAsync(1_500);
-      expect(await screen.findByRole("dialog", { name: "Invite collaborators" })).toBeVisible();
+      expect(await screen.findByRole("heading", { name: "Share “Launch”" })).toBeVisible();
       expect(screen.queryByText(/Share the whole project to manage access/i)).toBeNull();
     } finally {
       vi.useRealTimers();
@@ -303,6 +305,7 @@ describe("whole-project sharing confirmation", () => {
       api.post.mockImplementation(async (path: string) => {
         if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) };
         if (path.endsWith("/scopes")) return scope;
+        if (path.endsWith("/grants")) return defaultOrganizationGrant();
         if (path.endsWith("/policy/preflight")) return undefined;
         return { id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id, status: "prepared", inventoryRevision: "7",
           createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z" };
@@ -310,6 +313,7 @@ describe("whole-project sharing confirmation", () => {
       api.get.mockImplementation(async (path: string) => {
         if (path.endsWith("/members")) return { members: [] };
         if (path.endsWith("/project/inventory")) return completeInventory();
+        if (path.endsWith("/grants")) return [];
         scopeReads += 1;
         if (scopeReads === 1) return scope;
         // The publication read is still in flight when the owner closes the dialog.
@@ -325,7 +329,7 @@ describe("whole-project sharing confirmation", () => {
       await act(async () => { finishRead(shared); });
       await vi.advanceTimersByTimeAsync(2_000);
       await act(async () => { await Promise.resolve(); });
-      expect(screen.queryByRole("dialog", { name: "Invite collaborators" })).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "Share Launch" })).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -342,6 +346,7 @@ describe("whole-project sharing confirmation", () => {
       api.post.mockImplementation(async (path: string) => {
         if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) };
         if (path.endsWith("/scopes")) return scope;
+        if (path.endsWith("/grants")) return defaultOrganizationGrant();
         if (path.endsWith("/policy/preflight")) return undefined;
         return { id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id, status: "prepared", inventoryRevision: "7",
           createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z" };
@@ -349,7 +354,7 @@ describe("whole-project sharing confirmation", () => {
       api.get.mockImplementation(async (path: string) => {
         if (path.endsWith("/members")) return { members: [] };
         if (path.endsWith("/project/inventory")) return completeInventory();
-        if (path.endsWith("/grants")) return { grants: [] };
+        if (path.endsWith("/grants")) return [];
         if (path.startsWith("/api/organizations/")) return { members: [] };
         scopeReads += 1;
         if (scopeReads === 1) return scope;
@@ -365,7 +370,7 @@ describe("whole-project sharing confirmation", () => {
       published = true;
       fireEvent.click(screen.getByRole("button", { name: "Check again" }));
       await vi.advanceTimersByTimeAsync(1_500);
-      expect(await screen.findByRole("dialog", { name: "Invite collaborators" })).toBeVisible();
+      expect(await screen.findByRole("heading", { name: "Share “Launch”" })).toBeVisible();
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();
@@ -381,6 +386,7 @@ describe("whole-project sharing confirmation", () => {
       api.post.mockImplementation(async (path: string) => {
         if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) };
         if (path.endsWith("/scopes")) return scope;
+        if (path.endsWith("/grants")) return defaultOrganizationGrant();
         if (path.endsWith("/policy/preflight")) return undefined;
         return { id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id, status: "prepared", inventoryRevision: "7",
           createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z" };
@@ -388,6 +394,7 @@ describe("whole-project sharing confirmation", () => {
       api.get.mockImplementation(async (path: string) => {
         if (path.endsWith("/members")) return { members: [] };
         if (path.endsWith("/project/inventory")) return completeInventory();
+        if (path.endsWith("/grants")) return [];
         scopeReads += 1;
         return scopeReads === 1 ? scope : shared;
       });
@@ -398,7 +405,7 @@ describe("whole-project sharing confirmation", () => {
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
       await vi.advanceTimersByTimeAsync(3_000);
-      expect(screen.queryByRole("dialog", { name: "Invite collaborators" })).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "Share Launch" })).toBeNull();
       expect(scopeReads).toBe(1);
     } finally {
       vi.useRealTimers();
@@ -425,6 +432,15 @@ function apiFixture() {
     })),
     patch: vi.fn(),
     delete: vi.fn(),
+  };
+}
+
+function defaultOrganizationGrant() {
+  return {
+    id: "60000000-0000-4000-8000-000000000499", scopeId: scope.id,
+    organizationId: "org_matrix_team", audience: { kind: "organization" as const },
+    preset: "contributor" as const, state: "active" as const, policyVersion: "v1", revision: "1",
+    createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z",
   };
 }
 

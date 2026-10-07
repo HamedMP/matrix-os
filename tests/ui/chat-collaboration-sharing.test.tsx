@@ -86,19 +86,20 @@ describe("Chat collaboration sharing", () => {
     expect(openProject).toHaveBeenCalledWith(projectScopeId);
   });
 
-  it("keeps snapshot sharing and live invitations as distinct choices", () => {
-    const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
-    render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={api} runtimeId="runtime_owner" organizationId="org_matrix_team" chatId={chatId}
+  it("opens public snapshot sharing without offering a new live collaboration scope", async () => {
+    const api = { baseUrl: "https://gateway.test", get: vi.fn(async (path: string) => path.endsWith("/preview")
+      ? { title: "Project Chat", revision: 1, fingerprint: "a".repeat(64), messages: [] }
+      : { shares: [] }), post: vi.fn(), delete: vi.fn() };
+    const collaborationApi = { ...api, post: vi.fn(async () => ({ eligible: false, reason: "unsupported", resourceRevision: "1" })) };
+    render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={collaborationApi} runtimeId="runtime_owner" organizationId="org_matrix_team" chatId={chatId}
       handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    expect((screen.getByRole("dialog", { name: "Share Chat" }).firstElementChild as HTMLElement).style.background)
+    const dialog = await screen.findByRole("dialog", { name: "Share Chat" });
+    expect((dialog.firstElementChild as HTMLElement).style.background)
       .toContain("--bg-surface");
-    expect(screen.getByRole("button", { name: "Share snapshot" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Invite collaborators" })).toBeVisible();
-    expect(screen.getByText(/frozen copy/i)).toBeVisible();
-    expect(screen.getByText(/ongoing Chat/i)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Share" }));
     expect(screen.queryByRole("button", { name: "Share snapshot" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Invite collaborators" })).toBeNull();
+    expect(collaborationApi.post).not.toHaveBeenCalledWith(expect.stringMatching(/\/scopes$/), expect.anything());
   });
 
   it("opens snapshot sharing directly when live organization collaboration is unavailable", async () => {
@@ -113,7 +114,7 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByRole("button", { name: "Invite collaborators" })).toBeNull();
   });
 
-  it("converts an idle Chat once and grants Contributor to a current organization member", async () => {
+  it("keeps Manage access only for an already-existing legacy standalone Chat scope", async () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", organizationId: "org_matrix_team", kind: "chat", resourceId: chatId,
       membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
@@ -123,17 +124,11 @@ describe("Chat collaboration sharing", () => {
     const collaborationApi = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async (path: string) => path.startsWith("/api/organizations/")
-        ? { members: [{ actorId: "user_ada", displayName: "Ada", role: "org:member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
+        ? { members: [] }
         : path.endsWith("/grants") ? [] : path.endsWith("/members") ? { members: [] } : scope),
-      post: vi.fn(async (path: string, body: { audience?: unknown; preset?: string }) => {
-        if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "4", confirmationToken: "a".repeat(64) };
-        if (path.endsWith("/scopes")) return scope;
+      post: vi.fn(async (path: string) => {
+        if (path.endsWith("/scopes/preflight")) return { eligible: false, reason: "unsupported", resourceRevision: "4", existingScopeId: scopeId, existingLifecycle: "shared" };
         if (path.endsWith("/policy/preflight")) return undefined;
-        if (path.endsWith("/grants")) return {
-          id: "30000000-0000-4000-8000-000000000001", scopeId, organizationId: "org_matrix_team",
-          audience: body.audience, preset: body.preset, state: "pending", policyVersion: "v1", revision: "1",
-          createdAt: "2026-09-17T12:00:00.000Z", updatedAt: "2026-09-17T12:00:00.000Z",
-        };
         throw new Error("unexpected route");
       }),
       delete: vi.fn(), patch: vi.fn(),
@@ -141,24 +136,13 @@ describe("Chat collaboration sharing", () => {
     const snapshotApi = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<ChatSharingButton api={snapshotApi} collaborationEnabled collaborationApi={collaborationApi} runtimeId="vps:runtime_owner" organizationId="org_matrix_team"
       chatId={chatId} handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    fireEvent.click(screen.getByRole("button", { name: "Invite collaborators" }));
-    await screen.findByRole("dialog", { name: "Invite collaborators" });
+    fireEvent.click(await screen.findByRole("button", { name: "Manage access" }));
+    await screen.findByRole("dialog", { name: "Manage access" });
     expect(collaborationApi.post).toHaveBeenNthCalledWith(1,
       "/api/collaboration/runtimes/vps%3Aruntime_owner/scopes/preflight",
       { kind: "chat", resourceId: chatId, organizationId: "org_matrix_team" });
-    expect(collaborationApi.post).toHaveBeenNthCalledWith(2,
-      "/api/collaboration/runtimes/vps%3Aruntime_owner/scopes", expect.objectContaining({
-        kind: "chat", resourceId: chatId, organizationId: "org_matrix_team",
-      }));
     expect(await screen.findByText(/Current organization members only/)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "user_ada" } });
-    fireEvent.change(screen.getByLabelText("Access preset"), { target: { value: "contributor" } });
-    fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
-    await waitFor(() => expect(collaborationApi.post).toHaveBeenCalledWith(
-      `/api/collaboration/scopes/${scopeId}/grants`,
-      expect.objectContaining({ audience: { kind: "member", actorId: "user_ada" }, preset: "contributor", expectedRevision: "1" }),
-    ));
+    expect(collaborationApi.post).not.toHaveBeenCalledWith(expect.stringMatching(/\/scopes$/), expect.anything());
     expect(snapshotApi.post).not.toHaveBeenCalled();
   });
 

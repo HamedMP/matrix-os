@@ -63,6 +63,7 @@ describe("collaboration gateway routes", () => {
   let signer: CollaborationProofSigner;
   let nonce: number;
   let chatScope: CollaborationChatScopeService;
+  let terminalAdapter: CollaborationTerminalAdapter;
   let resolveInvitationIdentifier: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -160,7 +161,7 @@ describe("collaboration gateway routes", () => {
       resize: async () => undefined,
       stop: async () => undefined,
     };
-    const terminalAdapter = new CollaborationTerminalAdapter({
+    terminalAdapter = new CollaborationTerminalAdapter({
       repository,
       registry: {
         get: async () => terminalSession,
@@ -352,7 +353,7 @@ describe("collaboration gateway routes", () => {
     expect(member.status).toBe("pending");
   });
 
-  it("rejects a foreign organizationId before any scope is written and binds the organization into the confirmation", async () => {
+  it("rejects a foreign organizationId and denies standalone Chat creation without writing a scope", async () => {
     const precondition = createOrganizationPrecondition({ now: () => now });
     precondition.registerSource({
       assertMembership: async ({ organizationId }) => organizationId === "org_matrix_team"
@@ -371,34 +372,32 @@ describe("collaboration gateway routes", () => {
       body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_matrix_team" },
     });
     expect(preflight.status).toBe(200);
-    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
-    // A confirmation issued for org_matrix_team cannot create the scope under another organization.
+    expect(await preflight.json()).toMatchObject({ eligible: false, reason: "unsupported" });
     activePrecondition = allowAllOrganizationPrecondition;
     const swapped = await signedJson({
       actorId: collaborationActors.owner, method: "POST",
       path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
       body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_other_company",
-        clientRequestId: request(77), expectedRevision: eligibility.resourceRevision,
-        confirmationToken: eligibility.confirmationToken },
+        clientRequestId: request(77), expectedRevision: "0",
+        confirmationToken: "d".repeat(64) },
     });
-    expect(swapped.status).toBe(409);
+    expect(swapped.status).toBe(403);
     expect(await fixture.db.selectFrom("collaboration_scopes").selectAll().execute()).toEqual([]);
   });
 
   it("never routes a standalone resource scope through the project path", async () => {
     const catalogId = "70000000-0000-4000-8000-0000000000a1";
     for (const kind of ["file", "folder", "app"] as const) {
-      // A catalog id is not a project id. These kinds now have their own branch at
-      // the standalone resource scope service, and this runtime has no shared
-      // resources, so they must report unavailable rather than reach the project
-      // service, which would look the id up as a project and share the whole project.
+      // A catalog id is not a project id. Missing legacy adapters still fail closed
+      // as unsupported and never route the identity into project preparation.
       const preflight = await signedJson({
         actorId: collaborationActors.owner,
         method: "POST",
         path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`,
         body: { kind, resourceId: catalogId, organizationId: "org_matrix_team" },
       });
-      expect(preflight.status).toBe(503);
+      expect(preflight.status).toBe(200);
+      expect(await preflight.json()).toMatchObject({ eligible: false, reason: "unsupported" });
       const created = await signedJson({
         actorId: collaborationActors.owner,
         method: "POST",
@@ -412,14 +411,14 @@ describe("collaboration gateway routes", () => {
           confirmationToken: "d".repeat(64),
         },
       });
-      expect(created.status).toBe(503);
+      expect(created.status).toBe(403);
       const scopes = await fixture.db.selectFrom("collaboration_scopes").select("id")
         .where("resource_id", "=", catalogId).execute();
       expect(scopes).toEqual([]);
     }
   });
 
-  it("preflights and converts an owner Chat without accepting participant identity", async () => {
+  it("preflights but denies creation of a new standalone owner Chat", async () => {
     const preflight = await signedJson({
       actorId: collaborationActors.owner,
       method: "POST",
@@ -427,7 +426,8 @@ describe("collaboration gateway routes", () => {
       body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_matrix_team" },
     });
     expect(preflight.status).toBe(200);
-    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
+    const eligibility = await preflight.json() as { eligible: boolean; reason: string; resourceRevision: string };
+    expect(eligibility).toMatchObject({ eligible: false, reason: "unsupported" });
     const created = await signedJson({
       actorId: collaborationActors.owner,
       method: "POST",
@@ -439,16 +439,25 @@ describe("collaboration gateway routes", () => {
         organizationId: "org_matrix_team",
         clientRequestId: "50000000-0000-4000-8000-000000000010",
         expectedRevision: eligibility.resourceRevision,
-        confirmationToken: eligibility.confirmationToken,
+        confirmationToken: "d".repeat(64),
       },
     });
-    expect(created.status).toBe(201);
-    expect(await created.json()).toMatchObject({
-      id: collaborationIds.scope,
-      ownerId: collaborationActors.owner,
-      kind: "chat",
-      role: "owner",
-      capabilities: { discuss: true, requestAi: false },
+    expect(created.status).toBe(403);
+    expect(await fixture.db.selectFrom("collaboration_scopes").selectAll().execute()).toEqual([]);
+
+    await shareChat();
+    const legacy = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`,
+      body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_matrix_team" },
+    });
+    expect(legacy.status).toBe(200);
+    expect(await legacy.json()).toMatchObject({
+      eligible: false,
+      reason: "unsupported",
+      existingScopeId: collaborationIds.scope,
+      existingLifecycle: "shared",
     });
   });
 
@@ -640,7 +649,8 @@ describe("collaboration gateway routes", () => {
     });
   });
 
-  it("preflights, shares, reads, and controls a terminal through the authority", async () => {
+  it("detects, reads, and controls an existing standalone terminal through the authority", async () => {
+    await shareTerminal();
     const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
     const preflight = await signedJson({
       actorId: collaborationActors.owner,
@@ -648,29 +658,12 @@ describe("collaboration gateway routes", () => {
       path: preflightPath,
       body: { kind: "terminal", resourceId: terminalId, organizationId: "org_matrix_team" },
     });
-    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
     expect(preflight.status).toBe(200);
-    const created = await signedJson({
-      actorId: collaborationActors.owner,
-      method: "POST",
-      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
-      body: {
-        kind: "terminal",
-        resourceId: terminalId,
-
-        organizationId: "org_matrix_team",
-        clientRequestId: request(90),
-        expectedRevision: eligibility.resourceRevision,
-        confirmationToken: eligibility.confirmationToken,
-      },
-    });
-    expect(created.status).toBe(201);
-    expect(await created.json()).toMatchObject({
-      kind: "terminal",
-      resourceId: terminalId,
-
-      organizationId: "org_matrix_team",
-      capabilities: { observeTerminal: true, controlTerminal: true, stopTerminal: true },
+    expect(await preflight.json()).toMatchObject({
+      eligible: false,
+      reason: "unsupported",
+      existingScopeId: collaborationIds.scope,
+      existingLifecycle: "shared",
     });
 
     const terminalPath = `/api/collaboration/scopes/${collaborationIds.scope}/terminal`;
@@ -703,29 +696,7 @@ describe("collaboration gateway routes", () => {
   });
 
   it("exports terminal discussion through the owner lifecycle route", async () => {
-    const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
-    const preflight = await signedJson({
-      actorId: collaborationActors.owner,
-      method: "POST",
-      path: preflightPath,
-      body: { kind: "terminal", resourceId: terminalId, organizationId: "org_matrix_team" },
-    });
-    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
-    const created = await signedJson({
-      actorId: collaborationActors.owner,
-      method: "POST",
-      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
-      body: {
-        kind: "terminal",
-        resourceId: terminalId,
-
-        organizationId: "org_matrix_team",
-        clientRequestId: request(92),
-        expectedRevision: eligibility.resourceRevision,
-        confirmationToken: eligibility.confirmationToken,
-      },
-    });
-    expect(created.status).toBe(201);
+    await shareTerminal();
 
     const discussion = await signedJson({
       actorId: collaborationActors.owner,
@@ -1685,27 +1656,40 @@ describe("collaboration gateway routes", () => {
   });
 
   async function shareChat(): Promise<void> {
-    const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
-    const preflight = await signedJson({
-      actorId: collaborationActors.owner,
-      method: "POST",
-      path: preflightPath,
-      body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_matrix_team" },
+    const eligibility = await chatScope.preflight({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      chatId: collaborationIds.chat,
     });
-    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
-    await signedJson({
-      actorId: collaborationActors.owner,
-      method: "POST",
-      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
-      body: {
-        kind: "chat",
-        resourceId: collaborationIds.chat,
+    if (eligibility.existingScopeId) return;
+    if (!eligibility.confirmationToken) throw new Error("Chat fixture is unavailable");
+    await chatScope.shareChat({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
+      expectedChatRevision: eligibility.chatRevision,
+      confirmationToken: eligibility.confirmationToken,
+    });
+  }
 
-        organizationId: "org_matrix_team",
-        clientRequestId: "50000000-0000-4000-8000-000000000010",
-        expectedRevision: eligibility.resourceRevision,
-        confirmationToken: eligibility.confirmationToken,
-      },
+  async function shareTerminal(): Promise<void> {
+    const eligibility = await terminalAdapter.preflight({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      terminalId,
+    });
+    if (eligibility.existingScopeId) return;
+    if (!eligibility.confirmationToken) throw new Error("Terminal fixture is unavailable");
+    await terminalAdapter.shareTerminal({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      terminalId,
+      clientRequestId: request(90),
+      payloadHash: "b".repeat(64),
+      expectedResourceRevision: eligibility.resourceRevision,
+      confirmationToken: eligibility.confirmationToken,
     });
   }
 

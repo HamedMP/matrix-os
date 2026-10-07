@@ -1,6 +1,6 @@
 # Data model and authority
 
-Use PostgreSQL/Kysely and existing migrations/repositories. Reuse equivalent tables discovered on rebase. No new database engine or independently running ACL service. Identifiers below are proposed schema names, frozen by S02 before parallel implementation.
+Use the shipped PostgreSQL/Kysely collaboration tables and repositories. No role migration, database engine, or independently running ACL service is introduced by the project-sharing alignment. Wire preset `contributor` remains the stored representation of the Editor product role.
 
 ## Identity and ownership
 
@@ -35,8 +35,8 @@ V1 platform records are organizations/memberships, the organization command inbo
 | collaboration_access_requests (deferred from V1) | Actor, scope, requested capability, proposed bounded operation, approver class, state/expiry/revision |
 | direct_sessions/nonces | Actor/device key, resource, home generation, ticket nonce, expiry; bounded single-use handshake records and proof replay window |
 | collaboration_run_bindings | Existing canonical run ID plus requesting actor, executing owner, one project-selected V3 binding, payer/policy, worktree/root fingerprint, executor, Chat audience ceiling, session generation; immutable once admitted; it carries no status. Run status lives only on the referenced canonical Chat run/request record, which gains the `interrupted` status set when the home loses the run; re-admission of preserved queued requests after the home returns writes a new binding only when the requester's membership evidence is fresh |
-| project_execution_policies | One row per execution scope: a project scope or a standalone Chat scope (a Chat shared inside a project has no row of its own and uses the project's). One active owner-selected V3 source, submit mode (follow organization, or owner-only), owner provider-terms acknowledgement, allowed harnesses/models, budget/concurrency; versioned owner approval of the policy itself. The scope owner (the member who owns and hosts the resource) is the only actor who may set it, and for a standalone Chat that owner takes every role the spec gives the project owner: source selection, submit-mode restriction, privileged cancel and tool-approval (task profiles and integration grants deferred) |
-| project_default_chat | Unique project ID to canonical Chat ID/root and audience binding; idempotent create/join; joining creates no worktree, copy or provider account; share-time inventory of every Chat root in the project |
+| project_execution_policies | One row per project execution scope. Each project-owned Chat uses its project's active owner-selected V3 source and submit policy. Existing legacy standalone Chat policy rows remain readable for compatibility, but no new standalone scope or policy is created. |
+| project_chat_bindings | Every existing and future project-owned Chat binds to the parent project's audience and canonical Chat/root. Creation is idempotent and creates no independent audience, worktree, copy, or provider account; share-time inventory includes every Chat root in the project. |
 | project_git_operations | Requesting member, run, operation (commit/push/PR), remote/branch, result and unknown/reconciling state; owner Git identity and broker-held forge credential; no owner approval in V1; immutable operation audit |
 | worktree_leases (deferred from V1) | Worktree ID, Chat/run/terminal holders, fencing token, heartbeat/deadline and root fingerprint |
 | filtered_workspace_operations (deferred from V1) | Source revision, allowed catalog set, materialization digest, staged patch, publication state |

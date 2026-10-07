@@ -32,7 +32,7 @@ export function ProjectSharing({ projectId, projectName }: { projectId: string; 
     return () => { active = false; };
   }, [organizationStatus]);
   return api && runtimeId
-    ? <CollaborationOrganization>{(organizationId) => <ProjectSharingButton api={api} runtimeId={runtimeId}
-      organizationId={organizationId} projectId={projectId} projectName={projectName} />}</CollaborationOrganization>
+    ? <CollaborationOrganization>{(organizationId, organizationName) => <ProjectSharingButton api={api} runtimeId={runtimeId}
+      organizationId={organizationId} organizationName={organizationName} projectId={projectId} projectName={projectName} />}</CollaborationOrganization>
     : null;
 }

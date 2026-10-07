@@ -1,5 +1,5 @@
 import {
-  CollaborationMemberSchema,
+  CollaborationGrantSchema,
   CollaborationProjectInventorySchema,
   CollaborationScopePreflightResponseSchema,
   CollaborationScopeSchema,
@@ -8,11 +8,11 @@ import {
 } from "@matrix-os/contracts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { z } from "zod/v4";
-import { ChatCollaboratorsDialog, type CollaborationApi } from "./ChatCollaboratorsDialog.js";
+import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { ProjectSharingDialog } from "./ProjectSharingDialog.js";
 
 // react-doctor-disable-next-line react-doctor/zod-v4-no-deprecated-schema-apis -- imported from zod/v4; array max is the current bounded-array API and is verified by the package typecheck.
-const MembersSchema = z.object({ members: z.array(CollaborationMemberSchema).max(8) }).strict();
+const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 
 export const PROJECT_SHARING_UNAVAILABLE_MESSAGE = "Project sharing is unavailable. The project remains private and unchanged.";
 
@@ -32,18 +32,19 @@ export interface ProjectSharingController {
  * Owns the whole-project preflight, inventory confirmation, and member manager
  * so buttons and short-lived menu items can launch the same sharing flow.
  */
-export function useProjectSharing({ api, runtimeId, organizationId, projectId, projectName, onClose }: {
+export function useProjectSharing({ api, runtimeId, organizationId, organizationName: selectedOrganizationName, projectId, projectName, onClose }: {
   api: CollaborationApi;
   runtimeId: string | null;
   organizationId: string | null;
+  organizationName?: string | null;
   projectId: string;
   projectName: string;
   onClose?: () => void;
 }): ProjectSharingController {
-  const [surface, setSurface] = useState<"inventory" | "members" | null>(null);
+  const [surface, setSurface] = useState<"dialog" | null>(null);
   const [scope, setScope] = useState<CollaborationScope | null>(null);
   const [inventory, setInventory] = useState<CollaborationProjectInventory | null>(null);
-  const [members, setMembers] = useState<z.infer<typeof CollaborationMemberSchema>[]>([]);
+  const organizationName = selectedOrganizationName ?? undefined;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
   const alive = useRef(true);
@@ -57,26 +58,38 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
     return () => { alive.current = false; };
   }, []);
 
-  /** Reads the scope and its members without touching state, so a caller can still discard them. */
+  /** Reads the project scope without touching state, so a caller can still discard it. */
   const readScopeState = async (scopeId: string) => {
-    const [scopeValue, membersValue] = await Promise.all([
-      api.get(`/api/collaboration/scopes/${scopeId}`),
-      api.get(`/api/collaboration/scopes/${scopeId}/members`),
-    ]);
+    const scopeValue = await api.get(`/api/collaboration/scopes/${scopeId}`);
     const nextScope = CollaborationScopeSchema.parse(scopeValue);
     if (nextScope.kind !== "project" || nextScope.resourceId !== projectId) {
       throw new Error("Project scope mismatch");
     }
-    return { scope: nextScope, members: MembersSchema.parse(membersValue).members };
+    return nextScope;
   };
 
   const refreshScope = async (scopeId: string) => {
     const next = await readScopeState(scopeId);
     if (alive.current) {
-      setScope(next.scope);
-      setMembers(next.members);
+      setScope(next);
     }
     return next;
+  };
+
+  /** First-time project sharing starts with the Figma baseline: everyone in the organization is an Editor. */
+  const ensureDefaultGrant = async (currentScope: CollaborationScope) => {
+    const base = `/api/collaboration/scopes/${encodeURIComponent(currentScope.id)}`;
+    const live = GrantsSchema.parse(await api.get(`${base}/grants`))
+      .filter((grant) => grant.state === "active" || grant.state === "pending");
+    if (live.some((grant) => grant.audience.kind === "organization")) return currentScope;
+    await api.post(`${base}/grants`, {
+      clientRequestId: crypto.randomUUID(), expectedRevision: currentScope.revision,
+      audience: { kind: "organization" }, preset: "contributor",
+    });
+    // The revision-bound inventory read immediately after this mutation is the
+    // authoritative confirmation revision. Avoid an extra scope read here so
+    // publication polling remains the only post-confirmation scope reader.
+    return currentScope;
   };
 
   const refreshInventory = async (scopeId: string) => {
@@ -100,19 +113,15 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
     setPending(true);
     setError(false);
     try {
-      const preflight = CollaborationScopePreflightResponseSchema.parse(await api.post(
-        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
-        { kind: "project", resourceId: projectId, organizationId },
-      ));
+      const preflightValue = await api.post(`/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
+        { kind: "project", resourceId: projectId, organizationId });
+      const preflight = CollaborationScopePreflightResponseSchema.parse(preflightValue);
       if (!preflight.eligible || !preflight.confirmationToken) throw new Error("Project unavailable");
       if (preflight.existingScopeId) {
-        const refreshed = await refreshScope(preflight.existingScopeId);
-        if (refreshed.scope.lifecycle === "shared" || refreshed.scope.lifecycle === "archived") {
-          if (alive.current) setSurface("members");
-        } else {
-          await refreshInventory(refreshed.scope.id);
-          if (alive.current) setSurface("inventory");
-        }
+        let refreshed = await refreshScope(preflight.existingScopeId);
+        if (refreshed.lifecycle === "private") refreshed = await ensureDefaultGrant(refreshed);
+        if (refreshed.lifecycle !== "shared" && refreshed.lifecycle !== "archived") await refreshInventory(refreshed.id);
+        if (alive.current) setSurface("dialog");
         return;
       }
       const created = CollaborationScopeSchema.parse(await api.post(
@@ -126,13 +135,10 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
           confirmationToken: preflight.confirmationToken,
         },
       ));
-      const refreshed = await refreshScope(created.id);
-      if (refreshed.scope.lifecycle === "shared") {
-        if (alive.current) setSurface("members");
-      } else {
-        await refreshInventory(created.id);
-        if (alive.current) setSurface("inventory");
-      }
+      let refreshed = await refreshScope(created.id);
+      if (refreshed.lifecycle === "private") refreshed = await ensureDefaultGrant(refreshed);
+      if (refreshed.lifecycle !== "shared" && refreshed.lifecycle !== "archived") await refreshInventory(created.id);
+      if (alive.current) setSurface("dialog");
     } catch (failure: unknown) {
       console.warn("[project-collaboration] setup failed", failure instanceof Error ? failure.name : "UnknownError");
       if (alive.current) setError(true);
@@ -161,12 +167,11 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
         const next = await readScopeState(scopeId);
         // The owner may have closed the dialog while the read was in flight.
         if (!current()) return;
-        if (next.scope.lifecycle === "shared") {
+        if (next.lifecycle === "shared") {
           publishingScope.current = null;
           setPublication("idle");
-          setScope(next.scope);
-          setMembers(next.members);
-          setSurface("members");
+          setScope(next);
+          setSurface("dialog");
           return;
         }
       } catch (failure: unknown) {
@@ -193,34 +198,22 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
   };
 
   const dialogs = <>
-    {surface === "inventory" && scope && inventory ? <ProjectSharingDialog
+    {surface === "dialog" && scope ? <ProjectSharingDialog
       api={api}
       scope={scope}
       projectName={projectName}
-      inventory={inventory}
+      {...(organizationName ? { organizationName } : {})}
+      {...(inventory ? { inventory } : {})}
       refreshInventory={() => refreshInventory(scope.id)}
-      onManageMembers={() => setSurface("members")}
+      onAccessChanged={async () => {
+        const current = await refreshScope(scope.id);
+        if (current.lifecycle !== "shared" && current.lifecycle !== "archived") return refreshInventory(scope.id);
+        return current;
+      }}
       onConfirmed={() => { void awaitPublication(scope.id); }}
       publicationDelayed={publication === "delayed"}
       onCheckPublication={() => { void awaitPublication(scope.id); }}
       onClose={close}
-    /> : null}
-    {surface === "members" && scope ? <ChatCollaboratorsDialog
-      api={api}
-      scope={scope}
-      members={members}
-      onRefresh={() => refreshScope(scope.id)}
-      onClose={() => {
-        if (scope.lifecycle === "shared") close();
-        else {
-          void refreshInventory(scope.id).then(() => {
-            if (alive.current) setSurface("inventory");
-          }).catch((failure: unknown) => {
-            console.warn("[project-collaboration] inventory refresh failed", failure instanceof Error ? failure.name : "UnknownError");
-            if (alive.current) setError(true);
-          });
-        }
-      }}
     /> : null}
   </>;
 

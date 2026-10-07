@@ -11,6 +11,7 @@ import { Dialog } from "../Dialog.js";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { ProjectSourceSummary } from "./ProjectSourceSummary.js";
 import { ReadinessSummary } from "./ReadinessSummary.js";
+import { ProjectAccessManager } from "./ProjectAccessManager.js";
 import {
   deriveProjectPresentation,
   projectMembershipEffectKey,
@@ -23,9 +24,10 @@ export function ProjectSharingDialog({
   api,
   scope,
   projectName,
+  organizationName,
   inventory,
   refreshInventory,
-  onManageMembers,
+  onAccessChanged,
   onConfirmed,
   publicationDelayed = false,
   onCheckPublication,
@@ -34,9 +36,10 @@ export function ProjectSharingDialog({
   api: CollaborationApi;
   scope: CollaborationScope;
   projectName: string;
-  inventory: CollaborationProjectInventory;
+  organizationName?: string;
+  inventory?: CollaborationProjectInventory;
   refreshInventory: () => Promise<CollaborationProjectInventory>;
-  onManageMembers?: () => void;
+  onAccessChanged?: () => Promise<unknown>;
   /** Called once the home accepts the confirmation; the project then publishes asynchronously. */
   onConfirmed?: () => void;
   /** True once the bounded wait for publication ran out; the share continues on the home. */
@@ -44,13 +47,14 @@ export function ProjectSharingDialog({
   onCheckPublication?: () => void;
   onClose: () => void;
 }) {
-  const [currentInventory, setCurrentInventory] = useState(() =>
-    CollaborationProjectInventorySchema.parse(inventory),
+  const [currentInventory, setCurrentInventory] = useState<CollaborationProjectInventory | null>(() =>
+    inventory ? CollaborationProjectInventorySchema.parse(inventory) : null,
   );
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
   const [readiness, setReadiness] = useState<CollaborationReadiness | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -68,15 +72,15 @@ export function ProjectSharingDialog({
       });
     return () => { active = false; };
   }, [api, scope.id]);
-  const presentation = deriveProjectPresentation(scope, currentInventory);
-  const chatRoots = currentInventory.ownedItems.filter((item) => item.kind === "chat").map((item) => ({
+  const presentation = currentInventory ? deriveProjectPresentation(scope, currentInventory) : null;
+  const chatRoots = (currentInventory?.ownedItems ?? []).filter((item) => item.kind === "chat").map((item) => ({
     chatId: item.id, ...(item.executionRoot ? { executionRoot: item.executionRoot } : {}),
     ...(item.branch ? { branch: item.branch } : {}), ...(item.dirty !== undefined ? { dirty: item.dirty } : {}),
     readiness: item.compatibility,
   }));
 
   const confirm = async () => {
-    if (!presentation.canConfirm || pending) return;
+    if (!presentation?.canConfirm || pending || confirmed || !currentInventory) return;
     setPending(true);
     setError("");
     setFeedback("");
@@ -93,6 +97,7 @@ export function ProjectSharingDialog({
         },
       ));
       if (alive.current) {
+        setConfirmed(true);
         setFeedback(result.status === "active"
           ? "The whole project is shared."
           : "Preparing the shared project. Everyone gets access only after publication completes.");
@@ -115,22 +120,27 @@ export function ProjectSharingDialog({
     }
   };
 
-  return <Dialog open aria-label="Share whole project" onClose={() => { if (!pending) onClose(); }}
-    className="ph-no-capture flex max-h-[88vh] w-[min(94vw,720px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6"
+  const published = scope.lifecycle === "shared" || scope.lifecycle === "archived";
+  return <Dialog open aria-label={`Share ${projectName}`} onClose={() => { if (!pending) onClose(); }}
+    className="ph-no-capture flex max-h-[88vh] w-[min(94vw,560px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6"
     style={{
       background: "var(--bg-surface, var(--matrix-card, #FCFCF8))",
       color: "var(--text-primary, var(--matrix-card-fg, #32352E))",
       borderColor: "var(--border-default, var(--matrix-border, #D8D6C7))",
     }}>
     <header>
-      <h2 className="text-lg font-semibold">Share the whole {projectName} project?</h2>
+      <h2 className="text-lg font-semibold">{published ? `Share “${projectName}”` : `Share the whole ${projectName} project?`}</h2>
       <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-        Everything owned by this project shares together, including future project contents, with
-        members of your organization only. You can't exclude individual files, Chats, apps, layout, or terminals.
+        All current and future project contents share together, including every project Chat and its history.
+        Files stay inside this access boundary, but collaborators do not get a file browser or editor yet.
       </p>
     </header>
 
-    <section aria-labelledby="project-contents-heading">
+    {scope.organizationId ? <ProjectAccessManager api={api} scope={scope}
+      organizationName={organizationName}
+      onChanged={onAccessChanged} /> : null}
+
+    {currentInventory && !published ? <section aria-labelledby="project-contents-heading">
       <h3 id="project-contents-heading" className="font-medium">Complete project inventory</h3>
       <ul className="mt-2 grid gap-2 sm:grid-cols-2">
         {currentInventory.ownedItems.map((item) => <li key={`${item.kind}:${item.id}`}
@@ -139,12 +149,12 @@ export function ProjectSharingDialog({
           <span className="ml-2 capitalize" style={{ color: "var(--text-secondary)" }}>{item.kind}</span>
         </li>)}
       </ul>
-    </section>
+    </section> : null}
 
-    {readiness ? <ReadinessSummary readiness={readiness} /> : null}
-    <ProjectSourceSummary gitSetup={currentInventory.gitSetup} chatRoots={chatRoots} />
+    {readiness && !published ? <ReadinessSummary readiness={readiness} /> : null}
+    {currentInventory && !published ? <ProjectSourceSummary gitSetup={currentInventory.gitSetup} chatRoots={chatRoots} /> : null}
 
-    {currentInventory.externalReferences.length > 0 ? <section aria-labelledby="external-references-heading"
+    {currentInventory && !published && currentInventory.externalReferences.length > 0 ? <section aria-labelledby="external-references-heading"
       className="rounded-xl border p-4">
       <h3 id="external-references-heading" className="font-medium">External references stay private</h3>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
@@ -155,7 +165,7 @@ export function ProjectSharingDialog({
       </ul>
     </section> : null}
 
-    {currentInventory.membershipEffects.length > 0 ? <section aria-labelledby="membership-effects-heading">
+    {currentInventory && !published && currentInventory.membershipEffects.length > 0 ? <section aria-labelledby="membership-effects-heading">
       <h3 id="membership-effects-heading" className="font-medium">Membership changes</h3>
       <ul className="mt-2 grid gap-2">
         {currentInventory.membershipEffects.map((effect) => <li key={projectMembershipEffectKey(effect)}
@@ -163,7 +173,7 @@ export function ProjectSharingDialog({
       </ul>
     </section> : null}
 
-    {presentation.blockerMessages.length > 0 ? <div role="alert" className="rounded-xl border p-4 text-sm">
+    {presentation && presentation.blockerMessages.length > 0 ? <div role="alert" className="rounded-xl border p-4 text-sm">
       {presentation.blockerMessages.map((message) => <p key={message}>{message}</p>)}
     </div> : null}
     {error ? <p role="alert" className="rounded-xl border p-3 text-sm">{error}</p> : null}
@@ -175,11 +185,9 @@ export function ProjectSharingDialog({
       : feedback ? <p role="status" className="rounded-xl border p-3 text-sm">{feedback}</p> : null}
 
     <footer className="flex justify-end gap-2">
-      {onManageMembers ? <button type="button" className={buttonClass} disabled={pending}
-        onClick={onManageMembers}>Manage collaborators</button> : null}
-      <button type="button" className={buttonClass} disabled={pending} onClick={onClose}>Cancel</button>
-      <button type="button" className={buttonClass} disabled={pending || !presentation.canConfirm}
-        onClick={() => void confirm()}>{pending ? "Confirming…" : "Share whole project"}</button>
+      <button type="button" className={buttonClass} disabled={pending} onClick={onClose}>{published ? "Done" : "Cancel"}</button>
+      {!published ? <button type="button" className={buttonClass} disabled={pending || confirmed || !presentation?.canConfirm}
+        onClick={() => void confirm()}>{pending ? "Confirming…" : confirmed ? "Publishing…" : "Share whole project"}</button> : null}
     </footer>
   </Dialog>;
 }

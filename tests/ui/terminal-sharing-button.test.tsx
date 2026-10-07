@@ -13,7 +13,7 @@ beforeAll(() => {
 const scopeId = "10000000-0000-4000-8000-000000000001";
 
 describe("terminal sharing button", () => {
-  it("requires whole-output confirmation before creating the standalone scope", async () => {
+  it("shows Manage access only for an existing standalone terminal scope", async () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", kind: "terminal", resourceId: "terminal_release",
       membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
@@ -25,45 +25,27 @@ describe("terminal sharing button", () => {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async (path: string) => path.endsWith("/members") ? { members: [] } : scope),
       post: vi.fn(async (path: string) => path.endsWith("/preflight")
-        ? { eligible: true, resourceRevision: "4", confirmationToken: "a".repeat(64) }
-        : scope),
+        ? { eligible: false, reason: "unsupported", resourceRevision: "4", existingScopeId: scopeId, existingLifecycle: "shared" }
+        : undefined),
       patch: vi.fn(), delete: vi.fn(),
     };
     render(<TerminalSharingButton api={api} runtimeId="vps:runtime_owner" organizationId="org_matrix_team" terminalId="terminal_release" />);
-    fireEvent.click(screen.getByRole("button", { name: "Share terminal" }));
-    expect(await screen.findByRole("heading", { name: "Share this whole terminal?" })).toBeVisible();
-    expect(screen.getByText(/complete retained output and future live output/i)).toBeVisible();
-    expect(screen.getByText(/does not share its parent project/i)).toBeVisible();
-    expect(api.post).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "Confirm and invite members" }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/collaboration/runtimes/vps%3Aruntime_owner/scopes",
-      expect.objectContaining({
-        kind: "terminal",
-        resourceId: "terminal_release",
-        organizationId: "org_matrix_team",
-        expectedRevision: "4",
-        confirmationToken: "a".repeat(64),
-      }),
-    ));
-    expect(await screen.findByRole("dialog", { name: "Invite collaborators" })).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "Manage terminal access" }));
+    expect(await screen.findByRole("dialog", { name: "Manage access" })).toBeVisible();
     expect(screen.getByText(/ongoing terminal/i)).toBeVisible();
+    expect(api.post).not.toHaveBeenCalledWith(expect.stringMatching(/\/scopes$/), expect.anything());
   });
 
   it("treats a missing organization as unresolved instead of telling people to join one", () => {
     const api = { baseUrl: "https://app.matrix-os.com", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<TerminalSharingButton api={api} runtimeId="runtime_owner" organizationId={null} terminalId="terminal_release" />);
 
-    const button = screen.getByRole("button", { name: "Share terminal" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveTextContent("Loading share…");
-    fireEvent.click(button);
+    expect(screen.queryByRole("button", { name: /terminal/i })).toBeNull();
     expect(api.post).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("leaves an unrestricted terminal intact when preflight rejects it", async () => {
+  it("does not expose a new standalone terminal share control", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(),
@@ -71,8 +53,8 @@ describe("terminal sharing button", () => {
       delete: vi.fn(),
     };
     render(<TerminalSharingButton api={api} runtimeId="runtime_owner" organizationId="org_matrix_team" terminalId="legacy_terminal" />);
-    fireEvent.click(screen.getByRole("button", { name: "Share terminal" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("cannot be shared safely");
-    expect(api.post).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: /terminal/i })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

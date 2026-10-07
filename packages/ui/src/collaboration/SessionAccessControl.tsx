@@ -99,14 +99,14 @@ export function SessionAccessControl({ api, scope, zIndex }: {
       className="absolute right-0 top-full mt-2 max-h-[70vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border bg-background p-4 shadow-xl">
       <div className="flex items-start justify-between gap-3"><div>
         <h2 className="font-semibold">Access</h2>
-        <p className="text-xs text-muted-foreground">You are {effectiveScope.role === "owner" ? "the owner" : `a ${effectiveScope.role === "editor" ? "Contributor" : "Viewer"}`}.</p>
+        <p className="text-xs text-muted-foreground">You are {effectiveScope.role === "owner" ? "the owner" : effectiveScope.role === "editor" ? "an Editor" : "a Viewer"}.</p>
       </div><button ref={closeRef} type="button" aria-label="Close access summary"
         className="rounded-lg px-2 py-1 text-xs hover:bg-[var(--bg-hover)]" onClick={closeSummary}>Close</button></div>
       {loading ? <p role="status" className="mt-4 text-sm">Loading people…</p> : null}
       {error ? <p role="alert" className="mt-4 text-sm">Access details are unavailable. Try again.</p> : null}
       {!loading && !error ? <ul className="mt-4 space-y-2">{accepted.map((member) => <li key={member.actor.actorId} className="flex items-center gap-3">
         <span aria-hidden className="grid size-8 place-items-center rounded-full bg-[var(--bg-hover)] text-xs font-semibold">{member.actor.displayName.slice(0, 1).toUpperCase()}</span>
-        <span className="min-w-0 flex-1 truncate text-sm">{member.actor.displayName}</span><span className="text-xs text-muted-foreground">{member.role === "editor" ? "Contributor" : member.role === "viewer" ? "Viewer" : "Owner"}</span>
+        <span className="min-w-0 flex-1 truncate text-sm">{member.actor.displayName}</span><span className="text-xs text-muted-foreground">{member.role === "editor" ? "Editor" : member.role === "viewer" ? "Viewer" : "Owner"}</span>
       </li>)}</ul> : null}
       {readiness ? <div className="mt-4"><ReadinessSummary readiness={readiness} /></div> : null}
       {projectReadiness ? <div className="mt-4"><ProjectSourceSummary gitSetup={projectReadiness.gitSetup} chatRoots={projectReadiness.chatRoots} /></div> : null}
