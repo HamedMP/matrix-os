@@ -58,7 +58,8 @@ def host_verifier_digest(env_path):
     return hashlib.sha256(one_value(lines, 'UPGRADE_TOKEN').encode('utf-8')).hexdigest()
 
 
-def apply_rotation(env_path, key_path, envelope_path):
+def validated_rotation(env_path, key_path, envelope_path):
+    """Shared read-only checks used before activation and again before writing."""
     env_bytes = read_regular(env_path, 65536)
     private_key = serialization.load_pem_private_key(read_regular(key_path, 8192, True), password=None)
     envelope = json.loads(read_regular(envelope_path, 65536))
@@ -113,6 +114,16 @@ def apply_rotation(env_path, key_path, envelope_path):
     if not epochs:
         next_lines.insert(-1 if next_lines[-1] == '' else len(next_lines),
                           'MATRIX_RUNTIME_TOKEN_EPOCH=' + str(payload['epoch']))
+    return next_lines, payload['epoch']
+
+
+def validate_rotation(env_path, key_path, envelope_path):
+    _, epoch = validated_rotation(env_path, key_path, envelope_path)
+    return epoch
+
+
+def apply_rotation(env_path, key_path, envelope_path):
+    next_lines, epoch = validated_rotation(env_path, key_path, envelope_path)
 
     original = os.lstat(env_path)
     directory = os.path.dirname(os.path.abspath(env_path))
@@ -133,7 +144,7 @@ def apply_rotation(env_path, key_path, envelope_path):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
-    return payload['epoch']
+    return epoch
 
 
 def main():
@@ -166,11 +177,15 @@ def main():
     if len(sys.argv) == 2 and sys.argv[1] == 'verifier-digest':
         print(host_verifier_digest(ENV_PATH))
         return
+    if len(sys.argv) == 3 and sys.argv[1] == 'validate':
+        epoch = validate_rotation(ENV_PATH, KEY_PATH, sys.argv[2])
+        print(f'Runtime token epoch {epoch} validated. Host configuration unchanged.')
+        return
     if len(sys.argv) == 3 and sys.argv[1] == 'apply':
         epoch = apply_rotation(ENV_PATH, KEY_PATH, sys.argv[2])
         print(f'Runtime token epoch {epoch} installed. Restart dependent services.')
         return
-    raise ValueError('Usage: matrix-rotate-runtime-tokens.py <init|public-key|verifier-digest|token-domains|apply ENCRYPTED_FILE>')
+    raise ValueError('Usage: matrix-rotate-runtime-tokens.py <init|public-key|verifier-digest|token-domains|validate ENCRYPTED_FILE|apply ENCRYPTED_FILE>')
 
 
 if __name__ == '__main__':
