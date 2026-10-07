@@ -4,7 +4,7 @@ import { use, useEffect, useMemo, useState, createContext, useCallback, useRef }
 import { Stack, useRouter, usePathname } from "expo-router";
 import { PostHogProvider } from "posthog-react-native";
 import { StatusBar } from "expo-status-bar";
-import { View, Text, ActivityIndicator } from "react-native";
+import { Text, ActivityIndicator } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as SplashScreen from "expo-splash-screen";
 import * as SecureStore from "expo-secure-store";
@@ -39,6 +39,7 @@ import { mobileQueryClient } from "@/lib/query-client";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
+import { StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
 import { OtaUpdatePrompt } from "@/components/OtaUpdatePrompt";
 import {
@@ -97,7 +98,6 @@ export function useGateway() {
 }
 
 export default function RootLayout() {
-  const { theme } = useUnistyles();
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -132,12 +132,9 @@ export default function RootLayout() {
   }, [fontsLoaded]);
 
   if (!fontsLoaded) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingTitle}>Matrix OS</Text>
-        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
-      </View>
-    );
+    // Still behind the native splash, and drawn to match it -- see StartupScreen
+    // for why the title waits for its font.
+    return <StartupScreen showTitle={false} />;
   }
 
   if (!clerkPublishableKey) {
@@ -183,20 +180,18 @@ function BiometricGate({ children }: { children: React.ReactNode }) {
 
   if (!isLoaded || authenticated === undefined) {
     return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingTitle}>Matrix OS</Text>
+      <StartupScreen>
         <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
-      </View>
+      </StartupScreen>
     );
   }
 
   if (!authenticated) {
     return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingTitle}>Matrix OS</Text>
+      <StartupScreen>
         <Text style={styles.loadingSubtitle}>Authenticating…</Text>
         <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
-      </View>
+      </StartupScreen>
     );
   }
 
@@ -229,13 +224,12 @@ function AnalyticsScreenTracker() {
 
 function MissingClerkConfigScreen() {
   return (
-    <View style={styles.loadingContainer}>
-      <Text style={styles.loadingTitle}>Matrix OS</Text>
+    <StartupScreen>
       <Text style={styles.configTitle}>Missing mobile auth config</Text>
       <Text style={styles.configBody}>
         Set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY before starting Expo.
       </Text>
-    </View>
+    </StartupScreen>
   );
 }
 
@@ -467,18 +461,6 @@ function NotificationRouter() {
 const styles = StyleSheet.create((theme) => ({
   flex: {
     flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.background,
-  },
-  loadingTitle: {
-    fontFamily: theme.fonts.display,
-    fontSize: 30,
-    color: theme.colors.foreground,
-    letterSpacing: -0.5,
   },
   loadingSubtitle: {
     fontFamily: theme.fonts.sansMedium,
