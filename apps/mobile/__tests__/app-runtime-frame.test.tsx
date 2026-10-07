@@ -96,6 +96,27 @@ describe("app runtime frame", () => {
     expect(screen.queryByText("This link is unavailable in this app preview.")).toBeNull();
   });
 
+  it("overlays the notice without resizing or replacing the app preview", () => {
+    render(<AppRuntimeFrame url={runtime} title="Notes" />);
+    const webview = screen.getByTestId("webview");
+    const layout = { style: webview.props.style, containerStyle: webview.props.containerStyle };
+    expect(screen.queryByTestId("app-preview-link-notice")).toBeNull();
+
+    navigate("https://outside.example/");
+    const notice = screen.getByTestId("app-preview-link-notice");
+    expect(notice.props.style).toEqual(expect.objectContaining({ position: "absolute", top: 0, left: 0, right: 0 }));
+    expect(notice.props.style.zIndex).toBeGreaterThan(0);
+    expect(notice.props.pointerEvents).toBe("box-none");
+    expect(screen.getByTestId("app-preview-link-notice-card").props.pointerEvents).toBe("auto");
+    expect(screen.getByTestId("webview")).toBe(webview);
+    expect({ style: webview.props.style, containerStyle: webview.props.containerStyle }).toEqual(layout);
+    expect(screen.getByRole("alert")).toBeTruthy();
+    fireEvent.press(screen.getByRole("button", { name: "Continue in app" }));
+    expect(screen.queryByTestId("app-preview-link-notice")).toBeNull();
+    expect(screen.getByTestId("webview")).toBe(webview);
+    expect({ style: webview.props.style, containerStyle: webview.props.containerStyle }).toEqual(layout);
+  });
+
   it("does not carry the notice into another app session", () => {
     const view = render(<AppRuntimeFrame url={runtime} title="Notes" />);
     navigate("https://outside.example/");

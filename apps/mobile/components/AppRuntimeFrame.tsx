@@ -3,7 +3,7 @@ import { ActivityIndicator, Linking, Pressable, Text, View } from "react-native"
 import WebView from "react-native-webview";
 
 import { appRuntimeNavigation } from "@/lib/app-runtime-navigation";
-import { colors, fonts, spacing } from "@/lib/theme";
+import { colors, fonts, radius, spacing } from "@/lib/theme";
 
 interface AppRuntimeFrameProps {
   url: string;
@@ -51,16 +51,6 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl }: App
 
   return (
     <View style={{ flex: 1 }}>
-      {linkBlocked && (
-        <View style={{ padding: spacing.md, backgroundColor: colors.light.secondary }}>
-          <Text accessibilityRole="alert" style={{ fontFamily: fonts.sans, color: colors.light.foreground }}>
-            This link is unavailable in this app preview.
-          </Text>
-          <Pressable accessibilityRole="button" onPress={() => setLinkBlocked(false)} style={{ paddingVertical: spacing.sm }}>
-            <Text style={{ fontFamily: fonts.sansSemiBold, color: colors.light.foreground }}>Continue in app</Text>
-          </Pressable>
-        </View>
-      )}
       <WebView
         source={{ uri: url, headers }}
         // WebView opens non-whitelisted URLs through Linking before consulting
@@ -87,6 +77,26 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl }: App
         // On Android, route target=_blank/window.open through onOpenWindow too.
         setSupportMultipleWindows
       />
+      {linkBlocked && (
+        <View
+          testID="app-preview-link-notice"
+          pointerEvents="box-none"
+          style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 1, padding: spacing.md }}
+        >
+          <View
+            testID="app-preview-link-notice-card"
+            pointerEvents="auto"
+            style={{ padding: spacing.md, backgroundColor: colors.light.secondary, borderWidth: 1, borderColor: colors.light.border, borderRadius: radius.card }}
+          >
+            <Text accessibilityRole="alert" style={{ fontFamily: fonts.sans, color: colors.light.foreground }}>
+              This link is unavailable in this app preview.
+            </Text>
+            <Pressable accessibilityRole="button" onPress={() => setLinkBlocked(false)} style={{ minHeight: 44, justifyContent: "center", paddingVertical: spacing.sm }}>
+              <Text style={{ fontFamily: fonts.sansSemiBold, color: colors.light.foreground }}>Continue in app</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
