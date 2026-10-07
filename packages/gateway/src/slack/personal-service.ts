@@ -6,6 +6,7 @@ import type { BotInstantiation } from "../bots/instantiation.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import { SlackCompanyError } from "./schemas.js";
 import { SlackPersonalRepository, personalDmKey, personalDigest, type SlackPersonalDatabase, type SlackPersonalConversation, type SlackPersonalInbox } from "./personal-database.js";
+export const SLACK_PERSONAL_FAILURE_MESSAGE="I couldn’t finish your request. Please try again. If this keeps happening, check Agents & providers in Matrix.";
 export interface SlackPersonalRecord {envelope:SlackBridgeEnvelope;eventId:string;clientRequestId:string;chatId:string;botId:string;text:string;acceptedKind?:"run"|"queue";acceptedId?:string}
 export interface SlackPersonalResult {status:"pending"|"completed"|"failed";requestingActorId:string;runId?:string;text?:string}
 export interface SlackPersonalOptions {
@@ -52,11 +53,17 @@ export class SlackPersonalService {
  }
  for(const row of await this.repository.waiting())try{const record=this.record(row);const result=await this.options.readResult(record);
   this.requireResult(record,result);if(result.status==="pending"){await this.repository.deferResult(row);continue;}
-  await this.repository.finish(row,result.status==="completed"&&result.runId&&result.text?{runId:result.runId,text:result.text.slice(0,12_000)}:null);
+  // A failed accepted run gets a fixed notice through the same durable outbox;
+  // never publish its raw errors, partial output, or an unclaimed queue result.
+  const reply=result.runId&&(result.status==="completed"&&result.text
+   ? {runId:result.runId,text:result.text.slice(0,12_000)}
+   : result.status==="failed"?{runId:result.runId,text:SLACK_PERSONAL_FAILURE_MESSAGE}:null);
+  await this.repository.finish(row,reply||null);
  }catch(error:unknown){console.warn("[slack-personal] result unavailable",error instanceof Error?error.name:"UnknownError");if(denied(error))await this.repository.finish(row,null);else await this.repository.deferResult(row);}
  for(let index=0;index<10&&!this.stopping;index++){const delivery=await this.repository.claimReply();if(!delivery)break;const {inbox,outbox}=delivery;
   try{const record=this.record(inbox);const result=await this.options.readResult(record);this.requireResult(record,result);
-   if(result.status!=="completed"||result.runId!==outbox.run_id)throw new SlackCompanyError("forbidden");
+   const authorizedFailure=result.status==="failed"&&outbox.text===SLACK_PERSONAL_FAILURE_MESSAGE;
+   if((result.status!=="completed"&&!authorizedFailure)||result.runId!==outbox.run_id)throw new SlackCompanyError("forbidden");
    const sent=await this.options.sendReply({...record,runId:outbox.run_id,text:outbox.text});
    await this.repository.replyStatus(outbox.event_id,outbox.lease,sent.status==="sent"?"sent":sent.status==="uncertain"?"uncertain":outbox.attempts<3?"pending":"failed",sent.status==="sent"?sent.messageTs:undefined);
   }catch(error:unknown){console.warn("[slack-personal] delivery unavailable",error instanceof Error?error.name:"UnknownError");await this.repository.replyStatus(outbox.event_id,outbox.lease,denied(error)?"failed":"uncertain");}

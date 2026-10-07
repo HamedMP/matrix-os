@@ -19,3 +19,5 @@ Inbox: at most 1,000 active and 10,000 retained events per owner; bounded admiss
 An optional receipt-bound progress reaction runs only after canonical admission; its failure does not lose accepted work.
 
 No interactive approval or stop UI is added here. Users can inspect/control canonical shared Chat requests through existing collaboration controls. A Slack-native approval flow, history backfill, organization-owned hosting, Brain app, and rich channel status UI remain separate work.
+
+Personal DM runs that fail after canonical admission publish one fixed failure notice through their durable reply outbox. The notice contains no raw error or partial assistant output. Delivery rechecks the exact owner and accepted canonical Run; failures before a queued request acquires a Run remain fail-closed. Ambiguous sends retain the existing uncertain-delivery policy.
