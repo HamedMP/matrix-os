@@ -4,10 +4,10 @@
   "editions": {
     "current": {
       "notes": {
-        "sourceSha256": "e2c95455d8b096f57c47361e689a72a71e473443ad4625ca82977f2beeb557d5",
+        "sourceSha256": "32fc12cc66386d4ee2116d82f180d3f6f06041773e1d652da8dd5f098fbb3ccb",
         "outputs": {
-          "app.js": "74cae0fa1cafc1a8a5ef1cca66f2c433082b51301553b1e4b56bfd471ae25644",
-          "app.css": "398a6de743989102b02a34c79ed65d7a10406920608c24faef31bc34b8e725fb"
+          "app.js": "b3e76567b4eed932bc8cbe016a61538de2accadeca45d18b99e1f60553eb08c6",
+          "app.css": "5fa3b0166c0a113b403104f53d9714d4dd94a8946156738b4af4b4391773261d"
         }
       },
       "todo": {
@@ -39,10 +39,10 @@
         }
       },
       "weather": {
-        "sourceSha256": "b0b3e8bdee3d83de2cff08563b08f7cd5e622082d0ca2fc97f27fb5fd97a2558",
+        "sourceSha256": "f2cf73befa3f62fec4408bcf87d8544891b9afe6a2bfd561d48bee3e132e3679",
         "outputs": {
           "app.js": "3e8ecbf07131aab782709a186302b95b68917e8e1da959ad5a74e195caf59453",
-          "app.css": "045a82089c28c84dd53d5d96024f4f5324168f5ed12f2de5cb296b348e44ca61"
+          "app.css": "0c84bec82d6fcdea00d763245514f00ecf8653114e694b5ab2fbfef603af4b7c"
         }
       },
       "expense-tracker": {

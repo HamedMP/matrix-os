@@ -48,3 +48,7 @@ The parent lazily imports each document, then assigns it to an opaque `srcDoc` i
 `?review=apps` opens the comparison immediately. The new browser harness uses the titled srcDoc frame and opens the compact Filters & connections panel before searching. The current harness has not been executed since the access denial. Current screenshot capture and Matrix Expo validation are also pending; historical evidence cannot be reused as proof of these new layouts.
 
 A separate **App Design Studio** app can be staged in a Matrix computer for review. It contains this compiled review interface and fictional examples, rather than replacing any installed owner app. Source candidates, launch readiness and release approval remain separate.
+
+## October 7 review corrections
+
+Ten Node checks and three focused component checks pass; TypeScript, production Vite build, demo integrity checks and browser-harness syntax pass. Preview load failures are visible and retryable, atomic bulk updates reject an entire invalid batch, revenue labels align with points, and phone frames use a real 390-pixel document viewport. The browser harness selects the interactive dialog frame and compares its source document. Its execution remains pending. The 34 generated source documents ship in a separate dependency PR to keep source reviews within the 50-file limit.

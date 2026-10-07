@@ -48,8 +48,9 @@ try {
       await page.getByRole('button', { name: 'See your recommendations' }).click();
       await page.locator('.store-listing').filter({ hasText: 'Revenue' }).click();
       await page.getByRole('button', { name: 'Try phone layout' }).click();
-      const before = await page.locator('iframe').getAttribute('src');
-      assert.equal(await page.locator('iframe').getAttribute('sandbox'), 'allow-scripts allow-forms');
+      await page.locator('dialog iframe:not([aria-hidden="true"])').waitFor();
+      const before = await page.locator('dialog iframe:not([aria-hidden="true"])').getAttribute('srcdoc');
+      assert.equal(await page.locator('dialog iframe:not([aria-hidden="true"])').getAttribute('sandbox'), 'allow-scripts allow-forms');
       await page.getByRole('button', { name: 'Connect your tools', exact: true }).click();
       assert.equal(await page.locator('.connect-choices button').filter({ hasText: 'Gmail' }).isDisabled(), true, 'existing accounts cannot be silently disconnected');
       await page.locator('.connect-choices button').filter({ hasText: 'Stripe' }).click();
@@ -57,7 +58,7 @@ try {
       await page.getByRole('button', { name: 'Try the example connection' }).click();
       await page.getByRole('button', { name: 'Save example accounts' }).click();
       await page.getByRole('button', { name: 'See your recommendations' }).click();
-      assert.equal(await page.locator('iframe').getAttribute('src'), before, 'return to selected app and phone mode');
+      assert.equal(await page.locator('dialog iframe:not([aria-hidden="true"])').getAttribute('srcdoc'), before, 'return to selected app and phone mode');
       assert.equal(await page.locator('dialog').count(), 1);
       await page.getByRole('button', { name: 'Preview install flow' }).click();
       await page.getByRole('heading', { name: 'Review installation' }).waitFor();

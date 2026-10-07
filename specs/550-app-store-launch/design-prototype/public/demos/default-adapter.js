@@ -53,6 +53,22 @@
       if (!bounded(next)) throw Error('Preview record too large');
       rows[index] = next; emit(key); return { id };
     },
+    async bulkUpdate(key, updates) {
+      const rows = table(key);
+      if (!Array.isArray(updates) || updates.length < 1 || updates.length > 200) throw Error('Preview batch unavailable');
+      const ids = new Set();
+      const prepared = updates.map(change => {
+        if (!change || typeof change.id !== 'string' || ids.has(change.id) || !change.data || typeof change.data !== 'object' || Array.isArray(change.data)) throw Error('Invalid preview batch');
+        ids.add(change.id);
+        const index = rows.findIndex(row => row.id === change.id);
+        if (index < 0) throw Error('Preview record unavailable');
+        const next = { ...rows[index], ...clone(change.data), id: change.id, updated_at: new Date().toISOString() };
+        if (!bounded(next)) throw Error('Preview record too large');
+        return { index, next };
+      });
+      for (const { index, next } of prepared) rows[index] = next;
+      emit(key); return { ok: true };
+    },
     async delete(key, id) { const rows = table(key), index = rows.findIndex(row => row.id === id); if (index >= 0) rows.splice(index, 1); emit(key); return { id }; },
     onChange(key, fn) {
       table(key);

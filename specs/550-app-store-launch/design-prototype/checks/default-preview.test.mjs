@@ -34,6 +34,15 @@ test('subscriptions and KV values are bounded and disposed', async () => {
   a.events.pagehide();
   await assert.rejects(a.bridge.db.find('notes')); await assert.rejects(a.bridge.readData('draft'));
 });
+test('batch updates commit atomically and reject invalid later records without changing earlier ones', async () => {
+  const a = fixture();
+  await a.bridge.db.insert('notes', { id: 'note-2', title: 'Second' });
+  await a.bridge.db.bulkUpdate('notes', [{ id: 'note-1', data: { order: 1 } }, { id: 'note-2', data: { order: 0 } }]);
+  assert.equal((await a.bridge.db.findOne('notes', 'note-1')).order, 1);
+  await assert.rejects(a.bridge.db.bulkUpdate('notes', [{ id: 'note-1', data: { title: 'Should not save' } }, { id: 'missing', data: { order: 2 } }]));
+  assert.equal((await a.bridge.db.findOne('notes', 'note-1')).title, 'Example');
+  await assert.rejects(a.bridge.db.bulkUpdate('notes', Array.from({ length: 201 }, () => ({ id: 'note-1', data: { order: 0 } }))));
+});
 test('weather is a fixed fixture; arbitrary transports stay unavailable', async () => {
   const a = fixture();
   assert.equal((await a.bridge.proxyFetch('https://api.open-meteo.com/v1/forecast?latitude=0')).current.temperature_2m, 18);
