@@ -1,12 +1,9 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import {
-  AlertCircle,
-  LoaderCircle,
   MessageSquare,
   PinIcon,
   PinOffIcon,
-  Trash2,
-} from "@renderer/lib/hugeicons";
+} from "lucide-react";
 import { isChatUnread, ChatContextMenu } from "@matrix-os/ui";
 import { OverflowingChatTitle } from "../OverflowingChatTitle";
 import { ChatTitleEditor } from "../../chat/ChatTitleEditor";
@@ -14,7 +11,8 @@ import {
   resolveWorkRailAgentState,
   type WorkRailAgentState,
 } from "../work-rail-model";
-import { useEffect, useRef } from "react";
+import { WorkRailChatMenu, type RailChatAction } from "./WorkRailChatMenu";
+import { useEffect, useRef, useState } from "react";
 
 const railStateLabel: Record<Exclude<WorkRailAgentState, "idle">, string> = {
   approval_required: "Approval required",
@@ -61,6 +59,7 @@ export function WorkRailChatRow({
   moveItems?: {label: string; disabled?: boolean; onSelect: () => void}[];
   moving?: boolean;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const selectTimerRef = useRef<number | null>(null);
   const renameTimerRef = useRef<number | null>(null);
   useEffect(() => () => {
@@ -76,33 +75,25 @@ export function WorkRailChatRow({
   };
   const pinned = Boolean(record.chat.userState?.pinned);
   const agentState = resolveWorkRailAgentState(record);
+  const menuItems: RailChatAction[] = [
+    { label: pinned ? "Unpin" : "Pin", disabled: pinning, onSelect: onPin },
+    { label: "Rename", disabled: renameDisabled, onSelect: () => scheduleRename(20) },
+    ...(moveItems ? [{ label: "Move to project", disabled: moving || Boolean(record.activeRun), children: moveItems }] : []),
+    { label: "Delete", danger: true, onSelect: onDelete },
+  ];
   return (
-    <ChatContextMenu chatId={record.chat.id} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", disabled: readPending, onSelect: onToggleRead } : undefined} items={[
-      {
-        label: "Rename",
-        disabled: renameDisabled,
-        onSelect: () => scheduleRename(20),
-      },
-      {
-        label: pinned ? "Unpin" : "Pin",
-        disabled: pinning,
-        onSelect: onPin,
-      },
-      ...(moveItems ? [{ label: "Move to project", disabled: moving || Boolean(record.activeRun), children: moveItems }] : []),
-      {
-        label: "Delete",
-        danger: true,
-        onSelect: onDelete,
-      },
-    ]}>
+    <ChatContextMenu chatId={record.chat.id} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", disabled: readPending, onSelect: onToggleRead } : undefined} items={menuItems}>
       <div
+        data-chat-title-row
         data-placement={placement}
-        className="group/chat relative flex min-w-0 items-center rounded-md transition-colors duration-100 hover:bg-[var(--bg-hover)] focus-within:bg-[var(--bg-hover)]"
-        style={{ background: active ? "var(--bg-selected)" : undefined }}
+        data-current={active || undefined}
+        data-two-line={agentState !== "idle" || undefined}
+        data-menu-open={menuOpen || undefined}
+        className="work-rail-chat group/chat relative flex min-w-0 items-center"
       >
         {renaming ? (
-          <div className={`flex w-full min-w-0 items-center gap-2.5 px-2.5 py-1.5 text-sm font-normal ${placement === "project" ? "pl-[30px]" : ""}`}>
-            <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--matrix-chat-rail-text, var(--text-primary))" }} />
+          <div className={`flex w-full min-w-0 items-center gap-2.5 px-2.5 py-1.5 text-sm font-normal ${placement === "project" ? "pl-[24px]" : ""}`}>
+            <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />
             <ChatTitleEditor
               title={record.chat.title}
               disabled={renamePending}
@@ -115,7 +106,7 @@ export function WorkRailChatRow({
           type="button"
           aria-label={record.chat.title}
           aria-current={active ? "page" : undefined}
-          className={`flex w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${placement === "project" ? "pl-[30px]" : ""}`}
+          className={`flex w-full min-w-0 items-center gap-2.5 rounded-[8px] px-2.5 py-1.5 text-left text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)] ${placement === "project" ? "pl-[24px]" : ""}`}
           style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }}
           onClick={(event) => {
             if (event.detail === 0) {
@@ -138,43 +129,30 @@ export function WorkRailChatRow({
             if (!renameDisabled) scheduleRename(0);
           }}
         >
-          <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--matrix-chat-rail-text, var(--text-primary))" }} />
-          <span className="min-w-0 flex-1">
+          <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />
+          <span className="work-rail-chat-label min-w-0 flex-1">
             <span className={isChatUnread(record) ? "flex min-w-0 font-semibold" : "flex min-w-0"}><OverflowingChatTitle title={record.chat.title} /></span>
-            {agentState !== "idle" ? <span className="block text-[11px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{railStateLabel[agentState]}</span> : null}
+            {agentState !== "idle" ? <span className="block text-[11px] leading-[14.3px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{railStateLabel[agentState]}</span> : null}
           </span>
           {isChatUnread(record) && (record.readState || agentState !== "unseen_completion") ? <span aria-label={`Unread ${record.chat.title}`} className="size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
           <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} />
         </button>}
         {!renaming ? <div
-          className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity group-hover/chat:pointer-events-auto group-hover/chat:opacity-100 group-focus-within/chat:pointer-events-auto group-focus-within/chat:opacity-100"
-          style={{
-            background: active
-              ? "linear-gradient(var(--bg-selected), var(--bg-selected)), var(--bg-surface)"
-              : "linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg-surface)",
-          }}
+          className="work-rail-chat-actions pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-[8px] opacity-0 transition-opacity group-hover/chat:pointer-events-auto group-hover/chat:opacity-100 group-focus-within/chat:pointer-events-auto group-focus-within/chat:opacity-100"
         >
           <button
             type="button"
             aria-label={`${pinned ? "Unpin" : "Pin"} ${record.chat.title}`}
             title={`${pinned ? "Unpin" : "Pin"} ${record.chat.title}`}
             disabled={pinning}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="flex size-6 shrink-0 items-center justify-center rounded-[8px] outline-none hover:bg-[var(--matrix-chat-rail-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             onClick={onPin}
           >
             {pinned
               ? <PinOffIcon size={13} aria-hidden />
               : <PinIcon size={13} aria-hidden />}
           </button>
-          <button
-            type="button"
-            aria-label={`Delete ${record.chat.title}`}
-            title={`Delete ${record.chat.title}`}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            onClick={onDelete}
-          >
-            <Trash2 size={13} aria-hidden />
-          </button>
+          <WorkRailChatMenu title={record.chat.title} items={menuItems} open={menuOpen} onOpenChange={setMenuOpen} />
         </div> : null}
       </div>
     </ChatContextMenu>
@@ -197,27 +175,13 @@ function ChatAgentStateIndicator({
       />
     );
   }
-  if (state === "running") {
-    return (
-      <LoaderCircle
-        aria-label={`Agent running for ${title}`}
-        className="ml-auto shrink-0 animate-spin"
-        size={13}
-      />
-    );
-  }
-  const requiresApproval = state === "approval_required";
-  const label = requiresApproval
-    ? `Approval required for ${title}`
-    : state === "input_required"
-      ? `Input required for ${title}`
-      : `Agent failed for ${title}`;
-  return (
-    <AlertCircle
-      aria-label={label}
-      className="ml-auto shrink-0"
-      size={13}
-      style={{ color: state === "failed" ? "var(--danger)" : "var(--warning)" }}
-    />
-  );
+  const label = state === "running"
+    ? `Agent running for ${title}`
+    : state === "approval_required"
+      ? `Approval required for ${title}`
+      : state === "input_required"
+        ? `Input required for ${title}`
+        : `Agent failed for ${title}`;
+  return <span aria-label={label} className="ml-auto size-[6px] shrink-0 rounded-full"
+    style={{ background: state === "running" ? "var(--matrix-chat-rail-success, var(--success))" : "var(--matrix-chat-rail-warning, var(--warning))" }} />;
 }

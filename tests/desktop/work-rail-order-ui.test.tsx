@@ -67,10 +67,21 @@ it.each(["new", "lastUpdated", "manual"].flatMap(mode => ["keyboard", "drag"].ma
   useConnection.setState({status:"signed-in",userId:"owner-a",platformHost:"https://platform.test",runtimeSlot:"primary"});
   if (mode !== "new") localStorage.setItem(`matrix-chat-rail-order:${JSON.stringify(["https://platform.test", "owner-a", "primary"])}`, JSON.stringify({ mode, chatIds: ["b", "a"], projectIds: [] }));
   const items = records.map(record=>({...record,chat:{...record.chat,title:record.chat.id.toUpperCase(),ownerScope:{type:"personal",ownerId:"owner"},lifecycle:"active",attention:"none",revision:1,messageCount:1}}));
-  const client = {list:vi.fn(async()=>({items}))} as unknown as CanonicalChatClient;
+  const directBot = vi.fn(async (_chatId: string) => null);
+  const client = {
+    list: vi.fn(async () => ({ items })),
+    agents: {
+      list: vi.fn(async () => ({ enabled: true, agents: [] })),
+      bots: { directBot },
+    },
+  } as unknown as CanonicalChatClient;
   render(<WorkRail client={client} projects={[]} active onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()}/>);
+  const doneHeader = await screen.findByRole("button", { name: "Done" });
+  expect(doneHeader.getAttribute("aria-expanded")).toBe("true");
   await screen.findByRole("button",{name:"B"});
-  const done = screen.getByRole("button",{name:"Done"}).closest("section")!;
+  expect(directBot).toHaveBeenCalledWith("a");
+  expect(directBot).toHaveBeenCalledWith("b");
+  const done = doneHeader.closest("section")!;
   const ids = ()=>[...done.querySelectorAll<HTMLElement>("[data-rail-order-id]")].map(item=>item.dataset.railOrderId);
   expect(ids()).toEqual(["b","a"]);
   expect(screen.queryByRole("button",{name:"Sort chats"})).toBeNull();
@@ -86,6 +97,7 @@ it.each(["new", "lastUpdated", "manual"].flatMap(mode => ["keyboard", "drag"].ma
   expect(stored.mode).toBe("manual");
   expect(stored.chatIds).toEqual(["a", "b"]);
   expect(client.list).toHaveBeenCalledTimes(1);
+  expect(doneHeader.getAttribute("aria-expanded")).toBe("true");
   expect(screen.getByRole("button",{name:"A"})).toBeTruthy();
   expect(screen.queryByRole("button",{name:"Recent"})).toBeNull();
 });

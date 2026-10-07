@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import React, { type ComponentProps, type ComponentType } from "react";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type {
@@ -10,9 +12,10 @@ import type {
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
 import { ChatAgentsWorkspace, subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
-import { PinOffIcon } from "@desktop/renderer/src/lib/hugeicons";
+import { PinOffIcon } from "lucide-react";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
 import type { Project } from "@desktop/renderer/src/stores/board";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 function record(
   id: string,
@@ -132,7 +135,16 @@ function renderRail(client: CanonicalChatClient, eventSource?: Pick<CanonicalCha
     onSelectChat={vi.fn()} onCollapse={vi.fn()} />);
 }
 
+// Existing list/action tests explicitly use an expanded Done preference. Fresh
+// installation defaults and owner/Computer isolation have separate regressions.
+const initialConnection = useConnection.getState();
+beforeEach(() => {
+  useConnection.setState({ status: "signed-in", userId: "rail-fixture", platformHost: "https://platform.test", runtimeSlot: "primary", organizationStatus: "none", organizationId: null });
+  localStorage.setItem('matrix-chat-rail-disclosure:["https://platform.test","rail-fixture","primary"]', '{"done":true}');
+});
 afterEach(() => {
+  localStorage.clear();
+  useConnection.setState(initialConnection);
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -179,7 +191,7 @@ describe("WorkRail", () => {
     const orderedLabels = [...screen.getByRole("navigation").querySelectorAll("button")]
       .map(button => button.getAttribute("aria-label") ?? button.textContent?.trim())
       .filter(label => ["New chat", "Search chats", "Agents", "Pinned", "Projects", "Needs you", "Working", "Done"].includes(label ?? ""));
-    expect(orderedLabels).toEqual(["New chat", "Search chats", "Agents", "Pinned", "Projects", "Needs you", "Working", "Done"]);
+    expect(orderedLabels).toEqual(["New chat", "Search chats", "Agents", "Projects", "Needs you", "Working", "Done"]);
     fireEvent.click(screen.getByRole("button", { name: "Collapse agents" }));
     expect(screen.queryByRole("button", { name: "Chat with Research bot" })).toBeNull();
     expect(screen.getByRole("button", { name: "Review Research bot approval" })).toBeTruthy();
@@ -209,12 +221,12 @@ describe("WorkRail", () => {
     expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
   });
 
-  it("keeps New chat outside the scrollable list, with Search first inside it", async () => {
+  it("keeps New chat and Search outside the scrollable list", async () => {
     setup();
     await screen.findByRole("button", { name: "Recent global" });
     const scroller = screen.getByTestId("work-rail-scroll");
     expect(scroller.contains(screen.getByRole("button", { name: "New chat" }))).toBe(false);
-    expect(scroller.querySelector("button")?.getAttribute("aria-label")).toBe("Search chats");
+    expect(scroller.contains(screen.getByRole("button", { name: "Search chats" }))).toBe(false);
     const labels = [...scroller.querySelectorAll('[data-slot="chat-sidebar-section-heading"] button')].map(button => button.getAttribute("aria-label"));
     expect(labels.filter(label => label !== "Create project")).toEqual(["Pinned", "Projects", "Needs you", "Working", "Done"]);
   });
@@ -228,11 +240,11 @@ describe("WorkRail", () => {
     const { rerender } = render(<WorkRail client={client} projects={[alpha, beta]} active {...actions} />);
 
     await waitFor(() => expect(client.list).toHaveBeenCalled());
-    let pinnedSection = screen.getByRole("button", { name: "Pinned" }).closest("section");
+    let pinnedSection = screen.queryByRole("button", { name: "Pinned" })?.closest("section");
     let projectsSection = screen.getByRole("button", { name: "Projects" }).closest("section");
-    expect(pinnedSection).toBeTruthy();
+    expect(pinnedSection).toBeUndefined();
     expect(projectsSection).toBeTruthy();
-    expect(within(pinnedSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
+    expect(pinnedSection).toBeUndefined();
     expect(within(projectsSection!).getByRole("button", { name: "Alpha" })).toBeTruthy();
 
     rerender(<WorkRail client={client} projects={[{ ...alpha, pinned: true }, beta]} active {...actions} />);
@@ -245,9 +257,9 @@ describe("WorkRail", () => {
     expect(within(projectsSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
 
     rerender(<WorkRail client={client} projects={[alpha, beta]} active {...actions} />);
-    pinnedSection = screen.getByRole("button", { name: "Pinned" }).closest("section");
+    pinnedSection = screen.queryByRole("button", { name: "Pinned" })?.closest("section");
     projectsSection = screen.getByRole("button", { name: "Projects" }).closest("section");
-    expect(within(pinnedSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
+    expect(pinnedSection).toBeUndefined();
     expect(within(projectsSection!).getByRole("button", { name: "Alpha" })).toBeTruthy();
   });
 
@@ -355,6 +367,8 @@ describe("WorkRail", () => {
   });
 
   it("uses the Chat rail typography and contained section headings", async () => {
+    const css = await readFile(resolve(__dirname, "../../desktop/src/renderer/src/features/work/work-rail/work-rail.css"), "utf8");
+    render(<style>{css}</style>);
     setup();
     const rail = screen.getByRole("navigation", { name: "Chat navigation" });
     const newChat = screen.getByRole("button", { name: "New chat" });
@@ -375,7 +389,7 @@ describe("WorkRail", () => {
     expect(newChat.className).toContain("text-[14px]");
     expect(newChat.className).toContain("font-normal");
     expect(newChat.closest('[data-slot="chat-sidebar-new-chat"]')).toBeTruthy();
-    expect(screen.getByTestId("work-rail-scroll").contains(search)).toBe(true);
+    expect(screen.getByTestId("work-rail-scroll").contains(search)).toBe(false);
     expect(search.closest('[data-slot="chat-sidebar-section-heading"]')).toBeNull();
     expect(search.querySelector("span")?.textContent).toBe("Search");
 
@@ -394,17 +408,13 @@ describe("WorkRail", () => {
       expect(item.className).toContain("text-sm");
       expect(item.className).toContain("font-normal");
     }
-    expect(projectsHeading.className).toContain("text-xs");
-    expect(projectsHeading.className).toContain("uppercase");
-    for (const heading of [pinnedHeading, recentsHeading]) {
-      expect(heading.className).toContain("pl-2.5");
-      expect(heading.className).toContain("h-7");
-      expect(heading.className).toContain("py-0");
-      expect(heading.className).toContain("items-center");
-      expect(heading.className).toContain("text-xs");
-      expect(heading.className).toContain("font-semibold");
-      expect(heading.className).toContain("tracking-wide");
-      expect(heading.querySelector("svg")).toBeTruthy();
+    expect(getComputedStyle(projectsHeading).textTransform).toBe("uppercase");
+    expect(projectsHeading.closest(".work-rail-group-heading")).toBeNull();
+    expect(projectsHeading.querySelector(".work-rail-section-icon")).toBeNull();
+    expect(screen.getByRole("button", { name: "Alpha", exact: true }).querySelector("svg.lucide-folder-open")).toBeTruthy();
+    for (const heading of [pinnedHeading, projectsHeading, recentsHeading]) {
+      expect(heading.className).toContain("work-rail-section-toggle");
+      expect(heading.querySelector(".work-rail-section-disclosure")).toBeTruthy();
     }
   });
 
@@ -565,9 +575,7 @@ describe("WorkRail", () => {
     expect(title.getAttribute("title")).toBe("Recent global");
     expect(actions?.className).toContain("absolute");
     expect(actions?.className).toContain("group-focus-within/chat:opacity-100");
-    expect(actions?.getAttribute("style")).toContain(
-      "background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg-surface)",
-    );
+    expect(actions?.className).toContain("work-rail-chat-actions");
   });
 
   it("hides pinned Chat actions until hover or focus while preserving run status and an Unpin icon", async () => {
@@ -583,7 +591,7 @@ describe("WorkRail", () => {
 
     const chat = await screen.findByRole("button", { name: "Running pinned" });
     const pin = screen.getByRole("button", { name: "Unpin Running pinned" });
-    const remove = screen.getByRole("button", { name: "Delete Running pinned" });
+    const remove = screen.getByRole("button", { name: "Actions for Running pinned" });
     const actions = pin.parentElement as HTMLElement;
     const expectedIcon = render(<PinOffIcon size={13} aria-hidden />).container.querySelector("svg");
 
@@ -815,7 +823,7 @@ describe("WorkRail", () => {
     await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
     const alphaRow = screen.getByRole("button", { name: "Alpha" });
     fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
-    expect(within(alphaRow.parentElement!.parentElement!).getByRole("button", { name: "Moved chat" })).toBeTruthy();
+    expect(within(alphaRow.closest(".work-rail-project")!.parentElement!).getByRole("button", { name: "Moved chat" })).toBeTruthy();
 
     rerender(
       <WorkRail
@@ -830,7 +838,7 @@ describe("WorkRail", () => {
     await waitFor(() => expect(client.list).toHaveBeenCalledTimes(3));
     const betaRow = screen.getByRole("button", { name: "Beta" });
     fireEvent.click(screen.getByRole("button", { name: "Expand Beta chats" }));
-    expect(within(betaRow.parentElement!.parentElement!).getByRole("button", { name: "Moved chat" })).toBeTruthy();
+    expect(within(betaRow.closest(".work-rail-project")!.parentElement!).getByRole("button", { name: "Moved chat" })).toBeTruthy();
   });
 
   it("loads bounded canonical Chat pages without a Project filter", async () => {
@@ -948,7 +956,7 @@ describe("WorkRail", () => {
     compose.focus();
     expect(document.activeElement).toBe(compose);
     expect(compose.className).toContain("focus-visible");
-    expect(compose.parentElement?.className).toContain("group-focus-within/project:opacity-100");
+    expect(compose.parentElement?.className).toContain("work-rail-project-actions");
     fireEvent.click(compose);
     fireEvent.click(screen.getByRole("button", { name: "Hide Chat navigation" }));
     fireEvent.click(screen.getByRole("button", { name: "Alpha chat" }));
@@ -1357,11 +1365,12 @@ describe("WorkRail", () => {
     expect(await screen.findByRole("button", { name: "Pending title" })).toBeTruthy();
   });
 
-  it("deletes a Chat from its hover action after confirmation", async () => {
+  it("deletes a Chat from its hover menu after confirmation", async () => {
     const { client } = setup();
     await screen.findByRole("button", { name: "Recent global" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete Recent global" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Recent global" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
 
     await waitFor(() => expect(client.delete).toHaveBeenCalledWith(
@@ -1396,7 +1405,8 @@ describe("WorkRail", () => {
       <WorkRail {...props} activeChatId="chat_original_scope" />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Delete Recent global" }));
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "Recent global" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
     await waitFor(() => expect(client.delete).toHaveBeenCalledOnce());
 

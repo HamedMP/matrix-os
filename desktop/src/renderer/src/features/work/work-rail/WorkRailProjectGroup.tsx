@@ -1,8 +1,9 @@
 import { RailCollapse } from "./RailCollapse";
 import { WorkRailOrderItem } from "./WorkRailOrderItem";
 import { useRef } from "react";
+import { OverflowingChatTitle } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { ChevronRight, Folder, FolderOpen, PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2, UsersIcon } from "@renderer/lib/hugeicons";
+import { ChevronRight, Folder, FolderOpen, SquarePen as PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2, UsersIcon } from "lucide-react";
 import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
 import { ProjectEditDialog } from "./ProjectActionDialogs";
 import { useProjectActions } from "./use-project-actions";
@@ -75,40 +76,44 @@ export function WorkRailProjectGroup({
   return (
     <div>
       <ProjectActionsMenu items={items}>
-        <div className="work-rail-project group/project relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]">
-          <button
-            type="button"
-            aria-label={group.name}
-            aria-current={activeProjectSlug === group.slug && !activeChatId ? "page" : undefined}
-            className="work-rail-project-select flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-normal transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-            style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }}
-            onClick={() => onSelect?.(group.project)}
-          >
-            {expanded
-              ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: activeProjectSlug === group.slug ? "var(--accent)" : "var(--matrix-chat-rail-text, var(--text-primary))" }} />
-              : <Folder size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />}
-            <span className="truncate">{group.name}</span>
-            {shared ? <span role="img" aria-label="Shared project" title="Shared with others" className="ml-auto flex shrink-0" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>
-              <UsersIcon size={13} aria-hidden />
-            </span> : null}
-          </button>
-          <div className="work-rail-project-actions flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100">
+        <div data-chat-title-row data-current={activeProjectSlug === group.slug && !activeChatId || undefined} className="work-rail-project group/project relative flex min-w-0 items-center">
+          <div className="work-rail-project-main">
+            <button
+              type="button"
+              aria-label={group.name}
+              title={group.name}
+              aria-current={activeProjectSlug === group.slug && !activeChatId ? "page" : undefined}
+              className="work-rail-project-select flex min-w-0 flex-1 items-center gap-2.5 rounded-[8px] px-2.5 py-1.5 text-left text-sm font-normal transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+              style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }}
+              onClick={() => onSelect?.(group.project)}
+            >
+              {expanded
+                ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />
+                : <Folder size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />}
+              <OverflowingChatTitle title={group.name} />
+              {shared ? <span role="img" aria-label="Shared project" title="Shared with others" className="ml-auto flex shrink-0" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>
+                <UsersIcon size={13} aria-hidden />
+              </span> : null}
+            </button>
+            <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${group.name} chats`} aria-expanded={expanded}
+              className="work-rail-project-disclosure grid size-6 shrink-0 place-items-center rounded-[8px] outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              onClick={onToggle}>
+              <ChevronRight size={12} aria-hidden className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
+            </button>
+          </div>
+          <div className="work-rail-project-actions flex shrink-0 items-center gap-0.5">
             <ProjectActionsButton buttonRef={actionButtonRef} name={group.name} items={items} />
             <button
               type="button"
               aria-label={`New chat in ${group.name}`}
               title={`New chat in ${group.name}`}
-              className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="flex size-6 items-center justify-center rounded-[8px] outline-none hover:bg-[var(--bg-selected)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               onClick={() => onNewChat(group.project)}
             >
               <PencilEditIcon size={15} aria-hidden />
             </button>
           </div>
-          <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${group.name} chats`} aria-expanded={expanded}
-            className="work-rail-project-disclosure grid size-6 shrink-0 place-items-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            onClick={onToggle}>
-            <ChevronRight size={12} aria-hidden className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
-          </button>
+
         </div>
       </ProjectActionsMenu>
       {actions.error && actions.dialog !== "edit" ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}

@@ -1,5 +1,5 @@
-import React, { Fragment, type ReactNode } from 'react';
-import { resolveCanonicalChatLifecycleGroup } from '@matrix-os/ui';
+import React, { Fragment, useState, type ReactNode } from 'react';
+import { ChatRailSection, resolveCanonicalChatLifecycleGroup } from '@matrix-os/ui';
 import type { RenameableConversation } from './ChatTitleRename';
 
 type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done';
@@ -16,13 +16,18 @@ export function groupWebChats(items: readonly RenameableConversation[]): Record<
   return result;
 }
 
-export function WebChatLifecycleGroups({ conversations, projects, attention, renderRow }: {
+export function WebChatLifecycleGroups({ conversations, projects, attention, attentionCount = 0, scopeKey, renderRow }: {
+  attentionCount?: number; scopeKey?: string;
   conversations: readonly RenameableConversation[]; projects?: ReactNode; attention?: ReactNode; renderRow(item: RenameableConversation): ReactNode;
 }) {
   const groups = groupWebChats(conversations);
-  const section = (key: GroupKey, label: string, extra?: ReactNode) => groups[key].length || extra ? <section aria-label={label} className="px-2 pb-2">
-    <h3 className="px-2 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</h3>
+  const [state, setState] = useState(() => ({scopeKey, expanded: {pinned: true, needsYou: true, working: true, done: true}}));
+  let current = state;
+  if (current.scopeKey !== scopeKey) { current = {scopeKey, expanded: {pinned: true, needsYou: true, working: true, done: true}}; setState(current); }
+  const section = (key: GroupKey, label: string, extra?: ReactNode) => groups[key].length || extra || key !== "pinned" ? <ChatRailSection key={key} label={label}
+    count={groups[key].length + (key === "needsYou" ? attentionCount : 0)} attention={key === "needsYou"} expanded={current.expanded[key]}
+    onExpandedChange={expanded => setState(value => value.scopeKey === scopeKey ? {...value, expanded: {...value.expanded, [key]: expanded}} : value)}>
     {groups[key].map(item => <Fragment key={item.id}>{renderRow(item)}</Fragment>)}{extra}
-  </section> : null;
+  </ChatRailSection> : null;
   return <>{section('pinned','Pinned')}{projects}{section('needsYou','Needs you',attention)}{section('working','Working')}{section('done','Done')}</>;
 }

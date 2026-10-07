@@ -247,6 +247,15 @@ function botContentClient(directBot: () => Promise<string | null>) {
 }
 const projectChat = chat("chat_alpha", "Alpha chat", "project_alpha_id");
 
+// Done is quiet and closed on a fresh session. These tests exercise selected
+// Chat routing, event ownership, and inspector controls after the user expands
+// its history, rather than relying on the previous open-by-default presentation.
+async function showGlobalChatRow() {
+  const done = await screen.findByRole("button", { name: "Done" }, { timeout: 5_000 });
+  if (done.getAttribute("aria-expanded") === "false") fireEvent.click(done);
+  return screen.findByRole("button", { name: "Global chat" }, { timeout: 5_000 });
+}
+
 function activeWorkTab() {
   return useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId);
 }
@@ -418,7 +427,7 @@ describe("WorkTab rail integration", () => {
 
   it("owns one shared Chat event source across rail and content and replaces it on runtime identity changes", async () => {
     const view = render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     expect(chatEventSourceFactory.sources).toHaveLength(1);
     const firstSource = chatEventSourceFactory.sources[0];
@@ -457,7 +466,7 @@ describe("WorkTab rail integration", () => {
       </React.StrictMode>,
     );
 
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
     expect(chatEventSourceFactory.sources).toHaveLength(2);
     const committedSource = chatEventSourceFactory.sources.find((source) => source.subscribe.mock.calls.length > 0);
     const discardedSource = chatEventSourceFactory.sources.find((source) => source !== committedSource);
@@ -473,7 +482,7 @@ describe("WorkTab rail integration", () => {
   it("opens a Global draft and the existing Create Project dialog state", async () => {
     useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "projects", closable: false });
     const view = render(<WorkTab route="projects" active />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     const previousFocusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
@@ -552,7 +561,7 @@ describe("WorkTab rail integration", () => {
   it("selects Global and Project Chats in the retained Work route", async () => {
     useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "projects", closable: false });
     render(<WorkTab route="projects" active />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     fireEvent.click(screen.getByRole("button", { name: "Global chat" }));
     expect(activeWorkTab()).toMatchObject({
@@ -594,9 +603,10 @@ describe("WorkTab rail integration", () => {
         initialChatView="conversation"
       />,
     );
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete Global chat" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for Global chat" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
 
     await waitFor(() => expect(activeWorkTab()).toMatchObject({
@@ -619,7 +629,7 @@ describe("WorkTab rail integration", () => {
         initialChatView="conversation"
       />,
     );
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     resizeWork(900);
 
@@ -646,7 +656,7 @@ describe("WorkTab rail integration", () => {
 
   it("shows only the inspector below a 740px main pane and docks it at 740px", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     resizeWork(739);
     fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
@@ -675,7 +685,7 @@ describe("WorkTab rail integration", () => {
     const view = render(
       <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />,
     );
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
     resizeWork(640);
     fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
     expect(screen.getByRole("main", { hidden: true }).getAttribute("aria-hidden")).toBe("true");
@@ -701,7 +711,7 @@ describe("WorkTab rail integration", () => {
 
   it("keeps the Chat sidebar fixed while the inspector remains keyboard-resizable", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
     expect(screen.queryByRole("separator", { name: "Resize Chat navigation" })).toBeNull();
@@ -718,7 +728,7 @@ describe("WorkTab rail integration", () => {
 
   it("stops resizing the Chat inspector when an extreme pointer drag is cancelled", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     const inspectorSeparator = screen.getByRole("separator", { name: "Resize Chat inspector" });
     fireEvent.pointerDown(inspectorSeparator, { button: 0, clientX: 760, pointerId: 17 });
@@ -733,7 +743,7 @@ describe("WorkTab rail integration", () => {
 
   it("keeps navigation visible while the inspector divider collapses past its minimum", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     expect(screen.queryByRole("separator", { name: "Resize Chat navigation" })).toBeNull();
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
@@ -747,7 +757,7 @@ describe("WorkTab rail integration", () => {
 
   it("widens beyond the default and clamps when the container shrinks without losing Chat", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
     const divider = () => screen.getByRole("separator", { name: "Resize Chat inspector" });
     fireEvent.keyDown(divider(), { key: "ArrowLeft" });
     expect(divider().getAttribute("aria-valuenow")).toBe("396");
@@ -801,7 +811,7 @@ describe("WorkTab rail integration", () => {
   it("preserves closed inspector and visible navigation when an existing medium Work surface switches to New Chat", async () => {
     initialWorkWidth = 900;
     const view = render(<WorkTab route="projects" active />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     view.rerender(<WorkTab route="chat" active initialChatView="draft" />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy());
@@ -1088,7 +1098,7 @@ describe("WorkTab rail integration", () => {
     const view = render(
       <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />,
     );
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
     resizeWork(640);
     fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
 
@@ -1102,7 +1112,7 @@ describe("WorkTab rail integration", () => {
 
   it("moves focus into Chat after every narrow rail action that hides navigation", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
     resizeWork(640);
 
     fireEvent.click(screen.getByRole("button", { name: "Show Chat navigation" }));
@@ -1121,7 +1131,7 @@ describe("WorkTab rail integration", () => {
 
   it("returns to the middle Chat when an open inspector enters the narrow breakpoint", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
     const inspectorAction = screen.getByRole("button", { name: "Inspector action" });
     inspectorAction.focus();
 
@@ -1151,7 +1161,7 @@ describe("WorkTab rail integration", () => {
 
   it("dismisses the medium inspector with its stable toggle and Escape without an overlay backdrop", async () => {
     render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
     resizeWork(900);
 
     const showTools = screen.getByRole("button", { name: "Show inspector" });
@@ -1176,7 +1186,7 @@ describe("WorkTab rail integration", () => {
         initialChatView="conversation"
       />,
     );
-    await screen.findByRole("button", { name: "Global chat" });
+    await showGlobalChatRow();
 
     resizeWork(640);
 

@@ -235,3 +235,7 @@ export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLab
 export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry } from "./chat/canonical-slash-entries.js";
 export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
+
+export { ChatRailSection } from "./chat/ChatRailSection.js";
+
+export { OverflowingChatTitle } from "./chat/OverflowingChatTitle.js";

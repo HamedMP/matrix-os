@@ -28,3 +28,12 @@ describe("organization drives in Chat navigation", () => {
   await waitFor(() => expect(screen.queryByRole("button", {name: "Open Authority drive"})).toBeNull());
  });
 });
+
+it('collapses populated Company drives without inventing project creation',async()=>{
+  render(<OrganizationDrivesNavigation api={api() as never} onOpen={vi.fn()}/>);
+  await screen.findByRole('button',{name:'Open Authority drive'});
+  fireEvent.click(screen.getByRole('button',{name:'Company drives'}));
+  expect(screen.queryByRole('button',{name:'Open Authority drive'})).toBeNull();
+  expect(screen.getByLabelText('1 hidden drive').textContent).toBe('1');
+  expect(screen.queryByRole('button',{name:'New project'})).toBeNull();
+});

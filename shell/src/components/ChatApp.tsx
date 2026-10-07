@@ -418,8 +418,7 @@ function ChatAppContent({
           </Button>
         </div>
 
-        <ScrollArea className="min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
-        {/* Search */}
+        {/* Search remains reachable while the conversation list scrolls. */}
         {!mobile ? <WebChatRailControls active={active} onSearch={revealSearch} query={searchQuery} onQuery={setSearchQuery}/> : <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
             <SearchIcon className="size-3.5 text-muted-foreground" />
@@ -435,11 +434,12 @@ function ChatAppContent({
         </div>
 
         }
+        <ScrollArea className="min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
-        <div className="px-2 pb-2"><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} client={agentClient} menuZIndex={SHELL_Z_INDEX.popover} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        <div className="px-2 pb-2"><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} activeAgentId={directBotId} menuZIndex={SHELL_Z_INDEX.popover} client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
         {mobile ? <div className="flex gap-2 px-3 pb-2 text-xs">
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
@@ -449,7 +449,7 @@ function ChatAppContent({
         {/* Conversation list */}
 
           <div className="px-2 pb-3">
-            <WebChatLifecycleGroups conversations={listedConversations}
+            <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<OrganizationDrivesNav chats={ordinaryConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={conv => (

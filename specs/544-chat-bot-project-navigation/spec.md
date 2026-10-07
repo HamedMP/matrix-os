@@ -4,6 +4,8 @@ Status: implementation and review corrections complete; main integration and fin
 
 Current review scope override (2026-10-03): the user excludes further Mobile and documentation work. Complete the sixteen corrections and the fourteen follow-up corrections, with exact-source Preview/Electron Desktop acceptance. Preserve already completed shared fixes; additional Mobile or public-docs work is not a gate for this correction delivery.
 
+October 7 Navigation presentation override (ENG-166): apply the interaction-state correction in `visual-alignment.md`, including hover/focus-only label-adjacent disclosure and header create actions. PINNED remains above PROJECTS. Earlier right-edge disclosure presentation is superseded; Bot/Project architecture and separate management/tree actions remain.
+
 ## Goal and value
 
 Separate task-style ordinary Chat from persistent Bot conversations, remove provider-mismatch failures caused by inline @Bot execution, and make Projects navigable without replacing the shared sidebar. Implement the reviewed Figma presentation using existing backend capabilities and reuse the work from the Codex chat titled `Pi bot`.
