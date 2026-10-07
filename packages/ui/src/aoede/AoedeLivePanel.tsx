@@ -7,6 +7,8 @@ import type { AoedePanelProps } from "./AoedePanel.js";
 import { aoedeErrorCopy, aoedeReadinessCopy, AOEDE_STATUS_LABELS, boundedAoedeText } from "./presentation.js";
 import { MatrixChatAvatar } from "../chat/ChatPresentation.js";
 import { ChatIcon } from "../chat/ChatIcon.js";
+import { useCaptionFollow } from "./use-caption-follow.js";
+import { useAoedeTextComposer } from "./use-text-composer.js";
 /** Compact canonical chat follows the approved onboarding widget. Voice adds a
  * pointer-transparent edge halo; readiness never changes the presentation.
  */
@@ -14,41 +16,12 @@ export function AoedeLivePanel(props: AoedePanelProps & { pushToTalkControl?: Re
   const [expanded, setExpanded] = useState(false);
   const [settings, setSettings] = useState(false);
   const [more, setMore] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [textError, setTextError] = useState(false);
-  const alive = useRef(true);
-  const draftRevision = useRef(0);
-  const sendingRef = useRef(false);
+  const composer = useAoedeTextComposer(props);
+  const { sending, textError } = composer;
   const conversation = useRef<HTMLElement>(null);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => { conversation.current?.focus(); }, [props.focusRevision]);
-  const active = Boolean(props.capability) && !["idle", "ended", "failed"].includes(props.status);
-  const ready = props.capability?.status === "available" && props.capability.turnModes.includes(props.turnMode);
-  const style = { zIndex: (props.surface ?? props.capability?.surface) === "electron_desktop" ? DESKTOP_Z_INDEX.voiceCompanion : SHELL_Z_INDEX.voiceCompanion,
-    "--live-forest": desktopPalette.forest, "--live-paper": desktopPalette.paper,
-    "--live-gold": desktopPalette.gold, "--live-coral": desktopPalette.coral, "--live-blue": desktopPalette.blue,
-    "--live-sans": chatWidget.fontFamily,
-    "--live-widget": chatWidget.colors.surface, "--live-border": chatWidget.colors.border,
-    "--live-ink": chatWidget.colors.ink, "--live-muted": chatWidget.colors.muted,
-    "--live-text": chatWidget.colors.text, "--live-placeholder": chatWidget.colors.placeholder,
-    "--live-composer": chatWidget.colors.composer,
-  } as CSSProperties;
-  const submit = async () => {
-    if (sendingRef.current || !props.canSendText || !props.commands.sendText || !draft.trim()) return;
-    const revision = draftRevision.current;
-    sendingRef.current = true; setSending(true); setTextError(false);
-    try {
-      const accepted = await props.commands.sendText(draft);
-      if (!alive.current) return;
-      if (accepted && draftRevision.current === revision) setDraft("");
-      if (!accepted) setTextError(true);
-    } catch (error: unknown) {
-      console.warn("[aoede] message unavailable", error instanceof Error ? error.name : "UnknownError");
-      if (alive.current) setTextError(true);
-    } finally { sendingRef.current = false; if (alive.current) setSending(false); }
-  };
-  return <div data-aoede-live className="matrix-aoede-live" data-state={props.status} style={style}>
+  const { active, ready, style } = livePresentation(props);
+  return <div data-aoede-live className="matrix-aoede-live ph-no-capture" data-state={props.status} style={style}>
     {active ? <div className="matrix-aoede-live__halo" aria-hidden="true" /> : null}
     <section ref={conversation} tabIndex={-1} role="dialog" aria-modal="false" className="matrix-aoede-live__conversation" aria-label="Aoede live conversation" onKeyDown={event => {
       if (event.key === "Escape") { event.stopPropagation(); props.commands.dismiss(); }
@@ -62,21 +35,10 @@ export function AoedeLivePanel(props: AoedePanelProps & { pushToTalkControl?: Re
       </header>
       <div className="matrix-aoede-live__body">
         <div className="matrix-aoede-live__meta"><span role="status">{props.capability || active ? AOEDE_STATUS_LABELS[props.status] : props.status === "failed" ? "Connection unavailable" : "Connecting"}</span><span>{boundedAoedeText(props.scopeLabel, 160)}</span></div>
-        <div className="matrix-aoede-live__captions" aria-live="polite" aria-atomic="false">
-          {props.captions.utterance ? <p><span>You</span>{boundedAoedeText(props.captions.utterance)}</p> : null}
-          {props.captions.response ? <div role="region" aria-label="Current response" className="matrix-aoede-live__response"><span>Matrix{props.captions.interrupted ? " · interrupted" : ""}</span>{props.renderResponse?.(boundedAoedeText(props.captions.response)) ?? boundedAoedeText(props.captions.response)}</div> : null}
-          {!props.captions.utterance && !props.captions.response && props.status !== "failed" ? <p>{props.capability ? "What would you like to do?" : "Connecting to your workspace…"}</p> : null}
-        </div>
+        <AoedeLiveCaptions props={props} />
         {props.error ? <p className="matrix-aoede-live__error" role="alert">{aoedeErrorCopy(props.error.code)}</p> : null}
         {!active ? <p className="matrix-aoede-live__readiness">{aoedeReadinessCopy(props.capability, props.status)}</p> : null}
-        <div role="group" aria-label="Aoede controls" className="matrix-aoede-live__controls">
-          {props.pushToTalkControl}
-          {!active ? <button type="button" disabled={!ready} onClick={props.commands.start}>Start talking</button> : null}
-          {active ? <button type="button" onClick={props.status === "paused" ? props.commands.resume : props.commands.pause}>{props.status === "paused" ? "Unmute" : "Mute"}</button> : null}
-          {props.status === "speaking" ? <button type="button" onClick={props.commands.stopSpeaking}>Stop speaking</button> : null}
-          {props.status === "failed" && props.error?.retryable ? <button type="button" onClick={props.commands.retry}>Retry</button> : null}
-          {active ? <button type="button" onClick={props.commands.end}>End voice</button> : null}
-        </div>
+        <AoedeLiveControls props={props} active={active} ready={ready} />
         <div className="matrix-aoede-live__options" hidden={!more}>
           <button type="button" onClick={() => { setSettings(false); setExpanded(v => !v); }} aria-expanded={expanded}>Context & tasks</button>
           <button type="button" onClick={props.commands.viewHistory}>Chat history</button>
@@ -90,13 +52,53 @@ export function AoedeLivePanel(props: AoedePanelProps & { pushToTalkControl?: Re
         </div>
         {textError ? <p role="alert" className="matrix-aoede-live__error">Your message could not be sent. Your draft is saved here; retry the same message.</p> : null}
       </div>
-      <form className="matrix-aoede-live__composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
-        <input aria-label="Message Matrix" placeholder="Or type what you need…" value={draft} maxLength={8000} disabled={!props.canSendText}
-          onChange={event => { draftRevision.current++; setDraft(event.target.value); }} />
-        <button type="button" aria-label={active ? "End voice capture" : "Turn microphone on"} disabled={!active && !ready} onClick={active ? props.commands.end : props.commands.start}><ChatIcon name="microphone" /></button>
-        <button className="matrix-aoede-live__send" type="submit" aria-label="Send message" disabled={sending || !props.canSendText || !draft.trim()}><ChatIcon name="send" /></button>
-      </form>
+      <AoedeLiveComposer props={props} composer={composer} active={active} ready={ready} />
       <p className="matrix-aoede-live__privacy">{props.microphoneActive ? "Microphone active" : "Microphone off"}</p>
     </section>
   </div>;
+}
+
+function AoedeLiveControls({ props, active, ready }: { props: AoedePanelProps & { pushToTalkControl?: ReactNode }; active: boolean; ready: boolean }) {
+  return <div role="group" aria-label="Aoede controls" className="matrix-aoede-live__controls">
+          {props.pushToTalkControl}
+          {!active ? <button type="button" disabled={!ready} onClick={props.commands.start}>Start talking</button> : null}
+          {active ? <button type="button" onClick={props.status === "paused" ? props.commands.resume : props.commands.pause}>{props.status === "paused" ? "Unmute" : "Mute"}</button> : null}
+          {props.status === "speaking" ? <button type="button" onClick={props.commands.stopSpeaking}>Stop speaking</button> : null}
+          {props.status === "failed" && props.error?.retryable ? <button type="button" onClick={props.commands.retry}>Retry</button> : null}
+          {active ? <button type="button" onClick={props.commands.end}>End voice</button> : null}
+        </div>;
+}
+
+function AoedeLiveCaptions({ props }: { props: AoedePanelProps }) {
+  const { captions, onCaptionScroll } = useCaptionFollow(props.conversationKey, props.captions);
+  return <div ref={captions} className="matrix-aoede-live__captions" onScroll={onCaptionScroll} aria-live="polite" aria-atomic="false">
+          {props.captions.utterance ? <p><span>You</span>{boundedAoedeText(props.captions.utterance)}</p> : null}
+          {props.captions.response ? <div role="region" aria-label="Current response" className="matrix-aoede-live__response"><span>Matrix{props.captions.interrupted ? " · interrupted" : ""}</span>{props.renderResponse?.(boundedAoedeText(props.captions.response)) ?? boundedAoedeText(props.captions.response)}</div> : null}
+          {!props.captions.utterance && !props.captions.response && props.status !== "failed" ? <p>{props.capability ? "What would you like to do?" : "Connecting to your workspace…"}</p> : null}
+        </div>;
+}
+
+function AoedeLiveComposer({ props, composer, active, ready }: { props: AoedePanelProps; composer: ReturnType<typeof useAoedeTextComposer>; active: boolean; ready: boolean }) {
+  const { draft, changeDraft, sending, submit } = composer;
+  return <form className="matrix-aoede-live__composer" onSubmit={event => { event.preventDefault(); void submit(); }}>
+        <input aria-label="Message Matrix" placeholder="Or type what you need…" value={draft} maxLength={8000} disabled={!props.canSendText}
+          onChange={event => changeDraft(event.target.value)} />
+        <button type="button" aria-label={active ? "End voice capture" : "Turn microphone on"} disabled={!active && !ready} onClick={active ? props.commands.end : props.commands.start}><ChatIcon name="microphone" /></button>
+        <button className="matrix-aoede-live__send" type="submit" aria-label="Send message" disabled={sending || !props.canSendText || !draft.trim()}><ChatIcon name="send" /></button>
+      </form>;
+}
+
+function livePresentation(props: AoedePanelProps) {
+  const active = Boolean(props.capability) && !["idle", "ended", "failed"].includes(props.status);
+  const ready = props.capability?.status === "available" && props.capability.turnModes.includes(props.turnMode);
+  const style = { zIndex: (props.surface ?? props.capability?.surface) === "electron_desktop" ? DESKTOP_Z_INDEX.voiceCompanion : SHELL_Z_INDEX.voiceCompanion,
+    "--live-forest": desktopPalette.forest, "--live-paper": desktopPalette.paper,
+    "--live-gold": desktopPalette.gold, "--live-coral": desktopPalette.coral, "--live-blue": desktopPalette.blue,
+    "--live-sans": chatWidget.fontFamily,
+    "--live-widget": chatWidget.colors.surface, "--live-border": chatWidget.colors.border,
+    "--live-ink": chatWidget.colors.ink, "--live-muted": chatWidget.colors.muted,
+    "--live-text": chatWidget.colors.text, "--live-placeholder": chatWidget.colors.placeholder,
+    "--live-composer": chatWidget.colors.composer,
+  } as CSSProperties;
+  return { active, ready, style };
 }

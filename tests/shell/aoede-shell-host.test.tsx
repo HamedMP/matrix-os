@@ -509,3 +509,16 @@ it("keeps the halo host pointer transparent when bootstrap fails", async () => {
   expect(screen.queryByTestId("aoede-orb")).not.toBeInTheDocument();
   expect(screen.getByTestId("aoede-host")).toHaveStyle({ pointerEvents: "none" });
 });
+
+it("does not dismiss portal controls on their pointer press", async () => {
+  const h = harness(); renderHost(h);
+  await act(async () => { fireEvent.click(screen.getByTestId("aoede-launcher")); });
+  const start = await screen.findByRole("button", { name: "Start talking" });
+  await act(async () => { fireEvent.pointerDown(start); fireEvent.click(start); });
+  expect(h.media.startVoice).toHaveBeenCalledOnce();
+  expect(h.media.end).not.toHaveBeenCalled();
+  const more = screen.getByRole("button", { name: "More options" });
+  await act(async () => { fireEvent.pointerDown(more); fireEvent.click(more); });
+  expect(screen.getByRole("button", { name: "Settings" })).toBeVisible();
+  expect(h.media.end).not.toHaveBeenCalled();
+});

@@ -24,6 +24,8 @@ export interface ChatHistoryProps {
   onDelete?(id: string): void;
   onToggleRead?(id: string): void;
   onQueryChange?(query: string): void;
+  /** Remote items already include message-content matches. */
+  searchMode?: "local" | "remote";
   children?: ReactNode;
   searchIcon?: ReactNode;
   newChatIcon?: ReactNode;
@@ -35,6 +37,23 @@ export function ChatHistory(props: ChatHistoryProps) {
   const [kind, setKind] = useState<"chat" | "voice">(() => props.items.find(item => item.id === props.activeChatId)?.conversationKind ?? "chat");
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const queryChange = useRef(props.onQueryChange);
+  const lastQuery = useRef("");
+  useEffect(() => { queryChange.current = props.onQueryChange; }, [props.onQueryChange]);
+  useEffect(() => {
+    if (query === lastQuery.current || !queryChange.current) return;
+    const timer = setTimeout(() => {
+      lastQuery.current = query;
+      queryChange.current?.(query);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+  const clearSearch = () => {
+    setQuery("");
+    if (query || lastQuery.current) queryChange.current?.("");
+    lastQuery.current = "";
+    setSearchOpen(false);
+  };
   const [localUnreadOnly, setLocalUnreadOnly] = useState(false);
   const unreadOnly = props.unreadOnly ?? localUnreadOnly;
   const panelId = useId();
@@ -56,8 +75,8 @@ export function ChatHistory(props: ChatHistoryProps) {
   }, [props.activeChatId, props.items]);
   const shown = useMemo(() => props.items.filter(item => (item.conversationKind ?? "chat") === kind
     && (!unreadOnly || item.unread)
-    && `${item.title} ${item.preview ?? ""}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
-    .sort((a, b) => b.updatedAt - a.updatedAt), [props.items, kind, query, unreadOnly]);
+    && (props.searchMode === "remote" || `${item.title} ${item.preview ?? ""}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())))
+    .sort((a, b) => b.updatedAt - a.updatedAt), [props.items, props.searchMode, kind, query, unreadOnly]);
   const voices = props.items.filter(item => item.conversationKind === "voice");
   const unreadVoices = voices.filter(item => item.unread).length;
   const saveTitle = async () => {
@@ -73,7 +92,7 @@ export function ChatHistory(props: ChatHistoryProps) {
   };
   return <nav className="matrix-chat-history" aria-label="Conversation navigation">
     <header className="matrix-chat-history__header"><h2 className="text-[14px] font-medium leading-[20px]">Chats</h2>
-      <button type="button" aria-label="Search chats" aria-expanded={searchOpen} onClick={() => setSearchOpen(value => !value)}>{props.searchIcon ?? <ChatIcon name="search" />}</button>
+      <button type="button" aria-label="Search chats" aria-expanded={searchOpen} onClick={() => { if (searchOpen) clearSearch(); else setSearchOpen(true); }}>{props.searchIcon ?? <ChatIcon name="search" />}</button>
     </header>
     <button type="button" className="matrix-chat-history__new" onClick={() => { setKind("chat"); props.onNewChat(); }}>{props.newChatIcon ?? <ChatIcon name="add" />}<span>New chat</span></button>
     {props.children}
@@ -88,8 +107,8 @@ export function ChatHistory(props: ChatHistoryProps) {
     </div>
     <button type="button" className="matrix-chat-history__unread-filter" aria-pressed={unreadOnly} onClick={() => { setLocalUnreadOnly(!unreadOnly); props.onUnreadOnlyChange?.(!unreadOnly); }}>Unread</button>
     {searchOpen ? <input autoFocus type="search" aria-label="Search chats" className="matrix-chat-history__search" placeholder="Search chats" value={query}
-      onChange={event => { setQuery(event.target.value); props.onQueryChange?.(event.target.value); }}
-      onKeyDown={event => { if (event.key === "Escape") { setQuery(""); props.onQueryChange?.(""); setSearchOpen(false); } }} /> : null}
+      onChange={event => setQuery(event.target.value)}
+      onKeyDown={event => { if (event.key === "Escape") clearSearch(); }} /> : null}
     {props.error ? <p role="alert">Conversations could not be loaded. Try again.</p> : null}
     {props.loading && shown.length === 0 ? <p role="status" aria-label="Loading chats">Loading chats…</p> : null}
     {renameError ? <p role="alert">Title could not be saved. Try again.</p> : null}
@@ -111,7 +130,10 @@ export function ChatHistory(props: ChatHistoryProps) {
               event.preventDefault(); if (selectTimer.current) clearTimeout(selectTimer.current); selectTimer.current = null;
               setRename({ id: item.id, value: item.title }); setRenameError(false);
             } : undefined}>
-              {item.unread ? <span className="matrix-chat-history__unread" aria-label="Unread" /> : null}<span className="text-[14px] leading-[20px]">{item.title}</span>
+              {item.unread ? <span className="matrix-chat-history__unread" aria-label="Unread" /> : null}<span className="matrix-chat-history__text">
+                <span className="text-[14px] leading-[20px]">{item.title}</span>
+                {item.preview ? <span className="matrix-chat-history__preview text-[12px] leading-[16px]">{item.preview}</span> : null}
+              </span>
             </button>
             {props.onRename || props.onDelete || props.onToggleRead ? <button type="button" aria-label={`Options for ${item.title}`} aria-expanded={optionsId === item.id} className="matrix-chat-history__options-trigger" onClick={() => setOptionsId(value => value === item.id ? null : item.id)}><ChatIcon name="more" size={14} /></button> : null}
             {optionsId === item.id ? <div className="matrix-chat-history__options">

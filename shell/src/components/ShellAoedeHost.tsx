@@ -205,7 +205,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
 
   useEffect(() => {
     if (snapshot.visible && controller.presentation === "classic") focusTarget.current?.focus();
-  }, [snapshot.visible, snapshot.focusRevision]);
+  }, [snapshot.visible, snapshot.focusRevision, snapshot.binding?.capability.conversationMode, controller]);
 
   // Light dismissal: an outside pointerdown stops capture/playback and hides
   // the panel while canonical work survives for reopen. Launcher presses are
