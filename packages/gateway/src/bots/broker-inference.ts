@@ -12,6 +12,7 @@ import {
   type ScopeRuntimeBrokerResponse,
 } from "@matrix-os/scope-runtime/broker-protocol";
 import { z } from "zod/v4";
+import { forwardChatGptPlanInference } from "./chatgpt-plan-inference.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { FundedAiCredentialError, type MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import {
@@ -20,8 +21,7 @@ import {
   type KernelCredentialLaunch,
   type KernelFundingContext,
 } from "../kernel-credentials.js";
-import { createCodexOwnerIdentityResolver, type ResolveCodexOwnerIdentity } from "../collaboration/codex-owner-identity.js";
-import { forwardCodexBotInference } from "./codex-inference.js";
+import type { ResolveCodexOwnerIdentity } from "../collaboration/codex-owner-identity.js";
 import type { BotInferenceAuthorization } from "./credentials.js";
 import {
   discard,
@@ -34,9 +34,6 @@ const INFERENCE_TIMEOUT_MS = 30_000;
 /** Funded relay generation may buffer the full reply; the worker bridge and
  * turn retain independent bounds and lifetime cancellation still applies. */
 const FUNDED_INFERENCE_TIMEOUT_MS = 120_000;
-/** Codex tool continuations can outlast one short provider call; the worker
- * and broker still bound the whole turn independently. */
-const CODEX_INFERENCE_TIMEOUT_MS = 120_000;
 export const MAX_BOT_TOOLS = 64;
 
 const BotInferenceBodySchema = z.object({
@@ -47,12 +44,14 @@ const BotInferenceBodySchema = z.object({
 
 export interface BotInferenceDependencies {
   homePath: string;
+  chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
   lifetime: AbortSignal;
   /** Exact registry-owned run lifetime; combined with subsystem shutdown. */
   runSignal?: AbortSignal;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   resolveCredentials?: typeof buildKernelCredentialLaunch;
+  /** Deprecated compatibility seam; it is never invoked by Bot inference. */
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   fetchImpl?: typeof fetch;
   /** Canonical owner/run/workspace authority is rechecked after funded queue waits. */
@@ -118,9 +117,20 @@ export async function forwardBotInference(
   if (!authorization.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
     return failure(request.requestId, "action_denied");
   }
-  if ((request.action === "inference.responses") !== (authorization.accessSourceId === "owner_openai_profile")) {
-    return failure(request.requestId, "provider_unavailable");
+  if (authorization.accessSourceId === "matrix_chatgpt_plan") {
+    if (!deps.chatgptPlan) return failure(request.requestId, "provider_unavailable");
+    const authority = deps.chatgptPlan;
+    return forwardChatGptPlanInference(request, binding, { authority: {
+      ...authority,
+      infer: (candidate, body, signal) => authority.infer(candidate, body, signal),
+      revalidate: async (candidate, signal) => (!deps.revalidateBinding || await deps.revalidateBinding(candidate))
+        && !signal.aborted && await authority.revalidate(candidate, signal),
+    }, signal: lifecycle,
+      stillAuthorized: () => { const current = authorize(modelId); return !lifecycle.aborted && current.allowed && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId); } });
   }
+  // Borrowed native profiles remain task-executor-only; never substitute them for the explicit paired-device source.
+  if (authorization.accessSourceId === "owner_openai_profile" || authorization.accessSourceId === "owner_anthropic_profile"
+    || request.action === "inference.responses") return failure(request.requestId, "provider_unavailable");
   // Chat completions exist only on Matrix's managed route (the funded relay).
   if (request.action === "inference.chat_completions" && authorization.accessSourceId !== "matrix_included") {
     return failure(request.requestId, "provider_unavailable");
@@ -136,14 +146,6 @@ export async function forwardBotInference(
   const fetchImpl = deps.fetchImpl ?? fetch;
 
   try {
-    if (accessSourceId === "owner_openai_profile") {
-      return await forwardCodexBotInference(request, {
-        resolveIdentity: deps.resolveCodexIdentity ?? createCodexOwnerIdentityResolver({ homePath: deps.homePath, fetchImpl }),
-        stillAuthorized,
-        signal: AbortSignal.any([lifecycle, AbortSignal.timeout(CODEX_INFERENCE_TIMEOUT_MS)]),
-        fetchImpl,
-      });
-    }
     const launch = await resolveInferenceCredentials(
       accessSourceId,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },

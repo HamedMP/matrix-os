@@ -187,8 +187,13 @@ describe("Pi Matrix funded inference deadline", () => {
   it("retains the owner Anthropic credential deadline at 30 seconds", async () => {
     const fixture = setup();
     try {
-      const pending = forwardBotInference({ ...request, action: "inference.messages", path: "/v1/messages" }, binding,
-        () => ({ ...authorization, accessSourceId: "owner_anthropic_profile" }), fixture.deps);
+      const ownerModel = "claude-sonnet-5";
+      const ownerBinding = { ...binding, accessSourceId: "owner_anthropic_key" as const,
+        route: { ...binding.route, api: "anthropic-messages" as const, modelId: ownerModel } };
+      const pending = forwardBotInference({ ...request, action: "inference.messages", path: "/v1/messages",
+        body: JSON.stringify({ model: ownerModel, stream: true, messages: [] }) }, ownerBinding,
+        () => ({ ...authorization, accessSourceId: "owner_anthropic_key", allowedModelIds: [ownerModel] }),
+        { ...fixture.deps, resolveCredentials: async () => ({ env: { ANTHROPIC_API_KEY: "test-only" } }) });
       await vi.advanceTimersByTimeAsync(30_000);
       await expect(pending).resolves.toMatchObject({ ok: false, error: "provider_unavailable" });
       expect(fixture.signal()?.reason).toMatchObject({ name: "TimeoutError" });

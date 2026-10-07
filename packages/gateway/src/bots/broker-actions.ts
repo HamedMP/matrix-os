@@ -129,6 +129,7 @@ export function createBotBrokerActions(deps: {
     publishing: boolean;
   }
   const eventOrder = new Map<string, EventOrder>();
+  const toolCounts = new Map<string, number>(); // live runs <=64; forgetRun/shutdown release entries
   const maxTrackedRuns = Math.max(1, Math.min(Math.trunc(deps.maxTrackedRuns ?? MAX_TRACKED_RUNS), MAX_TRACKED_RUNS));
 
   /**
@@ -166,10 +167,15 @@ export function createBotBrokerActions(deps: {
     return true;
   }
 
-  async function runTool(binding: PiRuntimeBinding, request: BotToolRequest): Promise<BotToolResult> {
+  async function runTool(binding: PiRuntimeBinding, request: BotToolRequest, childSignal?: AbortSignal): Promise<BotToolResult> {
     if (!binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("denied");
-    const runSignal = deps.registry.inferenceSignal(binding);
-    if (!runSignal || runSignal.aborted) throw new BotBrokerActionError("stale_generation");
+    const registeredSignal = deps.registry.inferenceSignal(binding);
+    if (!registeredSignal || registeredSignal.aborted) throw new BotBrokerActionError("stale_generation");
+    const runSignal = childSignal ? AbortSignal.any([registeredSignal, childSignal]) : registeredSignal;
+    if (!toolCounts.has(binding.runId) && toolCounts.size >= 64) throw new BotBrokerActionError('budget_exhausted');
+    const count = (toolCounts.get(binding.runId) ?? 0) + 1;
+    if (count > 60) throw new BotBrokerActionError('budget_exhausted');
+    toolCounts.set(binding.runId, count);
     // Human approval is preflight, before any external-effect checkpoint is dispatched.
     if (deps.tools.prepare) {
       const preflightSignal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(10 * 60_000)]);
@@ -201,7 +207,7 @@ export function createBotBrokerActions(deps: {
       await checkpoints.markObserved({ ...id, now: now().toISOString() });
       throw new BotBrokerActionError("stale_generation");
     }
-    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(toolTimeoutMs)]);
+    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(request.capability === 'agent.task' ? 120000 : toolTimeoutMs)]);
     try {
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
       await checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });
@@ -220,6 +226,11 @@ export function createBotBrokerActions(deps: {
   }
 
   return {
+    /** Fixed native child bridge; every nested tool uses the same admission and durable checkpoint path. */
+    async callTool(binding: PiRuntimeBinding, request: BotToolRequest, signal: AbortSignal) {
+      if (!deps.registry.lookupRun(binding) || request.capability === 'agent.task') throw new BotBrokerActionError('not_granted');
+      return runTool(binding, request, signal);
+    },
     /** True when the bot registry owns the frame's runtime handle at this generation. */
     owns: (input: { runtimeHandle: string; executionGeneration: string }) => deps.registry.lookup(input) !== null,
     /**
@@ -290,6 +301,7 @@ export function createBotBrokerActions(deps: {
     /** Forget per-run ordering state when a run is released. */
     forgetRun(runId: string): void {
       eventOrder.delete(runId);
+      toolCounts.delete(runId);
     },
   };
 }

@@ -126,14 +126,17 @@ export class ChatAgentContext {
       }
       if (!bot.recipeRef) directAgent = bot;
       else {
-      const concrete = input.selection.instanceId === "matrix_pi_default" || (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID && input.selection.model !== "auto")
-        ? input.selection : bot.selection.instanceId === "matrix_pi_default" ? bot.selection : undefined;
-      if (concrete && Object.keys(concrete.options ?? {}).length) throw new ChatAgentContextError("context_unavailable");
-      return { selection: concrete ? { instanceId: MATRIX_BOT_INSTANCE_ID, model: concrete.model } : MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
+        const localPlan = input.selection.instanceId === "matrix_chatgpt_plan" ? input.selection
+          : input.selection.instanceId !== "matrix_pi_default" && bot.selection.instanceId === "matrix_chatgpt_plan" ? bot.selection : undefined;
+        if (localPlan) return { selection: { ...localPlan, instanceId: MATRIX_BOT_INSTANCE_ID }, interactionMode: "default", permissionMode: "default" };
+        const concrete = input.selection.instanceId === "matrix_pi_default" || (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID && input.selection.model !== "auto")
+          ? input.selection : bot.selection.instanceId === "matrix_pi_default" ? bot.selection : undefined;
+        if (concrete && Object.keys(concrete.options ?? {}).length) throw new ChatAgentContextError("context_unavailable");
+        return { selection: concrete ? { instanceId: MATRIX_BOT_INSTANCE_ID, model: concrete.model } : MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
       }
     }
     // Only a bot's own chat can run the bot runtime.
-    if (!directAgent && input.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
+    if (input.selection.instanceId === "matrix_chatgpt_plan" || (!directAgent && input.selection.instanceId === MATRIX_BOT_INSTANCE_ID)) throw new ChatAgentContextError("context_unavailable");
     const agentReference = references.find((reference) => reference.kind === "agent");
     const chatReferences = references.filter((reference) => reference.kind === "chat");
     const driveReferences = references.flatMap((reference) => reference.kind === "organization_drive" && reference.drive ? [reference.drive] : []);
@@ -143,7 +146,7 @@ export class ChatAgentContext {
     if (chatReferences.some((reference) => reference.id === chatId)) throw new ChatAgentContextError("context_unavailable");
     const agent = directAgent ?? (agentReference ? await this.agent(owner, agentReference.id) : undefined);
     // Recipe bots are reached only through their own direct chat.
-    if (agent?.recipeRef || agent?.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
+    if (agent?.recipeRef || agent?.selection.instanceId === MATRIX_BOT_INSTANCE_ID || agent?.selection.instanceId === "matrix_chatgpt_plan") throw new ChatAgentContextError("context_unavailable");
     if (agent?.recipe?.skills.includes("matrix-jev-email-triage") &&
       (!agent.recipe.jevInboxTriage || agent.recipe.jevInboxTriage.ownerId !== owner.ownerId)) {
       throw new ChatAgentContextError("context_unavailable");

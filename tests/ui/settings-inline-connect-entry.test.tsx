@@ -15,7 +15,7 @@ it("opens the current agent's Settings chooser when Own account has no bound nat
   fireEvent.click(screen.getByRole("button", { name: /^OpenCode/ }));
   fireEvent.click(screen.getByText("Advanced configuration"));
   fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
-  const choice = await screen.findByRole("button", { name: /Provider account/ });
+  const choice = await screen.findByRole("button", { name: /^API key/ });
   expect(choice).toHaveFocus();
   expect(client.start).not.toHaveBeenCalled();
   expect(onSetupHarness).not.toHaveBeenCalled();
@@ -58,22 +58,17 @@ it("preserves a visited agent's method and draft when another agent opens Connec
   expect(client.submitKey).not.toHaveBeenCalled();
 });
 
-it.each([true, false])("retains only advertised unsupported login inside Advanced (advertised=%s)", async advertised => {
+it.each([true, false])("rejects generic subscription login inside Advanced despite legacy advertisement (advertised=%s)", async advertised => {
   const snapshot = { harnesses: [{ id: "hermes", harness: "hermes", displayName: "Hermes", installState: "installed", authState: "unauthenticated", connectivity: "online", enabled: false, accountIds: [], selectedAccountId: null, accessSourceId: null, loginMethods: ["terminal"], recommendedLoginMethod: "terminal", route: { kind: "configurable", providerId: "anthropic", modelId: "test" } }], accounts: [], accessSources: [], modelProviders: [], gatewayPolicy: null, configurationHarnessKinds: ["hermes"], supportedActions: advertised ? ["start_login"] : [], access: { mode: "writable" }, refreshedAt: "2026-10-04T00:00:00Z" } as unknown as ProviderSettingsSnapshot;
   const mutate = vi.fn();
   render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId="hermes" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: /^Hermes/ }));
   const summary = screen.getByText("Advanced configuration");
   expect(summary.closest("details")).not.toHaveAttribute("open");
-  expect(summary.closest("details")).not.toHaveAttribute("open");
   fireEvent.click(summary);
-  if (advertised) {
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ type: "start_login", harnessInstanceId: "hermes", accountId: null, method: "terminal" }));
-  } else {
-    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
-    expect(mutate).not.toHaveBeenCalled();
-  }
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Connect in Terminal" })).toBeNull();
+  expect(mutate).not.toHaveBeenCalled();
 });
 
 
@@ -90,20 +85,20 @@ it("opens Own account after more than 32 removed agent IDs on the same connectio
     await waitFor(() => expect(client.capabilities).toHaveBeenCalledTimes(index + 2));
     fireEvent.click(document.getElementById(`matrix-ap-details-${id}-trigger`)!);
     const panel = within(document.getElementById(`matrix-ap-details-${id}`)!);
-    await panel.findByRole("button", { name: /Provider account/ });
+    await panel.findByRole("button", { name: /^API key/ });
     const summary = panel.getByText("Advanced configuration");
     if (!summary.closest("details")?.hasAttribute("open")) fireEvent.click(summary);
     fireEvent.click(panel.getByRole("button", { name: /Own account/ }));
     if (index < 32) {
-      await waitFor(() => expect(panel.getByRole("button", { name: /Provider account/ }), id).toHaveFocus());
+      await waitFor(() => expect(panel.getByRole("button", { name: /^API key/ }), id).toHaveFocus());
     } else {
       await panel.findByRole("alert");
       expect(panel.getByText("Connection could not be updated. Try again.")).toBeInTheDocument();
-      expect(panel.getByRole("button", { name: /Provider account/ })).not.toHaveFocus();
+      expect(panel.getByRole("button", { name: /^API key/ })).not.toHaveFocus();
       view.rerender(<AgentsProvidersView {...props} snapshot={snapshot(id, 34)} selectedHarnessId={id} />);
       await waitFor(() => expect(client.capabilities).toHaveBeenCalledTimes(35));
       fireEvent.click(panel.getByRole("button", { name: /Own account/ }));
-      await waitFor(() => expect(panel.getByRole("button", { name: /Provider account/ })).toHaveFocus());
+      await waitFor(() => expect(panel.getByRole("button", { name: /^API key/ })).toHaveFocus());
     }
   }
   expect(client.start).not.toHaveBeenCalled();

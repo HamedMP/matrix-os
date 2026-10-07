@@ -51,6 +51,7 @@ export interface AiProviderSnapshotReader {
 interface AiProviderServiceOptions {
   nativeHarnessCatalogReader?: GenericHarnessModelCatalogReader;
   hermesRuntimeSource?: AgentRuntimeSource;
+  openclawRuntimeSource?: AgentRuntimeSource;
   homePath: string;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
@@ -214,7 +215,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     );
     this.#driverInventory = options.driverInventory;
     this.#nativeHarnessCatalogReader = options.nativeHarnessCatalogReader ? createCanonicalNativeHarnessCatalogReader(options.nativeHarnessCatalogReader,
-      { hermesRuntimeSource: options.hermesRuntimeSource, now: this.#now }) : undefined;
+      { hermesRuntimeSource: options.hermesRuntimeSource, openclawRuntimeSource: options.openclawRuntimeSource, now: this.#now }) : undefined;
     this.#fundedReadiness = options.fundedReadinessReader;
     this.#codexNativeKeyReadiness = options.codexNativeKeyReadiness;
     this.#codexLocalObservation = options.codexLocalObservation;

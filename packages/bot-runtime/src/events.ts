@@ -1,5 +1,6 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { BotEvent, BotToolCapability } from "@matrix-os/contracts";
+import { bridgeToolCallId } from "./tool-call-id.js";
 
 /** Leaves room for the event envelope inside the 16 KiB assistant delta bound. */
 const MAX_DELTA_BYTES = 12 * 1024;
@@ -118,13 +119,12 @@ export function createEventProjector(options: {
     }
     if (event.type === "tool_execution_start" || event.type === "tool_execution_end") {
       const capability = options.capabilityForTool(event.toolName);
-      const validCallId = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(event.toolCallId);
       await serial(async () => {
         await flush();
-        if (!capability || !validCallId) return;
+        if (!capability) return;
         await emit({
           type: "tool_progress",
-          toolCallId: event.toolCallId,
+          toolCallId: bridgeToolCallId(event.toolCallId),
           capability,
           phase: event.type === "tool_execution_start" ? "started" : event.isError ? "failed" : "completed",
         });

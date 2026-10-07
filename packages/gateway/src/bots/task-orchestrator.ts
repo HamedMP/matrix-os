@@ -94,6 +94,7 @@ export function createBotTaskOrchestrator(deps: {
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
   resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
+  executorReady?(ownerId: string, botId: string): Promise<boolean>;
   admission: Pick<PrivateBotAdmission, "admit" | "release">;
   registry: Pick<BotRuntimeRegistry, "lookupRun" | "cancelInference">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
@@ -218,13 +219,17 @@ export function createBotTaskOrchestrator(deps: {
 
     let resolved: ResolvedBotRoute;
     try {
-      resolved = await deps.resolveRoute(input.selection && input.selection.model !== "auto" ? { ...input.selection, instanceId: "matrix_pi_default" }
-        : agent.selection.instanceId === "matrix_pi_default" ? agent.selection : undefined);
+      resolved = await deps.resolveRoute(input.selection && input.selection.model !== "auto"
+        ? input.selection.instanceId === "matrix_chatgpt_plan" || input.selection.options?.some(o => o.id === "accountId")
+          ? { ...input.selection, instanceId: "matrix_chatgpt_plan" } : { ...input.selection, instanceId: "matrix_pi_default" }
+        : ["matrix_pi_default", "matrix_chatgpt_plan"].includes(agent.selection.instanceId) ? agent.selection : undefined);
     } catch (error: unknown) {
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
     }
     const capabilities = recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
+    try { if (await deps.executorReady?.(input.ownerId, botId)) capabilities.push('agent.task'); }
+    catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return settle(task, 'blocked', 'policy_denied'); }
     let memory: string[];
     try {
       memory = deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
@@ -249,7 +254,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       runtime = await deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
-        route: resolved.route, accessSourceId: resolved.accessSourceId, capabilities, requestClass: "interactive",
+        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), capabilities, requestClass: "interactive",
       });
     } catch (error: unknown) {
       if (!(error instanceof BotAdmissionError)) throw error;

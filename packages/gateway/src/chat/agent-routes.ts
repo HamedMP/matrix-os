@@ -69,9 +69,9 @@ export function createChatAgentRoutes(options: {
   async function validSelection(principal: RequestPrincipal, selection: CanonicalChatModelSelection, jev = false): Promise<boolean> {
     const catalog = await options.catalog.getCatalog(principal);
     const checked = validateChatProviderSelection({ catalog, selection,
-      requirements: { interactionMode: "default", permissionMode: "full_access" },
+      requirements: { interactionMode: "default", permissionMode: selection.instanceId === "matrix_chatgpt_plan" ? "default" : "full_access" },
     });
-    return checked.ok && isChatAgentDriver(checked.instance.driverKind)
+    return checked.ok && (selection.instanceId === "matrix_chatgpt_plan" || isChatAgentDriver(checked.instance.driverKind))
       && (!jev || (jevHermesRoute(selection) !== null && checked.instance.driverKind === "hermes"
         && checked.instance.defaultSelection?.model === selection.model));
   }
@@ -96,6 +96,7 @@ export function createChatAgentRoutes(options: {
     const scope = { type: "personal" as const, ownerId: principal.userId };
     const existing = await agents.findCreated(scope, input);
     if (existing) return c.json(ChatAgentSchema.parse(existing), 201);
+    if (input.selection.instanceId === "matrix_chatgpt_plan") return c.json({ error: "Choose a Matrix Bot for this connection." }, 400);
     if (!await validSelection(principal, input.selection, isJevInboxRecipe(input.recipe))) return c.json({ error: "Choose an available Agent model." }, 400);
     let recipe;
     try {
@@ -117,9 +118,10 @@ export function createChatAgentRoutes(options: {
     const input = UpdateChatAgentRequestSchema.parse(await c.req.json());
     const current = await agents.get({ type: "personal", ownerId: principal.userId }, id);
     if (!current) return c.json({ error: "Agent or Chat not found" }, 404);
+    if (input.selection?.instanceId === "matrix_chatgpt_plan" && !current.recipeRef) return c.json({ error: "Choose a Matrix Bot for this connection." }, 400);
     const automatic = input.selection?.instanceId === "matrix_bot_default" && input.selection.model === "auto"
       && !Object.keys(input.selection.options ?? {}).length;
-    if (input.selection && current.recipeRef && !automatic && input.selection.instanceId !== "matrix_pi_default") {
+    if (input.selection && current.recipeRef && !automatic && ! ["matrix_pi_default", "matrix_chatgpt_plan"].includes(input.selection.instanceId)) {
       return c.json({ error: "Choose an available Matrix AI model." }, 400);
     }
     const jev = isJevInboxRecipe(input.recipe === null ? undefined : input.recipe ?? current.recipe);

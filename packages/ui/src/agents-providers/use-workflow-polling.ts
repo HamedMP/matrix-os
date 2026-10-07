@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProviderWorkflow } from "@matrix-os/contracts";
-import type { ProviderWorkflowClient } from "./types.js";
+import type { ProviderWorkflowClient, ProviderWorkflowUIOperation } from "./types.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 
 const active = (operation: ProviderWorkflow | null) =>
@@ -8,8 +8,8 @@ const active = (operation: ProviderWorkflow | null) =>
 
 /** Read-only recovery is bounded by the server receipt's expiry and UI scope. */
 export function useWorkflowPolling(input: {
-  operation: ProviderWorkflow | null; client: ProviderWorkflowClient; harnessId: string;
-  onUpdate: (operation: ProviderWorkflow) => void; onFailure: () => void;
+  operation: ProviderWorkflowUIOperation | null; client: ProviderWorkflowClient; harnessId: string;
+  onUpdate: (operation: ProviderWorkflowUIOperation) => void; onFailure: () => void;
 }) {
   const [generation, setGeneration] = useState(0);
   const callbacks = useRef(input);

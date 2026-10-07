@@ -27,7 +27,7 @@ function lifecycleDriver(input: {
   authMethod: ProviderLoginMethod;
 }): CliLifecycleDriver | null {
   if ((input.driverId === "kernel" || input.driverId === "claude_code")
-    && input.providerId === "anthropic" && input.authMethod === "terminal") {
+    && input.providerId === "anthropic" && (input.authMethod === "terminal" || input.authMethod === "api_key")) {
     return { driverId: "claude_code", harness: "claude" };
   }
   if (input.driverId === "codex" && input.providerId === "openai"

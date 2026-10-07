@@ -1,6 +1,7 @@
-import { isAutomaticBotSelection, matrixBotSelectableModelChoices, MatrixBotModelField } from "./bots/MatrixBotModelField.js";
+import type {BotClient} from "./bots/client.js";
+import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotSelectableModelChoices, MatrixBotModelField } from "./bots/MatrixBotModelField.js";
 import { useId, type ReactNode } from "react";
-import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { isChatgptPlanBotRoute, ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { AgentRecipeEditor } from "./AgentRecipeEditor.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
@@ -11,12 +12,13 @@ const input = chatAgentInputClass;
 const muted = chatAgentMutedStyle;
 export type AgentDraft = { name: string; description: string; instructions: string; selection: CanonicalChatModelSelection | null; requestId: string; recipe?: ChatAgentRecipe | null };
 
-export function AgentModelField({ id, selected, pending, models, change, onSetup, hermesOnly }: {
+export function AgentModelField({ id, selected, pending, models: suppliedModels, change, onSetup, hermesOnly }: {
   id: string; selected: CanonicalChatModelSelection | null; pending: boolean;
   models: ReturnType<typeof deriveCanonicalProviderChoices>;
   change(value: Partial<AgentDraft>): void; onSetup?: () => void;
   hermesOnly: boolean;
 }) {
+  const models = suppliedModels.filter(choice => !isChatgptPlanBotRoute(choice));
   const modelKey = selected ? JSON.stringify([selected.instanceId, selected.model]) : "";
   const available = models.some((choice) => choice.instanceId === selected?.instanceId && choice.modelId === selected?.model);
   return <>
@@ -45,9 +47,9 @@ function AgentEditorActions({ editing, pending, saveDisabled, onArchive, onBack,
   </div>;
 }
 
-export function AgentEditor({ draft, editing, pending, models, catalog, catalogLoading = false, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
+export function AgentEditor({ botClient, draft, editing, pending, models, catalog, catalogLoading = false, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
   change, onSave, onArchive, onBack, onSetup, onRetryRecipe, allowArchive = true, cancelLabel = "Back", apps }: {
-  apps?: ReactNode; draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
+  botClient?: BotClient; apps?: ReactNode; draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
   recipeCatalog: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[];
   recipeLoading: boolean; recipeError: string; connectionError: string;
@@ -58,9 +60,9 @@ export function AgentEditor({ draft, editing, pending, models, catalog, catalogL
   const recipeBot = editing !== "new" && Boolean(editing.recipeRef);
   const hermesOnly = draft.recipe?.skills.includes("matrix-jev-email-triage") === true;
   const managedAgent = recipeBot || (editing === "new" && !hermesOnly);
-  const eligibleModels = managedAgent ? matrixBotSelectableModelChoices(models, catalog) : models;
+  const eligibleModels = managedAgent ? matrixBotSelectableModelChoices(models, catalog, recipeBot) : models;
   const selectionChanged = editing === "new" || JSON.stringify(draft.selection) !== JSON.stringify(editing.selection);
-  const modelAvailable = eligibleModels.some((choice) => choice.instanceId === draft.selection?.instanceId && choice.modelId === draft.selection?.model);
+  const modelAvailable = eligibleModels.some((choice) => botModelChoiceMatchesSelection(choice, draft.selection));
   const recipeValid = recipeBot || draft.recipe === undefined || draft.recipe === null || (ChatAgentRecipeSchema.safeParse(draft.recipe).success
     && recipeSkillsFit(draft.recipe.skills, recipeCatalog?.skills ?? []));
   const saveDisabled = pending || (catalogLoading && selectionChanged) || !draft.name.trim() || !draft.instructions.trim() || !recipeValid
@@ -71,7 +73,7 @@ export function AgentEditor({ draft, editing, pending, models, catalog, catalogL
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-instructions`}>Instructions<textarea id={`${ids}-instructions`} className={`${input} min-h-32 resize-y`} value={draft.instructions} maxLength={8000} required disabled={pending} placeholder="What should this Agent do? How should it work?" onChange={(event) => change({ instructions: event.target.value })} /></label>
       {apps}
       {managedAgent ? <div className="grid gap-3 text-sm">
-        <MatrixBotModelField id={`${ids}-model`} selection={draft.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} allowAutomatic={recipeBot} preservedSelection={editing !== "new" && !recipeBot ? editing.selection : undefined} onSetup={onSetup} pending={pending} onChange={(selection) => change({ selection })} />
+        <MatrixBotModelField botClient={botClient} id={`${ids}-model`} selection={draft.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} allowAutomatic={recipeBot} allowSubscription={recipeBot} preservedSelection={editing !== "new" && !recipeBot ? editing.selection : undefined} onSetup={onSetup} pending={pending} onChange={(selection) => change({ selection })} />
         <p className="text-xs" style={muted}>{recipeBot ? "This bot runs in its own Chat. Choose a Matrix AI model or keep Automatic computer routing." : "Choose a Matrix AI model for this agent. Saving an agent does not run it."}</p>
       </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />}
       {!recipeBot ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={recipeCatalog}

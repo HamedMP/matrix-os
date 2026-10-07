@@ -102,7 +102,8 @@ describe("hosted empty Chat connections", () => {
     const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
     fireEvent.change(draft, { target: { value: "Retain this prompt" } });
     failed = false; fireEvent(window, new Event("focus"));
-    expect(await screen.findByRole("button", { name: "Connect Codex" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Connect Claude Code" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Connect Codex" })).not.toBeInTheDocument();
     expect(draft).toHaveValue("Retain this prompt");
   });
 });
