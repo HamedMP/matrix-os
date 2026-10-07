@@ -41,7 +41,7 @@ export default function Journey({onClose}:{onClose:()=>void}){
  const {installed,accounts,range,importState}=setups[setupKey]??initialSetup(selectedApp);
  function patchSetup(patch:Partial<AppSetup>){setSetups(value=>({...value,[setupKey]:{...(value[setupKey]??initialSetup(selectedApp)),...patch}}));}
  function setInstalled(value:boolean){patchSetup({installed:value});}
- function setRange(value:string){patchSetup({range:value});}
+ function setRange(value:string){patchSetup({range:value,importState:'idle'});}
  function setImportState(value:ImportState){patchSetup({importState:value});}
  const [chatBranch,setChatBranch]=useState<'suggestion'|'brief'|'preview'>('suggestion');
  const [draftOpen,setDraftOpen]=useState(false),[failedSave,setFailedSave]=useState(false),[error,setError]=useState('');

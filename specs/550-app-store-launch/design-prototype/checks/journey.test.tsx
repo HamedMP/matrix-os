@@ -46,6 +46,20 @@ describe('launch journey walkthrough',()=>{
   fireEvent.click(screen.getByRole('button',{name:/7\. Add data from chat/}));
   expect(screen.queryByRole('button',{name:'Add to Folio'})).toBeNull();
  });
+ it('clears the completed import when its date range changes',()=>{
+  render(createElement(Journey,{onClose:vi.fn()}));
+  fireEvent.click(screen.getByRole('button',{name:/4\. Preview & install/}));
+  fireEvent.click(screen.getByRole('button',{name:'Install Folio'}));
+  fireEvent.click(screen.getByRole('button',{name:/5\. Choose data/}));
+  fireEvent.click(screen.getByRole('checkbox',{name:/^Personal Gmail/}));
+  fireEvent.click(screen.getByRole('button',{name:'Import receipts'}));
+  fireEvent.click(screen.getByRole('button',{name:'Show completed scenario'}));
+  expect(screen.getByText('12 receipts saved')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Date range'),{target:{value:'This month'}});
+  expect(screen.queryByText('12 receipts saved')).toBeNull();
+  expect(screen.queryByRole('button',{name:'Open saved results'})).toBeNull();
+  expect(screen.getByRole('button',{name:'Import receipts'}).hasAttribute('disabled')).toBe(false);
+ });
  it('shows an existing app before the explicit custom-build branch',()=>{
   render(createElement(Journey,{onClose:vi.fn()}));
   fireEvent.click(screen.getByRole('button',{name:/6\. Apps in chat/}));
