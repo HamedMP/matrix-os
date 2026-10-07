@@ -1,0 +1,38 @@
+.design-review { background: var(--paper); color: var(--neutral-ink); min-height: 100dvh; }
+.review-header { display: flex; align-items: center; gap: 26px; padding: 20px 32px; border-bottom: 1px solid var(--border); }
+.review-header button { display: flex; gap: 8px; align-items: center; border: 0; background: none; min-height: 44px; padding: 0; font-size: 13px; }
+.review-header button svg { transform: rotate(180deg); }
+.review-header > span { font-weight: 600; font-size: 14px; }
+.review-header p { margin-left: auto; color: var(--muted); font-size: 11px; }
+.review-layout { display: grid; grid-template-columns: 240px minmax(0,1fr); }
+.review-apps { padding: 28px 24px; border-right: 1px solid var(--border); }
+.review-apps h1 { font-size: 24px; letter-spacing: -.8px; margin: 0 0 12px; line-height: 1.2; }
+.review-apps > p { font-size: 12px; line-height: 1.7; color: var(--muted); }
+.review-apps h2 { font-size: 12px; color: var(--muted); margin: 28px 0 8px; font-weight: 500; }
+.review-apps nav { display: grid; gap: 3px; }
+.review-apps nav button { display: flex; align-items: center; justify-content: space-between; text-align: left; border: 0; min-height: 44px; padding: 9px 12px; border-radius: 9px; font-size: 13px; background: none; }
+.review-apps nav button[aria-pressed=true] { color: var(--forest); background: var(--canvas); font-weight: 600; }
+.review-main { padding: 32px; min-width: 0; }
+.review-title { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.review-title span { font-size: 11px; color: var(--muted); }
+.review-title h2 { font-size: 40px; letter-spacing: -1.7px; margin: 9px 0; font-weight: 600; }
+.review-title p { font-size: 13px; color: var(--muted); line-height: 1.7; margin: 0; }
+.review-title button { font-size: 12px; white-space: nowrap; }
+.review-controls { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; margin-top: 28px; }
+.review-controls > div { display: flex; padding: 4px; border: 1px solid var(--border); background: var(--neutral-surface); border-radius: 12px; }
+.review-controls button { min-height: 44px; border: 0; padding: 8px 16px; background: none; border-radius: 8px; font-size: 12px; }
+.review-controls button[aria-pressed=true] { background: var(--paper); color: var(--forest); box-shadow: 0 1px 3px rgb(0 0 0 / .06); font-weight: 600; }
+.review-width { font-size: 11px; color: var(--muted); line-height: 1.7; margin: 16px 0; }
+.review-stage { overflow-x: auto; overscroll-behavior-x: contain; border: 1px solid var(--border); border-radius: 18px; padding: 24px; background: var(--neutral-surface); display: flex; gap: 24px; }
+.review-stage figure { margin: 0 auto; flex: 0 0 auto; max-width: none; }
+.review-stage figcaption { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; margin-bottom: 12px; gap: 12px; }
+.review-stage figcaption span { font-size: 10px; font-weight: 400; color: var(--muted); }
+.review-device { border: 1px solid var(--border); background: var(--paper); border-radius: 12px; overflow: hidden; }
+.review-device.device-phone { border: 6px solid var(--neutral-ink); border-radius: 34px; }
+.review-device iframe { display: block; border: 0; max-width: none; width: 100%; }
+.review-evidence { font-size: 11px; line-height: 1.8; color: var(--muted); max-width: 760px; margin: 20px 0; }
+.live-demo-thumbnail { position: relative; width: 100%; aspect-ratio: 1.6; overflow: hidden; background: var(--paper); }
+.live-demo-thumbnail iframe { display: block; border: 0; transform-origin: top left; max-width: none; pointer-events: none; }
+@media (max-width: 760px) { .review-header { padding: 12px 18px; flex-wrap: wrap; gap: 10px 24px; } .review-header p { flex-basis: 100%; margin: 0; } .review-layout { grid-template-columns: 1fr; } .review-apps { padding: 20px 18px; border-right: 0; border-bottom: 1px solid var(--border); } .review-apps > p { margin-bottom: 0; } .review-apps section h2 { margin: 18px 0 6px; } .review-apps nav { display: flex; overflow-x: auto; gap: 4px; } .review-apps nav button { flex: 0 0 auto; gap: 12px; } .review-main { padding: 24px 18px; } .review-title { align-items: flex-start; flex-direction: column; gap: 12px; } .review-title h2 { font-size: 34px; } .review-stage { padding: 12px; } .review-controls { gap: 10px; } .review-controls button { padding: 8px 12px; } }
+
+.example-loading { min-height: 200px; display: grid; place-items: center; padding: 24px; color: var(--muted); font-size: 12px; }
