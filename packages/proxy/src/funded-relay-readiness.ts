@@ -56,6 +56,10 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
     body = JSON.stringify({ model: "claude-sonnet-5", messages: [{ role: "user", content: "ping" }], max_tokens: 1 });
   } else return false;
 
+  // A scale-to-zero relay can suspend idle socket cleanup. Close standalone
+  // probes so the next health request cannot reuse a socket that expired while
+  // the process was idle; paid inference keeps its existing transport policy.
+  headers.connection = "close";
   try {
     const response = await fetchFn(url, { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs) });
     if (!response.ok) {
