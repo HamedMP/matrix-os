@@ -58,6 +58,16 @@ describe("voice conversations have separate durable history and titles", () => {
     expect((await sql<{ version: number }>`SELECT version FROM chat_schema_migrations ORDER BY version`
       .execute(repository.kysely)).rows).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
   });
+  it("repairs an invalid voice-history index left by an interrupted concurrent build", async () => {
+    await create("invalid_index");
+    await sql`UPDATE pg_index SET indisvalid = false
+      WHERE indexrelid = 'idx_chats_owner_kind_activity'::regclass`.execute(repository.kysely);
+    await bootstrapVoiceHistory(repository.kysely);
+    const validity = await sql<{ valid: boolean }>`SELECT indisvalid AS valid FROM pg_index
+      WHERE indexrelid = 'idx_chats_owner_kind_activity'::regclass`.execute(repository.kysely);
+    expect(validity.rows).toEqual([{ valid: true }]);
+    expect((await repository.get(owner, "chat_invalid_index"))?.chat.conversationKind).toBe("voice");
+  });
   it("migrates only durable assistant bootstrap records and preserves owner renames", async () => {
     await create("legacy", "chat"); await create("renamed", "chat"); await create("unrelated", "chat");
     await repository.kysely.updateTable("chats").set({ title: "Aoede" }).where("id", "in", ["chat_legacy", "chat_unrelated"]).execute();
