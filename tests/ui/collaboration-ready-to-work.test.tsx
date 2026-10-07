@@ -188,7 +188,7 @@ describe("organization ready-to-work presentation", () => {
     };
     render(<AudienceGrantPicker api={api} scope={scope} />);
     // The grant row names the person, not their Clerk id.
-    expect(await screen.findByText("Ada Lovelace · ada@example.com")).toBeVisible();
+    expect(await screen.findByLabelText("Preset for Ada Lovelace · ada@example.com")).toBeVisible();
     // Someone on a member page not loaded yet keeps their full id: a short id may not tell grants apart.
     expect(screen.getByText("user_2xFullClerkIdentifier00")).toBeVisible();
     expect(screen.getAllByText("Active")).toHaveLength(2);
