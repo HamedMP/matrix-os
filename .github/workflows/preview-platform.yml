@@ -1643,7 +1643,6 @@ jobs:
           test "$observed_machine" = "$PREVIEW_MACHINE_ID"
           preview_db="$(gcloud secrets versions access latest --secret "slack-preview-pr${PR_NUMBER}-platform-database-url" --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
-          SLACK_PREVIEW_DATABASE_URL="$preview_db" node scripts/slack-preview-runtime.mjs register
           preview_secret="$(gcloud secrets versions access latest --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_secret"
           preview_token="$(PREVIEW_SIGNING_SECRET="$preview_secret" node --input-type=module -e 'import {createHmac} from "node:crypto"; process.stdout.write(createHmac("sha256",process.env.PREVIEW_SIGNING_SECRET).update(process.argv[1]).digest("hex"))' "$handle")"
@@ -1679,14 +1678,18 @@ jobs:
           remaining=$((270 - (SECONDS - armed_at)))
           [ "$remaining" -gt 0 ] || fail_and_restore "The preview connection ran out of rollback-guard time before enrollment."
           enrollment_deadline="$(date -u -d "+${remaining} seconds" +%Y-%m-%dT%H:%M:%SZ)"
-          PREVIEW_DATABASE_URL="$preview_db" PREVIEW_HANDLE="$handle" PREVIEW_MACHINE_ID="$PREVIEW_MACHINE_ID" \
-            PREVIEW_COLLABORATION_OWNER_USER_ID="$PREVIEW_RUNTIME_OWNER_ID" PREVIEW_ADDRESS="$PREVIEW_ADDRESS" \
-            PREVIEW_ENROLLMENT_SINCE="$enrollment_since" PREVIEW_ENROLLMENT_DEADLINE="$enrollment_deadline" \
-            node scripts/preview-collaboration-staging.mjs enrollment \
-            || fail_and_restore "The home did not enroll with the isolated preview platform."
           commit="$(jq -cn --arg guard "$guard_path" --arg nonce "$nonce" '{command:["/usr/bin/sudo","/usr/bin/python3","-I",$guard,"commit",$nonce],timeoutMs:10000}')"
           send "$commit" || fail_and_restore "Could not commit the verified Slack preview connection."
           guard_armed=false
           disarm="$(jq -cn --arg unit "${guard_unit}.timer" '{command:["/usr/bin/sudo","/usr/bin/systemctl","stop",$unit],timeoutMs:10000}')"
           send_once "$disarm" || echo "::warning::The guard timer remains armed but will preserve the committed connection."
+          # Publish only after the VM can no longer roll back behind an active route.
+          SLACK_PREVIEW_DATABASE_URL="$preview_db" node scripts/slack-preview-runtime.mjs register
+          # Registration or enrollment failures leave a committed binding for retry;
+          # they never restore the VM while the database may already route to it.
+          PREVIEW_DATABASE_URL="$preview_db" PREVIEW_HANDLE="$handle" PREVIEW_MACHINE_ID="$PREVIEW_MACHINE_ID" \
+            PREVIEW_COLLABORATION_OWNER_USER_ID="$PREVIEW_RUNTIME_OWNER_ID" PREVIEW_ADDRESS="$PREVIEW_ADDRESS" \
+            PREVIEW_ENROLLMENT_SINCE="$enrollment_since" PREVIEW_ENROLLMENT_DEADLINE="$enrollment_deadline" \
+            node scripts/preview-collaboration-staging.mjs enrollment \
+            || fail_and_restore "The committed home did not enroll with the isolated preview platform; retry connection setup."
           echo "The Slack pilot is connected to the isolated PR backend and matching Matrix preview home." >> "$GITHUB_STEP_SUMMARY"
