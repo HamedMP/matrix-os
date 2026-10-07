@@ -19,7 +19,7 @@ describe("Custom MCP OAuth", () => {
     };
     const db = {
       getCustomMcpServerForBroker: vi.fn(async () => row),
-      updateCustomMcpCredentials: vi.fn(async (_id, _user, _revision, value) => { encrypted = value; return true; }),
+      updateCustomMcpCredentialsIfCurrent: vi.fn(async (_id, _user, _revision, _expected, value) => { encrypted = value; return true; }),
     } as unknown as PlatformDb;
     const request = vi.fn()
       .mockResolvedValueOnce({ status: 200, body: { resource: row.url, authorization_servers: ["https://auth.acme.tools"] } })
@@ -65,7 +65,7 @@ describe("Custom MCP OAuth", () => {
       };
       const db = {
         getCustomMcpServerForBroker: vi.fn(async () => row),
-        updateCustomMcpCredentials: vi.fn(async (_id, _user, _revision, value) => {
+        updateCustomMcpCredentialsIfCurrent: vi.fn(async (_id, _user, _revision, _expected, value) => {
           encrypted = value;
           return true;
         }),
@@ -113,7 +113,7 @@ describe("Custom MCP OAuth", () => {
 
       expect(authorization.searchParams.get("client_id")).toBe("granola-dynamic-client");
       expect(validateUrl).toHaveBeenCalledWith("https://mcp-auth.granola.ai/register");
-      expect(request).toHaveBeenNthCalledWith(3, {
+      expect(request).toHaveBeenNthCalledWith(3, expect.objectContaining({
         method: "POST",
         url: "https://mcp-auth.granola.ai/register",
         headers: { "content-type": "application/json" },
@@ -125,7 +125,7 @@ describe("Custom MCP OAuth", () => {
           token_endpoint_auth_method: "none",
           application_type: "web",
         }),
-      });
+      }));
       const credential = decryptCustomMcpCredential<any>(encrypted, key, {
         userId: "owner",
         serverId: row.id,
@@ -147,7 +147,7 @@ describe("Custom MCP OAuth", () => {
     };
     const db = {
       getCustomMcpServerForBroker: vi.fn(async () => row),
-      updateCustomMcpCredentials: vi.fn(),
+      updateCustomMcpCredentialsIfCurrent: vi.fn(),
     } as unknown as PlatformDb;
     const request = vi.fn()
       .mockResolvedValueOnce({ status: 200, body: { resource: row.url, authorization_servers: ["https://mcp-auth.granola.ai"] } })
@@ -175,7 +175,7 @@ describe("Custom MCP OAuth", () => {
     });
 
     await expect(oauth.start("owner", row.id)).rejects.toMatchObject({ code: "upstream" });
-    expect(db.updateCustomMcpCredentials).not.toHaveBeenCalled();
+    expect(db.updateCustomMcpCredentialsIfCurrent).not.toHaveBeenCalled();
   });
 
   it("reuses a dynamically registered client only for its bound issuer", async () => {
@@ -196,7 +196,7 @@ describe("Custom MCP OAuth", () => {
     }, key, { userId: "owner", serverId: row.id });
     const db = {
       getCustomMcpServerForBroker: vi.fn(async () => row),
-      updateCustomMcpCredentials: vi.fn(async () => true),
+      updateCustomMcpCredentialsIfCurrent: vi.fn(async () => true),
     } as unknown as PlatformDb;
     const request = vi.fn()
       .mockResolvedValueOnce({ status: 200, body: {
@@ -237,7 +237,7 @@ describe("Custom MCP OAuth", () => {
     };
     const db = {
       getCustomMcpServerForBroker: vi.fn(async () => row),
-      updateCustomMcpCredentials: vi.fn(),
+      updateCustomMcpCredentialsIfCurrent: vi.fn(),
     } as unknown as PlatformDb;
     const request = vi.fn()
       .mockResolvedValueOnce({ status: 200, body: {
@@ -263,6 +263,6 @@ describe("Custom MCP OAuth", () => {
     });
 
     await expect(oauth.start("owner", row.id)).rejects.toMatchObject({ code: "upstream" });
-    expect(db.updateCustomMcpCredentials).not.toHaveBeenCalled();
+    expect(db.updateCustomMcpCredentialsIfCurrent).not.toHaveBeenCalled();
   });
 });

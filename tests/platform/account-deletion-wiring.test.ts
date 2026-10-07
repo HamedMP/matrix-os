@@ -6,9 +6,9 @@ import { stubOrchestrator } from './proxy-routing-test-utils.js';
 import { createConfiguredAccountDeletionRuntime } from '../../packages/platform/src/account-deletion/wiring.js';
 import { createApp } from '../../packages/platform/src/main.js';
 import { createPlatformDb as createGatewayDb } from '../../packages/gateway/src/platform-db.js';
-import { CustomMcpBroker } from '../../packages/gateway/src/integrations/custom-mcp/broker.js';
+import { CustomMcpBroker, type CustomMcpCredential } from '../../packages/gateway/src/integrations/custom-mcp/broker.js';
 import { CustomMcpOAuthManager } from '../../packages/gateway/src/integrations/custom-mcp/oauth.js';
-import { encryptCustomMcpCredential } from '../../packages/gateway/src/integrations/custom-mcp/crypto.js';
+import { encryptCustomMcpCredential, decryptCustomMcpCredential } from '../../packages/gateway/src/integrations/custom-mcp/crypto.js';
 
 const store=vi.hoisted(()=>({listObjects:vi.fn(async()=>({keys:[],nextCursor:null})),deleteObject:vi.fn(),abortOwnerMultipartUploads:vi.fn(),destroy:vi.fn(),getPresignedGetUrl:vi.fn()}));
 vi.mock('../../packages/platform/src/account-deletion/storage.js',async importOriginal=>({...await importOriginal<object>(),createAccountDeletionObjectStore:()=>store}));
@@ -51,13 +51,17 @@ describe('production deletion composition',()=>{
      await sql`UPDATE account_deletion_jobs SET due_at='2020-01-01',next_attempt_at='2020-01-01'`.execute(db.executor);
      await runtime!.service.reconcile();
      expect((await runtime!.service.get('user_mcp'))?.status).not.toBe('completed');
-     expect((await sql`SELECT encrypted_credentials FROM custom_mcp_servers WHERE id=${ownerServerId}`.execute(db.executor)).rows)
-       .toEqual([{encrypted_credentials:encrypted}]);
+     const retained=await gatewayDb.getCustomMcpServerForBroker(ownerServerId,ownerUuid);
+     expect(retained).toMatchObject({enabled:false,status:'action_required',revision:3,action_required_reason:'credential_revocation_failed'});
+     expect(retained?.encrypted_credentials).toBeTruthy();
+     expect(decryptCustomMcpCredential<CustomMcpCredential>(retained!.encrypted_credentials!,encryptionKey,
+       {userId:ownerUuid,serverId:ownerServerId}).oauth).toEqual({...credential.oauth,removing:true});
      await sql`UPDATE account_deletion_jobs SET next_attempt_at='2020-01-01'`.execute(db.executor);
      await runtime!.service.reconcile();
      expect(await runtime!.service.get('user_mcp')).toMatchObject({status:'completed'});
      expect(remove).toHaveBeenCalledTimes(2);
      expect(remove).toHaveBeenLastCalledWith(ownerUuid,ownerServerId);
+     expect(revokeRequest).toHaveBeenCalledTimes(2);
      expect(revokeRequest).toHaveBeenLastCalledWith({method:'POST',url:'https://oauth.example.test/revoke',
        headers:{'content-type':'application/x-www-form-urlencoded'},body:'token=owner_grant&client_id=fixture_client'});
      expect(projectionRemove).not.toHaveBeenCalled();
