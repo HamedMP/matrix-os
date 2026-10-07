@@ -80,6 +80,15 @@ describe("Chat Agent HTTP boundary", () => {
     await agents.close(); await repository.kysely.destroy(); await rm(home, { recursive: true, force: true });
   });
   const json = (method: string, body: unknown) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  it.each(["matrix_pi_anthropic_api", "matrix_anthropic_api"])("rejects %s on generic Agent create and edit even when advertised", async instanceId => {
+    const selection = { instanceId, model: "claude-owner", options: [{ id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" }] };
+    catalog.instances.push({ ...catalog.instances[0]!, id: instanceId, driverKind: instanceId.startsWith("matrix_pi_") ? "matrix_pi" : "matrix_bot",
+      models: [{ ...catalog.instances[0]!.models[0]!, id: selection.model }], defaultSelection: selection,
+      options: selection.options.map(o => ({ id: o.id, label: o.id, kind: "enum", values: [{ value: o.value, label: "Current connection" }], defaultValue: o.value, placement: "advanced" })) });
+    expect((await app.request("/api/chat-agents", json("POST", { ...fields, selection }))).status).toBe(400);
+    const created = await (await app.request("/api/chat-agents", json("POST", fields))).json();
+    expect((await app.request(`/api/chat-agents/${created.id}`, json("PATCH", { baseRevision: created.revision, selection }))).status).toBe(400);
+  });
   it("rejects owner-local subscription selection on generic Agent create and edit", async () => {
     const selection = { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [
       { id: "accountId", value: "account_own" }, { id: "grantRevision", value: "3" },
@@ -136,6 +145,27 @@ describe("Chat Agent HTTP boundary", () => {
     }));
     expect(edited.status).toBe(200);
     expect(await edited.json()).toMatchObject({ name: "My Writing Bot", recipeRef: bot.recipeRef });
+  });
+
+  it("requires the complete current Anthropic binding before saving a recipe Bot selection", async () => {
+    const selection = { instanceId: "matrix_anthropic_api", model: "claude-owner", options: [
+      { id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" },
+    ] };
+    catalog.instances.push({ ...catalog.instances[0]!, id: selection.instanceId, driverKind: "matrix_bot",
+      supports: { ...catalog.instances[0]!.supports, permissionModes: ["default"] },
+      models: [{ ...catalog.instances[0]!.models[0]!, id: selection.model }], defaultSelection: selection,
+      options: selection.options.map(o => ({ id: o.id, label: o.id, kind: "enum", values: [{ value: o.value, label: "Current connection" }], defaultValue: o.value, placement: "advanced" })) });
+    const bot = await agents.createRecipeBot(owner, { id: "bot_anthropicedit", createHash: "e".repeat(64),
+      fields: { name: "Writing Bot", description: "Write", instructions: "Write", selection: { instanceId: "matrix_bot_default", model: "auto" } },
+      recipeRef: { recipeId: "writing-bot", version: "1" } });
+    for (const options of [undefined, [], [selection.options[0]!], [selection.options[1]!],
+      [{ ...selection.options[0]!, value: "2" }, selection.options[1]!],
+      [selection.options[0]!, { ...selection.options[1]!, value: "cfbe8f56-2fbc-47d7-9769-489ac7d4a78f" }]]) {
+      expect((await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: bot.revision, selection: { ...selection, options } }))).status).toBe(400);
+      expect((await agents.get(owner, bot.id))?.revision).toBe(bot.revision);
+    }
+    const saved = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: bot.revision, selection }));
+    expect(saved.status).toBe(200); expect(await saved.json()).toMatchObject({ selection, revision: 2 });
   });
 
   it("saves a recipe bot managed model with revision checks and can restore Automatic", async () => {

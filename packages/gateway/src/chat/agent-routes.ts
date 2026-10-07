@@ -1,4 +1,4 @@
-import { isChatAgentDriver, jevHermesRoute, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
+import { isChatAgentDriver, jevHermesRoute, matrixAnthropicSelectionBinding, sameMatrixAnthropicSelectionBinding, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID } from "@matrix-os/contracts";
 import {
   ChatAgentIdSchema, ChatAgentSchema, ChatAgentListResponseSchema, ChatMentionSearchResponseSchema,
   ChatAgentRecipeCatalogSchema,
@@ -68,10 +68,15 @@ export function createChatAgentRoutes(options: {
   }
   async function validSelection(principal: RequestPrincipal, selection: CanonicalChatModelSelection, jev = false): Promise<boolean> {
     const catalog = await options.catalog.getCatalog(principal);
+    if (selection.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID) {
+      const instance = catalog.instances.find(candidate => candidate.id === selection.instanceId);
+      if (!matrixAnthropicSelectionBinding(selection.options) || instance?.driverKind !== "matrix_bot"
+        || !sameMatrixAnthropicSelectionBinding(selection.options, instance.defaultSelection?.options)) return false;
+    }
     const checked = validateChatProviderSelection({ catalog, selection,
-      requirements: { interactionMode: "default", permissionMode: selection.instanceId === "matrix_chatgpt_plan" ? "default" : "full_access" },
+      requirements: { interactionMode: "default", permissionMode: ["matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(selection.instanceId) ? "default" : "full_access" },
     });
-    return checked.ok && (selection.instanceId === "matrix_chatgpt_plan" || isChatAgentDriver(checked.instance.driverKind))
+    return checked.ok && (["matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(selection.instanceId) || isChatAgentDriver(checked.instance.driverKind))
       && (!jev || (jevHermesRoute(selection) !== null && checked.instance.driverKind === "hermes"
         && checked.instance.defaultSelection?.model === selection.model));
   }
@@ -96,8 +101,8 @@ export function createChatAgentRoutes(options: {
     const scope = { type: "personal" as const, ownerId: principal.userId };
     const existing = await agents.findCreated(scope, input);
     if (existing) return c.json(ChatAgentSchema.parse(existing), 201);
-    if (input.selection.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return c.json({ error: "Choose an available Agent model." }, 400);
-    if (input.selection.instanceId === "matrix_chatgpt_plan") return c.json({ error: "Choose a Matrix Bot for this connection." }, 400);
+    if ([MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) return c.json({ error: "Choose an available Agent model." }, 400);
+    if (["matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) return c.json({ error: "Choose a Matrix Bot for this connection." }, 400);
     if (!await validSelection(principal, input.selection, isJevInboxRecipe(input.recipe))) return c.json({ error: "Choose an available Agent model." }, 400);
     let recipe;
     try {
@@ -119,11 +124,11 @@ export function createChatAgentRoutes(options: {
     const input = UpdateChatAgentRequestSchema.parse(await c.req.json());
     const current = await agents.get({ type: "personal", ownerId: principal.userId }, id);
     if (!current) return c.json({ error: "Agent or Chat not found" }, 404);
-    if (input.selection?.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return c.json({ error: "Choose an available Agent model." }, 400);
-    if (input.selection?.instanceId === "matrix_chatgpt_plan" && !current.recipeRef) return c.json({ error: "Choose a Matrix Bot for this connection." }, 400);
+    if (input.selection && [MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) return c.json({ error: "Choose an available Agent model." }, 400);
+    if (input.selection && ["matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId) && !current.recipeRef) return c.json({ error: "Choose a Matrix Bot for this connection." }, 400);
     const automatic = input.selection?.instanceId === "matrix_bot_default" && input.selection.model === "auto"
       && !Object.keys(input.selection.options ?? {}).length;
-    if (input.selection && current.recipeRef && !automatic && ! ["matrix_pi_default", "matrix_chatgpt_plan"].includes(input.selection.instanceId)) {
+    if (input.selection && current.recipeRef && !automatic && ! ["matrix_pi_default", "matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) {
       return c.json({ error: "Choose an available Matrix AI model." }, 400);
     }
     const jev = isJevInboxRecipe(input.recipe === null ? undefined : input.recipe ?? current.recipe);
