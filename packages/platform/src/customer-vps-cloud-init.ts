@@ -16,6 +16,9 @@ export interface CustomerHostConfig {
   platformVerificationToken: string;
   syncRuntimeToken: string;
   fundedAiRuntimeToken: string;
+  platformImageEnabled?: string;
+  platformImageOrigin?: string;
+  platformImageRuntimeToken?: string;
   platformSpeechEnabled: string;
   platformSpeechOrigin: string;
   platformSpeechRuntimeToken: string;
@@ -44,10 +47,12 @@ const SECRET_KEYS = [
   'syncRuntimeToken',
   'fundedAiRuntimeToken',
   'platformSpeechRuntimeToken',
+  'platformImageRuntimeToken',
 ] as const;
-const REQUIRED_KEYS = ['hostBundleUrl', 'registrationTokenExpiresAt', ...SECRET_KEYS] as const;
+const REQUIRED_KEYS = ['hostBundleUrl', 'registrationTokenExpiresAt', ...SECRET_KEYS.filter(key => key !== 'platformImageRuntimeToken')] as const;
 
 function assertRenderable(input: CustomerHostConfig): void {
+  if (input.platformImageEnabled === "true" && (!input.platformImageOrigin || !input.platformImageRuntimeToken)) throw new Error("Missing platform image runtime configuration");
   for (const key of REQUIRED_KEYS) {
     if (!input[key]) throw new Error(`Missing ${key}`);
   }
@@ -56,6 +61,9 @@ function assertRenderable(input: CustomerHostConfig): void {
 export function renderCloudInitTemplate(template: string, input: CustomerHostConfig): string {
   assertRenderable(input);
   const optionalDefaults: Partial<Record<keyof CustomerHostConfig, string>> = {
+    platformImageEnabled: 'false',
+    platformImageOrigin: '',
+    platformImageRuntimeToken: '',
     imageSource: 'clean_image',
     targetBundleSha256: '',
     snapshotSourceVersion: '',
@@ -83,7 +91,8 @@ export async function loadCustomerVpsCloudInitTemplate(
 export function redactCloudInitSecrets(value: string, input: CustomerHostConfig): string {
   let redacted = value;
   for (const key of SECRET_KEYS) {
-    redacted = redacted.replaceAll(input[key], '[redacted]');
+    const secret = input[key];
+    if (secret) redacted = redacted.replaceAll(secret, '[redacted]');
   }
   return redacted;
 }

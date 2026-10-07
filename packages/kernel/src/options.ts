@@ -1,3 +1,4 @@
+import type { ImageClient } from "./image-gen.js";
 import {
   closeSync,
   existsSync,
@@ -242,6 +243,7 @@ export interface KernelConfig {
   requestApproval?: RequestApprovalFn;
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
+  platformImageClient?: ImageClient;
 }
 
 export async function kernelOptions(config: KernelConfig) {
@@ -263,6 +265,7 @@ export async function kernelOptions(config: KernelConfig) {
     homePath,
     config.osViewTools,
     config.ownerAudioTranscriber,
+    config.platformImageClient,
   );
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);

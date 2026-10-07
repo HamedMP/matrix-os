@@ -804,7 +804,12 @@ export interface AccountDeletionJobsTable {
   completed_at: string | null;
 }
 
+export interface ImageMonthlyAllowanceTable { owner_id: string; period_start: string; granted_microusd: number; spent_microusd: number; reserved_microusd: number; }
+export interface ImageGenerationOperationsTable { owner_id: string; request_id: string; machine_id: string; runtime_slot: string; period_start: string; payload_hash: string; state: "dispatching" | "succeeded" | "uncertain"; reserved_microusd: number; actual_microusd: number | null; reconciliation_evidence: Generated<string | null>; created_at: string; updated_at: string; }
 export interface PlatformDatabase {
+  image_owner_admissions: { owner_id: string };
+  image_monthly_allowances: ImageMonthlyAllowanceTable;
+  image_generation_operations: ImageGenerationOperationsTable;
   account_deletion_jobs: AccountDeletionJobsTable;
   users: UsersTable;
   containers: ContainersTable;

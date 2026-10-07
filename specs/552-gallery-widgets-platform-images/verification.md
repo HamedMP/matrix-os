@@ -1,0 +1,16 @@
+# October 7 source verification
+
+This prepares reviewable source and a design preview. No production release, provider spending or owner app/data replacement occurred.
+
+- Funded images: implementation commits `f004fef1b`, `c7537be62`, `2c80e4a08`. Fourteen focused suites passed 176 tests; the final 17-case image-service suite and kernel type check passed after the generic BYOK-error fix. Platform, gateway and kernel production builds pass. The integration uses the registered image tool, real transport/routes/service and database transactions with a mocked Google response; exact saved PNG bytes are asserted. Large images, token-epoch races, monthly admission, uncertain reservations, explicit funding choice, thought images, owner export/deletion and real activation-script execution have regressions. The legacy generation-7 upgrade checks the new generation-15 image tables and constraints. Tests use PGlite; live concurrent PostgreSQL and live Google calls remain qualification gates.
+- Gallery/widgets: `e1f957a20`, integrated with the updated source-preview foundation. Seven gallery/widget interactions, three preview-failure cases, 17 Node checks, TypeScript, Vite build, demo verifier and browser-harness syntax pass. The widget board uses bounded fictional in-memory state; it is an interactive design, not a production desktop host. Real mobile-width documents are used. Exact generated artwork prompts and dimensions are in the prototype README.
+- Public site: `060645d`. 267 tests and strict TypeScript pass. Final canonical production build passes all 441 pages after removing an unused Orbitron request that reproduced a Next font-resolution failure. Public app pages use candidate metadata/fictional source screenshots. The whiteboard supports local drawing/export; peer sessions remain separate.
+- Existing app refresh: connected-app PR #2235 received exact-head Greptile 5/5 after filter/plot fixes. Default phone Notes/Weather regressions are covered by source safeguards; rendered evidence remains pending. Generated preview documents and source composition have separate PRs to keep each review below 50 files.
+
+## Independent review
+
+Correctness, testing, maintainability, standards, agent-native/API, learning, frontend-race and backend security/reliability reviews were performed. Findings were reproduced and corrected: widget focus continuity, large-PNG validation overflow, credential-epoch admission, monthly caps, global uncertain capacity, explicit BYOK, documented thought-image content, complete bounded owner export, stale migration test and raw BYOK errors.
+
+## Remaining release gates
+
+Gallery browser inspection was denied; no alternate browser/CDP/HTTP/screenshot route was used. Public-site visual inspection was unavailable while the Mac was locked and the in-app browser unavailable. Source/build checks are not rendered screenshots. Actual Native Mobile safe-area/keyboard/navigation/cold-warm-cache/save-reopen qualification remains pending, as do production widget hosting/notifications and platform-funded live activation. Direct native-harness image wrappers are not asserted as implemented; the root kernel and core builder have verified tool access. All PRs stay draft for review.

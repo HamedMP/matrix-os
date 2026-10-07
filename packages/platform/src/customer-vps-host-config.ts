@@ -6,6 +6,7 @@ import type { UserMachineProvisioningClass } from './db.js';
 import {
   buildPlatformRuntimeVerificationToken,
   buildPlatformSpeechRuntimeVerificationToken,
+  buildPlatformImageRuntimeVerificationToken,
   buildPlatformSyncVerificationToken,
   buildPlatformVerificationToken,
 } from './platform-token.js';
@@ -37,6 +38,9 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
   '      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}',
   '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
+  '      MATRIX_PLATFORM_IMAGE_ENABLED={{platformImageEnabled}}',
+  '      MATRIX_PLATFORM_IMAGE_ORIGIN={{platformImageOrigin}}',
+  '      MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN={{platformImageRuntimeToken}}',
   '      MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}',
   '      MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}',
   '      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}',
@@ -100,6 +104,9 @@ export function buildHostConfig(
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
     syncRuntimeToken: buildPlatformSyncVerificationToken(runtimeIdentity, config.platformSecret, runtimeTokenEpoch),
     fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken(runtimeIdentity, config.platformSecret, runtimeTokenEpoch),
+    platformImageEnabled: config.platformImageEnabled ? "true" : "false",
+    platformImageOrigin: platformInternalUrl,
+    platformImageRuntimeToken: buildPlatformImageRuntimeVerificationToken(runtimeIdentity, config.platformSecret, runtimeTokenEpoch),
     platformSpeechEnabled: String(config.platformSpeechEnabled),
     platformSpeechOrigin: platformInternalUrl,
     platformSpeechRuntimeToken: buildPlatformSpeechRuntimeVerificationToken(runtimeIdentity, config.platformSecret, runtimeTokenEpoch),

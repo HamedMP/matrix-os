@@ -123,6 +123,7 @@ const IPC_TOOLS = {
     "mcp__matrix-os-ipc__complete_task",
     "mcp__matrix-os-ipc__fail_task",
     "mcp__matrix-os-ipc__send_message",
+    "mcp__matrix-os-ipc__generate_image",
   ],
   healer: [
     "mcp__matrix-os-ipc__claim_task",

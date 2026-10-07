@@ -1,3 +1,4 @@
+import { migrateImageGeneration } from "./migrations/image-generation.js";
 import { migrateAccountDeletion } from './migrations/account-deletion.js';
 import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
@@ -31,6 +32,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'ai-funded', run: migrateAiFunded },
   { name: 'ai-credit-history', run: migrateAiCreditHistory },
   { name: 'speech', run: migrateSpeech },
+  { name: 'image-generation', run: migrateImageGeneration },
   { name: 'provisioning-jobs', run: migrateProvisioningJobs },
   { name: 'checkout', run: migrateCheckout },
   { name: 'onboarding', run: migrateOnboarding },

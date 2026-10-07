@@ -56,6 +56,7 @@ export default defineConfig({
       "@matrix-os/contracts/local-chat-import": path.resolve(__dirname, "packages/contracts/src/local-chat-import/index.ts"),
       "@matrix-os/contracts/bots": path.resolve(__dirname, "packages/contracts/src/bots/index.ts"),
       "@matrix-os/bot-runtime": path.resolve(__dirname, "packages/bot-runtime/src/index.ts"),
+      "@matrix-os/contracts/image-generation/server": path.resolve(__dirname, "packages/contracts/src/image-generation/server.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
       "@matrix-os/observability/client": path.resolve(
         __dirname,

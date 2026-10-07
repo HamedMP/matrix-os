@@ -6,11 +6,13 @@ import pg from 'pg';
 import {
   buildPlatformRuntimeVerificationToken,
   buildPlatformSpeechRuntimeVerificationToken,
+  buildPlatformImageRuntimeVerificationToken,
   buildPlatformSyncVerificationToken,
   buildPlatformVerificationToken,
 } from '../../packages/platform/src/platform-token.ts';
 import { encryptRuntimeTokenRotation } from './runtime-token-envelope.mjs';
 import { targetRuntimeTokenEpoch } from './runtime-token-epoch.mjs';
+import { pathToFileURL } from 'node:url';
 
 type Machine = {
   machine_id: string;
@@ -28,8 +30,8 @@ async function protectedText(path: string): Promise<string> {
   return readFile(path, 'utf8');
 }
 
-function flags(): Record<string, string> {
-  const args = process.argv.slice(2);
+export function parseRotationFlags(input: string[]): Record<string, string> {
+  const args = [...input];
   const action = args.shift();
   if (action !== 'prepare' && action !== 'prepare-recovery' && action !== 'activate') throw new Error('Expected prepare, prepare-recovery, or activate');
   if (args.length % 2) throw new Error('Expected flag/value pairs');
@@ -43,15 +45,30 @@ function flags(): Record<string, string> {
     : action === 'prepare-recovery'
       ? ['machine-id', 'db-file', 'secret-file', 'public-key-file', 'verifier-digest', 'host-epoch', 'out']
       : ['machine-id', 'db-file', 'expected-epoch'];
-  if (Object.keys(values).length !== required.length + 1 || required.some((key) => !values[key])) {
+  const imageSupport = values['host-image-support'];
+  if (imageSupport !== undefined && (action === 'activate' || imageSupport !== 'confirmed')) throw new Error('Host image rotation support must be confirmed');
+  if (Object.keys(values).length !== required.length + 1 + (imageSupport ? 1 : 0) || required.some((key) => !values[key])) {
     throw new Error('Invalid rotation arguments');
   }
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(values['machine-id'])) throw new Error('Invalid machine id');
   return values;
 }
 
+/** Default envelopes work on earlier strict three-domain host helpers. Only pass
+ * confirmed after checking that the selected installed helper supports images. */
+export function buildRotationPayload(machine: Pick<Machine, 'machine_id' | 'handle' | 'runtime_slot'>, secret: string, epoch: number, hostImageSupport?: string) {
+  if (hostImageSupport !== undefined && hostImageSupport !== 'confirmed') throw new Error('Host image rotation support must be confirmed');
+  const identity = { handle: machine.handle, machineId: machine.machine_id, runtimeSlot: machine.runtime_slot };
+  return { machineId: machine.machine_id, runtimeSlot: machine.runtime_slot, epoch, tokens: {
+    sync: buildPlatformSyncVerificationToken(identity, secret, epoch),
+    fundedAi: buildPlatformRuntimeVerificationToken(identity, secret, epoch),
+    speech: buildPlatformSpeechRuntimeVerificationToken(identity, secret, epoch),
+    ...(hostImageSupport === 'confirmed' ? { images: buildPlatformImageRuntimeVerificationToken(identity, secret, epoch) } : {}),
+  } };
+}
+
 async function main(): Promise<void> {
-  const options = flags();
+  const options = parseRotationFlags(process.argv.slice(2));
   const connectionString = (await protectedText(options['db-file'])).trim();
   const pool = new pg.Pool({ connectionString, max: 1, connectionTimeoutMillis: 10000 });
   const db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
@@ -80,17 +97,7 @@ async function main(): Promise<void> {
         throw new Error('Platform secret does not match selected host');
       }
       const publicKey = await protectedText(options['public-key-file']);
-      const identity = { handle: machine.handle, machineId: machine.machine_id, runtimeSlot: machine.runtime_slot };
-      const envelope = encryptRuntimeTokenRotation({
-        machineId: machine.machine_id,
-        runtimeSlot: machine.runtime_slot,
-        epoch: targetEpoch,
-        tokens: {
-          sync: buildPlatformSyncVerificationToken(identity, secret, targetEpoch),
-          fundedAi: buildPlatformRuntimeVerificationToken(identity, secret, targetEpoch),
-          speech: buildPlatformSpeechRuntimeVerificationToken(identity, secret, targetEpoch),
-        },
-      }, publicKey);
+      const envelope = encryptRuntimeTokenRotation(buildRotationPayload(machine, secret, targetEpoch, options['host-image-support']), publicKey);
       await writeFile(options.out, JSON.stringify(envelope), { flag: 'wx', mode: 0o600 });
       process.stdout.write(`Prepared encrypted runtime token epoch ${targetEpoch}.\n`);
       return;
@@ -113,4 +120,6 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(() => { process.stderr.write('Runtime token rotation failed. Check private operator logs.\n'); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(() => { process.stderr.write('Runtime token rotation failed. Check private operator logs.\n'); process.exitCode = 1; });
+}
