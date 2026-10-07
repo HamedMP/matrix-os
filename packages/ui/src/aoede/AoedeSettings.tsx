@@ -86,14 +86,14 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
     <fieldset className="matrix-aoede-settings__group" disabled={busy !== null}>
       <legend className="matrix-aoede-settings__legend">{nativeConversation ? "Tasks" : "Model"}</legend>
       {nativeConversation ? <p className="matrix-aoede-settings__hint">Voice is paid by Matrix and works without an AI subscription. Choose an agent below to run tasks.</p> : null}
-      {catalog === "loading" ? <p className="matrix-aoede-settings__hint">Loading providers…</p> : null}
+      {catalog === "loading" ? <p className="matrix-aoede-settings__hint">Loading harnesses…</p> : null}
       {catalog === null ? <div className="matrix-aoede-settings__row">
-        <p className="matrix-aoede-settings__hint" role="status">Provider list unavailable.</p>
+        <p className="matrix-aoede-settings__hint" role="status">Harness list unavailable.</p>
         <button type="button" className="matrix-aoede__button" onClick={reloadCatalog}>Reload</button>
       </div> : null}
       {catalog !== "loading" && catalog !== null ? <>
         <label className="matrix-aoede-settings__field">
-          <span>{nativeConversation ? "Task agent" : "Provider"}</span>
+          <span>{nativeConversation ? "Task agent" : "Harness"}</span>
           <select value={instance?.id ?? ""} disabled={busy === "selection" || boundInstance !== null}
             onChange={(event) => {
               const next = catalog.instances.find(item => item.id === event.target.value);
@@ -101,12 +101,12 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
               if (!next || !model) return;
               run("selection", () => controller.setSelection({ instanceId: next.id, model }));
             }}>
-            {instance === null ? <option value="" disabled>{nativeConversation ? "Choose task agent" : "Choose provider"}</option> : null}
+            {instance === null ? <option value="" disabled>{nativeConversation ? "Choose task agent" : "Choose harness"}</option> : null}
             {catalog.instances.filter(item => item.availability === "available").slice(0, 64).map(item =>
               <option key={item.id} value={item.id}>{boundedAoedeText(item.displayName, 80)}</option>)}
           </select>
         </label>
-        {boundInstance !== null ? <p className="matrix-aoede-settings__hint">The provider is locked to this conversation while runs are bound to it.</p> : null}
+        {boundInstance !== null ? <p className="matrix-aoede-settings__hint">The harness is locked to this conversation while runs are bound to it.</p> : null}
         <label className="matrix-aoede-settings__field">
           <span>Model</span>
           <select value={selection?.model ?? ""} disabled={busy === "selection" || !instance}
