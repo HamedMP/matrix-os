@@ -67,6 +67,15 @@ beforeEach(async () => {
 afterEach(async () => { await app.shutdownSlack(); await destroyFixture(); });
 
 describe("Slack app ingress", () => {
+  it('limits the mutating OAuth callback before exchanging a code',async()=>{
+    const callback=await startOAuth();
+    // Browser Request constructors forbid GET bodies; simulate a body-bearing inbound server request.
+    const request=new Request(new URL(callback,config.publicBaseUrl),{method:'POST',body:'x'.repeat(256*1024+1),headers:{'content-length':String(256*1024+1)}});
+    Object.defineProperty(request,'method',{value:'GET'});
+    const response=await app.fetch(request);
+    expect(response.status).toBe(413);
+    expect(api.exchangeCode).not.toHaveBeenCalled();
+  });
   it("rejects unsafe callback origins and authenticates events using the live default clock",async()=>{
     for(const publicBaseUrl of ["http://app.matrix-os.com","https://user@app.matrix-os.com","https://app.matrix-os.com/path","https://app.matrix-os.com?bad=1","https://app.matrix-os.com#bad"])
       expect(()=>makeApp({config:{...config,publicBaseUrl}})).toThrow("Slack public origin unavailable");
