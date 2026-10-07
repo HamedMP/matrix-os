@@ -152,14 +152,18 @@ export function createBotGrantsRepository(db: BotExecutor) {
       return rows.map(fromRow);
     },
     /** The live grant for one account in one audience that allows `effect`, if any. */
-    async findUsable(input: { ownerId: string; botId: string; service: string; connectionId: string; audience: string; effect: BotEffect; now: string }, executor: BotExecutor = db): Promise<BotGrantRecord | undefined> {
-      const row = await executor.selectFrom("bot_grants").selectAll()
+    async findUsable(input: { ownerId: string; botId: string; service: string; connectionId: string; audience: string; effect: BotEffect; now: string; lockForDispatch?: boolean }, executor: BotExecutor = db): Promise<BotGrantRecord | undefined> {
+      if (input.lockForDispatch && !executor.isTransaction) throw new BotStateError("invalid_input");
+      let query = executor.selectFrom("bot_grants").selectAll()
         .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
         .where("service", "=", input.service).where("connection_id", "=", input.connectionId)
         .where("audience", "=", input.audience).where("revoked_at", "is", null)
         .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", input.now)]))
-        .where(sql<boolean>`${input.effect} = ANY(effects)`)
-        .executeTakeFirst();
+        .where(sql<boolean>`${input.effect} = ANY(effects)`);
+      // Hold this exact grant stable through local source qualification.
+      // The caller must commit before entering network transport.
+      if (input.lockForDispatch) query = query.forShare();
+      const row = await query.executeTakeFirst();
       return row ? fromRow(row) : undefined;
     },
   };

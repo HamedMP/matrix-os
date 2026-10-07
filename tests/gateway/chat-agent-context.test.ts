@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KyselyPGlite } from "kysely-pglite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+import { createCanonicalChatRoutes, type CanonicalChatRouteService } from "../../packages/gateway/src/chat/routes.js";
+import { admitCanonicalTurn } from "../../packages/gateway/src/chat/turn-admission.js";
+import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { ChatAgentStore } from "../../packages/gateway/src/chat/agent-store.js";
 import { ChatAgentContext, contextPrompt } from "../../packages/gateway/src/chat/agent-context.js";
@@ -280,6 +284,52 @@ describe("server-resolved Chat mention context", () => {
       });
       await expect(context.prepare(owner, "chat_source", { ...request, selection: plan }))
         .rejects.toMatchObject({ code: "context_unavailable" });
+    });
+
+    it.each([
+      { instanceId: "matrix_anthropic_api", model: "claude-model" },
+      { instanceId: "matrix_anthropic_api", model: "claude-model", options: [{ id: "connectionRevision", value: "3" }] },
+      { instanceId: "matrix_anthropic_api", model: "claude-model", options: [{ id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" }] },
+      { instanceId: "matrix_chatgpt_plan", model: "account-model" },
+      { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [{ id: "accountId", value: "account_own" }] },
+    ])("rejects incomplete coordinator binding as a nonretryable Chat Turn selection error: %j", async selection => {
+      const id = "bot_0123456789abcdef01234567";
+      await agents.createRecipeBot(owner, { id, createHash: "d".repeat(64),
+        fields: { name: "Writing Bot", description: "", instructions: "Revise.", selection: botSelection },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" } });
+      const bots = botContext(chatId => chatId === "chat_current" ? id : null);
+      const getCatalog = vi.fn(async () => { throw new Error("Invalid source must fail before catalog or inference"); });
+      const startDispatch = vi.fn(), persist = vi.spyOn(repository, "admitTurn");
+      const service = { admitTurn: (principal, resolvedOwner, chatId, input) => admitCanonicalTurn({
+        repository, agentContext: bots, catalog: { getCatalog }, adapters: new CanonicalChatProviderRegistry([]),
+        assertOpen: () => {}, assertPersonalExecutionAllowed: async () => {}, reconcileActiveRuns: async () => {},
+        reservePendingDispatch: () => {}, releasePendingDispatch: () => {}, atCapacity: () => false,
+        hasStoppingExecution: () => false, startDispatch,
+      }, principal, resolvedOwner, chatId, input) } as CanonicalChatRouteService;
+      const app = new Hono().route("/", createCanonicalChatRoutes({ service, getPrincipal: () => ({ userId: owner.ownerId, source: "jwt" }) }));
+      const response = await app.request("/api/chats/chat_current/turns", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...request, selection }) });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: { code: "model_unavailable", safeMessage: "The selected model is not available.", retryable: false, recoveryActions: ["select_provider"] } });
+      expect(getCatalog).not.toHaveBeenCalled(); expect(startDispatch).not.toHaveBeenCalled(); expect(persist).not.toHaveBeenCalled();
+    });
+
+    it("preserves qualified Anthropic and funded coordinator choices while leaving unexpected errors untouched", async () => {
+      const id = "bot_0123456789abcdef01234567";
+      await agents.createRecipeBot(owner, { id, createHash: "e".repeat(64),
+        fields: { name: "Writing Bot", description: "", instructions: "Revise.", selection: botSelection },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" } });
+      const bots = botContext(chatId => chatId === "chat_current" ? id : null);
+      for (const selection of [
+        { instanceId: "matrix_anthropic_api", model: "claude-model", options: [{ id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" }] },
+        { instanceId: "matrix_pi_default", model: "cloudflare:@cf/zai-org/glm-5.3-flash" },
+      ]) {
+        expect((await bots.prepare(owner, "chat_current", { ...request, selection })).selection)
+          .toEqual({ ...selection, instanceId: "matrix_bot_default" });
+      }
+      const unexpected = new Error("Unrelated infrastructure failure");
+      vi.spyOn(agents, "get").mockRejectedValueOnce(unexpected);
+      await expect(bots.prepare(owner, "chat_current", request)).rejects.toBe(unexpected);
     });
 
     it("refuses a Bot-only subscription saved on a custom Agent rather than forwarding it to ordinary execution", async () => {

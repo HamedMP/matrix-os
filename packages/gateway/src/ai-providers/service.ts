@@ -13,6 +13,7 @@ import {
   type AiProviderReadiness,
   type AiProviderLocalObservation,
   type AiProviderSnapshotV3,
+  type MatrixAnthropicConnection,
 } from "@matrix-os/contracts";
 import type { KernelCredentialObservationState } from "../kernel-credentials.js";
 import { KERNEL_DEFAULTS } from "../kernel-settings.js";
@@ -65,6 +66,8 @@ interface AiProviderServiceOptions {
   fundedReadinessReader?: FundedAiReadinessReader;
   codexNativeKeyReadiness?: () => Promise<AiProviderReadiness | null>;
   codexLocalObservation?: (signal: AbortSignal) => Promise<CodexLocalCredentialObservation>;
+  /** Saved source authority only; this read must not discover or enable a connection. */
+  matrixAnthropicConnection?: () => Promise<MatrixAnthropicConnection | undefined>;
 }
 
 function matchedCodexLocalObservation(
@@ -199,6 +202,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #fundedReadiness?: FundedAiReadinessReader;
   readonly #codexNativeKeyReadiness?: AiProviderServiceOptions["codexNativeKeyReadiness"];
   readonly #codexLocalObservation?: AiProviderServiceOptions["codexLocalObservation"];
+  readonly #matrixAnthropicConnection?: AiProviderServiceOptions["matrixAnthropicConnection"];
 
   constructor(options: AiProviderServiceOptions) {
     if (!options.homePath) throw new Error("AI provider home path is required");
@@ -221,6 +225,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     this.#fundedReadiness = options.fundedReadinessReader;
     this.#codexNativeKeyReadiness = options.codexNativeKeyReadiness;
     this.#codexLocalObservation = options.codexLocalObservation;
+    this.#matrixAnthropicConnection = options.matrixAnthropicConnection;
   }
 
   async #readCodexLocalObservation(timeoutMs = CODEX_OBSERVATION_TIMEOUT_MS, parent?: AbortSignal): Promise<AiProviderLocalObservation | undefined> {
@@ -564,8 +569,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
         }
       : { providerInstanceId: null, accessSourceId: null, modelId: null };
 
+    const matrixAnthropicConnection = await this.#matrixAnthropicConnection?.();
+    options.signal?.throwIfAborted();
     return AiProviderSnapshotV3Schema.parse({
       contractVersion: 3,
+      ...(matrixAnthropicConnection ? { matrixAnthropicConnection } : {}),
       ...(nativeHarnessCatalog ? { nativeHarnessCatalog } : {}),
       revision: 0,
       refreshedAt: now,

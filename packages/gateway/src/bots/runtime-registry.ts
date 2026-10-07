@@ -42,6 +42,7 @@ export interface BotRuntimeBinding {
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
+  anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
   capabilities: readonly BotToolCapability[];
   /** Funded priority for this run: a person waiting in chat, or a routine. */
   requestClass: "interactive" | "background";
@@ -77,6 +78,7 @@ const BindingSchema = z.object({
   route: BotModelRouteSchema,
   accessSourceId: BotCredentialAccessSourceIdSchema,
   subscription: z.object({peerId: z.uuid(), accountId: ReferenceSchema, computerId: ReferenceSchema, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)}).strict().optional(),
+  anthropicApi: z.object({ connectionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), credentialGeneration: z.uuid() }).strict().optional(),
   capabilities: z.array(BotToolCapabilitySchema).max(16),
   requestClass: z.enum(["interactive", "background"]),
 }).strict();
@@ -120,7 +122,8 @@ export class BotRuntimeRegistry {
   bind(input: PiRuntimeBinding): void {
     const parsed = (isManagedPiBinding(input) ? ManagedBindingSchema : BindingSchema).safeParse(input);
     if (!parsed.success || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
-      || parsed.data.subscription && parsed.data.route.api !== "openai-responses") throw new BotRuntimeRegistryError("invalid_binding");
+      || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
+      || parsed.data.anthropicApi && (parsed.data.accessSourceId !== "owner_anthropic_key" || parsed.data.route.api !== "anthropic-messages" || parsed.data.subscription)) throw new BotRuntimeRegistryError("invalid_binding");
     this.sweep();
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
       throw new BotRuntimeRegistryError("capacity_exceeded");
@@ -157,6 +160,12 @@ export class BotRuntimeRegistry {
   /** Stop inference immediately, retaining terminal event/session authority until release. */
   cancelInference(input: PiInferenceIdentity): void {
     if (this.inferenceSignal(input)) this.entries.get(input.runtimeHandle)!.inference.abort();
+  }
+
+  /** Changing this explicit source stops inference while retaining terminal/session delivery. */
+  cancelAnthropicInference(): void {
+    this.sweep();
+    for (const entry of this.entries.values()) if (entry.anthropicApi) entry.inference.abort();
   }
 
   /** Inference only on the route's own action and model; bot runtimes never use egress. */

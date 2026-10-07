@@ -79,7 +79,7 @@ function stateCode(error: BotStateError): BotToolErrorCode {
  * Settles with `work`, or rejects when `signal` aborts first, so a dispatcher
  * that ignores cancellation cannot hold the broker past its timeout.
  */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+export function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(signal.reason);
