@@ -1,0 +1,184 @@
+{
+  "folio": {
+    "name": "Lagoon",
+    "accent": "#176d65",
+    "darkAccent": "#88d8ca",
+    "wash": "#e0f2ed",
+    "glow": "#c6e7df"
+  },
+  "atlas": {
+    "name": "Sky",
+    "accent": "#2562a0",
+    "darkAccent": "#8fc8f8",
+    "wash": "#e4f1fb",
+    "glow": "#c4dff5"
+  },
+  "agenda": {
+    "name": "Poppy",
+    "accent": "#b4364b",
+    "darkAccent": "#ffa3b1",
+    "wash": "#fce8eb",
+    "glow": "#f3cbd3"
+  },
+  "subscriptions": {
+    "name": "Plum",
+    "accent": "#78509b",
+    "darkAccent": "#d2afea",
+    "wash": "#f1e8f7",
+    "glow": "#e0cef0"
+  },
+  "focus": {
+    "name": "Honey",
+    "accent": "#90651b",
+    "darkAccent": "#f2d084",
+    "wash": "#fbf0d7",
+    "glow": "#efdfb5"
+  },
+  "meeting-briefs": {
+    "name": "Aubergine",
+    "accent": "#694a78",
+    "darkAccent": "#d2b8dd",
+    "wash": "#f0e9f4",
+    "glow": "#e3d3eb"
+  },
+  "projects": {
+    "name": "Cobalt",
+    "accent": "#4059b2",
+    "darkAccent": "#aabaff",
+    "wash": "#e8edff",
+    "glow": "#d5def9"
+  },
+  "revenue": {
+    "name": "Emerald",
+    "accent": "#216c4d",
+    "darkAccent": "#95d9ae",
+    "wash": "#e2f3e8",
+    "glow": "#c8e7d3"
+  },
+  "workout-coach": {
+    "name": "Coral",
+    "accent": "#b24b38",
+    "darkAccent": "#ffb29c",
+    "wash": "#fce9e2",
+    "glow": "#f4d0c2"
+  },
+  "paycheck-runway": {
+    "name": "Sea glass",
+    "accent": "#267577",
+    "darkAccent": "#9bdedd",
+    "wash": "#e0f3f1",
+    "glow": "#c4e8e5"
+  },
+  "meal-planner": {
+    "name": "Olive",
+    "accent": "#647225",
+    "darkAccent": "#c2d88b",
+    "wash": "#f0f4dd",
+    "glow": "#e1e9bf"
+  },
+  "job-search": {
+    "name": "Copper",
+    "accent": "#a35c27",
+    "darkAccent": "#edbd91",
+    "wash": "#faf0e3",
+    "glow": "#efdabf"
+  },
+  "study-notes": {
+    "name": "Iris",
+    "accent": "#6450ac",
+    "darkAccent": "#c1b3f3",
+    "wash": "#eeebfc",
+    "glow": "#ded6f6"
+  },
+  "journal-memory": {
+    "name": "Rose",
+    "accent": "#9d5278",
+    "darkAccent": "#e5b0ca",
+    "wash": "#f9eaf1",
+    "glow": "#efd3e2"
+  },
+  "chess-coach": {
+    "name": "Slate",
+    "accent": "#46566d",
+    "darkAccent": "#b6c6df",
+    "wash": "#e9edf4",
+    "glow": "#d6dfec"
+  },
+  "people": {
+    "name": "Periwinkle",
+    "accent": "#575caa",
+    "darkAccent": "#b6bef1",
+    "wash": "#eeeffb",
+    "glow": "#dcdff5"
+  },
+  "cashflow": {
+    "name": "Bronze",
+    "accent": "#88662b",
+    "darkAccent": "#e4cb8e",
+    "wash": "#f8f0dc",
+    "glow": "#eadeba"
+  },
+  "notes": {
+    "name": "Marigold",
+    "accent": "#82600f",
+    "darkAccent": "#eed68a",
+    "wash": "#fbf3d9",
+    "glow": "#f0e2b3"
+  },
+  "todo": {
+    "name": "Azure",
+    "accent": "#236da7",
+    "darkAccent": "#99cff7",
+    "wash": "#e6f4ff",
+    "glow": "#cbe5f8"
+  },
+  "task-manager": {
+    "name": "Orchid",
+    "accent": "#8c4799",
+    "darkAccent": "#ddb0e8",
+    "wash": "#f7eafa",
+    "glow": "#ebd1f0"
+  },
+  "calculator": {
+    "name": "Graphite",
+    "accent": "#505965",
+    "darkAccent": "#c2c9d4",
+    "wash": "#edf0f4",
+    "glow": "#dce1e7"
+  },
+  "clock": {
+    "name": "Twilight",
+    "accent": "#654c91",
+    "darkAccent": "#c6b3e8",
+    "wash": "#eee8f8",
+    "glow": "#ded1ef"
+  },
+  "weather": {
+    "name": "Ocean",
+    "accent": "#11758b",
+    "darkAccent": "#86dbea",
+    "wash": "#e1f4f8",
+    "glow": "#c5e9ee"
+  },
+  "expense-tracker": {
+    "name": "Forest",
+    "accent": "#386a3e",
+    "darkAccent": "#aed6a6",
+    "wash": "#eaf3e6",
+    "glow": "#d6e7cd"
+  },
+  "stickies": {
+    "name": "Lemon",
+    "accent": "#786617",
+    "darkAccent": "#ebd994",
+    "wash": "#fbf7df",
+    "glow": "#eee7bd"
+  },
+  "pomodoro": {
+    "name": "Tomato",
+    "accent": "#b24643",
+    "darkAccent": "#f6adaa",
+    "wash": "#fcebe7",
+    "glow": "#f4d3ce"
+  }
+}

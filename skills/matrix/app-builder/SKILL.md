@@ -262,3 +262,7 @@ Then open the app from the Matrix launcher using the existing authenticated sess
 - 404s for app bundle or icon paths
 - CORS errors from direct provider calls
 - unhandled React errors
+
+### Distinct identities within an app family
+
+Keep shared typography, spacing, material, lighting and interaction conventions, but give each app a recognizable dominant accent with coordinated soft surfaces and a matching icon palette. Carry that identity into Gallery cards and phone layouts. Use app-local identity tokens rather than inheriting the same shell accent for every product; preserve host base surfaces and semantic success, warning and error colours. Choose purpose-appropriate palettes such as teal finance, sky travel, poppy calendar, plum subscriptions or amber focus. Check light/dark control-label contrast before shipping. First-party palette data lives in `packages/brand/src/app-identities.json`; regenerate installed-app and Gallery CSS with its companion generator.

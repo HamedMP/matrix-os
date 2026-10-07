@@ -305,3 +305,7 @@ to the Matrix kernel and returns `undefined`. It is available in Web and Electro
 app windows. Keep using it for existing kernel workflows. For text-only inference,
 use `await MatrixOS.ai.generate({ prompt })` (explicit owner grant required). These
 APIs have different contracts; do not treat legacy `generate` as a text Promise.
+
+### Distinct identities within an app family
+
+Keep shared typography, spacing, material, lighting and interaction conventions, but give each app a recognizable dominant accent with coordinated soft surfaces and a matching icon palette. Carry that identity into Gallery cards and phone layouts. Use app-local identity tokens rather than inheriting the same shell accent for every product; preserve host base surfaces and semantic success, warning and error colours. Choose purpose-appropriate palettes such as teal finance, sky travel, poppy calendar, plum subscriptions or amber focus. Check light/dark control-label contrast before shipping. First-party palette data lives in `packages/brand/src/app-identities.json`; regenerate installed-app and Gallery CSS with its companion generator.

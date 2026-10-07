@@ -114,3 +114,22 @@
 }
 
 .workbench .page-heading p { font-size:14px; }
+
+/* App identity is independent of the shell's accent; base surfaces follow its theme. */
+.workbench[data-app] {
+ --brand:var(--identity-accent,#596bc3); --brand-fg:var(--identity-on-accent,#fff);
+ --bg:var(--matrix-bg,var(--identity-wash,#eef2fb));
+ --tint:color-mix(in srgb,var(--brand) 10%,var(--card));
+ background:radial-gradient(ellipse at 100% 0%,color-mix(in srgb,var(--bg) 78%,var(--identity-glow)),transparent 65%),var(--bg);
+}
+.workbench[data-app] .brand-mark:not(.sculptural-mark) { background:linear-gradient(145deg,var(--card),color-mix(in srgb,var(--card) 70%,var(--brand))); }
+.workbench[data-app] .sidebar { border-color:color-mix(in srgb,var(--border) 80%,var(--brand)); }
+.workbench[data-app] .agenda-event { border-left-color:var(--brand); }
+.workbench[data-app] .workflow-panel { background:linear-gradient(125deg,color-mix(in srgb,var(--card) 90%,var(--brand)),var(--card) 60%); }
+.workbench[data-app] .focus-stage { background:linear-gradient(145deg,var(--card),var(--tint)); }
+.workbench[data-app] .renewal-day,.workbench[data-app] .invoice-totals article,.workbench[data-app] .meeting-decisions { background:var(--tint); }
+.workbench[data-app] .workflow-object,.workbench[data-app] .person-object { background:linear-gradient(145deg,var(--card),color-mix(in srgb,var(--card) 72%,var(--brand))); }
+.workbench[data-app] .revenue-overview .segmented button[aria-pressed="true"] { color:var(--brand-fg); }
+@media(prefers-color-scheme:dark) {
+ .workbench[data-app] { --bg:var(--matrix-bg,#1e2435); }
+}
