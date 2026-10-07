@@ -1,16 +1,19 @@
 import { lstat, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
+import { MatrixAnthropicCredentialGenerationSchema } from "@matrix-os/contracts";
 import { readBoundedJsonFileWithIdentity, type FileIdentity } from "../bounded-json-file.js";
 import { writeProviderJsonAtomic } from "./provider-settings-persistence.js";
 import { ProviderWorkflowError } from "./provider-workflows.js";
 import { commitCodexKey, CodexKeyRollbackFailedError } from "./codex-key-transaction.js";
 import { NativeProviderWriteNotStartedError } from "./native-provider-profile-guard.js";
 
-const Credential = z.object({ version: z.literal(1), apiKey: z.string().trim().min(1).max(4096).nullable() }).strict();
+const Credential = z.object({ version: z.literal(1), apiKey: z.string().trim().min(1).max(4096).nullable(),
+  credentialGeneration: MatrixAnthropicCredentialGenerationSchema.optional() }).strict();
 const pathFor = (home: string) => join(resolve(home), "system/ai-providers/anthropic-key.json");
 const missing = (error: unknown) => error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT";
-async function assertParents(home: string, create: boolean) {
+export async function assertOwnerAnthropicKeyParents(home: string, create: boolean) {
   for (const path of [join(resolve(home), "system"), join(resolve(home), "system/ai-providers")]) {
     if (create) await mkdir(path, { recursive: true, mode: 0o700 });
     const metadata = await lstat(path);
@@ -18,7 +21,7 @@ async function assertParents(home: string, create: boolean) {
   }
 }
 /** One canonical owner key. A private tombstone deliberately suppresses legacy config fallback. */
-export async function readOwnerAnthropicKey(home: string): Promise<{ state: "unverified" | "setup_required" | "invalid" | "unavailable"; key?: string; identity?: FileIdentity }> {
+export async function readOwnerAnthropicKey(home: string): Promise<{ state: "unverified" | "setup_required" | "invalid" | "unavailable"; key?: string; identity?: FileIdentity; credentialGeneration?: string }> {
   try {
     try { await lstat(pathFor(home)); }
     catch (error) {
@@ -35,7 +38,7 @@ export async function readOwnerAnthropicKey(home: string): Promise<{ state: "unv
       const key = result.success ? result.data.kernel?.anthropicApiKey : undefined;
       return key ? { state: "unverified", key, identity: legacy!.identity } : { state: "setup_required" };
     }
-    await assertParents(home, false);
+    await assertOwnerAnthropicKeyParents(home, false);
     const metadata = await lstat(pathFor(home));
     if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1
       || metadata.uid !== process.getuid?.() || (metadata.mode & 0o077) !== 0) return { state: "invalid" };
@@ -44,21 +47,23 @@ export async function readOwnerAnthropicKey(home: string): Promise<{ state: "unv
       || document.identity.size !== metadata.size || document.identity.mtimeMs !== metadata.mtimeMs)) return { state: "invalid" };
     const parsed = Credential.safeParse(document?.value);
     if (!parsed.success || !document) return { state: "invalid" };
-    return parsed.data.apiKey === null ? { state: "setup_required", identity: document.identity }
-      : { state: "unverified", key: parsed.data.apiKey, identity: document.identity };
+    const metadataFields = { identity: document.identity, ...(parsed.data.credentialGeneration ? { credentialGeneration: parsed.data.credentialGeneration } : {}) };
+    return parsed.data.apiKey === null ? { state: "setup_required", ...metadataFields }
+      : { state: "unverified", key: parsed.data.apiKey, ...metadataFields };
   } catch (error) {
     console.warn("[provider-workflow] Owner key read unavailable:", error instanceof Error ? error.name : "UnknownError");
     return { state: "unavailable" };
   }
 }
 export function createOwnerAnthropicKeySaver(options: { homePath: string }) {
-  const save = async (apiKey: string, commit: () => Promise<void>) => {
+  const save = async (apiKey: string | null, commit: (generation: string) => Promise<void>) => {
     const directory = join(resolve(options.homePath), "system/ai-providers");
     const staging = join(directory, ".matrix-anthropic-key-staging");
     let published = false; let recovery = false; let ownsStaging = false;
     try {
-      const credential = Credential.parse({ version: 1, apiKey });
-      await assertParents(options.homePath, true);
+      const generation = randomUUID();
+      const credential = Credential.parse({ version: 1, apiKey, credentialGeneration: generation });
+      await assertOwnerAnthropicKeyParents(options.homePath, true);
       const identity = await lstat(directory);
       try { await mkdir(staging, { mode: 0o700 }); }
       catch (error) {
@@ -71,7 +76,7 @@ export function createOwnerAnthropicKeySaver(options: { homePath: string }) {
       ownsStaging = true;
       await writeProviderJsonAtomic(join(staging, "anthropic-key.json"), credential);
       published = true;
-      await commitCodexKey({ directory, directoryIdentity: identity, staging, targetName: "anthropic-key.json", commit });
+      await commitCodexKey({ directory, directoryIdentity: identity, staging, targetName: "anthropic-key.json", commit: () => commit(generation) });
     } catch (error) {
       recovery = error instanceof CodexKeyRollbackFailedError;
       if (!published) throw new NativeProviderWriteNotStartedError();
@@ -83,10 +88,12 @@ export function createOwnerAnthropicKeySaver(options: { homePath: string }) {
       }
     }
   };
-  return Object.assign((apiKey: string) => save(apiKey, async () => {}), { connect: save });
+  return Object.assign((apiKey: string) => save(apiKey, async () => {}), {
+    connect: (apiKey: string, commit: (generation: string) => Promise<void>) => save(apiKey, commit),
+    revoke: () => save(null, async () => {}),
+  });
 }
 /** Called only by explicit scoped API-key sign-out; never by a discovery refresh. */
 export async function revokeOwnerAnthropicKey(home: string) {
-  await assertParents(home, true);
-  await writeProviderJsonAtomic(pathFor(home), { version: 1, apiKey: null });
+  await createOwnerAnthropicKeySaver({ homePath: home }).revoke();
 }

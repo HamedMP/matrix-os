@@ -169,7 +169,7 @@ export function CanonicalChatWorkspace({
     active: live && !explicitSharedRoute,
   });
   const providerCatalog = catalog ?? liveCatalog.catalog;
-  const providerCatalogLoading = !catalog && liveCatalog.status === "loading";
+  const providerCatalogLoading = !catalog && liveCatalog.initialLoading;
   const onCredentialInvalidation = useCallback((event: CanonicalChatInvalidation) => {
     if (event.type !== "chat.changed"
       || (event.eventType !== "chat.updated" && event.eventType !== "chat.deleted")) return;
@@ -269,7 +269,7 @@ export function CanonicalChatWorkspace({
   );
   const { selection: providerSelection, onSelectionChange } = useCanonicalComposerSelection({
     catalog: providerCatalog,
-    catalogReady: Boolean(catalog || liveCatalog.hasTrustedCatalog || liveCatalog.status === "error"),
+    catalogReady: Boolean(catalog || liveCatalog.lastSuccessAt !== null || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
     chatId: controller.detail?.record.chat.id ?? null,
     currentSelection: controller.detail?.record.chat.currentSelection,
