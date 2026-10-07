@@ -36,3 +36,8 @@
 @media (max-width: 760px) { .review-header { padding: 12px 18px; flex-wrap: wrap; gap: 10px 24px; } .review-header p { flex-basis: 100%; margin: 0; } .review-layout { grid-template-columns: 1fr; } .review-apps { padding: 20px 18px; border-right: 0; border-bottom: 1px solid var(--border); } .review-apps > p { margin-bottom: 0; } .review-apps section h2 { margin: 18px 0 6px; } .review-apps nav { display: flex; overflow-x: auto; gap: 4px; } .review-apps nav button { flex: 0 0 auto; gap: 12px; } .review-main { padding: 24px 18px; } .review-title { align-items: flex-start; flex-direction: column; gap: 12px; } .review-title h2 { font-size: 34px; } .review-stage { padding: 12px; } .review-controls { gap: 10px; } .review-controls button { padding: 8px 12px; } }
 
 .example-loading { min-height: 200px; display: grid; place-items: center; padding: 24px; color: var(--muted); font-size: 12px; }
+
+.identity-dot { width:10px; height:10px; border-radius:50%; background:var(--identity-accent); flex-shrink:0; }
+.review-apps button.app-identity { justify-content:flex-start; gap:10px; }
+.review-apps button.app-identity >svg { margin-left:auto; }
+.review-apps button.app-identity[aria-pressed="true"] { background:var(--identity-wash); color:var(--identity-accent); }

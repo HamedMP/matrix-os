@@ -40,14 +40,15 @@ function validateDocument(value, id) {
   return Buffer.byteLength(value.html);
 }
 
-if (process.argv.slice(2).join(' ') === '--verify') {
+const isMain = Boolean(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain && process.argv.slice(2).join(' ') === '--verify') {
   let maximum = 0;
   for (const id of [...connectedIds, ...defaultIds]) {
     const value = JSON.parse(await readFile(resolve(documents, `current-${id}.json`), 'utf8'));
     maximum = Math.max(maximum, validateDocument(value, id));
   }
   console.log(JSON.stringify({ verified: 26, maximumBytes: maximum, limitBytes: maxBytes }));
-} else {
+} else if (isMain) {
   const args = process.argv.slice(2), flags = ['--connected-source', '--default-source', '--site-output'];
   if (args.length !== 6 || flags.some((flag, index) => args[index * 2] !== flag || !isAbsolute(args[index * 2 + 1]))) throw Error('Usage: --connected-source <absolute repository> --default-source <absolute repository> --site-output <absolute public/app-previews directory>, or --verify');
   const source = resolve(args[1]), defaults = resolve(args[3]), siteOutput = resolve(args[5]);
@@ -74,13 +75,18 @@ if (process.argv.slice(2).join(' ') === '--verify') {
       return { contents: text.replace(pattern, JSON.stringify(dataArtwork)), loader: 'tsx' };
     });
     builder.onLoad({ filter: /[\\/]ChessCoach\.tsx$/ }, async ({ path }) => {
-      const text = await readFile(path, 'utf8'), pattern = /new URL\("\.\/chess\.worker\.ts",\s*import\.meta\.url\)/g;
-      assert.equal([...text.matchAll(pattern)].length, 1, 'Expected worker constructor reference');
-      return { contents: text.replace(pattern, JSON.stringify('data:application/javascript,/* offline preview disables workers */')), loader: 'tsx' };
+      const text = await readFile(path, 'utf8'), pattern = /import ChessWorker from "\.\/chess\.worker\.ts\?worker&inline";/g;
+      assert.equal([...text.matchAll(pattern)].length, 1, 'Expected inline worker import');
+      return { contents: text.replace(pattern, 'class ChessWorker { constructor() { throw new Error("Local analysis is unavailable in this offline preview."); } }'), loader: 'tsx' };
     });
   } }]);
-  const siteApps = [], budgets = {};
-  await mkdir(siteOutput, { recursive: true });
+  const siteApps = [], budgets = {}, collection = [];
+  let stagedBytes = 0;
+  const stage = (id, value) => {
+    stagedBytes += Buffer.byteLength(JSON.stringify(value));
+    assert.ok(stagedBytes <= 52_000_000 && collection.length < 26, 'Bounded source preview staging');
+    collection.push({ id, value });
+  };
   for (const id of connectedIds) {
     const definition = catalog.apps.find(app => app.id === id);
     assert.ok(definition, `Missing real app definition: ${id}`);
@@ -96,24 +102,50 @@ if (process.argv.slice(2).join(' ') === '--verify') {
     const html = documentHtml(id, compiled, connectedAdapter, [['matrix-app-definition', definition], ['demo-records', fixture]], false);
     const value = { html, sha256: hash(html), sourceSha256: sourceHash, sourceTreeSha256: connectedTree, definitionSha256: definitionHash, fictionalOnly: true, packaging: 'Real source, classic IIFE, inline CSS and WebP; preview-only offline adapter.' };
     budgets[id] = validateDocument(value, id);
-    await writeFile(resolve(documents, `current-${id}.json`), JSON.stringify(value) + '\n');
-    await writeFile(resolve(siteOutput, `${id}.html`), html);
+    stage(id, value);
     siteApps.push({ slug: id, sourceSha: sourceHash, exampleData: true });
   }
   for (const id of defaultIds) {
     const appRoot = resolve(defaults, 'home/apps', id), tree = await sourceDigest(resolve(appRoot, 'src'));
     const manifestBytes = await readFile(resolve(appRoot, 'matrix.json')), manifest = JSON.parse(manifestBytes.toString('utf8'));
-    const sharedStyleHash = hash(await readFile(resolve(defaults, 'home/apps/_shared/gallery-family.css')));
+    const sharedStyleHash = hash(Buffer.concat([await readFile(resolve(defaults, 'home/apps/_shared/gallery-family.css')), await readFile(resolve(defaults, 'home/apps/_shared/app-identities.css'))]));
     const sourceHash = previewSourceHash({ sourceTree: tree, sharedStyle: sharedStyleHash, definition: hash(manifestBytes), adapter: hash(defaultsAdapter), packager: packagingHash });
     const output = await compile(build, resolve(appRoot, 'src/main.tsx'));
     const html = documentHtml(id, output, defaultsAdapter, [['default-fixture', defaultFixture(id, manifest)]], true);
     const value = { html, sha256: hash(html), sourceSha256: sourceHash, sourceTreeSha256: tree, sharedStyleSha256: sharedStyleHash, definitionSha256: hash(manifestBytes), fictionalOnly: true, packaging: 'Real default-app source, classic IIFE and inline CSS; bounded temporary fixture adapter.' };
     budgets[id] = validateDocument(value, id);
-    await writeFile(resolve(documents, `current-${id}.json`), JSON.stringify(value) + '\n');
+    stage(id, value);
   }
-  await writeFile(resolve(siteOutput, 'manifest.json'), JSON.stringify({ apps: siteApps }, null, 2) + '\n');
   for (let index = 0; index < originalNames.length; index++) assert.equal(hash(await readFile(resolve(documents, originalNames[index]))), originalDigests[index], `${originalNames[index]} must remain byte-identical`);
+  await publishPreviewCollection({ collection, documents, siteOutput, siteApps });
   console.log(JSON.stringify({ currentDocuments: 26, connectedSitePreviews: siteApps.length, unchangedOriginalDocuments: originalNames.length, connectedSourceTreeSha256: connectedTree, maximumBytes: Math.max(...Object.values(budgets)), budgets, sourceManifestSha256: hash(await readFile(resolve(siteOutput, 'manifest.json'))) }, null, 2));
+}
+
+
+/** Compile and validate the complete bounded collection before replacing any output. */
+export async function publishPreviewCollection({ collection, documents, siteOutput, siteApps }) {
+  assert.equal(collection.length, 26, 'Expected 26 source documents before publication');
+  const ids = new Set();
+  for (const { id, value } of collection) {
+    assert.match(id, /^[a-z0-9-]+$/);
+    assert.ok(!ids.has(id), 'Duplicate source preview'); ids.add(id);
+    validateDocument(value, id);
+  }
+  assert.equal(siteApps.length, 17, 'Expected 17 connected site previews');
+  assert.equal(new Set(siteApps.map(app => app.slug)).size, 17, 'Unique connected site previews');
+  for (const app of siteApps) {
+    assert.ok(ids.has(app.slug), 'Site preview must be in the validated source collection');
+    assert.match(app.sourceSha, /^[a-f0-9]{64}$/);
+    assert.equal(app.exampleData, true);
+    assert.equal(app.sourceSha, collection.find(item => item.id === app.slug).value.sourceSha256);
+  }
+  const writes = collection.map(({ id, value }) => ({ destination: resolve(documents, `current-${id}.json`), content: JSON.stringify(value) + '\n' }));
+  for (const app of siteApps) writes.push({ destination: resolve(siteOutput, `${app.slug}.html`), content: collection.find(item => item.id === app.slug).value.html });
+  writes.push({ destination: resolve(siteOutput, 'manifest.json'), content: JSON.stringify({ apps: siteApps }, null, 2) + '\n' });
+  assert.ok(writes.reduce((total, file) => total + Buffer.byteLength(file.content), 0) <= 52_000_000, 'Bounded collection publication');
+  await mkdir(documents, { recursive: true });
+  await mkdir(siteOutput, { recursive: true });
+  for (const file of writes) await writeFile(file.destination, file.content);
 }
 
 async function compile(build, entry, plugins = []) {

@@ -1,0 +1,55 @@
+/* Generated from @matrix-os/brand app-identities.json. Update the palette source, then regenerate. */
+.workbench[data-app="folio"], .app-identity[data-app="folio"], :root:root:root[data-app="folio"] { --identity-accent:#176d65; --identity-wash:#e0f2ed; --identity-glow:#c6e7df; --identity-on-accent:#ffffff; }
+.workbench[data-app="atlas"], .app-identity[data-app="atlas"], :root:root:root[data-app="atlas"] { --identity-accent:#2562a0; --identity-wash:#e4f1fb; --identity-glow:#c4dff5; --identity-on-accent:#ffffff; }
+.workbench[data-app="agenda"], .app-identity[data-app="agenda"], :root:root:root[data-app="agenda"] { --identity-accent:#b4364b; --identity-wash:#fce8eb; --identity-glow:#f3cbd3; --identity-on-accent:#ffffff; }
+.workbench[data-app="subscriptions"], .app-identity[data-app="subscriptions"], :root:root:root[data-app="subscriptions"] { --identity-accent:#78509b; --identity-wash:#f1e8f7; --identity-glow:#e0cef0; --identity-on-accent:#ffffff; }
+.workbench[data-app="focus"], .app-identity[data-app="focus"], :root:root:root[data-app="focus"] { --identity-accent:#90651b; --identity-wash:#fbf0d7; --identity-glow:#efdfb5; --identity-on-accent:#ffffff; }
+.workbench[data-app="meeting-briefs"], .app-identity[data-app="meeting-briefs"], :root:root:root[data-app="meeting-briefs"] { --identity-accent:#694a78; --identity-wash:#f0e9f4; --identity-glow:#e3d3eb; --identity-on-accent:#ffffff; }
+.workbench[data-app="projects"], .app-identity[data-app="projects"], :root:root:root[data-app="projects"] { --identity-accent:#4059b2; --identity-wash:#e8edff; --identity-glow:#d5def9; --identity-on-accent:#ffffff; }
+.workbench[data-app="revenue"], .app-identity[data-app="revenue"], :root:root:root[data-app="revenue"] { --identity-accent:#216c4d; --identity-wash:#e2f3e8; --identity-glow:#c8e7d3; --identity-on-accent:#ffffff; }
+.workbench[data-app="workout-coach"], .app-identity[data-app="workout-coach"], :root:root:root[data-app="workout-coach"] { --identity-accent:#b24b38; --identity-wash:#fce9e2; --identity-glow:#f4d0c2; --identity-on-accent:#ffffff; }
+.workbench[data-app="paycheck-runway"], .app-identity[data-app="paycheck-runway"], :root:root:root[data-app="paycheck-runway"] { --identity-accent:#267577; --identity-wash:#e0f3f1; --identity-glow:#c4e8e5; --identity-on-accent:#ffffff; }
+.workbench[data-app="meal-planner"], .app-identity[data-app="meal-planner"], :root:root:root[data-app="meal-planner"] { --identity-accent:#647225; --identity-wash:#f0f4dd; --identity-glow:#e1e9bf; --identity-on-accent:#ffffff; }
+.workbench[data-app="job-search"], .app-identity[data-app="job-search"], :root:root:root[data-app="job-search"] { --identity-accent:#a35c27; --identity-wash:#faf0e3; --identity-glow:#efdabf; --identity-on-accent:#ffffff; }
+.workbench[data-app="study-notes"], .app-identity[data-app="study-notes"], :root:root:root[data-app="study-notes"] { --identity-accent:#6450ac; --identity-wash:#eeebfc; --identity-glow:#ded6f6; --identity-on-accent:#ffffff; }
+.workbench[data-app="journal-memory"], .app-identity[data-app="journal-memory"], :root:root:root[data-app="journal-memory"] { --identity-accent:#9d5278; --identity-wash:#f9eaf1; --identity-glow:#efd3e2; --identity-on-accent:#ffffff; }
+.workbench[data-app="chess-coach"], .app-identity[data-app="chess-coach"], :root:root:root[data-app="chess-coach"] { --identity-accent:#46566d; --identity-wash:#e9edf4; --identity-glow:#d6dfec; --identity-on-accent:#ffffff; }
+.workbench[data-app="people"], .app-identity[data-app="people"], :root:root:root[data-app="people"] { --identity-accent:#575caa; --identity-wash:#eeeffb; --identity-glow:#dcdff5; --identity-on-accent:#ffffff; }
+.workbench[data-app="cashflow"], .app-identity[data-app="cashflow"], :root:root:root[data-app="cashflow"] { --identity-accent:#88662b; --identity-wash:#f8f0dc; --identity-glow:#eadeba; --identity-on-accent:#ffffff; }
+.workbench[data-app="notes"], .app-identity[data-app="notes"], :root:root:root[data-app="notes"] { --identity-accent:#82600f; --identity-wash:#fbf3d9; --identity-glow:#f0e2b3; --identity-on-accent:#ffffff; }
+.workbench[data-app="todo"], .app-identity[data-app="todo"], :root:root:root[data-app="todo"] { --identity-accent:#236da7; --identity-wash:#e6f4ff; --identity-glow:#cbe5f8; --identity-on-accent:#ffffff; }
+.workbench[data-app="task-manager"], .app-identity[data-app="task-manager"], :root:root:root[data-app="task-manager"] { --identity-accent:#8c4799; --identity-wash:#f7eafa; --identity-glow:#ebd1f0; --identity-on-accent:#ffffff; }
+.workbench[data-app="calculator"], .app-identity[data-app="calculator"], :root:root:root[data-app="calculator"] { --identity-accent:#505965; --identity-wash:#edf0f4; --identity-glow:#dce1e7; --identity-on-accent:#ffffff; }
+.workbench[data-app="clock"], .app-identity[data-app="clock"], :root:root:root[data-app="clock"] { --identity-accent:#654c91; --identity-wash:#eee8f8; --identity-glow:#ded1ef; --identity-on-accent:#ffffff; }
+.workbench[data-app="weather"], .app-identity[data-app="weather"], :root:root:root[data-app="weather"] { --identity-accent:#11758b; --identity-wash:#e1f4f8; --identity-glow:#c5e9ee; --identity-on-accent:#ffffff; }
+.workbench[data-app="expense-tracker"], .app-identity[data-app="expense-tracker"], :root:root:root[data-app="expense-tracker"] { --identity-accent:#386a3e; --identity-wash:#eaf3e6; --identity-glow:#d6e7cd; --identity-on-accent:#ffffff; }
+.workbench[data-app="stickies"], .app-identity[data-app="stickies"], :root:root:root[data-app="stickies"] { --identity-accent:#786617; --identity-wash:#fbf7df; --identity-glow:#eee7bd; --identity-on-accent:#ffffff; }
+.workbench[data-app="pomodoro"], .app-identity[data-app="pomodoro"], :root:root:root[data-app="pomodoro"] { --identity-accent:#b24643; --identity-wash:#fcebe7; --identity-glow:#f4d3ce; --identity-on-accent:#ffffff; }
+@media (prefers-color-scheme: dark) {
+ .workbench[data-app="folio"], .app-identity[data-app="folio"], :root:root:root[data-app="folio"] { --identity-accent:#88d8ca; --identity-on-accent:#202338; }
+ .workbench[data-app="atlas"], .app-identity[data-app="atlas"], :root:root:root[data-app="atlas"] { --identity-accent:#8fc8f8; --identity-on-accent:#202338; }
+ .workbench[data-app="agenda"], .app-identity[data-app="agenda"], :root:root:root[data-app="agenda"] { --identity-accent:#ffa3b1; --identity-on-accent:#202338; }
+ .workbench[data-app="subscriptions"], .app-identity[data-app="subscriptions"], :root:root:root[data-app="subscriptions"] { --identity-accent:#d2afea; --identity-on-accent:#202338; }
+ .workbench[data-app="focus"], .app-identity[data-app="focus"], :root:root:root[data-app="focus"] { --identity-accent:#f2d084; --identity-on-accent:#202338; }
+ .workbench[data-app="meeting-briefs"], .app-identity[data-app="meeting-briefs"], :root:root:root[data-app="meeting-briefs"] { --identity-accent:#d2b8dd; --identity-on-accent:#202338; }
+ .workbench[data-app="projects"], .app-identity[data-app="projects"], :root:root:root[data-app="projects"] { --identity-accent:#aabaff; --identity-on-accent:#202338; }
+ .workbench[data-app="revenue"], .app-identity[data-app="revenue"], :root:root:root[data-app="revenue"] { --identity-accent:#95d9ae; --identity-on-accent:#202338; }
+ .workbench[data-app="workout-coach"], .app-identity[data-app="workout-coach"], :root:root:root[data-app="workout-coach"] { --identity-accent:#ffb29c; --identity-on-accent:#202338; }
+ .workbench[data-app="paycheck-runway"], .app-identity[data-app="paycheck-runway"], :root:root:root[data-app="paycheck-runway"] { --identity-accent:#9bdedd; --identity-on-accent:#202338; }
+ .workbench[data-app="meal-planner"], .app-identity[data-app="meal-planner"], :root:root:root[data-app="meal-planner"] { --identity-accent:#c2d88b; --identity-on-accent:#202338; }
+ .workbench[data-app="job-search"], .app-identity[data-app="job-search"], :root:root:root[data-app="job-search"] { --identity-accent:#edbd91; --identity-on-accent:#202338; }
+ .workbench[data-app="study-notes"], .app-identity[data-app="study-notes"], :root:root:root[data-app="study-notes"] { --identity-accent:#c1b3f3; --identity-on-accent:#202338; }
+ .workbench[data-app="journal-memory"], .app-identity[data-app="journal-memory"], :root:root:root[data-app="journal-memory"] { --identity-accent:#e5b0ca; --identity-on-accent:#202338; }
+ .workbench[data-app="chess-coach"], .app-identity[data-app="chess-coach"], :root:root:root[data-app="chess-coach"] { --identity-accent:#b6c6df; --identity-on-accent:#202338; }
+ .workbench[data-app="people"], .app-identity[data-app="people"], :root:root:root[data-app="people"] { --identity-accent:#b6bef1; --identity-on-accent:#202338; }
+ .workbench[data-app="cashflow"], .app-identity[data-app="cashflow"], :root:root:root[data-app="cashflow"] { --identity-accent:#e4cb8e; --identity-on-accent:#202338; }
+ .workbench[data-app="notes"], .app-identity[data-app="notes"], :root:root:root[data-app="notes"] { --identity-accent:#eed68a; --identity-on-accent:#202338; }
+ .workbench[data-app="todo"], .app-identity[data-app="todo"], :root:root:root[data-app="todo"] { --identity-accent:#99cff7; --identity-on-accent:#202338; }
+ .workbench[data-app="task-manager"], .app-identity[data-app="task-manager"], :root:root:root[data-app="task-manager"] { --identity-accent:#ddb0e8; --identity-on-accent:#202338; }
+ .workbench[data-app="calculator"], .app-identity[data-app="calculator"], :root:root:root[data-app="calculator"] { --identity-accent:#c2c9d4; --identity-on-accent:#202338; }
+ .workbench[data-app="clock"], .app-identity[data-app="clock"], :root:root:root[data-app="clock"] { --identity-accent:#c6b3e8; --identity-on-accent:#202338; }
+ .workbench[data-app="weather"], .app-identity[data-app="weather"], :root:root:root[data-app="weather"] { --identity-accent:#86dbea; --identity-on-accent:#202338; }
+ .workbench[data-app="expense-tracker"], .app-identity[data-app="expense-tracker"], :root:root:root[data-app="expense-tracker"] { --identity-accent:#aed6a6; --identity-on-accent:#202338; }
+ .workbench[data-app="stickies"], .app-identity[data-app="stickies"], :root:root:root[data-app="stickies"] { --identity-accent:#ebd994; --identity-on-accent:#202338; }
+ .workbench[data-app="pomodoro"], .app-identity[data-app="pomodoro"], :root:root:root[data-app="pomodoro"] { --identity-accent:#f6adaa; --identity-on-accent:#202338; }
+}

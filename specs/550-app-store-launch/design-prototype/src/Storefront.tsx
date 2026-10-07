@@ -6,9 +6,10 @@ import { searchSuggestions } from './catalog-search';
 import AppSculpture from './AppSculpture';
 import DemoFrame from './DemoFrame';
 import './Storefront.css';
+import './AppIdentities.css';
 import './DesignReview.css';
 function Listing({ app, connected, onPick }: Pick<DesignProps, 'connected' | 'onPick'> & { app: AppInfo }) {
-  return <button className={`store-listing listing-${app.id}`} onClick={() => onPick(app)} aria-label={`Explore ${app.name}`}>
+  return <button className={`store-listing app-identity listing-${app.id}`} data-app={app.id} onClick={() => onPick(app)} aria-label={`Explore ${app.name}`}>
     <div className="listing-description"><AppSculpture id={app.id} /><span><strong>{app.name}</strong><small>{app.description}</small></span></div>
     <div className="listing-screenshot"><DemoFrame id={app.id} viewport="phone" /><span>Real app · example data</span></div>
     <div className="listing-context"><span>{reason(app, connected)}</span><span className="listing-get">Explore<Glyph name="arrow" size={14} /></span></div>

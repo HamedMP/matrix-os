@@ -20,7 +20,7 @@ describe('gallery and widget preview interactions', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Widgets' }));
     expect(screen.getByRole('heading', { name: 'A desktop with your kind of day.' })).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Gallery' }));
-    expect(screen.getAllByTestId('app-preview')).toHaveLength(8);
+    expect(screen.getAllByTestId('app-preview')).toHaveLength(17);
   });
   it('adds, reorders and removes actual widget cards and retains hidden Work widgets', () => {
     render(createElement(WidgetsPreview));

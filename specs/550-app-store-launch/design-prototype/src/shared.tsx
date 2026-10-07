@@ -1,5 +1,7 @@
 import type { AppInfo, ToolId } from './types';
-import { BookOpen, CalendarDays, Check, ChevronRight, CircleDollarSign, Clock3, CreditCard, FileText, Focus, Grid2X2, Layers3, Link2, Mail, MapPin, Search, ShieldCheck, Smartphone, Sparkles, Star, X } from 'lucide-react';
+import DemoFrame from './DemoFrame';
+import './AppIdentities.css';
+import { BriefcaseBusiness, Dumbbell, HandCoins, NotebookPen, ChessKnight, UsersRound, Utensils, WalletCards, BookOpen, CalendarDays, Check, ChevronRight, CircleDollarSign, Clock3, CreditCard, FileText, Focus, Grid2X2, Layers3, Link2, Mail, MapPin, Search, ShieldCheck, Smartphone, Sparkles, Star, X } from 'lucide-react';
 
 export const tools: { id: ToolId; name: string; description: string }[] = [
   { id: 'gmail', name: 'Gmail', description: 'Receipts, bookings and useful context' },
@@ -29,7 +31,7 @@ export const apps: AppInfo[] = [
   {"id": "cashflow", "name": "Cashflow", "category": "Business", "description": "A clear view of what is owed.", "detail": "Track incoming invoices, due dates, and payment evidence.", "tools": ["stripe"], "glyph": "cashflow", "benefits": ["Invoice and payment ledger", "Receivables by currency", "Payment evidence"]},
 ];
 
-const glyphs = { folio: FileText, atlas: MapPin, agenda: CalendarDays, subscriptions: Clock3, focus: Focus, briefs: BookOpen, projects: Layers3, revenue: CircleDollarSign, search: Search, arrow: ChevronRight, check: Check, close: X, grid: Grid2X2, link: Link2, phone: Smartphone, shield: ShieldCheck, sparkles: Sparkles, star: Star, gmail: Mail, google_calendar: CalendarDays, stripe: CreditCard, linear: Layers3, google_docs: BookOpen };
+const glyphs = { folio: FileText, atlas: MapPin, agenda: CalendarDays, subscriptions: Clock3, focus: Focus, briefs: BookOpen, projects: Layers3, revenue: CircleDollarSign, search: Search, arrow: ChevronRight, check: Check, close: X, grid: Grid2X2, link: Link2, phone: Smartphone, shield: ShieldCheck, sparkles: Sparkles, star: Star, gmail: Mail, google_calendar: CalendarDays, stripe: CreditCard, linear: Layers3, google_docs: BookOpen, dumbbell: Dumbbell, wallet: WalletCards, utensils: Utensils, briefcase: BriefcaseBusiness, 'book-open': BookOpen, notebook: NotebookPen, chess: ChessKnight, people: UsersRound, cashflow: HandCoins };
 export function Glyph({ name, size = 22 }: { name: string; size?: number }) { const Icon = glyphs[name as keyof typeof glyphs] ?? Grid2X2; return <Icon size={size} strokeWidth={1.7} aria-hidden="true" />; }
 export function ToolName({ id }: { id: ToolId }) { return <span className="tool-name"><Glyph name={id} size={16} />{tools.find(tool => tool.id === id)?.name}</span>; }
 export function reason(app: AppInfo, connected: ToolId[]) {
@@ -39,8 +41,8 @@ export function reason(app: AppInfo, connected: ToolId[]) {
   return `Connect ${missing.map(id => tools.find(tool => tool.id === id)?.name).join(' and ')}`;
 }
 export function AppCard({ app, connected, onPick, compact = false }: { app: AppInfo; connected: ToolId[]; onPick: (app: AppInfo) => void; compact?: boolean }) {
-  return <button className={`app-card ${compact ? 'compact' : ''}`} onClick={() => onPick(app)} aria-label={`Explore ${app.name}`}>
-    <div className="app-shot"><img src={`./previews/${app.id}.webp`} width="1200" height="750" alt={`${app.name} actual starter interface with fictional example records`} loading="lazy" /><span>Example data</span></div>
+  return <button data-app={app.id} className={`app-card app-identity ${compact ? 'compact' : ''}`} onClick={() => onPick(app)} aria-label={`Explore ${app.name}`}>
+    <div className="app-shot"><DemoFrame id={app.id} /><span>Example data</span></div>
     <div className="app-card-body"><div className={`app-glyph glyph-${app.id}`}><Glyph name={app.glyph} /></div><div className="app-name-block"><h3>{app.name}</h3><p>{app.description}</p></div><Glyph name="arrow" size={18} /></div>
     <div className="app-card-foot"><span>{reason(app, connected)}</span><span>Free</span></div>
   </button>;
