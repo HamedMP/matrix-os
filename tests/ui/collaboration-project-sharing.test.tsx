@@ -124,7 +124,12 @@ describe("whole-project sharing confirmation", () => {
     let grants: unknown[] = [];
     const api = apiFixture();
     api.get.mockImplementation(async (path: string) => {
-      if (path.startsWith("/api/organizations/")) return { members: [{ actorId: "user_ada", role: "org:member", joinedAt: "2026-08-01T00:00:00.000Z" }] };
+      if (path.startsWith("/api/organizations/")) return { members: [{
+        actorId: "user_ada",
+        displayName: "Ada",
+        role: "org:member",
+        joinedAt: "2026-08-01T00:00:00.000Z",
+      }] };
       if (path.endsWith("/grants")) return grants;
       return { ...privateScope, revision: grants.length ? "5" : "4" };
     });
