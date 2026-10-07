@@ -45,6 +45,14 @@ Bot library metadata failure must not classify every ordinary Chat as unresolved
 
 Dedicated identity is independent of `recipeRef`. Use shared `botExecutionPresentation` and authenticated definition loading for custom versus recipe applicability. Custom selection is the saved canonical executor/model/options; never substitute Matrix Pi or interpret a missing catalog entry as Automatic. Unknown binding/definition or unavailable route disables Send and hides ordinary routing controls. Custom sends echo the exact Bot ID and revision; Full access is explicit per request and resets on accepted send. Recipe-only tasks/authority/memory reads are skipped for custom definitions. Text-only edits omit unchanged selection and recipe fields, including broker-stamped Jev authority. Sidebar and mention opens call explicit ensure POST; GET remains pure. Ensure checks canonical deletion tombstones after binding cascades and never adopts an ordinary Chat occupying its deterministic ID or request key. See `specs/545-custom-bot-dedicated-entry/spec.md`.
 
+## Transcript wrapper and discovery states
+
+`BotChatPanel({ children, visible, directBotId, ... })` always keeps its transcript/composer children mounted. Missing Bot identity or `visible === false` suppresses Bot chrome, details portals and inline requests, not the ordinary Chat or its unsent draft. Web Chat forwards window visibility; Electron forwards workspace activity. Recipe requests and status attach to their owning assistant turn through the shared context, while custom Bot execution retains the canonical executor and consent path.
+
+Identity gates use `loading={botBinding.loading || botExecution.loading}`. A resolved binding with a pending definition remains “Loading Chat identity…”; a completed failed definition lookup shows the existing retry state. Neither state may enable an ordinary-provider fallback for a bound Bot.
+
+Regression assertions: `chat-panel-wrapper.test.tsx` retains ordinary content and hidden Bot drafts; `bot-chat-parity.test.tsx` hides and restores Bot chrome/requests without losing text; Electron `bot-chat.test.tsx` and Web `custom-bot-parity.test.tsx` hold definition loading separately from failure. Wrong: return null from the whole wrapper or treat only binding loading as discovery. Correct: gate Bot-only UI and combine both authenticated discovery stages.
+
 
 ## Ordinary subscription applicability
 

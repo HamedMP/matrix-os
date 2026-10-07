@@ -32,6 +32,7 @@ import type {
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
+import { botTranscriptPlacement, BotTranscriptRunState, BotTranscriptFallback } from "./BotTranscriptState";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -295,6 +296,7 @@ function ChatAppContent({
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
+  const botTranscript = botTranscriptPlacement(grouped);
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the writeHermesSetup useEffect dependency array below; keep an explicit useMemo so the persisted-setup effect only re-runs when the channel set actually changes, not on every render.
   const selectedChannels = useMemo(() => Array.from(channels).sort(), [channels]);
   useEffect(() => {
@@ -592,18 +594,7 @@ function ChatAppContent({
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header> : null}
-        {botIdentityUnknown ? <BotBindingStatus loading={botBinding.loading} retry={() => { botBinding.retry(); botExecution.retry(); }}/> : null}
-        {!collaborationView && sessionId ? <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} detailsContainer={botDetailsContainer}
-          headerLeading={!sidebarOpen ? <>
-            <Button variant="ghost" size="icon" aria-label="Open Chat sidebar" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={() => setSidebarOpen(true)}><PanelLeftIcon className="size-4" /></Button>
-            <Button variant="ghost" size="icon" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={onNewChat} title="New chat"><PlusIcon className="size-4" /></Button>
-          </> : null}
-          headerActions={<>
-            <ChatSharing key={sessionId} chatId={sessionId} />
-            <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => { setSetupOpen(false); openProviderSettings(); }}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
-            {!connected ? <span className="text-[10px] text-destructive font-medium">Offline</span> : null}
-          </>}
-          onModelChanged={() => setBotModelRevision(value => value + 1)} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision} /> : null}
+        {botIdentityUnknown ? <BotBindingStatus loading={botBinding.loading || botExecution.loading} retry={() => { botBinding.retry(); botExecution.retry(); }}/> : null}
         {!collaborationView && !botIdentityUnknown && !directBotId && setupOpen && (
           <ChatProviderSetupPanel
             onDismiss={() => {
@@ -639,11 +630,22 @@ function ChatAppContent({
           <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat} onOpenProject={onOpenSharedProject}
             onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
+        <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} visible={visible} detailsContainer={botDetailsContainer}
+          headerLeading={!sidebarOpen ? <>
+            <Button variant="ghost" size="icon" aria-label="Open Chat sidebar" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={() => setSidebarOpen(true)}><PanelLeftIcon className="size-4" /></Button>
+            <Button variant="ghost" size="icon" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={onNewChat} title="New chat"><PlusIcon className="size-4" /></Button>
+          </> : null}
+          headerActions={<>
+            {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
+            <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => { setSetupOpen(false); openProviderSettings(); }}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
+            {!connected ? <span className="text-[10px] text-destructive font-medium">Offline</span> : null}
+          </>}
+          onModelChanged={() => setBotModelRevision(value => value + 1)} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision}>
         {botDraftNavigation.recovery ? <BotDraftRecoveryPanel onReturn={botDraftNavigation.returnToOriginalDraft}/> : null}
         <ChatQueuedRequests key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} onCancel={onCancelQueuedTurn} />
         {/* Empty state or conversation */}
         {isEmpty ? (
-          <EmptyState
+          <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/></div><EmptyState
             composerProps={{ slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
@@ -654,16 +656,16 @@ function ChatAppContent({
             modelLabel={directBotId ? null : providerState.selected?.modelLabel ?? null}
             providerReady={providerReady}
             attachmentsEnabled={!botIdentityUnknown && !directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
-          />
+          /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
             <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
             <div className="contents">
             <Conversation>
               <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
-                {grouped.map((group) => {
+                {grouped.map((group, groupIndex) => {
                   if (group.type === "tool_group") {
-                    return <ToolCallGroup key={`tg-${group.messages[0].id}`} tools={group.messages} />;
+                    return <div key={`tg-${group.messages[0].id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/></div>;
                   }
                   const msg = group.message;
                   return (
@@ -709,10 +711,12 @@ function ChatAppContent({
                     />
                       )}
                     <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
+                    <BotTranscriptRunState placement={botTranscript} index={groupIndex}/>
                     </div>
                   );
                 })}
 
+                <BotTranscriptFallback placement={botTranscript}/>
                 {busy && (
                   <div className="flex items-center gap-2.5 text-sm text-muted-foreground py-1">
                     <div className="flex gap-1">
@@ -761,6 +765,7 @@ function ChatAppContent({
             </div>
           </div>
         )}
+        </BotChatPanel>
         </>}
       </main>
       {previewFile && previewFile.chatId === sessionId ? <ChatFilePanel key={`${sessionId}:${previewFile.path}`} path={previewFile.path} onClose={() => {

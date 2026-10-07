@@ -1,3 +1,4 @@
+import { startVisibleNativeObservationRenewal } from "./native-observation-renewal.js";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   CanonicalProviderCatalogSchema,
@@ -56,6 +57,8 @@ export interface ProviderSettingsControllerOptions {
   transport: ProviderSettingsTransport;
   /** Called only after an explicit refresh or mutation snapshot is accepted. */
   onCatalogChanged?: (intent?: ProviderSettingsMutationIntent, previousSnapshot?: ProviderSettingsSnapshot) => void;
+  /** Retained Settings panes explicitly suspend read-only evidence renewal. */
+  observationRenewalActive?: boolean;
 }
 
 export interface ProviderSettingsMutationOptions {
@@ -144,6 +147,12 @@ export class ProviderSettingsController {
     if (!this.disposed) await this.runRefresh(options.refresh ?? true);
   };
 
+  /** Read-only observation renewal never invalidates every Chat catalog. */
+  renewLocalObservation = async (signal: AbortSignal): Promise<boolean> => {
+    if (this.disposed || signal.aborted || this.state.busy) return false;
+    return this.runRefresh(true, { signal, notifyCatalog: false });
+  };
+
   refreshForConnection = async (): Promise<ProviderSettingsSnapshot | null> => {
     if (this.disposed) return null;
     if (this.pendingMutations > 0) await this.mutationTail;
@@ -178,21 +187,27 @@ export class ProviderSettingsController {
     this.listeners.clear();
   };
 
-  private async runRefresh(refresh = true): Promise<boolean> {
+  private async runRefresh(refresh = true, options: { signal?: AbortSignal; notifyCatalog?: boolean } = {}): Promise<boolean> {
     const operationId = ++this.operationClock;
     const request = this.beginRequest("refresh");
+    const onAbort = () => request.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
     try {
       const raw = await this.options.transport.getSnapshot(request.signal, { refresh });
+      request.signal.throwIfAborted();
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
       const applied = this.applySnapshot(parsed.data, { operationId });
-      if (applied && refresh) this.options.onCatalogChanged?.();
+      if (applied && refresh && options.notifyCatalog !== false) this.options.onCatalogChanged?.();
       return applied;
     } catch (error) {
+      if (request.signal.aborted) return false;
       console.warn("[provider-settings] Provider settings refresh failed:", error instanceof Error ? error.name : typeof error);
       if (!this.disposed && operationId >= this.appliedOperationId) this.update({ error: LOAD_ERROR });
       return false;
     } finally {
+      options.signal?.removeEventListener("abort", onAbort);
       this.endRequest(request, "refresh");
     }
   }
@@ -390,6 +405,11 @@ export function useProviderSettingsController(
       });
     };
   }, [controller, lifecycle]);
+
+  useEffect(() => {
+    if (options.observationRenewalActive === false) return;
+    return startVisibleNativeObservationRenewal(controller);
+  }, [controller, options.observationRenewalActive]);
 
   return {
     ...state,

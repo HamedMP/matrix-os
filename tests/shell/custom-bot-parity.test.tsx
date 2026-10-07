@@ -11,6 +11,14 @@ vi.mock("../../shell/src/components/chat-app-provider-setup.js", ()=>({
 }));
 vi.mock("@clerk/nextjs", async original=>({...(await original<typeof import("@clerk/nextjs")>()),useOrganization:()=>({organization:null}),useAuth:()=>({userId:null,sessionId:null})}));
 afterEach(cleanup);
+it("keeps Web Bot definition discovery loading rather than reporting an identity failure", async () => {
+ const client = { ...clientFixture(), list: vi.fn(() => new Promise<{ enabled: boolean; agents: never[] }>(() => undefined)),
+  bots: { directBot: vi.fn(async () => saved.id) } };
+ render(<ChatApp messages={[]} sessionId="chat_custom" busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client as never}/>);
+ await waitFor(() => expect(client.list.mock.calls.length).toBeGreaterThanOrEqual(2));
+ expect(screen.getByText("Loading Chat identity…").closest('[role="status"]')).toBeTruthy();
+ expect(screen.queryByText("Chat identity could not be loaded. Try again.")).toBeNull();
+});
 it.each(["Web Canvas","Web Desktop","Web Mobile"])("%s keeps a custom Bot executor and resets explicit Full access after sending",async surface=>{
  const catalog=createCanonicalProviderCatalogFixture(),base=catalog.instances[0]!;
  catalog.instances=[{...base,id:saved.selection.instanceId,driverKind:"hermes",displayName:"Hermes",models:[{...base.models[0]!,id:saved.selection.model}],supports:{...base.supports,permissionModes:["full_access"]}}];state.catalog=catalog;

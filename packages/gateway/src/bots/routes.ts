@@ -5,10 +5,10 @@
  * with allowlisted codes and generic messages, and responses are private.
  */
 import { BotChatBindingResponseSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, type BotTaskSummary } from "@matrix-os/contracts";
-import { z } from "zod/v4";
 import { BotEntryError } from "./custom-direct-chat.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { z } from "zod/v4";
 import { bodyLimit } from "hono/body-limit";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 import type { BotContinuationAdmitter } from "./continuations.js";
@@ -25,6 +25,7 @@ import type { ChatGptPlanPeers } from './chatgpt-plan-peers.js';
 import type { BotProviderConnectionsService } from './provider-connections.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
+const includeRunIdsSchema = z.enum(["true", "false"]).optional();
 
 type ErrorCode = "invalid_request" | "not_found" | "conflict" | "expired" | "rate_limited" | "unavailable";
 const ERRORS: Record<ErrorCode, { status: 400 | 404 | 409 | 410 | 429 | 503; message: string }> = {
@@ -135,8 +136,16 @@ export function createBotRoutes(options: {
     if (!options.tasks) return errorResponse(context, "unavailable");
     const chatId = CanonicalChatIdSchema.safeParse(context.req.param("chatId"));
     if (!chatId.success) return errorResponse(context, "invalid_request");
+    const includeRunIds = includeRunIdsSchema.safeParse(context.req.query("includeRunIds"));
+    if (!includeRunIds.success) return errorResponse(context, "invalid_request");
+    const tasks = BotTaskListResponseSchema.parse({ tasks: await options.tasks(principal.userId, chatId.data) }).tasks;
     context.header("Cache-Control", "private, no-store");
-    return context.json(BotTaskListResponseSchema.parse({ tasks: await options.tasks(principal.userId, chatId.data) }));
+    // Older clients parse task summaries strictly; extra identity is opt-in.
+    return context.json({ tasks: includeRunIds.data === "true" ? tasks : tasks.map(task => {
+      const legacy = { ...task };
+      delete legacy.runId;
+      return legacy;
+    }) });
   });
 
   routes.get("/api/chats/:chatId/interactions", async (context) => {

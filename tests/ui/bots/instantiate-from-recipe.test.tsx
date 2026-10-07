@@ -105,3 +105,11 @@ it('does not navigate after a recipe panel has been left',async()=>{
  fireEvent.click(screen.getByRole('button',{name:'Use Writing Bot'}));fireEvent.change(screen.getByRole('combobox',{name:'Bot model'}),{target:{value:''}});fireEvent.click(screen.getByRole('button',{name:'Create bot'}));
  await waitFor(()=>expect(create).toHaveBeenCalledOnce());view.unmount();finish('chat_bot');await Promise.resolve();await Promise.resolve();expect(open).not.toHaveBeenCalled();
 });
+
+it("negotiates Bot run IDs and accepts older task summaries", async () => {
+  const request = vi.fn(async () => ({ tasks: [{ taskId: "task_abcdefgh", agentId: "bot_research1", chatId: "chat_research",
+    status: "waiting_person", revision: 2, updatedAt: "2026-09-28T12:00:00.000Z" }] }));
+  const result = await createBotClient(request).tasks("chat_research");
+  expect(request).toHaveBeenCalledWith("/api/chats/chat_research/bot-tasks?includeRunIds=true", "GET", undefined);
+  expect(result[0]?.runId).toBeUndefined();
+});

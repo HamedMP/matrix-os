@@ -14,6 +14,33 @@ vi.mock("@clerk/nextjs", async (importOriginal) => ({
 
 afterEach(cleanup);
 
+it("hides Web Bot chrome and inline requests with its window while preserving the draft", async () => {
+  const client = { bots: {
+    directBot: vi.fn(async () => "bot_research1"),
+    interactions: vi.fn(async () => [{ interactionId: "in_abcdefgh", chatId: "chat_research", agentId: "bot_research1",
+      taskId: "task_abcdefgh", kind: "question", blocking: true, status: "pending", revision: 1,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      payload: { kind: "question", questions: [{ questionId: "target", header: "Target", question: "Which company?" }] } }]),
+    tasks: vi.fn(async () => []),
+    authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
+  }, list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1,
+    instructions: "Research", description: "Research", archived: false,
+    createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z",
+    selection: { instanceId: "matrix_bot_default", model: "auto" }, recipeRef: { recipeId: "research", version: "1" } }] })) } as unknown as ChatAgentClient;
+  const panel = (visible: boolean) => <ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
+    visible={visible} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} />;
+  const { rerender } = render(panel(true));
+  await screen.findByText("Which company?");
+  fireEvent.change(screen.getByRole("textbox", { name: /message/i }), { target: { value: "Unsent research draft" } });
+  rerender(panel(false));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Bot controls" })).toBeNull());
+  expect(screen.queryByText("Which company?")).toBeNull();
+  expect(screen.getByRole("textbox", { name: /message/i })).toHaveProperty("value", "Unsent research draft");
+  rerender(panel(true));
+  expect(await screen.findByText("Which company?")).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: /message/i })).toHaveProperty("value", "Unsent research draft");
+});
+
 it("renders a direct bot's identity, pending interaction and authority from its saved Chat", async () => {
   const client = { bots: {
     directBot: vi.fn(async () => "bot_research1"),

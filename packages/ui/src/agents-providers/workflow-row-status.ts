@@ -1,5 +1,5 @@
 import type { ProviderAccessSource, ProviderHarnessInstance } from "@matrix-os/contracts";
-import { hasConfiguredConnection } from "./harness-connection.js";
+import { hasConfiguredConnection, hasStaleHermesConnection } from "./harness-connection.js";
 /** Mounted rows share progress without clearing another row's active operation. */
 export function updateWorkflowRowStatus(current: Record<string, string>, id: string, status: string | null): Record<string, string> {
   if (current[id] === status || (!status && !(id in current))) return current;
@@ -18,5 +18,6 @@ export function resolvedWorkflowRowStatus(harness: ProviderHarnessInstance, sour
   if (harness.installState === "installing") return "Installing";
   if (override === "Connecting" || harness.authState === "authenticating") return "Connecting";
   if (hasConfiguredConnection(harness, source)) return "Connected";
+  if (hasStaleHermesConnection(harness, source)) return "Checking connection";
   return override === "Couldn't connect" ? override : "Not connected";
 }

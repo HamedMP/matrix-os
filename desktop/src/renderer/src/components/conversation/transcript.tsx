@@ -1,5 +1,5 @@
 import { ConversationNotice } from "./notice";
-import { ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
+import { BotRunMessageBody, BotUnassignedMessageBody, ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   ChevronRight,
@@ -14,6 +14,7 @@ import { ConversationActivityGroup } from "./activity";
 import { RequestApprovalOutcome, RequestStatusIcon } from "./request-outcome";
 import { Bubble, BubbleContent } from "./bubble";
 import { Marker, MarkerContent } from "./marker";
+import { conversationTurnVisibility } from "./turn-visibility";
 import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
 import type {
   ConversationMessagePresentation,
@@ -317,12 +318,15 @@ function ConversationTurn({
   turn,
   callbacks,
   initialFinalIds,
+  visibility,
+  onToggle,
 }: {
   turn: ConversationTurnPresentation;
   callbacks: ConversationPresentationCallbacks;
   initialFinalIds: ReadonlySet<string>;
+  visibility: ReturnType<typeof conversationTurnVisibility>;
+  onToggle: () => void;
 }) {
-  const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
   const rootKind = turn.executionRoot?.kind;
   const rootProjectId = turn.executionRoot && turn.executionRoot.kind !== "bot_workspace" ? turn.executionRoot.projectId : undefined;
   const rootBotId = turn.executionRoot?.kind === "bot_workspace" ? turn.executionRoot.botId : undefined;
@@ -342,22 +346,14 @@ function ConversationTurn({
     ...(callbacks.resolveApp ? { resolveApp: resolveRunApp } : {}),
     ...(callbacks.openApp ? { openApp: openRunApp } : {}),
   };
-  const showWork = turn.active || expanded;
+  const { showWork, visibleWork, visibleTimeline, pendingRequestIds } = visibility;
   const hasWork = turn.work.length > 0;
-  const terminalPartial = !turn.active
-    && turn.final?.kind === "notice"
-    && (turn.final.tone === "failed" || turn.final.tone === "stopped")
-    ? [...turn.work].reverse().find((item) => item.kind === "message")
-    : undefined;
-  const visibleWork = showWork ? turn.work : terminalPartial ? [terminalPartial] : [];
   const timeline = turn.timeline;
-  const visibleTimeline = timeline?.filter((entry) => (
-    entry.kind === "user-followup" || showWork || (terminalPartial !== undefined && entry.item.id === terminalPartial.id)
-  ));
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} /> : null}
       <ChatContextReceipt context={turn.runContext} />
+      <div data-agent-message-body={turn.id} className="min-w-0">
       {hasWork || turn.final || turn.active ? (
         <TurnReceipt
           startedAt={turn.startedAt}
@@ -365,7 +361,7 @@ function ConversationTurn({
           active={turn.active}
           expanded={showWork}
           canToggle={!turn.active && hasWork}
-          onToggle={() => setExpanded((value) => !value)}
+          onToggle={onToggle}
         />
       ) : null}
       {timeline ? (
@@ -398,6 +394,8 @@ function ConversationTurn({
           }
         />
       ) : null}
+      <BotRunMessageBody runIds={turn.runIds ?? []} requestIds={pendingRequestIds}/>
+      </div>
     </>
   );
 }
@@ -412,17 +410,33 @@ export function ConversationTranscript({
   const [initialFinalIds] = useState(() => new Set(
     turns.flatMap((turn) => turn.final ? [turn.final.id] : []),
   ));
+  const [turnExpansion, setTurnExpansion] = useState<Record<string, boolean>>(() => Object.fromEntries(
+    turns.map(turn => [turn.id, turn.expandedByDefault ?? false]),
+  ));
+  const visibleTurns = turns.map(turn => {
+    const expanded = (Object.hasOwn(turnExpansion, turn.id) ? turnExpansion[turn.id] : turn.expandedByDefault) ?? false;
+    return { turn, visibility: conversationTurnVisibility(turn, expanded) };
+  });
+  const toggleTurn = (turnId: string) => setTurnExpansion(current => Object.fromEntries(turns.map(turn => {
+    const expanded = (Object.hasOwn(current, turn.id) ? current[turn.id] : turn.expandedByDefault) ?? false;
+    // Evict removed turns on interaction so expansion state stays bounded by this transcript.
+    return [turn.id, turn.id === turnId ? !expanded : expanded];
+  })));
   return (
     <Conversation>
       <ConversationContent className="justify-start pt-8 sm:pt-12">
-        {turns.map((turn) => (
+        {visibleTurns.map(({ turn, visibility }) => (
           <ConversationTurn
             key={turn.id}
             turn={turn}
             callbacks={callbacks}
             initialFinalIds={initialFinalIds}
+            visibility={visibility}
+            onToggle={() => toggleTurn(turn.id)}
           />
         ))}
+        <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
+          requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
       </ConversationContent>
     </Conversation>
   );

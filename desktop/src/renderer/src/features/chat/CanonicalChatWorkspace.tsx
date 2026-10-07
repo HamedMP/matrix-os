@@ -729,7 +729,7 @@ export function CanonicalChatWorkspace({
         onReorder={(queuedTurnIds, movedQueuedTurnId) => void reorderQueuedTurns(queuedTurnIds, movedQueuedTurnId)}
         onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
       />
-      <CanonicalChatIdentityGate unknown={botIdentityUnknown} loading={botBinding.loading} retry={() => { botBinding.retry(); botExecution.retry(); }} onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}><>
+      <CanonicalChatIdentityGate unknown={botIdentityUnknown} loading={botBinding.loading || botExecution.loading} retry={() => { botBinding.retry(); botExecution.retry(); }} onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}><>
       <input
         ref={fileInputRef}
         type="file"
@@ -962,7 +962,7 @@ export function CanonicalChatWorkspace({
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id} visible={live && !inspectorExclusive}
               client={client.agents} directBotId={directBotId} detailsContainer={frameDetailsContainer ?? botDetailsContainer} headerContainer={botHeaderContainer}
               headerActions={chatSharingAction}
-              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
+              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision}>
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
@@ -1003,6 +1003,7 @@ export function CanonicalChatWorkspace({
             </div>
             </ChatContextMenu>
             <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>{composer}</div>
+            </BotChatPanel>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
           <div

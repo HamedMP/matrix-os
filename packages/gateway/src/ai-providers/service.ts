@@ -1,3 +1,5 @@
+import type { NativeObservationReadScope } from "./hermes-observation-renewal.js";
+import type { CanonicalNativeHarnessCatalogReader } from "./native-harness-canonical-projection.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createCanonicalNativeHarnessCatalogReader } from "./native-harness-canonical-projection.js";
 import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
@@ -192,7 +194,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #healthCache: ProviderHealthCache<AiProviderReadiness>;
   readonly #ownsHealthCache: boolean;
   readonly #healthTimeoutMs: number;
-  readonly #nativeHarnessCatalogReader?: (refresh: boolean) => Promise<NonNullable<AiProviderSnapshotV3["nativeHarnessCatalog"]>>;
+  readonly #nativeHarnessCatalogReader?: CanonicalNativeHarnessCatalogReader;
   readonly #driverInventory?: AiProviderServiceOptions["driverInventory"];
   readonly #fundedReadiness?: FundedAiReadinessReader;
   readonly #codexNativeKeyReadiness?: AiProviderServiceOptions["codexNativeKeyReadiness"];
@@ -221,22 +223,29 @@ export class AiProviderService implements AiProviderSnapshotReader {
     this.#codexLocalObservation = options.codexLocalObservation;
   }
 
-  async #readCodexLocalObservation(): Promise<AiProviderLocalObservation | undefined> {
+  async #readCodexLocalObservation(timeoutMs = CODEX_OBSERVATION_TIMEOUT_MS, parent?: AbortSignal): Promise<AiProviderLocalObservation | undefined> {
     if (!this.#codexLocalObservation) return undefined;
-    const signal = AbortSignal.timeout(CODEX_OBSERVATION_TIMEOUT_MS);
+    parent?.throwIfAborted();
+    if (timeoutMs <= 0) return UNKNOWN_LOCAL_OBSERVATION;
+    const timeoutSignal = AbortSignal.timeout(Math.max(1, Math.floor(Math.min(timeoutMs, CODEX_OBSERVATION_TIMEOUT_MS))));
+    const signal = parent ? AbortSignal.any([parent, timeoutSignal]) : timeoutSignal;
+    let onAbort: (() => void) | undefined;
     try {
       const observed = await Promise.race([
         this.#codexLocalObservation(signal),
         new Promise<never>((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("Codex observation timed out")), { once: true });
+          onAbort = () => reject(new Error("Codex observation timed out"));
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) onAbort();
         }),
       ]);
       return matchedCodexLocalObservation(observed, this.#now());
     } catch (error: unknown) {
+      parent?.throwIfAborted();
       // An unavailable local CLI probe is not an authentication verdict.
       console.warn("[ai-providers] Codex local observation unavailable:", error instanceof Error ? error.name : "UnknownError");
       return UNKNOWN_LOCAL_OBSERVATION;
-    }
+    } finally { if (onAbort) signal.removeEventListener("abort", onAbort); }
   }
 
   async #drivers(managedMatrixOnly = false): Promise<AiProviderSnapshotV3["drivers"]> {
@@ -335,15 +344,23 @@ export class AiProviderService implements AiProviderSnapshotReader {
     }
   }
 
+  async renewNativeObservations(snapshot: AiProviderSnapshotV3, scope: NativeObservationReadScope): Promise<AiProviderSnapshotV3> {
+    scope.signal?.throwIfAborted();
+    if (!snapshot.nativeHarnessCatalog || !this.#nativeHarnessCatalogReader) return snapshot;
+    const nativeHarnessCatalog = await this.#nativeHarnessCatalogReader.renewStale(snapshot.nativeHarnessCatalog, scope);
+    return nativeHarnessCatalog === snapshot.nativeHarnessCatalog ? snapshot : { ...snapshot, nativeHarnessCatalog };
+  }
+
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
     options.signal?.throwIfAborted();
     const managedMatrixOnly = options.admissionScope === "managed_matrix";
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
+    const nativeScope = { signal: options.signal, deadline: +snapshotTime + 13000, deferRenewal: true };
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
-    const [drivers, funded, apiKeyReadiness, profileReadiness, nativeHarnessCatalog] = await Promise.all([
+    const [drivers, funded, apiKeyReadiness, profileReadiness, observedNativeCatalog] = await Promise.all([
       this.#drivers(managedMatrixOnly),
       !options.suppressFundedProbes && credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
@@ -354,15 +371,23 @@ export class AiProviderService implements AiProviderSnapshotReader {
       managedMatrixOnly ? readinessForObservation(credentials.ownerProfile.state, "profile", now) : this.#resolveOwnerReadiness(
         "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
       ),
-      !managedMatrixOnly && this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true) : undefined,
+      !managedMatrixOnly && this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true, nativeScope) : undefined,
     ]);
     options.signal?.throwIfAborted();
     // Native discovery can consume more than the local credential probe's
     // five-second TTL. Collect the bounded observation after metadata settles;
     // preserve its original timestamps rather than extending stale evidence.
-    const codexLocalObservation = managedMatrixOnly ? undefined : await this.#readCodexLocalObservation();
-    options.signal?.throwIfAborted();
     const codexNativeKey = managedMatrixOnly ? undefined : await this.#codexNativeKeyReadiness?.();
+    let codexLocalObservation = managedMatrixOnly ? undefined : await this.#readCodexLocalObservation(undefined, options.signal);
+    options.signal?.throwIfAborted();
+    const nativeHarnessCatalog = observedNativeCatalog && this.#nativeHarnessCatalogReader
+      ? await this.#nativeHarnessCatalogReader.renewStale(observedNativeCatalog, nativeScope) : observedNativeCatalog;
+    options.signal?.throwIfAborted();
+    // A slow Hermes renewal can consume the already-read Codex observation.
+    // Re-read only that expired exact source within the original remaining budget.
+    if (codexLocalObservation?.staleAfter && Date.parse(codexLocalObservation.staleAfter) <= +this.#now()) {
+      codexLocalObservation = await this.#readCodexLocalObservation(nativeScope.deadline - +this.#now(), options.signal);
+    }
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     // Driver health and CLI login are local observations. Neither proves the
     // selected OpenAI account or model can complete a remote request.

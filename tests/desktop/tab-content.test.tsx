@@ -15,6 +15,7 @@ const homeMock = vi.hoisted(() => vi.fn(() => <div>Browser</div>));
 const browserMock = vi.hoisted(() => vi.fn(() => <div>Web Browser</div>));
 const editorMock = vi.hoisted(() => vi.fn(() => <div>Editor</div>));
 const notesMock = vi.hoisted(() => vi.fn(() => <div>Notes</div>));
+const settingsMock = vi.hoisted(() => vi.fn(() => <div>Settings</div>));
 
 vi.mock("@desktop/renderer/src/features/work/WorkTab", () => ({ default: workTabMock }));
 vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({ default: taskWorkspaceMock }));
@@ -23,6 +24,10 @@ vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({ defau
 vi.mock("@desktop/renderer/src/features/browser/BrowserTab", () => ({ default: browserMock }));
 vi.mock("@desktop/renderer/src/features/editor/DesktopEditorWorkspace", () => ({ default: editorMock }));
 vi.mock("@desktop/renderer/src/features/notes/NotesWorkspace", () => ({ default: notesMock }));
+vi.mock("@desktop/renderer/src/features/settings/SettingsView", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@desktop/renderer/src/features/settings/SettingsView")>(),
+  default: settingsMock,
+}));
 vi.mock("@desktop/renderer/src/features/embeds/EmbedHost", () => ({ default: () => <div>Native content</div> }));
 
 afterEach(() => {
@@ -32,6 +37,13 @@ afterEach(() => {
 });
 
 describe("current desktop tab panes", () => {
+  it("pauses provider observation renewal in a hidden retained Settings pane", () => {
+    const tab: Tab = { id: "settings", kind: "settings", title: "Settings", closable: true };
+    const view = render(<TabPane tab={tab} active={false} visible={false} />);
+    expect(settingsMock).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }), undefined);
+    view.rerender(<TabPane tab={tab} active={false} visible />);
+    expect(settingsMock).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }), undefined);
+  });
   it.each(["desktop", "canvas"] as const)("resizes an inactive Terminal from its full-frame left edge in %s", (presentation) => {
     vi.stubGlobal("PointerEvent", MouseEvent);
     const onBoundsChange = vi.fn();
