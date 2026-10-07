@@ -39,6 +39,12 @@ export function chatPickerEntryInstance(entry?: ChatPickerEntry): CanonicalProvi
     ?? entry?.instances[0];
 }
 
+/** Recovery is source-specific even when another source makes the category ready. */
+export function chatPickerEntryRecoveryInstances(entry?: ChatPickerEntry, selectedInstanceId?: string): CanonicalProviderInstanceDescriptor[] {
+  return (entry?.instances ?? []).filter(instance => instance.availability !== "available")
+    .sort((left, right) => Number(right.id === selectedInstanceId) - Number(left.id === selectedInstanceId));
+}
+
 export interface ChatPickerModelRow {
   instanceId: string;
   modelId: string;
