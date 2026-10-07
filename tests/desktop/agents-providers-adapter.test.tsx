@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import type { MatrixAnthropicConnectionClient } from "../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js";
 
 const mocks = vi.hoisted(() => ({
   controller: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
+  ...await import("../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js"),
   AgentsProvidersView: mocks.view,
   useProviderSettingsController: mocks.controller,
 }));
@@ -155,6 +157,30 @@ describe("desktop shared agents and providers adapter", () => {
       }),
     }));
     expect(useConnection.getState().api?.forRuntime).toHaveBeenCalledWith("vm-2");
+  });
+
+  it.each(["runtime", "owner", "credential"])("passes the real Matrix connection client and rejects stale calls after %s changes", async change => {
+    const observation = { connectionId: "matrix_anthropic_api", providerId: "anthropic", executionKind: "direct_pi", billingKind: "api_key",
+      revision: 0, enabled: false, credentialGeneration: null, sourceCredentialGeneration: null,
+      state: "disconnected", models: [], actions: ["connect"], checkedAt: null, staleAfter: null,
+      supports: { rootChat: true, recipeBots: true } };
+    const get = vi.fn().mockResolvedValue(observation);
+    const forRuntime = vi.fn(() => ({ get, post: vi.fn() }));
+    useConnection.setState({ api: { forRuntime } as never });
+    render(<AgentsProvidersAdapter />);
+    const props = mocks.view.mock.calls.at(-1)![0] as unknown as { matrixAnthropicClient: MatrixAnthropicConnectionClient };
+    const signal = new AbortController().signal;
+    await expect(props.matrixAnthropicClient.status(signal)).resolves.toEqual(observation);
+    expect(get).toHaveBeenCalledExactlyOnceWith("/api/ai/matrix-connections/anthropic",
+      expect.objectContaining({ signal, maxBytes: 65536, timeoutMs: 15000 }));
+    act(() => useConnection.setState(change === "runtime" ? { runtimeSlot: "other" }
+      : change === "owner" ? { handle: "bob" } : { authGeneration: 8 }));
+    await expect(props.matrixAnthropicClient.status(signal)).rejects.toThrow("Provider action is unavailable.");
+    expect(get).toHaveBeenCalledOnce();
+    const current = mocks.view.mock.calls.at(-1)![0] as unknown as { matrixAnthropicClient: MatrixAnthropicConnectionClient };
+    expect(current.matrixAnthropicClient).not.toBe(props.matrixAnthropicClient);
+    await expect(current.matrixAnthropicClient.status(signal)).resolves.toEqual(observation);
+    expect(forRuntime).toHaveBeenLastCalledWith(change === "runtime" ? "other" : "vm-2");
   });
 
   it("invalidates Chat only from accepted Settings callbacks for the current scope", () => {
