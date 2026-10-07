@@ -110,7 +110,10 @@ export async function enqueueCanonicalQueuedTurn(options: {
     );
   }
   const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
-  const effective = { ...input, ...prepared, permissionMode: admissionPolicy.permissionMode };
+  // A server-selected bot mode must survive ordinary admission; only the
+  // owning live session can override it with its frozen execution policy.
+  const effective = { ...input, ...prepared,
+    ...(sessionPolicy ? { permissionMode: admissionPolicy.permissionMode } : {}) };
   const catalog = await options.catalog.getCatalog(options.principal, effective.selection);
   const requirements = chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
     part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
@@ -141,7 +144,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     );
   }
   try {
-    await revalidateActionPolicy(adapter, { driverKind: validated.instance.driverKind, selection: validated.selection, permissionMode: admissionPolicy.permissionMode }, admissionPolicy.runPolicy);
+    await revalidateActionPolicy(adapter, { driverKind: validated.instance.driverKind, selection: validated.selection, permissionMode: effective.permissionMode }, admissionPolicy.runPolicy);
   } catch (error: unknown) {
     console.warn("[chat/queue] action policy qualification failed", error instanceof Error ? error.name : "UnknownError");
     throw new CanonicalQueueAdmissionError(safeError("capability_mismatch", "The selected Provider cannot enforce this execution policy."), 400);
@@ -203,7 +206,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     driverKind: validated.instance.driverKind,
     selection: validated.selection,
     interactionMode: effective.interactionMode,
-    permissionMode: admissionPolicy.permissionMode,
+    permissionMode: effective.permissionMode,
     ...(admissionPolicy.runPolicy ? { runPolicy: admissionPolicy.runPolicy } : {}),
     ...(prepared?.context ? { context: prepared.context } : {}),
     ...(resolvedRoot ? {

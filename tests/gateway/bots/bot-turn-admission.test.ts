@@ -9,6 +9,7 @@ import { ChatAgentContext } from "../../../packages/gateway/src/chat/agent-conte
 import { CanonicalChatOrchestrator } from "../../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalChatProviderAdapter } from "../../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
+import type { ActiveVoiceSessionPolicy } from "../../../packages/gateway/src/chat/voice-session-policy.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_bot_turns" };
 const principal = { userId: owner.ownerId, source: "jwt" as const };
@@ -21,11 +22,13 @@ let blockedRun: Promise<void> | undefined;
 let getCatalog: ReturnType<typeof vi.fn>;
 let savedSelection: CanonicalChatModelSelection = { instanceId: "matrix_bot_default", model: "auto" };
 let started: Array<{ selection: unknown; permissionMode: string }>;
+let livePolicy: ActiveVoiceSessionPolicy | undefined;
 
 beforeEach(async () => {
   repository = new ChatRepository((await KyselyPGlite.create()).dialect);
   await repository.bootstrap();
   started = [];
+  livePolicy = undefined;
   savedSelection = { instanceId: "matrix_bot_default", model: "auto" };
   finishBlockedRun = undefined;
   blockedRun = undefined;
@@ -44,6 +47,7 @@ beforeEach(async () => {
   };
   orchestrator = new CanonicalChatOrchestrator({
     repository,
+    voiceSessionPolicy: { policyForChat: () => livePolicy },
     catalog: withBotProviderInstance({ getCatalog }),
     adapters: new CanonicalChatProviderRegistry([bot]),
     agentContext: new ChatAgentContext({
@@ -111,7 +115,23 @@ describe("turns in a bot's chat", () => {
       selection: { instanceId: "codex_default", model: "auto" }, interactionMode: "plan", permissionMode: "read_only",
     });
     expect(queued.queuedTurn.selection).toEqual({ instanceId: "matrix_bot_default", model: "auto" });
+    expect(queued.queuedTurn.permissionMode).toBe("default");
     expect(getCatalog).not.toHaveBeenCalled();
+    livePolicy = { sessionId: "voice_queued_bot_policy", memoryMode: "session_only", permissionMode: "read_only" };
+    const latest = await repository.get(owner, BOT_CHAT);
+    await expect(orchestrator.enqueueQueuedTurn(principal, owner, BOT_CHAT, {
+      clientRequestId: "req_queued_bot_voice", baseRevision: latest!.chat.revision, parts: [{ type: "text", text: "next" }],
+      selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default",
+    })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("never lets bot preparation bypass a live session's permission mode", async () => {
+    livePolicy = { sessionId: "voice_bot_policy", memoryMode: "session_only", permissionMode: "read_only" };
+    await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, {
+      clientRequestId: "req_live_bot_policy", baseRevision: 0, parts: [{ type: "text", text: "hi" }],
+      selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default",
+    })).rejects.toMatchObject({ status: 400 });
+    expect(started).toEqual([]);
   });
 
   it("preserve ordinary catalog failures and reject forged bot routing", async () => {
