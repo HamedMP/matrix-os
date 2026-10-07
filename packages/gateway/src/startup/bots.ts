@@ -7,7 +7,7 @@ import { createManagedPiSessionsRepository } from "../chat/managed-pi-sessions.j
 import { createManagedPiCheckpointsRepository } from "../chat/managed-pi-checkpoints.js";
 import { resolveManagedPiRoute } from "../bots/route-resolver.js";
 import { BotInstantiationError } from "../bots/instantiation.js";
-import { isManagedPiBinding } from "../bots/runtime-registry.js";
+import { isManagedPiBinding, type PiRuntimeBinding } from "../bots/runtime-registry.js";
 /**
  * Starts recipe bot services on the owner database the chat repository owns
  * (spec 536, technical-design "Integration Wiring and Startup"):
@@ -150,6 +150,15 @@ export async function startBots(options: {
   checkpointReconcile?: { passes?: number; intervalMs?: number };
 }): Promise<BotServices | undefined> {
   const now = () => options.now?.() ?? new Date();
+  const lifetime = new AbortController();
+  // Native key writes may leave the run signal live. Consumers call this again
+  // after asynchronous preparation, immediately before the actual effect.
+  const revalidateRecipeSource = async (binding: PiRuntimeBinding, signal?: AbortSignal) => {
+    if (isManagedPiBinding(binding) || !binding.anthropicApi) return;
+    const currentSignal = AbortSignal.any([...(signal ? [signal] : []), lifetime.signal]);
+    if (currentSignal.aborted || !options.matrixAnthropic || !await options.matrixAnthropic.revalidate(binding, currentSignal)
+      || currentSignal.aborted) throw new BotBrokerActionError("stale_generation");
+  };
   const db = ownerBotExecutor(options.repository.kysely);
   try {
     await bootstrapBotDatabase(db);
@@ -189,7 +198,7 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const integrationClient = options.integrations ? createBotIntegrationClient(options.integrations) : undefined;
   const integrationTools = integrationClient
-    ? createBotIntegrationTools({ client: integrationClient, transact, recipes, agents: options.agents })
+    ? createBotIntegrationTools({ client: integrationClient, transact, recipes, agents: options.agents, assertSource: revalidateRecipeSource })
     : undefined;
   const connections = integrationClient && integrationTools
     ? createBotConnections({ client: integrationClient, transact, tools: integrationTools })
@@ -296,7 +305,6 @@ export async function startBots(options: {
   const saveSweepTimer = setInterval(sweepSaves, SAVE_SWEEP_INTERVAL_MS);
   saveSweepTimer.unref();
 
-  const lifetime = new AbortController();
   const registry = new BotRuntimeRegistry();
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
@@ -342,16 +350,9 @@ export async function startBots(options: {
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
     homePath: options.homePath, managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
+    assertSource: revalidateRecipeSource,
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
   });
-  // Native key writers do not necessarily cancel this run. Recipe tools must
-  // independently fence the captured source before approvals and side effects.
-  const revalidateRecipeSource = async (binding: import("../bots/runtime-registry.js").PiRuntimeBinding, signal: AbortSignal) => {
-    if (isManagedPiBinding(binding) || !binding.anthropicApi) return;
-    const currentSignal = AbortSignal.any([signal, lifetime.signal]);
-    if (currentSignal.aborted || !options.matrixAnthropic || !await options.matrixAnthropic.revalidate(binding, currentSignal)
-      || currentSignal.aborted) throw new BotBrokerActionError("stale_generation");
-  };
   const qualifiedTools: BotToolDispatcher = {
     effectClass: request => tools.effectClass(request),
     async prepare(binding, request, signal) {

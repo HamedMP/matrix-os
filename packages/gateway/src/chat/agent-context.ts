@@ -1,4 +1,5 @@
 import { recipeCoordinatorSelection } from "../bots/coordinator-selection.js";
+import { BotRouteError } from "../bots/route-resolver.js";
 import { createHash } from "node:crypto";
 import {
   CanonicalChatIdSchema, CanonicalCreateChatTurnRequestSchema, ChatRunContextSchema,
@@ -24,7 +25,7 @@ export interface BotChatLookup {
 }
 
 export class ChatAgentContextError extends Error {
-  constructor(readonly code: "feature_disabled" | "context_unavailable" | "workflow_unavailable" | "workflow_setup_required" | "workflow_funding_required") {
+  constructor(readonly code: "feature_disabled" | "context_unavailable" | "workflow_unavailable" | "workflow_setup_required" | "workflow_funding_required" | "model_unavailable") {
     super(code);
     this.name = "ChatAgentContextError";
   }
@@ -128,7 +129,12 @@ export class ChatAgentContext {
       if (!bot.recipeRef) directAgent = bot;
       else {
         const explicit = ["matrix_pi_default", "matrix_chatgpt_plan", "matrix_anthropic_api", MATRIX_BOT_INSTANCE_ID].includes(input.selection.instanceId) ? input.selection : undefined;
-        const coordinator = recipeCoordinatorSelection(explicit, bot.selection);
+        let coordinator: ReturnType<typeof recipeCoordinatorSelection>;
+        try { coordinator = recipeCoordinatorSelection(explicit, bot.selection); }
+        catch (error: unknown) {
+          if (error instanceof BotRouteError) throw new ChatAgentContextError("model_unavailable");
+          throw error;
+        }
         return { selection: coordinator ? { ...coordinator, instanceId: MATRIX_BOT_INSTANCE_ID } : MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
       }
     }

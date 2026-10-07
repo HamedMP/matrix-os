@@ -191,6 +191,8 @@ export function createBotToolDispatcher(deps: {
   homePath: string;
   managedTools?: import("../chat/managed-pi-owner-tools.js").ManagedPiOwnerTools;
   managedWorkspace?: (binding: import("./runtime-registry.js").ManagedPiRuntimeBinding) => Promise<string>;
+  /** Recheck live source after staging, immediately before artifact publication. */
+  assertSource?: (binding: PiRuntimeBinding, signal: AbortSignal) => Promise<void>;
   interactions?: Pick<BotInteractionService, "createFromTool">;
   memory?: Pick<BotMemoryService, "propose" | "search">;
   integrations?: Pick<BotIntegrationTools, "inventory" | "call">;
@@ -218,7 +220,7 @@ export function createBotToolDispatcher(deps: {
     }
   }
 
-  async function write(binding: PiRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.write" }>): Promise<BotToolResult> {
+  async function write(binding: PiRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.write" }>, signal: AbortSignal): Promise<BotToolResult> {
     // Revision-checked replacement needs artifact revisions; a plain save overwrites.
     if (request.args.replace) throw new BotBrokerActionError("invalid_arguments");
     const parts = segments(request.args.relPath);
@@ -267,6 +269,7 @@ export function createBotToolDispatcher(deps: {
         // link is an atomic exclusive publication: existing files/links always win.
         // Never remove the target on error: publication may have happened before a
         // lost acknowledgement. Its bytes are complete; the broker retains uncertainty.
+        await deps.assertSource?.(binding, signal);
         try { await link(temp, target); }
         catch (error: unknown) {
           if (isCode(error, "EEXIST", "ELOOP")) throw new BotBrokerActionError("invalid_arguments");
@@ -275,6 +278,8 @@ export function createBotToolDispatcher(deps: {
         const parent = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
         try { await parent.sync(); } finally { await parent.close(); }
       } else {
+        // Staging/close may finish after native credentials were removed or replaced.
+        await deps.assertSource?.(binding, signal);
         await rename(temp, target);
       }
     } catch (error: unknown) {
@@ -327,7 +332,7 @@ export function createBotToolDispatcher(deps: {
       if (request.capability === "artifact.write") {
         // Paths may hold characters the checkpoint reference does not allow; the digest names the file.
         const outcomeRef = `artifact:${createHash("sha256").update(request.args.relPath).digest("hex").slice(0, 32)}`;
-        return { result: await write(binding, request), outcomeRef };
+        return { result: await write(binding, request, signal), outcomeRef };
       }
       if (request.capability === "artifact.read") return { result: await read(binding, request) };
       if (isManagedPiBinding(binding)) {

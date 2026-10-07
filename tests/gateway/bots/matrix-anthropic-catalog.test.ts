@@ -3,6 +3,8 @@ import { providerSettingsCanonicalFixture } from "../provider-settings-test-supp
 import { withMatrixAnthropicProviderInstances } from "../../../packages/gateway/src/bots/matrix-anthropic-provider-instance.js";
 import { deriveCanonicalProviderChoices, canonicalProviderChoiceCanBeDefault, canonicalChatSubscriptionSelectionMatches } from "../../../packages/ui/src/canonical-provider-choice.js";
 import { deriveChatPickerEntries } from "../../../packages/ui/src/chat-picker-entries.js";
+import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
+import { createCanonicalProviderCatalogFixture } from "../../contracts/fixtures/canonical-chat.js";
 const gen = "e16625fe-cad7-4983-a9db-e808bbf104cc";
 const status = { connectionId: "matrix_anthropic_api" as const, providerId: "anthropic" as const, executionKind: "direct_pi" as const, billingKind: "api_key" as const,
  revision: 3, enabled: true, credentialGeneration: gen, sourceCredentialGeneration: gen, state: "ready" as const,
@@ -46,4 +48,19 @@ it("keeps other shared-Computer catalogs usable without exposing an owner's API 
  const base = { getCatalog: async () => ({ revision: "base", drivers: [], instances: [] }) };
  const service = withMatrixAnthropicProviderInstances(base, { getSnapshot: async () => { throw new Error("Nonowner must not read authority"); } }, () => true, "owner");
  expect(await service.getCatalog({ userId: "other-owner", source: "jwt" })).toEqual(await base.getCatalog());
+});
+it.each([65, 256])("bounds both Anthropic catalogs when the qualified source returns %i models", async count => {
+ const models = Array.from({ length: count }, (_, index) => ({ id: `claude-model-${index}`, displayName: `Claude ${index}` }));
+ const inherited = createCanonicalProviderCatalogFixture();
+ const base = { getCatalog: async () => inherited };
+ const providers = { getSnapshot: async () => ({ ...providerSettingsCanonicalFixture(), matrixAnthropicConnection: { ...status, actions: [...status.actions], models } }) };
+ const result = await withMatrixAnthropicProviderInstances(base, providers, () => true, "owner").getCatalog({ userId: "owner", source: "jwt" });
+ const parsed = CanonicalProviderCatalogSchema.parse(result);
+ expect(parsed.instances.find(instance => instance.id === inherited.instances[0]!.id)?.models).toEqual(inherited.instances[0]!.models);
+ for (const id of ["matrix_anthropic_api", "matrix_pi_anthropic_api"]) {
+   const instance = parsed.instances.find(candidate => candidate.id === id)!;
+   expect(instance.models).toHaveLength(64);
+   expect(instance.models.map(model => model.id)).toEqual(models.slice(0, 64).map(model => model.id));
+   expect(instance.defaultSelection?.model).toBe(models[0]!.id);
+ }
 });

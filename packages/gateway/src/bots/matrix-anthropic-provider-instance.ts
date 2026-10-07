@@ -19,7 +19,7 @@ export function withMatrixAnthropicProviderInstances(base: Pick<ChatProviderCata
     const instance: CanonicalProviderInstanceDescriptor = {
       id: MATRIX_ANTHROPIC_API_INSTANCE_ID, driverKind: "matrix_bot", displayName: "Claude · Anthropic API", connectionLabel: "Anthropic API",
       availability: ready && runnable && source.supports.recipeBots ? "available" : "unavailable", workspaceRequirement: "none", catalogRevision: revision,
-      models: ready && runnable && source.supports.recipeBots ? source.models.map(model => ({ ...model, availability: "available", capabilities: ["tools"], supportsToolUse: true, supportsVision: false })) : [],
+      models: ready && runnable && source.supports.recipeBots ? source.models.slice(0, 64).map(model => ({ ...model, availability: "available", capabilities: ["tools"], supportsToolUse: true, supportsVision: false })) : [],
       options: selectionOptions.map(option => ({ id: option.id, label: option.id === "connectionRevision" ? "Connection" : "Credential", kind: "enum", placement: "advanced",
         values: [{ value: option.value, label: "Current connection" }], defaultValue: option.value })), skills: [], commands: [],
       setupActions: [{ id: "matrix_anthropic_settings", kind: "open_settings", label: "Agents & providers" }],
@@ -30,7 +30,7 @@ export function withMatrixAnthropicProviderInstances(base: Pick<ChatProviderCata
     const chat: CanonicalProviderInstanceDescriptor = { ...instance, id: MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, driverKind: "matrix_pi",
       displayName: "Matrix AI · Anthropic API", workspaceRequirement: "project_optional", supports: MANAGED_PI_CHAT_SUPPORTS,
       availability: ready && runnable && source.supports.rootChat ? "available" : "unavailable",
-      models: ready && runnable && source.supports.rootChat ? source.models.map(model => ({ ...model, availability: "available", capabilities: ["tools"], supportsToolUse: true, supportsVision: false })) : [],
+      models: ready && runnable && source.supports.rootChat ? source.models.slice(0, 64).map(model => ({ ...model, availability: "available", capabilities: ["tools"], supportsToolUse: true, supportsVision: false })) : [],
       ...(!runnable ? { unavailabilityReason: "runtime_unavailable" } : {}),
     };
     delete chat.defaultSelection;

@@ -37,7 +37,7 @@ prior source and key; uncertain rollback keeps admission fenced.
 Matrix Disconnect disables and revises only this source. It preserves the shared
 key and native consumers. Global key removal invalidates this source's generation.
 Every inference and continuation rechecks the selected generation, source revision
-and model. Recipe tool preparation and dispatch also revalidate the captured source even when native key removal has not aborted the run signal. Cancellation must not replay ambiguous paid requests or tool effects. A replayed old Disconnect cannot withdraw a newer qualified catalog.
+and model. Recipe tool preparation and dispatch also revalidate the captured source even when native key removal has not aborted the run signal. Integration tools check again after inventory, approval and the final grant read, immediately before service invocation; artifact writes check after staging and close, immediately before rename or exclusive publication. A refusal before the effect cleans temporary files and remains definite; an already-entered external call retains its existing uncertainty and no-replay policy. Cancellation must not replay ambiguous paid requests or tool effects. A replayed old Disconnect cannot withdraw a newer qualified catalog.
 
 Persist only bounded nonsecret source/model/generation/revision references in
 ordinary Chat and supported recipe Bot selections and runtime bindings. The
@@ -76,7 +76,7 @@ owner/Computer mutations and failed discovery reconciliation invalidate the scop
 provider catalog; replacement verification failure retains the existing source. Opening the
 picker does not start another discovery, autofocus Search or reset drafts. Connection cards consume the existing canonical observation without an additional mount probe. A lost Connect response triggers bounded status reconciliation; changed authority replaces stale CAS intent, while an unchanged authority preserves an exact retry and a usable prior connection.
 
-Ordinary Chat and recipe Bot routes require separate admission qualification.
+Ordinary Chat and recipe Bot routes require separate admission qualification. Both canonical picker instances project at most 64 models from the bounded discovery catalog. Invalid or partial recipe source bindings return a nonretryable selection error before run admission.
 Custom Bot routes remain excluded from choices and save boundaries until separately
 qualified; an available ordinary catalog row is insufficient. Recipe Bot model saves require a complete, current source revision and credential generation binding. Preserve unrelated
 custom Bot edits and historical saved identities as unavailable without rewriting.

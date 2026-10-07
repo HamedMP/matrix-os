@@ -76,6 +76,8 @@ export function createBotIntegrationTools(deps: {
   transact: BotStateTransactions;
   recipes: BotRecipeCatalog;
   agents: Pick<ChatAgentStore, "get">;
+  /** Live source check at the last local checkpoint before service invocation. */
+  assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>;
   now?: () => Date;
 }) {
   const now = () => deps.now?.() ?? new Date();
@@ -261,6 +263,9 @@ export function createBotIntegrationTools(deps: {
       if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
         throw new BotBrokerActionError("not_granted");
       }
+      // Inventory, approval and both grant reads can await a source revocation.
+      // A refusal here precedes transport; post-dispatch uncertainty stays below.
+      await deps.assertSource?.(binding, signal);
       try {
         const result = await deps.client.call(binding.ownerId, {
           service: args.service, action: args.action, label: grant.accountLabel, params: args.params, read: effect === "read",
