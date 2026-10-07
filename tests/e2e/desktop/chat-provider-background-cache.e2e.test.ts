@@ -188,6 +188,9 @@ suite("Electron Desktop application-owned provider background cache", () => {
       expect(await chat().count()).toBe(0);
       await page.getByRole("button", { name: "Chat", exact: true }).first().dblclick();
       await chat().waitFor();
+      // Reopening also loads the Chat controller; catalog discovery stays cached.
+      await expect.poll(() => picker().isEnabled(), { timeout: 5_000 }).toBe(true);
+      expect(Boolean(pendingCatalog)).toBe(true);
       await usablePicker();
       await draft().fill("Sending stays available during background refresh");
       expect(await send().isEnabled()).toBe(true);
