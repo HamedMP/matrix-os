@@ -1,0 +1,10 @@
+.fixture-chat-preview { inset: 6% 10%; }
+.fixture-chat-preview__content { padding: 24px; }
+.fixture-chat-preview__composer { margin: 20px; }
+
+@media (max-width: 639px) {
+  .fixture-chat-preview { inset: 6% 12px; }
+  .fixture-chat-preview__history { display: none; }
+  .fixture-chat-preview__content { padding: 16px; }
+  .fixture-chat-preview__composer { margin: 12px; }
+}
