@@ -45,7 +45,7 @@ export function deriveChatProviderConnectionState(snapshot: ProviderSettingsSnap
   return "disconnected";
 }
 
-export function ChatProviderConnections({ snapshot, busy = false, error, attempt, onMutate, onRefresh, onOpenAction, children }: {
+export function ChatProviderConnections({ snapshot, busy = false, error, attempt, onMutate, onRefresh, onOpenAction, onOpenSettings, children }: {
   snapshot: ProviderSettingsSnapshot | null;
   busy?: boolean;
   error?: string | null;
@@ -53,6 +53,8 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
   onMutate: (intent: ProviderSettingsMutationIntent) => unknown;
   onRefresh: () => void;
   onOpenAction: (action: ProviderConnectionAttempt["action"]) => void;
+  /** Navigate to the host's current connection workflows; never initiate auth here. */
+  onOpenSettings?: () => void;
   children?: ReactNode;
 }) {
   const state = deriveChatProviderConnectionState(snapshot, Boolean(error));
@@ -78,7 +80,7 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
   const canLogin = snapshot?.access.mode === "writable" && snapshot.supportedActions.includes("start_login");
   return <section aria-label="Chat provider connection" className="matrix-chat-provider-connections" aria-busy={busy || undefined}>
     <h2>Connect a coding agent</h2>
-    <p>Sign in to Claude Code to start chatting. Configure API key connections in Agents & providers.</p>
+    <p>Sign in to Claude Code to start chatting. Connect Codex and configure API key connections in Agents & providers.</p>
     <div className="matrix-chat-provider-rows">{(["claude"] as const).map((kind) => {
       const label = "Claude Code";
       const harness = snapshot?.harnesses.find((candidate) => candidate.harness === kind
@@ -96,18 +98,23 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
           Connect {label}
         </button>
       </div>;
-    })}</div>
+    })}
+    {onOpenSettings && snapshot?.harnesses.some(harness => harness.harness === "codex") ? <div className="matrix-chat-provider-row">
+      <HarnessIcon harness="codex" /><strong>Codex</strong>
+      <button type="button" title="Connect in Agents & providers" disabled={busy || snapshot.access.mode !== "writable"} onClick={onOpenSettings}>Connect Codex</button>
+    </div> : null}</div>
     {recovery}
   </section>;
 }
 
 /** Reuses Settings' validated attempts and revisions; refreshes reads, never authentication mutations. */
-export function ChatProviderOnboarding({ identityKey, transport, onCatalogChanged, isIdentityCurrent, openAction, changedEvent, lifecycleRefresh = true, backgroundRefreshKey, children }: {
+export function ChatProviderOnboarding({ identityKey, transport, onCatalogChanged, isIdentityCurrent, openAction, onOpenSettings, changedEvent, lifecycleRefresh = true, backgroundRefreshKey, children }: {
   identityKey: string;
   transport: ProviderSettingsTransport;
   onCatalogChanged?: ProviderSettingsControllerOptions["onCatalogChanged"];
   isIdentityCurrent: () => boolean;
   openAction: (action: ProviderConnectionAttempt["action"]) => boolean | Promise<boolean>;
+  onOpenSettings?: () => void;
   changedEvent?: string;
   /** Electron owns refresh at application scope; Web retains foreground probes. */
   lifecycleRefresh?: boolean;
@@ -177,7 +184,8 @@ export function ChatProviderOnboarding({ identityKey, transport, onCatalogChange
         if (isIdentityCurrent()) setActionError("Connection action unavailable");
       });
     }}
-    onMutate={(intent) => isIdentityCurrent() && controller.mutate(intent, { onLoginAction: acceptAction })}>
+    onMutate={(intent) => isIdentityCurrent() && controller.mutate(intent, { onLoginAction: acceptAction })}
+    onOpenSettings={onOpenSettings ? () => { if (isIdentityCurrent()) onOpenSettings(); } : undefined}>
     {children}
   </ChatProviderConnections>;
 }

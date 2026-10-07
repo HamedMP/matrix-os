@@ -63,3 +63,24 @@ it('owes one newer event read while coalescing all consumers of an in-flight old
  expect(client.bots!.directChat).toHaveBeenCalledTimes(2);
  await reads.directChat('bot_one','event:1'); expect(client.bots!.directChat).toHaveBeenCalledTimes(2);
 });
+it('bounds library subscriptions, frees unsubscribed slots and isolates failing listeners', async () => {
+ const reads=botSummaryReads(fixture());
+ const detach=Array.from({length:256}, () => reads.subscribeLibrary(() => undefined));
+ expect(() => reads.subscribeLibrary(() => undefined)).toThrow('subscription capacity');
+ detach[0]!();
+ const failing=vi.fn(() => { throw new Error('private callback error'); });
+ reads.subscribeLibrary(failing);
+ const warn=vi.spyOn(console,'warn').mockImplementation(() => undefined);
+ await reads.library('first');
+ expect(failing).toHaveBeenCalledTimes(1);
+ expect(warn).toHaveBeenCalledWith('[bots] Library subscriber unavailable:', 'Error');
+ const notified=vi.fn();
+ const unsubscribe=reads.subscribeLibrary(notified);
+ await reads.library('second');
+ expect(failing).toHaveBeenCalledTimes(1);
+ expect(notified).toHaveBeenCalledTimes(1);
+ unsubscribe();
+ await reads.library('third');
+ expect(notified).toHaveBeenCalledTimes(1);
+ detach.forEach(unsubscribe => unsubscribe());
+});

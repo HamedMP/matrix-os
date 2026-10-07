@@ -12,6 +12,8 @@ import { createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
 import { openExistingProviderTerminalSession } from "@desktop/renderer/src/features/settings/provider-settings-desktop-adapter";
+import { openChatProviderSettings } from "@desktop/renderer/src/features/chat/open-chat-provider-settings";
+vi.mock("@desktop/renderer/src/features/chat/open-chat-provider-settings", () => ({ openChatProviderSettings: vi.fn() }));
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 vi.mock("@desktop/renderer/src/features/settings/provider-settings-desktop-adapter", async (original) => ({
   ...(await original<typeof import("@desktop/renderer/src/features/settings/provider-settings-desktop-adapter")>()),
@@ -24,6 +26,20 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
 });
 describe("canonical native empty Chat connection wiring", () => {
+  it("opens current supported Codex Settings recovery without a legacy login mutation", async () => {
+    const snapshot = disconnectedSnapshot();
+    const api = { forRuntime: () => api, get: vi.fn(async () => snapshot), post: vi.fn() };
+    useConnection.setState({ status: "signed-in", handle: "owner", runtimeSlot: "preview", api: api as unknown as ApiClient });
+    render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()} projectId={null} initialView="draft" active catalog={providerCatalog} />);
+    const draft = screen.getByRole("textbox", { name: "Start a chat" });
+    await setSharedComposerText(draft, "Keep the recovery draft");
+    const connect = await screen.findByRole("button", { name: "Connect Codex" });
+    fireEvent.click(connect);
+    expect(openChatProviderSettings).toHaveBeenCalledOnce();
+    expect(api.post).not.toHaveBeenCalled();
+    expect(draft).toHaveTextContent("Keep the recovery draft");
+  });
+
   it.each(["checking", "unknown", "read_failed"])("preserves native starter cards and draft while connection evidence is %s", async (state) => {
     const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.authState = "unknown";
     const api = { forRuntime: () => api, get: vi.fn(async () => {

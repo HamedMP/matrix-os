@@ -6,9 +6,15 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import type { Browser } from "playwright";
 import { WorkRailProjectGroup } from "../../../desktop/src/renderer/src/features/work/work-rail/WorkRailProjectGroup";
 import { WorkRailSection } from "../../../desktop/src/renderer/src/features/work/work-rail/WorkRailSection";
+import { ChatAgentsRailSection } from "../../../packages/ui/src/chat-agents/ChatAgentsRailSection";
+import { ChatAgentsWorkspace } from "../../../packages/ui/src/chat-agents/ChatAgentsNavigation";
+import { clientFixture } from "../../desktop/chat-agents-fixture";
 
 vi.mock("../../../desktop/src/renderer/src/features/work/work-rail/use-project-actions", () => ({
   useProjectActions: () => ({ available: true, pending: false, update: vi.fn(), showInFiles: vi.fn(), setDialog: vi.fn(), dialog: null, error: null }),
+}));
+vi.mock("../../../packages/ui/src/chat-agents/bots/use-agent-rail-library.js", () => ({
+  useAgentRailLibrary: () => ({ enabled: true, agents: [] }),
 }));
 const { chromium } = createRequire(new URL("../../../shell/package.json", import.meta.url))("@playwright/test");
 let browser: Browser;
@@ -69,34 +75,61 @@ it("aligns pinned/unpinned project icons and labels and contains disclosure/acti
   } finally {await page.close();}
 });
 
-it("does not stretch shared Agent heading actions when applying section disclosure geometry", async () => {
-  const page = await browser.newPage();
+it("keeps actual Agent disclosure beside its label and actions contained on hover and focus", async () => {
+  const page = await browser.newPage({ viewport: { width: 600, height: 700 } });
   try {
     const projectHeading = renderToStaticMarkup(React.createElement(WorkRailSection, {label:"Projects",expanded:true,onToggle:()=>{},children:null}));
-    await page.setContent(`<style>${css} *{box-sizing:border-box} body{margin:0} button{border:0;padding:0} .ml-auto{margin-left:auto} [class~="mr-2.5"]{margin-right:10px} .matrix-chat-agent-button{display:grid;place-items:center}</style>
-      <nav class="matrix-chat-work-rail" style="width:240px;padding:0 10px"><section class="matrix-chat-agents-rail">
-        <div data-slot="chat-sidebar-section-heading" style="display:flex;width:100%">
-          <button aria-label="Agents" class="matrix-chat-agents-heading" style="flex:1;min-width:0">Agents</button>
-          <button aria-label="Add new agent" class="matrix-chat-agents-create" style="flex-shrink:0">+</button>
-          <button aria-label="Collapse Agents" class="matrix-chat-agent-button" style="flex-shrink:0"><svg width="12" height="12" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
-        </div></section>${projectHeading}</nav>`);
-    const geometry = await page.locator("button").evaluateAll(buttons => buttons.map(button => {
-      const rect = button.getBoundingClientRect(); return {width:rect.width,right:rect.right};
-    }));
-    expect(geometry[1].width).toBe(20);
-    expect(geometry[2].right).toBe(222);
+    const agentHeading = renderToStaticMarkup(React.createElement(ChatAgentsWorkspace, {},
+      React.createElement(ChatAgentsRailSection, {client:clientFixture(),expanded:true})));
+    await page.setContent(`<style>${css} *{box-sizing:border-box} body{margin:0;font-family:Arial} button{border:0;padding:0} .ml-auto{margin-left:auto} [class~="mr-2.5"]{margin-right:10px}</style>
+      <nav class="matrix-chat-work-rail" style="width:240px;padding:0 10px">${agentHeading}${projectHeading}</nav>`);
+    const heading = page.locator(".matrix-chat-agents-group-heading");
+    const controls = heading.locator(".matrix-chat-agents-disclosure, .matrix-chat-agents-create");
+    const disclosure = page.getByRole("button", {name:"Collapse agents",exact:true});
+    const create = page.getByRole("button", {name:"Add new agent",exact:true});
+    const agent = page.getByRole("button", {name:"Agents",exact:true});
     for (const width of [240,200]) {
       await page.locator("nav").evaluate((nav,width) => { (nav as HTMLElement).style.width = `${width}px`; },width);
-      const centers = await page.locator('[aria-label="Collapse Agents"] svg, .work-rail-section-disclosure svg').evaluateAll(icons => icons.map(icon => {
-        const rect = icon.getBoundingClientRect(); return rect.x + rect.width / 2;
-      }));
-      expect(centers).toHaveLength(2);
-      expect(centers[0]).toBe(centers[1]);
-      expect(centers[0]).toBeLessThan(width - 10);
+      await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+      await page.mouse.move(550,650);
+      const quiet = await controls.evaluateAll(buttons => buttons.map(button => ({opacity:getComputedStyle(button).opacity,pointer:getComputedStyle(button).pointerEvents})));
+      expect(quiet).toEqual([{opacity:"0",pointer:"none"},{opacity:"0",pointer:"none"}]);
+      const geometry = await heading.evaluate(node => {
+        const rect = node.getBoundingClientRect();
+        const label = node.querySelector(".matrix-chat-agents-heading > span")!.getBoundingClientRect();
+        const glyph = node.querySelector(".matrix-chat-agents-disclosure svg")!.getBoundingClientRect();
+        const buttons = Array.from(node.querySelectorAll(".matrix-chat-agents-disclosure, .matrix-chat-agents-create"), button => {
+          const box = button.getBoundingClientRect();
+          return {width:box.width,height:box.height,left:box.left,right:box.right,top:box.top,bottom:box.bottom};
+        });
+        return {left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,labelRight:label.right,glyphGap:glyph.left-label.right,buttons};
+      });
+      expect(geometry.buttons).toHaveLength(2);
+      expect(geometry.glyphGap).toBeCloseTo(6,3);
+      expect(geometry.buttons[0].left).toBeCloseTo(geometry.labelRight,3);
+      expect(geometry.buttons[0].right).toBeLessThan(geometry.buttons[1].left);
+      expect(geometry.buttons[1].right).toBeCloseTo(geometry.right-8,3);
+      for (const button of geometry.buttons) {
+        expect(button.width).toBe(24);
+        expect(button.height).toBe(24);
+        expect(button.left).toBeGreaterThanOrEqual(geometry.left);
+        expect(button.right).toBeLessThanOrEqual(geometry.right);
+        expect(button.top).toBeGreaterThanOrEqual(geometry.top);
+        expect(button.bottom).toBeLessThanOrEqual(geometry.bottom);
+      }
+      await agent.hover();
+      expect(await controls.evaluateAll(buttons => buttons.map(button => getComputedStyle(button).pointerEvents))).toEqual(["auto","auto"]);
+      await create.click({timeout:1500});
+      expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Add new agent");
+      await disclosure.click({timeout:1500});
+      expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Collapse agents");
+      await page.mouse.move(550,650);
+      await agent.focus();
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Collapse agents");
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Add new agent");
+      expect(await controls.evaluateAll(buttons => buttons.map(button => getComputedStyle(button).opacity))).toEqual(["1","1"]);
     }
-    await page.getByRole("button", {name:"Add new agent"}).click({timeout:1500});
-    expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Add new agent");
-    await page.getByRole("button", {name:"Collapse Agents"}).click({timeout:1500});
-    expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Collapse Agents");
   } finally {await page.close();}
 });

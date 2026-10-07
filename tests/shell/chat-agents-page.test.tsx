@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
 import { createBotClient } from "../../packages/ui/src/chat-agents/bots/client.js";
 import { clientFixture, saved } from "../desktop/chat-agents-fixture";
+import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering";
 
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
@@ -149,4 +150,33 @@ describe("Web Chat Agents page", () => {
     expect((await screen.findByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement).value).toBe("Keep the original draft");
     expect(screen.getByText("Original message")).toBeTruthy();
   });
+});
+
+
+it("portals Agent Details above fullscreen Web chrome and keeps its action usable", async () => {
+  const base = clientFixture();
+  base.list.mockResolvedValue({ enabled: true, agents: [saved] });
+  const botChatId = "chat_fullscreen_details";
+  const botRequest = vi.fn(async (path: string, method: string) => {
+    if (path === `/api/chat-agents/${saved.id}/direct-chat` && (method === "GET" || method === "POST")) return { chatId: botChatId };
+    if (path === "/api/chats/chat_original/bot" && method === "GET") return { agentId: null };
+    throw new Error(`Unexpected Bot request: ${method} ${path}`);
+  });
+  const client = { ...base, bots: createBotClient(botRequest) };
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(await client.catalog())));
+  const switchChat = vi.fn();
+  const submit = vi.fn();
+  render(<div data-testid="fullscreen-chat" style={{ position: "fixed", zIndex: SHELL_Z_INDEX.fullscreenWindow }}>
+    <ChatApp messages={[]} sessionId="chat_original" busy={false} connected conversations={[]}
+      onNewChat={vi.fn()} onSwitchConversation={switchChat} onSubmit={submit} agentClient={client} />
+  </div>);
+  fireEvent.keyDown(await screen.findByRole("button", { name: `Actions for ${saved.name}` }), { key: "Enter" });
+  const menu = await screen.findByRole("menu");
+  const fullscreen = screen.getByTestId("fullscreen-chat");
+  expect(fullscreen.contains(menu)).toBe(false);
+  expect(Number(getComputedStyle(menu).zIndex)).toBe(SHELL_Z_INDEX.popover);
+  expect(Number(getComputedStyle(menu).zIndex)).toBeGreaterThan(Number(getComputedStyle(fullscreen).zIndex));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Details" }));
+  await waitFor(() => expect(switchChat).toHaveBeenCalledWith(botChatId));
+  expect(submit).not.toHaveBeenCalled();
 });

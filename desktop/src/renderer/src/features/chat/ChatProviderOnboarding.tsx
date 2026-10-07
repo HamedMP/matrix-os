@@ -6,6 +6,7 @@ import { useCallback, useMemo, useSyncExternalStore, type ReactNode } from "reac
 import { ChatProviderOnboarding as SharedOnboarding } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
 import type { ProviderConnectionAttempt } from "@matrix-os/contracts";
+import { openChatProviderSettings } from "./open-chat-provider-settings";
 import { useConnection } from "../../stores/connection";
 import type { ApiClient } from "../../lib/api";
 import { createDesktopProviderSettingsTransport, desktopProviderIdentityKey, openExistingProviderTerminalSession, openProviderAuthorizationPath } from "../settings/provider-settings-desktop-adapter";
@@ -27,8 +28,12 @@ function ConnectedOnboarding({ api, identityKey, runtimeSlot, platformHost, chil
     if (action.kind === "open_browser") return openProviderAuthorizationPath({ authorizationPath: action.authorizationPath, platformHost, runtimeSlot });
     return false;
   }, [isIdentityCurrent, runtimeApi, platformHost, runtimeSlot]);
+  const onOpenSettings = useCallback(() => {
+    if (isIdentityCurrent()) openChatProviderSettings();
+  }, [isIdentityCurrent]);
   return <SharedOnboarding identityKey={identityKey} transport={transport} isIdentityCurrent={isIdentityCurrent}
-    onCatalogChanged={onCatalogChanged} openAction={openAction} lifecycleRefresh={false} backgroundRefreshKey={backgroundRefreshKey}>{children}</SharedOnboarding>;
+    onCatalogChanged={onCatalogChanged} openAction={openAction} onOpenSettings={onOpenSettings}
+    lifecycleRefresh={false} backgroundRefreshKey={backgroundRefreshKey}>{children}</SharedOnboarding>;
 }
 
 export function ChatProviderOnboarding({ children }: { children?: ReactNode }) {

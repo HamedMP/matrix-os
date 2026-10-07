@@ -1,0 +1,9 @@
+.matrix-chat-title-viewport { display: block; min-width: 0; flex: 1; overflow: hidden; }
+.matrix-chat-title-text { display: block; width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+@keyframes matrix-chat-title-scroll { 0%, 10% { transform: translateX(0); } 90%, 100% { transform: translateX(calc(-1 * var(--chat-title-scroll-distance))); } }
+@media (prefers-reduced-motion: no-preference) {
+  [data-chat-title-row]:hover .matrix-chat-title-viewport[data-overflowing="true"] > .matrix-chat-title-text,
+  [data-chat-title-row]:focus-within .matrix-chat-title-viewport[data-overflowing="true"] > .matrix-chat-title-text {
+    width: max-content; overflow: visible; text-overflow: clip; animation: matrix-chat-title-scroll 4s ease-in-out infinite alternate;
+  }
+}
