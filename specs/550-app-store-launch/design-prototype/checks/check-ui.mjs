@@ -18,6 +18,21 @@ try {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width, `page overflow at ${width}`);
       assert.equal(await page.locator('.store-listing').count(), 8);
       assert.equal(await page.locator('.feature-screenshot').first().evaluate(element => element.getBoundingClientRect().top < 650), true, 'real apps must appear early');
+      // Exercise actual main.tsx collection selection and rendered listings.
+      const search = page.getByRole('searchbox', { name: 'Search apps' });
+      await search.fill('trips');
+      await page.locator('.store-listing.listing-atlas').waitFor();
+      assert.deepEqual(await page.locator('.store-listing').evaluateAll(elements => elements.map(element => element.getAttribute('aria-label'))), ['Explore Atlas'], 'trips renders only Atlas');
+      await page.getByRole('button', { name: 'Business', exact: true }).click();
+      await page.getByRole('heading', { name: 'No apps found.' }).waitFor();
+      assert.equal(await search.inputValue(), 'trips', 'collection switch retains search');
+      assert.equal(await page.locator('.store-listing').count(), 0, 'Business excludes the personal trip app');
+      await page.getByRole('button', { name: 'All apps', exact: true }).click();
+      await page.locator('.store-listing.listing-atlas').waitFor();
+      assert.deepEqual(await page.locator('.store-listing').evaluateAll(elements => elements.map(element => element.getAttribute('aria-label'))), ['Explore Atlas'], 'returning to All apps restores Atlas');
+      await search.fill('');
+      await page.locator('.store-listing.listing-revenue').waitFor();
+      assert.equal(await page.locator('.store-listing').count(), 8, 'clearing search restores the catalog');
       await page.getByRole('searchbox', { name: 'Search apps' }).fill('no-such-app');
       await page.getByRole('heading', { name: 'No apps found.' }).waitFor();
       await page.getByRole('button', { name: 'Clear search' }).click();
@@ -54,7 +69,7 @@ try {
       assert.equal(await page.locator('dialog').count(), 0);
       assert.deepEqual(privilegedRequests, []);
       assert.deepEqual(errors, []);
-      results.push({ width, overflow: false, onboarding: 'passed', selectedAppPreserved: true, permissionsBeforeInstall: true, privateRequests: 0, pageErrors: 0 });
+      results.push({ width, overflow: false, searchCollectionBoundary: true, onboarding: 'passed', selectedAppPreserved: true, permissionsBeforeInstall: true, privateRequests: 0, pageErrors: 0 });
     } finally { await context.close(); }
   }
   process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
