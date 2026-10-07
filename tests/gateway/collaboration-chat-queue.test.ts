@@ -265,7 +265,7 @@ describe("shared Chat canonical queue", () => {
       .resolves.toEqual([expect.objectContaining({ id: admitted.id, state: "unavailable" })]);
   });
 
-  it("requires the owner to establish an unbound shared Chat Provider", async () => {
+  it("lets a Contributor establish an unbound shared Chat only with trusted owner-policy authority", async () => {
     await fixture.db.updateTable("chats").set({
       bound_driver_kind: null,
       bound_instance_id: null,
@@ -276,10 +276,9 @@ describe("shared Chat canonical queue", () => {
       owner,
       request(18, collaborationActors.editor),
     )).rejects.toMatchObject({ code: "unavailable" });
-    const admitted = await repository.enqueueSharedQueuedTurn(
-      owner,
-      { ...request(19, collaborationActors.owner), canonicalProviderAuthority: productionClaudeAuthority },
-    );
+    const admitted = await repository.enqueueSharedQueuedTurn(owner, {
+      ...request(19, collaborationActors.editor), canonicalProviderAuthority: productionClaudeAuthority,
+    });
     expect(admitted.selection).toEqual(productionClaudeSelection);
     await repository.claimNextQueuedTurn(owner, {
       chatId: collaborationIds.chat,
@@ -296,6 +295,35 @@ describe("shared Chat canonical queue", () => {
         lockedAtTurnId: "cturn_owner_initial_binding",
       },
     });
+  });
+
+  it("snapshots an updated owner-policy model without changing the immutable Chat Instance", async () => {
+    const policySelection = { ...productionClaudeSelection, model: "claude-sonnet-5" };
+    const admitted = await repository.enqueueSharedQueuedTurn(owner, {
+      ...request(52, collaborationActors.editor),
+      canonicalProviderAuthority: { driverKind: "claude_code", selection: policySelection },
+    });
+    expect(admitted.selection).toEqual(policySelection);
+    await expect(fixture.db.selectFrom("chats").select("current_selection")
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .resolves.toMatchObject({ current_selection: policySelection });
+    const claimed = await repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_policy_model",
+      runId: "run_policy_model",
+      messageId: "msg_policy_model",
+      claimedAt: now,
+    });
+    expect(claimed?.run.selection).toEqual(policySelection);
+    await expect(fixture.db.selectFrom("chats")
+      .select(["current_selection", "bound_driver_kind", "bound_instance_id"])
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .resolves.toMatchObject({
+        current_selection: policySelection,
+        bound_driver_kind: "claude_code",
+        bound_instance_id: productionClaudeSelection.instanceId,
+      });
   });
 
   it("rejects partial or mismatched immutable bindings without changing provider authority", async () => {
@@ -596,7 +624,7 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
     );
   });
 
-  it("serializes initial binding attempts and never lets an editor establish ownership", async () => {
+  it("serializes initial binding attempts and rejects a Contributor without trusted authority", async () => {
     await fixture.db.updateTable("chats").set({
       bound_driver_kind: null,
       bound_instance_id: null,

@@ -59,7 +59,7 @@ function presetMeaning(kind: Scope["kind"]): string {
   return "Contributors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals.";
 }
 
-function useScopeReadiness(api: CollaborationApi, scope: Scope): CollaborationReadiness | null {
+function useScopeReadiness(api: CollaborationApi, scope: Scope, refreshVersion: number): CollaborationReadiness | null {
   const [readiness, setReadiness] = useState<CollaborationReadiness | null>(null);
   const awaitingShare = projectAwaitingShare(scope);
   useEffect(() => {
@@ -74,7 +74,7 @@ function useScopeReadiness(api: CollaborationApi, scope: Scope): CollaborationRe
         console.warn("[collaboration-access] readiness unavailable", failure instanceof Error ? failure.name : "UnknownError");
       });
     return () => { active = false; };
-  }, [api, scope.id, scope.kind, awaitingShare]);
+  }, [api, scope.id, scope.kind, awaitingShare, refreshVersion]);
   return readiness;
 }
 
@@ -104,7 +104,8 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
 }) {
   const resourceLabel = scope.kind === "chat" ? "Chat" : scope.kind === "terminal" ? "terminal" : scope.kind === "app" ? "app" : scope.kind;
   const [currentMembers, setCurrentMembers] = useState(members);
-  const readiness = useScopeReadiness(api, scope);
+  const [readinessVersion, setReadinessVersion] = useState(0);
+  const readiness = useScopeReadiness(api, scope, readinessVersion);
   const refresh = async () => {
     const next = await onRefresh();
     setCurrentMembers(next.members);
@@ -124,7 +125,8 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       <button type="button" className={buttonClass} onClick={onClose}>Close</button>
     </div>
     {readiness ? <ReadinessSummary readiness={readiness} /> : null}
-    {!projectAwaitingShare(scope) ? <ContributorAiSettings api={api} scope={scope} /> : null}
+    {!projectAwaitingShare(scope) ? <ContributorAiSettings api={api} scope={scope}
+      onPolicyUpdated={() => setReadinessVersion((version) => version + 1)} /> : null}
     <ScopeAccess api={api} scope={scope} onRefresh={refresh} allowNewGrants={allowNewGrants} />
     <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
       {presetMeaning(scope.kind)}

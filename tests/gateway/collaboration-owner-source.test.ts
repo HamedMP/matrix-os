@@ -249,6 +249,27 @@ describe("S08 owner-selected AI source", () => {
       })).rejects.toMatchObject({ code: "conflict" });
     });
 
+    it("offers and accepts only sources compatible with an immutable shared Chat harness", async () => {
+      await fixture.db.insertInto("chats").values({
+        id: collaborationIds.chat, owner_type: "personal", owner_id: collaborationActors.owner,
+        create_request_id: "req_bound_policy_chat", project_id: "project_collaboration_primary",
+        title: "Bound project Chat", lifecycle: "active", attention: "none", revision: 1,
+        message_count: 0, collaboration: null, user_state: null, shell_state: null,
+        fork_provenance: null, last_message_preview: null,
+        current_selection: JSON.stringify({ instanceId: "claude_code_default", model: "claude-opus-5" }),
+        bound_driver_kind: "claude_code", bound_instance_id: "claude_code_default",
+        bound_at_turn_id: "cturn_bound_policy", created_at: NOW, updated_at: NOW,
+      }).execute();
+
+      const options = await policies.options(PROJECT_SCOPE, collaborationActors.owner);
+      expect(options.options).toHaveLength(2);
+      expect(options.options.every((option) => option.source.harness === "claude_code")).toBe(true);
+      await expect(ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CODEX, {
+        allowedModelIds: ["gpt-5.6"],
+      })).rejects.toMatchObject({ code: "invalid_source" });
+      await expect(ownerPolicy()).resolves.toMatchObject({ source: { harness: "claude_code" } });
+    });
+
     it.skipIf(!hasRealPostgres)("resolves the owner's source and the organization policy outside the scope lock", async () => {
       // A second pool connection probes the scope row: NOWAIT fails with 55P03 while put() holds FOR UPDATE.
       const observed: string[] = [];
@@ -596,6 +617,7 @@ describe("S08 owner-selected AI source", () => {
         providerInstanceId: "inst_claude_profile",
         accessSourceId: "owner_anthropic_profile",
         allowedModelIds: ["claude-opus-5"],
+        modelId: "claude-opus-5",
         effectiveSubmitMode: "members",
       });
     });

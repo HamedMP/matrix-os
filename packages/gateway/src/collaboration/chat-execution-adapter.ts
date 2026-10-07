@@ -55,8 +55,10 @@ export class CollaborationChatExecutionAdapter {
       boundDriverKind: CanonicalProviderDriverKind | null,
     ): Promise<"ready" | "reconnect_required" | "unavailable">;
     resolveCanonicalProviderAuthority?(
+      scopeId: string,
       ownerId: string,
       selection: CollaborationAiRequest["selection"],
+      boundDriverKind: CanonicalProviderDriverKind | null,
     ): Promise<CanonicalSharedProviderAuthority | null>;
     resolveResourceRevision(scopeId: string, chatId: string): Promise<number | null>;
     requestDispatch(scopeId: string, chatId: string): Promise<void>;
@@ -290,14 +292,32 @@ export class CollaborationChatExecutionAdapter {
       if (admission === "missing") return { capability: { ...capability, status: "unavailable" } };
     }
 
+    let canonicalProviderAuthority: CanonicalSharedProviderAuthority | undefined;
+    if (capability.effectiveSelection && this.options.resolveCanonicalProviderAuthority) {
+      try {
+        canonicalProviderAuthority = await this.options.resolveCanonicalProviderAuthority(
+          context.scopeId,
+          context.ownerId,
+          capability.effectiveSelection,
+          boundDriverKind ?? null,
+        ) ?? undefined;
+      } catch (error: unknown) {
+        console.warn("[collaboration] canonical shared Provider authority unavailable",
+          error instanceof Error ? error.name : "UnknownError");
+      }
+      if (!canonicalProviderAuthority) {
+        return { capability: { ...capability, status: "unavailable" } };
+      }
+    }
+
     let readiness: "ready" | "reconnect_required" | "unavailable" = "ready";
     try {
-      // Readiness follows the immutable bound driver; an unbound Chat has none
-      // and the resolver classifies the candidate selection server-side.
+      // Readiness follows the server-validated owner policy selection. For a
+      // bound Chat the immutable driver/Instance still constrains that authority.
       readiness = await this.options.resolveProviderReadiness?.(
         context.ownerId,
-        capability.effectiveSelection ?? null,
-        boundDriverKind ?? null,
+        canonicalProviderAuthority?.selection ?? capability.effectiveSelection ?? null,
+        canonicalProviderAuthority?.driverKind ?? boundDriverKind ?? null,
       ) ?? "ready";
     } catch (error: unknown) {
       console.warn("[collaboration] shared AI Provider readiness unavailable",
@@ -314,29 +334,16 @@ export class CollaborationChatExecutionAdapter {
         },
       };
     }
-    if (capability.status === "available") return { capability };
-    if (context.actorId !== context.ownerId || !capability.effectiveSelection
-      || !this.options.resolveCanonicalProviderAuthority) {
+    const effectiveCapability = canonicalProviderAuthority
+      ? { ...capability, status: "available" as const, effectiveSelection: canonicalProviderAuthority.selection }
+      : capability;
+    if (capability.status === "available") {
+      return { capability: effectiveCapability, ...(canonicalProviderAuthority ? { canonicalProviderAuthority } : {}) };
+    }
+    if (!capability.effectiveSelection || !canonicalProviderAuthority) {
       return { capability };
     }
-
-    try {
-      const canonicalProviderAuthority = await this.options.resolveCanonicalProviderAuthority(
-        context.ownerId,
-        capability.effectiveSelection,
-      );
-      if (!canonicalProviderAuthority) {
-        return { capability: { ...capability, status: "unavailable" } };
-      }
-      return {
-        capability: { ...capability, status: "available" },
-        canonicalProviderAuthority,
-      };
-    } catch (error: unknown) {
-      console.warn("[collaboration] canonical shared Provider authority unavailable",
-        error instanceof Error ? error.name : "UnknownError");
-      return { capability: { ...capability, status: "unavailable" } };
-    }
+    return { capability: effectiveCapability, canonicalProviderAuthority };
   }
 
   private async notify(scopeId: string): Promise<void> {

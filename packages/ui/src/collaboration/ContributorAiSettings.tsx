@@ -10,9 +10,10 @@ import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
 const controlClass = "rounded-lg border bg-transparent px-3 py-2 text-sm disabled:opacity-50";
 
-export function ContributorAiSettings({ api, scope }: {
+export function ContributorAiSettings({ api, scope, onPolicyUpdated }: {
   api: CollaborationApi;
   scope: CollaborationScope;
+  onPolicyUpdated?: () => void | Promise<void>;
 }) {
   const executionScopeId = scope.kind === "chat" && scope.membershipMode === "inherited"
     ? scope.parentScopeId
@@ -84,6 +85,7 @@ export function ContributorAiSettings({ api, scope }: {
       setFeedback(updated.effectiveSubmitMode === "members"
         ? "Contributors can now send prompts using this owner-selected AI source."
         : "Contributor AI requests are disabled.");
+      await onPolicyUpdated?.();
     } catch (failure: unknown) {
       console.warn("[collaboration-access] contributor AI update failed",
         failure instanceof Error ? failure.name : "UnknownError");
@@ -96,15 +98,12 @@ export function ContributorAiSettings({ api, scope }: {
   return <section aria-label="Contributor AI" className="rounded-xl border p-4 text-sm">
     <h3 className="font-medium">Contributor AI</h3>
     {state === null ? error ? <p role="alert" className="mt-2">{error}</p>
-      : <p className="mt-2">Loading owner AI sources…</p> : enabled ? <>
-      <p className="mt-2">
-        Contributors can send prompts using the owner's selected source and allowed model.
-        To prevent a collaborator from prompting, change their access to Viewer.
-      </p>
-    </> : state.options.length === 0 ? <p className="mt-2">
+      : <p className="mt-2">Loading owner AI sources…</p> : state.options.length === 0 ? <p className="mt-2">
       Set up a supported owner AI account in Agents &amp; providers before enabling contributor prompts.
     </p> : <>
-      <p className="mt-2">Choose the owner-funded source and model that contributor prompts may use.</p>
+      <p className="mt-2">{enabled
+        ? "Contributors can send prompts using this owner-selected source and model. Change their access to Viewer to make them read-only."
+        : "Choose the owner-funded source and model that contributor prompts may use."}</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="grid gap-1">Owner AI source
           <select className={controlClass} value={sourceKey} onChange={(event) => {
@@ -133,7 +132,7 @@ export function ContributorAiSettings({ api, scope }: {
       <button type="button" className={`${controlClass} mt-3`}
         disabled={pending || !api.put || !acknowledged || !selected?.available || !modelId}
         onClick={() => void save()}>
-        {pending ? "Saving…" : "Use this AI source for contributors"}
+        {pending ? "Saving…" : enabled ? "Update AI source for contributors" : "Use this AI source for contributors"}
       </button>
     </>}
     {feedback ? <p role="status" className="mt-2">{feedback}</p> : null}

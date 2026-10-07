@@ -149,6 +149,7 @@ export interface EnqueueSharedQueuedTurnInput extends Omit<
   expectedRevision: number;
   acceptedAt: string;
   retryOfQueuedTurnId?: string;
+  /** Server-derived owner-policy authority; never accepted from the HTTP request body. */
   canonicalProviderAuthority?: CanonicalSharedProviderAuthority;
 }
 
@@ -339,6 +340,7 @@ export class ChatQueueRepository {
         actorId: requestingActorId,
         executionEligibility: scope.execution_eligibility,
         canonicalProviderAuthority: input.canonicalProviderAuthority,
+        allowPolicyModelUpdate: true,
       });
       if (provider.capability.status !== "available" || !provider.execution) {
         throw new SharedChatQueueError("unavailable");
@@ -410,7 +412,12 @@ export class ChatQueueRepository {
         updated_at: acceptedAt,
       }).returningAll().executeTakeFirstOrThrow();
       const revision = Number(chat.revision) + 1;
-      const updated = await trx.updateTable("chats").set({ revision, updated_at: acceptedAt, activity_at: sql`clock_timestamp()` })
+      const updated = await trx.updateTable("chats").set({
+        revision,
+        current_selection: jsonb(provider.execution.selection),
+        updated_at: acceptedAt,
+        activity_at: sql`clock_timestamp()`,
+      })
         .where("id", "=", chatId)
         .where("revision", "=", Number(chat.revision))
         .returning("id")
@@ -1292,6 +1299,8 @@ function authoritativeSharedProvider(input: {
   ownerId?: string;
   executionEligibility: unknown;
   canonicalProviderAuthority?: CanonicalSharedProviderAuthority;
+  /** Admission may atomically apply the trusted owner-policy model; claim/replay may not. */
+  allowPolicyModelUpdate?: boolean;
 }): {
   capability: SharedAiCapability;
   execution?: {
@@ -1317,28 +1326,34 @@ function authoritativeSharedProvider(input: {
     if (selection.data.instanceId !== input.chat.bound_instance_id) {
       return { capability: { status: "unavailable" } };
     }
-    const driverKind = CanonicalChatRunSchema.shape.driverKind.safeParse(input.chat.bound_driver_kind);
-    if (!driverKind.success || !sharedRuntimeSupports(
+    const boundDriver = CanonicalChatRunSchema.shape.driverKind.safeParse(input.chat.bound_driver_kind);
+    const authorityDriver = input.canonicalProviderAuthority === undefined ? undefined
+      : CanonicalChatRunSchema.shape.driverKind.safeParse(input.canonicalProviderAuthority.driverKind);
+    const authoritySelection = input.canonicalProviderAuthority === undefined ? undefined
+      : CanonicalChatModelSelectionSchema.safeParse(input.canonicalProviderAuthority.selection);
+    if (!boundDriver.success
+      || (authorityDriver !== undefined && (!authorityDriver.success || authorityDriver.data !== boundDriver.data))
+      || (authoritySelection !== undefined && (!authoritySelection.success
+        || authoritySelection.data.instanceId !== input.chat.bound_instance_id
+        || (!input.allowPolicyModelUpdate && !sameSelection(selection.data, authoritySelection.data))))) {
+      return { capability: { status: "unavailable", effectiveSelection: selection.data } };
+    }
+    const effectiveSelection = authoritySelection?.success ? authoritySelection.data : selection.data;
+    if (!sharedRuntimeSupports(
       input.executionEligibility,
-      driverKind.data,
-      selection.data.instanceId,
+      boundDriver.data,
+      effectiveSelection.instanceId,
     )) {
       return {
         capability: { status: "unavailable", effectiveSelection: selection.data },
       };
     }
     return {
-      capability: { status: "available", effectiveSelection: selection.data },
-      execution: { driverKind: driverKind.data, selection: selection.data },
+      capability: { status: "available", effectiveSelection },
+      execution: { driverKind: boundDriver.data, selection: effectiveSelection },
     };
   }
 
-  const ownerId = input.ownerId ?? input.chat.owner_id;
-  if (input.actorId !== ownerId) {
-    return {
-      capability: { status: "owner_binding_required", effectiveSelection: selection.data },
-    };
-  }
   const authorityDriver = CanonicalChatRunSchema.shape.driverKind.safeParse(
     input.canonicalProviderAuthority?.driverKind,
   );
@@ -1346,7 +1361,8 @@ function authoritativeSharedProvider(input: {
     input.canonicalProviderAuthority?.selection,
   );
   if (!authorityDriver.success || !authoritySelection.success
-    || !sameSelection(selection.data, authoritySelection.data)
+    || selection.data.instanceId !== authoritySelection.data.instanceId
+    || (!input.allowPolicyModelUpdate && !sameSelection(selection.data, authoritySelection.data))
     || !sharedRuntimeSupports(
       input.executionEligibility,
       authorityDriver.data,
@@ -1357,7 +1373,7 @@ function authoritativeSharedProvider(input: {
     };
   }
   return {
-    capability: { status: "available", effectiveSelection: selection.data },
+    capability: { status: "available", effectiveSelection: authoritySelection.data },
     execution: { driverKind: authorityDriver.data, selection: authoritySelection.data },
   };
 }
