@@ -8,7 +8,7 @@ import {
   CanonicalProviderCatalogSchema, CanonicalChatRecordSchema,
   CanonicalUpdateChatSelectionRequestSchema, CanonicalCreateChatTurnRequestSchema, CanonicalChatTurnAdmissionResponseSchema,
   type CanonicalCreateChatTurnRequest,
-  chatMessageVersionUrl, chatReadStateVersionUrl,
+  chatMessageVersionUrl, chatReadStateVersionUrl, chatRunVersionUrl,
   AoedeBootstrapRequestSchema, AoedeBootstrapResponseSchema,
   type CanonicalChatDetailResponse, type CanonicalSubmitChatApprovalRequest,
   type CanonicalSubmitChatInputRequest, type CanonicalCancelChatRunRequest,
@@ -43,7 +43,7 @@ export function createAoedeApi(options: { baseUrl: string; fetcher?: typeof fetc
   // Catalog discovery and speech readiness can each consume their own bounded
   // server probe. Allow cold startup to finish before the browser aborts it.
   const request = async (path: string, body?: unknown, method = "POST", timeoutMs = 10_000): Promise<unknown> => {
-    const response = await fetcher(`${base}${path}`, {
+    const response = await fetcher(`${base}${path.startsWith("/api/chats") ? chatRunVersionUrl(path) : path}`, {
       method: body === undefined ? "GET" : method,
       headers: { "X-Matrix-Chat-Metadata": "2", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(timeoutMs),
@@ -70,7 +70,7 @@ export function createAoedeApi(options: { baseUrl: string; fetcher?: typeof fetc
     async detail(chatId) { return CanonicalChatDetailResponseSchema.parse(await request(chatReadStateVersionUrl(chatMessageVersionUrl(`${chatPath(chatId)}?limit=200`)))); },
     events() {
       return createSharedCanonicalChatEventSource({ openStream: ({ cursor, signal }) => fetcher(
-        `${base}${chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events"))}`,
+        `${base}${chatRunVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")))}`,
         { headers: { Accept: "text/event-stream", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "2", ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }) },
           signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60 * 1000)]) },
       ) });
