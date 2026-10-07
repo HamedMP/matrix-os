@@ -36,6 +36,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { GatewayClient } from "@/lib/gateway-client";
 import { CanonicalChatSessionProvider } from "@/lib/canonical-chat-session-context";
 import { mobileQueryClient } from "@/lib/query-client";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import {clearNativeEditionOwner} from "@/lib/edition/native-downloads";
 import { mobileQueryPersistence } from "@/lib/query-cache-persistence";
 import { forgetJourneyConnectable } from "@/lib/journey-cache";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
@@ -265,6 +267,7 @@ function GatewayShell() {
     if (!isLoaded) return;
     const signedInUserId = isSignedIn && userId ? userId : null;
     void mobileQueryPersistence.setOwner(signedInUserId);
+    void clearNativeEditionOwner(AsyncStorage,signedInUserId).catch(()=>console.warn("Edition device downloads could not be cleared"));
     if (signedInUserId === null) void forgetJourneyConnectable();
   }, [isLoaded, isSignedIn, userId]);
 
