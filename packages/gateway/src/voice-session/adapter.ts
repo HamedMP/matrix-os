@@ -50,6 +50,7 @@ export const VoiceAdapterCapabilitiesSchema = z.object({
    * session capture format. Projected to `VoiceCapability.outputAudio`.
    */
   outputAudio: VoiceOutputAudioFormatSchema.optional(),
+  conversationMode: z.enum(["canonical_turn", "native_live"]).optional(),
 }).strict();
 export type VoiceAdapterCapabilities = z.infer<typeof VoiceAdapterCapabilitiesSchema>;
 
@@ -57,6 +58,7 @@ const ADAPTER_ID = /^[a-z][a-z0-9_-]{0,79}$/;
 
 /** Events an adapter emits into the engine (provider → session). */
 export type VoiceAdapterEvent =
+  | { type: "companion.frame"; frame: import("./session-runtime.js").ServerFramePayload }
   | { type: "vad"; turnId: string; action: "speech_start" | "speech_end" }
   | { type: "transcript.provisional"; turnId: string; revision: number; text: string }
   | {
@@ -124,6 +126,7 @@ export interface VoiceSynthesisCommand {
 
 /** Commands the engine issues to one provider/session projection. */
 export interface VoiceMediaSession {
+  native?: { played(responseId: string, segmentId: string): void; onTask(event: import("./ports.js").VoiceCanonicalChatEvent): void };
   /** Begin/end capture for a turn. `null` releases capture resources. */
   setCapture(capture: { turnId: string; mode: VoiceTurnMode } | null): void;
   /** Bounded base64 audio for the active capture turn. */
@@ -145,6 +148,7 @@ export interface VoiceMediaSession {
 }
 
 export interface VoiceAdapterSessionContext {
+  live?: import("../live-companion/coordinator.js").LiveCompanionPort;
   sessionId: string;
   chatId: string;
   principalId: string;
@@ -242,6 +246,7 @@ export function createAdapterCapabilityPort(options: {
     supportsInputSelection: caps.supportsInputSelection,
     supportsOutputSelection: caps.supportsOutputSelection,
     ...(caps.outputAudio ? { outputAudio: caps.outputAudio } : {}),
+    ...(caps.conversationMode ? { conversationMode: caps.conversationMode } : {}),
     limits: options.limits,
   });
   return {

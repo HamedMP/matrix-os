@@ -7,7 +7,7 @@ export const AoedeBootstrapRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   intent: z.enum(["continue", "new"]),
   projectId: CanonicalCreateChatRequestSchema.shape.projectId,
-  surface: z.enum(["web_canvas", "web_desktop"]),
+  surface: z.enum(["web_canvas", "web_desktop", "electron_desktop"]),
 }).strict();
 
 export const AoedeScopeSchema = z.object({

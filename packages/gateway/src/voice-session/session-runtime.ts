@@ -189,6 +189,7 @@ export interface VoiceSessionRecord {
 }
 
 export interface VoiceSessionHost {
+  readonly liveHistory?: (input: { principalId: string; chatId: string; principalSource: import("../request-principal.js").PrincipalSource; selection: import("@matrix-os/contracts").CanonicalChatModelSelection }) => import("../live-companion/coordinator.js").LiveCompanionPort;
   readonly limits: VoiceSessionLimits;
   readonly clock: VoiceClock;
   readonly admission: VoiceAdmissionPort;
@@ -589,6 +590,7 @@ export class VoiceSessionRuntime {
    * continues to use the pipeline's canonical generation interruption path. */
   private async stopSpeaking(frame: Extract<VoiceClientFrame, { type: "response.interrupt" }>): Promise<void> {
     const s = this.session;
+    if (s.adapter?.native) { s.adapter.interrupt(frame.responseId, frame.playedThroughMs); return; }
     const ledger = s.responses.get(frame.responseId);
     if (!ledger || ledger.state !== "open") {
       this.countStale("interrupt_for_terminal_response");

@@ -14,6 +14,7 @@ import type {
   VoiceRecoveryAction,
   VoiceSessionState,
 } from "@matrix-os/contracts/voice-session";
+import { sessionLivePort } from "../live-companion/session-port.js";
 import type { VoiceAdapterEvent } from "./adapter.js";
 import type { VoiceCanonicalChatEvent } from "./ports.js";
 import {
@@ -95,6 +96,7 @@ export class VoiceSessionPipeline {
         ...(s.locale !== undefined ? { locale: s.locale } : {}),
         audio: frame.audio,
         clientCapabilities: frame.capabilities,
+        live: sessionLivePort(s, this.host),
         emit: (event) => this.onAdapterEvent(event),
       });
     } catch (error: unknown) {
@@ -116,6 +118,7 @@ export class VoiceSessionPipeline {
    * `run.started` still needs their `qturn_`/`cturn_` identity to correlate.
    */
   private turnTrackingComplete(turn: VoiceTurnRecord): boolean {
+    if (this.session.adapter?.native && turn.phase === "admitted") return true;
     if (turn.phase === "empty" || turn.phase === "rejected") return true;
     if (turn.phase !== "admitted" || !turn.runTerminal || !turn.runId) return false;
     for (const ledger of this.session.responses.values()) {
@@ -307,6 +310,7 @@ export class VoiceSessionPipeline {
     frame: Extract<VoiceClientFrame, { type: "playback.segment_played" }>,
   ): Promise<void> {
     const s = this.session;
+    if (s.adapter?.native) { s.adapter.native.played(frame.responseId, frame.segmentId); return; }
     const ledger = s.responses.get(frame.responseId);
     if (!ledger || ledger.state !== "open") {
       this.runtime.countStale("ack_for_terminal_response");
@@ -363,12 +367,25 @@ export class VoiceSessionPipeline {
       this.runtime.countStale("adapter_terminal");
       return;
     }
-    void enqueueSessionTask(s, () => this.dispatchAdapterEvent(event));
+    const bytes = event.type === "companion.frame" ? Buffer.byteLength(JSON.stringify(event.frame)) : 0;
+    void enqueueSessionTask(s, () => this.dispatchAdapterEvent(event), { bytes });
   }
 
   private async dispatchAdapterEvent(event: VoiceAdapterEvent): Promise<void> {
     const s = this.session;
     switch (event.type) {
+      case "companion.frame": {
+        const frame = event.frame;
+        if (frame.type === "companion.capture.completed") {
+          const turn = s.turns.get(frame.turnId);
+          if (turn) turn.phase = "admitted";
+          if (s.activeCaptureTurnId === frame.turnId) s.activeCaptureTurnId = null;
+        }
+        if (frame.type === "companion.response.started") this.runtime.setState("speaking");
+        if ((frame.type === "companion.caption" && frame.speaker === "assistant" && frame.final) || frame.type === "response.interrupted") this.runtime.setState("listening");
+        this.runtime.emit(frame);
+        return;
+      }
       case "vad": {
         const turn = s.turns.get(event.turnId);
         if (!turn) {
@@ -792,6 +809,7 @@ export class VoiceSessionPipeline {
 
   onCanonicalEvent(event: VoiceCanonicalChatEvent): void {
     const s = this.session;
+    if (s.adapter?.native) { s.adapter.native.onTask(event); return; }
     if (s.state === "ending" || s.state === "ended") return;
     if (event.type === "run.started" && !s.runIds.has(event.runId)) {
       // Queued admissions only learn their run identity when canonical Chat

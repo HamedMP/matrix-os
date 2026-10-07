@@ -149,7 +149,7 @@ describe("voice capabilities route", () => {
   });
 
   it("composes one authoritative catalog decision per request instead of a duplicate eligibility probe", async () => {
-    const source = await readFile(new URL("../../../packages/gateway/src/server.ts", import.meta.url), "utf8");
+    const source = await readFile(new URL("../../../packages/gateway/src/server/canonical-voice.ts", import.meta.url), "utf8");
     const start = source.indexOf('app.route("/", createVoiceSessionRoutes({');
     const end = source.indexOf("// Aoede standalone assistant bootstrap", start);
     expect(start).toBeGreaterThan(0);
