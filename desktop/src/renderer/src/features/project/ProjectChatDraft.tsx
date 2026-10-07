@@ -231,13 +231,17 @@ export function ProjectChatDraft({
     },
   );
 
+  const observedProviderCatalog = useRef(false);
   useEffect(() => {
+    const hadObservedCatalog = observedProviderCatalog.current;
+    observedProviderCatalog.current = liveCatalog.lastSuccessAt !== null;
     setCanonicalSelection((current) => {
       const currentStillValid = current
         && projectCatalog.instances.some((instance) => (
           instance.id === current.instanceId
           && instance.models.some((model) => model.id === current.model && model.availability === "available")
         ));
+      if (current && (providerSelectionTouchedRef.current || hadObservedCatalog && !currentStillValid) && liveCatalog.lastSuccessAt !== null) return current;
       if (providerSelectionTouchedRef.current && currentStillValid) return current;
       const created = createCanonicalComposerSelection(projectCatalog, preferredInstanceId);
       if (!created) return null;
@@ -267,7 +271,7 @@ export function ProjectChatDraft({
         ? current
         : next;
     });
-  }, [composerSelections, effectiveDraft.mode, preferredInstanceId, projectCatalog]);
+  }, [composerSelections, effectiveDraft.mode, preferredInstanceId, projectCatalog, liveCatalog.lastSuccessAt]);
   const selectedInstance = projectCatalog.instances.find((instance) => (
     instance.id === canonicalSelection?.instanceId
   ));
@@ -305,7 +309,7 @@ export function ProjectChatDraft({
   }, [active, typeToStartEnabled, canCreate]);
 
   async function submit(submission: SharedChatComposerSubmission) {
-    if (liveCatalog.status === "loading" || canonicalBlocked || submitting || submitInFlightRef.current) return;
+    if (liveCatalog.initialLoading || canonicalBlocked || submitting || submitInFlightRef.current) return;
     const selectedInstance = projectCatalog.instances.find((instance) => (
       instance.id === canonicalSelection?.instanceId
     ));
@@ -467,7 +471,7 @@ export function ProjectChatDraft({
                     || referenceTokens.length > 0
                   )}
                   catalog={projectCatalog}
-                  providerCatalogLoading={liveCatalog.status === "loading"}
+                  providerCatalogLoading={liveCatalog.initialLoading}
                   selection={canonicalSelection}
                   onSelectionChange={(selection) => {
                     providerSelectionTouchedRef.current = true;

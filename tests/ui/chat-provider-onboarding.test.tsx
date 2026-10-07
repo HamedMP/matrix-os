@@ -247,3 +247,19 @@ describe("Chat provider connection rows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check connection" })); expect(refresh).toHaveBeenCalledOnce();
   });
 });
+
+
+it("reconciles app-owned background observations without forcing probes or echoing catalog invalidation", async () => {
+  const getSnapshot = vi.fn().mockResolvedValue(disconnectedSnapshot());
+  const changed = vi.fn();
+  const props = { identityKey: "desktop_owner", transport: { getSnapshot, mutate: vi.fn() },
+    isIdentityCurrent: () => true, openAction: () => true, lifecycleRefresh: false, onCatalogChanged: changed };
+  const view = render(<ChatProviderOnboarding {...props} backgroundRefreshKey={1} />);
+  await waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce());
+  view.rerender(<ChatProviderOnboarding {...props} backgroundRefreshKey={2} />);
+  await waitFor(() => expect(getSnapshot).toHaveBeenCalledTimes(2));
+  expect(getSnapshot).toHaveBeenLastCalledWith(expect.any(AbortSignal), { refresh: false });
+  expect(changed).not.toHaveBeenCalled();
+  act(() => { window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); });
+  expect(getSnapshot).toHaveBeenCalledTimes(2);
+});

@@ -13,6 +13,13 @@ import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/proj
 import { clearDraftChats } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
+import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
+import { createLegacyProjectProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
+import {
+  startDesktopProviderCatalogCoordinator,
+  stopDesktopProviderCatalogCoordinator,
+} from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 
@@ -137,6 +144,21 @@ function mockOperator({ withThreads = true, failFirstCreate = false }: {
     configurable: true,
     value: { invoke, on: vi.fn(() => () => undefined) },
   });
+  const providerSettings = disconnectedSnapshot();
+  providerSettings.harnesses.forEach((harness) => { harness.authState = "authenticated"; });
+  const api = {
+    baseUrl: "https://matrix.test",
+    forRuntime: vi.fn(() => api),
+    get: vi.fn(async (path: string) => {
+      if (path.startsWith("/api/chat-providers")) return createLegacyProjectProviderCatalog(summaryFixture());
+      if (path.startsWith("/api/ai/provider-settings?")) return providerSettings;
+      if (path.startsWith("/api/chats")) return { legacy: true };
+      if (path === "/api/conversations") return { conversations: [] };
+      throw new Error(`unexpected GET ${path}`);
+    }),
+  };
+  useConnection.setState({ api: api as never });
+  startDesktopProviderCatalogCoordinator();
   return { invoke };
 }
 
@@ -147,6 +169,9 @@ class MockResizeObserver {
 }
 
 function resetStores() {
+  stopDesktopProviderCatalogCoordinator();
+  useConnection.setState(useConnection.getInitialState(), true);
+  resetProviderPreferences();
   clearDraftChats();
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {} });
@@ -186,6 +211,8 @@ describe("ProjectChatsView hero empty state", () => {
 
   afterEach(() => {
     cleanup();
+    stopDesktopProviderCatalogCoordinator();
+    useConnection.setState(useConnection.getInitialState(), true);
     vi.restoreAllMocks();
   });
 

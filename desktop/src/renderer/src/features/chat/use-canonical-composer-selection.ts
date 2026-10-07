@@ -52,6 +52,7 @@ export function useCanonicalComposerSelection({
   const setComposerSelection = useProviderPreferences((state) => state.setComposerSelection);
   const composerSelectionTouched = useRef(false);
   const selectionChatId = useRef<string | null>(null);
+  const observedCatalog = useRef(false);
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -65,6 +66,8 @@ export function useCanonicalComposerSelection({
       selectionChatId.current = chatId;
       composerSelectionTouched.current = false;
     }
+    const hadObservedCatalog = observedCatalog.current && !chatChanged && !scopeChanged;
+    observedCatalog.current = catalogReady;
     setSelection((current) => {
       if (!catalogReady) return null;
       // A cold read may restore an explicit personal source. Do not expose a
@@ -92,6 +95,10 @@ export function useCanonicalComposerSelection({
         && rememberedOptions(catalog, current).length === current.options.length
         && canonicalChatSubscriptionSelectionMatches(currentInstance, current.options);
       if (!chatChanged && !scopeChanged && composerSelectionTouched.current && currentIsSupported) return current;
+      if (!chatChanged && !scopeChanged && (composerSelectionTouched.current || hadObservedCatalog) && current
+        && (!currentInstance || currentInstance.availability !== "available"
+          || !currentInstance.models.some(model => model.id === current.model && model.availability === "available"))
+        && (!boundInstanceId || current.instanceId === boundInstanceId)) return current;
       if (!chatChanged && !scopeChanged && composerSelectionTouched.current && current
         && current.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID
         && (!boundInstanceId || current.instanceId === boundInstanceId)
