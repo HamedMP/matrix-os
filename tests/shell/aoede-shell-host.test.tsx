@@ -448,7 +448,7 @@ describe("Shell Aoede host", () => {
     await waitFor(() => expect(screen.getByText("Turn mode")).toBeInTheDocument());
     expect(screen.getByLabelText("Hands free")).toBeChecked();
     // Truthful degradation: this api/media harness exposes no catalog or enumeration.
-    await waitFor(() => expect(screen.getByText("Provider list unavailable.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Harness list unavailable.")).toBeInTheDocument());
     expect(screen.getByText(/Device list unavailable/)).toBeInTheDocument();
   });
 
