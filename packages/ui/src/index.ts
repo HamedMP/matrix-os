@@ -252,6 +252,8 @@ export {
   type ConnectPollConnection,
   type ConnectPollOptions,
 } from "./integrations/connect-poll.js";
+export { AddToSlack, SlackMark } from './messaging/AddToSlack.js';
+export { SlackInstallPanel } from './messaging/SlackInstallPanel.js';
 export type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./agents-providers/local-chatgpt-plan-client.js";
 export { createMatrixAnthropicConnectionClient, type MatrixAnthropicConnectionClient } from "./agents-providers/matrix-anthropic-connection-client.js";
 
