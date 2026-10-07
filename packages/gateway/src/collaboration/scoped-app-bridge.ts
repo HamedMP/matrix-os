@@ -126,6 +126,10 @@ export function createScopedAppBridge(options: {
           await sql`UPDATE ${table} SET ${assignments(action.data.data)} WHERE id = ${action.data.id}`.execute(trx);
           return { ok: true };
         }
+        case "compareAndSwap": {
+          const result = await sql<{ id: string }>`UPDATE ${table} SET ${assignments(action.data.data)}, updated_at = now() WHERE id = ${action.data.id} AND payload = ${JSON.stringify(action.data.expectedPayload)}::jsonb RETURNING id`.execute(trx);
+          return { ok: result.rows.length > 0 };
+        }
         case "bulkUpdate": {
           for (const item of action.data.updates) {
             await sql`UPDATE ${table} SET ${assignments(item.data)} WHERE id = ${item.id}`.execute(trx);

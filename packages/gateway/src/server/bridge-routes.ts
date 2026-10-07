@@ -61,6 +61,7 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
       if (err instanceof SyntaxError) {
         return c.json({ error: "Invalid JSON body" }, 400);
       }
+      if (err instanceof Error && err.name === "BodyLimitError") return c.json({ error: "Request is too large" }, 413);
       console.error("[bridge/query] Failed to read request body:", err);
       return c.json({ error: "Failed to read request body" }, 500);
     }
@@ -117,6 +118,11 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
           broadcast({ type: "data:change", app: appSlug, key: safeTable });
           return c.json({ ok: true });
         }
+        case "compareAndSwap": {
+          const result = await queryEngine.compareAndSwap(appSlug, safeTable, body.id, body.expectedPayload, body.data);
+          if (result.ok) broadcast({ type: "data:change", app: appSlug, key: safeTable });
+          return c.json(result);
+        }
         case "bulkUpdate": {
           await queryEngine.bulkUpdate(
             appSlug,
@@ -153,7 +159,8 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
         msg.startsWith("insert:") ||
         msg.startsWith("bulkInsert:") ||
         msg.startsWith("update:") ||
-        msg.startsWith("bulkUpdate:");
+        msg.startsWith("bulkUpdate:") ||
+        msg.startsWith("compareAndSwap:");
       const safe = isValidation ? msg : "Query failed";
       return c.json({ error: safe }, isValidation ? 400 : 500);
     }

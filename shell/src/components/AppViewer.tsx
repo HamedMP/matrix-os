@@ -1,6 +1,6 @@
 "use client";
 
-import { prepareAppAiRequest } from "./app-ai-request";
+import { prepareBridgeFetchRequest } from "./app-viewer-bridge-request";
 import { FileResourceSharing } from "./file-browser/FileResourceSharing";
 import { APP_AI_TIMEOUT_MS } from "@matrix-os/contracts";
 
@@ -25,7 +25,6 @@ import {
   shouldRenderAppIframe,
   injectBridgeIntoAppHtml,
 } from "./app-viewer-helpers";
-import { isAllowedBridgeFetchUrl } from "./app-viewer-bridge-policy";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
@@ -57,16 +56,8 @@ function readCurrentDesign(): string {
 
 async function handleBridgeFetch(appName: string, payload: unknown, port: MessagePort): Promise<void> {
   try {
-    if (!payload || typeof payload !== "object") {
-      throw new Error("Invalid bridge fetch payload");
-    }
-    const { url, init } = payload as { url?: unknown; init?: unknown };
-    if (typeof url !== "string" || !isAllowedBridgeFetchUrl(appName, url)) {
-      throw new Error("Blocked bridge fetch URL");
-    }
-    let requestInit = init && typeof init === "object" ? init as RequestInit : {};
+    const { url, init: requestInit } = prepareBridgeFetchRequest(appName, payload);
     const isAi = url === "/api/bridge/ai";
-    if (isAi) requestInit = prepareAppAiRequest(appName, requestInit);
     const response = await fetch(`${getGatewayUrl()}${url}`, {
       method: requestInit.method,
       headers: requestInit.headers,

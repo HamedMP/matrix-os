@@ -12,7 +12,10 @@
     "./codex-chat-import-client": "./src/codex-chat-import-client.ts",
     "./local-chat-import": "./src/local-chat-import/index.ts",
     "./bots": "./src/bots/index.ts",
-    "./integration-marketplace": "./src/integration-marketplace.ts"
+    "./integration-marketplace": "./src/integration-marketplace.ts",
+    "./app-gallery": "./src/app-gallery.ts",
+    "./app-gallery-bridge-policy": "./src/app-gallery-bridge-policy.ts",
+    "./app-gallery-inventory": "./src/app-gallery-inventory.ts"
   },
   "imports": {
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",

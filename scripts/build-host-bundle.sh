@@ -69,6 +69,7 @@ else
 fi
 pnpm --filter '@finnaai/matrix' build
 node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
+node "$ROOT_DIR/scripts/build-app-gallery-template.mjs"
 pnpm exec tsx -e 'import { writeFileSync } from "node:fs"; import { generateTemplateManifest } from "./packages/kernel/src/boot.ts"; writeFileSync("home/.template-manifest.json", JSON.stringify(generateTemplateManifest("home"), null, 2) + "\n");'
 curl --fail --location --max-time 120 "$NODE_URL" -o "$DIST_DIR/$NODE_ARCHIVE"
 curl --fail --location --max-time 30 "$NODE_BASE_URL/SHASUMS256.txt" -o "$DIST_DIR/SHASUMS256.txt"

@@ -10,13 +10,24 @@ import type { PipedreamConnectClient } from "./pipedream.js";
 import { getAction, getService } from "./registry.js";
 import { executeJevBoundRead, JevBoundReadError, JevReadBindingSchema } from "./jev-bound-read.js";
 
+/** Independent from Jev recipe binding; contains identity metadata only, never credentials. */
+export const IntegrationAccountBindingSchema = z.strictObject({
+  service: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+  connectionId: z.string().regex(/^[A-Za-z0-9_-]{1,256}$/),
+  accountLabel: z.string().min(1).max(100).refine(value => !/[\u0000-\u001f\u007f]/.test(value)),
+  expectedEmail: z.string().max(320).refine(value => !/[\u0000-\u001f\u007f]/.test(value)).nullable(),
+});
+
 const ReadCallBodySchema = z.strictObject({
   service: z.string().min(1).max(100),
   action: z.string().min(1).max(100),
   label: z.string().trim().min(1).max(100),
   params: z.record(z.string(), z.unknown()).optional(),
   binding: JevReadBindingSchema.optional(),
-});
+  accountBinding: IntegrationAccountBindingSchema.optional(),
+  galleryImport: z.literal(true).optional(),
+}).refine(body =>
+  !(body.binding && body.accountBinding) && (!body.galleryImport || Boolean(body.accountBinding)));
 
 /** The dedicated scoped route never syncs, chooses an account, or calls a preset without exact selection. */
 export function createIntegrationReadCallRoutes(options: {
@@ -41,8 +52,11 @@ export function createIntegrationReadCallRoutes(options: {
     }
     const parsed = ReadCallBodySchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid request body" }, 400);
-    const { service, action, label, params, binding } = parsed.data;
+    const { service, action, label, params, binding, accountBinding } = parsed.data;
     if (binding && (service !== "gmail" || label !== binding.accountLabel)) {
+      return c.json({ error: "Action not permitted" }, 403);
+    }
+    if (accountBinding && (service !== accountBinding.service || label !== accountBinding.accountLabel)) {
       return c.json({ error: "Action not permitted" }, 403);
     }
     const def = getService(service);
@@ -58,6 +72,11 @@ export function createIntegrationReadCallRoutes(options: {
     const selected = resolveIntegrationConnection(await options.db.listConnectedServices(uid), service, label);
     if (selected.kind === "ambiguous") return c.json({ error: "Integration account label is ambiguous" }, 409);
     if (selected.kind === "missing") return c.json({ error: "Integration account unavailable" }, 400);
+    if (accountBinding && (
+      selected.connection.user_id !== uid || selected.connection.status !== "active" ||
+      selected.connection.id !== accountBinding.connectionId ||
+      selected.connection.account_email !== accountBinding.expectedEmail
+    )) return c.json({ error: "Integration account changed. Select the account again." }, 403);
     const user = await options.db.getUserById(uid);
     if (!user?.pipedream_external_id) return c.json({ error: "Integration unavailable" }, 503);
     try {

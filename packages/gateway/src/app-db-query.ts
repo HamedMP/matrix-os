@@ -24,6 +24,7 @@ export interface QueryEngine {
     rows: Array<Record<string, unknown>>,
   ): Promise<{ ids: string[] }>;
   update(schema: string, table: string, id: string, data: Record<string, unknown>): Promise<void>;
+  compareAndSwap(schema: string, table: string, id: string, expectedPayload: Record<string, unknown>, data: Record<string, unknown>): Promise<{ ok: boolean }>;
   bulkUpdate(
     schema: string,
     table: string,
@@ -197,6 +198,23 @@ export function createQueryEngine(db: AppDb): QueryEngine {
         `UPDATE ${qualifiedTable(schema, table)} SET ${sets}, updated_at = now() WHERE id = $${vals.length}`,
         vals,
       );
+    },
+
+    async compareAndSwap(schema, table, id, expectedPayload, data) {
+      parseSafeName(schema, "schema");
+      parseSafeName(table, "table");
+      const cols = Object.keys(data);
+      for (const col of cols) parseSafeName(col, "column");
+      if (cols.length === 0) throw new Error("compareAndSwap: data must have at least one column");
+      const sets = cols.map((col, index) => `"${col}" = $${index + 1}`).join(", ");
+      const values = [...cols.map((col) => data[col]), id, JSON.stringify(expectedPayload)];
+      // The snapshot predicate is part of the write, so competing edits cannot
+      // both succeed even under PostgreSQL READ COMMITTED isolation.
+      const result = await db.raw(
+        `UPDATE ${qualifiedTable(schema, table)} SET ${sets}, updated_at = now() WHERE id = $${cols.length + 1} AND payload = $${cols.length + 2}::jsonb RETURNING id`,
+        values,
+      );
+      return { ok: result.rows.length > 0 };
     },
 
     async bulkUpdate(schema, table, updates) {

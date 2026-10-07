@@ -19,7 +19,7 @@ describe("scoped app bridge", () => {
     fixture = await fixtureFactory();
     const result = await sql<{ name: string }>`SELECT current_schema() AS name`.execute(fixture.db);
     schema = result.rows[0]!.name;
-    await sql`CREATE TABLE ${sql.id(schema)}.${sql.id("cards")} (id TEXT PRIMARY KEY, title TEXT NOT NULL)`.execute(fixture.db);
+    await sql`CREATE TABLE ${sql.id(schema)}.${sql.id("cards")} (id TEXT PRIMARY KEY, title TEXT NOT NULL, payload JSONB, updated_at TIMESTAMPTZ DEFAULT now())`.execute(fixture.db);
     bridge = createScopedAppBridge({
       resolveApp: async (appId) => appId === APP ? { storageSchema: schema, tables: ["cards"] } : null,
     });
@@ -33,10 +33,26 @@ describe("scoped app bridge", () => {
       expect(inserted).toEqual({ id: "one" });
       const found = await bridge.execute({ namespace, appId: APP, storageSchema: schema, scopeId: SCOPE,
         actorId: "member", action: { action: "find", app: namespace, table: "cards", filter: { id: "one" } }, transaction });
-      expect(found).toEqual([{ id: "one", title: "First" }]);
+      expect(found).toEqual([expect.objectContaining({ id: "one", title: "First" })]);
     });
     const count = await sql<{ count: string }>`SELECT COUNT(*) AS count FROM ${sql.id(schema)}.${sql.id("cards")}`.execute(fixture.db);
     expect(Number(count.rows[0]?.count)).toBe(1);
+  });
+
+  it("conditionally writes the exact payload in the verified owner transaction", async () => {
+    const expected = { fields: { title: "Original" }, sources: [] };
+    const changed = { fields: { title: "Edited" }, sources: [{ id: "evidence" }] };
+    await sql`INSERT INTO ${sql.id(schema)}.${sql.id("cards")} (id, title, payload) VALUES ('cas', 'Original', ${JSON.stringify(expected)}::jsonb)`.execute(fixture.db);
+    await fixture.db.transaction().execute(async (transaction) => {
+      const input = { namespace, appId: APP, storageSchema: schema, scopeId: SCOPE, actorId: "member", transaction };
+      const action = { action: "compareAndSwap" as const, app: namespace, table: "cards", id: "cas", expectedPayload: expected, data: { payload: changed } };
+      expect(await bridge.execute({ ...input, action })).toEqual({ ok: true });
+      expect(await bridge.execute({ ...input, action: { ...action, data: { payload: { ...expected, archivedAt: "2026-10-06" } } } })).toEqual({ ok: false });
+      await expect(bridge.execute({ ...input, action: { ...action, app: "other" } })).rejects.toMatchObject({ code: "invalid_action" });
+      await expect(bridge.execute({ ...input, action: { ...action, table: "private" } })).rejects.toMatchObject({ code: "forbidden" });
+    });
+    const result = await sql<{ payload: unknown }>`SELECT payload FROM ${sql.id(schema)}.${sql.id("cards")} WHERE id = 'cas'`.execute(fixture.db);
+    expect(result.rows[0]?.payload).toEqual(changed);
   });
 
   it("rejects a forged namespace and rolls mutations back with the owner transaction", async () => {
