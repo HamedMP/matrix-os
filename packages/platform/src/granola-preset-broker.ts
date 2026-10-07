@@ -32,6 +32,10 @@ export interface GranolaPresetRuntime {
     toolName: string;
     arguments?: Record<string, unknown>;
   }): Promise<unknown>;
+  callManagedPresetTool?(input: {
+    userId: string; serverId: string; presetId: string; toolName: string;
+    arguments?: Record<string, unknown>;
+  }): Promise<unknown>;
   remove(userId: string, serverId: string): Promise<void>;
 }
 
@@ -50,6 +54,7 @@ export interface ManagedMcpPresetBroker {
     connected_at: Date | string;
     last_used_at: null;
   }>>;
+  listActionCapabilities?(userId: string, serviceId: string): Promise<Record<string, readonly string[]> | null>;
   listAvailableActions(userId: string, serviceId: string): Promise<readonly string[] | null>;
   listAvailableActionParams(userId: string, serviceId: string): Promise<Record<string, readonly string[]> | null>;
   connect(userId: string, service: unknown): Promise<{ url: string }>;
@@ -58,6 +63,7 @@ export interface ManagedMcpPresetBroker {
     service: unknown;
     actionId: string;
     params?: Record<string, unknown>;
+    connectionId?: string;
   }): Promise<unknown>;
   disconnect(userId: string, connectionId: string): Promise<boolean>;
 }
@@ -133,17 +139,21 @@ export function createGranolaPresetBroker(dependencies: {
       });
       return { url: await oauth.start(userId, row.id) };
     },
-    call: async ({ userId, actionId, params }) => {
+    call: async ({ userId, actionId, params, connectionId }) => {
       const row = await broker.activatePreset(activationInput(userId));
+      if (connectionId && connectionId !== row.id) throw new Error("Integration account unavailable");
       const plan = planGranolaAction(actionId, params, row.tools);
       const results: unknown[] = [];
       for (const call of plan.calls) {
-        results.push(await broker.callSelectedTool({
+        const input = {
           userId,
           serverId: row.id,
           toolName: call.toolName,
           arguments: call.arguments,
-        }));
+        };
+        results.push(await (broker.callManagedPresetTool
+          ? broker.callManagedPresetTool({ ...input, presetId: GRANOLA_PRESET.id })
+          : broker.callSelectedTool(input)));
       }
       return results[0];
     },
