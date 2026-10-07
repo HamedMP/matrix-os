@@ -183,7 +183,7 @@ export async function createGatewayCollaboration(options: {
     })
     : undefined;
   const runBindings = eligibility && executionPolicies
-    ? new CollaborationRunBindingRepository(options.db, { policies: executionPolicies, eligibility })
+    ? new CollaborationRunBindingRepository(options.db, { eligibility })
     : undefined;
   const ownerSource = eligibility && executionPolicies && runBindings
     ? new SharedRunOwnerSource({ policies: executionPolicies, eligibility, bindings: runBindings })

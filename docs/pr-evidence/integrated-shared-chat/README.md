@@ -22,6 +22,10 @@ This is a real Electron 41 capture under Xvfb, using the production main, preloa
 
 ![Electron Desktop Ask AI queue](electron-desktop.png)
 
+The same production journey opens **Collaboration access** and verifies the persisted Contributor AI policy. It proves that contributors can send prompts using the owner's selected source, that the saved source is **Owner Claude account**, and that the saved model is **claude-sonnet-5**. The dialog also shows the organization-only sharing boundary and the Contributor/Viewer distinction.
+
+![Electron Desktop saved Contributor AI policy](contributor-ai-electron-desktop.png)
+
 The Web fixture intentionally rejects the scoped WebSocket after loading canonical data, so the screenshots also demonstrate the non-destructive reconnect state while Discussion and Ask AI remain available from the last server-authorized projection. The Electron fixture shows the connected state.
 
 ## Reproduction
@@ -45,8 +49,8 @@ xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts \
 
 | Surface | UI | Behavior | State/recovery | Automated tests | Real evidence |
 | --- | --- | --- | --- | --- | --- |
-| Web Canvas | pass | pass | pass | pass | pass: `web-canvas-ai.png` |
-| Web Desktop | pass | pass | pass | pass | pass: `web-desktop-discussion.png`, `web-desktop-ai.png` |
-| Electron Desktop | pass | pass | pass | pass | pass: actual Electron capture `electron-desktop.png` |
+| Web Canvas | pass | pass | pass | pass: shared collaboration components and controller | pass: `web-canvas-ai.png`; Contributor AI uses the same shared dialog verified below |
+| Web Desktop | pass | pass | pass | pass: shared collaboration components and controller | pass: `web-desktop-discussion.png`, `web-desktop-ai.png`; Contributor AI uses the same shared dialog verified below |
+| Electron Desktop | pass | pass | pass | pass: production Electron E2E verifies saved source, saved model, and Contributor prompt permission | pass: actual Electron captures `electron-desktop.png`, `contributor-ai-electron-desktop.png` |
 | Web Mobile | N/A: intentionally gated to the desktop-width shell; shared URLs bootstrap the normal mobile shell without exposing collaboration | N/A | N/A | desktop-gating contract coverage | N/A: outside the requested Canvas/Desktop surfaces |
 | Native Mobile | N/A: no Shared with me entry point or shared-Chat route exists in the native client | N/A | N/A | shared-controller coverage | N/A: outside the requested Canvas/Desktop surfaces |
