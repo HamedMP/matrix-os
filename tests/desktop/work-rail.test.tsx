@@ -154,6 +154,26 @@ describe("WorkRail", () => {
     expect(client.list).toHaveBeenCalledWith({ limit: 100, conversationKind: "all" });
   });
 
+  it("keeps saved voice history discoverable when the bot identity service is unavailable", async () => {
+    const voice = record("chat_voice_bot_failure", "Voice planning", { updatedAt: "2026-10-07T00:00:00Z" });
+    voice.chat.conversationKind = "voice";
+    const directBot = vi.fn(async () => { throw new Error("Identity unavailable"); });
+    const client = { list: vi.fn(async () => ({ items: [recent, voice] })),
+      agents: { list: vi.fn(async () => ({ enabled: true, agents: [] })), bots: { directBot } },
+    } as unknown as CanonicalChatClient;
+    const onSelectChat = vi.fn();
+    render(<WorkRail client={client} projects={[]} active onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()}
+      onNewProjectChat={vi.fn()} onSelectProject={vi.fn()} onSelectChat={onSelectChat} onCollapse={vi.fn()} />);
+    await waitFor(() => expect(directBot).toHaveBeenCalledWith(recent.chat.id));
+    const voices = screen.getByRole("button", { name: "Voice conversations" }).closest("section")!;
+    expect(within(voices).getByText("Voice planning")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "Voice planning" } });
+    fireEvent.click(screen.getByRole("option", { name: "Voice planning, Voice · Global" }));
+    expect(onSelectChat).toHaveBeenCalledWith(voice);
+    expect(directBot).not.toHaveBeenCalledWith(voice.chat.id);
+  });
+
   it("finds and opens a saved voice conversation through Work search", async () => {
     const voice = record("chat_voice_search", "Plan my week", {});
     voice.chat.conversationKind = "voice";

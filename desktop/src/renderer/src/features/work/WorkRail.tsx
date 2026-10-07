@@ -149,11 +149,11 @@ export function WorkRail({
       generation: routeScopeRef.current.generation + 1,
     };
   }
-  const recordIds = useMemo(() => records.map(record => record.chat.id), [records]);
+  const recordIds = useMemo(() => records.filter(record => record.chat.conversationKind !== "voice").map(record => record.chat.id), [records]);
   const botSummaries = useBotConversationSummaries(client?.agents, recordIds, active, botRefreshKey);
   const excludedChatIds = useMemo(() => [...botSummaries.unresolvedChatIds, ...botSummaries.conversations.map(bot => bot.chatId)], [botSummaries.unresolvedChatIds, botSummaries.conversations]);
   const searchableRecords = useMemo(() => recordsClientRef.current === client
-    ? records.filter(record => !excludedChatIds.includes(record.chat.id)) : [], [client, records, excludedChatIds]);
+    ? records.filter(record => record.chat.conversationKind === "voice" || !excludedChatIds.includes(record.chat.id)) : [], [client, records, excludedChatIds]);
   const ordinaryRecords = useMemo(() => searchableRecords.filter(record => record.chat.conversationKind !== "voice"), [searchableRecords]);
   const voiceRecords = useMemo(() => searchableRecords.filter(record => record.chat.conversationKind === "voice"), [searchableRecords]);
   const order = useWorkRailOrder(ordinaryRecords, projects);

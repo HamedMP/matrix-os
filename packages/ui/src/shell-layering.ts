@@ -69,5 +69,5 @@ export const DESKTOP_Z_INDEX = {
 export const NATIVE_DESKTOP_LAYOUT = {
   tabStripHeight: 38,
   taskbarReservedHeight: 86,
-  resizeHandleSize: 16,
+  resizeHandleSize: 24,
 } as const;
