@@ -62,3 +62,20 @@ it('refreshes a rejected conflict and creates a fresh attempt for the next send'
   expect(await h.sender('Hello')).toBe(true);
   expect(h.createTurn.mock.calls[1]![1].clientRequestId).not.toBe(h.createTurn.mock.calls[0]![1].clientRequestId);
 });
+
+it('retries the original unknown request even if its accepted run has become active', async () => {
+  let running = false;
+  const pending = vi.fn();
+  const createTurn = vi.fn().mockRejectedValueOnce(new DOMException('Timeout', 'TimeoutError')).mockResolvedValue(undefined);
+  const sender = createAoedeTextSender({ context: () => ({ generation: 1, chatId: fixture.chat.id, revision: 0,
+    selection: { instanceId: 'codex_fixture', model: 'gpt-5.6-sol' }, running }),
+    catalog: async () => createCanonicalProviderCatalogFixture(), createTurn, onPendingChange: pending,
+    refresh: async () => {}, fail: vi.fn() });
+  expect(await sender('Original request')).toBe(false);
+  expect(pending).toHaveBeenLastCalledWith({ text: 'Original request', status: 'unknown' });
+  running = true;
+  expect(await sender('Different request')).toBe(false);
+  expect(await sender('Original request')).toBe(true);
+  expect(createTurn.mock.calls[1]).toEqual(createTurn.mock.calls[0]);
+  expect(pending).toHaveBeenLastCalledWith(null);
+});

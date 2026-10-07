@@ -8,6 +8,7 @@ import { aoedeErrorCopy, aoedeReadinessCopy, AOEDE_STATUS_LABELS, boundedAoedeTe
 import { MatrixChatAvatar } from "../chat/ChatPresentation.js";
 import { ChatIcon } from "../chat/ChatIcon.js";
 import { useCaptionFollow } from "./use-caption-follow.js";
+import { AoedePendingText } from "./AoedePendingText.js";
 import { useAoedeTextComposer } from "./use-text-composer.js";
 /** Compact canonical chat follows the approved onboarding widget. Voice adds a
  * pointer-transparent edge halo; readiness never changes the presentation.
@@ -36,6 +37,7 @@ export function AoedeLivePanel(props: AoedePanelProps & { pushToTalkControl?: Re
       <div className="matrix-aoede-live__body">
         <div className="matrix-aoede-live__meta"><span role="status">{props.capability || active ? AOEDE_STATUS_LABELS[props.status] : props.status === "failed" ? "Connection unavailable" : "Connecting"}</span><span>{boundedAoedeText(props.scopeLabel, 160)}</span></div>
         <AoedeLiveCaptions props={props} />
+        <AoedePendingText pending={props.pendingText} retry={props.commands.retryPendingText ? composer.retryPending : undefined} />
         {props.error ? <p className="matrix-aoede-live__error" role="alert">{aoedeErrorCopy(props.error.code)}</p> : null}
         {!active ? <p className="matrix-aoede-live__readiness">{aoedeReadinessCopy(props.capability, props.status)}</p> : null}
         <AoedeLiveControls props={props} active={active} ready={ready} />
@@ -84,7 +86,7 @@ function AoedeLiveComposer({ props, composer, active, ready }: { props: AoedePan
         <input aria-label="Message Matrix" placeholder="Or type what you need…" value={draft} maxLength={8000} disabled={!props.canSendText}
           onChange={event => changeDraft(event.target.value)} />
         <button type="button" aria-label={active ? "End voice capture" : "Turn microphone on"} disabled={!active && !ready} onClick={active ? props.commands.end : props.commands.start}><ChatIcon name="microphone" /></button>
-        <button className="matrix-aoede-live__send" type="submit" aria-label="Send message" disabled={sending || !props.canSendText || !draft.trim()}><ChatIcon name="send" /></button>
+        <button className="matrix-aoede-live__send" type="submit" aria-label="Send message" disabled={sending || Boolean(props.pendingText) || !props.canSendText || !draft.trim()}><ChatIcon name="send" /></button>
       </form>;
 }
 

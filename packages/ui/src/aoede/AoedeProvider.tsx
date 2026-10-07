@@ -51,11 +51,11 @@ export function AoedeAssistant() {
   return <div ref={focusTarget} role="dialog" aria-modal="false" aria-label="Aoede assistant" tabIndex={-1} onKeyDown={event => {
     if (event.key === "Escape") { event.stopPropagation(); void controller.dismiss(); }
   }}>
-    <AoedePanel presentation={controller.presentation} conversationKey={snapshot.binding?.chatId} surface={controller.surface()} canSendText={controller.canSendText()} canOpenConversation={Boolean(snapshot.binding)} scopeLabel={snapshot.binding?.scope.label ?? "Workspace"} status={snapshot.status} focusRevision={snapshot.focusRevision}
+    <AoedePanel presentation={controller.presentation} conversationKey={snapshot.binding?.chatId} surface={controller.surface()} canSendText={controller.canSendText()} pendingText={snapshot.pendingText} canOpenConversation={Boolean(snapshot.binding)} scopeLabel={snapshot.binding?.scope.label ?? "Workspace"} status={snapshot.status} focusRevision={snapshot.focusRevision}
       microphoneActive={snapshot.microphoneActive} turnMode={snapshot.turnMode} captions={snapshot.canonical.captions}
       capability={snapshot.binding?.capability} error={snapshot.error ?? undefined}
       canCancel={snapshot.canonical.canCancel}
-      commands={{ sendText: controller.sendText, start: () => void controller.start(), dismiss: () => void controller.dismiss(), end: () => void controller.end(),
+      commands={{ sendText: controller.sendText, retryPendingText: controller.retryPendingText, start: () => void controller.start(), dismiss: () => void controller.dismiss(), end: () => void controller.end(),
         pause: controller.pause, resume: controller.resume, stopSpeaking: controller.stopSpeaking,
         cancelGeneration: () => void controller.cancelGeneration(),
         pushToTalkStart: controller.pushToTalkStart, pushToTalkStop: controller.pushToTalkStop,

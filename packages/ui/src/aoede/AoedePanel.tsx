@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { SafeVoiceError, VoiceCapability } from "@matrix-os/contracts/voice-session";
 import { createPortal } from "react-dom";
+import type { PendingAoedeText } from "./text-turn.js";
 import { AoedeLivePanel } from "./AoedeLivePanel.js";
 import { Button } from "../Button.js";
 import {
@@ -22,6 +23,7 @@ export interface AoedePanelProps {
   conversationKey?: string;
   surface?: "web_canvas" | "web_desktop" | "electron_desktop";
   canSendText?: boolean;
+  pendingText?: PendingAoedeText | null;
   canOpenConversation?: boolean;
   scopeLabel: string;
   focusRevision?: number;
@@ -36,6 +38,7 @@ export interface AoedePanelProps {
   children?: ReactNode;
   commands: {
     sendText?(text: string): Promise<boolean>;
+    retryPendingText?(): Promise<boolean>;
     start(): void;
     dismiss(): void;
     end(): void;
@@ -65,7 +68,7 @@ export interface AoedePanelProps {
 
 /** Presentation only. The host owns focus restoration, light dismissal, media and canonical work. */
 export function AoedePanel({
-  title = "Aoede", presentation, conversationKey, surface, canSendText, canOpenConversation, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions,
+  title = "Aoede", presentation, conversationKey, surface, canSendText, pendingText, canOpenConversation, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions,
   capability, canCancel, error, children, commands, settings, subscribeInputLevel, renderResponse,
 }: AoedePanelProps) {
   const id = useId();
@@ -189,7 +192,7 @@ export function AoedePanel({
             if (event.detail === 0) { if (hold.current) release(); else begin({}); }
           }}>Push to talk</Button> : null;
   if ((presentation === "halo" || capability?.conversationMode === "native_live") && typeof document !== "undefined") {
-    return createPortal(<AoedeLivePanel key={conversationKey} pushToTalkControl={pushToTalkControl} {...{ presentation, surface, canSendText, canOpenConversation, title, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions, capability, canCancel, error, children, commands: { ...commands, dismiss: afterRelease(commands.dismiss), end: afterRelease(commands.end), pause: afterRelease(commands.pause), newConversation: afterRelease(commands.newConversation) }, settings, subscribeInputLevel, renderResponse }} />, document.body);
+    return createPortal(<AoedeLivePanel key={conversationKey} pushToTalkControl={pushToTalkControl} {...{ presentation, surface, canSendText, pendingText, canOpenConversation, title, scopeLabel, focusRevision, status, microphoneActive, turnMode, captions, capability, canCancel, error, children, commands: { ...commands, dismiss: afterRelease(commands.dismiss), end: afterRelease(commands.end), pause: afterRelease(commands.pause), newConversation: afterRelease(commands.newConversation) }, settings, subscribeInputLevel, renderResponse }} />, document.body);
   }
   return (
     <section className="matrix-aoede" aria-labelledby={`${id}-title`} data-state={status}>

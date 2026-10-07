@@ -34,3 +34,6 @@
 @media (max-width: 640px) { .matrix-aoede-live__conversation { right: 16px; bottom: max(80px, env(safe-area-inset-bottom)); } }
 @media (prefers-reduced-motion: reduce) { .matrix-aoede-live__halo { transition: none; } }
 @media (forced-colors: active) { .matrix-aoede-live__conversation { background: Canvas; color: CanvasText; border-color: CanvasText; } .matrix-aoede-live button { border-color: ButtonText; } .matrix-aoede-live__halo { box-shadow: none; border-color: Highlight; } }
+
+.matrix-aoede-live__pending { margin: 12px 0; padding: 10px; border: 1px solid var(--live-border); border-radius: 12px; font-size: 13px; line-height: 1.45; }
+.matrix-aoede-live__pending p { margin: 0 0 8px; max-height: 10rem; overflow-y: auto; overflow-wrap: anywhere; }
