@@ -2,10 +2,11 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ComputerFileBrowser from "../../desktop/src/renderer/src/features/files/ComputerFileBrowser";
 import { createFileUploadController } from "../../desktop/src/renderer/src/features/files/file-upload-controller";
+import { useFileUploads } from "../../desktop/src/renderer/src/features/files/use-file-uploads";
 import { AppError } from "../../desktop/src/renderer/src/lib/errors";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
@@ -17,6 +18,41 @@ function deferred<T>() {
 }
 
 describe("Files upload controller", () => {
+  it("cancels active transfers and prevents stale computer retries", async () => {
+    const pending = deferred<{ path: string }>();
+    let scope = "computer-a";
+    const putBytes = vi.fn((..._args: unknown[]) => pending.promise);
+    const rows = vi.fn();
+    const controller = createFileUploadController({ api: { putBytes } as never, getScope: () => scope, onUploaded: vi.fn() });
+    controller.subscribe(rows);
+    controller.enqueue([new File(["x"], "cancel.csv")], "");
+    await waitFor(() => expect(putBytes).toHaveBeenCalledOnce());
+    const id = rows.mock.calls.at(-1)![0][0].id;
+    controller.cancel(id);
+    const requestOptions = putBytes.mock.calls[0]![3] as { signal: AbortSignal };
+    expect(requestOptions.signal.aborted).toBe(true);
+    pending.reject(new Error("aborted"));
+    await waitFor(() => expect(rows).toHaveBeenLastCalledWith([expect.objectContaining({ status: "cancelled" })]));
+    scope = "computer-b";
+    controller.retry(id);
+    expect(putBytes).toHaveBeenCalledOnce();
+    controller.dispose();
+  });
+  it("reads live Electron scope before a deferred send instead of a captured render value", async () => {
+    useConnection.setState({ runtimeSlot: "primary", authGeneration: 1 });
+    const putBytes = vi.fn().mockResolvedValue({ path: "private.csv" });
+    const api = { putBytes } as never;
+    const onUploaded = vi.fn();
+    const hook = renderHook(() => useFileUploads({ api, browserScope: "primary|1", currentPath: "", enabled: true, onUploaded }));
+    act(() => {
+      hook.result.current.enqueue([new File(["private"], "private.csv")], "");
+      useConnection.setState({ runtimeSlot: "other", authGeneration: 2 });
+    });
+    await waitFor(() => expect(hook.result.current.uploads).toEqual([expect.objectContaining({ status: "failed" })]));
+    expect(putBytes).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
   it("uses the existing blob route, runs at most three uploads, and ignores stale-scope refreshes", async () => {
     const calls = Array.from({ length: 4 }, () => deferred<{ path: string }>());
     const putBytes = vi.fn((..._args: unknown[]) => calls[putBytes.mock.calls.length - 1]!.promise);
@@ -30,18 +66,19 @@ describe("Files upload controller", () => {
 
     const files = Array.from({ length: 4 }, (_, index) => new File([String(index)], `f${index}.txt`));
     controller.enqueue(files, "projects");
-    expect(putBytes).toHaveBeenCalledTimes(3);
+    await waitFor(() => expect(putBytes).toHaveBeenCalledTimes(3));
     expect(putBytes).toHaveBeenNthCalledWith(
       1,
       "/api/files/blob?path=projects%2Ff0.txt",
       files[0],
       { "content-type": "application/octet-stream" },
-      { timeoutMs: 30_000 },
+      expect.objectContaining({ timeoutMs: 30_000, signal: expect.any(AbortSignal) }),
     );
 
     scope = "vm-2|2";
     calls[0]!.resolve({ path: "projects/f0.txt" });
-    await waitFor(() => expect(putBytes).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(calls[0]!.promise).resolves.toEqual({ path: "projects/f0.txt" }));
+    expect(putBytes).toHaveBeenCalledTimes(3);
     calls.slice(1).forEach((call) => call.resolve({ path: "projects/done.txt" }));
     await waitFor(() => expect(onUploaded).not.toHaveBeenCalled());
     controller.dispose();
@@ -162,7 +199,7 @@ describe("ComputerFileBrowser uploads", () => {
       "/api/files/blob?path=projects%2Fnotes.md",
       file,
       { "content-type": "text/markdown" },
-      { timeoutMs: 30_000 },
+      expect.objectContaining({ timeoutMs: 30_000, signal: expect.any(AbortSignal) }),
     ));
   });
 
@@ -178,7 +215,7 @@ describe("ComputerFileBrowser uploads", () => {
       "/api/files/blob?path=pasted.txt",
       file,
       { "content-type": "text/plain" },
-      { timeoutMs: 30_000 },
+      expect.objectContaining({ timeoutMs: 30_000, signal: expect.any(AbortSignal) }),
     ));
     expect(filePaste.defaultPrevented).toBe(true);
 
@@ -203,7 +240,7 @@ describe("ComputerFileBrowser uploads", () => {
       "/api/files/blob?path=root.txt",
       expect.any(File),
       { "content-type": "application/octet-stream" },
-      { timeoutMs: 30_000 },
+      expect.objectContaining({ timeoutMs: 30_000, signal: expect.any(AbortSignal) }),
     ));
   });
 

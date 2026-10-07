@@ -52,6 +52,8 @@ export default defineConfig({
       "@matrix-os/contracts/managed-integrations": path.resolve(__dirname, "packages/contracts/src/managed-integrations.ts"),
       "@matrix-os/contracts/bokio-integration": path.resolve(__dirname, "packages/contracts/src/bokio-integration.ts"),
       "@matrix-os/contracts/data-imports": path.resolve(__dirname, "packages/contracts/src/data-imports.ts"),
+      "@matrix-os/contracts/selected-import-preview": path.resolve(__dirname, "packages/contracts/src/selected-import-preview.ts"),
+      "@matrix-os/contracts/file-upload": path.resolve(__dirname, "packages/contracts/src/file-upload.ts"),
       "@matrix-os/contracts/chat-subagent": path.resolve(__dirname, "packages/contracts/src/chat-subagent.ts"),
       "@matrix-os/contracts/codex-chat-import": path.resolve(__dirname, "packages/contracts/src/codex-chat-import.ts"),
       "@matrix-os/contracts/codex-chat-import-client": path.resolve(__dirname, "packages/contracts/src/codex-chat-import-client.ts"),

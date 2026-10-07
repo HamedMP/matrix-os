@@ -415,25 +415,27 @@ export function UploadStatusList({
   uploads,
   onRetry,
   onRemove,
+  onCancel,
 }: {
   uploads: FileUploadRow[];
   onRetry: (id: string) => void;
   onRemove: (id: string) => void;
+  onCancel: (id: string) => void;
 }) {
   if (uploads.length === 0) return null;
   return (
-    <div className="shrink-0 space-y-1 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }} aria-live="polite">
+    <div className="ph-no-capture shrink-0 space-y-1 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }} aria-live="polite">
       {uploads.slice(0, 4).map((upload) => (
         <div key={upload.id} className="flex min-h-7 items-center justify-between gap-2">
           <span className="min-w-0 truncate">{upload.name}: {upload.error ?? upload.status}</span>
-          {upload.status === "failed" ? (
+          {upload.status === "failed" || upload.status === "cancelled" ? (
             <span className="flex shrink-0 items-center gap-1">
               {upload.error !== "Files are limited to 10 MB." ? (
                 <Button variant="subtle" className="h-7 text-xs" onClick={() => onRetry(upload.id)}>Retry</Button>
               ) : null}
               <Button variant="ghost" className="h-7 text-xs" onClick={() => onRemove(upload.id)}>Remove</Button>
             </span>
-          ) : null}
+          ) : <Button variant="ghost" className="h-7 text-xs" onClick={() => onCancel(upload.id)}>Cancel</Button>}
         </div>
       ))}
     </div>

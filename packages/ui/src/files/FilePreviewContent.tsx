@@ -1,10 +1,9 @@
+import { ImportPreviewError, MAX_IMPORT_PREVIEW_BYTES, parseSelectedImportPreview } from "@matrix-os/contracts/selected-import-preview";
 import type { FilePreviewDescriptor } from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_BINARY_BYTES = 50 * 1024 * 1024;
-const MAX_TABLE_ROWS = 500;
-const MAX_TABLE_COLUMNS = 100;
 const TEXTUAL_PREVIEW_KINDS: ReadonlyArray<FilePreviewDescriptor["kind"]> = ["text", "markdown", "table", "html"];
 
 export interface FilePreviewContentProps {
@@ -15,36 +14,6 @@ export interface FilePreviewContentProps {
   retry?: () => void;
   /** A caller that supplies a bounded prefix rather than the complete text. */
   textPreviewBytes?: number;
-}
-
-function parseDelimited(source: string, separator: "," | "\t"): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let quoted = false;
-  for (let index = 0; index < source.length && rows.length < MAX_TABLE_ROWS; index += 1) {
-    const character = source[index]!;
-    if (character === '"') {
-      if (quoted && source[index + 1] === '"') { cell += '"'; index += 1; }
-      else quoted = !quoted;
-    } else if (!quoted && character === separator) {
-      if (row.length < MAX_TABLE_COLUMNS) row.push(cell);
-      cell = "";
-    } else if (!quoted && (character === "\n" || character === "\r")) {
-      if (character === "\r" && source[index + 1] === "\n") index += 1;
-      if (row.length < MAX_TABLE_COLUMNS) row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = "";
-    } else {
-      cell += character;
-    }
-  }
-  if ((cell || row.length > 0) && rows.length < MAX_TABLE_ROWS) {
-    if (row.length < MAX_TABLE_COLUMNS) row.push(cell);
-    rows.push(row);
-  }
-  return rows;
 }
 
 function Loading() {
@@ -59,7 +28,8 @@ function Failure({ retry }: { retry?: () => void }) {
 }
 
 function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBytes }: FilePreviewContentProps) {
-  const limit = textPreviewBytes === undefined ? MAX_TEXT_BYTES : Math.max(1, Math.min(MAX_TEXT_BYTES, textPreviewBytes));
+  const maximum = descriptor.kind === "table" ? MAX_IMPORT_PREVIEW_BYTES : MAX_TEXT_BYTES;
+  const limit = textPreviewBytes === undefined ? maximum : Math.max(1, Math.min(maximum, textPreviewBytes));
   const [state, setState] = useState<{ status: "loading" } | { status: "ready"; text: string } | { status: "failed" }>({ status: "loading" });
   useEffect(() => {
     let active = true;
@@ -79,8 +49,14 @@ function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBy
   if (state.status === "loading") return <Loading />;
   if (state.status === "failed") return <Failure retry={retry} />;
   if (descriptor.kind === "table") {
-    const separator = descriptor.mimeType === "text/tab-separated-values" || descriptor.name.toLowerCase().endsWith(".tsv") ? "\t" : ",";
-    return <TablePreview name={descriptor.name} rows={parseDelimited(state.text, separator)} />;
+    try {
+      const preview = parseSelectedImportPreview(descriptor.name, state.text);
+      if (preview.kind !== "table") return <Failure retry={retry} />;
+      return <TablePreview name={descriptor.name} rows={[preview.columns, ...preview.rows]} truncated={preview.truncated} />;
+    } catch (error) {
+      if (!(error instanceof ImportPreviewError)) throw error;
+      return <Failure retry={retry} />;
+    }
   }
   if (descriptor.kind === "html") {
     const policy = "default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:";
@@ -97,13 +73,14 @@ function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBy
   </div>;
 }
 
-function TablePreview({ name, rows }: { name: string; rows: string[][] }) {
+function TablePreview({ name, rows, truncated }: { name: string; rows: string[][]; truncated: boolean }) {
   const [header = [], ...body] = rows;
   return <div className="min-h-0 overflow-auto p-4">
     <table aria-label={name} className="w-full border-collapse text-left text-xs">
       <thead><tr>{header.map((cell, index) => <th key={index} className="border px-2 py-1 font-semibold">{cell}</th>)}</tr></thead>
       <tbody>{body.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex} className="border px-2 py-1">{cell}</td>)}</tr>)}</tbody>
     </table>
+    {truncated ? <p role="status" className="pt-2 text-xs">Preview truncated after 100 rows.</p> : null}
   </div>;
 }
 

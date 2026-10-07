@@ -1,3 +1,4 @@
+import { selectedImportPreviewText } from "@matrix-os/contracts/selected-import-preview";
 import {
   ArrowLeft,
   Download,
@@ -35,7 +36,7 @@ const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024;
 const MAX_IMAGE_PREVIEW_BYTES = 10 * 1024 * 1024;
 
 const TEXT_EXTENSIONS = [
-  "txt", "json", "jsonl", "yaml", "yml", "toml", "xml", "csv", "log",
+  "pgn", "txt", "json", "jsonl", "yaml", "yml", "toml", "xml", "csv", "log",
   "ts", "tsx", "js", "jsx", "mjs", "cjs", "css", "scss", "html", "sh",
   "bash", "zsh", "py", "rb", "go", "rs", "java", "kt", "sql", "env",
 ];
@@ -195,10 +196,11 @@ function TextPreview({ path, markdown = false, monaco = false }: { path: string;
   if (state.status === "loading") return <LoadingPreview />;
   if (state.status === "error") return <PreviewFailure error={state.error} onRetry={() => setAttempt((value) => value + 1)} />;
   if (markdown) return <MarkdownContent content={state.content} />;
-  if (monaco) return <MonacoReadOnlyEditor path={path} content={state.content} />;
+  const importSummary = selectedImportPreviewText(path, state.content);
+  if (monaco && !importSummary) return <MonacoReadOnlyEditor path={path} content={state.content} />;
   return (
     <pre className="min-h-0 flex-1 overflow-auto p-5 font-mono text-[13px] leading-6" style={{ color: "var(--text-primary)", background: "var(--bg-sunken)" }} data-selectable>
-      <code>{state.content}</code>
+      <code>{importSummary ? `${importSummary}\n\nOriginal file\n${state.content}` : state.content}</code>
     </pre>
   );
 }

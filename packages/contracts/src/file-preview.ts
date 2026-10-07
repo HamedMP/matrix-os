@@ -77,7 +77,7 @@ const EXTENSION_KINDS: Readonly<Record<string, PreviewKind>> = {
   ogv: "video", webm: "video",
   htm: "html", html: "html",
   c: "text", cc: "text", conf: "text", cpp: "text", css: "text", go: "text",
-  h: "text", hpp: "text", ini: "text", java: "text", js: "text", json: "text",
+  h: "text", hpp: "text", ini: "text", java: "text", js: "text", json: "text", pgn: "text",
   jsx: "text", log: "text", mjs: "text", py: "text", rb: "text", rs: "text",
   sh: "text", sql: "text", toml: "text", ts: "text", tsx: "text", txt: "text",
   xml: "text", yaml: "text", yml: "text",

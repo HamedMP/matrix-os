@@ -4,6 +4,7 @@ import { previewKindForPath } from "@desktop/renderer/src/features/files/FilePre
 describe("Electron File Preview format routing", () => {
   it.each([
     ["report.pdf", "pdf"],
+    ["game.pgn", "text"],
     ["sales.csv", "table"],
     ["sales.tsv", "table"],
     ["interview.mp3", "audio"],

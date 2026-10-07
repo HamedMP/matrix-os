@@ -14,7 +14,7 @@ const MAX_NEW_ENTRY_NAME_LENGTH = 255;
 const MAX_FILE_PATH_LENGTH = 4_096;
 const MAX_FILE_ENTRIES = 5_000;
 const DEFAULT_FILE_PREVIEW_BYTES = 512 * 1024;
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "heic", "heif"]);
 
 const FileEntrySchema = z.object({
   name: z.string().min(1).max(MAX_FILE_NAME_LENGTH),

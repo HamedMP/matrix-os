@@ -5,6 +5,7 @@ const mockUseComputerDirectory = jest.fn();
 const mockCreateFolder = jest.fn();
 const mockCreateFile = jest.fn();
 const mockRefreshDirectory = jest.fn();
+jest.mock("@/components/files/SelectedDeviceUploadPanel", () => ({ SelectedDeviceUploadPanel: () => null }));
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockPush }),

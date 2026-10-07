@@ -1,5 +1,6 @@
 "use client";
 
+import { selectedImportPreviewText } from "@matrix-os/contracts/selected-import-preview";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { usePreviewWindow, type PreviewTab as PreviewTabType } from "@/hooks/usePreviewWindow";
 import { fileBlobUrl, fileMediaUrl } from "@/lib/file-blob";
@@ -92,6 +93,7 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
   }
 
   // Toolbar for text-editable types
+  const importSummary = selectedImportPreviewText(tab.name, content);
   const showToolbar =
     tab.type === "markdown" || tab.type === "code" || tab.type === "text";
 
@@ -121,6 +123,7 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
         </div>
       )}
 
+      {importSummary ? <pre className="ph-no-capture max-h-64 shrink-0 overflow-auto border-b p-3 text-xs whitespace-pre-wrap" aria-label="Import preview">{importSummary}</pre> : null}
       <div className="flex-1 min-h-0">
         <Suspense
           fallback={
