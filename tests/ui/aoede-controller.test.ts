@@ -26,6 +26,21 @@ function harness(bootstrap = vi.fn(async () => binding), initialDetail = detail,
 const catalog = createCanonicalProviderCatalogFixture();
 const devices = [{ deviceId: "mic_usb", kind: "audioinput" as const, label: "USB Mic" }, { deviceId: "spk_hdmi", kind: "audiooutput" as const, label: "HDMI" }];
 const operationView = { id: "action_timer", chatId: "chat_aoede", runId: "run_op", toolId: "tool_timer", schemaRevision: "s1", policyRevision: "p1", state: "authorized" as const, argumentDigest: "a".repeat(64), cancellationRequested: false, createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z" };
+it("chooses the first task route in a native conversation without changing voice readiness", async () => {
+  const nativeBinding = { ...binding, selection: undefined, capability: { ...binding.capability,
+    conversationMode: "native_live" as const, turnModes: ["hands_free" as const], actionMode: "conversation_only" as const, actionCancellation: "none" as const } };
+  const next = { instanceId: "pi_main", model: "test:model" };
+  const h = harness(vi.fn().mockResolvedValueOnce(nativeBinding).mockResolvedValue({ ...nativeBinding, selection: next }));
+  await h.controller.open();
+  expect(h.controller.getSnapshot().binding?.selection).toBeUndefined();
+  h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: {
+    ...detail.record.chat, revision: 1, currentSelection: next,
+  } } });
+  expect(await h.controller.setSelection(next)).toBe(true);
+  expect(h.updateSelection).toHaveBeenCalledWith(binding.chatId, { baseRevision: 0, selection: next });
+  expect(h.controller.getSnapshot().binding).toMatchObject({ selection: next, capability: { status: "available", conversationMode: "native_live" } });
+  h.controller.dispose();
+});
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function runningDetail(): CanonicalChatDetailResponse {
   const fixture = createCanonicalChatFixture("running").snapshot;
