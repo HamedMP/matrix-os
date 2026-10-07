@@ -8,6 +8,8 @@ import { useSSO, useAuth } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Image } from "expo-image";
 import { describeSignInFailure } from "@/lib/clerk-sign-in";
+import { completePendingSignUp } from "@/lib/clerk-sign-up";
+import { useAppleSignIn } from "@/lib/use-apple-sign-in";
 import { SignInStepError, useEmailCodeSignIn } from "@/lib/use-email-code-sign-in";
 import { HostedSignInPanel } from "@/components/auth/HostedSignInPanel";
 import {
@@ -72,12 +74,20 @@ export function SignInScreen() {
       await saveSelectedGatewayUrl(normalizedGatewayUrl);
       setGatewayUrl(normalizedGatewayUrl);
       setSignInError(null);
-      const { createdSessionId, setActive } = await startSSOFlow({
+      const { createdSessionId, setActive, signUp, authSessionResult } = await startSSOFlow({
         strategy,
         redirectUrl: clerkOAuthRedirectUrl,
       });
-      if (createdSessionId && setActive) {
-        await setActive({ session: createdSessionId });
+      // A first-time account comes back without a session until the sign-up's
+      // requirements are filled in. Only a finished browser round trip counts:
+      // a cancelled one may still hold an earlier attempt's pending sign-up.
+      const sessionId =
+        createdSessionId ??
+        (authSessionResult?.type === "success" && signUp?.status === "missing_requirements"
+          ? await completePendingSignUp(signUp)
+          : null);
+      if (sessionId && setActive) {
+        await setActive({ session: sessionId });
         redirectedRef.current = true;
         router.replace("/(drawer)" as any);
       }
@@ -131,6 +141,12 @@ export function SignInScreen() {
   }, [gatewayUrl]);
 
   const emailSignIn = useEmailCodeSignIn({
+    prepareGateway,
+    onError: setSignInError,
+    onSuccess: goToApps,
+  });
+
+  const appleSignIn = useAppleSignIn({
     prepareGateway,
     onError: setSignInError,
     onSuccess: goToApps,
@@ -206,10 +222,11 @@ export function SignInScreen() {
           {signInError ? <Text style={styles.errorText}>{signInError}</Text> : null}
 
           <HostedSignInPanel
-            loadingProvider={loadingProvider}
+            loadingProvider={appleSignIn.signingIn ? "apple" : loadingProvider}
             signingInWithPassword={emailSignIn.signingIn}
             sendingCode={emailSignIn.sending}
             verifyingCode={emailSignIn.verifying}
+            onApple={appleSignIn.signIn}
             onGoogle={handleGoogleSignIn}
             onGithub={handleGithubSignIn}
             onComputer={handleComputerSignIn}

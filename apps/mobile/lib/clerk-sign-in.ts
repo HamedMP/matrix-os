@@ -135,7 +135,7 @@ export function supportsPassword(factors: FirstFactorLike[] | null | undefined):
   return Boolean(factors?.some((factor) => factor.strategy === "password"));
 }
 
-function hasClerkErrorCode(error: unknown, code: string): boolean {
+export function hasClerkErrorCode(error: unknown, code: string): boolean {
   if (typeof error !== "object" || error === null) return false;
   const errors = (error as { errors?: unknown }).errors;
   if (!Array.isArray(errors)) return false;

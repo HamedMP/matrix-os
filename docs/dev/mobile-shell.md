@@ -180,8 +180,83 @@ demo credentials that work, so the review account **must have a password set**;
 an OAuth-only account cannot log in with a username and password.
 
 Sign-**up** by email is deliberately not implemented on mobile: the instance
-requires a username and legal consent at signup. New users go through OAuth or
-the web.
+requires a username and legal consent at signup. New users go through Apple,
+Google, GitHub or the web.
+
+### First-time provider accounts
+
+A first-time Apple, Google or GitHub user has no Clerk account, so Clerk turns
+the sign-in into a sign-up and returns it as `missing_requirements` (`username`,
+`legal_accepted`) with **no session**. `lib/clerk-sign-up.ts` fills both in and
+activates the session, so the tap does not end in nothing:
+
+- **Legal consent** is sent because the sign-in screen states that continuing
+  accepts the Terms of Service and Privacy Policy. Keep that sentence on the
+  screen for as long as this code sends `legalAccepted`.
+- **Username** starts as the part of the email before the `@`, reduced to what a
+  Matrix OS handle allows (lowercase letters, digits, hyphens, a leading letter,
+  31 characters). A taken or too-short name gets a random six-character suffix.
+  It is a starting value; the user can change it before a computer exists.
+- Anything else Clerk still asks for (an unverified address, a phone number)
+  cannot be supplied from the app, and the user is told to finish on the web.
+
+### Sign in with Apple
+
+iOS only. The button is Apple's system button (`AppleAuthenticationButton`), a
+full-width row above the provider icons; Android does not render it.
+
+The flow is native, not a browser round trip: `expo-apple-authentication`
+presents Apple's sheet, and its identity token goes to Clerk as
+`signIn.create({ strategy: "oauth_token_apple", token })`. Clerk's own
+`useSignInWithApple` hook is **not** used, because it discards Apple's
+authorization code. `specs/547-account-deletion/rollout.md` needs that code: once
+the session is active the app posts it to `POST /api/account/apple-token` on the
+platform, which exchanges it for the credential used to revoke Apple access when
+the account is deleted. The post is best effort and never blocks sign-in; without
+it deletion still completes and asks the user to remove Apple access by hand.
+
+What has to be true outside the repository:
+
+- `app.json` sets `ios.usesAppleSignIn` and the `expo-apple-authentication`
+  plugin, which write the `com.apple.developer.applesignin` entitlement. The App
+  ID needs the Sign in with Apple capability and the provisioning profiles must
+  have been regenerated after it was enabled.
+- A local device build (`expo run:ios --device`) does not use those profiles. It
+  signs with Xcode's own managed development profile, "iOS Team Provisioning
+  Profile: com.matrixos.mobile", which is cached on each Mac. One created before
+  the capability was enabled fails the build with `does not support the Sign In
+  with Apple capability`. Open `apps/mobile/ios/MatrixOS.xcworkspace` in Xcode
+  and select the MatrixOS target's Signing & Capabilities tab: Xcode regenerates
+  the profile, or names what stops it (an expired sign-in, or a team role that
+  may not manage profiles). An EAS `development-device` build avoids this, since
+  it signs with the EAS-managed Ad Hoc profile.
+- Clerk has Apple enabled and the native application registered with Team ID
+  `PX4JL74Y2K` and bundle ID `com.matrixos.mobile`. The identity token's audience
+  is the bundle ID, so a build with another bundle ID is rejected by Clerk.
+- Emails to Hide My Email addresses (`@privaterelay.appleid.com`) only arrive if
+  the sending domain is registered under Apple's "Sign in with Apple for Email
+  Communication". Without it an email-code sign-in for such an account never
+  receives its code.
+
+Testing notes:
+
+- Use a physical device. The simulator renders the button, but without an Apple
+  Account it only gets Apple's "Sign in to your Apple Account" alert, so it
+  cannot complete a sign-in.
+- Dismissing Apple's sheet must leave the screen as it was, with no error.
+  `expo-modules-core` 57.0.2 rejects with a bare `Error` (the native reason as
+  the message, no `code`), so `isAppleCancellation` matches the reason text as
+  well as the documented `ERR_REQUEST_CANCELED`. Re-check this after an Expo
+  upgrade. Any other failure logs `[mobile] apple credential request failed:`
+  with what Apple reported; the screen only says it did not complete.
+- Apple shares the name and email **only the first time** an Apple Account
+  authorizes the app. To repeat a first-time run, remove the app under
+  Settings > Apple Account > Sign in with Apple, then delete the Clerk user.
+- An Apple Account whose real email matches a verified email on an existing
+  Clerk account signs in to **that** account. Hide My Email produces a relay
+  address, which matches nothing and creates a separate account.
+- Local runs use the production Clerk instance, so every test creates a real
+  user. Delete test users afterwards.
 
 ## Over-the-Air Updates (EAS Update)
 
