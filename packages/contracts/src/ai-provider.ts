@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
-import { MatrixAnthropicConnectionSchema } from "./matrix-anthropic-connection.js";
+import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;

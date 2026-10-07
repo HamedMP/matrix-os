@@ -3,7 +3,7 @@ import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primit
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
 import { FundedAiChatAvailabilitySchema } from "#funded-ai";
-import { MatrixAnthropicConnectionSchema } from "./matrix-anthropic-connection.js";
+import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
