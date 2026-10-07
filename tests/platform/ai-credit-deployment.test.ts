@@ -70,6 +70,7 @@ describe("Matrix AI credit Cloud Run deployment", () => {
       GOOGLE_ANALYTICS_API_SECRET_VERSION: "1",
       WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
       ACCOUNT_DELETION_CONFIGURED: "false", ACCOUNT_DELETION_ENABLED: "false",
+      SLACK_ENABLED: "false", SLACK_TOKEN_ENCRYPTION_KEY_VERSION: "1",
       IMAGE_DIGEST: "image@sha256:fixture", ...overrides } });
     const disabled = deploy({ MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "false",
       MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false", MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false" });
@@ -183,6 +184,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
         GOOGLE_ANALYTICS_API_SECRET_VERSION: "1",
         WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
         ACCOUNT_DELETION_CONFIGURED: "false", ACCOUNT_DELETION_ENABLED: "false",
+        SLACK_ENABLED: "false", SLACK_TOKEN_ENCRYPTION_KEY_VERSION: "1",
         IMAGE_DIGEST: "image@sha256:fixture", ...enabled } });
       expect(deployed.status, deployed.stderr).toBe(0);
       expect(deployed.stdout).toContain(`${key}=${enabled[key as keyof typeof enabled]}`);
