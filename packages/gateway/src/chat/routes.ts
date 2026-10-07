@@ -1,3 +1,4 @@
+import { ChatRunWireVersionSchema, projectChatRunResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
 import { projectChatFundingErrors } from "./funding-error-wire.js";
@@ -330,14 +331,16 @@ export function createCanonicalChatRoutes(options: {
       || !ChatReadStateWireVersionSchema.safeParse(context.req.query("readStateVersion")).success) {
       return validationError(context);
     }
+    const runVersion = ChatRunWireVersionSchema.safeParse(context.req.query("runVersion"));
+    if (!runVersion.success || (context.req.queries("runVersion")?.length ?? 0) > 1) return context.json({ error: "Unsupported run version" }, 400);
     const metadataVersion = ChatMetadataVersionSchema.safeParse(context.req.header("x-matrix-chat-metadata"));
     if (!metadataVersion.success) return validationError(context);
     const fundingVersion = ChatFundingWireVersionSchema.safeParse(context.req.query("fundingVersion"));
     if (!fundingVersion.success || (context.req.queries("fundingVersion")?.length ?? 0) > 1) return validationError(context);
     await next();
     context.header("Vary", "X-Matrix-Chat-Metadata", { append: true });
-    if ((metadataVersion.data === "0" || fundingVersion.data === "0") && context.res.headers.get("content-type")?.includes("application/json")) {
-      const payload = projectChatFundingErrors(projectChatMetadata(await context.res.json(), metadataVersion.data), fundingVersion.data);
+    if ((metadataVersion.data === "0" || fundingVersion.data === "0" || runVersion.data === "0") && context.res.headers.get("content-type")?.includes("application/json")) {
+      const payload = projectChatRunResponse(projectChatFundingErrors(projectChatMetadata(await context.res.json(), metadataVersion.data), fundingVersion.data), runVersion.data);
       const headers = new Headers(context.res.headers);
       headers.delete("content-length");
       context.res = new Response(JSON.stringify(payload), { status: context.res.status, headers });

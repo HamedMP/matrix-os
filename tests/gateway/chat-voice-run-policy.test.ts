@@ -716,6 +716,22 @@ describe("checkpoint provenance and retained history", () => {
     expect(result.retainedHistory?.text).toContain("7 plus 11 is 18.");
   });
 
+  it("rebuilds from the newest bounded heard-safe window after a long checkpoint gap", async () => {
+    await createChat();
+    await completedCheckpoint("long_gap");
+    for (let seq = 2; seq <= 65; seq++) await commitMessage(`msg_recent_${seq}`, seq, `RECENT_${seq}`);
+    await commitMessage("msg_recent_unheard", 66, "UNHEARD_LATEST", "run_unheard_latest");
+    await insertDelivery({ responseId: "resp_recent_unheard", runId: "run_unheard_latest",
+      messageId: "msg_recent_unheard", state: "interrupted", effectiveTextEnd: 0 });
+    const result = await decision({ retainedHistorySupported: true, historyBoundarySeq: 66 });
+    expect(result).toMatchObject({ mode: "rebuild", reason: "retention_truncated" });
+    expect(result.retainedHistory).toMatchObject({ throughSeq: 66, truncated: true });
+    expect(result.retainedHistory?.text).toContain("RECENT_65");
+    expect(result.retainedHistory?.text).not.toContain("RECENT_2\n");
+    expect(result.retainedHistory?.text).not.toContain("UNHEARD_LATEST");
+    expect(result.retainedHistory!.text.indexOf("RECENT_27")).toBeLessThan(result.retainedHistory!.text.indexOf("RECENT_65"));
+  });
+
   it("resumes with retained canonical history when the checkpoint predates it", async () => {
     await createChat();
     const runId = await completedCheckpoint("retained");
