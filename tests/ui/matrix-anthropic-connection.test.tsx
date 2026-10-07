@@ -314,3 +314,85 @@ it("does not retain runnable readiness when status reconciliation also fails", a
   expect(screen.queryByText(/Available for chats/)).toBeNull();
   expect(changed).toHaveBeenCalledOnce();
 });
+
+
+it.each(["refresh", "reconciliation", "fallback status"] as const)("a delayed %s cannot overwrite a later same-revision credential observation", async kind => {
+  const native = client(connected), changed = vi.fn();
+  let settle!: (value: MatrixAnthropicConnection) => void;
+  const held = () => new Promise<MatrixAnthropicConnection>(resolve => { settle = resolve; });
+  if (kind === "refresh") native.refresh = vi.fn(held);
+  else if (kind === "reconciliation") {
+    native.refresh = vi.fn().mockRejectedValue(new Error("ResponseLost"));
+    native.status = vi.fn(held);
+  } else native.status = vi.fn().mockResolvedValueOnce(connected).mockImplementationOnce(held);
+  const view = render(<MatrixAnthropicConnectionCard client={native} initialStatus={kind === "fallback status" ? undefined : connected}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  await screen.findByText("Connected");
+  if (kind === "fallback status") {
+    view.rerender(<MatrixAnthropicConnectionCard client={native} refreshRevision={1}
+      disabled={false} readOnly={false} onChanged={changed}/>);
+    await waitFor(() => expect(native.status).toHaveBeenCalledTimes(2));
+  } else {
+    fireEvent.click(screen.getByRole("button", { name: "Check Claude connection" }));
+    await waitFor(() => expect(kind === "refresh" ? native.refresh : native.status).toHaveBeenCalledOnce());
+  }
+  const newerGeneration = "75c0d0e5-376b-4970-b6ad-602526f60a54";
+  const observed: MatrixAnthropicConnection = { ...connected, credentialGeneration: newerGeneration,
+    sourceCredentialGeneration: null, state: "refresh_required", models: [] };
+  view.rerender(<MatrixAnthropicConnectionCard client={native} initialStatus={observed} refreshRevision={1}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  await act(async () => { settle(connected); });
+  expect(screen.getByText("Check connection")).toBeVisible();
+  expect(screen.queryByText(/Available for chats/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Disconnect Claude" }));
+  await waitFor(() => expect(native.disconnect).toHaveBeenCalledOnce());
+  expect(native.disconnect).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: observed.revision,
+    expectedCredentialGeneration: newerGeneration }), expect.any(AbortSignal));
+});
+
+it("retains an accepted Connect when the real subscriptions consumer requests refresh before the snapshot arrives", async () => {
+  const native = client(), refresh = vi.fn();
+  function Subscriptions({ projection }: { projection: MatrixAnthropicConnection }) {
+    const [refreshRevision, setRefreshRevision] = React.useState(0);
+    // AgentsProvidersView increments this counter when refresh starts, before
+    // the canonical Settings request publishes its new observation.
+    return <YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [], matrixAnthropicConnection: projection } as never}
+      capabilities={[]} matrixAnthropicClient={native} localChatgptRefreshRevision={refreshRevision}
+      operationIds={{}} workflowStatus={{}} forbidden={false} disabled={false} onOpen={vi.fn()}
+      onRefresh={() => { setRefreshRevision(value => value + 1); refresh(); }}/>;
+  }
+  const view = render(<Subscriptions projection={disconnected}/>);
+  await fillKey(); fireEvent.click(screen.getByRole("button", { name: "Connect Claude" }));
+  await screen.findByText("Connected");
+  expect(refresh).toHaveBeenCalledOnce(); expect(native.status).not.toHaveBeenCalled();
+  // A delayed/failed Settings fetch has not supplied a new observation. The
+  // receipt must still authorize the next explicit CAS mutation.
+  fireEvent.click(screen.getByRole("button", { name: "Disconnect Claude" }));
+  await screen.findByText("Not connected");
+  expect(native.disconnect).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: connected.revision,
+    expectedCredentialGeneration: generation }), expect.any(AbortSignal));
+  expect(refresh).toHaveBeenCalledTimes(2);
+  // Only arrival of actual canonical truth supersedes the retained receipt.
+  view.rerender(<Subscriptions projection={{ ...connected, revision: 3, state: "refresh_required", models: [] }}/>);
+  expect(screen.getByText("Check connection")).toBeVisible();
+});
+
+
+it("a delayed failed refresh cannot withdraw a later same-revision replacement credential", async () => {
+  const native = client(connected), changed = vi.fn();
+  let reject!: (error: Error) => void;
+  native.refresh = vi.fn(() => new Promise<MatrixAnthropicConnection>((_, fail) => { reject = fail; }));
+  native.status = vi.fn().mockRejectedValue(new Error("StatusUnavailable"));
+  const view = render(<MatrixAnthropicConnectionCard client={native} initialStatus={connected}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  fireEvent.click(screen.getByRole("button", { name: "Check Claude connection" }));
+  const newerGeneration = "75c0d0e5-376b-4970-b6ad-602526f60a54";
+  const observed = { ...connected, credentialGeneration: newerGeneration, sourceCredentialGeneration: newerGeneration };
+  view.rerender(<MatrixAnthropicConnectionCard client={native} initialStatus={observed}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  await act(async () => { reject(new Error("DiscoveryUnavailable")); });
+  expect(screen.getByText("Connected")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Disconnect Claude" }));
+  await waitFor(() => expect(native.disconnect).toHaveBeenCalledOnce());
+  expect(native.disconnect).toHaveBeenCalledWith(expect.objectContaining({ expectedCredentialGeneration: newerGeneration }), expect.any(AbortSignal));
+});
