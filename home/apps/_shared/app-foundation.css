@@ -1,0 +1,31 @@
+/* Shared accessibility, viewport and theme fallback. OS bridge tokens win. */
+html { color-scheme: light dark; }
+html, body, #root { min-width: 0; }
+body { -webkit-text-size-adjust: 100%; }
+input, textarea, select { font-size: 16px; }
+button, input, textarea, select { touch-action: manipulation; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--matrix-accent, #315bb4); outline-offset: 3px; }
+@media (prefers-color-scheme: dark) {
+  :root:root {
+    --app-bg: var(--matrix-bg, #141923);
+    --app-fg: var(--matrix-fg, #eef1f7);
+    --app-card: var(--matrix-card, #202734);
+    --app-muted: var(--matrix-muted, #252d3a);
+    --app-muted-fg: var(--matrix-muted-fg, #a2adbe);
+    --app-border: var(--matrix-border, #343e4d);
+    --app-primary: var(--matrix-primary, #b6c9ea);
+    --app-primary-fg: var(--matrix-primary-fg, #172033);
+    --app-accent: var(--matrix-accent, #729ce9);
+    --background: var(--matrix-bg, #141923);
+    --foreground: var(--matrix-fg, #eef1f7);
+    --card: var(--matrix-card, #202734);
+    --card-soft: var(--matrix-muted, #252d3a);
+    --muted: var(--matrix-muted-fg, #a2adbe);
+    --border: var(--matrix-border, #343e4d);
+    --accent: var(--matrix-accent, #729ce9);
+    color-scheme: dark;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

@@ -1,0 +1,23 @@
+@import "../../_shared/app-foundation.css";
+
+
+/* Existing condition-driven sky, with a wider horizon and forecast strips. */
+:root { --app-bg: var(--matrix-bg, #f4f7fb); --app-fg: var(--matrix-fg, #253245); --app-muted: var(--matrix-muted, #e4ecf5); --app-accent: var(--matrix-accent, #456dab); }
+.weather-app, .sidebar { height: 100dvh; }
+.weather-app { grid-template-columns: 200px minmax(0, 1fr); }
+.sidebar { background: var(--app-bg); padding: 24px 16px; }
+.sidebar__head h1 { font-size: 24px; font-weight: 600; }
+.loc-chip { border-radius: 10px; box-shadow: none; }
+.loc-chip__select, .loc-chip__remove, .add-btn, .unit-toggle, .search-close, .search-result, .primary-action { min-height: 44px; }.loc-chip__remove, .add-btn, .search-close { min-width: 44px; }
+.stage { min-width: 0; min-height: 0; height: 100%; }
+.weather-scroll { height: 100%; min-height: 0; padding: 24px; }
+.hero { border-radius: 24px; min-height: 340px; box-shadow: none; }
+.hero__loc { font-size: 24px; font-weight: 500; }
+.hero__temp { font-size: clamp(72px, 11vw, 120px); font-weight: 300; letter-spacing: -.06em; }
+.hero__condition { font-size: 20px; }
+.panel { border-radius: 0; box-shadow: none; background: transparent; padding: 24px 8px; border-bottom: 1px solid var(--app-border); }
+.panel__title { font-size: 16px; font-weight: 550; }
+.hourly-strip { gap: 24px; }.hourly-cell { background: transparent; border-radius: 0; min-width: 60px; }
+.daily-row { min-height: 52px; }
+.search-bar input { font-size: 16px; }
+@media (max-width: 760px) { .weather-app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }.sidebar { height: auto; padding: max(12px, env(safe-area-inset-top)) 16px 10px; border-right: 0; border-bottom: 1px solid var(--app-border); }.location-list { display: flex; overflow-x: auto; gap: 8px; }.loc-chip { min-width: 160px; flex-shrink: 0; }.weather-scroll { padding: 16px 16px max(24px, env(safe-area-inset-bottom)); }.hero { min-height: 330px; }.hero__content { padding: 28px 24px; }.hourly-strip { gap: 16px; }.search-panel { max-height: 80dvh; } }
