@@ -29,10 +29,13 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(providerState).toContain("const onSettingsChange = () => { void refresh(true); };");
     expect(providerState).not.toContain("/api/ai/providers");
     // The setup action used to be invoked from an inline arrow in the shell component. It is now
-    // handed to the shared picker, which invokes it, so assert both halves: the shell must pass the
-    // handler through, and the picker must call it with the instance and the action.
+    // handed to the shared picker, which invokes it, so assert both halves. A mixed-funding
+    // category can be available while the selected source needs recovery: its own setup actions
+    // must receive that source, rather than the category's available representative instance.
     expect(providerState).toContain("onSetupAction={onSetupAction}");
-    expect(providerChoices).toContain("onSetupAction(activeInstance, action)");
+    expect(providerChoices).toContain("recoveryInstance.setupActions.map");
+    expect(providerChoices).toContain("onSetupAction(recoveryInstance, action)");
+    expect(providerChoices).not.toContain("onSetupAction(activeInstance, action)");
     expect(desktop).toContain("OPEN_PROVIDER_SETTINGS_EVENT");
     expect(desktop).toContain("OPEN_PROVIDER_TERMINAL_EVENT");
     expect(shellHome).toContain('terminalCollaborationView ? "__terminal__"');

@@ -140,8 +140,9 @@ export function createPlatformOrganizationRoutes(options: {
           const profile = profiles.get(member.actorId);
           return {
             actorId: member.actorId,
-            displayName: profile?.displayName ?? member.actorId,
-            ...(profile?.emailAddress ? { emailAddress: profile.emailAddress } : {}),
+            displayName: member.displayName ?? profile?.displayName ?? member.actorId,
+            ...(member.email ? { emailAddress: member.email }
+              : profile?.emailAddress ? { emailAddress: profile.emailAddress } : {}),
             role: managementRole(member.role),
             joinedAt: member.sourceUpdatedAt.toISOString(),
           };

@@ -117,22 +117,23 @@ export function DrawerContent({
                 onPress={() => navigate(item.route)}
                 style={({ pressed }) => [
                   styles.padded,
-                  styles.primaryRow,
                   pressed && styles.pressed,
                 ]}
               >
                 <Spacer size="xxs" />
-                <View style={styles.itemContainer}>
-                  <Icon
-                    icon={item.icon}
-                    size={20}
-                    style={styles.itemIcon}
-                  />
-                  <Text size="body">{item.label}</Text>
+                <View testID={`drawer-primary-row-${item.route}`} style={styles.primaryRow}>
+                  <View style={styles.itemContainer}>
+                    <Icon
+                      icon={item.icon}
+                      size={20}
+                      style={styles.itemIcon}
+                    />
+                    <Text size="body">{item.label}</Text>
+                  </View>
+                  {item.route === "shared" && pendingInvitationCount > 0 ? <View style={styles.badge}>
+                    <Text size="muted" tone="inverse">{pendingInvitationCount > 99 ? "99+" : String(pendingInvitationCount)}</Text>
+                  </View> : null}
                 </View>
-                {item.route === "shared" && pendingInvitationCount > 0 ? <View style={styles.badge}>
-                  <Text size="muted" tone="inverse">{pendingInvitationCount > 99 ? "99+" : String(pendingInvitationCount)}</Text>
-                </View> : null}
                 <Spacer size="xxs" />
               </Pressable>
               {index < visibleItems.length - 1 ? <Spacer size="sm" /> : null}

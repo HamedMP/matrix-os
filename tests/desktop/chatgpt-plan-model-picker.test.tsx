@@ -20,7 +20,7 @@ it("Electron explicit model selection replaces the stale grant with current qual
  const trigger = screen.getByRole("button", { name: "Choose model and provider" });
  expect(trigger).toHaveTextContent("Unavailable");
  fireEvent.click(trigger);
- fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Codex · ChatGPT subscription" }));
+ fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Matrix AI · ChatGPT subscription" }));
  expect(change).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instanceId: planId, model: "gpt-owner", options: planBinding }));
 });
 it("Electron keeps the saved Chat binding across catalog refresh and restores only explicit new intent", () => {
@@ -50,6 +50,18 @@ it("Electron explicit subscription choice repairs unsupported execution controls
  const change = vi.fn();
  render(<ProviderModelPicker catalog={ordinaryPlanCatalog()} selection={{ instanceId: planId, model: "gpt-owner", options: stale, interactionMode: "old-mode", permissionMode: "old-permission" }} instanceLocked onChange={change}/>);
  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
- fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Codex · ChatGPT subscription" }));
+ fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Matrix AI · ChatGPT subscription" }));
  expect(change).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instanceId: planId, options: planBinding, interactionMode: "default", permissionMode: "supervised" }));
+});
+
+it("Electron selected personal model identifies Matrix AI and subscription funding with the rabbit", () => {
+ render(<ProviderModelPicker catalog={ordinaryPlanCatalog()} selection={{ instanceId: planId, model: "gpt-owner", options: planBinding, interactionMode: "default", permissionMode: "supervised" }} instanceLocked onChange={vi.fn()}/>);
+ const trigger = screen.getByRole("button", { name: "Choose model and provider" });
+ expect(trigger).toHaveAttribute("title", "Owner GPT · Matrix AI · ChatGPT subscription");
+ expect(trigger.querySelector('[data-provider-glyph="kernel"]')).not.toBeNull();
+ expect(trigger.querySelector('[data-provider-glyph="codex"]')).toBeNull();
+ fireEvent.click(trigger);
+ expect(screen.getByRole("button", { name: "Matrix AI agent, Available" })).toHaveAttribute("aria-pressed", "true");
+ expect(screen.queryByRole("button", { name: /ChatGPT subscription agent/ })).toBeNull();
+ expect(screen.getByRole("searchbox")).not.toHaveFocus();
 });
