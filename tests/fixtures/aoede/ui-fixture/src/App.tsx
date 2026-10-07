@@ -1,3 +1,4 @@
+import { ChatPresentationPreview } from "./ChatPresentationPreview";
 /**
  * Standalone Aoede fixture — the real `ShellAoedeHost` (singleton launcher,
  * command-palette registration, panel and canonical cards) rendered on a mock
@@ -177,7 +178,7 @@ function ScenarioFixture({ scenario, surface }: { scenario: AoedeScenario; surfa
         onOpenNavigation={(nav) => rig.evidence.recordNavigation(`navigation:${nav.app}:${nav.path}`)}
       >
         <section className="fixture-stage" aria-label={`${surface} surface with Aoede`}>
-          {surface === "web_canvas" ? <MockCanvasStage /> : <MockDesktopStage />}
+          {new URLSearchParams(window.location.search).get("chat-preview") === "1" ? <ChatPresentationPreview /> : surface === "web_canvas" ? <MockCanvasStage /> : <MockDesktopStage />}
         </section>
       </ShellAoedeHost>
       <EvidencePanel evidence={rig.evidence} scenario={scenario} surface={surface} result={result} />
