@@ -14,6 +14,29 @@ import { describe, expect, it, vi } from "vitest";
 import { OSWindow, OSWindowSafeView, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow.js";
 
 describe("Electron OS window chrome", () => {
+  it("measures setup dialog anchoring after a floating move, resize, and sidebar toggle", () => {
+    let mainBounds = { left: 240, width: 760 };
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function () {
+      return (this.hasAttribute("data-os-window-main") ? mainBounds : { left: 0, width: 0 }) as DOMRect;
+    });
+    const view = render(<OSWindow surfaceId="anchor" sidebarWidth={240} sidebar={<nav />} style={{ left: 0 }}
+      topBar={<TopBar showSidebarTrigger />}><div /></OSWindow>);
+    const main = view.container.querySelector<HTMLElement>("[data-os-window-main]")!;
+    expect(main.style.getPropertyValue("--matrix-chat-dialog-offset")).toBe(`${620 - window.innerWidth / 2}px`);
+    mainBounds = { left: 100, width: 460 };
+    view.rerender(<OSWindow surfaceId="anchor" sidebarWidth={240} sidebar={<nav />} style={{ left: 100 }}
+      topBar={<TopBar showSidebarTrigger />}><div /></OSWindow>);
+    expect(main.style.getPropertyValue("--matrix-chat-dialog-offset")).toBe(`${330 - window.innerWidth / 2}px`);
+    mainBounds = { left: 100, width: 700 };
+    fireEvent.click(view.getByRole("button", { name: "Toggle sidebar" }));
+    expect(main.style.getPropertyValue("--matrix-chat-dialog-offset")).toBe(`${450 - window.innerWidth / 2}px`);
+    mainBounds = { left: 20, width: 700 };
+    fireEvent(window, new Event("resize"));
+    expect(main.style.getPropertyValue("--matrix-chat-dialog-offset")).toBe(`${370 - window.innerWidth / 2}px`);
+    view.unmount();
+    rect.mockRestore();
+  });
+
   it("leaves the maximized sidebar New chat hit target outside empty chrome overlays", () => {
     const onNew = vi.fn();
     const { container } = render(<OSWindow surfaceId="chat-maximized" sidebarWidth={280} safeAreaLayout="sidebar" topBarReservesSafeArea={false}

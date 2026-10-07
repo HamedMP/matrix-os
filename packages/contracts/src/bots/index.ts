@@ -11,3 +11,4 @@ export * from "#bots/view-model";
 export * from "#bots/selection";
 export * from "#bots/model-choice";
 export * from "#bots/provider-connections";
+export * from "#bots/execution-presentation";

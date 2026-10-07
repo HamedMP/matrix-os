@@ -56,6 +56,36 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByRole("button", { name: "Open project" })).toBeNull();
   });
 
+  it("keeps an accepted project visible when the Projects rail has no overview", async () => {
+    const projectScopeId = "10000000-0000-4000-8000-000000000102";
+    const projectScope = {
+      id: projectScopeId, ownerId: "user_owner", kind: "project", resourceId: "project_without_overview",
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    } as const;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path.endsWith("/inbox") ? { items: [] } : { items: [{
+        scopeId: projectScopeId, runtimeId: "runtime_owner", ownerId: "user_owner",
+        kind: "project", authorityGeneration: 1, status: "accepted", resource: {
+          scope: projectScope,
+          project: { id: "project_without_overview", scopeId: projectScopeId, status: "active", resources: [] },
+        },
+      }] }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    const openProject = vi.fn();
+
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor"
+      hideAcceptedProjects openProject={openProject} />);
+
+    expect(await screen.findByText("Shared project")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open project" }));
+    expect(openProject).toHaveBeenCalledWith(projectScopeId);
+  });
+
   it("keeps snapshot sharing and live invitations as distinct choices", () => {
     const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={api} runtimeId="runtime_owner" organizationId="org_matrix_team" chatId={chatId}
@@ -71,14 +101,16 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByRole("button", { name: "Share snapshot" })).toBeNull();
   });
 
-  it("hides live collaboration entirely when the computer flag is off", () => {
-    const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
+  it("opens snapshot sharing directly when live organization collaboration is unavailable", async () => {
+    const api = { baseUrl: "https://gateway.test", get: vi.fn(async (path: string) => path.endsWith("/preview")
+      ? { title: "Solo Chat", revision: 1, fingerprint: "a".repeat(64), messages: [] }
+      : { shares: [] }), post: vi.fn(), delete: vi.fn() };
     render(<ChatSharingButton api={api} collaborationEnabled={false} collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
       handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    expect(screen.getByRole("button", { name: "Share snapshot" })).toBeVisible();
+    expect(await screen.findByRole("dialog", { name: "Share Chat" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Share snapshot" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Invite collaborators" })).toBeNull();
-    expect(screen.queryByText(/Live collaboration is unavailable/i)).toBeNull();
   });
 
   it("converts an idle Chat once and grants Contributor to a current organization member", async () => {
@@ -91,7 +123,7 @@ describe("Chat collaboration sharing", () => {
     const collaborationApi = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async (path: string) => path.startsWith("/api/organizations/")
-        ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
+        ? { members: [{ actorId: "user_ada", displayName: "Ada", role: "org:member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
         : path.endsWith("/grants") ? [] : path.endsWith("/members") ? { members: [] } : scope),
       post: vi.fn(async (path: string, body: { audience?: unknown; preset?: string }) => {
         if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "4", confirmationToken: "a".repeat(64) };
@@ -140,7 +172,7 @@ describe("Chat collaboration sharing", () => {
       : { items: [] }), post: vi.fn(), delete: vi.fn() };
     const openChat = vi.fn();
     render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" openChat={openChat} />);
-    expect(await screen.findByText("Shared with your organization")).toBeVisible();
+    expect(await screen.findByText("Shared with you")).toBeVisible();
     expect(screen.getByText(/opens when you join/i)).toBeVisible();
     // A pending directory pointer is not authority to open content, so the card offers
     // acceptance and nothing navigates until the member asks for it.

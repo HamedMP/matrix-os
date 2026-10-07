@@ -282,6 +282,14 @@ describe("server-resolved Chat mention context", () => {
         .rejects.toMatchObject({ code: "context_unavailable" });
     });
 
+    it("refuses a Bot-only subscription saved on a custom Agent rather than forwarding it to ordinary execution", async () => {
+      const agent = await agents.create(owner, { clientRequestId: "req_custom_subscription", name: "Custom", description: "", instructions: "Revise.",
+        selection: { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [{ id: "accountId", value: "account_own" }, { id: "grantRevision", value: "3" }] } });
+      const custom = botContext(chatId => chatId === "chat_current" ? agent.id : null);
+      await expect(custom.prepare(owner, "chat_current", { ...request, permissionMode: "supervised" })).rejects.toMatchObject({ code: "context_unavailable" });
+      await expect(context.prepare(owner, "chat_current", { ...request, parts: [...request.parts, mention("agent", agent.id)] })).rejects.toMatchObject({ code: "context_unavailable" });
+    });
+
     it("refuses the bot runtime in any other chat, directly or through a mention", async () => {
       const bots = botContext(() => null);
       await expect(bots.prepare(owner, "chat_current", { ...request, selection: botSelection }))

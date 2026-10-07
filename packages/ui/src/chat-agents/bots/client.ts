@@ -39,6 +39,7 @@ function safeError(error: unknown): BotClientError {
 }
 
 export interface BotClient extends Partial<BotConnectionClient> {
+  ensureDirectChat(agentId: string): Promise<string | null>;
   directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
   recipes(): Promise<BotRecipeSummary[]>;
@@ -64,6 +65,7 @@ export function createBotClient(request: BotRequest): BotClient {
   const chatPath = (chatId: string) => `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
   return {
     ...createBotConnectionClient((path, method, body) => request(path, method, body)),
+    ensureDirectChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "POST", BotChatBindingResponseSchema, {})).chatId,
     directChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "GET", BotChatBindingResponseSchema)).chatId,
     directBot: async (chatId) => (await call(`${chatPath(chatId)}/bot`, "GET", BotDirectChatResponseSchema)).agentId,
     recipes: async () => (await call("/api/chat-agents/bot-recipes", "GET", BotRecipeListResponseSchema)).recipes,

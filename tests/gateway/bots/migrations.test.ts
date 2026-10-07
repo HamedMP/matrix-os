@@ -24,8 +24,8 @@ describe("bot state migrations", () => {
       SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'bot_%' ORDER BY table_name
     `.execute(db);
     expect(tables.rows.map((row) => row.table_name)).toEqual([
-      "bot_agent_sessions", "bot_approvals", "bot_chat_bindings", "bot_chatgpt_plan_devices", "bot_connect_requests", "bot_execution_bindings", "bot_grants",
-      "bot_interactions", "bot_memory_items", "bot_operations", "bot_provider_authorizations", "bot_schema_migrations", "bot_tasks", "bot_tool_checkpoints",
+      "bot_agent_sessions", "bot_approvals", "bot_chat_bindings", "bot_chatgpt_plan_devices", "bot_connect_requests",
+      "bot_execution_bindings", "bot_grants", "bot_interactions", "bot_memory_items", "bot_operations", "bot_provider_authorizations", "bot_schema_migrations", "bot_tasks", "bot_tool_checkpoints",
     ]);
     const recorded = await db.selectFrom("bot_schema_migrations").select(["version", "name"]).execute();
     expect(recorded).toEqual([{ version: 1, name: "bot_state_m1" }, { version: 2, name: "bot_approvals_by_task" }, { version: 3, name: "bot_connect_retry_schedule" }, { version: 4, name: "managed_pi_state" }, { version: 5, name: "bot_provider_connections" }, { version: 6, name: "bot_chatgpt_plan_devices" }]);

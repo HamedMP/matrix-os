@@ -14,6 +14,7 @@ import { BotRecipeSetup } from "./bots/BotRecipeSetup.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
 import { activeConnections } from "./recipe-integrations.js";
 import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe, jevAgentSelection } from "./jev-agent-template.js";
+import { editableAgentRecipe, agentRecipePatch } from "./recipe-edit.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
 import { AgentAvatar } from "./AgentAvatar.js";
 import { AgentRecipesPanel } from "./AgentRecipesPanel.js";
@@ -120,7 +121,7 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
       <button type="button" className={button} onClick={retryRecipes}>Retry recipe options</button></div> : null}
     </div>
     {state.draft && state.editing ? <Dialog open aria-label={state.editing === "new" ? "New Agent" : "Edit Agent"}
-      className="matrix-agent-edit-dialog" style={{...chatAgentSurfaceStyle, width:"min(92vw,440px)"}} onClose={() => { if (!state.pending) back(); }}>
+      className="matrix-agent-edit-dialog" style={{...chatAgentSurfaceStyle, width:"min(92vw,460px)"}} onClose={() => { if (!state.pending) back(); }}>
       <header className="flex items-center gap-3"><AgentAvatar id={state.editing === "new" ? "new-agent" : state.editing.id} name={state.draft.name || "New agent"} size="small" />
         <div className="min-w-0 flex-1"><h3 className="text-base font-semibold">{state.editing === "new" ? "New agent" : "Edit agent"}</h3><p className="truncate text-xs" style={muted}>{state.draft.name}</p></div>
         <button type="button" className={button} aria-label="Close agent settings" disabled={state.pending} onClick={back}>×</button>
@@ -196,7 +197,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       state.recipeCatalog?.skills.some((skill) => skill.id === id)) ? "Jev Agent skills are unavailable on this computer."
     : "";
   const createJev = async (accountLabel: string, labeling = false) => {
-    if (jevPending || jevUnavailable || !onStartChat) return;
+    if (jevPending || jevUnavailable || !onOpenBotChat || !client.bots) return;
     const matchingAccounts = activeConnections("gmail", state.connections).filter((account) => account.account_label === accountLabel);
     if (matchingAccounts.length !== 1 || !matchingAccounts[0]?.account_email) {
       setJevError("Choose a connected Gmail account with a recorded email address before creating this Agent.");
@@ -238,9 +239,11 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
         setJevError("Agent labeling permission could not be verified. Check Agents before trying again.");
         return;
       }
+      const chatId = await client.bots.ensureDirectChat(verified.id);
+      if (!chatId) throw new Error("Bot conversation unavailable");
+      await onOpenBotChat(chatId);
       jevCreateAttempt.current = null;
       onClose();
-      onStartChat("", [{ kind: "agent", id: verified.id, label: verified.name, revision: String(verified.revision) }]);
     } catch (failure: unknown) {
       console.warn("[chat-agents] Jev Agent creation failed:", failure instanceof Error ? failure.name : "UnknownError");
       setJevError("Agent could not be created. Please check Agents before trying again.");
@@ -265,9 +268,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       name: "", description: "", instructions: "", requestId: requestId(),
       selection,
     } : { name: agent.name, description: agent.description, instructions: agent.instructions, selection: agent.selection,
-      requestId: requestId(), ...(agent.recipe ? { recipe: { skills: [...agent.recipe.skills],
-        integrations: agent.recipe.integrations.map((integration) => ({ ...integration })), output: agent.recipe.output,
-        ...(agent.recipe.jevInboxLabeling !== undefined ? { jevInboxLabeling: agent.recipe.jevInboxLabeling } : {}) } } : {}) } });
+      requestId: requestId(), ...(agent.recipe ? { recipe: editableAgentRecipe(agent) } : {}) } });
   };
   const change = (value: Partial<Draft>) => {
     const nextRequestId = requestId();
@@ -288,7 +289,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
         ? await client.create({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) })
         : await client.update(state.editing!.id, { ...fields,
           ...(JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
-          ...(recipeBot || draft.recipe === undefined ? {} : { recipe: draft.recipe }) });
+          ...agentRecipePatch(state.editing!, draft.recipe) });
       setState((current) => ({ ...current, pending: false, editing: null, draft: null,
         agents: [...current.agents.filter((agent) => agent.id !== saved.id), saved],
         notice: recipeBot ? "Saved. Open this bot’s Chat from the sidebar to send a request."
@@ -328,7 +329,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       matrixModels={botModels} catalog={state.catalog} catalogLoading={state.loading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}
       onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection, name) =>
         (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}), ...(name ? { name } : {}) })).chatId : undefined}
-      onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}
+      onCreateJev={client.bots && onOpenBotChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
     <AgentLibraryBody state={state} client={client} models={state.editing && state.editing !== "new" && state.editing.recipeRef ? botModels
       : state.draft?.recipe?.skills.includes("matrix-jev-email-triage")

@@ -9,11 +9,13 @@ export function OrganizationDrivesRail({active,chats=[],client,onNewChat,onSelec
   const host=useConnection(state => state.platformHost);
   const slot=useConnection(state => state.runtimeSlot);
   const generation=useConnection(state => state.authGeneration);
+  const organizationStatus=useConnection(state => state.organizationStatus);
   const identity = `${host}\0${slot}\0${generation}`;
   const [apiState,setApiState]=useState<{identity: string; api: CollaborationDirectApi | null} | null>(null);
   const api = apiState?.identity === identity ? apiState.api : null;
-  useEffect(() => {const next=createDesktopCollaborationApi(host); setApiState({identity, api: next}); return () => {if (next) releaseDesktopCollaborationApi(next);};},[host,identity]);
-  const projectState=useChatDriveProjects(client?.driveProjects,chats.map(record=>({id:record.chat.id,revision:record.chat.revision})),active);
+  useEffect(() => {const next=organizationStatus !== "none" ? createDesktopCollaborationApi(host) : null; setApiState({identity, api: next}); return () => {if (next) releaseDesktopCollaborationApi(next);};},[host,identity,organizationStatus]);
+  const projectState=useChatDriveProjects(client?.driveProjects,chats.map(record=>({id:record.chat.id,revision:record.chat.revision})),active&&organizationStatus !== "none");
   const grouped=projectState.associations.flatMap(association=>{const record=chats.find(item=>item.chat.id===association.chatId);return association.reference&&record?[{chatId:record.chat.id,title:record.chat.title,scopeId:association.reference.scopeId}]:[];});
+  if (organizationStatus === "none") return null;
   return <OrganizationDrivesNavigation chatLoading={projectState.loading} chatError={projectState.error} api={api} active={active} chats={grouped} activeChatId={activeChatId} onSelectChat={id=>{const record=chats.find(item=>item.chat.id===id);if(record)onSelectChat?.(record);}} onNewChat={onNewChat?drive=>onNewChat("",[companyDriveChatReference(drive)]):undefined} onOpen={drive => {useFilesNavigation.getState().navigateDrive(drive.scopeId); useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC);}}/>;
 }

@@ -5,6 +5,22 @@ import { mkdtemp, rm } from 'node:fs/promises';import { join } from 'node:path';
 const session={runtimeSlot:'primary',authGeneration:1};
 async function fixture(){const dir=await mkdtemp(join(tmpdir(),'plan-service-'));const vault=createPlanVault({dir,safeStorage:{isEncryptionAvailable:()=>true,encryptString:x=>Buffer.from(x),decryptString:x=>x.toString()}});const status={...session,signedIn:true,userId:'owner',handle:'computer'};const openBrowser=vi.fn();const fetchFn=vi.fn(async()=>{throw new Error('no external work');});const service=createNativeChatgptPlanService({vault,auth:{getStatus:()=>status,getToken:()=> 'native-matrix-token',getGatewayOrigin:()=> 'https://matrix.test'},openBrowser,fetchFn});return {service,status,openBrowser,fetchFn,cleanup:async()=>{await service.dispose();await rm(dir,{recursive:true,force:true});}};}
 describe('native ChatGPT owner and Computer fences',()=>{
+ it('allows another Connect after initial protected storage preparation fails',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'plan-service-retry-'));
+  const vault=createPlanVault({dir,safeStorage:{isEncryptionAvailable:()=>true,encryptString:x=>Buffer.from(x),decryptString:x=>x.toString()}});
+  const save=vi.spyOn(vault,'save').mockRejectedValueOnce(new Error('storage unavailable'));
+  const openBrowser=vi.fn();
+  const service=createNativeChatgptPlanService({vault,auth:{getStatus:()=>({...session,signedIn:true,userId:'owner',handle:'computer'}),getToken:()=> 'native-matrix-token',getGatewayOrigin:()=> 'https://matrix.test'},openBrowser,fetchFn:vi.fn(async()=>{throw new Error('no external work');})});
+  try{
+   await expect(service.connect({...session,purpose:'personal_local'})).rejects.toThrow('storage unavailable');
+   expect((await service.status(session)).state).toBe('error');
+   expect(openBrowser).not.toHaveBeenCalled();
+   expect((await service.connect({...session,purpose:'personal_local'})).state).toBe('connecting');
+   expect(save).toHaveBeenCalledTimes(2);
+   expect(openBrowser).toHaveBeenCalledOnce();
+   expect((await service.cancel(session)).state).toBe('disconnected');
+  }finally{await service.dispose();await rm(dir,{recursive:true,force:true});}
+ });
  it('rejects stale session and missing personal-device consent before OAuth browser or network',async()=>{const x=await fixture();try{await expect(x.service.connect({...session,authGeneration:0,purpose:'personal_local'})).rejects.toThrow();await expect(x.service.connect({...session,purpose:'commercial' as never})).rejects.toThrow();expect(x.openBrowser).not.toHaveBeenCalled();expect(x.fetchFn).not.toHaveBeenCalled();}finally{await x.cleanup();}});
  it('starts bound loopback authorization and cancels without model or funded request',async()=>{const x=await fixture();try{const out=await x.service.connect({...session,purpose:'personal_local'});expect(out.state).toBe('connecting');expect(out.models).toEqual([]);expect(x.openBrowser).toHaveBeenCalledOnce();const url=new URL(x.openBrowser.mock.calls[0]![0]);expect(url.searchParams.get('agent_name_hint')).toBe('Matrix OS');expect((await x.service.cancel(session)).state).toBe('disconnected');expect(x.fetchFn).not.toHaveBeenCalled();}finally{await x.cleanup();}});
  it('never advertises a granted Bot source from a logged-out local registration',async()=>{const x=await fixture();try{await expect(x.service.setGrant({...session,enabled:true,background:false})).rejects.toThrow();const out=await x.service.status(session);expect(out.grant.enabled).toBe(false);expect(out.bridgeConnected).toBe(false);}finally{await x.cleanup();}});

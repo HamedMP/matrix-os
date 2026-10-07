@@ -13,6 +13,15 @@ import {
   CollaborationControlAckSchema,
   CollaborationOrganizationIdSchema,
   CollaborationOrganizationMembersCursorSchema,
+  ORGANIZATION_LOGO_MAX_BYTES,
+  OrganizationManagementInviteInputSchema,
+  OrganizationManagementInvitationsSchema,
+  OrganizationManagementListSchema,
+  OrganizationManagementMembersPageSchema,
+  OrganizationManagementMutationResultSchema,
+  OrganizationManagementRenameInputSchema,
+  OrganizationManagementRoleInputSchema,
+  type OrganizationManagementRole,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -24,6 +33,7 @@ import { MAX_INFLIGHT_RECONCILIATIONS, type OrganizationMembershipProjection } f
 import { MEMBERSHIP_PAGE_LIMIT, type PlatformOrganizationRepository } from "./repository.js";
 import { parseClerkOrganizationWebhook } from "./roles.js";
 import { verifyClerkWebhookSignature } from "./webhook-signature.js";
+import type { OrganizationManagementDirectory, OrganizationManagementUpstream } from "./management.js";
 
 const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
@@ -38,6 +48,9 @@ const AccessResolveSchema = z.object({
     actorId: CollaborationActorIdSchema,
   }).strict()).min(1).max(100),
 }).strict();
+const InvitationIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_:-]+$/);
+const LOGO_UPLOAD_BODY_LIMIT = ORGANIZATION_LOGO_MAX_BYTES + 64 * 1024;
+const ORGANIZATION_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 503;
 
@@ -45,6 +58,8 @@ export function createPlatformOrganizationRoutes(options: {
   repository: PlatformOrganizationRepository;
   projection: OrganizationMembershipProjection;
   controlAuthority: CollaborationControlAuthority;
+  managementDirectory?: OrganizationManagementDirectory;
+  managementUpstream?: OrganizationManagementUpstream;
   webhookSigningSecret?: string;
   resolveActor(c: Context): Promise<string | null>;
   authenticateRuntime(input: { runtimeId: string; bearerToken: string }): Promise<{ runtimeId: string; ownerId: string } | null>;
@@ -53,6 +68,8 @@ export function createPlatformOrganizationRoutes(options: {
   const app = new Hono();
   const now = options.now ?? (() => new Date());
   const jsonLimit = bodyLimit({ maxSize: COLLABORATION_DIRECT_LIMITS.httpJsonBytes, onError: (c) => safeJson(c, "Request too large", 413) });
+  const emptyLimit = bodyLimit({ maxSize: 1, onError: (c) => safeJson(c, "Request too large", 413) });
+  const logoLimit = bodyLimit({ maxSize: LOGO_UPLOAD_BODY_LIMIT, onError: (c) => safeJson(c, "Request too large", 413) });
   const webhookLimit = bodyLimit({ maxSize: COLLABORATION_DIRECT_LIMITS.webhookBytes, onError: (c) => safeJson(c, "Request too large", 413) });
 
   app.get("/api/organizations", async (c) => {
@@ -77,6 +94,9 @@ export function createPlatformOrganizationRoutes(options: {
       // Request-local set is bounded by the repository's 100-entry limit.
       // Refresh may change role, policy, epoch or remove membership entirely.
       const refreshed = await options.repository.listOrganizationsForActor(actorId);
+      const memberCounts = await options.repository.listMemberCounts(
+        refreshed.map((entry) => entry.organization.organizationId),
+      );
       const organizations = [];
       for (const entry of refreshed) {
         if (!permitted.has(entry.organization.organizationId)) continue;
@@ -84,13 +104,14 @@ export function createPlatformOrganizationRoutes(options: {
           organizationId: entry.organization.organizationId,
           name: entry.organization.name,
           slug: entry.organization.slug,
-          role: entry.membership.role,
+          role: managementRole(entry.membership.role),
+          memberCount: memberCounts.get(entry.organization.organizationId) ?? 0,
           aiSubmission: entry.organization.aiSubmission,
           membershipEpoch: entry.organization.membershipEpoch,
         });
       }
       c.header("Cache-Control", "private, no-store");
-      return c.json({ organizations, complete: discovery.complete });
+      return c.json(OrganizationManagementListSchema.parse({ organizations, complete: discovery.complete }));
     } catch (error: unknown) {
       console.warn("[organizations] organization listing failed", error instanceof Error ? error.name : "UnknownError");
       return safeJson(c, "Organizations unavailable", 503);
@@ -110,14 +131,189 @@ export function createPlatformOrganizationRoutes(options: {
       const afterActorId = query.data.cursor ? decodeCursor(query.data.cursor) : undefined;
       if (query.data.cursor && !afterActorId) return safeJson(c, "Invalid request", 422);
       const page = await options.repository.listMembers(organizationId.data, { limit: query.data.limit, afterActorId });
+      const profiles = options.managementDirectory
+        ? await options.managementDirectory.resolveMemberProfiles(page.members.map((member) => member.actorId))
+        : new Map();
       c.header("Cache-Control", "private, no-store");
-      return c.json({
-        members: page.members.map((member) => ({ actorId: member.actorId, role: member.role, joinedAt: member.sourceUpdatedAt.toISOString() })),
+      return c.json(OrganizationManagementMembersPageSchema.parse({
+        members: page.members.map((member) => {
+          const profile = profiles.get(member.actorId);
+          return {
+            actorId: member.actorId,
+            displayName: profile?.displayName ?? member.actorId,
+            ...(profile?.emailAddress ? { emailAddress: profile.emailAddress } : {}),
+            role: managementRole(member.role),
+            joinedAt: member.sourceUpdatedAt.toISOString(),
+          };
+        }),
         ...(page.nextActorId ? { nextCursor: Buffer.from(page.nextActorId, "utf8").toString("base64url") } : {}),
-      });
+      }));
     } catch (error: unknown) {
       console.warn("[organizations] member listing failed", error instanceof Error ? error.name : "UnknownError");
       return safeJson(c, "Organizations unavailable", 503);
+    }
+  });
+
+  app.get("/api/organizations/:orgId/invitations", async (c) => {
+    const actorId = await resolveValidatedActor(c, options.resolveActor);
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
+    const organizationId = CollaborationOrganizationIdSchema.safeParse(c.req.param("orgId"));
+    if (!organizationId.success) return safeJson(c, "Invalid request", 422);
+    try {
+      const membership = await options.repository.getMembership({ organizationId: organizationId.data, actorId });
+      if (!membership || membership.state !== "active"
+        || !(await options.projection.isCurrentMember({ organizationId: organizationId.data, actorId }))) {
+        return safeJson(c, "Organization not found", 404);
+      }
+      if (managementRole(membership.role) !== "org:admin") return safeJson(c, "Forbidden", 403);
+      if (!options.managementUpstream) return safeJson(c, "Organizations unavailable", 503);
+      const invitations = (await options.managementUpstream.listPendingInvitations(organizationId.data)).map((invitation) => ({
+        invitationId: invitation.invitationId,
+        emailAddress: invitation.emailAddress,
+        role: managementRole(invitation.role),
+        createdAt: invitation.createdAt.toISOString(),
+        expiresAt: invitation.expiresAt.toISOString(),
+      }));
+      c.header("Cache-Control", "private, no-store");
+      return c.json(OrganizationManagementInvitationsSchema.parse({ invitations }));
+    } catch (error: unknown) {
+      console.warn("[organizations] invitation listing failed", error instanceof Error ? error.name : "UnknownError");
+      return safeJson(c, "Organizations unavailable", 503);
+    }
+  });
+
+  app.patch("/api/organizations/:orgId", jsonLimit, async (c) => {
+    const context = await mutationContext(c, options);
+    if (context instanceof Response) return context;
+    if (managementRole(context.membership.role) !== "org:admin") return safeJson(c, "Forbidden", 403);
+    const request = await parseJson(c, OrganizationManagementRenameInputSchema);
+    if (!request) return safeJson(c, "Invalid request", 422);
+    if (!options.managementUpstream) return safeJson(c, "Organizations unavailable", 503);
+    try {
+      await options.managementUpstream.renameOrganization(context.organizationId, request.name);
+      await options.projection.reconcile(context.organizationId);
+      return mutationResult(c);
+    } catch (error: unknown) {
+      return mutationFailure(c, "rename", error);
+    }
+  });
+
+  app.patch("/api/organizations/:orgId/logo", logoLimit, async (c) => {
+    const context = await mutationContext(c, options);
+    if (context instanceof Response) return context;
+    if (managementRole(context.membership.role) !== "org:admin") return safeJson(c, "Forbidden", 403);
+    if (!options.managementUpstream) return safeJson(c, "Organizations unavailable", 503);
+    try {
+      const form = await c.req.formData();
+      const file = form.get("file");
+      if (!(file instanceof Blob) || file.size === 0 || file.size > ORGANIZATION_LOGO_MAX_BYTES || !ORGANIZATION_LOGO_TYPES.has(file.type)) {
+        return safeJson(c, "Invalid request", 422);
+      }
+      await options.managementUpstream.updateOrganizationLogo(context.organizationId, file);
+      return mutationResult(c);
+    } catch (error: unknown) {
+      return mutationFailure(c, "logo update", error);
+    }
+  });
+
+  app.post("/api/organizations/:orgId/invitations", jsonLimit, async (c) => {
+    const context = await mutationContext(c, options);
+    if (context instanceof Response) return context;
+    if (managementRole(context.membership.role) !== "org:admin") return safeJson(c, "Forbidden", 403);
+    const request = await parseJson(c, OrganizationManagementInviteInputSchema);
+    if (!request) return safeJson(c, "Invalid request", 422);
+    if (!options.managementUpstream) return safeJson(c, "Organizations unavailable", 503);
+    try {
+      await options.managementUpstream.createInvitations(context.organizationId, request.emailAddresses, request.role);
+      return mutationResult(c);
+    } catch (error: unknown) {
+      return mutationFailure(c, "invitation creation", error);
+    }
+  });
+
+  app.post("/api/organizations/:orgId/invitations/:invitationId/resend", jsonLimit, async (c) => {
+    const context = await mutationContext(c, options);
+    if (context instanceof Response) return context;
+    if (managementRole(context.membership.role) !== "org:admin") return safeJson(c, "Forbidden", 403);
+    const invitationId = InvitationIdSchema.safeParse(c.req.param("invitationId"));
+    if (!invitationId.success) return safeJson(c, "Invalid request", 422);
+    if (!options.managementUpstream) return safeJson(c, "Organizations unavailable", 503);
+    try {
+      await options.managementUpstream.resendInvitation(context.organizationId, invitationId.data);
+      return mutationResult(c);
+    } catch (error: unknown) {
+      return mutationFailure(c, "invitation resend", error);
+    }
+  });
+
+  app.delete("/api/organizations/:orgId/invitations/:invitationId", emptyLimit, async (c) => {
+    const context = await mutationContext(c, options);
+    if (context instanceof Response) return context;
+    if (managementRole(context.membership.role) !== "org:admin") return safeJson(c, "Forbidden", 403);
+    const invitationId = InvitationIdSchema.safeParse(c.req.param("invitationId"));
+    if (!invitationId.success) return safeJson(c, "Invalid request", 422);
+    if (!options.managementUpstream) return safeJson(c, "Organizations unavailable", 503);
+    try {
+      await options.managementUpstream.revokeInvitation(context.organizationId, invitationId.data);
+      return mutationResult(c);
+    } catch (error: unknown) {
+      return mutationFailure(c, "invitation revocation", error);
+    }
+  });
+
+  app.patch("/api/organizations/:orgId/members/:actorId", jsonLimit, async (c) => {
+    const context = await mutationContext(c, options);
+    if (context instanceof Response) return context;
+    if (managementRole(context.membership.role) !== "org:admin") return safeJson(c, "Forbidden", 403);
+    const targetActorId = CollaborationActorIdSchema.safeParse(c.req.param("actorId"));
+    const request = await parseJson(c, OrganizationManagementRoleInputSchema);
+    if (!targetActorId.success || !request) return safeJson(c, "Invalid request", 422);
+    if (!options.managementUpstream) return safeJson(c, "Organizations unavailable", 503);
+    try {
+      const target = await options.repository.getMembership({ organizationId: context.organizationId, actorId: targetActorId.data });
+      if (!target || target.state !== "active") return safeJson(c, "Organization member not found", 404);
+      if (managementRole(target.role) === "org:admin" && request.role !== "org:admin"
+        && await isLastAdmin(options.repository, context.organizationId)) return safeJson(c, "Assign another admin first", 409);
+      await options.managementUpstream.updateMemberRole(context.organizationId, targetActorId.data, request.role);
+      await options.projection.reconcile(context.organizationId);
+      return mutationResult(c);
+    } catch (error: unknown) {
+      return mutationFailure(c, "member role update", error);
+    }
+  });
+
+  app.delete("/api/organizations/:orgId/members/:actorId", emptyLimit, async (c) => {
+    const context = await mutationContext(c, options);
+    if (context instanceof Response) return context;
+    const targetActorId = CollaborationActorIdSchema.safeParse(c.req.param("actorId"));
+    if (!targetActorId.success) return safeJson(c, "Invalid request", 422);
+    const removingSelf = targetActorId.data === context.actorId;
+    if (!removingSelf && managementRole(context.membership.role) !== "org:admin") return safeJson(c, "Forbidden", 403);
+    if (!options.managementUpstream) return safeJson(c, "Organizations unavailable", 503);
+    try {
+      const target = await options.repository.getMembership({ organizationId: context.organizationId, actorId: targetActorId.data });
+      if (!target || target.state !== "active") return safeJson(c, "Organization member not found", 404);
+      if (managementRole(target.role) === "org:admin" && await isLastAdmin(options.repository, context.organizationId)) {
+        return safeJson(c, "Assign another admin first", 409);
+      }
+      await options.managementUpstream.removeMember(context.organizationId, targetActorId.data);
+      await options.projection.reconcile(context.organizationId);
+      return mutationResult(c);
+    } catch (error: unknown) {
+      return mutationFailure(c, "member removal", error);
+    }
+  });
+
+  app.delete("/api/organizations/:orgId", emptyLimit, async (c) => {
+    const context = await mutationContext(c, options);
+    if (context instanceof Response) return context;
+    if (managementRole(context.membership.role) !== "org:admin") return safeJson(c, "Forbidden", 403);
+    if (!options.managementUpstream) return safeJson(c, "Organizations unavailable", 503);
+    try {
+      await options.managementUpstream.deleteOrganization(context.organizationId);
+      return mutationResult(c);
+    } catch (error: unknown) {
+      return mutationFailure(c, "organization deletion", error);
     }
   });
 
@@ -253,4 +449,50 @@ async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<T | null>
 function safeJson(c: Context, error: string, status: ErrorStatus) {
   c.header("Cache-Control", "no-store");
   return c.json({ error }, status);
+}
+
+function managementRole(role: string): OrganizationManagementRole {
+  return role === "org:admin" ? "org:admin" : "org:member";
+}
+
+async function mutationContext(c: Context, options: {
+  repository: PlatformOrganizationRepository;
+  projection: OrganizationMembershipProjection;
+  resolveActor(c: Context): Promise<string | null>;
+}) {
+  const actorId = await resolveValidatedActor(c, options.resolveActor);
+  if (!actorId) return safeJson(c, "Unauthorized", 401);
+  const organizationId = CollaborationOrganizationIdSchema.safeParse(c.req.param("orgId"));
+  if (!organizationId.success) return safeJson(c, "Invalid request", 422);
+  try {
+    await options.projection.reconcile(organizationId.data);
+    const membership = await options.repository.getMembership({ organizationId: organizationId.data, actorId });
+    if (!membership || membership.state !== "active") return safeJson(c, "Organization not found", 404);
+    return { organizationId: organizationId.data, actorId, membership };
+  } catch (error: unknown) {
+    console.warn("[organizations] mutation authorization failed", error instanceof Error ? error.name : "UnknownError");
+    return safeJson(c, "Organizations unavailable", 503);
+  }
+}
+
+async function isLastAdmin(repository: PlatformOrganizationRepository, organizationId: string): Promise<boolean> {
+  let afterActorId: string | undefined;
+  let admins = 0;
+  do {
+    const page = await repository.listMembers(organizationId, { limit: MEMBERSHIP_PAGE_LIMIT, ...(afterActorId ? { afterActorId } : {}) });
+    admins += page.members.filter((member) => managementRole(member.role) === "org:admin").length;
+    if (admins > 1) return false;
+    afterActorId = page.nextActorId;
+  } while (afterActorId);
+  return admins <= 1;
+}
+
+function mutationResult(c: Context) {
+  c.header("Cache-Control", "no-store");
+  return c.json(OrganizationManagementMutationResultSchema.parse({ ok: true }));
+}
+
+function mutationFailure(c: Context, action: string, error: unknown) {
+  console.warn(`[organizations] ${action} failed`, error instanceof Error ? error.name : "UnknownError");
+  return safeJson(c, "Organization update failed", 503);
 }

@@ -47,7 +47,7 @@ beforeEach(async () => {
     catalog: withBotProviderInstance({ getCatalog }),
     adapters: new CanonicalChatProviderRegistry([bot]),
     agentContext: new ChatAgentContext({
-      repository, agents: { get: vi.fn(async () => ({ id: "bot_0123456789abcdef01234567", archived: false, selection: savedSelection }) as never) }, enabled: () => true,
+      repository, agents: { get: vi.fn(async () => ({ id: "bot_0123456789abcdef01234567", archived: false, recipeRef: {recipeId:"writing-bot",version:"1"}, selection: savedSelection }) as never) }, enabled: () => true,
       botChats: { directBot: async (_owner, chatId) => (chatId === BOT_CHAT ? "bot_0123456789abcdef01234567" : null) },
     }),
   });

@@ -40,6 +40,7 @@ import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnectio
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
 import { startMobileThemeController } from "@/lib/theme-preference";
+import { OtaUpdatePrompt } from "@/components/OtaUpdatePrompt";
 import {
   captureScreen,
   getAnalyticsClient,
@@ -436,6 +437,7 @@ function GatewayShell() {
             />
           </Stack>
           <NotificationRouter />
+          <OtaUpdatePrompt />
           <AnalyticsScreenTracker />
           <StatusBar style="dark" />
         </CanonicalChatSessionProvider>

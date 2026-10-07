@@ -325,6 +325,18 @@ export class PlatformOrganizationRepository {
     return rows.length > limit ? { members, nextActorId: members[members.length - 1]!.actorId } : { members };
   }
 
+  async listMemberCounts(organizationIds: readonly string[]): Promise<Map<string, number>> {
+    if (organizationIds.length === 0) return new Map();
+    const rows = await this.db.selectFrom("organization_memberships")
+      .select("organization_id")
+      .select((eb) => eb.fn.count<number>("actor_id").as("member_count"))
+      .where("organization_id", "in", [...organizationIds])
+      .where("state", "=", "active")
+      .groupBy("organization_id")
+      .execute();
+    return new Map(rows.map((row) => [row.organization_id, asNumber(row.member_count)]));
+  }
+
   // --- revocation intents (durable outbox drained by the control authority) --------------------
 
   /**

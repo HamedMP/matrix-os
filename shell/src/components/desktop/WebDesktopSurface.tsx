@@ -36,6 +36,7 @@ interface WebDesktopSurfaceProps {
   onOpenLauncher: () => void;
   onOpenSettings: (section: WebDesktopSettingsSection) => void;
   headerActions?: ReactNode;
+  headerLeadingAction?: ReactNode;
   onActivateWindow: (id: string) => void;
   onCloseWindow: (id: string) => void;
   onShowDesktop: () => void;
@@ -250,6 +251,7 @@ export function WebDesktopSurface({
   onOpenLauncher,
   onOpenSettings,
   headerActions,
+  headerLeadingAction,
   onActivateWindow,
   onCloseWindow,
   onShowDesktop,
@@ -324,6 +326,7 @@ export function WebDesktopSurface({
         onCloseWindow={onCloseWindow}
         onShowDesktop={onShowDesktop}
         onToggleFullscreen={onToggleFullscreen}
+        leadingAction={headerLeadingAction}
         rightActions={headerActions}
       />
 

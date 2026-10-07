@@ -51,13 +51,13 @@ describe("terminal sharing button", () => {
     expect(screen.getByText(/ongoing terminal/i)).toBeVisible();
   });
 
-  it("shows sharing as disabled for an individual user in no organization", () => {
+  it("treats a missing organization as unresolved instead of telling people to join one", () => {
     const api = { baseUrl: "https://app.matrix-os.com", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<TerminalSharingButton api={api} runtimeId="runtime_owner" organizationId={null} terminalId="terminal_release" />);
 
     const button = screen.getByRole("button", { name: "Share terminal" });
     expect(button).toBeDisabled();
-    expect(button).toHaveTextContent("Join an organization to share");
+    expect(button).toHaveTextContent("Loading share…");
     fireEvent.click(button);
     expect(api.post).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();

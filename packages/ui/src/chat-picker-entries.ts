@@ -1,5 +1,5 @@
 import type { CanonicalProviderCatalog, CanonicalProviderDriverKind, CanonicalProviderInstanceDescriptor } from "@matrix-os/contracts";
-import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, isPiBotCoordinatorRoute, isChatgptPlanBotRoute } from "@matrix-os/contracts";
+import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute } from "@matrix-os/contracts";
 import { canonicalProviderAvailabilityLabel, orderCanonicalProviderInstancesForDefault, type CanonicalProviderChoice } from "./canonical-provider-choice.js";
 
 export interface ChatPickerEntry {
@@ -10,12 +10,18 @@ export interface ChatPickerEntry {
   capabilityClass: CanonicalProviderCatalog["drivers"][number]["capabilityClass"];
 }
 
+/** Empty unavailable Bot-plan descriptors have no model or setup capability to inspect. */
+function isEmptyBotPlaceholder(instance: CanonicalProviderInstanceDescriptor): boolean {
+  return instance.driverKind === "matrix_bot" && instance.availability === "unavailable"
+    && instance.models.length === 0 && instance.setupActions.length === 0;
+}
+
 /** Presentation groups retain real server instance IDs; Matrix AI is an access source. */
 export function deriveChatPickerEntries(catalog: CanonicalProviderCatalog): ChatPickerEntry[] {
   const visibleInstances = catalog.instances.filter(instance => !isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || instance.supports.rootChat);
-  const managed = visibleInstances.filter(instance => isPiBotCoordinatorRoute({ instanceId: instance.id, driverKind: instance.driverKind }));
+  const managed = visibleInstances.filter(instance => instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default");
   return [{ id: "matrix-ai", label: "Matrix AI", iconKind: "kernel", instances: managed, capabilityClass: "system_agent" },
-    ...catalog.drivers.flatMap(driver => visibleInstances.filter(instance => instance.driverKind === driver.kind && !isLegacyMatrixSdkProvider(instance)
+    ...catalog.drivers.flatMap(driver => visibleInstances.filter(instance => instance.driverKind === driver.kind && !isLegacyMatrixSdkProvider(instance) && !isEmptyBotPlaceholder(instance)
       && !managed.some(candidate => candidate.id === instance.id))
       .map(instance => ({ id: instance.id, label: instance.displayName, iconKind: instance.driverKind,
         instances: [instance], capabilityClass: driver.capabilityClass })))];

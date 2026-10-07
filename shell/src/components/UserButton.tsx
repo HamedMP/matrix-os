@@ -27,6 +27,7 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { useState } from "react";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import {
   clearMatrixAppSession,
@@ -156,6 +157,7 @@ function MountedUserButton({
   const { user } = useUser();
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
+  const { status: organizationStatus } = useCollaborationOrganization();
 
   if (!isLoaded || !isSignedIn) {
     return <Placeholder variant={variant} />;
@@ -265,7 +267,7 @@ function MountedUserButton({
                 Account data and deletion
               </a>
             </DropdownMenuPrimitive.Item>
-            {showSharedWithMe ? <DropdownMenuPrimitive.Item asChild>
+            {showSharedWithMe && organizationStatus !== "none" ? <DropdownMenuPrimitive.Item asChild>
               <Link className={itemClass} href="/shared">
                 <UsersIcon className="size-4 text-muted-foreground" aria-hidden="true" />
                 Shared with me

@@ -98,7 +98,7 @@ export function ResourceSharingButton({ api, runtimeId, organizationId, kind, pa
   return <span className="inline-flex items-center gap-2">
     <button type="button" aria-label={`Share ${label}`} disabled={pending || !runtimeId || !organizationId || !identifies(kind, path)}
       aria-expanded={scope !== null} onClick={() => scope ? setScope(null) : void open()}
-      className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">{pending ? "Loading share…" : "Share"}</button>
+      className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">{pending || !organizationId ? "Loading share…" : "Share"}</button>
     {error ? <span role="alert" className="text-xs">Sharing unavailable. The resource remains private.</span> : null}
     {scope ? <ChatCollaboratorsDialog api={api} scope={scope} members={members} onRefresh={() => refresh(scope.id)} onClose={() => setScope(null)} /> : null}
   </span>;

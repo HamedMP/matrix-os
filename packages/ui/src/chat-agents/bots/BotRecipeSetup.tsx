@@ -2,7 +2,7 @@ import {BotTaskExecutorField, type BotExecutorSelection} from "./BotTaskExecutor
 import {useBotConnections} from "./use-bot-connections.js";
 import type {BotClient} from "./client.js";
 import type { BotRecipeSummary, CanonicalChatModelSelection, CanonicalProviderCatalog } from '@matrix-os/contracts';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Dialog } from '../../Dialog.js';
 import type { CanonicalProviderChoice } from '../../canonical-provider-choice.js';
 import { AgentAvatar } from '../AgentAvatar.js';
@@ -18,11 +18,14 @@ export function BotRecipeSetup({ botClient, creationRetained = false, onSetup, r
   const connections = useBotConnections(botClient?.connections ? botClient as Required<Pick<BotClient,"connections">> : undefined);
   const [setupPaused,setSetupPaused]=useState(false);
   const setup=onSetup ? ()=>{setSetupPaused(true); onSetup();}:undefined;
-  useEffect(()=>{setExecutor(null);setExecutorIncomplete(false);},[botClient]);
   const [executorIncomplete,setExecutorIncomplete]=useState(false);
   const [executor, setExecutor] = useState<BotExecutorSelection | null>(null);
+  const [executorScope, setExecutorScope] = useState(botClient);
+  if (executorScope !== botClient) {
+    setExecutorScope(botClient); setExecutor(null); setExecutorIncomplete(false);
+  }
   const [name, setName] = useState(recipe.name);
-  return <>{setupPaused ? <button type="button" className={chatAgentButtonClass} onClick={()=>{connections.refresh();setSetupPaused(false);}}>Resume bot setup</button>:null}<Dialog open={!setupPaused} onClose={() => { if (!pending) onClose(); }} aria-label={`Set up ${recipe.name}`} className="matrix-agent-edit-dialog" style={{ ...chatAgentSurfaceStyle, width:'min(92vw,420px)' }}>
+  return <>{setupPaused ? <button type="button" className={chatAgentButtonClass} onClick={()=>{connections.refresh();setSetupPaused(false);}}>Resume bot setup</button>:null}<Dialog open={!setupPaused} onClose={() => { if (!pending) onClose(); }} aria-label={`Set up ${recipe.name}`} className="matrix-agent-edit-dialog matrix-bot-setup-dialog" overlayStyle={{ transform: "translateX(clamp(min(0px, calc((460px - 100vw) / 2 + 16px)), var(--matrix-chat-dialog-offset, 0px), max(0px, calc((100vw - 460px) / 2 - 16px))))" }} style={{ ...chatAgentSurfaceStyle, width:'min(92vw,460px)' }}>
     <header className='flex items-start gap-3'><AgentAvatar id={recipe.recipeId} name={recipe.name} size="small"/><div className='min-w-0 flex-1'><h2 className='text-base font-semibold'>{recipe.name}</h2><p className='mt-1 text-xs' style={chatAgentMutedStyle}>{recipe.description}</p></div><button type='button' aria-label='Close bot setup' disabled={pending} className={chatAgentButtonClass} onClick={onClose}>×</button></header>
     <form className='mt-5 grid gap-4' onSubmit={event=>{event.preventDefault(); if(!pending && !createDisabled && !executorIncomplete && selection && name.trim()) onCreate(name.trim(), executor);}}>
       <label className='grid gap-1.5 text-sm'>Name<input className={chatAgentInputClass} value={name} maxLength={80} required disabled={pending || creationRetained} onChange={event=>setName(event.target.value)}/></label>

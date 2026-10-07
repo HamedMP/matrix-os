@@ -346,11 +346,6 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         pending = operation;
         state = 'connecting';
         revocation = 'none';
-        await mutate(async () => {
-            if (!record || pending !== operation || !current(value))
-                throw new Error('vault unavailable');
-            await save(value, record);
-        });
         const fail = () => {
             if (pending === operation) {
                 pending = null;
@@ -358,6 +353,11 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             }
         };
         try {
+            await mutate(async () => {
+                if (!record || pending !== operation || !current(value))
+                    throw new Error('vault unavailable');
+                await save(value, record);
+            });
             if (!record || !current(value) || pending !== operation)
                 throw new Error('connection changed');
             const listener = await startPlanLoopback({

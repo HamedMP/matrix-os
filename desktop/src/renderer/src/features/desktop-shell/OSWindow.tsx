@@ -6,8 +6,10 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useContext,
+  useRef,
   useState,
 } from "react";
+import { useChatDialogAnchor } from "./chat-dialog-anchor";
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
 export const OS_WINDOW_GESTURE_HEIGHT = 48;
@@ -300,6 +302,8 @@ export function OSWindow({
   safeAreaLayout?: OSWindowSafeArea;
 }) {
   const [sidebarShown, setSidebarShown] = useState(true);
+  const mainRef = useRef<HTMLElement | null>(null);
+  useChatDialogAnchor(mainRef, style, sidebarShown);
   const sidebarAvailable = Boolean(sidebarWidth);
   const sidebarId = `os-window-sidebar-${surfaceId}`;
   const paneSurface = {
@@ -352,7 +356,7 @@ export function OSWindow({
             </OSWindowSafeView>
           </aside>
         ) : null}
-        <main data-os-window-main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <main ref={mainRef} data-os-window-main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {safeAreaLayout === "pane" ? (
             <OSWindowSafeView area="pane" data-os-window-safe-view="pane" className="flex min-h-0 flex-1 flex-col">
               {children}

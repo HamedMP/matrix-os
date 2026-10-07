@@ -19,7 +19,10 @@ import {
 
 const harness = vi.hoisted(() => ({ createApi: null as null | ((baseUrl: string) => unknown) }));
 vi.mock("@/hooks/useBrowserOrigin", () => ({ useBrowserOrigin: () => "https://app.matrix-os.com" }));
-vi.mock("@/lib/collaboration", () => ({ createShellCollaborationApi: (baseUrl: string) => harness.createApi!(baseUrl) }));
+vi.mock("@/lib/collaboration", () => ({
+  createShellCollaborationApi: (baseUrl: string) => harness.createApi!(baseUrl),
+  releaseShellCollaborationApi: vi.fn(),
+}));
 
 import { OrganizationDrivesView } from "../../shell/src/components/file-browser/OrganizationDrivesView.js";
 
@@ -37,9 +40,12 @@ function organizationRoutes() {
   const record = (id: string) => ({ actorId: id, role: id === actorId ? "org:admin" : "org:member", sourceUpdatedAt: new Date("2026-09-20T12:00:00.000Z") });
   const repository = {
     listOrganizationsForActor: async (id: string) => memberIds.includes(id) ? [{
-      organization: { organizationId, name: "Direct org", slug: null, aiSubmission: "members", membershipEpoch: 4 },
+      organization: { organizationId, name: "Direct org", slug: "direct-org", aiSubmission: "members", membershipEpoch: 4 },
       membership: record(id),
     }] : [],
+    listMemberCounts: async (organizationIds: string[]) => new Map(
+      organizationIds.map((id) => [id, id === organizationId ? memberIds.length : 0]),
+    ),
     listMembers: async (_organizationId: string, page: { limit: number; afterActorId?: string }) => {
       const remaining = memberIds.filter((id) => !page.afterActorId || id > page.afterActorId);
       const members = remaining.slice(0, page.limit).map(record);

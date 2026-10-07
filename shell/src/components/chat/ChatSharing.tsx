@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { ChatSharingButton } from "@matrix-os/ui";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
-import { collaborationRuntimeFromSystemInfo, createShellCollaborationApi } from "@/lib/collaboration";
-import { CollaborationOrganization } from "@/lib/collaboration-organization";
+import { collaborationRuntimeFromSystemInfo } from "@/lib/collaboration";
+import { useShellCollaborationApi } from "@/lib/collaboration-organization";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
 export function ChatSharing({ chatId }: { chatId: string }) {
   const platformHost = useBrowserOrigin();
@@ -14,12 +15,13 @@ export function ChatSharing({ chatId }: { chatId: string }) {
 }
 
 function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platformHost: string }) {
+  const { status: organizationStatus, organizationId } = useCollaborationOrganization();
   const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string; runtimeId: string | null; collaborationEnabled: boolean }>({
     handle: null, runtimeSlot: "primary", runtimeId: null, collaborationEnabled: false,
   });
   const gatewayUrl = getGatewayUrl();
   const api = useMemo(() => createChatSharingApi(gatewayUrl), [gatewayUrl]);
-  const collaborationApi = useMemo(() => createShellCollaborationApi(platformHost), [platformHost]);
+  const collaborationApi = useShellCollaborationApi(platformHost, organizationStatus !== "none") ?? undefined;
   useEffect(() => {
     let active = true;
     void api.get("/api/system/info").then((value) => {
@@ -29,10 +31,10 @@ function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platform
     });
     return () => { active = false; };
   }, [api]);
-  return <CollaborationOrganization>{(organizationId) => <ChatSharingButton api={api} collaborationEnabled={runtime.collaborationEnabled}
+  return <ChatSharingButton key={organizationId ?? organizationStatus} api={api} collaborationEnabled={runtime.collaborationEnabled}
     collaborationApi={collaborationApi} runtimeId={runtime.runtimeId} organizationId={organizationId}
     chatId={chatId} handle={runtime.handle} runtimeSlot={runtime.runtimeSlot}
-    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)} />}</CollaborationOrganization>;
+    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)} />;
 }
 
 function createChatSharingApi(baseUrl: string) {

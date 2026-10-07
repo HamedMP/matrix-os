@@ -1,3 +1,4 @@
+import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
 import { createClaudeInputController } from "./claude-input-control.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
@@ -148,80 +149,6 @@ function canonicalClaudeActivityEvent(
   return retained;
 }
 
-function classifiedClaudeFailureEvidence(text: string) {
-  if (/\b(?:unsupported|invalid) model\b|\bmodel\b.{0,120}\b(?:does not exist|not found|not available|unavailable|unsupported)\b/i.test(text)) {
-    return {
-      category: "unsupported_model" as const,
-      safeError: {
-        code: "model_unavailable" as const,
-        safeMessage: "The selected Claude model is unavailable. Choose another model and try again.",
-        retryable: false,
-        recoveryActions: ["select_provider" as const],
-      },
-    };
-  }
-  if (/\b(?:authentication (?:failed|required)|unauthorized|not logged in|login required|invalid (?:api[ -]?key|x-api-key)|api[ -]?key.{0,80}(?:missing|required|invalid)|oauth.{0,80}(?:expired|required)|credentials?.{0,80}(?:missing|invalid|expired|required))\b|\bplease (?:run )?\/?login\b/i.test(text)) {
-    return {
-      category: "authentication" as const,
-      safeError: {
-        code: "authorization_failed" as const,
-        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
-        retryable: false,
-        recoveryActions: ["open_setup_terminal" as const],
-      },
-    };
-  }
-  if (/\b(?:permission denied|not permitted|operation not permitted|access denied|requires? permission)\b/i.test(text)) {
-    return {
-      category: "permission" as const,
-      safeError: {
-        code: "authorization_failed" as const,
-        safeMessage: "Claude was blocked by its current permissions. Review the permission mode and try again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  return undefined;
-}
-
-function classifiedClaudeCliFailure(error: unknown) {
-  if (!(error instanceof CanonicalCliError)) return undefined;
-  if (error.kind === "startup") {
-    return {
-      category: "startup" as const,
-      safeError: {
-        code: "provider_unavailable" as const,
-        safeMessage: "Claude is not available on this runtime. Open setup and install or reconnect Claude.",
-        retryable: false,
-        recoveryActions: ["open_setup_terminal" as const],
-      },
-    };
-  }
-  if (error.kind === "timeout") {
-    return {
-      category: "timeout" as const,
-      safeError: {
-        code: "service_unavailable" as const,
-        safeMessage: "Claude took too long to respond. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  if (error.kind === "invalid_output" || error.kind === "stdout_limit") {
-    return {
-      category: "invalid_protocol" as const,
-      safeError: {
-        code: "run_failed" as const,
-        safeMessage: "Claude returned an invalid response. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  return undefined;
-}
 
 export function createClaudeChatProviderAdapter(options: {
   homePath: string;
@@ -793,12 +720,7 @@ export function createClaudeChatProviderAdapter(options: {
                   retryable: true,
                   recoveryActions: ["retry", "open_setup_terminal"],
                 }
-              : {
-                  code: "run_failed",
-                  safeMessage: "Claude returned an invalid response. Try the Run again.",
-                  retryable: true,
-                  recoveryActions: ["retry"],
-                }),
+              : classifiedClaudeCliFailure(new CanonicalCliError("invalid_output"))!.safeError),
           }
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
