@@ -8,6 +8,7 @@ import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useCanonicalChatState } from "@/hooks/useCanonicalChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCommandStore } from "@/stores/commands";
+import { AppDownloadScope } from "@/components/AppDownloadScope";
 import { ChatProvider } from "@/stores/chat-context";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
@@ -138,6 +139,7 @@ function ShellHomeBody({
   }, [isMobile]);
 
   return (
+    <AppDownloadScope scope={cacheScope ? JSON.stringify([cacheScope.userId, cacheScope.runtimeScope, runtimeSlot ?? "primary"]) : null}>
     <GettingStartedVisibilityProvider scope={JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot])}>
     <ChatProvider value={chat}>
       <div className="flex h-screen w-screen flex-col overflow-hidden md:flex-row">
@@ -167,5 +169,6 @@ function ShellHomeBody({
       </div>
     </ChatProvider>
     </GettingStartedVisibilityProvider>
+    </AppDownloadScope>
   );
 }

@@ -331,6 +331,15 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
     }
   });
 
+  function deviceDownloadRequest(payload) {
+    return new Promise(function(resolve,reject) {
+      var channel=new MessageChannel();
+      var timer=setTimeout(function(){channel.port1.close();reject(new Error("Device downloads unavailable"));},10000);
+      channel.port1.onmessage=function(e){clearTimeout(timer);channel.port1.close();
+        if(e.data&&e.data.ok)resolve(e.data.value);else reject(new Error("Device downloads unavailable"));};
+      window.parent.postMessage({type:"os:mail-downloads",app:app,payload:payload},"*",[channel.port2]);
+    });
+  }
   window.MatrixOS = {
     generate: function(context) {
       post("os:generate", { context: context });
@@ -414,6 +423,16 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 	        .then(function(r) { return r.json(); })
 	        .then(function(d) { return d.services || []; });
 	    },
+    mailDownloads: app === "edition" ? {
+      load: function() { return deviceDownloadRequest({action:"load"}); },
+      save: function(raw) { return deviceDownloadRequest({action:"save",raw:raw}); },
+      clear: function() { return deviceDownloadRequest({action:"clear"}); }
+    } : undefined,
+    mail: function(action, payload) {
+      var identity = app.split("/").filter(Boolean).pop();
+      return parentFetch("/api/mail/action", {method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({appId:identity,action:action,payload:payload || {}})},action.indexOf("cleanup-")===0?35000:10000).then(function(r){return r.json();});
+    },
 
     service: function(service, action, params, label) {
 	      return parentFetch("/api/bridge/service", {

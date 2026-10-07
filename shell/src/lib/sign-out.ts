@@ -1,4 +1,5 @@
 import { closeShellCollaborationSessions } from "@/lib/collaboration";
+import {clearBrowserMailDownloads} from "@/lib/mail-downloads";
 
 const SIGN_OUT_TIMEOUT_MS = 10_000;
 
@@ -10,6 +11,8 @@ export function getSignInRedirectUrl(): string {
 export async function clearMatrixAppSession(): Promise<void> {
   // S06 / T034: direct collaboration sessions end with the actor's app session.
   closeShellCollaborationSessions();
+  try {clearBrowserMailDownloads(window.localStorage);}
+  catch(error){console.warn('[edition-cache] Sign-out cleanup unavailable',error instanceof Error?error.name:'UnknownError');}
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {

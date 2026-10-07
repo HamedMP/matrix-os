@@ -92,3 +92,13 @@ it("offers connected starters inventory without advertising general gateway acce
   expect(bridge.integrations).toBeTypeOf("function");
   expect(Object.hasOwn(bridge, "gatewayFetch")).toBe(false);
 });
+
+it.each(['edition','folio','atlas'])('offers private offline downloads only to exact Edition (%s)',async(identity)=>{
+ vi.spyOn(process,'argv','get').mockReturnValue(['electron','--matrix-app-bridge',`--matrix-mail-app=${identity}`]);
+ electron.ipcRenderer.invoke.mockResolvedValue({scope:'a'.repeat(64),raw:null});await import('../../desktop/src/preload/index.js');
+ const [,bridge]=electron.contextBridge.exposeInMainWorld.mock.calls[0];expect(Object.hasOwn(bridge,'mailDownloads')).toBe(identity==='edition');
+ if(identity==='edition'){
+  await expect(bridge.mailDownloads.load()).resolves.toEqual({scope:'a'.repeat(64),raw:null});expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith('native-app:mail-downloads',{action:'load'});
+  const calls=electron.ipcRenderer.invoke.mock.calls.length;await expect(bridge.mailDownloads.save('{"invalid":true}')).rejects.toThrow();expect(electron.ipcRenderer.invoke.mock.calls).toHaveLength(calls);
+ }
+});

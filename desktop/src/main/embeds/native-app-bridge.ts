@@ -1,4 +1,7 @@
 import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, APP_AI_TIMEOUT_MS, AppAiInputSchema, AppAiResultSchema, type AppAiInput } from "@matrix-os/contracts";
+import {MailDeviceCacheRequestSchema} from '@matrix-os/contracts';
+import {NATIVE_MAIL_DOWNLOADS_CHANNEL} from '../../shared/mail-device-downloads';
+import type {MailDeviceStore} from '../persistence/mail-device-store';
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { z } from "zod/v4";
 import { NATIVE_APP_OPEN_CHANNEL, NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
@@ -69,6 +72,7 @@ interface NativeAppBridgeOptions {
   resolveApp?: (request: NativeAppOpenRequest) => Promise<NativeAppOpenTarget>;
   openApp?: (app: NativeAppOpenTarget) => void;
   maxSenders?: number;
+  deviceStore?: MailDeviceStore;
 }
 
 export interface NativeAppSender {
@@ -242,6 +246,19 @@ export class NativeAppBridge {
     this.senders.clear();
   }
 
+  async mailDownloads(sender:NativeAppSender,raw:unknown):Promise<unknown> {
+    const identity=this.senders.get(sender.id);
+    const authorized=()=>!!identity&&this.senders.get(sender.id)===identity
+      &&identity.appIdentity==='edition'&&identity.routeSlug==='edition'
+      &&identity.authGeneration===this.options.authGeneration()
+      &&isSenderAtApp(sender,this.options.gatewayOrigin(),identity.routeSlug);
+    if(!authorized())throw new Error('Downloads unavailable');
+    const parsed=MailDeviceCacheRequestSchema.safeParse(raw);
+    if(!parsed.success||!this.options.deviceStore)throw new Error('Downloads unavailable');
+    const result=await this.options.deviceStore.request(parsed.data,authorized);
+    if(!authorized())throw new Error('Downloads unavailable');return result;
+  }
+
   async query(sender: NativeAppSender, rawQuery: unknown): Promise<unknown> {
     const identity = this.senders.get(sender.id);
     if (!identity || identity.authGeneration !== this.options.authGeneration() || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
@@ -307,6 +324,12 @@ export class NativeAppBridge {
   }
 
   registerIpc(ipcMain: Pick<IpcMain, "handle">): void {
+    if(this.options.deviceStore)ipcMain.handle(NATIVE_MAIL_DOWNLOADS_CHANNEL,async(event:IpcMainInvokeEvent,raw:unknown)=>{
+      try{
+        if(event.senderFrame!==event.sender.mainFrame||event.sender.isDestroyed())throw new Error('Downloads unavailable');
+        return await this.mailDownloads({id:event.sender.id,get url(){return event.senderFrame===event.sender.mainFrame&&!event.sender.isDestroyed()?event.sender.getURL():'';}},raw);
+      }catch(error){console.warn('[mail-downloads] IPC failed',error instanceof Error?error.name:'UnknownError');throw new Error('Downloads unavailable');}
+    });
     if (this.options.resolveApp || this.options.openApp) {
       if (!this.options.resolveApp || !this.options.openApp) throw new Error("App launch dependencies are required");
       ipcMain.handle(NATIVE_APP_OPEN_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {

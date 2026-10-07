@@ -1,5 +1,6 @@
 import { prepareAppAiRequest } from "./app-ai-request";
 import { isAllowedBridgeFetchUrl } from "./app-viewer-bridge-policy";
+import { isAllowedMailBridgeBody } from "@matrix-os/contracts";
 
 /** Authorize the same method that the trusted parent will dispatch. */
 export function prepareBridgeFetchRequest(appName: string, payload: unknown): { url: string; init: RequestInit } {
@@ -10,5 +11,10 @@ export function prepareBridgeFetchRequest(appName: string, payload: unknown): { 
   const method = (source.method ?? "GET").toUpperCase();
   if (typeof url !== "string" || !isAllowedBridgeFetchUrl(appName, url, method)) throw new Error("Blocked bridge fetch URL");
   const requestInit = { ...source, method };
+  if (url === "/api/mail/action") {
+    const identity = appName;
+    if (typeof source.body !== "string" || !isAllowedMailBridgeBody(identity, source.body)) throw new Error("Invalid email app request");
+    return { url, init: { method: "POST", headers: { "content-type": "application/json" }, body: source.body } };
+  }
   return { url, init: url === "/api/bridge/ai" ? prepareAppAiRequest(appName, requestInit) : requestInit };
 }
