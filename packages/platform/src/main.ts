@@ -1,3 +1,4 @@
+import { isGmailOAuthCallback } from './integration-public-path.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
@@ -257,6 +258,7 @@ export function createApp(deps: {
   matrixProvisioner?: MatrixProvisioner;
   platformSecret?: string;
   integrationRoutes?: Hono<any>;
+  gmailLaunchRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
@@ -701,8 +703,10 @@ export function createApp(deps: {
 
   const integrationDeletionGuard=createAccountDeletionMutationGuard({db,env:appEnv,resolveOwner:c=>c.get('platformUserId') as string|undefined});
   app.use('/api/integrations/*',(c,next)=>c.req.path==='/api/integrations/webhook/connected'
+    || isGmailOAuthCallback(c.req.method,c.req.path)
     || (c.req.method==='GET' && c.req.path==='/api/integrations/available') ? next() : integrationDeletionGuard(c,next));
   app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
+  if (deps.gmailLaunchRoutes) app.route('/auth', deps.gmailLaunchRoutes);
   registerCustomMcpRoutes(app, {
     db,
     platformSecret,

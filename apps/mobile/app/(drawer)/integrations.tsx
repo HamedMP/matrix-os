@@ -11,7 +11,8 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import { useFocusEffect, useRouter } from "expo-router";
 
-import { buildIntegrationSections, integrationDescription, integrationAuthType } from "@matrix-os/contracts/integration-marketplace";
+import { buildIntegrationSections, integrationDescription, integrationAuthType, type GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
+import { GmailConnectionChoice, type GmailChoiceState } from "@/components/integrations/GmailConnectionChoice";
 import { IntegrationLogo } from "@/components/integrations/IntegrationLogo";
 import {
   SearchField,
@@ -33,11 +34,13 @@ export default function IntegrationsScreen() {
   const router = useRouter();
   const { theme } = useUnistyles();
   const {
+    connectionContextKey,
     available,
     connected,
     isPending,
     isError,
     startConnection,
+    gmailConnectionOptions,
     syncConnections,
     connectingServiceId: startingServiceId,
     refresh,
@@ -49,6 +52,15 @@ export default function IntegrationsScreen() {
   const syncConnectionsRef = useRef(syncConnections);
   const syncInFlight = useRef(false);
   const connectInFlight = useRef(false);
+  const [gmailChoice, setGmailChoice] = useState<GmailChoiceState | null>(null);
+  const gmailAttempt = useRef(0);
+  useEffect(() => {
+    gmailAttempt.current += 1;
+    connectInFlight.current = false;
+    setGmailChoice(null);
+    setConnectingServiceId(null);
+    return () => { gmailAttempt.current += 1; };
+  }, [connectionContextKey]);
   syncConnectionsRef.current = syncConnections;
   const servicesById = new Map(available.map((service) => [service.id, service]));
   const catalogSections = buildIntegrationSections(available, { query, oauthOnly, connectedOnly, connectedIds: connected.map(c => c.service) });
@@ -56,20 +68,51 @@ export default function IntegrationsScreen() {
     ? "Loading connected accounts…"
     : `${connected.length} connected ${connected.length === 1 ? "account" : "accounts"}`;
 
-  const connectIntegration = async (service: IntegrationService) => {
+  const connectIntegration = async (service: IntegrationService, connectionMethod?: GmailConnectionMethod) => {
     if (connectingServiceId || startingServiceId || connectInFlight.current) return;
     connectInFlight.current = true;
+    const attempt = gmailAttempt.current;
     setConnectionError(null);
     previousConnectionIds.current = new Set(connected.map((connection) => connection.id));
     try {
-      const url = await startConnection(service.id);
+      const url = await (connectionMethod ? startConnection(service.id, { connectionMethod }) : startConnection(service.id));
+      if (gmailAttempt.current !== attempt) return;
       setConnectingServiceId(service.id);
       await Linking.openURL(url);
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[integrations] Connection unavailable:", error instanceof Error ? error.name : "UnknownError");
+      if (gmailAttempt.current !== attempt) return;
       setConnectingServiceId(null);
       setConnectionError("Could not start connection. Try again.");
     } finally {
+      if (gmailAttempt.current === attempt) connectInFlight.current = false;
+    }
+  };
+
+  const cancelGmailChoice = () => {
+    gmailAttempt.current += 1;
+    connectInFlight.current = false;
+    setGmailChoice(null);
+  };
+  const requestConnection = async (service: IntegrationService) => {
+    if (service.id !== "gmail") return connectIntegration(service);
+    if (connectingServiceId || startingServiceId || connectInFlight.current) return;
+    const attempt = ++gmailAttempt.current;
+    connectInFlight.current = true;
+    setGmailChoice({ loading: true, error: false, options: null });
+    try {
+      const options = await gmailConnectionOptions();
+      if (gmailAttempt.current !== attempt) return;
       connectInFlight.current = false;
+      if (options.methods.length === 1 && options.methods[0] === "pipedream") {
+        setGmailChoice(null);
+        await connectIntegration(service, "pipedream");
+      } else setGmailChoice({ loading: false, error: false, options });
+    } catch (error: unknown) {
+      console.warn("[integrations] Gmail connection options unavailable:", error instanceof Error ? error.name : "UnknownError");
+      if (gmailAttempt.current === attempt) setGmailChoice({ loading: false, error: true, options: null });
+    } finally {
+      if (gmailAttempt.current === attempt) connectInFlight.current = false;
     }
   };
 
@@ -203,7 +246,7 @@ export default function IntegrationsScreen() {
                       {startingServiceId === service.id || connectingServiceId === service.id ? <ActivityIndicator color={theme.v2.appColors.muted} size="small" testID={`integration-connect-spinner-${service.id}`} />
                         : <Text style={styles.statusText}>{connected.some(c => c.service === service.id) ? "Add account" : "Connect"}</Text>}
                     </View>}
-                    accessibilityLabel={`Connect ${service.name} integration`} onPress={startingServiceId || connectingServiceId ? undefined : () => void connectIntegration(service)} />
+                    accessibilityLabel={`Connect ${service.name} integration`} onPress={startingServiceId || connectingServiceId || gmailChoice ? undefined : () => void requestConnection(service)} />
                 ))}
               </ListRowStack>
             </View>
@@ -211,6 +254,14 @@ export default function IntegrationsScreen() {
           {catalogSections.length === 0 ? <Text style={styles.statusText}>No integrations found. Try another search or change the filters.</Text> : null}
         </View>
       ) : null}
+      <GmailConnectionChoice choice={gmailChoice} onCancel={cancelGmailChoice}
+        onRetry={() => { const service = available.find(item => item.id === "gmail"); if (service) void requestConnection(service); }}
+        onChoose={method => {
+          const service = available.find(item => item.id === "gmail");
+          if (!service || gmailChoice?.loading || gmailChoice?.error || !gmailChoice?.options?.methods.includes(method)) return;
+          setGmailChoice(null);
+          void connectIntegration(service, method);
+        }} />
     </Page>
   );
 }

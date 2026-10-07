@@ -5,6 +5,8 @@ import { registerJevInboxTool } from "./jev-inbox.js";
 import {
   callServiceHandler,
   connectServiceHandler,
+  getGmailConnectionOptionsHandler,
+  ConnectServiceInputSchema,
   describeServiceHandler,
   disconnectServiceHandler,
   listConnectedServicesHandler,
@@ -93,11 +95,16 @@ export function createIntegrationsMcpServer(
       async (input) => describeServiceHandler(input, fetcher),
     );
     server.registerTool(
+      "get_gmail_connection_options",
+      { description: "Discover the authenticated owner's available Gmail connection methods. Honor their explicit Matrix or Pipedream choice." },
+      async () => getGmailConnectionOptionsHandler(fetcher),
+    );
+    server.registerTool(
       "connect_service",
       {
         description:
           "Start a Matrix Settings-compatible OAuth connection and return the browser authorization URL.",
-        inputSchema: { service: serviceSchema, label: labelSchema },
+        inputSchema: ConnectServiceInputSchema.shape,
       },
       async (input) => connectServiceHandler(input, fetcher),
     );

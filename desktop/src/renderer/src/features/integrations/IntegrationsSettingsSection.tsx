@@ -5,14 +5,16 @@
 // the sync endpoint with backoff until the account lands; Disconnect asks
 // for confirmation first. The renderer only displays name/category/label/
 // email/status and public app logos — never tokens or upstream error text.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
+import { fetchGmailConnectionOptions } from "./gmail-connection-request";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { invoke } from "../../lib/operator";
 import { categoryMessage } from "../../../../shared/app-error";
 import { RefreshButton } from "../settings/sections/ProvidersSection";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
-import { IntegrationMarketplace } from "@matrix-os/ui";
+import { GmailConnectionChoice, useGmailConnectionChoice, IntegrationMarketplace } from "@matrix-os/ui";
 import { AvailableServiceCard } from "./AvailableServiceCard";
 import { ConnectPendingBanner } from "./ConnectPendingBanner";
 import { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll } from "./connect-poll";
@@ -31,6 +33,9 @@ export interface IntegrationsSettingsSectionProps {
 
 export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSettingsSectionProps = {}) {
   const api = useConnection((s) => s.api);
+  const loadGmailOptions = useCallback(() => fetchGmailConnectionOptions(api), [api]);
+  const gmailChoice = useGmailConnectionChoice(loadGmailOptions);
+  const connectInFlight = useRef(false);
   const available = useIntegrations((s) => s.available);
   const connections = useIntegrations((s) => s.connections);
   const status = useIntegrations((s) => s.status);
@@ -54,6 +59,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     cancelPollRef.current?.();
     cancelPollRef.current = null;
     previousIdsRef.current = null;
+    connectInFlight.current = false;
     setConnectingService(null);
     setManualBusy(false);
     setManualNote(null);
@@ -79,8 +85,9 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     void useIntegrations.getState().refresh(api);
   };
 
-  const handleConnect = async (serviceId: string): Promise<void> => {
-    if (!api || connectingService) return;
+  const handleConnect = async (serviceId: string, connectionMethod?: GmailConnectionMethod): Promise<void> => {
+    if (!api || connectingService || connectInFlight.current) return;
+    connectInFlight.current = true;
     const attempt = ++connectAttemptRef.current;
     const runtimeGeneration = captureRuntimeGeneration();
     const isCurrentAttempt = (): boolean =>
@@ -90,7 +97,8 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     const previousIds = new Set(useIntegrations.getState().connections.map((conn) => conn.id));
     previousIdsRef.current = previousIds;
 
-    const url = await useIntegrations.getState().startConnect(serviceId, api);
+    const url = await useIntegrations.getState().startConnect(serviceId, api, connectionMethod);
+    if (isCurrentAttempt()) connectInFlight.current = false;
     if (!isCurrentAttempt()) return;
     if (!url) {
       setConnectingService(null);
@@ -138,6 +146,12 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     });
   };
 
+  const requestConnect = (serviceId: string) => {
+    if (connectingService || connectInFlight.current) return;
+    if (serviceId === "gmail") gmailChoice.request(method => void handleConnect(serviceId, method));
+    else void handleConnect(serviceId);
+  };
+
   const handleManualConfirm = async (): Promise<void> => {
     if (!api || !connectingService || manualBusy) return;
     const attempt = connectAttemptRef.current;
@@ -172,6 +186,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
 
   const handleCancelConnect = (): void => {
     connectAttemptRef.current += 1;
+    connectInFlight.current = false;
     cancelConnectPoll();
     setConnectingService(null);
     setManualNote(null);
@@ -241,12 +256,12 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
             <EmptyCatalogState />
           ) : (
             <IntegrationMarketplace services={catalogServices} connectedIds={connections.map(c => c.service)} connectingId={connectingService}
-              onConnect={id => void handleConnect(id)} renderService={service => (
+              onConnect={requestConnect} renderService={service => (
                 <AvailableServiceCard service={service} connected={connections.some(c => c.service === service.id)}
                   connections={connections.filter(c => c.service === service.id)} connecting={connectingService === service.id}
                   disabled={connectingService !== null}
                   connectDisabled={connectingService !== null || !available.some(s => s.id === service.id)}
-                  onConnect={() => void handleConnect(service.id)} onDisconnect={target => setConfirmId(target.id)} />
+                  onConnect={() => requestConnect(service.id)} onDisconnect={target => setConfirmId(target.id)} />
               )} />
           )}
         </section>
@@ -276,6 +291,8 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       </div>
 
       {body}
+
+      <GmailConnectionChoice choice={gmailChoice} />
 
       <DisconnectConfirmDialog
         connection={confirmConnection}

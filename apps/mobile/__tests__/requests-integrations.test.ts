@@ -2,6 +2,7 @@ import {
   createIntegrationConnectUrl,
   deleteIntegrationConnection,
   fetchAvailableIntegrations,
+  fetchGmailConnectionOptions,
   fetchConnectedIntegrations,
   refreshIntegrationConnection,
   syncIntegrationConnections,
@@ -128,6 +129,25 @@ describe("integration requests", () => {
       }),
     );
   });
+  it("opens the exact trusted Matrix Gmail consent launcher", async () => {
+    const url = `https://app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}`;
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ url, service: "gmail" }) } as Response);
+    await expect(createIntegrationConnectUrl("clerk-token", "https://app.matrix-os.com/vm/solar-vale", "gmail")).resolves.toBe(url);
+  });
+  it.each([
+    `https://evil.example/auth/gmail?state=${'a'.repeat(43)}`,
+    `https://app.matrix-os.com.evil.example/auth/gmail?state=${'a'.repeat(43)}`,
+    `https://app.matrix-os.com/wrong?state=${'a'.repeat(43)}`,
+    `https://app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}&redirect=https://evil.example`,
+    `https://app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}&state=${'b'.repeat(43)}`,
+    `https://secret@app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}`,
+    `https://app.matrix-os.com:444/auth/gmail?state=${'a'.repeat(43)}`,
+    `http://app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}`,
+    "https://app.matrix-os.com/auth/gmail?state=bad",
+  ])("rejects an untrusted Matrix consent URL %s", async url => {
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ url, service: "gmail" }) } as Response);
+    await expect(createIntegrationConnectUrl("clerk-token", "https://app.matrix-os.com/vm/solar-vale", "gmail")).rejects.toThrow("Could not start connection");
+  });
 
   it("syncs Pipedream accounts after the app returns", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
@@ -143,5 +163,30 @@ describe("integration requests", () => {
       "https://app.matrix-os.com/vm/solar-vale/api/integrations/sync?runtime=preview-1",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+});
+
+describe("Gmail pilot connection methods", () => {
+  beforeEach(() => jest.restoreAllMocks());
+  afterEach(() => jest.restoreAllMocks());
+  it.each(["matrix", "pipedream"] as const)("preserves explicit %s choice, label and native return URI", async connectionMethod => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ url: "https://pipedream.com/connect/test", service: "gmail" }) } as Response);
+    await createIntegrationConnectUrl("token", "https://app.matrix-os.com/vm/test?runtime=preview-1", "gmail", { connectionMethod, label: "Work" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ service: "gmail", connectionMethod, label: "Work", redirectUri: "matrixos://integrations" });
+  });
+});
+
+describe("Gmail capability discovery", () => {
+  beforeEach(() => jest.restoreAllMocks());
+  afterEach(() => jest.restoreAllMocks());
+  it("authenticates discovery on the selected runtime", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, status: 200, json: async () => ({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" }) } as Response);
+    await expect(fetchGmailConnectionOptions("token", "https://app.matrix-os.com/vm/test?runtime=preview-1")).resolves.toEqual({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" });
+    expect(fetchMock).toHaveBeenCalledWith("https://app.matrix-os.com/vm/test/api/integrations/gmail/connection-options?runtime=preview-1", expect.objectContaining({ headers: { Authorization: "Bearer token" } }));
+  });
+  it("treats only a missing endpoint as Pipedream-only", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValueOnce({ ok: false, status: 404 } as Response).mockResolvedValueOnce({ ok: false, status: 500 } as Response);
+    await expect(fetchGmailConnectionOptions("token", "https://app.matrix-os.com")).resolves.toEqual({ methods: ["pipedream"], defaultMethod: "pipedream" });
+    await expect(fetchGmailConnectionOptions("token", "https://app.matrix-os.com")).rejects.toThrow("Could not load Gmail connection options. Try again.");
   });
 });

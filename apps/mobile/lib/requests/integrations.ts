@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
+import { GmailConnectionMethodSchema, GmailConnectionOptionsSchema, type GmailConnectionMethod, type GmailConnectionOptions } from "@matrix-os/contracts/integration-marketplace";
 
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "@/lib/requests/http";
 
 const INTEGRATIONS_UNAVAILABLE_ERROR = "Integrations unavailable. Try again.";
 const INTEGRATION_REFRESH_ERROR = "Could not refresh connection. Try again.";
@@ -60,15 +61,18 @@ const RefreshConnectionResponseSchema = z.object({
 
 const DeleteConnectionResponseSchema = z.object({ ok: z.literal(true) });
 const ConnectIntegrationResponseSchema = z.object({
-  url: z.string().url().refine(isTrustedPipedreamConnectUrl),
+  url: z.string().max(4096).url().refine(isTrustedConnectUrl),
   service: z.string().regex(SERVICE_ID),
 });
 
-function isTrustedPipedreamConnectUrl(value: string): boolean {
+function isTrustedConnectUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:"
-      && (url.hostname === "pipedream.com" || url.hostname.endsWith(".pipedream.com"));
+    if (url.protocol !== "https:" || url.username || url.password || url.hash) return false;
+    if (url.hostname === "pipedream.com" || url.hostname.endsWith(".pipedream.com")) return true;
+    return url.origin === "https://app.matrix-os.com" && url.pathname === "/auth/gmail"
+      && [...url.searchParams.keys()].length === 1
+      && /^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get("state") ?? "");
   } catch {
     return false;
   }
@@ -141,12 +145,29 @@ export async function deleteIntegrationConnection(
   });
 }
 
+export async function fetchGmailConnectionOptions(clerkToken: string, computerGatewayUrl: string): Promise<GmailConnectionOptions> {
+  return fetchAuthenticatedResponse({
+    url: integrationUrl(computerGatewayUrl, "/api/integrations/gmail/connection-options"),
+    token: clerkToken,
+    errorMessage: "Could not load Gmail connection options. Try again.",
+    expectedStatuses: [404],
+  }, async response => response.status === 404
+    ? { methods: ["pipedream"], defaultMethod: "pipedream" }
+    : GmailConnectionOptionsSchema.parse(await response.json()));
+}
+
+export interface IntegrationConnectOptions { connectionMethod?: GmailConnectionMethod; label?: string }
+
 export async function createIntegrationConnectUrl(
   clerkToken: string,
   computerGatewayUrl: string,
   serviceId: string,
+  options: IntegrationConnectOptions = {},
 ): Promise<string> {
   if (!SERVICE_ID.test(serviceId)) throw new Error(INTEGRATION_CONNECT_ERROR);
+  if (options.connectionMethod && (serviceId !== "gmail" || !GmailConnectionMethodSchema.safeParse(options.connectionMethod).success)) throw new Error(INTEGRATION_CONNECT_ERROR);
+  const label = options.label?.trim();
+  if (label && label.length > 100) throw new Error(INTEGRATION_CONNECT_ERROR);
   const response = await fetchAuthenticatedJson({
     url: integrationUrl(computerGatewayUrl, "/api/integrations/connect"),
     token: clerkToken,
@@ -157,6 +178,8 @@ export async function createIntegrationConnectUrl(
     body: JSON.stringify({
       service: serviceId,
       redirectUri: MOBILE_INTEGRATIONS_REDIRECT_URI,
+      ...(options.connectionMethod ? { connectionMethod: options.connectionMethod } : {}),
+      ...(label ? { label } : {}),
     }),
   });
   return response.url;
