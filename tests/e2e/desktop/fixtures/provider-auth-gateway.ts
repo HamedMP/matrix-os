@@ -122,6 +122,10 @@ export async function startProviderAuthGateway(options: {
         res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
         res.end(JSON.stringify(value));
       };
+      // This fixture implements only V1. Missing V2 routes must negotiate via
+      // HTTP404, never a successful response carrying the wrong contract.
+      if (path === "/api/ai/provider-settings/workflows/v2" || path.startsWith("/api/ai/provider-settings/workflows/v2/"))
+        return json({ error: "Unknown fixture workflow" }, 404);
       try {
         const active = operation && ["pending", "running"].includes(operation.state);
         if (req.method === "GET" && path.endsWith("/capabilities")) return json(ProviderWorkflowCapabilitiesSchema.parse([{

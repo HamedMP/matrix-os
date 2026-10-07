@@ -71,6 +71,14 @@ describe("unimplemented plan catalog placeholders", () => {
   });
   it.each([
     { ...placeholder, availability: "available" as const },
+    { ...placeholder, models: [{ id: "personal-model", displayName: "Personal model", availability: "available" as const, capabilities: [], supportsVision: false, supportsToolUse: true }] },
+    { ...placeholder, setupActions: [{ id: "connect", kind: "open_settings" as const, label: "Connect bot" }] },
+  ])("omits a Bot-only subscription route from ordinary Chat even with models or setup", instance => {
+    const botOnly = { ...instance, supports: { ...instance.supports, rootChat: false } };
+    expect(deriveChatPickerEntries(withBot(botOnly)).flatMap(entry => entry.instances).some(candidate => candidate.id === botOnly.id)).toBe(false);
+  });
+  it.each([
+    { ...placeholder, availability: "available" as const },
     { ...placeholder, driverKind: "openclaw" as const },
     { ...placeholder, models: [{ id: "auto", displayName: "Automatic", availability: "unavailable" as const, capabilities: [], supportsVision: false, supportsToolUse: true }] },
     { ...placeholder, setupActions: [{ id: "connect", kind: "open_settings" as const, label: "Connect bot" }] },

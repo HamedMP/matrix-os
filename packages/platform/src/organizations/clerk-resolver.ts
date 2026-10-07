@@ -7,7 +7,7 @@
 import { z } from "zod/v4";
 import { OrganizationManagementRoleSchema, type OrganizationManagementRole } from "@matrix-os/contracts";
 import type { ClerkOrganizationUpstream } from "./projection.js";
-import { ClerkActorIdSchema, ClerkOrganizationIdSchema, normalizeClerkRole, projectAiSubmission } from "./roles.js";
+import { ClerkActorIdSchema, ClerkOrganizationIdSchema, normalizeClerkRole, projectAiSubmission, projectMemberProfile } from "./roles.js";
 import type { OrganizationManagementUpstream } from "./management.js";
 
 const CLERK_API_BASE = "https://api.clerk.com/v1";
@@ -92,6 +92,7 @@ export class ClerkOrganizationUpstreamClient implements ClerkOrganizationUpstrea
           actorId: entry.public_user_data.user_id,
           role: normalizeClerkRole(entry.role),
           sourceUpdatedAt: entry.updated_at !== undefined ? new Date(entry.updated_at) : now,
+          profile: projectMemberProfile(entry.public_user_data, now),
         });
       }
       if (members.length > MAX_MEMBERS || (page.total_count !== undefined && page.total_count > MAX_MEMBERS)) {

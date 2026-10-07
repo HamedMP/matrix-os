@@ -3,7 +3,7 @@
  * Provider V3 snapshot (spec 536, research R3). The owner's active choice
  * wins when bots can use it; otherwise the first ready access source bots
  * can use, in the order Matrix AI (GLM Flash, the managed default), Matrix
- * AI (Anthropic models), own Anthropic key, own Anthropic profile, with that
+ * AI (Anthropic models), own Anthropic key, with that
  * source's default model. A bot never picks its own model.
  *
  * Anthropic models run on the Messages API. Matrix AI's other models run on
@@ -21,7 +21,6 @@ const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: BotCredentialAcc
   { id: "matrix_cloudflare", credential: "matrix_included", anthropicOnly: false },
   { id: "matrix_included", credential: "matrix_included", anthropicOnly: true },
   { id: "owner_anthropic_key", credential: "owner_anthropic_key", anthropicOnly: true },
-  { id: "owner_anthropic_profile", credential: "owner_anthropic_profile", anthropicOnly: true },
 ];
 const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 const ANTHROPIC_CONTEXT_WINDOW = 200_000;
@@ -30,6 +29,7 @@ const OTHER_CONTEXT_WINDOW = 128_000;
 export interface ResolvedBotRoute {
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
+  subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
 }
 
 export class BotRouteError extends Error {

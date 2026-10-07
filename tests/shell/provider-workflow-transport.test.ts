@@ -68,7 +68,7 @@ describe("web provider workflow transport", () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json([]));
     const caller = new AbortController();
     await createWebProviderWorkflowClient({ fetcher }).capabilities(caller.signal);
-    expect(fetcher.mock.calls[0][0]).toBe("/vm/review/api/ai/provider-settings/workflows/capabilities?connectionVersion=2");
+    expect(fetcher.mock.calls[0][0]).toBe("/vm/review/api/ai/provider-settings/workflows/v2/capabilities");
     expect(fetcher.mock.calls[0][1]).toMatchObject({ cache: "no-store", credentials: "include" });
     caller.abort();
     expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
@@ -119,4 +119,15 @@ describe("web provider workflow transport", () => {
       .rejects.toMatchObject({ reason: status === 401 ? "unauthorized" : "forbidden" });
   });
 
+});
+
+it("negotiates legacy discovery only for a real missing V2 endpoint", async () => {
+ const urls: string[] = [];
+ const fetcher = vi.fn(async (url: string | URL | Request) => {
+   urls.push(String(url));
+   return urls.length === 1 ? Response.json({error:{code:"not_found",message:"Not found"}}, {status:404}) : Response.json([]);
+ }) as unknown as typeof fetch;
+ await expect(createWebProviderWorkflowClient({fetcher}).capabilities(new AbortController().signal)).resolves.toEqual([]);
+ expect(urls[0]).toContain("/api/ai/provider-settings/workflows/v2/capabilities");
+ expect(urls[1]).toContain("/api/ai/provider-settings/workflows/capabilities?connectionVersion=2");
 });

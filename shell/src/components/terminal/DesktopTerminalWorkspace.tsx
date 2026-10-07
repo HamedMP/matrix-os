@@ -83,7 +83,7 @@ export function DesktopTerminalEmptyState({
   );
 }
 
-export function DesktopTerminalSessionHeader({ title, terminalId }: { title: string; terminalId: string | null }) {
+export function DesktopTerminalSessionHeader({ title, terminalId = null }: { title: string; terminalId?: string | null }) {
   return (
     <header
       data-testid="terminal-desktop-session-header"
@@ -100,16 +100,16 @@ export function DesktopTerminalSessionHeader({ title, terminalId }: { title: str
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {terminalId ? <TerminalSharing terminalId={terminalId} /> : null}
-      <span
-        className="rounded-full border px-2.5 py-1 text-xs font-medium"
-        style={{
-          background: "var(--terminal-chrome-badge-bg)",
-          borderColor: "var(--terminal-chrome-badge-border)",
-          color: "var(--terminal-chrome-accent)",
-        }}
-      >
-        Active
-      </span>
+        <span
+          className="rounded-full border px-2.5 py-1 text-xs font-medium"
+          style={{
+            background: "var(--terminal-chrome-badge-bg)",
+            borderColor: "var(--terminal-chrome-badge-border)",
+            color: "var(--terminal-chrome-accent)",
+          }}
+        >
+          Active
+        </span>
       </div>
     </header>
   );

@@ -80,6 +80,14 @@ describe("Chat Agent HTTP boundary", () => {
     await agents.close(); await repository.kysely.destroy(); await rm(home, { recursive: true, force: true });
   });
   const json = (method: string, body: unknown) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  it("rejects owner-local subscription selection on generic Agent create and edit", async () => {
+    const selection = { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [
+      { id: "accountId", value: "account_own" }, { id: "grantRevision", value: "3" },
+    ] };
+    expect((await app.request("/api/chat-agents", json("POST", { ...fields, selection }))).status).toBe(400);
+    const created = await (await app.request("/api/chat-agents", json("POST", fields))).json();
+    expect((await app.request(`/api/chat-agents/${created.id}`, json("PATCH", { baseRevision: created.revision, selection }))).status).toBe(400);
+  });
   it("rejects a Jev recipe on a Codex harness at create and selection-only edit", async () => {
     const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
       integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Read-only proposals" };

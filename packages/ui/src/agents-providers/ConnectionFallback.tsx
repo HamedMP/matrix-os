@@ -12,12 +12,13 @@ export function ConnectionFallback({ harness, source, onRefresh, workflowPermiss
   onSetupHarness?: (kind: ProviderHarnessInstance["harness"]) => Promise<boolean>;
 }) {
   if (hasConfiguredConnection(harness, source) || harness.installState !== "installed") return null;
-  const subscription = harness.harness === "codex" ? "ChatGPT" : harness.harness === "claude" ? "Claude" : null;
+  const subscription = harness.harness === "claude" ? "Claude" : null;
   const reason = workflowPermission === "forbidden"
     ? "Only this computer’s owner can manage connections."
     : "Connection in Settings is unavailable on this computer. Refresh or update the computer to try again.";
   return <section className="matrix-ap-workflow" aria-label={`${harness.displayName} connection`}>
     <h3>Connect {harness.displayName} with</h3>
+    {harness.harness === "codex" ? <p className="matrix-ap-help">Codex subscription connections are not currently supported on managed Computers. API-key connection requires a supported version of this Computer.</p> : null}
     {subscription ? <div className="matrix-ap-connection-options">
       <ConnectionMethodCard method="account" title={`${subscription} account`} recommended description={`Use your ${subscription} plan`} disabled tooltip={reason} />
       <ConnectionMethodCard method="key" title="API key" description={`Pay ${harness.harness === "codex" ? "OpenAI" : "Anthropic"} per request`} disabled tooltip={reason} />

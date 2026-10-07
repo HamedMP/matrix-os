@@ -76,10 +76,10 @@ describe("Chat provider connection rows", () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(snapshot.refreshedAt));
     try {
       const { rerender } = render(<ChatProviderConnections snapshot={snapshot} {...props}><div>Normal Chat suggestions</div></ChatProviderConnections>);
-      expect(screen.getByRole("button", { name: "Connect Codex" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Connect Claude Code" })).toBeEnabled();
       clock.mockReturnValue(Date.parse("2026-10-02T00:00:00Z"));
       rerender(<ChatProviderConnections snapshot={snapshot} busy {...props}><div>Normal Chat suggestions</div></ChatProviderConnections>);
-      expect(screen.getByRole("button", { name: "Connect Codex" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Connect Claude Code" })).toBeDisabled();
       expect(screen.queryByText("Normal Chat suggestions")).not.toBeInTheDocument();
       const staleSnapshot = { ...snapshot, revision: 2, refreshedAt: "2026-09-30T21:06:37.363Z" };
       rerender(<ChatProviderConnections snapshot={staleSnapshot} {...props}><div>Normal Chat suggestions</div></ChatProviderConnections>);
@@ -196,6 +196,29 @@ describe("Chat provider connection rows", () => {
     expect(first).toHaveBeenCalledTimes(2);
     expect(second).toHaveBeenCalledTimes(2);
   });
+  it("ignores legacy Codex login advertisements and retained handoffs", () => {
+    const mutate = vi.fn(); const open = vi.fn();
+    const snapshot = disconnectedSnapshot();
+    const attempt = { id: "old-codex", harnessInstanceId: "codex_default", accountId: null, method: "terminal" as const, state: "pending" as const,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), action: { kind: "open_terminal" as const, terminalSessionId: "codex-login" }, safeFailure: null };
+    render(<ChatProviderConnections snapshot={snapshot} attempt={attempt} onMutate={mutate} onRefresh={vi.fn()} onOpenAction={open} />);
+    expect(screen.queryByRole("button", { name: "Connect Codex" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sign in to Claude Code or Codex/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Finish signing in")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect Claude Code" }));
+    expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ harnessInstanceId: "claude_default" }));
+    expect(open).not.toHaveBeenCalled();
+  });
+  it("does not reopen an orphaned cached login handoff during a failed read", () => {
+    const attempt = { id: "orphan", harnessInstanceId: "codex_default", accountId: null, method: "terminal" as const, state: "pending" as const,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), action: { kind: "open_terminal" as const, terminalSessionId: "codex-login" }, safeFailure: null };
+    render(<ChatProviderConnections snapshot={null} attempt={attempt} error="Connection unavailable" onMutate={vi.fn()} onRefresh={vi.fn()} onOpenAction={vi.fn()}><div>Normal Chat suggestions</div></ChatProviderConnections>);
+    expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Check connection" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Finish signing in")).not.toBeInTheDocument();
+  });
   it("uses advertised login and displays only a confirmed disconnected panel", () => {
     const mutate = vi.fn(); const snapshot = disconnectedSnapshot();
     const { rerender } = render(<ChatProviderConnections snapshot={snapshot} onMutate={mutate} onRefresh={vi.fn()} onOpenAction={vi.fn()} />);
@@ -212,7 +235,7 @@ describe("Chat provider connection rows", () => {
     render(<ChatProviderConnections snapshot={snapshot} onMutate={mutate} onRefresh={vi.fn()} onOpenAction={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Connect Claude Code" }));
     expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ accountId: "existing_account" }));
-    expect(screen.getByRole("button", { name: "Connect Codex" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Connect Codex" })).not.toBeInTheDocument();
   });
   it("keeps failed disconnected actions recoverable alongside normal Chat", () => {
     const refresh = vi.fn(); render(<ChatProviderConnections snapshot={disconnectedSnapshot()} error="unsafe provider secret" onMutate={vi.fn()} onRefresh={refresh} onOpenAction={vi.fn()}><div>Normal Chat suggestions</div></ChatProviderConnections>);
