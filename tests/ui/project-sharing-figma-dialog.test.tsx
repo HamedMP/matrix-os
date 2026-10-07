@@ -258,6 +258,47 @@ describe("Figma-aligned project access dialog", () => {
     expect(api.get).toHaveBeenCalledWith("/api/organizations/org_acme/members?cursor=page_2");
   });
 
+  it("prevents grant mutations while a later member page is loading", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
+    let resolveLaterPage!: (value: unknown) => void;
+    const laterPage = new Promise((resolve) => { resolveLaterPage = resolve; });
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/organizations/org_acme/members") return {
+          members: [
+            { actorId: "user_first", displayName: "First member", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          ],
+          nextCursor: "page_2",
+        };
+        if (path === "/api/organizations/org_acme/members?cursor=page_2") return laterPage;
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id,
+          revision: "7",
+          owner: { actorId: "user_owner", displayName: "Owner" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000631", preset: "viewer", revision: "3" },
+          people: [],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+
+    expect(await screen.findByRole("button", { name: "Add" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Load more members" }));
+    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(api.post).not.toHaveBeenCalled();
+
+    resolveLaterPage({ members: [
+      { actorId: "user_later", displayName: "Later member", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+    ] });
+    expect(await screen.findByRole("option", { name: "Later member" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+  });
+
   it("retries a transient access load failure in place", async () => {
     let memberAttempts = 0;
     const api = {

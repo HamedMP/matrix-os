@@ -156,7 +156,7 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
   }, [reload]);
 
   const mutate = async (operation: (current: CollaborationProjectAccessPresentation) => Promise<unknown>) => {
-    if (!access || pending) return;
+    if (!access || pending || membersPending) return;
     setPending(true);
     setError(false);
     try {
@@ -250,7 +250,7 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
           {directGrant && !organizationEditor ? <select
             aria-label={`Access for ${person.actor.displayName}`}
             value={directGrant.preset}
-            disabled={pending}
+            disabled={pending || membersPending}
             onChange={(event) => {
               const preset = event.target.value as CollaborationPreset;
               void mutate(async (current) => {
@@ -267,7 +267,7 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
           </select> : <span className="text-sm">
             {editorLabel(person.effectivePreset)}{organizationEditor ? " · inherited" : ""}
           </span>}
-          {directGrant ? <button type="button" className={buttonClass} disabled={pending}
+          {directGrant ? <button type="button" className={buttonClass} disabled={pending || membersPending}
             onClick={() => void mutate((current) => api.delete(`${base}/grants/${encodeURIComponent(directGrant.grantId)}`, {
               clientRequestId: crypto.randomUUID(), expectedRevision: current.revision,
               expectedMemberRevision: directGrant.revision,
@@ -276,18 +276,18 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
       })}
       {availableMembers.length > 0 && access.generalAccess?.preset !== "contributor" ? <div className="grid gap-2 sm:grid-cols-[1fr_8rem_auto]">
         <label className="grid gap-1 text-sm">Add person
-          <select value={selectedActor} onChange={(event) => setSelectedActor(event.target.value)} disabled={pending}
+          <select value={selectedActor} onChange={(event) => setSelectedActor(event.target.value)} disabled={pending || membersPending}
             className="rounded-lg border bg-transparent px-3 py-2">
             {availableMembers.map((member) => <option key={member.actorId} value={member.actorId}>{member.displayName}</option>)}
           </select>
         </label>
         <label className="grid gap-1 text-sm">Role
-          <select value={selectedPreset} onChange={(event) => setSelectedPreset(event.target.value as CollaborationPreset)} disabled={pending}
+          <select value={selectedPreset} onChange={(event) => setSelectedPreset(event.target.value as CollaborationPreset)} disabled={pending || membersPending}
             className="rounded-lg border bg-transparent px-3 py-2">
             <option value="contributor">Editor</option><option value="viewer">Viewer</option>
           </select>
         </label>
-        <button type="button" className={`${buttonClass} self-end`} disabled={pending || !selectedActor} onClick={addMember}>Add</button>
+        <button type="button" className={`${buttonClass} self-end`} disabled={pending || membersPending || !selectedActor} onClick={addMember}>Add</button>
       </div> : null}
       {membersCursor && access.generalAccess?.preset !== "contributor" ? <button type="button" className={buttonClass}
         disabled={pending || membersPending} onClick={() => { void loadMoreMembers(); }}>
@@ -300,7 +300,7 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
         </span>
         <label className="sr-only" htmlFor={`general-access-${scope.id}`}>General access</label>
         <select id={`general-access-${scope.id}`} aria-label="General access"
-          value={access.generalAccess?.preset ?? "restricted"} disabled={pending}
+          value={access.generalAccess?.preset ?? "restricted"} disabled={pending || membersPending}
           onChange={(event) => setGeneralAccess(event.target.value as CollaborationPreset | "restricted")}
           className="rounded-lg border bg-transparent px-3 py-2 text-sm">
           <option value="contributor">Editor</option><option value="viewer">Viewer</option><option value="restricted">Restricted</option>
