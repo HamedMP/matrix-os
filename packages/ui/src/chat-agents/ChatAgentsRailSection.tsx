@@ -1,6 +1,6 @@
 import { ChevronRight, Plus, Sparkle } from "lucide-react";
 import type { StartAgentChat } from "./client.js";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChatAgent } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "./client.js";
 import { useBotRailStatuses, useBotRailVisibility } from "./bots/use-bot-rail-statuses.js";
@@ -22,11 +22,14 @@ export function ChatAgentsRailSection({ activeChatId, client, visible = true, on
   const [openingBot, setOpeningBot] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const currentChatId = useRef(activeChatId);
-  currentChatId.current = activeChatId;
   const currentClient = useRef(client);
-  currentClient.current = client;
+  // Pending/abandoned renders must not change the scope of committed actions.
+  useLayoutEffect(() => {
+    currentChatId.current = activeChatId;
+    currentClient.current = client;
+  }, [activeChatId, client]);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const openSequence = useRef(0);
   const opening = useRef(false);
   useEffect(() => {
@@ -57,7 +60,7 @@ export function ChatAgentsRailSection({ activeChatId, client, visible = true, on
     const sequence = ++openSequence.current;
     const navigationGeneration = navigation.getGeneration();
     const sourceChatId = activeChatId;
-    const isCurrent = () => sequence === openSequence.current && navigation.getGeneration() === navigationGeneration && currentChatId.current === sourceChatId;
+    const isCurrent = () => mounted.current && currentClient.current === client && sequence === openSequence.current && navigation.getGeneration() === navigationGeneration && currentChatId.current === sourceChatId;
     setOpeningBot(agent.id);
     try {
       const boundChatId = await client.bots.ensureDirectChat(agent.id);

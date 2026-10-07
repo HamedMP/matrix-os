@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React, {useState} from "react";
+import React, {Suspense, startTransition, useEffect, useState} from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatAgentsRailSection } from "../../../packages/ui/src/chat-agents/ChatAgentsRailSection.js";
@@ -139,4 +139,59 @@ it.each(['client', 'navigation'])('does not close newer management after a late 
   await React.act(async () => { finish(); });
   expect(screen.getByRole('button', {name: 'Agents', exact: true}).getAttribute('aria-pressed')).toBe('true');
   expect(accepted).not.toHaveBeenCalled();
+});
+
+
+it.each(['Chat', 'client'])('keeps committed Details scope when a changed %s render suspends before commit', async mode => {
+  const base = clientFixture();
+  base.list.mockResolvedValue({enabled: true, agents: [saved]});
+  const replacement = clientFixture();
+  replacement.list.mockResolvedValue({enabled: true, agents: [saved]});
+  let finishBinding!: (chatId: string) => void;
+  let finishHost!: () => void;
+  const ensureDirectChat = vi.fn(() => new Promise<string>(resolve => { finishBinding = resolve; }));
+  const client = {...base, bots: {ensureDirectChat}} as unknown as import('../../../packages/ui/src/chat-agents/client.js').ChatAgentClient;
+  const onOpenBotChat = vi.fn(() => new Promise<void>(resolve => { finishHost = resolve; }));
+  const accepted = vi.fn();
+  const attemptedSuspension = vi.fn();
+  const pending = new Promise<never>(() => {});
+  let suspendChangedScope!: () => void;
+  function Gate({blocked}: {blocked: boolean}) {
+    if (blocked) { attemptedSuspension(); throw pending; }
+    return null;
+  }
+  function DetailsTarget() {
+    const navigation = useChatAgentsNavigation();
+    return <output aria-label="Details target" data-original-client={navigation?.detailsRequest?.client === client}>
+      {navigation?.detailsRequest?.chatId ?? 'none'}
+    </output>;
+  }
+  function Host() {
+    const [blocked, setBlocked] = useState(false);
+    useEffect(() => { suspendChangedScope = () => startTransition(() => setBlocked(true)); }, []);
+    return <Suspense fallback={<p>Replacement loading</p>}>
+      <ChatAgentsRailSection client={blocked && mode === 'client' ? replacement : client}
+        activeChatId={blocked && mode === 'Chat' ? 'chat_abandoned' : 'chat_committed'}
+        onOpen={accepted} onOpenBotChat={onOpenBotChat}/>
+      <Gate blocked={blocked}/><DetailsTarget/>
+    </Suspense>;
+  }
+  render(<ChatAgentsWorkspace><Host/></ChatAgentsWorkspace>);
+  fireEvent.keyDown(await screen.findByRole('button', {name: `Actions for ${saved.name}`}), {key: 'Enter'});
+  fireEvent.click(await screen.findByRole('menuitem', {name: 'Details'}));
+  await waitFor(() => expect(ensureDirectChat).toHaveBeenCalledWith(saved.id));
+  if (mode === 'client') {
+    await React.act(async () => { finishBinding('chat_bot'); });
+    await waitFor(() => expect(onOpenBotChat).toHaveBeenCalledWith('chat_bot'));
+  }
+  await React.act(async () => { suspendChangedScope(); });
+  expect(attemptedSuspension).toHaveBeenCalled();
+  expect(screen.queryByText('Replacement loading')).toBeNull();
+  expect(screen.getByRole('button', {name: `Chat with ${saved.name}`})).toBeTruthy();
+  if (mode === 'Chat') await React.act(async () => { finishBinding('chat_bot'); });
+  await waitFor(() => expect(onOpenBotChat).toHaveBeenCalledWith('chat_bot'));
+  await React.act(async () => { finishHost(); });
+  await waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+  expect(screen.getByLabelText('Details target').textContent).toBe('chat_bot');
+  expect(screen.getByLabelText('Details target').getAttribute('data-original-client')).toBe('true');
 });
