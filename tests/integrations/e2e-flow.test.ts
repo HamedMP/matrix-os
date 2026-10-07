@@ -6,7 +6,6 @@ import { createIntegrationRoutes } from "../../packages/gateway/src/integrations
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import { getService, discoverComponentKeys } from "../../packages/gateway/src/integrations/registry.js";
 import { createHmac } from "node:crypto";
-import { DriveContentError } from "../../packages/gateway/src/integrations/drive-content.js";
 
 const WEBHOOK_SECRET = "whsec_e2e_test";
 
@@ -61,26 +60,6 @@ describe("E2E: connect -> call -> disconnect flow", () => {
 
   afterEach(async () => {
     await db.destroy();
-  });
-
-  it("reads Drive contents through authenticated account selection, including scoped reads and safe failures", async () => {
-    const readDriveFile = vi.fn().mockResolvedValue({ fileId: "notes", mimeType: "text/markdown", content: "# Contents", bytes: 10 });
-    pipedream.readDriveFile = readDriveFile;
-    await db.connectService({ userId, service: "google_drive", pipedreamAccountId: "apn_drive", accountLabel: "Work", scopes: [] });
-    const body = { service: "google_drive", action: "read_file", label: "Work", params: { fileId: "notes", mimeType: "text/markdown" } };
-    const call = (path = "/call", data = body) => app.request("/api/integrations" + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
-    expect((await (await call()).json()).data.content).toBe("# Contents");
-    expect((await (await call("/read-call")).json()).data.content).toBe("# Contents");
-    expect(readDriveFile).toHaveBeenCalledWith({ externalUserId: "pd_ext_e2e", accountId: "apn_drive", ...body.params });
-    const before = readDriveFile.mock.calls.length;
-    expect((await call("/call", { ...body, params: { fileId: "../notes", mimeType: "text/markdown" } })).status).toBe(400);
-    expect(readDriveFile).toHaveBeenCalledTimes(before);
-    readDriveFile.mockRejectedValueOnce(new DriveContentError("file_access_denied"));
-    const denied = await call(); expect(denied.status).toBe(403); expect((await denied.json()).code).toBe("file_access_denied");
-    const other = await db.createUser({ clerkId: "other_drive", handle: "other-drive", displayName: "Other", email: "other@example.com", containerId: "other", pipedreamExternalId: "pd_other" });
-    userId = other.id;
-    expect((await call("/read-call")).status).toBe(400);
-    expect(readDriveFile).toHaveBeenCalledTimes(before + 1);
   });
 
   it("maps the OAuth Airtable slug through connect, sync, call recovery, and webhook", async () => {

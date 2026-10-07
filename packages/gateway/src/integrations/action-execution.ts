@@ -2,7 +2,6 @@ import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { validateActionParams } from "./parameter-validation.js";
 import { BoundedPipedreamReadError } from "./pipedream-bounded-get.js";
-import { DriveContentError } from "./drive-content.js";
 
 export class IntegrationActionNotImplementedError extends Error {
   readonly serviceId: string;
@@ -34,10 +33,6 @@ export async function executeIntegrationAction(opts: {
 
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");
-  }
-  if (serviceId === "google_drive" && actionId === "read_file") {
-    if (!pipedream.readDriveFile) throw new DriveContentError();
-    return { data: await pipedream.readDriveFile({ ...params, externalUserId, accountId: connection.pipedream_account_id }) };
   }
   // New thread discovery/ID actions always use a raw capped response, including
   // ordinary callers; a generic SDK parse is not a byte limit.

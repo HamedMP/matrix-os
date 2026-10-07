@@ -89,7 +89,11 @@ const PROFILE_ENDPOINTS: Record<string, {
     // the verified primary if we want fuller coverage.)
     extract: (d) => d?.email ?? undefined,
   },
-  // Slack auth.test cannot return an email; do not spend a proxy credit on it.
+  slack: {
+    url: "https://slack.com/api/auth.test",
+    // auth.test yields a username/display identifier, not an email address.
+    extract: () => undefined,
+  },
   discord: {
     url: "https://discord.com/api/v10/users/@me",
     extract: (d) => d?.email ?? d?.username,
@@ -462,15 +466,14 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }
       const synced = upserted.filter((u) => u.row.inserted).length;
 
-      // Consent polling must stay credit-free for existing accounts. Backfill
-      // only actual emails from the management inventory, never paid profiles.
+      // Also backfill emails for existing connections missing them
       const missingEmail = existing.filter((s) => !s.account_email);
       await Promise.all(
         missingEmail.map(async (s) => {
           const conn = pdAccounts.find((a) => a.id === s.pipedream_account_id);
           if (!conn) return;
-          const email = z.email().safeParse(conn.email);
-          if (email.success) await db.updateAccountEmail(s.id, email.data);
+          const email = await resolveAccountEmail(pipedream, externalId, conn.id, s.service);
+          if (email) await db.updateAccountEmail(s.id, email);
         }),
       );
 
