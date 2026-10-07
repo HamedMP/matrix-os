@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash, createHmac, createPublicKey, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, createPublicKey, randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createConnection, createServer as createTcpServer } from "node:net";
@@ -13,6 +13,7 @@ import {
   runtimeLogPath, runtimeSshKeyPath, storageTlsDirectory, storageTlsCertificatePath,
   storageTlsKeyPath, baseImagePath, baseImageChecksumPath, artifactPort, platformPort,
   storageTlsPort, guestHostAddress, fixturePublicAddress, localPlatformUrl,
+  platformTlsPort, platformTlsProxyName, localPlatformTlsOrigin,
   localArtifactUrl, ubuntuImageUrl, fixtureRouterName, storageTlsProxyName,
   platformContainerName, platformImageName, LOCAL_PARITY_OWNER_LABEL,
   resolveParityStateDirectory,
@@ -121,6 +122,8 @@ export function renderLocalParityCloudInit(template, input) {
       `      MATRIX_METADATA_INSTANCE_ID_URL=${artifactOrigin}/metadata/instance-id`,
       `      MATRIX_METADATA_PUBLIC_IPV4_URL=${artifactOrigin}/metadata/public-ipv4`,
       "      NODE_EXTRA_CA_CERTS=/opt/matrix/local-parity-storage-ca.pem",
+      `      COLLABORATION_RELAY_ORIGIN=${localPlatformTlsOrigin}`,
+      `      MATRIX_COLLABORATION_CLIENT_ORIGINS=${localPlatformTlsOrigin}`,
       "      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix",
     ].join("\n"),
   );
@@ -148,11 +151,12 @@ export function addLocalParityOperator(template, publicKey, storageCertificate) 
   const withOperator = template.replace("\nwrite_files:\n", `\n${operator}\n\nwrite_files:\n${localTrust}\n`);
   return withOperator.replace(
     "#cloud-config\n",
-    [
+    () => [
       "#cloud-config",
       "# Local-only routable fixture address. Production registration and routing remain unchanged.",
       "bootcmd:",
       "  - |",
+      `    grep -q ' app.localhost$' /etc/hosts || echo '${guestHostAddress} app.localhost' >> /etc/hosts`,
       "    interface=$(ip route show default | awk '{print $5; exit}')",
       `    ip address replace ${fixturePublicAddress}/32 dev "$interface"`,
       "",
@@ -218,7 +222,7 @@ export function assertLocalParityMachinesAvailable(options = {}) {
   if (options.builderName && exists(options.builderName)) {
     throw new Error(`${options.builderName} already exists; remove it manually only if you own that OrbStack machine`);
   }
-  for (const name of [platformContainerName, fixtureRouterName, storageTlsProxyName]) {
+  for (const name of [platformContainerName, fixtureRouterName, storageTlsProxyName, platformTlsProxyName]) {
     if (containerExists(name)) {
       throw new Error(`${name} already exists; run dev:parity:down only if you own that environment`);
     }
@@ -314,7 +318,7 @@ function prepareStorageTlsCertificate() {
   run("openssl", [
     "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "30",
     "-subj", "/CN=matrix-local-parity-storage",
-    "-addext", `subjectAltName=IP:${guestHostAddress}`,
+    "-addext", `subjectAltName=IP:${guestHostAddress},DNS:app.localhost,DNS:localhost`,
     "-keyout", storageTlsKeyPath,
     "-out", storageTlsCertificatePath,
   ]);
@@ -385,6 +389,7 @@ export function storageTlsProxyArguments(options = {}) {
   const name = options.name ?? storageTlsProxyName;
   const owner = options.owner ?? root;
   const port = options.port ?? storageTlsPort;
+  const targetPort = options.targetPort ?? 9100;
   const tlsDirectory = options.tlsDirectory ?? storageTlsDirectory;
   return [
     "run", "--detach", "--name", name,
@@ -392,12 +397,26 @@ export function storageTlsProxyArguments(options = {}) {
     "--publish", `127.0.0.1:${port}:${port}`,
     "--volume", `${tlsDirectory}:/tls:ro`,
     "alpine:latest", "sh", "-c",
-    `apk add --no-cache socat >/dev/null && exec socat OPENSSL-LISTEN:${port},fork,reuseaddr,cert=/tls/certificate.pem,key=/tls/key.pem,verify=0 TCP:host.docker.internal:9100`,
+    `apk add --no-cache socat >/dev/null && exec socat OPENSSL-LISTEN:${port},fork,reuseaddr,cert=/tls/certificate.pem,key=/tls/key.pem,verify=0 TCP:host.docker.internal:${targetPort}`,
   ];
 }
 
 function startStorageTlsProxy() {
   run("docker", storageTlsProxyArguments());
+}
+
+export function assertParityTlsCertificate(certificatePath = storageTlsCertificatePath) {
+  try {
+    const certificate = new X509Certificate(readFileSync(certificatePath));
+    if (certificate.checkHost("app.localhost") && certificate.checkHost("localhost") && certificate.checkIP(guestHostAddress)) return;
+  } catch (error) {
+    throw new Error("Retained parity TLS certificate is invalid; migrate it manually without rotating saved credentials", { cause: error });
+  }
+  throw new Error("Retained parity TLS certificate needs app.localhost, localhost and 10.0.2.2 SANs; migrate it and the VM trust file manually without rotating saved credentials");
+}
+
+function stopPlatformTlsProxy() {
+  stopOwnedContainer(platformTlsProxyName);
 }
 
 function containerExists(name) {
@@ -427,7 +446,7 @@ function stopPlatformContainer() {
 
 export async function cleanupLocalParityResources(options = {}) {
   const stopRuntime = options.stopRuntime ?? stopQemuRuntime;
-  const stopContainers = options.stopContainers ?? [stopFixtureRouter, stopStorageTlsProxy, stopPlatformContainer];
+  const stopContainers = options.stopContainers ?? [stopFixtureRouter, stopStorageTlsProxy, stopPlatformTlsProxy, stopPlatformContainer];
   const removeRuntime = options.removeRuntime ?? (() => rmSync(runtimeDirectory, { recursive: true, force: true }));
   const errors = [];
   let runtimeStopped = false;
@@ -699,7 +718,7 @@ export function publicBuildEnvironment() {
     NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? "",
     NEXT_PUBLIC_POSTHOG_HOST: env.NEXT_PUBLIC_POSTHOG_HOST ?? "",
     NEXT_PUBLIC_POSTHOG_API_HOST: env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "",
-    NEXT_PUBLIC_MATRIX_APP_URL: `http://app.localhost:${platformPort}`,
+    NEXT_PUBLIC_MATRIX_APP_URL: localPlatformTlsOrigin,
   };
 }
 
@@ -748,6 +767,12 @@ export function platformEnvironment(state, clerkJwtKey) {
     PLATFORM_DATABASE_URL: "postgresql://matrixos:matrixos@host.docker.internal:5432/matrixos_platform",
     PLATFORM_SECRET: state.platformSecret,
     PLATFORM_JWT_SECRET: state.platformJwtSecret,
+    MATRIX_COLLABORATION_RELAY_ORIGIN: localPlatformTlsOrigin,
+    MATRIX_COLLABORATION_ALLOWED_ORIGINS: localPlatformTlsOrigin,
+    MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "local-parity-v1",
+    MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({
+      "local-parity-v1": createHmac("sha256", state.platformSecret).update("local-parity-collaboration-ed25519-v1").digest("base64url"),
+    }),
     CUSTOMER_VPS_TLS_VERIFY: "false",
     S3_ENDPOINT: "http://host.docker.internal:9100",
     S3_PUBLIC_ENDPOINT: `https://${guestHostAddress}:${storageTlsPort}`,
@@ -791,6 +816,7 @@ async function up() {
     assertTcpPortAvailable(platformPort),
     assertTcpPortAvailable(artifactPort),
     assertTcpPortAvailable(storageTlsPort),
+    assertTcpPortAvailable(platformTlsPort),
   ]);
   assertFixtureAddressInstalled();
   const publicEnv = publicBuildEnvironment();
@@ -842,6 +868,7 @@ async function up() {
     writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
     artifactServer = await startArtifactServer(state);
     startPlatformContainer(env);
+    run("docker", storageTlsProxyArguments({ name: platformTlsProxyName, port: platformTlsPort, targetPort: platformPort }));
     await waitFor(`http://127.0.0.1:${platformPort}/health`, 120_000, shutdown.signal);
     startQemuRuntime();
     await waitForRuntimeSsh(15 * 60_000, shutdown.signal);
@@ -850,7 +877,7 @@ async function up() {
     await runInRuntimeAsync(["sudo", "cloud-init", "status", "--wait", "--long"], shutdown.signal);
     await waitForRuntimeReadiness(30 * 60_000, shutdown.signal);
     ready = true;
-    console.log(`\nProduction-parity VM is ready. Platform: http://127.0.0.1:${platformPort}`);
+    console.log(`\nProduction-parity VM is ready. Platform: ${localPlatformTlsOrigin}`);
     console.log(`Machine: https://${fixturePublicAddress} (production auth still applies)`);
     console.log("Keep this process running; Ctrl+C stops only the local platform and artifact server.\n");
     await new Promise((resolvePromise) => {

@@ -3,10 +3,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   assertFixtureAddressInstalled, assertLocalParityContainerOwnership, assertTcpPortAvailable,
+  assertParityTlsCertificate,
   fetchConfiguredClerkJwtKey, fixtureRouterArguments, platformContainerArguments,
   platformEnvironment, publicBuildEnvironment, storageTlsProxyArguments,
 } from "../dev-production-parity.mjs";
-import { root as projectRoot, resolveParityStateDirectory } from "./config.mjs";
+import { root as projectRoot, resolveParityStateDirectory, platformTlsPort, platformTlsProxyName, platformPort } from "./config.mjs";
 import { qemuRuntimeArguments, runtimeProcessPids, sshArguments } from "./runtime.mjs";
 
 export function execute(command, args, options = {}) {
@@ -65,7 +66,9 @@ systemctl is-active --quiet nginx matrix-gateway matrix-shell matrix-scope-runti
 
 export async function recoverLocalParity({ root = projectRoot, saved = resolveParityStateDirectory(root), run = execute,
   restart = false, checkPort = assertTcpPortAvailable, assertAddress = assertFixtureAddressInstalled,
-  loadPlatformEnv = savedPlatformEnvironment, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), log = console.log } = {}) {
+  checkCertificate = assertParityTlsCertificate,
+  loadPlatformEnv = savedPlatformEnvironment,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), log = console.log } = {}) {
   const runtime = resolve(saved, "runtime");
   for (const file of ["state.json", "runtime/disk.qcow2", "runtime/cidata.iso", "runtime/operator_ed25519",
     "runtime/known_hosts", "ubuntu-24.04-amd64.qcow2", "storage-tls/certificate.pem", "storage-tls/key.pem"]) {
@@ -94,9 +97,12 @@ export async function recoverLocalParity({ root = projectRoot, saved = resolvePa
   }
   const existing = new Set(run("docker", ["ps", "-a", "--format", "{{.Names}}"]).split("\n"));
   const platform = "matrix-os-parity-platform";
+  checkCertificate(resolve(saved, "storage-tls/certificate.pem"));
   const proxies = [
     ["matrix-os-parity-router", fixtureRouterArguments({ owner: root })],
     ["matrix-os-parity-storage-tls", storageTlsProxyArguments({ owner: root, tlsDirectory: resolve(saved, "storage-tls") })],
+    [platformTlsProxyName, storageTlsProxyArguments({ name: platformTlsProxyName, owner: root,
+      port: platformTlsPort, targetPort: platformPort, tlsDirectory: resolve(saved, "storage-tls") })],
   ];
   for (const name of [platform, ...proxies.map(([name]) => name)]) {
     if (existing.has(name)) assertLocalParityContainerOwnership(name,
@@ -117,6 +123,7 @@ export async function recoverLocalParity({ root = projectRoot, saved = resolvePa
   const pids = runtimeProcessPids({ diskPath: resolve(runtime, "disk.qcow2"), processList: () => run("ps", ["-axo", "pid=,command="]) });
   if (pids.length > 1) throw new Error("Multiple QEMU processes reference the saved disk; refusing another VM");
   if (pids.length === 0) { await checkPort(2222); await checkPort(8443); }
+  if (!existing.has(platformTlsProxyName)) await checkPort(platformTlsPort, "127.0.0.1");
   let platformEnv;
   if (!existing.has(platform)) {
     run("docker", ["image", "inspect", "--format", "{{.Id}}", "matrix-os-parity-platform:working-tree"]);

@@ -33,6 +33,9 @@ export const artifactPort = Number(process.env.MATRIX_PARITY_ARTIFACT_PORT ?? 98
 // Keep parity isolated from the source/HMR platform's conventional port 9000.
 export const platformPort = Number(process.env.MATRIX_PARITY_PLATFORM_PORT ?? 9003);
 export const storageTlsPort = Number(process.env.MATRIX_PARITY_STORAGE_TLS_PORT ?? 9444);
+export const platformTlsPort = Number(process.env.MATRIX_PARITY_PLATFORM_TLS_PORT ?? 9445);
+export const platformTlsProxyName = "matrix-os-parity-platform-tls";
+export const localPlatformTlsOrigin = `https://app.localhost:${platformTlsPort}`;
 export const guestHostAddress = "10.0.2.2";
 export const fixturePublicAddress = "192.0.2.2";
 export const localPlatformUrl = `http://${guestHostAddress}:${platformPort}`;

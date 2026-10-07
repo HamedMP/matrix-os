@@ -1,5 +1,5 @@
-import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -28,6 +28,7 @@ function savedEnvironment() {
   }
   writeFileSync(resolve(saved, "state.json"), JSON.stringify(state));
   const containers = new Map<string, { owner: string; running: boolean }>();
+  containers.set("matrix-os-parity-platform", { owner: root, running: false });
   const containerEnvironments = new Map<string, Record<string, string | undefined>>();
   const effects: string[] = [];
   const services = new Set(["matrix-gateway", "matrix-shell"]);
@@ -86,7 +87,7 @@ function savedEnvironment() {
     throw new Error(`Unexpected external operation: ${key}`);
   };
   const options = { root, saved, run, checkPort: async () => {}, assertAddress: () => {},
-    loadPlatformEnv: async () => ({ PLATFORM_SECRET: state.platformSecret, PLATFORM_JWT_SECRET: state.platformJwtSecret }),
+    checkCertificate: () => {},
     sleep: async () => {}, log: () => {} };
   const original = ["state.json", ...files].map(file => [file, readFileSync(resolve(saved, file))] as const);
   const preserved = () => { for (const [file, content] of original) expect(readFileSync(resolve(saved, file))).toEqual(content); };
@@ -103,6 +104,8 @@ it("resumes the same owner VM and credentials, and retry does not launch a dupli
   await recoverLocalParity(env.options);
   env.preserved();
   expect(env.containers.get("matrix-os-parity-platform")?.running).toBe(true);
+  expect(env.containers.get("matrix-os-parity-platform-tls")?.running).toBe(true);
+  expect(env.effects.find(effect => effect.includes("--name matrix-os-parity-platform-tls"))).toContain("TCP:host.docker.internal:9003");
   expect(env.effects.filter(effect => effect.startsWith("qemu-system-x86_64"))).toHaveLength(1);
   expect(env.effects.filter(effect => effect.includes("compose"))).toEqual([
     `docker compose -f ${env.root}/docker-compose.dev.yml up --detach --no-recreate --no-build --wait --wait-timeout 120 postgres minio`,
@@ -117,7 +120,7 @@ it("refuses replacement before rotating a retained VM's identity or credentials,
   env.preserved();
   await recoverLocalParity(env.options);
   env.preserved();
-  expect(env.containerEnvironments.get("matrix-os-parity-platform")?.PLATFORM_SECRET).toBe("retained-platform-secret");
+  expect(env.effects).toContain("docker start matrix-os-parity-platform");
   rmSync(resolve(env.saved, "runtime"), { recursive: true });
   const replacement = loadState({ projectRoot: env.root });
   expect(replacement.previousMachineId).toBe("saved-machine");
@@ -126,6 +129,7 @@ it("refuses replacement before rotating a retained VM's identity or credentials,
 
 it("recreates the platform with retained credentials without leaking host secrets or macOS paths", async () => {
   const env = savedEnvironment();
+  env.containers.delete("matrix-os-parity-platform");
   vi.stubEnv("HOST_PRIVATE_TOKEN", "host-only-secret");
   vi.stubEnv("TMPDIR", "/host-only/temp/");
   vi.stubEnv("SSH_AUTH_SOCK", "/host-only/ssh-agent");
@@ -144,10 +148,19 @@ it("recreates the platform with retained credentials without leaking host secret
   env.preserved();
 });
 
-it.each(["foreign platform", "foreign database", "missing volume", "missing disk", "duplicate VM", "occupied VM port"])(
+it("restarts the owned TLS bridge alongside the retained platform", async () => {
+  const env = savedEnvironment();
+  await recoverLocalParity({ ...env.options, restart: true });
+  expect(env.effects.find(effect => effect.startsWith("docker restart"))).toContain("matrix-os-parity-platform-tls");
+  env.preserved();
+});
+
+it.each(["foreign platform", "foreign bridge", "foreign database", "missing volume", "missing disk", "duplicate VM", "occupied VM port", "legacy certificate"])(
   "refuses %s before changing resources or retained data", async (failure) => {
     const env = savedEnvironment();
     if (failure === "foreign platform") env.containers.set("matrix-os-parity-platform", { owner: "/another/checkout", running: false });
+    if (failure === "foreign bridge") env.containers.set("matrix-os-parity-platform-tls", { owner: "/another/checkout", running: false });
+    if (failure === "legacy certificate") env.options.checkCertificate = () => { throw new Error("manual certificate migration required"); };
     if (failure === "foreign database") env.containers.set("demo-postgres-1", { owner: "/another/checkout", running: true });
     if (failure === "missing volume") env.missingVolume();
     if (failure === "missing disk") rmSync(resolve(env.saved, "runtime/disk.qcow2"));
