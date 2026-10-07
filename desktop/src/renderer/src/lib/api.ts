@@ -2,7 +2,7 @@
 // Authorization header injected by the trusted core at the network layer —
 // this module never sees the credential. Every call has a timeout.
 import { AppError, classifyHttpStatus, classifyTransportError, safeErrorDetail } from "../../../shared/app-error";
-import { chatFundingVersionUrl } from "@matrix-os/contracts";
+import { chatFundingVersionUrl, chatRunVersionUrl } from "@matrix-os/contracts";
 
 const API_TIMEOUT_MS = 10_000;
 
@@ -87,7 +87,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     init: RequestInit,
     requestOptions?: RequestTimeoutOptions,
   ): Promise<Response> {
-    const url = buildGatewayUrl(options.baseUrl, /^\/api\/chats(?:[/?]|$)/.test(path) ? chatFundingVersionUrl(path) : path, options.getRuntimeSlot());
+    const url = buildGatewayUrl(options.baseUrl, /^\/api\/chats(?:[/?]|$)/.test(path) ? chatRunVersionUrl(chatFundingVersionUrl(path)) : path, options.getRuntimeSlot());
     const callerSignals = [init.signal, requestOptions?.signal].filter(
       (signal): signal is AbortSignal => signal !== null && signal !== undefined,
     );

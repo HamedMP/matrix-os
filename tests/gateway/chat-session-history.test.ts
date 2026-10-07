@@ -44,3 +44,12 @@ it("preserves a delivery-filtered gap alongside native resume instead of replayi
   })).resolves.toEqual(context);
   expect(contextForChatSession(context, { sessionId: "native" })?.history).toBeUndefined();
 });
+
+it("preserves a truncated delivery-filtered rebuild when the current boundary is newer", async () => {
+  const context = withChatSessionHistory({ chatId: "chat_history", title: "History", throughSeq: 40,
+    requestHash: "a".repeat(64), truncated: true, messages: [message(40, "assistant", "committed", [{ type: "text", text: "HEARD_ONLY" }])] });
+  const repository = { getDetailPage: async () => { throw new Error("Must not reload unfiltered assistant text"); } };
+  await expect(prepareChatSessionContext({ repository, owner, chatId: "chat_history", instanceId: "codex_default",
+    throughSeq: 80, requestHash: "a".repeat(64), resumeState: undefined, context, preserveHistory: true,
+  })).resolves.toEqual(context);
+});
