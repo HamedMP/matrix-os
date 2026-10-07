@@ -5,6 +5,7 @@ import type { PlatformDB, PlatformDatabase } from '../../packages/platform/src/d
 import { migratePlatformSchema } from '../../packages/platform/src/database/migrate.js';
 import { bootstrapPlatformCollaborationDatabase } from '../../packages/platform/src/collaboration/database.js';
 import { bootstrapPlatformOrganizationDatabase } from '../../packages/platform/src/organizations/database.js';
+import { reconcilePlatformImageOperation } from '../../packages/platform/src/image-generation/reconcile.js';
 import { assertDeletionOwnershipSafe, eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
 
 async function fixture() {
@@ -24,6 +25,24 @@ describe('account deletion personal database cleanup', () => {
       await expect(assertDeletionOwnershipSafe(db, 'user_empty')).resolves.toBeUndefined();
       await expect(eraseOwnerPlatformData(db, 'user_empty')).resolves.toBeUndefined();
       await expect(eraseOwnerPlatformData(db, 'user_empty')).resolves.toBeUndefined();
+    } finally { await db.destroy(); }
+  });
+  it('erases funded image allowance and operation records before deleting their machine', async () => {
+    const db = await fixture();
+    try {
+      await sql`INSERT INTO user_machines (machine_id,clerk_user_id,handle,status,deleted_at,provisioned_at)
+        VALUES ('image-machine','user_images','images','deleted','2026-10-01','2026-10-01')`.execute(db.executor);
+      await sql`INSERT INTO image_owner_admissions VALUES ('user_images')`.execute(db.executor);
+      await sql`INSERT INTO image_monthly_allowances VALUES ('user_images','2026-10-01',2000000,0,1000000)`.execute(db.executor);
+      await sql`INSERT INTO image_generation_operations (owner_id,request_id,machine_id,runtime_slot,period_start,payload_hash,state,reserved_microusd,created_at,updated_at)
+        VALUES ('user_images','image_1','image-machine','primary','2026-10-01',${'a'.repeat(64)},'uncertain',1000000,'2026-10-01','2026-10-01')`.execute(db.executor);
+      await expect(eraseOwnerPlatformData(db, 'user_images')).rejects.toThrow('accounting_reconciliation_required');
+      await reconcilePlatformImageOperation(db, { ownerId: 'user_images', requestId: 'image_1', actualMicrousd: 33615, evidenceReference: 'reviewed-billing-123' });
+      await eraseOwnerPlatformData(db, 'user_images');
+      expect(await db.executor.selectFrom('image_generation_operations').selectAll().execute()).toEqual([]);
+      expect(await db.executor.selectFrom('image_monthly_allowances').selectAll().execute()).toEqual([]);
+      expect(await db.executor.selectFrom('image_owner_admissions').selectAll().where('owner_id', '=', 'user_images').execute()).toEqual([]);
+      expect(await db.executor.selectFrom('user_machines').selectAll().execute()).toEqual([]);
     } finally { await db.destroy(); }
   });
   it('blocks destruction of owner-hosted shared resources while retaining their data', async () => {

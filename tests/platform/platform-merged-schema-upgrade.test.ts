@@ -66,7 +66,31 @@ describe("merged platform schema upgrade", () => {
       await expect(runPlatformMigration(db, migratePlatformSchema, {
         revision: PLATFORM_SCHEMA_REVISION,
       })).resolves.toBeUndefined();
-      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(14);
+      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(15);
+      const imageTables = await sql<{ name: string }>`
+        SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public'
+          AND table_name IN ('image_owner_admissions', 'image_monthly_allowances', 'image_generation_operations')
+        ORDER BY table_name
+      `.execute(db);
+      expect(imageTables.rows.map(row => row.name)).toEqual([
+        'image_generation_operations', 'image_monthly_allowances', 'image_owner_admissions',
+      ]);
+      await sql`INSERT INTO image_monthly_allowances (owner_id, period_start, granted_microusd)
+        VALUES ('owner', '2026-10', 1000000)`.execute(db);
+      await expect(sql`UPDATE image_monthly_allowances SET reserved_microusd = 1000001
+        WHERE owner_id = 'owner' AND period_start = '2026-10'`.execute(db)).rejects.toThrow(/check constraint/);
+      const insertImageOperation = (state: string, actual: number | null, period: string) => sql`
+        INSERT INTO image_generation_operations
+          (owner_id, request_id, machine_id, runtime_slot, period_start, payload_hash,
+            state, reserved_microusd, actual_microusd, created_at, updated_at)
+        VALUES ('owner', 'request', 'machine', 'primary', ${period}, ${'a'.repeat(64)},
+          ${state}, 1000000, ${actual}, '2026-10-01', '2026-10-01')
+      `.execute(db);
+      await expect(insertImageOperation('succeeded', null, '2026-10')).rejects.toThrow(/check constraint/);
+      await expect(insertImageOperation('succeeded', 1000001, '2026-10')).rejects.toThrow(/check constraint/);
+      await expect(insertImageOperation('dispatching', null, '2026-11')).rejects.toThrow(/foreign key constraint/);
+      await insertImageOperation('dispatching', null, '2026-10');
+      await expect(insertImageOperation('dispatching', null, '2026-10')).rejects.toThrow(/unique constraint/);
       const deletionColumns = await sql<{column_name:string}>`
         SELECT column_name FROM information_schema.columns WHERE table_schema='public'
           AND table_name='account_deletion_jobs' ORDER BY column_name

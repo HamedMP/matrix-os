@@ -7,11 +7,17 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { rm } from 'node:fs/promises';
 import { encryptRuntimeTokenRotation } from '../../scripts/ops/runtime-token-envelope.mjs';
+import { buildRotationPayload, parseRotationFlags } from '../../scripts/ops/rotate-runtime-tokens.js';
 
 const hostScript = fileURLToPath(new URL('../../distro/customer-vps/host-bin/matrix-rotate-runtime-tokens.py', import.meta.url));
 function apply(paths: { envPath: string; keyPath: string; envelopePath: string }) {
   return spawnSync('python3', ['-c',
     'import runpy,sys; runpy.run_path(sys.argv[1],run_name="rotation_test")["apply_rotation"](*sys.argv[2:])',
+    hostScript, paths.envPath, paths.keyPath, paths.envelopePath], { encoding: 'utf8' });
+}
+function validate(paths: { envPath: string; keyPath: string; envelopePath: string }) {
+  return spawnSync('python3', ['-c',
+    'import runpy,sys; print(runpy.run_path(sys.argv[1],run_name="rotation_test")["validate_rotation"](*sys.argv[2:]))',
     hostScript, paths.envPath, paths.keyPath, paths.envelopePath], { encoding: 'utf8' });
 }
 
@@ -93,4 +99,73 @@ describe('host runtime-token rotation', () => {
     expect(apply(paths).stderr).toContain('Invalid host environment');
     expect(await readFile(paths.envPath, 'utf8')).toBe(before);
   });
+});
+
+describe('image runtime-token rotation compatibility', () => {
+ it('validates the matching image-enabled envelope without changing the host before activation', async () => {
+  const paths = await fixture();
+  const before = (await readFile(paths.envPath, 'utf8')) + 'MATRIX_PLATFORM_IMAGE_ENABLED=true\nMATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=old\n';
+  await writeFile(paths.envPath, before);
+  const payload = buildRotationPayload({ machine_id: 'machine-1', handle: 'images', runtime_slot: 'primary' }, 'operator-secret-at-least-thirty-two-bytes', 2, 'confirmed');
+  await writeFile(paths.envelopePath, JSON.stringify(encryptRuntimeTokenRotation(payload, paths.publicKey)));
+  expect(validate(paths).status).toBe(0);
+  expect(validate(paths).stdout.trim()).toBe('2');
+  expect(await readFile(paths.envPath, 'utf8')).toBe(before);
+  expect(apply(paths).status).toBe(0);
+  expect(validate(paths).status).not.toBe(0);
+ });
+ it('rejects a missing-image envelope during pre-activation validation without changing credentials', async () => {
+  const paths = await fixture();
+  const before = (await readFile(paths.envPath, 'utf8')) + 'MATRIX_PLATFORM_IMAGE_ENABLED=true\nMATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=old\n';
+  await writeFile(paths.envPath, before);
+  expect(validate(paths).status).not.toBe(0);
+  expect(validate(paths).stderr).toContain('Missing image runtime token');
+  expect(await readFile(paths.envPath, 'utf8')).toBe(before);
+ });
+ it('documents host capability and envelope validation before platform activation', async () => {
+  const spec = await readFile(fileURLToPath(new URL('../../specs/527-runtime-token-rotation/spec.md', import.meta.url)), 'utf8');
+  const sequence = spec.split('## Operator sequence')[1]!.split('## Acceptance')[0]!;
+  expect(sequence).toContain('token-domains');
+  expect(sequence).toContain('--host-image-support confirmed');
+  const validation = sequence.indexOf('validate <encrypted-file>');
+  const activation = sequence.indexOf('Use `activate`');
+  expect(validation).toBeGreaterThan(-1);
+  expect(activation).toBeGreaterThan(validation);
+  expect(sequence).toContain('Do not activate');
+ });
+ it.each(['prepare', 'prepare-recovery'])('operator %s defaults to the three-domain payload accepted by older hosts', async (action) => {
+  const paths = await fixture();
+  const args = [action, '--machine-id', 'machine-1', '--db-file', 'db', '--secret-file', 'secret', '--public-key-file', 'public', '--verifier-digest', 'a'.repeat(64), '--out', 'out'];
+  if (action === 'prepare-recovery') args.push('--host-epoch', '1');
+  const options = parseRotationFlags(args);
+  const payload = buildRotationPayload({ machine_id: 'machine-1', handle: 'images', runtime_slot: 'primary' }, 'operator-secret-at-least-thirty-two-bytes', 2, options['host-image-support']);
+  expect(Object.keys(payload.tokens).sort()).toEqual(['fundedAi', 'speech', 'sync']);
+  await writeFile(paths.envelopePath, JSON.stringify(encryptRuntimeTokenRotation(payload, paths.publicKey)));
+  expect(apply(paths).status).toBe(0);
+  expect(await readFile(paths.envPath, 'utf8')).not.toContain('MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN');
+ });
+ it('operator includes image tokens only with explicit confirmed host support', () => {
+  const probe = spawnSync('python3', [hostScript, 'token-domains'], { encoding: 'utf8' });
+  expect(probe.status).toBe(0);
+  expect(JSON.parse(probe.stdout)).toEqual(['fundedAi', 'images', 'speech', 'sync']);
+  const args = ['prepare', '--machine-id', 'machine-1', '--db-file', 'db', '--secret-file', 'secret', '--public-key-file', 'public', '--verifier-digest', 'a'.repeat(64), '--out', 'out'];
+  expect(() => parseRotationFlags([...args, '--host-image-support', 'unknown'])).toThrow();
+  const options = parseRotationFlags([...args, '--host-image-support', 'confirmed']);
+  const payload = buildRotationPayload({ machine_id: 'machine-1', handle: 'images', runtime_slot: 'primary' }, 'operator-secret-at-least-thirty-two-bytes', 2, options['host-image-support']);
+  expect(Object.keys(payload.tokens).sort()).toEqual(['fundedAi', 'images', 'speech', 'sync']);
+ });
+ it('rotates image credentials along with existing domains on a new host', async () => {
+  const paths = await fixture();
+  await writeFile(paths.envPath, (await readFile(paths.envPath, 'utf8')) + 'MATRIX_PLATFORM_IMAGE_ENABLED=true\nMATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=old\n');
+  const envelope = encryptRuntimeTokenRotation({ ...paths.payload, tokens: { ...paths.payload.tokens, images: 'd'.repeat(64) } }, paths.publicKey);
+  await writeFile(paths.envelopePath, JSON.stringify(envelope));
+  expect(apply(paths).status).toBe(0);
+  expect(await readFile(paths.envPath, 'utf8')).toContain('MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=' + 'd'.repeat(64));
+ });
+ it('refuses a legacy envelope when funded images are enabled', async () => {
+  const paths = await fixture();
+  const before = (await readFile(paths.envPath, 'utf8')) + 'MATRIX_PLATFORM_IMAGE_ENABLED=true\nMATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=old\n';
+  await writeFile(paths.envPath, before);
+  expect(apply(paths).status).not.toBe(0); expect(await readFile(paths.envPath, 'utf8')).toBe(before);
+ });
 });

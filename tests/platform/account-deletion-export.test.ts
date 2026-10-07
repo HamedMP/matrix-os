@@ -49,7 +49,16 @@ describe('portable account exports',()=>{
               ('22222222-2222-4222-8222-222222222222','user_b','other','Other','other@example.test','other-secret',null)`.execute(db.executor);
      await sql`INSERT INTO social_posts (id,author_id,content,type,created_at) VALUES
        ('mine-post','11111111-1111-4111-8111-111111111111','portable','text','2026-10-01'),('foreign','22222222-2222-4222-8222-222222222222','private other data','text','2026-10-01')`.execute(db.executor);
+     await sql`INSERT INTO image_monthly_allowances VALUES ('user_a','2026-10-01',2000000,33615,0), ('user_b','2026-10-01',2000000,100000,0)`.execute(db.executor);
+     await sql`INSERT INTO image_monthly_allowances VALUES ('user_a','2026-09-01',2000000,0,0)`.execute(db.executor);
+     await sql`INSERT INTO user_machines (machine_id,clerk_user_id,handle,status,deleted_at,provisioned_at)
+       VALUES ('export-machine','user_a','export-images','deleted','2026-10-01','2026-10-01')`.execute(db.executor);
+     await sql`INSERT INTO image_generation_operations (owner_id,request_id,machine_id,runtime_slot,period_start,payload_hash,state,reserved_microusd,actual_microusd,created_at,updated_at)
+       SELECT 'user_a','export_' || n::text,'export-machine','primary',CASE WHEN n <= 2500 THEN '2026-09-01' ELSE '2026-10-01' END,${'a'.repeat(64)},'succeeded',1000000,0,'2026-10-01','2026-10-01' FROM generate_series(1,5000) n`.execute(db.executor);
      const result=await exportOwnerPlatformData(db,'user_a');
+     expect(result.images.operations).toHaveLength(5000);
+     expect(result.images.allowances).toHaveLength(2);
+     expect(Number(result.images.allowances.find(row => row.period_start === "2026-10-01")!.spent_microusd)).toBe(33615);
      expect(result.profile).toHaveLength(1);expect(result.posts.map(post=>post.content)).toEqual(['portable']);
      expect(JSON.stringify(result)).not.toMatch(/private-runtime-token|secret-integration-id|other-secret|private other data/);
      await expect(exportOwnerPlatformData(db,'user_b/../user_a')).rejects.toThrow();

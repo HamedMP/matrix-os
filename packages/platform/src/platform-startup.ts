@@ -1,3 +1,6 @@
+import { loadPlatformImageConfig } from "./image-generation/config.js";
+import { createPlatformImageService } from "./image-generation/service.js";
+import { createImageGenerationRoutes } from "./image-generation/routes.js";
 import { z } from 'zod/v4';
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { createConfiguredAccountDeletionRuntime } from './account-deletion/wiring.js';
@@ -203,6 +206,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  internalImageRuntimeRoutes?: Hono<any>;
   whatsappRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
@@ -283,9 +287,12 @@ async function startPlatformServerWithCleanup(
   const backgroundWorkersEnabled = shouldEnablePlatformBackgroundWorkers(process.env);
   let runtimeConfig;
   let speechConfig;
+  let imageConfig;
   try {
     runtimeConfig = loadPlatformRuntimeConfig();
     speechConfig = loadPlatformSpeechConfig(process.env);
+    imageConfig = loadPlatformImageConfig(process.env);
+    if (imageConfig.enabled && platformSecret.length < 32) throw new PlatformStartupConfigError("Platform images are misconfigured");
     if (speechConfig.enabled && platformSecret.length < 32) throw new PlatformSpeechConfigError();
   } catch (err: unknown) {
     if (err instanceof PlatformStartupConfigError || err instanceof PlatformSpeechConfigError) {
@@ -310,6 +317,8 @@ async function startPlatformServerWithCleanup(
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
   let internalFundedAiOperatorRoutes: Hono | undefined;
+  const imageService = createPlatformImageService({ db, config: imageConfig });
+  const internalImageRuntimeRoutes = platformSecret.length >= 32 ? createImageGenerationRoutes({ db, platformSecret, service: imageService }) : undefined;
   const speechService = createConfiguredPlatformSpeechService({ db, config: speechConfig });
   const internalSpeechRuntimeRoutes = platformSecret.length >= 32
     ? createSpeechRuntimeRoutes({ db, platformSecret, service: speechService })
@@ -975,6 +984,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
+    internalImageRuntimeRoutes,
     whatsappRoutes: whatsappRuntime?.routes,
     fundedAiRepository,
     fundedModelProbes,
@@ -1007,6 +1017,7 @@ async function startPlatformServerWithCleanup(
   const shutdown = (signal: NodeJS.Signals): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    const imageDrain = imageService.shutdown();
     console.log(`[platform] Received ${signal}, shutting down`);
     accountDeletion?.stop();
     customerVpsReconciliationWorker?.stop();
@@ -1034,6 +1045,7 @@ async function startPlatformServerWithCleanup(
           whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
+          imageDrain,
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),

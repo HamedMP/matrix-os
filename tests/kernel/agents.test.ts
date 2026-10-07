@@ -186,9 +186,9 @@ describe("registered builder product style direction", () => {
     expect(prompt).not.toMatch(/always apply -- non-negotiable|ALWAYS inherit|literal colors are fallbacks only|explicit app branding only|Use inherited typography|Use inherited fonts|inherit Matrix\s+tokens and fonts/i);
     expect(prompt).toContain("No remote");
   });
-  it("keeps the core builder's tools and persistence boundary unchanged", () => {
+  it("gives the core builder image generation while preserving its persistence boundary", () => {
     const builder = getCoreAgents("/test/owner").builder;
-    expect(builder.tools).toEqual(["Read", "Write", "Edit", "Glob", "Grep", "Bash", "mcp__matrix-os-ipc__claim_task", "mcp__matrix-os-ipc__complete_task", "mcp__matrix-os-ipc__fail_task", "mcp__matrix-os-ipc__send_message"]);
+    expect(builder.tools).toEqual(["Read", "Write", "Edit", "Glob", "Grep", "Bash", "mcp__matrix-os-ipc__claim_task", "mcp__matrix-os-ipc__complete_task", "mcp__matrix-os-ipc__fail_task", "mcp__matrix-os-ipc__send_message", "mcp__matrix-os-ipc__generate_image"]);
     expect(builder.prompt).toContain("window.MatrixOS.db");
     expect(builder.prompt).toContain("Only use tools present in this run");
   });

@@ -4,7 +4,7 @@ export function encryptRuntimeTokenRotation(payload, publicKey) {
   if (!payload || !/^[A-Za-z0-9_-]{1,128}$/.test(payload.machineId) ||
       !/^[a-z0-9-]{1,32}$/.test(payload.runtimeSlot) ||
       !Number.isSafeInteger(payload.epoch) || payload.epoch < 2 || payload.epoch > 2147483647 ||
-      !payload.tokens || Object.keys(payload.tokens).sort().join(',') !== 'fundedAi,speech,sync' ||
+      !payload.tokens || !['fundedAi,speech,sync', 'fundedAi,images,speech,sync'].includes(Object.keys(payload.tokens).sort().join(',')) ||
       Object.values(payload.tokens).some((token) => typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token))) {
     throw new Error('Invalid rotation payload');
   }

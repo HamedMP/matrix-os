@@ -17,6 +17,16 @@ describe('platform/customer-vps-cloud-init', () => {
     const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), input);
     expect(rendered).toContain('MATRIX_SYNC_RUNTIME_TOKEN=sync-runtime-verification-secret');
   });
+  it('ships and redacts image-specific runtime credentials without a provider key', async () => {
+    const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), {
+      ...input, platformImageEnabled: 'true', platformImageOrigin: 'https://platform.example',
+      platformImageRuntimeToken: 'image-runtime-verification-secret',
+    });
+    expect(rendered).toContain('MATRIX_PLATFORM_IMAGE_ENABLED=true');
+    expect(rendered).toContain('MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=image-runtime-verification-secret');
+    expect(rendered).not.toContain('GEMINI_API_KEY');
+    expect(redactCloudInitSecrets(rendered, { ...input, platformImageRuntimeToken: 'image-runtime-verification-secret' })).not.toContain('image-runtime-verification-secret');
+  });
   it('rendered user_data stays under the Hetzner 32KiB limit with headroom', async () => {
     // Hetzner rejects servers whose user_data exceeds 32768 bytes with a
     // generic 422 invalid_input; the platform surfaces it as

@@ -37,6 +37,11 @@ describe('customer VPS bootstrap configuration', () => {
     }).platformSpeechEnabled).toBe(false);
   });
 
+  it('enables included platform images only through explicit runtime provisioning', () => {
+    expect(loadCustomerVpsConfig({}).platformImageEnabled).toBe(false);
+    expect(loadCustomerVpsConfig({ MATRIX_PLATFORM_IMAGE_RUNTIME_ENABLED: 'true' }).platformImageEnabled).toBe(true);
+  });
+
   it('keeps registration tokens at the bounded clean-bootstrap lifetime', () => {
     expect(loadCustomerVpsConfig({}).registrationTokenTtlMs).toBe(60 * 60 * 1000);
     expect(loadCustomerVpsConfig({

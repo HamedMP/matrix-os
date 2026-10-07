@@ -22,6 +22,11 @@ TOKEN_KEYS = {
 }
 
 
+def supported_token_domains():
+    """Read-only capability probe; older installed helpers reject this command."""
+    return sorted(set(TOKEN_KEYS) | {'images'})
+
+
 def read_regular(path, maximum, root_only=False):
     info = os.lstat(path)
     if not stat.S_ISREG(info.st_mode) or info.st_size > maximum or info.st_mode & 0o022:
@@ -53,7 +58,8 @@ def host_verifier_digest(env_path):
     return hashlib.sha256(one_value(lines, 'UPGRADE_TOKEN').encode('utf-8')).hexdigest()
 
 
-def apply_rotation(env_path, key_path, envelope_path):
+def validated_rotation(env_path, key_path, envelope_path):
+    """Shared read-only checks used before activation and again before writing."""
     env_bytes = read_regular(env_path, 65536)
     private_key = serialization.load_pem_private_key(read_regular(key_path, 8192, True), password=None)
     envelope = json.loads(read_regular(envelope_path, 65536))
@@ -73,7 +79,7 @@ def apply_rotation(env_path, key_path, envelope_path):
             not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', payload['machineId']) or
             not re.fullmatch(r'[a-z0-9-]{1,32}', payload['runtimeSlot']) or
             type(payload.get('epoch')) is not int or not 2 <= payload['epoch'] <= 2147483647 or
-            not isinstance(tokens, dict) or set(tokens) != set(TOKEN_KEYS) or
+            not isinstance(tokens, dict) or set(tokens) not in (set(TOKEN_KEYS), set(TOKEN_KEYS) | {'images'}) or
             any(not isinstance(token, str) or not re.fullmatch(r'[a-f0-9]{64}', token) for token in tokens.values())):
         raise ValueError('Invalid rotation payload')
 
@@ -87,15 +93,37 @@ def apply_rotation(env_path, key_path, envelope_path):
     current_epoch = int(epochs[0].split('=', 1)[1]) if epochs else 1
     if payload['epoch'] != current_epoch + 1:
         raise ValueError('Unexpected runtime token epoch')
+    image_enabled = 'MATRIX_PLATFORM_IMAGE_ENABLED=true' in lines or 'MATRIX_PLATFORM_IMAGE_ENABLED=1' in lines
+    if image_enabled and 'images' not in tokens:
+        raise ValueError('Missing image runtime token')
+    token_keys = dict(TOKEN_KEYS)
+    if 'images' in tokens:
+        token_keys['images'] = 'MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN'
     for key_name in TOKEN_KEYS.values():
         one_value(lines, key_name)
-    replacements = {key_name: tokens[field] for field, key_name in TOKEN_KEYS.items()}
+    image_lines = [line for line in lines if line.startswith('MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=')]
+    if len(image_lines) > 1:
+        raise ValueError('Invalid host environment')
+    replacements = {key_name: tokens[field] for field, key_name in token_keys.items()}
     replacements['MATRIX_RUNTIME_TOKEN_EPOCH'] = str(payload['epoch'])
     next_lines = [line.split('=', 1)[0] + '=' + replacements[line.split('=', 1)[0]]
                   if line.split('=', 1)[0] in replacements else line for line in lines]
+    if 'images' in tokens and not image_lines:
+        next_lines.insert(-1 if next_lines[-1] == '' else len(next_lines),
+                          'MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=' + tokens['images'])
     if not epochs:
         next_lines.insert(-1 if next_lines[-1] == '' else len(next_lines),
                           'MATRIX_RUNTIME_TOKEN_EPOCH=' + str(payload['epoch']))
+    return next_lines, payload['epoch']
+
+
+def validate_rotation(env_path, key_path, envelope_path):
+    _, epoch = validated_rotation(env_path, key_path, envelope_path)
+    return epoch
+
+
+def apply_rotation(env_path, key_path, envelope_path):
+    next_lines, epoch = validated_rotation(env_path, key_path, envelope_path)
 
     original = os.lstat(env_path)
     directory = os.path.dirname(os.path.abspath(env_path))
@@ -116,10 +144,13 @@ def apply_rotation(env_path, key_path, envelope_path):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
-    return payload['epoch']
+    return epoch
 
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == 'token-domains':
+        print(json.dumps(supported_token_domains()))
+        return
     if os.geteuid() != 0:
         raise ValueError('Root is required')
     if len(sys.argv) == 2 and sys.argv[1] == 'init':
@@ -146,11 +177,15 @@ def main():
     if len(sys.argv) == 2 and sys.argv[1] == 'verifier-digest':
         print(host_verifier_digest(ENV_PATH))
         return
+    if len(sys.argv) == 3 and sys.argv[1] == 'validate':
+        epoch = validate_rotation(ENV_PATH, KEY_PATH, sys.argv[2])
+        print(f'Runtime token epoch {epoch} validated. Host configuration unchanged.')
+        return
     if len(sys.argv) == 3 and sys.argv[1] == 'apply':
         epoch = apply_rotation(ENV_PATH, KEY_PATH, sys.argv[2])
         print(f'Runtime token epoch {epoch} installed. Restart dependent services.')
         return
-    raise ValueError('Usage: matrix-rotate-runtime-tokens.py <init|public-key|verifier-digest|apply ENCRYPTED_FILE>')
+    raise ValueError('Usage: matrix-rotate-runtime-tokens.py <init|public-key|verifier-digest|token-domains|validate ENCRYPTED_FILE|apply ENCRYPTED_FILE>')
 
 
 if __name__ == '__main__':
