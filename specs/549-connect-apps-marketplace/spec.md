@@ -35,7 +35,7 @@ Registry entries remain the execution allowlist. Do not expose all 3,223 connect
 | POST /api/integrations/webhook/connected | HMAC, bodyLimit + bounded schema, existing admission policy | Exact canonical service resolution |
 | DELETE /api/integrations/:id | Existing owner identity + bodyLimit | Unchanged deletion semantics |
 
-No new endpoints, pools, tables, or long-lived collections. Provider calls retain existing SDK deadlines. New actions use strict schemas, bounded IDs/cursors/page sizes and encoded path segments; callers cannot supply target hosts or arbitrary continuation URLs. Related persistence uses existing idempotent database writes. Unconfirmed consent may leave a provider-side account temporarily absent locally; signed webhook/sync/call-time recovery reconciles it. Failed disconnect preserves the local account.
+No new endpoints, pools, or tables. Active identical reads share a bounded promise map (128 entries, 30-second expiry and oldest-entry eviction); completed data is never cached. Billable SDK executions have explicit deadlines and no automatic retries; management calls retain retries. New actions use strict schemas, bounded IDs/cursors/page sizes and encoded path segments; callers cannot supply target hosts or arbitrary continuation URLs. Related persistence uses existing idempotent database writes. Unconfirmed consent may leave a provider-side account temporarily absent locally; signed webhook/sync/call-time recovery reconciles it. Failed disconnect preserves the local account.
 
 ## Validation and deliverables
 
@@ -50,3 +50,11 @@ No new endpoints, pools, tables, or long-lived collections. Provider calls retai
 ## Deferred scope
 
 Full Pipedream catalog browsing, dynamic actions/MCP ingestion, native Granola OAuth support (the existing mobile consent parser accepts Pipedream URLs), Outlook Calendar's separate connector, writes for new apps, and provider-specific live consent verification. New apps have read capabilities; existing integrations retain their current actions. Greptile 5/5 is required before merge.
+
+## Drive content and execution costs
+
+`get_file` remains metadata. The new read-risk `read_file` action returns actual UTF-8 text/Markdown and bounded Workspace exports (Docs Markdown/plain text, Sheets first-sheet CSV/TSV, Slides text). Fixed Google targets pass through the owner/account-bound Pipedream proxy, with a total 30-second deadline, redirect rejection, a 16 KiB metadata limit and 512 KiB streamed content limit. Invalid IDs fail before billable calls. Unsupported formats, download restrictions, missing files, oversized content and rate limits return safe failures, never metadata or silently truncated text. Passing the source MIME type from `list_files` avoids a metadata round trip; Google still enforces file access. Contents are untrusted external data.
+
+No paid retries occur invisibly for actions or proxy calls, especially writes. Concurrent identical proxy reads coalesce by owner, account, URL, parameters and headers; settled results are removed so refresh reads fresh data. Remove Slack's auth.test profile lookup because it can never populate an email. Management/catalog/account listing remains credit-free under the current Connect pricing. Proxy calls themselves remain billable.
+
+Validation: raw Markdown/Workspace export tests, byte/UTF-8/deadline/error bounds, server-resolved identity and cross-owner denial through ordinary and scoped call routes, no retry and concurrent-read tests. A read-only check against a connected production Drive account on 2026-10-07 returned nonempty Markdown through the new reader; no contents or credentials were logged. Existing installed runtimes do not acquire this action until this PR ships. Pipedream's usage endpoint rejected the deployment credentials, so precise invoice attribution remains unverified. Pricing reference: https://pipedream.com/pricing (checked 2026-10-07).

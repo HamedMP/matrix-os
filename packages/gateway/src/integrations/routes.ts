@@ -89,11 +89,7 @@ const PROFILE_ENDPOINTS: Record<string, {
     // the verified primary if we want fuller coverage.)
     extract: (d) => d?.email ?? undefined,
   },
-  slack: {
-    url: "https://slack.com/api/auth.test",
-    // auth.test yields a username/display identifier, not an email address.
-    extract: () => undefined,
-  },
+  // Slack auth.test cannot return an email; do not spend a proxy credit on it.
   discord: {
     url: "https://discord.com/api/v10/users/@me",
     extract: (d) => d?.email ?? d?.username,
