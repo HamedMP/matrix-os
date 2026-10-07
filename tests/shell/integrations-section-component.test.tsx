@@ -79,6 +79,35 @@ describe("IntegrationsSection websocket lifecycle", () => {
 });
 
 
+describe("Connect Apps partial loading", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it.each(["http", "network", "json"])("keeps accounts removable when the catalog fails with %s", async (failure) => {
+    buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/available")) {
+        if (failure === "network") throw new Error("Network unavailable");
+        return { ok: failure !== "http", json: async () => { throw new Error("Invalid JSON"); } };
+      }
+      return { ok: true, json: async () => [{ id: "saved", service: "gmail", account_label: "Work", account_email: "work@example.test", status: "active", scopes: [] }] };
+    }));
+    render(<IntegrationsSection />);
+    expect(await screen.findByText("work@example.test")).toBeTruthy();
+    expect(screen.getByText("Failed to load integrations")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    expect(await screen.findByRole("button", { name: "Confirm" })).toBeTruthy();
+  });
+  it("keeps the usable catalog when loading accounts fails", async () => {
+    buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/available")) return { ok: true, json: async () => [{ id: "asana", name: "Asana", category: "productivity", authType: "oauth" }] };
+      throw new Error("Accounts unavailable");
+    }));
+    render(<IntegrationsSection />);
+    expect(await screen.findByRole("button", { name: "Connect Asana" })).toBeTruthy();
+    expect(screen.getByText("Failed to load integrations")).toBeTruthy();
+  });
+});
+
 describe("Connect Apps consent window", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   function prepare() {

@@ -39,18 +39,25 @@ export function IntegrationsSection() {
   const loadData = useCallback(async () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the try/finally needed to clear `loading` on every path; the code is correct and the finalizer must run whether the loads resolve, reject, or throw.
     try {
-      const [availRes, connRes] = await Promise.all([
-        fetch(`${GATEWAY}/api/integrations/available`, { signal: AbortSignal.timeout(10_000) }),
-        fetch(`${GATEWAY}/api/integrations`, { signal: AbortSignal.timeout(10_000) }),
+      const readJson = async (url: string) => {
+        const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        if (!response.ok) throw new Error("Integrations unavailable");
+        return response.json();
+      };
+      const [availResult, connResult] = await Promise.allSettled([
+        readJson(`${GATEWAY}/api/integrations/available`),
+        readJson(`${GATEWAY}/api/integrations`),
       ]);
-      if (!availRes.ok || !connRes.ok) throw new Error("Catalog unavailable");
-      setError(null);
-      if (availRes.ok) {
-        const data = await availRes.json();
+      setError(availResult.status === "rejected" || connResult.status === "rejected" ? "Failed to load integrations" : null);
+      for (const result of [availResult, connResult]) {
+        if (result.status === "rejected") console.warn("[integrations] Load failed", { errorName: result.reason instanceof Error ? result.reason.name : "UnknownError" });
+      }
+      if (availResult.status === "fulfilled") {
+        const data = availResult.value;
         setAvailable(data.services ?? data);
       }
-      if (connRes.ok) {
-        const data = await connRes.json();
+      if (connResult.status === "fulfilled") {
+        const data = connResult.value;
         const connections: ConnectedService[] = data.connections ?? data;
         setConnected(connections);
 
