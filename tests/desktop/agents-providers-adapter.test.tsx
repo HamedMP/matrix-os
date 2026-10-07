@@ -39,6 +39,7 @@ describe("desktop shared agents and providers adapter", () => {
     useConnection.setState({
       status: "signed-in",
       handle: "alice",
+      userId: "user_alice",
       platformHost: "https://app.matrix-os.com",
       runtimeSlot: "vm-2",
       authGeneration: 7,
@@ -53,7 +54,7 @@ describe("desktop shared agents and providers adapter", () => {
     useConnection.setState(useConnection.getInitialState(), true);
   });
 
-  it.each(["runtime", "owner", "credential", "unmount"])(
+  it.each(["runtime", "owner", "user ID", "credential", "unmount"])(
     "cancels checkout and rejects a late URL after %s changes in the rendered caller",
     async (change) => {
       let release!: (value: unknown) => void;
@@ -75,7 +76,8 @@ describe("desktop shared agents and providers adapter", () => {
       });
       if (change === "unmount") view.unmount();
       else act(() => useConnection.setState(change === "runtime" ? { runtimeSlot: "other" }
-        : change === "owner" ? { handle: "bob" } : { authGeneration: 8 }));
+        : change === "owner" ? { handle: "bob" }
+        : change === "user ID" ? { userId: "user_other" } : { authGeneration: 8 }));
       release({ url: "https://checkout.stripe.com/c/pay/cs_previous" });
       let completed!: boolean;
       await act(async () => { completed = await pending; });
@@ -141,12 +143,12 @@ describe("desktop shared agents and providers adapter", () => {
     expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it("renders the shared view with a runtime- and credential-scoped controller", () => {
+  it("renders the shared view with an owner-, runtime-, and credential-scoped controller", () => {
     render(<AgentsProvidersAdapter />);
 
     expect(screen.getByTestId("shared-agents-providers-view").textContent).toBe("ready");
     expect(mocks.controller).toHaveBeenCalledWith(expect.objectContaining({
-      identityKey: "signed-in|alice|https://app.matrix-os.com|vm-2|7",
+      identityKey: "signed-in|alice|user_alice|https://app.matrix-os.com|vm-2|7",
       transport: expect.objectContaining({
         getSnapshot: expect.any(Function),
         mutate: expect.any(Function),
@@ -170,14 +172,26 @@ describe("desktop shared agents and providers adapter", () => {
     act(() => useConnection.setState({ runtimeSlot: "other" }));
     act(() => current());
     expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+    const previousUser = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
+    act(() => useConnection.setState({ userId: "user_other" }));
+    act(() => previousUser());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+    const currentUser = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
+    act(() => currentUser());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(3);
   });
 
-  it("changes controller identity when the trusted credential generation changes", () => {
+  it.each([
+    { boundary: "trusted credential generation", change: { authGeneration: 8 },
+      identityKey: "signed-in|alice|user_alice|https://app.matrix-os.com|vm-2|8" },
+    { boundary: "owner user ID with the same handle", change: { userId: "user_other" },
+      identityKey: "signed-in|alice|user_other|https://app.matrix-os.com|vm-2|7" },
+  ])("changes controller identity when the $boundary changes", ({ change, identityKey }) => {
     render(<AgentsProvidersAdapter />);
-    act(() => useConnection.setState({ authGeneration: 8 }));
+    act(() => useConnection.setState(change));
 
     expect(mocks.controller).toHaveBeenLastCalledWith(expect.objectContaining({
-      identityKey: "signed-in|alice|https://app.matrix-os.com|vm-2|8",
+      identityKey,
     }));
   });
 

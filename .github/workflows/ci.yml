@@ -502,6 +502,11 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           bun run test -- tests/platform/account-deletion-*-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Bot Integration grant and source admission races
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          bun run test -- tests/gateway/bots/integration-grant-source-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+
   docs-contract:
     name: Docs Contract Tests
     needs: changes

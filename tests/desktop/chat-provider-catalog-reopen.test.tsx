@@ -1,3 +1,4 @@
+import { stopDesktopProviderCatalogCoordinator, desktopProviderCatalogCache } from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 // @vitest-environment jsdom
 import React, { useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -18,7 +19,7 @@ const support = { rootChat: true, resume: true, cancellation: true, attachments:
 function catalog(revision: string, savedOff = false): CanonicalProviderCatalog {
   return CanonicalProviderCatalogSchema.parse({ revision,
     drivers: [{ kind: "pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "coding_agent" }],
-    instances: [{ id: "pi_owner", driverKind: "pi", displayName: "Pi", availability: savedOff ? "unavailable" : "available",
+    instances: [{ id: "pi_owner", driverKind: "pi", displayName: `Pi ${revision}`, availability: savedOff ? "unavailable" : "available",
       ...(savedOff ? { unavailabilityReason: "disabled_in_settings" } : {}), workspaceRequirement: "project_optional",
       catalogRevision: revision, models: savedOff ? [] : [{ id: "model", displayName: "Owner model", availability: "available",
         capabilities: [], supportsVision: false, supportsToolUse: false }], options: [], skills: [], commands: [], setupActions: [], supports: support,
@@ -47,8 +48,7 @@ function LayoutCatalogProbe({ api, observe }: { api: { get: () => Promise<unknow
 }
 const openPicker = () => fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
 const refreshCatalog = () => fireEvent.click(screen.getByRole("button", { name: "Refresh catalog" }));
-const expireLifecycleCatalog = () => { vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000); };
-afterEach(() => { cleanup(); vi.restoreAllMocks(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); useBoard.setState(useBoard.getInitialState(), true); });
+afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); vi.restoreAllMocks(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); useBoard.setState(useBoard.getInitialState(), true); });
 describe("native Chat catalog freshness", () => {
   it.each([true, false])("refreshes accepted Settings route changes without reopening (savedOff=%s)", async (savedOff) => {
     const before = catalog("pre_settings", !savedOff);
@@ -80,8 +80,9 @@ describe("native Chat catalog freshness", () => {
     await screen.findByText("before_update");
     refreshCatalog();
     act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
-    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
     await act(async () => older.resolve(oldCatalog));
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
     expect(screen.getByTestId("availability").textContent).toBe("unavailable");
     expect(screen.queryByText("Owner model")).toBeNull();
   });
@@ -92,7 +93,7 @@ describe("native Chat catalog freshness", () => {
     await screen.findByText("before_update");
     act(() => useConnection.setState(field === "runtimeSlot" ? { runtimeSlot: "other" }
       : field === "status" ? { status: "signed-out" } : { authGeneration: 1 }));
-    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe(field === "status" ? "fallback" : "error"));
     expect(screen.getByTestId("availability").textContent).toBe("unavailable");
   });
 
@@ -119,7 +120,7 @@ describe("native Chat catalog freshness", () => {
     expect(get).toHaveBeenCalledTimes(1);
     refreshCatalog();
     await screen.findByText("Disabled in Settings");
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", { timeoutMs: 15_000 });
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
     expect(screen.queryByText("Owner model")).toBeNull();
     expect(screen.queryByText("Connect Pi")).toBeNull();
     // Closing and reopening reuse the current catalog, without another read.
@@ -167,16 +168,19 @@ describe("native Chat catalog freshness", () => {
     }
   });
 
-  it("fails closed on initial and replaced-API errors instead of borrowing old trusted truth", async () => {
+  it("retains the same-scope cache across API replacement and fails closed on a genuinely cold error", async () => {
     const firstApi = { get: vi.fn().mockResolvedValue(newCatalog) };
     const view = render(<CatalogComposer api={firstApi} />);
     await screen.findByText("after_update");
-    const replacementApi = { get: vi.fn().mockRejectedValue(new Error("new_runtime_unavailable")) };
+    const replacementApi = { get: vi.fn().mockRejectedValue(new Error("transport_unavailable")) };
     view.rerender(<CatalogComposer api={replacementApi} />);
+    expect(screen.getByText("after_update")).not.toBeNull();
+    expect(replacementApi.get).not.toHaveBeenCalled();
+    refreshCatalog();
     await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
-    expect(screen.getByText("before_update")).not.toBeNull();
-    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+    expect(screen.getByText("after_update")).not.toBeNull();
     view.unmount();
+    stopDesktopProviderCatalogCoordinator();
     render(<CatalogComposer api={replacementApi} />);
     await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
     expect(screen.getByTestId("availability").textContent).toBe("unavailable");
@@ -200,11 +204,11 @@ describe("native Chat catalog freshness", () => {
     act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
     await screen.findByText("Disabled in Settings");
     expect(get).toHaveBeenCalledTimes(2);
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", { timeoutMs: 15_000 });
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
     expect(screen.queryByText("Owner model")).toBeNull();
   });
 
-  it("reuses the production canonical workspace catalog on open and refreshes stale discovery on focus", async () => {
+  it("reuses the production canonical workspace catalog on open and refreshes discovery explicitly", async () => {
     const get = vi.fn(async (path: string) => path.startsWith("/api/chat-providers") ? oldCatalog : {});
     window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };
     const view = render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()}
@@ -216,14 +220,13 @@ describe("native Chat catalog freshness", () => {
     fireEvent.click(trigger);
     await screen.findByRole("searchbox");
     expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(readsBefore);
-    expireLifecycleCatalog();
-    act(() => window.dispatchEvent(new Event("focus")));
+    act(() => desktopProviderCatalogCache.refresh());
     await screen.findByText("Disabled in Settings");
     expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(readsBefore + 1);
     view.unmount();
   });
 
-  it.each([true, false])("preserves production workspace truth on focus refresh failure (savedOff=%s)", async (savedOff) => {
+  it.each([true, false])("preserves production workspace truth on background refresh failure (savedOff=%s)", async (savedOff) => {
     const trusted = catalog("trusted_workspace", savedOff);
     let failRefresh = false;
     const get = vi.fn(async (path: string) => {
@@ -237,8 +240,7 @@ describe("native Chat catalog freshness", () => {
     const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
     await waitFor(() => expect(trigger.hasAttribute("disabled")).toBe(false));
     failRefresh = true;
-    expireLifecycleCatalog();
-    act(() => window.dispatchEvent(new Event("focus")));
+    act(() => desktopProviderCatalogCache.refresh());
     fireEvent.click(trigger);
     await waitFor(() => expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(2));
     await act(async () => undefined);
@@ -268,8 +270,7 @@ describe("native Chat catalog freshness", () => {
     failRefresh = true;
     act(() => useBoard.setState({ projects: [{ slug: "new-project", name: "New project" }] }));
     expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(1);
-    expireLifecycleCatalog();
-    act(() => window.dispatchEvent(new Event("focus")));
+    act(() => desktopProviderCatalogCache.refresh());
     await waitFor(() => expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(2));
     await act(async () => undefined);
     if (savedOff) {
@@ -282,18 +283,16 @@ describe("native Chat catalog freshness", () => {
     }
   });
 
-  it("discards inactive trusted snapshots before a new active read fails", async () => {
-    const get = vi.fn().mockResolvedValueOnce(newCatalog).mockRejectedValue(new Error("reactivated_unavailable"));
+  it("retains inactive trusted snapshots without a reactivation read", async () => {
+    const get = vi.fn().mockResolvedValueOnce(newCatalog).mockRejectedValue(new Error("must_not_read"));
     const api = { get };
     const view = render(<CatalogComposer api={api} />);
     await screen.findByText("after_update");
     view.rerender(<CatalogComposer api={api} active={false} />);
-    openPicker();
-    expect(get).toHaveBeenCalledTimes(1);
     view.rerender(<CatalogComposer api={api} />);
-    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
-    expect(screen.getByText("before_update")).not.toBeNull();
-    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+    expect(screen.getByTestId("catalog-status").textContent).toBe("ready");
+    expect(screen.getByText("after_update")).not.toBeNull();
+    expect(get).toHaveBeenCalledOnce();
   });
 
   it("keeps a pending read across fallback changes and ignores it after an explicit newer response", async () => {
@@ -305,14 +304,14 @@ describe("native Chat catalog freshness", () => {
     const view = render(<CatalogComposer api={api} />);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("ready"));
-    expireLifecycleCatalog();
-    act(() => window.dispatchEvent(new Event("focus")));
+    act(() => desktopProviderCatalogCache.refresh());
     view.rerender(<CatalogComposer api={api} fallback={catalog("project_changed_fallback")} />);
     expect(get).toHaveBeenCalledTimes(2);
     refreshCatalog();
+    expect(get).toHaveBeenCalledTimes(2);
+    await act(async () => older.resolve(oldCatalog));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
     await act(async () => newer.resolve(newCatalog));
-    await act(async () => older.resolve(oldCatalog));
     expect(screen.getByText("after_update")).not.toBeNull();
     refreshCatalog();
     openPicker();
@@ -328,13 +327,13 @@ describe("native Chat catalog freshness", () => {
     render(<CatalogComposer api={{ get }} />);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("ready"));
-    expireLifecycleCatalog();
-    act(() => window.dispatchEvent(new Event("focus")));
+    act(() => desktopProviderCatalogCache.refresh());
     refreshCatalog();
+    expect(get).toHaveBeenCalledTimes(2);
+    await act(async () => outcome === "success" ? older.resolve(oldCatalog) : older.reject(new Error("older_request_failed")));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
     await act(async () => newer.resolve(newCatalog));
     expect(screen.getByText("after_update")).not.toBeNull();
-    await act(async () => outcome === "success" ? older.resolve(oldCatalog) : older.reject(new Error("older_request_failed")));
     expect(screen.getByText("after_update")).not.toBeNull();
   });
 });
