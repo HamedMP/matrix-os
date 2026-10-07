@@ -1,4 +1,5 @@
 import { createPlanCatalogRefresh } from './catalog-refresh';
+import { rejectedPlanCredential } from './credential-failure';
 import { logPlanFailure } from './diagnostics';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod/v4';
@@ -316,7 +317,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             controller.abort();
         requests.clear();
         if (state === 'connecting')
-            state = active()?.tokens ? 'connected' : 'disconnected';
+            state = active()?.tokens ? models.length ? 'connected' : 'error' : 'disconnected';
         void peer.stop().catch((error: unknown) => logPlanFailure('peer_disconnect', error));
     }
     async function status(input: ChatgptPlanSession) {
@@ -348,13 +349,24 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         const selected = active();
         // Explicit reconnect recovers the same local account without another OAuth
         // prompt. Read-only status/catalog checks never change Bot authorization.
-        if (selected?.tokens && (state === 'error' || state === 'connected' && !grant(value.computerId).enabled)) {
+        if (selected?.tokens) {
             const expected = { accountId: selected.id, generation };
-            await readCatalog(value, AbortSignal.timeout(15000));
-            if (!grant(value.computerId).enabled)
-                return setGrant({ runtimeSlot: value.runtimeSlot, authGeneration: value.authGeneration, enabled: true, background: false }, expected);
-            await restartPeer(value);
-            return snapshot(value);
+            let retryQualified = false;
+            try { await readCatalog(value, AbortSignal.timeout(15000)); retryQualified = true; }
+            catch (error: unknown) {
+                if (!current(value) || expected.generation !== generation || active()?.id !== expected.accountId)
+                    throw new Error('source changed');
+                if (pending) return snapshot(value);
+                if (!rejectedPlanCredential(error) || models.length) throw error;
+                // R8 has withdrawn inference authority. Only this explicit Connect
+                // may replace rejected credentials through the existing PKCE flow.
+            }
+            if (retryQualified) {
+                if (!grant(value.computerId).enabled)
+                    return setGrant({ runtimeSlot: value.runtimeSlot, authGeneration: value.authGeneration, enabled: true, background: false }, expected);
+                await restartPeer(value);
+                return snapshot(value);
+            }
         }
         const operation = {
             controller: new AbortController(), bound: value, close: undefined as (() => Promise<void>) | undefined
@@ -365,7 +377,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         const fail = () => {
             if (pending === operation) {
                 pending = null;
-                state = selected?.tokens ? 'connected' : 'error';
+                state = selected?.tokens && models.length ? 'connected' : 'error';
             }
         };
         try {

@@ -22,8 +22,9 @@ async function fixture(runtimeSlot='primary') {
  const authState={...localSession,signedIn:true as const,userId:'owner',handle:'computer'};
  let authUrl:URL|undefined;let browserOpens=0;let rejectNonce=false;let expiresIn=300;
  let jwksGate:Promise<void>|null=null;let releaseJwks:()=>void=()=>{};let jwksHeld=false;
- let catalogOverride:{gate:Promise<void>;fail:boolean;model:string}|null=null;let responseGate:Promise<void>|null=null;let releaseResponse:()=>void=()=>{};let responseAborted=false;
+ let catalogOverride:{gate:Promise<void>;fail:boolean|401;model:string}|null=null;let responseGate:Promise<void>|null=null;let releaseResponse:()=>void=()=>{};let responseAborted=false;
  let disconnectGate:Promise<void>|null=null;
+ let catalogStatus:number|null=null;let refreshError:string|null=null;
  let rejectCatalog=false;let visibleModel='fixture-visible';let catalogGate:Promise<void>|null=null;let releaseCatalog:()=>void=()=>{};let refreshGate:Promise<void>|null=null;let releaseRefresh:()=>void=()=>{};let lateFailure=false;
  const snapshots:unknown[]=[];const replies:Array<Record<string,unknown>>=[];const providerBodies:unknown[]=[];
  let queued:ChatGptPlanPeerRequest[]=[];let refreshes=0;let polls=0;let revoked=false;
@@ -36,11 +37,11 @@ async function fixture(runtimeSlot='primary') {
   if(url.pathname==='/api/accounts/oauth/token'){
    const form=new URLSearchParams(String(init?.body));
    expect(form.get('client_id')).toBe('oaiapp_matrix_fixture');
-   if(form.get('grant_type')==='refresh_token'){refreshes++;if(refreshGate)await refreshGate;expect(form.has('scope')).toBe(false);return json(await tokens('oaiapp_matrix_fixture',undefined,'subject',300));}
+   if(form.get('grant_type')==='refresh_token'){refreshes++;if(refreshError)return Response.json({error:refreshError,error_description:'private fixture diagnostic'},{status:400});if(refreshGate)await refreshGate;expect(form.has('scope')).toBe(false);return json(await tokens('oaiapp_matrix_fixture',undefined,'subject',300));}
    expect(form.get('redirect_uri')).toBe(authUrl?.searchParams.get('redirect_uri'));expect(form.get('code_verifier')).toBeTruthy();
    return json(await tokens('oaiapp_matrix_fixture',rejectNonce?'wrong':authUrl?.searchParams.get('nonce')??undefined,'subject',expiresIn));
   }
-  if(url.pathname==='/v1/models'){const override=catalogOverride;catalogOverride=null;if(override)await override.gate;if(catalogGate)await catalogGate;if(override?.fail||rejectCatalog)throw new Error('catalog unavailable');return json({models:[{slug:override?.model??visibleModel,display_name:'Visible fixture',visibility:'list'},{slug:'fixture-hidden',display_name:'Hidden',visibility:'hidden'}]});}
+  if(url.pathname==='/v1/models'){const override=catalogOverride;catalogOverride=null;if(override)await override.gate;if(catalogGate)await catalogGate;if(override?.fail===401||catalogStatus)return Response.json({error:{code:'invalid_api_key',message:'private fixture diagnostic'}},{status:override?.fail===401?401:catalogStatus!});if(override?.fail||rejectCatalog)throw new Error('catalog unavailable');return json({models:[{slug:override?.model??visibleModel,display_name:'Visible fixture',visibility:'list'},{slug:'fixture-hidden',display_name:'Hidden',visibility:'hidden'}]});}
   if(url.pathname==='/v1/responses'){
    providerBodies.push(JSON.parse(String(init?.body)));expect(init?.headers).toHaveProperty('authorization');
    if(responseGate){const gate=responseGate;return new Response(new ReadableStream<Uint8Array>({
@@ -71,7 +72,7 @@ async function fixture(runtimeSlot='primary') {
  const service=createNativeChatgptPlanService({vault,auth:{getStatus:()=>authState,getToken:()=> 'fixture-matrix-bearer',getGatewayOrigin:()=> 'https://matrix.test'},openBrowser:async url=>{browserOpens++;authUrl=new URL(url);},fetchFn});
  async function finish(){const callback=new URL(authUrl!.searchParams.get('redirect_uri')!);callback.searchParams.set('state',authUrl!.searchParams.get('state')!);callback.searchParams.set('code','fixture-code');callback.searchParams.set('client_id','oaiapp_matrix_fixture');expect((await fetch(callback)).status).toBe(200);}
  async function signedIn(){await service.connect({...localSession,purpose:'personal_local'});await finish();await vi.waitFor(async()=>expect((await service.status(localSession)).bridgeConnected).toBe(true));}
- return {service,vault,authState,snapshots,holdDisconnect:()=>{let release:()=>void=()=>{};disconnectGate=new Promise<void>(resolve=>{release=resolve;});return release;},clearRequests:()=>{queued=[];},allowCatalog:()=>{rejectCatalog=false;},holdOneCatalog:(fail=false,model=visibleModel)=>{let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});catalogOverride={gate,fail,model};return release;},holdResponse:()=>{responseGate=new Promise<void>(resolve=>{releaseResponse=()=>{responseGate=null;resolve();};});return ()=>releaseResponse();},get responseAborted(){return responseAborted;},replies,providerBodies,fetchFn,finish,signedIn,queue:(items:ChatGptPlanPeerRequest[])=>{queued.push(...items);},changeModel:(model:string)=>{visibleModel=model;},holdCatalog:()=>{catalogGate=new Promise(resolve=>{releaseCatalog=()=>{catalogGate=null;resolve();};});return ()=>releaseCatalog();},holdRefresh:()=>{refreshGate=new Promise(resolve=>{releaseRefresh=()=>{refreshGate=null;resolve();};});return ()=>releaseRefresh();},lateFailure:()=>{lateFailure=true;},rejectNonce:()=>{rejectNonce=true;},expireSoon:()=>{expiresIn=1;},holdJwks:()=>{jwksHeld=false;jwksGate=new Promise(resolve=>{releaseJwks=()=>{jwksGate=null;resolve();};});return ()=>releaseJwks();},rejectCatalog:()=>{rejectCatalog=true;},get browserOpens(){return browserOpens;},get jwksHeld(){return jwksHeld;},get refreshes(){return refreshes;},get polls(){return polls;},get revoked(){return revoked;},cleanup:async()=>{await service.dispose();await rm(dir,{recursive:true,force:true});}};
+ return {service,vault,authState,snapshots,catalogStatus:(value:number|null)=>{catalogStatus=value;},refreshError:(value:string|null)=>{refreshError=value;},holdDisconnect:()=>{let release:()=>void=()=>{};disconnectGate=new Promise<void>(resolve=>{release=resolve;});return release;},clearRequests:()=>{queued=[];},allowCatalog:()=>{rejectCatalog=false;},holdOneCatalog:(fail:boolean|401=false,model=visibleModel)=>{let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});catalogOverride={gate,fail,model};return release;},holdResponse:()=>{responseGate=new Promise<void>(resolve=>{releaseResponse=()=>{responseGate=null;resolve();};});return ()=>releaseResponse();},get responseAborted(){return responseAborted;},replies,providerBodies,fetchFn,finish,signedIn,queue:(items:ChatGptPlanPeerRequest[])=>{queued.push(...items);},changeModel:(model:string)=>{visibleModel=model;},holdCatalog:()=>{catalogGate=new Promise(resolve=>{releaseCatalog=()=>{catalogGate=null;resolve();};});return ()=>releaseCatalog();},holdRefresh:()=>{refreshGate=new Promise(resolve=>{releaseRefresh=()=>{refreshGate=null;resolve();};});return ()=>releaseRefresh();},lateFailure:()=>{lateFailure=true;},rejectNonce:()=>{rejectNonce=true;},expireSoon:()=>{expiresIn=1;},holdJwks:()=>{jwksHeld=false;jwksGate=new Promise(resolve=>{releaseJwks=()=>{jwksGate=null;resolve();};});return ()=>releaseJwks();},rejectCatalog:()=>{rejectCatalog=true;},get browserOpens(){return browserOpens;},get jwksHeld(){return jwksHeld;},get refreshes(){return refreshes;},get polls(){return polls;},get revoked(){return revoked;},cleanup:async()=>{await service.dispose();await rm(dir,{recursive:true,force:true});}};
 }
 function request(id:string,accountId:string,grantRevision:number):ChatGptPlanPeerRequest {
  const sequence=Number.parseInt(id.slice(-12),16);
@@ -196,7 +197,7 @@ describe('native subscription authorization to signed peer transport (explicit m
   const x=await fixture();let release:()=>void=()=>{};
   try{
    await x.signedIn();await x.service.setGrant({...session,enabled:true,background:false});
-   release=x.holdJwks();await x.service.connect({...session,purpose:'personal_local'});await x.finish();
+   x.catalogStatus(401);await expect(x.service.refreshModels(session)).rejects.toThrow();release=x.holdJwks();await x.service.connect({...session,purpose:'personal_local'});x.catalogStatus(null);await x.finish();
    await vi.waitFor(()=>expect(x.jwksHeld).toBe(true));
    x.authState.authGeneration=2;x.service.cancelAll();
    const replacement={...session,authGeneration:2};
@@ -223,7 +224,7 @@ describe('native subscription authorization to signed peer transport (explicit m
  });
  it('keeps validated active account on failed reauthorization and revokes/clears tokens on sign out',async()=>{
   const x=await fixture();try{
-   await x.signedIn();const before=await x.service.status(session);x.rejectNonce();await x.service.connect({...session,purpose:'personal_local'});await x.finish();
+   await x.signedIn();const before=await x.service.status(session);x.catalogStatus(401);await expect(x.service.refreshModels(session)).rejects.toThrow();x.rejectNonce();await x.service.connect({...session,purpose:'personal_local'});x.catalogStatus(null);await x.finish();
    await vi.waitFor(async()=>expect((await x.service.status(session)).state).toBe('connected'));
    expect((await x.service.status(session)).account?.id).toBe(before.account?.id);
    const out=await x.service.disconnect(session);expect(out.state).toBe('disconnected');expect(out.revocation).toBe('confirmed');expect(x.revoked).toBe(true);expect((await x.vault.load('owner')).accounts[0]?.tokens).toBeNull();
@@ -332,4 +333,81 @@ it('a catalog invalidation fences a captured peer restart delayed by disconnect'
   expect(x.snapshots).toHaveLength(connections);expect(result).toHaveProperty('error');
   expect(await x.service.status(session)).toMatchObject({state:'error',models:[],bridgeConnected:false});
  }finally{release();await x.cleanup();}
+});
+
+
+it.each(['catalog401','refresh_invalid_grant'])('explicit Connect recovers rejected %s credentials with fresh OAuth without erasing the saved account',async(kind)=>{
+ const x=await fixture();try{
+  await x.signedIn();let next=session;
+  if(kind==='catalog401'){x.catalogStatus(401);await expect(x.service.refreshModels(session)).rejects.toThrow();}
+  else{const saved=await x.vault.load('owner');saved.accounts[0]!.tokens!.expiresAt=1;await x.vault.save('owner',saved);x.refreshError('invalid_grant');x.authState.authGeneration=2;x.service.cancelAll();next={...session,authGeneration:2};}
+  const before=await x.vault.load('owner');expect(await x.service.status(next)).toMatchObject({state:'error',models:[],bridgeConnected:false});expect(x.browserOpens).toBe(1);
+  const connecting=await x.service.connect({...next,purpose:'personal_local'});expect(connecting).toMatchObject({state:'connecting',models:[],bridgeConnected:false});expect(x.browserOpens).toBe(2);
+  expect(await x.vault.load('owner')).toEqual(before);expect(await x.service.status(next)).toMatchObject({state:'connecting',models:[],bridgeConnected:false});expect(x.browserOpens).toBe(2);expect(await x.service.cancel(next)).toMatchObject({state:'error',models:[],bridgeConnected:false});expect(await x.vault.load('owner')).toEqual(before);
+  await x.service.connect({...next,purpose:'personal_local'});expect(x.browserOpens).toBe(3);x.catalogStatus(null);x.refreshError(null);await x.finish();
+  await vi.waitFor(async()=>expect(await x.service.status(next)).toMatchObject({state:'connected',models:[{id:'fixture-visible'}],bridgeConnected:true,account:{id:before.activeAccountId},grant:{enabled:true,background:false,revision:before.grants[0]!.revision+1}}));
+  const recovered=await x.service.status(next);x.queue([request('00000000-0000-4000-8000-000000000060',recovered.account!.id,recovered.grant.revision)]);await vi.waitFor(()=>expect(x.replies.at(-1)?.ok).toBe(true));expect(x.providerBodies).toHaveLength(1);
+ }finally{await x.cleanup();}
+});
+
+it.each([403,429,503])('catalog HTTP%s does not initiate OAuth or discard credentials',async(status)=>{
+ const x=await fixture();try{
+  await x.signedIn();const before=await x.vault.load('owner');x.catalogStatus(status);await expect(x.service.refreshModels(session)).rejects.toThrow();
+  await expect(x.service.connect({...session,purpose:'personal_local'})).rejects.toThrow();expect(x.browserOpens).toBe(1);expect(await x.vault.load('owner')).toEqual(before);
+  x.catalogStatus(null);expect(await x.service.connect({...session,purpose:'personal_local'})).toMatchObject({state:'connected',bridgeConnected:true});expect(x.browserOpens).toBe(1);
+ }finally{await x.cleanup();}
+});
+
+it('failed fresh authorization after definitive rejection retains the vault and unavailable inference state',async()=>{
+ const x=await fixture();try{
+  await x.signedIn();const before=await x.vault.load('owner');x.catalogStatus(401);await expect(x.service.refreshModels(session)).rejects.toThrow();
+  await x.service.connect({...session,purpose:'personal_local'});x.rejectNonce();await x.finish();await vi.waitFor(async()=>expect((await x.service.status(session)).state).toBe('error'));
+  expect(await x.vault.load('owner')).toEqual(before);expect(await x.service.status(session)).toMatchObject({models:[],bridgeConnected:false});expect(x.providerBodies).toHaveLength(0);
+ }finally{await x.cleanup();}
+});
+
+it.each(['account','owner','computer_runtime'])('a delayed definitive rejection cannot start OAuth for a replacement %s source',async(kind)=>{
+ const x=await fixture();let release=()=>{};try{
+  await x.signedIn();x.catalogStatus(401);await expect(x.service.refreshModels(session)).rejects.toThrow();x.catalogStatus(null);release=x.holdOneCatalog(401);
+  const connecting=x.service.connect({...session,purpose:'personal_local'});const rejected=expect(connecting).rejects.toThrow();await vi.waitFor(()=>expect(x.fetchFn.mock.calls.filter(call=>String(call[0]).endsWith('/v1/models'))).toHaveLength(3));
+  const saved=await x.vault.load('owner');
+  if(kind==='account'){const account={...saved.accounts[0]!,id:'00000000-0000-4000-8000-000000000002'};await x.vault.save('owner',{...saved,activeAccountId:account.id,accounts:[account]});}
+  else if(kind==='owner'){x.authState.userId='other-owner';await x.vault.save('other-owner',{...saved,ownerId:'other-owner'});}
+  else{x.authState.handle='other-computer';x.authState.runtimeSlot='preview';await x.vault.save('owner',{...saved,grants:[...saved.grants,{computerId:'other-computer',revision:4,enabled:true,background:false}]});}
+  x.authState.authGeneration=2;x.service.cancelAll();const next={runtimeSlot:x.authState.runtimeSlot,authGeneration:2};expect((await x.service.status(next)).bridgeConnected).toBe(true);release();await rejected;expect(x.browserOpens).toBe(1);expect((await x.service.status(next)).bridgeConnected).toBe(true);
+ }finally{release();await x.cleanup();}
+});
+
+
+it('a delayed rejected credential read cannot open OAuth after a newer catalog has qualified',async()=>{
+ const x=await fixture();let release=()=>{};try{
+  await x.signedIn();x.catalogStatus(401);await expect(x.service.refreshModels(session)).rejects.toThrow();x.catalogStatus(null);release=x.holdOneCatalog(401);
+  const older=x.service.connect({...session,purpose:'personal_local'});const rejected=expect(older).rejects.toThrow();await vi.waitFor(()=>expect(x.fetchFn.mock.calls.filter(call=>String(call[0]).endsWith('/v1/models'))).toHaveLength(3));
+  expect((await x.service.refreshModels(session)).bridgeConnected).toBe(true);release();await rejected;expect(x.browserOpens).toBe(1);expect((await x.service.status(session)).bridgeConnected).toBe(true);
+ }finally{release();await x.cleanup();}
+});
+
+it('periodic credential rejection withdraws inference without automatically opening browser authorization',async()=>{
+ vi.useFakeTimers({toFake:['setInterval','clearInterval']});const x=await fixture();let dateSpy:ReturnType<typeof vi.spyOn>|undefined;try{
+  await x.signedIn();x.catalogStatus(401);dateSpy=vi.spyOn(Date,'now').mockReturnValue(Date.now()+4*60000+1000);vi.advanceTimersByTime(10000);
+  await vi.waitFor(()=>expect(x.fetchFn.mock.calls.some(call=>String(call[0]).endsWith('/device/disconnect'))).toBe(true));
+  expect(await x.service.status(session)).toMatchObject({state:'error',models:[],bridgeConnected:false});expect(x.browserOpens).toBe(1);expect(x.providerBodies).toHaveLength(0);
+ }finally{dateSpy?.mockRestore();await x.cleanup();vi.useRealTimers();}
+});
+
+
+it('explicit Connect for the current qualified enabled account reuses authorization without another browser or grant revision',async()=>{
+ const x=await fixture();try{
+  await x.signedIn();const before=await x.service.status(session);const vault=await x.vault.load('owner');const connections=x.snapshots.length;
+  expect(await x.service.connect({...session,purpose:'personal_local'})).toEqual(before);expect(x.browserOpens).toBe(1);expect(await x.vault.load('owner')).toEqual(vault);expect(x.snapshots).toHaveLength(connections);
+ }finally{await x.cleanup();}
+});
+
+
+it('a qualified saved-account read during fresh OAuth cannot pretend the pending authorization completed',async()=>{
+ const x=await fixture();try{
+  await x.signedIn();const before=await x.vault.load('owner');x.catalogStatus(401);await expect(x.service.refreshModels(session)).rejects.toThrow();await x.service.connect({...session,purpose:'personal_local'});
+  x.catalogStatus(null);expect(await x.service.refreshModels(session)).toMatchObject({state:'connecting',models:[{id:'fixture-visible'}],bridgeConnected:true});expect(x.browserOpens).toBe(2);expect(await x.vault.load('owner')).toEqual(before);
+  expect(await x.service.cancel(session)).toMatchObject({state:'connected',grant:{revision:before.grants[0]!.revision},bridgeConnected:false});expect(await x.vault.load('owner')).toEqual(before);
+ }finally{await x.cleanup();}
 });

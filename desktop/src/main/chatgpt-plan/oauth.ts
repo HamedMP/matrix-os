@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createLocalJWKSet, jwtVerify, type JSONWebKeySet } from 'jose';
 import { z } from 'zod/v4';
 import { PlanFailure } from './diagnostics';
+import { rejectedRefreshGrant } from './credential-failure';
 export const PLAN_ISSUER = 'https://auth.openai.com';
 export const PLAN_RESOURCE = 'https://api.openai.com/v1';
 export const PLAN_SCOPE = 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct';
@@ -152,8 +153,10 @@ export async function planJson(fetchFn: typeof fetch, path: 'token' | 'jwks' | '
         throw new PlanFailure(stage, error instanceof DOMException && error.name === 'TimeoutError' ? 'timeout' : 'network_error');
     }
     if (!response.ok) {
-        await response.body?.cancel();
-        throw new PlanFailure(stage, 'http_error', response.status);
+        const refreshRejected = path === 'token' && response.status === 400 && init.body instanceof URLSearchParams
+            && init.body.get('grant_type') === 'refresh_token' ? await rejectedRefreshGrant(response, init.signal ?? undefined) : false;
+        if (!response.bodyUsed) await response.body?.cancel();
+        throw new PlanFailure(stage, refreshRejected ? 'credential_rejected' : 'http_error', response.status);
     }
     const text = await boundedText(response);
     try {
