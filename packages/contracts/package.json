@@ -14,6 +14,8 @@
     "./bots": "./src/bots/index.ts"
   },
   "imports": {
+    "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
+    "#chatgpt-plan-wire": "./src/chatgpt-plan-wire.ts",
     "#canonical-chat-import-parts": "./src/canonical-chat-import-parts.ts",
     "#local-chat-import/*": "./src/local-chat-import/*.ts",
     "#chat-subagent": "./src/chat-subagent.ts",

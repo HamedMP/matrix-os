@@ -6,6 +6,32 @@ import { createAgentRuntimeServices } from "../../packages/gateway/src/agent-con
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import { createHermesRuntimeSource } from "../../packages/gateway/src/agent-config/hermes-source.js";
 import { createCanonicalNativeHarnessCatalogReader } from "../../packages/gateway/src/ai-providers/native-harness-canonical-projection.js";
+import type { AgentRuntimeSettingsSnapshot } from "../../packages/gateway/src/agent-config/service.js";
+
+it("preserves OpenClaw discovery while renewing Hermes after a shared slow catalog wait", async () => {
+  let clock = 0;
+  const coding = Promise.withResolvers<{ providers: []; accessSources: []; failures: [] }>();
+  const hermes = createHermesRuntimeSource(async path => path === "/api/status" ? { gateway_running: false } : {
+    provider: "openai-codex", model: "gpt-5.6-sol", providers: [{ slug: "openai-codex", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol"] }],
+  }, { now: () => clock });
+  const openclaw = vi.fn(async () => ({
+    runtime: { selected: "openclaw", options: [{ id: "openclaw", installState: "installed", health: "healthy" }] },
+    messaging: { runtime: "openclaw", provider: "anthropic", model: "native-model", configured: true },
+    providers: [{ id: "anthropic", runtime: "openclaw", displayName: "Anthropic", authKind: "api_key",
+      authStatus: { state: "ready", authenticated: true }, models: [{ id: "native-model", displayName: "Native model", available: true }] }],
+  }) as unknown as AgentRuntimeSettingsSnapshot);
+  const reader = createCanonicalNativeHarnessCatalogReader({ getCatalog: () => coding.promise },
+    { hermesRuntimeSource: hermes, openclawRuntimeSource: openclaw, now: () => new Date(clock) });
+  const request = reader(true);
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  clock = 6000;
+  coding.resolve({ providers: [], accessSources: [], failures: [] });
+  const catalog = await request;
+  expect(catalog.profiles.find(profile => profile.harness === "hermes")?.localObservation.checkedAt).toBe(new Date(6000).toISOString());
+  expect(catalog.profiles.find(profile => profile.harness === "openclaw")?.defaultModelId).toBe("anthropic:native-model");
+  expect(openclaw).toHaveBeenCalledOnce();
+  expect(catalog.failures).toEqual([]);
+});
 
 // Exercise the production dependency choice with real runtime composition.
 // The messaging projection intentionally omits native-only profile evidence.

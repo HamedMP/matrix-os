@@ -114,7 +114,7 @@ export function AccountsPanel({
   const [showLoginMethods, setShowLoginMethods] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const supportsLogin = !guided && canLogin && harness.loginMethods.length > 0;
+  const supportsLogin = harness.harness === "claude" && !guided && canLogin && harness.loginMethods.length > 0;
   const recommendedMethod =
     harness.recommendedLoginMethod &&
     harness.loginMethods.includes(harness.recommendedLoginMethod)
@@ -213,7 +213,7 @@ export function AccountsPanel({
           Other sign-in methods
         </button>
       ) : null}
-      {showLoginMethods ? (
+      {supportsLogin && showLoginMethods ? (
         <div className="matrix-ap-login-methods" aria-label="Login methods">
           {harness.loginMethods.map((method) => (
             <button
@@ -240,7 +240,7 @@ export function AccountsPanel({
         </div>
       ) : null}
 
-      {attempt ? (
+      {attempt && harness.harness === "claude" ? (
         <div className="matrix-ap-attempt" role="status">
           <span>
             {attempt.state === "pending"

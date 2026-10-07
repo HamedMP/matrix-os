@@ -103,7 +103,7 @@ function normalizeProvider(
   const name = DisplayNameSchema.safeParse(parsed.data.name);
   const authenticated = parsed.data.authenticated === true;
   const authKind = authKindForProvider(
-    parsed.data.auth_type ?? undefined,
+    parsed.data.auth_type ?? (parsed.data.is_user_defined === false && ["openai-api", "openrouter"].includes(id.data) ? "api_key" : undefined),
     parsed.data.is_user_defined === true,
   );
   const models = parseModelIds(
@@ -227,8 +227,6 @@ export function normalizeHermesRuntimeSnapshot(input: {
   // native model/options contract omits auth_type for this built-in entry.
   // Custom, duplicate, or explicitly different credential records stay closed.
   const selectedCredentialKind = nativeCredentialKind(currentProvider, nativeProvider);
-  const codexProvider = nativeProviderRecord(options.providers, "openai-codex");
-  const codexCredentialKind = nativeCredentialKind("openai-codex", codexProvider);
   const localObservation = (authenticated: boolean | undefined) => ({
     state: authenticated === true ? "present_unverified" as const
       : authenticated === false ? "absent" as const : "unknown" as const,
@@ -276,10 +274,11 @@ export function normalizeHermesRuntimeSnapshot(input: {
       transition: null,
     },
     providers,
-    ...(codexProvider && codexCredentialKind && input.observedAt !== undefined ? {
-      nativeProfileObservations: [{ providerId: "openai-codex", credentialKind: codexCredentialKind,
-        localObservation: localObservation(codexProvider.authenticated) }],
-    } : {}),
+    ...(input.observedAt !== undefined ? { nativeProfileObservations: ["openai-codex", "openai-api", "anthropic", "openrouter"].flatMap(providerId => {
+      const raw = nativeProviderRecord(options.providers, providerId);
+      const credentialKind = nativeCredentialKind(providerId, raw);
+      return raw && credentialKind ? [{ providerId, credentialKind, localObservation: localObservation(raw.authenticated) }] : [];
+    }) } : {}),
     messaging: {
       runtime: "hermes",
       provider: configured ? currentProvider : null,

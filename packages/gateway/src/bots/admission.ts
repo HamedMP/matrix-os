@@ -46,6 +46,7 @@ export interface PrivateBotRunRequest {
   runId: string;
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
+  subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   capabilities: readonly BotToolCapability[];
   requestClass: "interactive" | "background";
   /** The fingerprint stored with the task; a drift blocks the run as `root_changed`. */
@@ -142,6 +143,7 @@ export function createPrivateBotAdmission(deps: {
           rootFingerprint: root.fingerprint,
           route: input.route,
           accessSourceId: input.accessSourceId,
+          ...(input.subscription ? { subscription: input.subscription } : {}),
           capabilities: input.capabilities,
           requestClass: input.requestClass,
         });

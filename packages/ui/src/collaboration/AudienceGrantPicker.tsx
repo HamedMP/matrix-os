@@ -7,16 +7,17 @@ import {
 import { useEffect, useState } from "react";
 import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
-
+import { memberLabel } from "./member-label.js";
 const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
 type Member = z.infer<typeof OrganizationManagementMembersPageSchema>["members"][number];
 
-export function AudienceGrantPicker({ api, scope, onRefresh }: {
+export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = true }: {
   api: CollaborationApi;
   scope: CollaborationScope;
   onRefresh?: () => Promise<unknown>;
+  allowNewGrants?: boolean;
 }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [grants, setGrants] = useState<z.infer<typeof GrantsSchema>>([]);
@@ -31,23 +32,33 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
   const [retryToken, setRetryToken] = useState(0);
   const base = `/api/collaboration/scopes/${encodeURIComponent(scope.id)}`;
   const orgId = scope.organizationId;
+  // A grantee on a member page not loaded yet keeps the full id: a short id may not tell two apart.
+  const audienceLabel = (actorId: string) => {
+    const member = members.find((candidate) => candidate.actorId === actorId);
+    return member ? memberLabel(member, actorId) : actorId;
+  };
+  // Chosen on a private project, access is recorded now and starts when the owner shares it.
+  const beforeShare = scope.kind === "project" && scope.lifecycle === "private";
   useEffect(() => {
     if (!orgId) { setLoading(false); setError(true); return; }
     let active = true;
+    const membersRequest = allowNewGrants
+      ? api.get(`/api/organizations/${encodeURIComponent(orgId)}/members`)
+      : Promise.resolve(null);
     void Promise.all([
-      api.get(`/api/organizations/${encodeURIComponent(orgId)}/members`),
+      membersRequest,
       api.get(`${base}/grants`),
       api.get(base),
     ]).then(([memberPage, grantRows, scopeValue]) => {
       if (!active) return;
-      const page = OrganizationManagementMembersPageSchema.parse(memberPage);
+      const page = memberPage ? OrganizationManagementMembersPageSchema.parse(memberPage) : null;
       const currentScope = CollaborationScopeSchema.parse(scopeValue);
       if (currentScope.id !== scope.id || currentScope.organizationId !== orgId || currentScope.role !== "owner") {
         throw new Error("Scope owner mismatch");
       }
       setRevision(currentScope.revision);
-      setMembers(page.members.filter((member) => member.actorId !== scope.ownerId));
-      setCursor(page.nextCursor ?? null);
+      setMembers(page?.members.filter((member) => member.actorId !== scope.ownerId) ?? []);
+      setCursor(page?.nextCursor ?? null);
       setGrants(GrantsSchema.parse(grantRows));
       setError(false);
     }).catch((failure: unknown) => {
@@ -55,7 +66,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
       if (active) setError(true);
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [api, base, orgId, scope.ownerId, retryToken]);
+  }, [allowNewGrants, api, base, orgId, scope.id, scope.ownerId, retryToken]);
   const loadMore = async () => {
     if (!orgId || !cursor || pending) return;
     setPending(true);
@@ -114,7 +125,8 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
         clientRequestId: crypto.randomUUID(), expectedRevision: revision, audience: selected, preset,
       }));
       await reloadGrants();
-      setFeedback(created.audience.kind === "organization"
+      setFeedback(beforeShare ? "Access starts when you share the whole project."
+        : created.audience.kind === "organization"
         ? "Organization access is pending until each member opens the share."
         : "Member access is pending until this member opens the share.");
       setError(false);
@@ -124,17 +136,21 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
     } finally { setPending(false); }
   };
   return <section aria-label="Share with organization" className="rounded-xl border p-4">
-    <h3 className="font-medium">Share with your organization</h3>
-    <p className="mt-1 text-xs">Current organization members only. Access starts when the recipient opens the share.</p>
-    {loading ? <p role="status" className="mt-2 text-sm">Loading organization members…</p> : null}
+    <h3 className="font-medium">{allowNewGrants ? beforeShare ? "Choose who gets access" : "Share with your organization" : "Existing live access"}</h3>
+    <p className="mt-1 text-xs">{!allowNewGrants
+      ? "This legacy share cannot be extended to new people. You can adjust or revoke access that already exists."
+      : beforeShare
+      ? "Current organization members only. Access starts when you share the whole project; if you choose no one, everyone in your organization gets contributor access."
+      : "Current organization members only. Access starts when the recipient opens the share."}</p>
+    {loading ? <p role="status" className="mt-2 text-sm">{allowNewGrants ? "Loading organization members…" : "Loading access…"}</p> : null}
     {error ? <div role="alert" className="mt-2 text-sm">Organization access is unavailable. Refresh and try again.
       <button type="button" className={`${buttonClass} ml-2`} onClick={() => { setLoading(true); setError(false); setRetryToken((value) => value + 1); }}>Retry</button>
     </div> : null}
-    <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_9rem_auto]">
+    {allowNewGrants ? <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_9rem_auto]">
       <label className="grid gap-1 text-sm">Share with
         <select value={audience} disabled={loading || pending || error} onChange={(event) => setAudience(event.target.value)} className="min-w-0 rounded-lg border bg-transparent px-3 py-2">
           <option value="organization">Everyone in the organization</option>
-          {members.map((member) => <option key={member.actorId} value={member.actorId}>{member.actorId}</option>)}
+          {members.map((member) => <option key={member.actorId} value={member.actorId}>{memberLabel(member, member.actorId)}</option>)}
         </select>
       </label>
       <label className="grid gap-1 text-sm">Access preset
@@ -143,11 +159,15 @@ export function AudienceGrantPicker({ api, scope, onRefresh }: {
         </select>
       </label>
       <button type="button" className={`${buttonClass} self-end`} disabled={loading || pending || error} onClick={() => void create()}>Grant access</button>
-    </div>
-    {cursor ? <button type="button" className={`${buttonClass} mt-2`} disabled={pending} onClick={() => void loadMore()}>More members</button> : null}
+    </div> : null}
+    {allowNewGrants && cursor ? <button type="button" className={`${buttonClass} mt-2`} disabled={pending} onClick={() => void loadMore()}>More members</button> : null}
     {grants.length ? <ul className="mt-3 space-y-2 text-sm">{grants.filter((grant) => grant.state === "active" || grant.state === "pending").map((grant) => <li key={grant.id} className="flex flex-wrap items-center gap-2 rounded-lg border p-2">
-      <span className="min-w-0 flex-1 truncate">{grant.audience.kind === "organization" ? "Everyone in the organization" : grant.audience.actorId} · {grant.state}</span>
-      <select aria-label={`Preset for ${grant.audience.kind === "organization" ? "organization" : grant.audience.actorId}`}
+      {/* Who on one line, the access state below it, so a long name never hides whether access has started. */}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{grant.audience.kind === "organization" ? "Everyone in the organization" : audienceLabel(grant.audience.actorId)}</span>
+        <span className="block text-xs" style={{ color: "var(--text-secondary)" }}>{beforeShare ? "Starts when shared" : grant.state === "pending" ? "Pending until opened" : "Active"}</span>
+      </span>
+      <select aria-label={`Preset for ${grant.audience.kind === "organization" ? "organization" : audienceLabel(grant.audience.actorId)}`}
         value={grant.preset} disabled={pending || loading || error || !api.patch}
         onChange={(event) => void mutateGrant(grant, event.target.value as "viewer" | "contributor")}
         className="rounded-lg border bg-transparent px-2 py-1">

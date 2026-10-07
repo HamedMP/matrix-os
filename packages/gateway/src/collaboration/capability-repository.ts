@@ -38,6 +38,12 @@ import {
 const DIRECTORY_EVENT_RECIPIENT_LIMIT = 8;
 /** Scopes handled per expiry sweep call; the periodic sweep picks up the rest. */
 const EXPIRY_BATCH_SIZE = 100;
+/**
+ * A project the owner has not shared yet (or whose share is still being published) is not in the
+ * platform directory. Grants chosen then are recorded and audited but not published: activation
+ * publishes the ones still live, so nobody learns of a project before it is shared.
+ */
+const UNPUBLISHED_LIFECYCLES: ReadonlySet<ScopeRow["lifecycle"]> = new Set(["private", "preparing", "recovering"]);
 
 /** Contract limit: grants 100 per scope. */
 export const MAX_GRANTS_PER_SCOPE = 100;
@@ -184,6 +190,7 @@ export class CollaborationCapabilityRepository {
         // A member grant names its grant so the platform can list it and sign an accept-only ticket for it.
         recipients: input.audience.kind === "member" ? [{ actorId: input.audience.actorId, grantId }] : [],
         discoveryState: "invited",
+        publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle),
         now,
         reasonCode: `${input.audience.kind}:${input.preset}`,
       });
@@ -268,6 +275,7 @@ export class CollaborationCapabilityRepository {
         action: auditAction,
         recipients,
         discoveryState: applied.state === "revoked" ? "revoked" : pendingMember ? "invited" : "accepted",
+        publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle),
         now,
         ...(applied.reasonCode ? { reasonCode: applied.reasonCode } : {}),
       });
@@ -500,7 +508,7 @@ export class CollaborationCapabilityRepository {
               await appendMutationRecords(trx, {
                 scope: current, actorId: scope.owner_id, action: "grant.expired",
                 recipients: recipients.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT),
-                discoveryState: state, now,
+                discoveryState: state, publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle), now,
               });
             }
           }

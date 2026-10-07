@@ -45,3 +45,16 @@ export function hasStaleHermesConnection(harness: Pick<ProviderHarnessInstance, 
   return observation?.state === "present_unverified" && Number.isFinite(checked) && Number.isFinite(expires)
     && expires > checked && expires - checked <= 5000 && checked <= Date.now() && expires <= Date.now();
 }
+
+/** Native account shortcuts must not borrow a Matrix-funded route or another account. */
+export function isNativeAccountSource(kind: "codex" | "claude", source?: ProviderAccessSource, account?: ProviderAccount): boolean {
+  const matchesProvider = (provider: string) => provider === (kind === "claude" ? "anthropic" : "openai")
+    || (kind === "codex" && provider === "openai-codex");
+  if (account?.providerId && !matchesProvider(account.providerId)) return false;
+  if (!source) return true; // Legacy native status can be observed without a source descriptor.
+  // Harness profiles belong to generic runtimes; none names official Codex or Claude Code.
+  if (source.kind === "matrix_gateway" || source.kind === "harness_profile" || !matchesProvider(source.providerId)) return false;
+  if ((source.accountId && account?.id !== source.accountId) || (account && account.accessSourceId !== source.id)) return false;
+  return source.fundingKind === "owner_subscription" || source.fundingKind === "owner_api_key"
+    || (source.fundingKind === "owner_account" && Boolean(account));
+}

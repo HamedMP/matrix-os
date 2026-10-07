@@ -65,11 +65,12 @@ suite("Electron Desktop Chat against an authenticated runtime", () => {
       await chat.waitFor({ timeout: 20_000 });
       if (connectionState === "disconnected") {
         await chat.getByRole("heading", { name: "Connect a coding agent", exact: true }).waitFor();
-        for (const name of ["Connect Claude Code", "Connect Codex"]) {
+        for (const name of ["Connect Claude Code"]) {
           const action = chat.getByRole("button", { name, exact: true });
           await action.waitFor();
           expect(await action.isEnabled()).toBe(true);
         }
+        expect(await chat.getByRole("button", { name: "Connect Codex", exact: true }).count()).toBe(0);
       } else {
         expect(await chat.getByRole("heading", { name: "Connect a coding agent", exact: true }).count()).toBe(0);
         expect(await chat.getByRole("button", { name: "Connect Claude Code", exact: true }).count()).toBe(0);

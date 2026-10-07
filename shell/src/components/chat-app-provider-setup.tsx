@@ -5,6 +5,8 @@ import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import {
   CanonicalProviderCatalogSchema,
   FUNDED_AI_READINESS_TIMEOUTS,
+  isChatgptPlanChatRoute,
+  MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
   type CanonicalProviderInstanceDescriptor,
@@ -17,6 +19,8 @@ import {
   type CanonicalProviderChoice,
   canonicalChatProviderCatalogPath,
   canonicalProviderUnavailableSelectionLabel,
+  canonicalChatSubscriptionSelectionMatches,
+  canonicalProviderChoiceCanBeDefault,
 } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
@@ -167,7 +171,8 @@ export function useChatProviderState(
     };
   }, []);
 
-  const choices = catalog ? deriveCanonicalProviderChoices(catalog) : [];
+  const choices = catalog ? deriveCanonicalProviderChoices(catalog).filter(choice => catalog.instances.some(instance => instance.id === choice.instanceId && instance.supports.rootChat)
+    && (!unavailable || !isChatgptPlanChatRoute(choice))) : [];
   const bindingKey = currentSelection
     ? `${currentSelection.instanceId}:${currentSelection.model}:${JSON.stringify(currentSelection.options ?? [])}`
     : "";
@@ -176,20 +181,27 @@ export function useChatProviderState(
       ? boundDraft.selection
       : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [] }
     : savedChoice;
+  const personalIntent = effectiveSaved.key.startsWith(`${MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID}:`)
+    ? { instanceId: MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, modelId: effectiveSaved.key.slice(MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID.length + 1) } : null;
+  const rememberedChoice = choices.find(choice => (!boundInstanceId || choice.instanceId === boundInstanceId) && choiceKey(choice) === effectiveSaved.key);
   const chatChoice = choices.find((choice) => (!boundInstanceId || choice.instanceId === boundInstanceId)
     && choiceKey(choice) === effectiveSaved.key)
     ?? choices.find((choice) => choice.instanceId === currentSelection?.instanceId
       && choice.modelId === currentSelection.model);
-  const selectedBase = currentSelection
+  const selectedBase = personalIntent
+    ? rememberedChoice ?? null
+    : currentSelection
     ? chatChoice ?? null
     : choices.find((choice) => choiceKey(choice) === effectiveSaved.key)
     ?? choices.find((choice) => {
+      if (!canonicalProviderChoiceCanBeDefault(choice)) return false;
       const instance = catalog?.instances.find((candidate) => candidate.id === choice.instanceId);
       return instance?.defaultSelection?.model === choice.modelId;
     })
-    ?? choices[0]
+    ?? choices.find(canonicalProviderChoiceCanBeDefault)
     ?? null;
-  const selected = selectedBase
+  const selectedInstance = catalog?.instances.find(instance => instance.id === selectedBase?.instanceId);
+  const selected = selectedBase && canonicalChatSubscriptionSelectionMatches(selectedInstance, effectiveSaved.options)
     ? applySavedSelection(selectedBase, effectiveSaved)
     : null;
 
@@ -208,12 +220,15 @@ export function useChatProviderState(
 
   const select = (choice: CanonicalProviderChoice) => {
     if (boundInstanceId && choice.instanceId !== boundInstanceId) return;
+    if (isChatgptPlanChatRoute(choice) && !choices.some(current => current.instanceId === choice.instanceId
+      && current.modelId === choice.modelId
+      && canonicalChatSubscriptionSelectionMatches(catalog?.instances.find(instance => instance.id === choice.instanceId), choice.selectedOptions))) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
     save({
       key: choiceKey(choice),
       interactionMode: preserveControls ? selected.interactionMode : choice.interactionMode,
       permissionMode: preserveControls ? selected.permissionMode : choice.permissionMode,
-      options: preserveControls ? selected.selectedOptions : choice.selectedOptions,
+      options: preserveControls && !isChatgptPlanChatRoute(choice) ? selected.selectedOptions : choice.selectedOptions,
     });
   };
 
@@ -247,12 +262,12 @@ export function useChatProviderState(
   };
 
   const displaySelection = selected ? { instanceId: selected.instanceId, modelId: selected.modelId }
-    : currentSelection ? { instanceId: currentSelection.instanceId, modelId: currentSelection.model } : null;
+    : personalIntent ?? (currentSelection ? { instanceId: currentSelection.instanceId, modelId: currentSelection.model } : null);
   const activeInstance = catalog?.instances.find((instance) => instance.id === displaySelection?.instanceId) ?? null;
   const displayModelLabel = selected?.modelLabel
     ?? activeInstance?.models.find(model => model.id === displaySelection?.modelId)?.displayName
     ?? currentSelection?.model;
-  const selectionStatus = currentSelection && !selected ? canonicalProviderUnavailableSelectionLabel(activeInstance, currentSelection.model) : null;
+  const selectionStatus = displaySelection && !selected ? canonicalProviderUnavailableSelectionLabel(activeInstance, displaySelection.modelId) : null;
   return {
     catalog,
     choices,
