@@ -28,7 +28,7 @@ export default function AppsScreen() {
   return (
     <Page title="Apps" subtitle={`Web apps on ${computer?.handle ?? "your computer"}`}>
       <Text style={styles.statusText}>
-        Apps that use workspace data or connected accounts may not work here yet. Open those apps on the web or desktop.
+        Apps that use workspace data or connected accounts may not work here yet. Open those apps on Web Canvas, Web Desktop or Electron Desktop.
       </Text>
       <Spacer size="md" />
       <SearchField placeholder="Search apps" value={query} onChangeText={setQuery} />

@@ -1,6 +1,6 @@
 import React from "react";
-import { fireEvent, render } from "@testing-library/react-native";
-import { Platform } from "react-native";
+import { fireEvent, render, within } from "@testing-library/react-native";
+import { Platform, ScrollView, StyleSheet } from "react-native";
 import { JourneyGate } from "../components/JourneyGate";
 import type { JourneyFetchResult, MobileJourneyState } from "../lib/journey";
 
@@ -102,6 +102,16 @@ describe("JourneyGate", () => {
 
     afterEach(() => {
       jest.restoreAllMocks();
+    });
+
+    it.each(["ios", "android"] as const)("keeps every action in scrollable content for short screens and large text on %s", (os) => {
+      jest.replaceProperty(Platform, "OS", os);
+      const result = render(<JourneyGate result={planRequired()} onRetry={noop} onOpenUrl={noop} />);
+      const scrollView = result.UNSAFE_getByType(ScrollView);
+      expect(StyleSheet.flatten(scrollView.props.contentContainerStyle).flexGrow).toBe(1);
+      for (const action of ["journey-refresh", "journey-sign-out", "journey-support"]) {
+        expect(within(scrollView).getByTestId(action)).toBeTruthy();
+      }
     });
 
     it.each(["ios", "android"] as const)("shows neutral copy with no purchase call to action on %s", (os) => {

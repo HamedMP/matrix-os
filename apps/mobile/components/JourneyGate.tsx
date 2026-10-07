@@ -1,4 +1,4 @@
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   PROVISIONING_STAGE_LABEL,
@@ -20,7 +20,14 @@ interface JourneyGateProps {
   working?: boolean;
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
+function Centered({ children, scrollable = false }: { children: React.ReactNode; scrollable?: boolean }) {
+  if (scrollable) {
+    return (
+      <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent} testID="journey-gate">
+        <View style={styles.card}>{children}</View>
+      </ScrollView>
+    );
+  }
   return (
     <View style={styles.container} testID="journey-gate">
       <View style={styles.card}>{children}</View>
@@ -61,7 +68,7 @@ function PlanRequired({ detail, plansUrl, onOpenUrl, onRefresh, onSignOut }: Pla
     // Store builds: local, neutral copy only. The server detail and plans URL
     // point at purchasing outside the app, so neither is shown here.
     return (
-      <Centered>
+      <Centered scrollable>
         <Title>No active plan</Title>
         <Body>This account doesn’t have an active Matrix computer plan. If you expected access, check again or sign in with another account.</Body>
         <PrimaryButton label="Check again" testID="journey-refresh" onPress={onRefresh} />
@@ -181,6 +188,8 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
 
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.background, padding: theme.spacing.lg },
+  scrollContainer: { flex: 1, backgroundColor: theme.colors.background },
+  scrollContent: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: theme.spacing.lg },
   card: { alignItems: "center", gap: theme.spacing.md, maxWidth: 360 },
   title: { fontFamily: theme.fonts.sansSemiBold, fontSize: 20, color: theme.colors.forest, textAlign: "center" },
   body: { fontFamily: theme.fonts.sans, fontSize: 14, color: theme.colors.forest, opacity: 0.8, textAlign: "center" },
