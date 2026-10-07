@@ -2,7 +2,6 @@ import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity
 import { canonicalComposerSelectionIsAvailable } from "./canonical-composer-state";
 import {
   ChatPresentation,
-  isChatUnread,
   chatReadAction,
   CanonicalSharedChatPanel,
   SharedChatPanel,
@@ -27,7 +26,7 @@ import type {
   CanonicalChatQueuedTurn,
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
-import { MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
+import { MessageSquare } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
@@ -756,8 +755,9 @@ export function CanonicalChatWorkspace({
       data-slot="canonical-chat-workspace"
       data-layout={workspaceLayout}
     >
-      {!externalNavigation && (projectId === null ? (
+      {!externalNavigation && (
         <CanonicalChatIndex
+          scopeLabel={projectId !== null ? projectLabel ?? "Project chats" : undefined}
           onRename={controller.renameChat}
           onToggleRead={(record) => { void controller.updateReadState(record.chat.id, chatReadAction(record)); }}
           items={controller.items}
@@ -775,76 +775,7 @@ export function CanonicalChatWorkspace({
           onNewChat={startNewChat}
           layout={workspaceLayout}
         />
-      ) : <aside
-        aria-label="Project chats"
-        data-layout={workspaceLayout}
-        className={`flex shrink-0 flex-col p-3 ${workspaceLayout === "narrow" ? "h-[168px] min-h-[120px] w-full border-b" : "w-[260px] border-r"}`}
-        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
-      >
-        <div className="flex items-center justify-between gap-2 px-1 pb-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-[14px] font-semibold leading-[20px]" style={{ color: "var(--text-primary)" }}>
-              {projectLabel ?? "Project chats"}
-            </h2>
-            <p className="text-[12px] leading-[16px] tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
-              Project
-            </p>
-          </div>
-          <button
-            type="button"
-            aria-label="New chat"
-            className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)]"
-            onClick={startNewChat}
-          >
-            <Plus size={15} aria-hidden />
-          </button>
-        </div>
-        <form
-          className="relative mb-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void controller.search(query);
-          }}
-        >
-          <Search size={14} aria-hidden className="absolute left-2.5 top-2.5" style={{ color: "var(--text-tertiary)" }} />
-          <input
-            value={query}
-            aria-label="Search chats"
-            placeholder="Search chats"
-            className="h-9 w-full rounded-lg border bg-transparent pl-8 pr-2 text-[14px] leading-[20px] outline-none focus:border-[var(--accent)]"
-            style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              setQuery(value);
-              if (!value) void controller.refresh();
-            }}
-          />
-        </form>
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
-          {controller.items.map((record) => (
-            <ChatContextMenu key={record.chat.id} chatId={record.chat.id} primaryAction={{ label: isChatUnread(record) ? "Mark as read" : "Mark as unread", onSelect: () => { void controller.updateReadState(record.chat.id, chatReadAction(record)); } }}>
-            <button
-              type="button"
-              aria-label={record.chat.title}
-              aria-pressed={record.chat.id === controller.activeChatId}
-              className="w-full rounded-lg px-2.5 py-2 text-left hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)]"
-              onClick={() => selectChat(record.chat.id)}
-            >
-              <span className="block truncate text-[14px] font-medium leading-[20px]" style={{ color: "var(--text-primary)" }}>
-                {isChatUnread(record) ? <span aria-label={`Unread ${record.chat.title}`} className="mr-2 inline-block size-2 rounded-full bg-[var(--accent)]" /> : null}
-                {record.chat.title}
-              </span>
-              <span className="block truncate text-[12px] leading-[16px] tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
-                {record.chat.lastMessagePreview ?? "No messages yet"}
-              </span>
-            </button>
-            </ChatContextMenu>
-          ))}
-          {controller.status === "ready" && controller.items.length === 0 ? (
-            <p className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
-          ) : null}
-        </div>
-      </aside>)}
+      )}
       <SharedChatSurface
         ariaLabel={projectId ? "Project Chat" : "Global Chat"}
         project={projectId ? { projectId, label: projectLabel ?? projectId } : undefined}
