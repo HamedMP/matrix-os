@@ -58,6 +58,30 @@ describe("relay routing for a private project's owner setup", () => {
     }
   });
 
+  it("routes grant management on a private project so its owner can choose access before sharing", async () => {
+    const { relay, forwarded, send } = harness();
+    const grant = `${BASE}/grants/60000000-0000-4000-8000-00000000d001`;
+    try {
+      for (const [method, path] of [
+        ["GET", `${BASE}/grants`], ["POST", `${BASE}/grants`], ["PATCH", grant], ["DELETE", grant],
+      ] as const) {
+        expect((await send(method, path)).status).toBe(200);
+      }
+      expect(forwarded).toEqual([
+        `${HOME.origin}${BASE}/grants`, `${HOME.origin}${BASE}/grants`, `${HOME.origin}${grant}`, `${HOME.origin}${grant}`,
+      ]);
+      // Accepting, reading one grant, or any other verb is never routed by runtime.
+      for (const [method, path] of [
+        ["GET", grant], ["PUT", grant], ["POST", `${grant}/accept`], ["DELETE", `${BASE}/grants`], ["PATCH", `${BASE}/grants`],
+      ] as const) {
+        expect((await send(method, path)).status).toBe(404);
+      }
+      expect(forwarded).toHaveLength(4);
+    } finally {
+      relay.close();
+    }
+  });
+
   it("keeps using the directory when the scope has a route, without consulting the owner runtime", async () => {
     const { relay, forwarded, resolveOwnerRuntimeHome, send } = harness({ directory: DIRECTORY_HOME });
     try {
