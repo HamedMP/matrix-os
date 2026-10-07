@@ -15,6 +15,10 @@ import { jsonb, parseJson } from "./records.js";
 import type { SharedQueuedTurn } from "./repository.js";
 import type { CollaborationRunLossRepository } from "../collaboration/shared-run-loss.js";
 import { fenceSharedChatAuthority, type SharedChatAuthorizer } from "../collaboration/shared-chat-authority.js";
+import {
+  authorizedSharedChatBindingMatches,
+  directSharedChatBindingMatches,
+} from "../collaboration/shared-chat-binding.js";
 
 const RequestIdSchema = CollaborationIdSchema;
 const HashSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -503,7 +507,10 @@ async function authorizeCommand(
     .where("owner_id", "=", scope.owner_id)
     .where("owner_type", "=", scope.owner_type)
     .forUpdate().executeTakeFirst();
-  if (!chat || !bindingMatches(chat.collaboration, scope.id)) {
+  const bindingMatches = chat && (authority
+    ? await authorizedSharedChatBindingMatches(trx, authority, chat.collaboration, { executionFenced: true })
+    : directSharedChatBindingMatches(chat.collaboration, scope.id, { executionFenced: true }));
+  if (!chat || !bindingMatches) {
     throw new CollaborationChatCommandError("unavailable");
   }
   return {
@@ -720,19 +727,4 @@ async function appendEvent(
     payload: jsonb(payload),
     created_at: authorized.at,
   }).execute();
-}
-
-function bindingMatches(value: unknown, scopeId: string): boolean {
-  try {
-    const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
-    return !!parsed && typeof parsed === "object"
-      && (parsed as { scopeId?: unknown }).scopeId === scopeId
-      && (parsed as { executionFenced?: unknown }).executionFenced === true;
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[chat/collaboration-commands] binding decode failed",
-        error instanceof Error ? error.name : "UnknownError");
-    }
-    return false;
-  }
 }

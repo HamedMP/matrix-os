@@ -32,6 +32,10 @@ import {
   fenceSharedChatAuthority,
   type SharedChatAuthorizer,
 } from "../collaboration/shared-chat-authority.js";
+import {
+  authorizedSharedChatBindingMatches,
+  directSharedChatBindingMatches,
+} from "../collaboration/shared-chat-binding.js";
 import { sharedAiEligibilitySupportsDriver } from "../collaboration/shared-ai-eligibility.js";
 import type {
   ChatDatabase,
@@ -324,7 +328,10 @@ export class ChatQueueRepository {
 
       const chat = await ownedChat(executor, owner, chatId);
       if (!chat) throw new SharedChatQueueError("not_found");
-      if (chat.lifecycle !== "active" || !sharedBindingMatches(chat.collaboration, scopeId)) {
+      const bindingMatches = authority
+        ? await authorizedSharedChatBindingMatches(trx, authority, chat.collaboration, { executionFenced: true })
+        : directSharedChatBindingMatches(chat.collaboration, scope.id, { executionFenced: true });
+      if (chat.lifecycle !== "active" || !bindingMatches) {
         throw new SharedChatQueueError("unavailable");
       }
       const provider = authoritativeSharedProvider({
@@ -1275,20 +1282,6 @@ function projectedSharedRequestState(
   if (run === "accepted") return "claimed";
   if (run === "aborted") return "cancelled";
   return run;
-}
-
-function sharedBindingMatches(value: unknown, scopeId: string): boolean {
-  try {
-    const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
-    return !!parsed && typeof parsed === "object"
-      && (parsed as { scopeId?: unknown }).scopeId === scopeId
-      && (parsed as { executionFenced?: unknown }).executionFenced === true;
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[chat/queue] collaboration binding decode failed", error instanceof Error ? error.name : "UnknownError");
-    }
-    return false;
-  }
 }
 
 function authoritativeSharedProvider(input: {

@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import type { z } from "zod/v4";
 import { Dialog } from "../Dialog.js";
 import { AudienceGrantPicker } from "./AudienceGrantPicker.js";
+import { ContributorAiSettings } from "./ContributorAiSettings.js";
 import { ReadinessSummary } from "./ReadinessSummary.js";
 import { projectAwaitingShare } from "./project-state.js";
 
@@ -19,6 +20,7 @@ export interface CollaborationApi {
   baseUrl: string;
   get(path: string): Promise<unknown>;
   post(path: string, body: unknown): Promise<unknown>;
+  put?(path: string, body: unknown): Promise<unknown>;
   patch?(path: string, body: unknown): Promise<unknown>;
   delete(path: string, body?: unknown): Promise<unknown>;
   subscribe?(
@@ -113,6 +115,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       <button type="button" className={buttonClass} onClick={onClose}>Close</button>
     </div>
     {readiness ? <ReadinessSummary readiness={readiness} /> : null}
+    {!projectAwaitingShare(scope) ? <ContributorAiSettings api={api} scope={scope} /> : null}
     <ScopeAccess api={api} scope={scope} onRefresh={refresh} />
     <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
       {presetMeaning(scope.kind)}

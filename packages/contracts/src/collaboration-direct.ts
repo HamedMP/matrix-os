@@ -471,6 +471,7 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("GET", `${SCOPE}/events`, { websocket: true, response: "CollaborationEventFrameSchema" }),
   home("GET", `${SCOPE}/sync/events`, { websocket: true }),
   home("GET", `${SCOPE}/execution-policy`, { response: "CollaborationExecutionPolicySchema" }),
+  home("GET", `${SCOPE}/execution-policy/options`, { response: "CollaborationExecutionPolicyOptionsSchema" }),
   home("PUT", `${SCOPE}/execution-policy`, { request: "CollaborationExecutionPolicyPutRequestSchema", response: "CollaborationExecutionPolicySchema" }),
   home("POST", `${SCOPE}/lifecycle`, { request: "CollaborationLifecycleRequestSchema", response: "CollaborationOperationSchema" }),
   home("GET", `${SCOPE}/operations/:operationId`, { response: "CollaborationOperationSchema" }),

@@ -9,7 +9,6 @@
  */
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CollaborationExecutionPolicySchema,
@@ -164,7 +163,7 @@ describe("S08 owner-selected AI source", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     eligibility = new OwnerAccountEligibility({ snapshots });
     policies = new CollaborationExecutionPolicyRepository(fixture.db, { now, organizationAiSubmission, eligibility });
-    bindings = new CollaborationRunBindingRepository(fixture.db, { now, policies, eligibility });
+    bindings = new CollaborationRunBindingRepository(fixture.db, { now, eligibility });
     await seedScopes(fixture);
   });
 
@@ -197,6 +196,33 @@ describe("S08 owner-selected AI source", () => {
   });
 
   describe("policy selection", () => {
+    it("lists only owner sources backed by a supported shared harness", async () => {
+      const result = await policies.options(PROJECT_SCOPE, collaborationActors.owner);
+      expect(result.organizationAiSubmission).toBe("members");
+      expect(result.policy).toBeNull();
+      expect(result.options).toEqual([
+        expect.objectContaining({
+          source: { accessSourceId: "owner_anthropic_profile", providerInstanceId: "inst_claude_profile", harness: "claude_code" },
+          sourceLabel: "Claude Code (profile)",
+          sourceKind: "owner_account",
+          available: true,
+          modelIds: ["claude-opus-5"],
+          defaultModelId: "claude-opus-5",
+        }),
+        expect.objectContaining({
+          source: { ...CLAUDE, harness: "claude_code" },
+          modelIds: ["claude-opus-5", "claude-sonnet-5"],
+        }),
+        expect.objectContaining({
+          source: { ...CODEX, harness: "codex" },
+          sourceKind: "owner_api_key",
+          modelIds: ["gpt-5.6"],
+        }),
+      ]);
+      await expect(policies.options(PROJECT_SCOPE, collaborationActors.editor))
+        .rejects.toMatchObject({ code: "forbidden" });
+    });
+
     it("stores one owner-selected V3 source per project scope with the effective submit mode", async () => {
       const policy = await ownerPolicy();
       expect(CollaborationExecutionPolicySchema.parse(policy)).toEqual(policy);
@@ -291,19 +317,20 @@ describe("S08 owner-selected AI source", () => {
     it("requires the owner's provider-terms acknowledgement before members may submit", async () => {
       await expect(ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { acknowledgeProviderTerms: false }))
         .rejects.toMatchObject({ code: "provider_terms_required" });
-      const ownerOnly = await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { acknowledgeProviderTerms: false, submitMode: "owner_only" });
-      expect(ownerOnly.effectiveSubmitMode).toBe("owner_only");
-      expect(ownerOnly.providerTermsAcknowledgedAt).toBeNull();
+      await expect(ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, {
+        acknowledgeProviderTerms: false,
+        submitMode: "owner_only",
+      })).rejects.toMatchObject({ code: "provider_terms_required" });
     });
   });
 
   describe("effective submit mode", () => {
     it.each([
       ["members", "follow_organization", "members"],
-      ["members", "owner_only", "owner_only"],
-      ["owner_only", "follow_organization", "owner_only"],
-      ["absent", "follow_organization", "owner_only"],
-      ["unknown", "follow_organization", "owner_only"],
+      ["members", "owner_only", "members"],
+      ["owner_only", "follow_organization", "members"],
+      ["absent", "follow_organization", "members"],
+      ["unknown", "follow_organization", "members"],
     ] as const)("organization %s + policy %s → %s", async (org, mode, expected) => {
       aiSubmission = org;
       const policy = await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { submitMode: mode });
@@ -311,37 +338,24 @@ describe("S08 owner-selected AI source", () => {
       expect(await policies.effectiveSubmitMode(PROJECT_SCOPE)).toBe(expected);
     });
 
-    it("re-reads organization metadata on every resolution instead of freezing it", async () => {
+    it("does not let organization metadata override Contributor submission", async () => {
       await ownerPolicy();
       aiSubmission = "owner_only";
-      expect(await policies.effectiveSubmitMode(PROJECT_SCOPE)).toBe("owner_only");
-      expect((await policies.resolve(PROJECT_SCOPE))?.effectiveSubmitMode).toBe("owner_only");
+      expect(await policies.effectiveSubmitMode(PROJECT_SCOPE)).toBe("members");
+      expect((await policies.resolve(PROJECT_SCOPE))?.effectiveSubmitMode).toBe("members");
     });
 
     it("is owner-only with no policy at all", async () => {
       expect(await policies.effectiveSubmitMode(PROJECT_SCOPE)).toBe("owner_only");
     });
 
-    it("stays owner-only without the provider-terms acknowledgement even after the organization enables members", async () => {
+    it("requires provider-terms acknowledgement for Contributor submission regardless of organization metadata", async () => {
       aiSubmission = "owner_only";
-      const policy = await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { acknowledgeProviderTerms: false });
-      expect(policy.submitMode).toBe("follow_organization");
-      expect(policy.providerTermsAcknowledgedAt).toBeNull();
-      aiSubmission = "members";
-      expect(await policies.effectiveSubmitMode(PROJECT_SCOPE)).toBe("owner_only");
-      const resolved = await policies.resolve(PROJECT_SCOPE);
-      expect(resolved?.effectiveSubmitMode).toBe("owner_only");
-      expect(resolved?.organizationAiSubmission).toBe("owner_only");
-      await expect(bindings.admit({
-        runId: "run_unacked", requestId: "req_unacked", scopeId: PROJECT_CHAT_SCOPE, requestingActorId: collaborationActors.editor,
-        expectedPolicyRevision: policy.revision, executionRoot: ROOT, rootFingerprint: sha("root"), audienceGeneration: "1",
-      })).rejects.toMatchObject({ code: "owner_only" });
-      const acknowledged = await policies.put({
-        scopeId: PROJECT_SCOPE, actorId: collaborationActors.owner, payloadHash: sha("ack"),
-        request: putRequest(CLAUDE, { expectedRevision: policy.revision }),
-      });
+      await expect(ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { acknowledgeProviderTerms: false }))
+        .rejects.toMatchObject({ code: "provider_terms_required" });
+      const acknowledged = await ownerPolicy();
       expect(acknowledged.effectiveSubmitMode).toBe("members");
-      expect(acknowledged.organizationAiSubmission).toBe("members");
+      expect(acknowledged.organizationAiSubmission).toBe("owner_only");
     });
   });
 
@@ -392,12 +406,11 @@ describe("S08 owner-selected AI source", () => {
       expect(second.requestingActorId).toBe(collaborationActors.viewer);
     });
 
-    it("refuses member submission under owner-only while the owner still submits", async () => {
+    it("admits a Contributor even when organization metadata is absent", async () => {
       aiSubmission = "absent";
       const policy = await ownerPolicy();
-      await expect(bindings.admit(admission(collaborationActors.editor, policy.revision))).rejects.toMatchObject({ code: "owner_only" });
-      const owner = await bindings.admit(admission(collaborationActors.owner, policy.revision));
-      expect(owner.requestingActorId).toBe(collaborationActors.owner);
+      const member = await bindings.admit(admission(collaborationActors.editor, policy.revision));
+      expect(member.requestingActorId).toBe(collaborationActors.editor);
     });
 
     it("refuses admission with no policy and never invents a source", async () => {
@@ -424,68 +437,16 @@ describe("S08 owner-selected AI source", () => {
       expect((await policies.resolve(PROJECT_SCOPE))?.source).toEqual({ ...CLAUDE, harness: "claude_code" });
     });
 
-    it.skipIf(!hasRealPostgres)("resolves the slow AI-submission preflight before the lock and the fenced re-read under it (real Postgres)", async () => {
-      const policy = await ownerPolicy();
-      const observed: string[] = [];
-      aiSubmissionProbe = async () => {
-        // A NOWAIT lock from another pooled connection fails only while admit() holds the scope row.
-        try {
-          await sql`SELECT id FROM collaboration_scopes WHERE id = ${PROJECT_SCOPE} FOR UPDATE NOWAIT`.execute(fixture.db);
-          observed.push("unlocked");
-        } catch (error: unknown) {
-          observed.push((error as { code?: string }).code === "55P03" ? "locked" : `error:${error instanceof Error ? error.name : "unknown"}`);
-        }
-      };
-      await bindings.admit(admission(collaborationActors.editor, policy.revision));
-      // The unbounded preflight never holds the scope row; only the bounded fenced re-read does.
-      expect(observed).toEqual(["unlocked", "locked"]);
-    });
-
-    it("re-reads the organization submission mode under the admission fence, not only at preflight", async () => {
+    it("does not consult organization submission metadata during admission", async () => {
       const policy = await ownerPolicy();
       let lookups = 0;
       aiSubmissionProbe = async () => {
         lookups += 1;
-        // The organization turns member submission off after the slow preflight and before the binding is written.
-        if (lookups >= 2) aiSubmission = "owner_only";
+        throw new Error("organization metadata should not gate a Contributor");
       };
-      await expect(bindings.admit(admission(collaborationActors.editor, policy.revision)))
-        .rejects.toMatchObject({ code: "owner_only" });
-      expect(lookups).toBeGreaterThanOrEqual(2);
-      expect(await bindings.list(PROJECT_CHAT_SCOPE)).toEqual([]);
-    });
-
-    it("fails the fenced submission re-read closed and releases the scope row when the lookup stalls", async () => {
-      const policy = await ownerPolicy();
-      const fenced = new CollaborationRunBindingRepository(fixture.db, {
-        now, policies, eligibility, authorityRecheckTimeoutMs: 25,
-      });
-      let release: (() => void) | undefined;
-      let lookups = 0;
-      aiSubmissionProbe = async () => {
-        lookups += 1;
-        if (lookups < 2) return;
-        await new Promise<void>((resolve) => { release = resolve; });
-      };
-      await expect(fenced.admit(admission(collaborationActors.editor, policy.revision)))
-        .rejects.toMatchObject({ code: "owner_only" });
-      release?.();
-      aiSubmissionProbe = undefined;
-      expect(await bindings.list(PROJECT_CHAT_SCOPE)).toEqual([]);
-      // The refused admission released the scope row, so the owner's own run still admits.
-      expect((await bindings.admit(admission(collaborationActors.owner, policy.revision))).requestingActorId)
-        .toBe(collaborationActors.owner);
-    });
-
-    it.skipIf(!hasRealPostgres)("re-validates the policy revision under the lock after the membership preflight (real Postgres)", async () => {
-      const policy = await ownerPolicy();
-      let changed = false;
-      aiSubmissionProbe = async () => {
-        if (changed) return;
-        changed = true;
-        await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { expectedRevision: policy.revision });
-      };
-      await expect(bindings.admit(admission(collaborationActors.editor, policy.revision))).rejects.toMatchObject({ code: "stale_policy" });
+      const admitted = await bindings.admit(admission(collaborationActors.editor, policy.revision));
+      expect(admitted.requestingActorId).toBe(collaborationActors.editor);
+      expect(lookups).toBe(0);
     });
 
     it("rejects a participant account override and an unlisted model", async () => {
@@ -549,13 +510,13 @@ describe("S08 owner-selected AI source", () => {
       const first = await admit(bindings, "run_restart_1", "1");
       expect(first.sessionGeneration).toBe("1");
       // A fresh repository has no in-memory session state: the persisted key decides.
-      const restarted = new CollaborationRunBindingRepository(fixture.db, { now, policies, eligibility });
+      const restarted = new CollaborationRunBindingRepository(fixture.db, { now, eligibility });
       const sameKey = await admit(restarted, "run_restart_2", "1");
       expect(sameKey.sessionGeneration).toBe("1");
-      const restartedAgain = new CollaborationRunBindingRepository(fixture.db, { now, policies, eligibility });
+      const restartedAgain = new CollaborationRunBindingRepository(fixture.db, { now, eligibility });
       const changedKey = await admit(restartedAgain, "run_restart_3", "2");
       expect(Number(changedKey.sessionGeneration)).toBeGreaterThan(Number(sameKey.sessionGeneration));
-      const backToOld = await admit(new CollaborationRunBindingRepository(fixture.db, { now, policies, eligibility }), "run_restart_4", "1");
+      const backToOld = await admit(new CollaborationRunBindingRepository(fixture.db, { now, eligibility }), "run_restart_4", "1");
       expect(Number(backToOld.sessionGeneration)).toBeGreaterThan(Number(changedKey.sessionGeneration));
     });
 
@@ -648,12 +609,10 @@ describe("S08 owner-selected AI source", () => {
         .rejects.toMatchObject({ requestState: "unavailable" });
     });
 
-    it("refuses a member under owner-only as unauthorized and an unavailable source as unavailable, never falling back", async () => {
-      aiSubmission = "absent";
-      await ownerPolicy();
-      await expect(source().prepare(run(collaborationActors.editor))).rejects.toBeInstanceOf(SharedChatRunPreparationError);
-      await expect(source().prepare(run(collaborationActors.editor))).rejects.toMatchObject({ requestState: "unauthorized" });
-      expect(await source().prepare(run(collaborationActors.owner))).toMatchObject({ effectiveSubmitMode: "owner_only" });
+    it("treats a legacy owner-only value as compatibility data and never falls back from an unavailable source", async () => {
+      await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { submitMode: "owner_only" });
+      expect(await source().prepare(run(collaborationActors.editor))).toMatchObject({ effectiveSubmitMode: "members" });
+      expect(await source().prepare(run(collaborationActors.owner))).toMatchObject({ effectiveSubmitMode: "members" });
       snapshot = withSourceState("src_claude_sub", "expired");
       await expect(source().prepare(run(collaborationActors.owner))).rejects.toMatchObject({ requestState: "unavailable" });
     });
@@ -681,8 +640,8 @@ describe("S08 owner-selected AI source", () => {
       });
     });
 
-    async function signed(actorId: string, ownerId: string, method: "GET" | "PUT", body?: unknown, scopeId = PROJECT_SCOPE) {
-      const path = `/api/collaboration/scopes/${scopeId}/execution-policy`;
+    async function signed(actorId: string, ownerId: string, method: "GET" | "PUT", body?: unknown, scopeId = PROJECT_SCOPE, suffix = "") {
+      const path = `/api/collaboration/scopes/${scopeId}/execution-policy${suffix}`;
       const bytes = body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(body));
       const proof = signer.signHttp({ actorId, ownerId, runtimeId: collaborationIds.runtime, scopeId, method, path, query: "", body: bytes });
       return app.request(path, {
@@ -703,6 +662,18 @@ describe("S08 owner-selected AI source", () => {
       const memberPut = await signed(collaborationActors.editor, collaborationActors.owner, "PUT", putRequest(CLAUDE, { expectedRevision: policy.revision }));
       expect(memberPut.status).toBe(403);
       expect(await memberPut.json()).toEqual({ error: "Collaboration unavailable", code: "forbidden" });
+    });
+
+    it("exposes bounded source options only to the scope owner", async () => {
+      const owner = await signed(collaborationActors.owner, collaborationActors.owner, "GET", undefined, PROJECT_SCOPE, "/options");
+      expect(owner.status).toBe(200);
+      expect(await owner.json()).toMatchObject({
+        organizationAiSubmission: "members",
+        policy: null,
+        options: expect.arrayContaining([expect.objectContaining({ sourceLabel: "Claude Code (profile)" })]),
+      });
+      const member = await signed(collaborationActors.editor, collaborationActors.owner, "GET", undefined, PROJECT_SCOPE, "/options");
+      expect(member.status).toBe(403);
     });
 
     it("an outsider with a valid proof is denied by the organization precondition and a bad body is rejected", async () => {

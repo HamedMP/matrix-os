@@ -74,8 +74,9 @@ export class SharedRunOwnerSource {
   /**
    * Throws `SharedChatRunPreparationError("unavailable")` when the scope has
    * no execution policy or the owner's source cannot serve the run, and
-   * `SharedChatRunPreparationError("unauthorized")` when a member submits on
-   * an owner-only scope. There is no null path: a policy is mandatory.
+   * `SharedChatRunPreparationError("unauthorized")` when the persisted policy
+   * lacks the owner's provider-terms acknowledgement. There is no null path:
+   * a policy is mandatory.
    */
   async prepare(input: SharedRunOwnerSourceInput): Promise<SharedRunOwnerSourceDecision> {
     const policy = await this.policies.resolve(input.scopeId);

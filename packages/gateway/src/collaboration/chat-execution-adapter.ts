@@ -277,10 +277,10 @@ export class CollaborationChatExecutionAdapter {
     if (capability.status !== "available" && capability.status !== "owner_binding_required") {
       return { capability };
     }
-    // The effective submit mode and the owner's source selection gate the
-    // capability itself, not only dispatch: a member on an owner-only scope
-    // and any actor on a scope without an owner-selected source see it as
-    // unavailable, so no request is accepted that could never run.
+    // Owner terms and source selection gate the capability itself, not only
+    // dispatch: a participant without acknowledged terms, and any actor on a
+    // scope without an owner-selected source, sees it as unavailable, so no
+    // request is accepted that could never run.
     if (context.actorId !== context.ownerId) {
       const mode = await this.options.resolveEffectiveSubmitMode?.(context.scopeId) ?? "owner_only";
       if (mode !== "members") return { capability: { ...capability, status: "unavailable" } };

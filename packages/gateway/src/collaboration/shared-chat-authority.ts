@@ -11,14 +11,30 @@ export type SharedChatAuthorizer = (
   action: "request_ai" | "control_execution",
 ) => Promise<AuthorizedCollaborationContext>;
 
+export type SharedChatAction = "read" | "discuss" | Parameters<SharedChatAuthorizer>[2];
+
 /** Locks the same scopes grant mutations advance, so a preflight cannot survive revocation. */
+export function fenceSharedChatAuthority(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  scope: Selectable<CollaborationScopesTable>,
+  context: AuthorizedCollaborationContext,
+  actorId: string,
+  action: "read",
+): Promise<"owner" | "editor" | "viewer">;
+export function fenceSharedChatAuthority(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  scope: Selectable<CollaborationScopesTable>,
+  context: AuthorizedCollaborationContext,
+  actorId: string,
+  action: Exclude<SharedChatAction, "read">,
+): Promise<"owner" | "editor">;
 export async function fenceSharedChatAuthority(
   trx: Transaction<OwnerCollaborationDatabase>,
   scope: Selectable<CollaborationScopesTable>,
   context: AuthorizedCollaborationContext,
   actorId: string,
-  action: "request_ai" | "control_execution",
-): Promise<"owner" | "editor"> {
+  action: SharedChatAction,
+): Promise<"owner" | "editor" | "viewer"> {
   if (scope.kind !== "chat" || scope.lifecycle !== "shared"
     || context.scopeId !== scope.id || context.resourceId !== scope.resource_id
     || context.ownerId !== scope.owner_id || context.actorId !== actorId
@@ -27,7 +43,7 @@ export async function fenceSharedChatAuthority(
     || context.authorityGeneration !== Number(scope.authority_generation)
     || (context.role === "owner" && actorId !== scope.owner_id)
     || (scope.membership_mode === "direct" && scope.parent_scope_id !== null)
-    || context.role === "viewer") {
+    || (action !== "read" && context.role === "viewer")) {
     throw new CollaborationAuthorizationError("forbidden", "Shared Chat authority changed");
   }
   const membershipScope = scope.membership_mode === "direct"

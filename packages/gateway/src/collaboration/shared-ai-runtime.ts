@@ -328,9 +328,9 @@ export async function createSharedAiRuntime(options: {
           })) throw new SharedChatRunPreparationError("unavailable");
           const adapter = sharedAdapterFor(execution.driverKind, execution.selection.instanceId, eligibility);
           if (!adapter) throw new SharedChatRunPreparationError("unavailable");
-          // S08: the owner's execution policy decides the source; a missing policy, a
-          // member on an owner-only scope or an unavailable source refuses preparation
-          // and keeps the queued request. No default credential is ever substituted.
+          // S08: the owner's execution policy decides the source; a missing policy,
+          // missing owner terms, or an unavailable source refuses preparation and
+          // keeps the queued request. No default credential is ever substituted.
           const ownerDecision = await options.ownerSource.prepare({
             scopeId,
             chatId,

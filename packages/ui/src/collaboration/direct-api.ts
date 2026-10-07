@@ -106,7 +106,7 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     return { ...page, items };
   };
 
-  const send = async (method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<unknown> => {
+  const send = async (method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<unknown> => {
     if (DISCOVERY_PATH.test(path) && method === "GET") return discovery(path);
     const ownerRuntime = method === "POST" ? OWNER_RUNTIME_SETUP_PATH.exec(path) : null;
     if (ownerRuntime) {
@@ -154,6 +154,7 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     }
     if (!scopeId) {
       if (INVITATION_PATH.test(path)) throw new Error("CollaborationUnavailable");
+      if (method === "PUT") throw new Error("CollaborationUnavailable");
       return method === "GET" ? platform.get(path) : method === "POST" ? platform.post(path, body) : method === "PATCH" ? platform.patch!(path, body) : platform.delete(path, body);
     }
     try {
@@ -171,6 +172,7 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     rememberInvitation,
     get: (path) => send("GET", path),
     post: (path, body) => send("POST", path, body),
+    put: (path, body) => send("PUT", path, body),
     patch: (path, body) => send("PATCH", path, body),
     delete: (path, body) => send("DELETE", path, body),
     subscribe: (scopeId, onEvent, onUnavailable, onConnectionChange) => direct.subscribeEvents(scopeId, {
