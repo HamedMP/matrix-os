@@ -136,10 +136,15 @@ describe("collaboration gateway routes", () => {
       },
       // This fixture exercises the organization-enabled member submission path.
       resolveEffectiveSubmitMode: async () => "members",
-      resolveCanonicalProviderAuthority: async (_ownerId, selection) =>
-        selection.instanceId === "claude_code_default" && selection.model === "opus"
-          ? { driverKind: "claude_code", selection }
-          : null,
+      resolveCanonicalProviderAuthority: async (_scopeId, _ownerId, selection) => {
+        if (selection.instanceId === "claude_code_default" && selection.model === "opus") {
+          return { driverKind: "claude_code" as const, selection };
+        }
+        if (selection.instanceId === "codex_default" && selection.model === "gpt-5.6-sol") {
+          return { driverKind: "codex" as const, selection };
+        }
+        return null;
+      },
       requestDispatch: async () => undefined,
       now: () => now,
       createQueuedTurnId: () => "qturn_shared_route_1",
