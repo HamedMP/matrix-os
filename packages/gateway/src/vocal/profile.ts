@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir, rename, unlink } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 
 // Per-home write lock. `appendFact` is read-modify-write, and Gemini can
@@ -9,21 +9,20 @@ import { randomBytes } from "node:crypto";
 const writeLocks = new Map<string, Promise<unknown>>();
 const MAX_WRITE_LOCKS = 100;
 function withLock<T>(homePath: string, fn: () => Promise<T>): Promise<T> {
+  homePath = resolve(homePath);
+  if (!writeLocks.has(homePath) && writeLocks.size >= MAX_WRITE_LOCKS) {
+    return Promise.reject(new Error("Profile writers busy"));
+  }
   const prev = writeLocks.get(homePath) ?? Promise.resolve();
   const next = prev.catch((err: unknown) => {
     console.warn("[vocal] previous profile write failed:", err instanceof Error ? err.message : String(err));
   }).then(fn);
-  if (!writeLocks.has(homePath) && writeLocks.size >= MAX_WRITE_LOCKS) {
-    const oldest = writeLocks.keys().next().value;
-    if (oldest) writeLocks.delete(oldest);
-  }
-  writeLocks.set(
-    homePath,
-    next.finally(() => {
-      // Only clear if nothing else chained after us.
-      if (writeLocks.get(homePath) === next) writeLocks.delete(homePath);
-    }),
-  );
+  writeLocks.set(homePath, next);
+  void next.then(() => {
+    if (writeLocks.get(homePath) === next) writeLocks.delete(homePath);
+  }, () => {
+    if (writeLocks.get(homePath) === next) writeLocks.delete(homePath);
+  });
   return next;
 }
 
@@ -45,11 +44,11 @@ function sanitizeFact(raw: string): string | null {
   return cleaned.slice(0, MAX_FACT_LEN);
 }
 
-export async function loadProfile(homePath: string): Promise<VocalProfile | null> {
+export async function loadProfile(homePath: string, strict = false): Promise<VocalProfile | null> {
   try {
     const raw = await readFile(join(homePath, PROFILE_PATH), "utf-8");
     const data = JSON.parse(raw) as Partial<VocalProfile>;
-    if (!Array.isArray(data.facts)) return null;
+    if (!Array.isArray(data.facts)) throw new Error("Invalid profile facts");
     return {
       facts: data.facts.filter((f): f is string => typeof f === "string").slice(0, MAX_FACTS),
       updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString(),
@@ -59,6 +58,7 @@ export async function loadProfile(homePath: string): Promise<VocalProfile | null
     // logging — a parse failure means a corrupt file we should know about.
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       console.warn("[vocal] profile load failed:", err instanceof Error ? err.message : String(err));
+      if (strict) throw err;
     }
     return null;
   }
@@ -69,7 +69,7 @@ export async function appendFact(homePath: string, rawFact: string): Promise<boo
   if (!fact) return false;
 
   return withLock(homePath, async () => {
-    const current = (await loadProfile(homePath)) ?? { facts: [], updatedAt: new Date().toISOString() };
+    const current = (await loadProfile(homePath, true)) ?? { facts: [], updatedAt: new Date().toISOString() };
 
     // LLMs repeatedly re-save facts they already "know"; dedupe or the
     // profile bloats into duplicates over a long session.
@@ -81,6 +81,12 @@ export async function appendFact(homePath: string, rawFact: string): Promise<boo
       updatedAt: new Date().toISOString(),
     };
 
+    await writeProfile(homePath, next);
+    return true;
+  });
+}
+
+async function writeProfile(homePath: string, next: VocalProfile): Promise<void> {
     const fullPath = join(homePath, PROFILE_PATH);
     await mkdir(dirname(fullPath), { recursive: true });
 
@@ -105,6 +111,21 @@ export async function appendFact(homePath: string, rawFact: string): Promise<boo
       }
     }
 
+}
+
+export async function listFacts(homePath: string): Promise<string[]> {
+  return withLock(homePath, async () => [...((await loadProfile(homePath, true))?.facts ?? [])]);
+}
+
+export async function forgetFact(homePath: string, rawFact: string): Promise<boolean> {
+  const fact = sanitizeFact(rawFact);
+  if (!fact) return false;
+  return withLock(homePath, async () => {
+    const current = await loadProfile(homePath, true);
+    if (!current) return false;
+    const facts = current.facts.filter(f => f.toLowerCase() !== fact.toLowerCase());
+    if (facts.length === current.facts.length) return false;
+    await writeProfile(homePath, { facts, updatedAt: new Date().toISOString() });
     return true;
   });
 }

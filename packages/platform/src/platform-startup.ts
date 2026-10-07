@@ -86,6 +86,8 @@ import {
   loadPlatformSpeechConfig,
 } from './speech/config.js';
 import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
+import { createConfiguredPlatformAoedeLiveService } from './aoede/wiring.js';
+import { createAoedeLiveRuntimeRoutes, createAoedeLiveUpgradeHandler } from './aoede/routes.js';
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 
@@ -207,6 +209,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  internalAoedeLiveRuntimeRoutes?: Hono<any>;
   whatsappRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
@@ -318,6 +321,10 @@ async function startPlatformServerWithCleanup(
   const internalSpeechRuntimeRoutes = platformSecret.length >= 32
     ? createSpeechRuntimeRoutes({ db, platformSecret, service: speechService })
     : undefined;
+  const aoedeLiveService = createConfiguredPlatformAoedeLiveService({ db, speechConfig });
+  await aoedeLiveService?.reconcile();
+  const internalAoedeLiveRuntimeRoutes = createAoedeLiveRuntimeRoutes({ db, platformSecret, service: aoedeLiveService });
+  const aoedeLiveUpgrade = createAoedeLiveUpgradeHandler({ db, platformSecret, service: aoedeLiveService });
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
   if (fundedAiConfig.enabled) {
@@ -985,6 +992,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
+    internalAoedeLiveRuntimeRoutes,
     whatsappRoutes: whatsappRuntime?.routes,
     fundedAiRepository,
     fundedModelProbes,
@@ -1022,10 +1030,12 @@ async function startPlatformServerWithCleanup(
     customerVpsReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
+    // Drain upgraded voice sockets before HTTP close waits for their connections.
+    const aoedeLiveShutdown = aoedeLiveService?.shutdown();
     const shutdownTimer = setTimeout(() => {
       console.error('[platform] Graceful shutdown timed out');
       process.exit(1);
-    }, 10_000);
+    }, aoedeLiveService ? 45_000 : 10_000);
     shutdownTimer.unref();
 
     (server as Server).close((err?: Error) => {
@@ -1044,6 +1054,7 @@ async function startPlatformServerWithCleanup(
           whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
+          aoedeLiveShutdown,
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),
@@ -1083,6 +1094,7 @@ async function startPlatformServerWithCleanup(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationDirect: collaboration?.direct,
+    aoedeLiveUpgrade,
   });
 }
 

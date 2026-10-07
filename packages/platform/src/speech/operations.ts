@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { sql, type Transaction } from "kysely";
+import { sql, type Transaction, type Selectable } from "kysely";
 import {
   SpeechExecutionStateSchema,
   SpeechOutcomeCodeSchema,
@@ -117,7 +117,7 @@ function exactNullableInteger(value: unknown): number | null {
   return parsed;
 }
 
-function operationRecord(row: SpeechOperationsTable): SpeechOperationRecord {
+function operationRecord(row: Selectable<SpeechOperationsTable>): SpeechOperationRecord {
   const executionState = SpeechExecutionStateSchema.parse(row.execution_state);
   return {
     identity: { ownerId: row.owner_id, machineId: row.machine_id, runtimeSlot: row.runtime_slot },
@@ -147,7 +147,7 @@ function requestTimestamp(requestId: string): number {
 }
 
 function matchesImmutableAdmission(
-  row: SpeechOperationsTable,
+  row: Selectable<SpeechOperationsTable>,
   admission: z.output<typeof AdmissionSchema>,
 ): boolean {
   return row.content_fingerprint === admission.contentFingerprint
@@ -527,6 +527,7 @@ export function createSpeechOperationsRepository(options: {
     await options.db.ready;
     const candidates = await options.db.executor.selectFrom("speech_operations")
       .select(["owner_id", "machine_id", "runtime_slot", "operation_id"])
+      .where("adapter_id", "is distinct from", "aoede-live")
       .where("expires_at", "<=", checkedAt)
       .where("execution_state", "in", ["succeeded", "failed", "uncertain", "cancelled"])
       .orderBy("expires_at", "asc")

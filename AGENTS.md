@@ -555,5 +555,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current feature plan: specs/536-conversational-bots/plan.md
+Current feature plan: specs/548-aoede-live/plan.md
 <!-- SPECKIT END -->

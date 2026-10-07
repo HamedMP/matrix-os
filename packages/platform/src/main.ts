@@ -266,6 +266,7 @@ export function createApp(deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  internalAoedeLiveRuntimeRoutes?: Hono<any>;
   whatsappRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
@@ -659,6 +660,9 @@ export function createApp(deps: {
   // through to Clerk session routing or the tenant proxy.
   if (deps.internalSpeechRuntimeRoutes) {
     app.route('/internal/containers/:handle/speech', deps.internalSpeechRuntimeRoutes);
+  }
+  if (deps.internalAoedeLiveRuntimeRoutes) {
+    app.route('/internal/containers/:handle/aoede', deps.internalAoedeLiveRuntimeRoutes);
   }
 
   // Funded AI control routes authenticate with dedicated runtime, relay, or

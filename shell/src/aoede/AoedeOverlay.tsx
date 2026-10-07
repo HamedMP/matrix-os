@@ -1,0 +1,89 @@
+"use client";
+import { useEffect, useRef } from "react";
+import type { AoedeCard, AoedeServerMessage } from "@matrix-os/contracts";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useVocalStore } from "@/stores/vocal";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { XIcon } from "@/lib/hugeicons";
+import { useAoedeSession } from "./useAoedeSession";
+import type { UiResult } from "./shell-actions";
+import "./aoede.css";
+
+const messages = {
+  idle: "A little space to think out loud", connecting: "Connecting…", active: "Listening · You can interrupt anytime",
+  closed: "Voice session ended", interrupted: "Your conversation was interrupted",
+  superseded: "Voice moved to another session", error: "Voice is unavailable. Check microphone access and try again.",
+  denied: "Microphone access is blocked",
+  caption_limit: "This conversation reached its text limit. Your captions are still here.",
+};
+type SessionView = Omit<ReturnType<typeof useAoedeSession>, "audioRef">;
+function TaskCard({ card, session, live }: { card: AoedeCard; session: SessionView; live: boolean }) {
+  const deciding = session.deciding.includes(card.id);
+  const disabled = !live || !session.connected || deciding;
+  return <article><h3>{card.title}</h3><p className="aoede-task-status">{card.status === "approval" ? deciding ? "Confirming your decision…" : "Needs your decision" : card.status}</p>
+    {card.status === "approval" && card.approval && <><p>{card.approval.description}</p><div className="aoede-actions">
+      {card.approval.allowedDecisions.includes("approve_once") && <Button disabled={disabled} onClick={() => void session.approval(card, "approve_once")}>Allow once</Button>}
+      {card.approval.allowedDecisions.includes("deny") && <Button variant="outline" disabled={disabled} onClick={() => void session.approval(card, "deny")}>Deny</Button>}
+      <Button variant="ghost" disabled={!live || !session.connected} onClick={() => session.cancel(card)}>Cancel task</Button>
+    </div></>}
+    {["queued", "running"].includes(card.status) && <Button variant="ghost" disabled={!live || !session.connected} onClick={() => session.cancel(card)}>Cancel task</Button>}
+  </article>;
+}
+function ConversationControls({ session, live }: { session: SessionView; live: boolean }) {
+  return <footer className="aoede-footer"><div className="aoede-actions">
+    {!live && <Button disabled={!session.connected} onClick={session.start}>Start fresh session</Button>}
+    {live && <Button variant="outline" onClick={() => session.stop("closed")}>End session</Button>}
+    {!session.connected && <p role="status">Waiting for your computer to reconnect…</p>}
+  </div><details className="aoede-conversation"><summary>Conversation &amp; privacy</summary><div className="aoede-conversation-panel">
+    {session.captions.length > 0 && <section aria-label="Full conversation captions" className="aoede-transcript" tabIndex={0}>{session.captions.map((caption) =>
+      <p key={caption.id}><strong>{caption.role === "user" ? "You" : "Aoede"}</strong> {caption.text}</p>)}</section>}
+    <p className="aoede-recovery">Recent text is saved for up to 24 hours. No audio is stored. Chat history and remembered facts are kept separately.</p>
+    <Button variant="ghost" onClick={() => void session.clearRecovery()}>Delete saved voice text</Button>
+  </div></details></footer>;
+}
+export function AoedeOverlay({ active, onUi }: {
+  active: boolean; onUi: (frame: Extract<AoedeServerMessage, { type: "aoede:ui" }>) => UiResult;
+}) {
+  const { audioRef, ...session } = useAoedeSession(active, onUi);
+  const priorFocus = useRef<HTMLElement | null>(null);
+  const captionRef = useRef<HTMLElement | null>(null);
+  const follow = useRef(true);
+  const latest = session.captions.at(-1);
+  useEffect(() => {
+    if (follow.current && captionRef.current) captionRef.current.scrollTop = captionRef.current.scrollHeight;
+  }, [latest]);
+  const dismiss = () => { session.stop("closed"); useVocalStore.getState().setActive(false); };
+  const live = session.status === "active" || session.status === "connecting";
+  return <Dialog open={active} onOpenChange={(open) => { if (!open) dismiss(); }}>
+    <DialogContent className="aoede-live ph-no-capture" showCloseButton={false}
+      style={{ zIndex: SHELL_Z_INDEX.desktopDrawer }}
+      overlayStyle={{ zIndex: SHELL_Z_INDEX.desktopDrawerBackdrop, background: "rgba(3, 4, 10, .92)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)" }}
+      onOpenAutoFocus={() => { priorFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; }}
+      onCloseAutoFocus={(event) => { event.preventDefault(); priorFocus.current?.focus(); }}>
+      <header className="aoede-header"><DialogHeader><DialogTitle>Aoede</DialogTitle><DialogDescription>Voice preview</DialogDescription></DialogHeader>
+        <Button variant="ghost" size="icon" aria-label="Close Aoede" onClick={dismiss}><XIcon /></Button></header>
+      <main className="aoede-stage" data-tasks={session.cards.length > 0}>
+      <div className="aoede-presence" data-live={session.status === "active"} data-captioning={session.captioning}>
+        <div className="aoede-orb" aria-hidden="true"><span className="aoede-orb-glow" /><span className="aoede-orb-ring" />
+          <span className="aoede-orb-blob aoede-orb-a" /><span className="aoede-orb-blob aoede-orb-b" /><span className="aoede-orb-blob aoede-orb-c" /><span className="aoede-orb-glass" /></div>
+        <p role="status">{session.status === "active" && session.captioning ? "Aoede · Microphone still on" : messages[session.status]}</p>
+      </div>
+      <section ref={captionRef} aria-label="Voice captions" className="aoede-captions" tabIndex={latest ? 0 : undefined}
+        onScroll={(event) => { const node = event.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32; }}>
+        {latest ? <p><strong>{latest.role === "user" ? "You" : "Aoede"}</strong>{latest.text}</p>
+          : <p>{live ? "Speak naturally. There’s nothing to press." : "Open an app, take a note, or work on something together."}</p>}
+      </section>
+      {session.cards.length > 0 && <section aria-label="Voice tasks" className="aoede-tasks" aria-live="polite" tabIndex={0}>
+        {session.cards.map((card) => <TaskCard key={card.id} card={card} session={session} live={live} />)}
+      </section>}
+      {session.actionError && <p className="aoede-recovery" role="alert">The action was not confirmed. Retry the same decision, or check the task in Chat before changing it.</p>}
+      {session.status === "denied" && <p className="aoede-recovery">Allow microphone access in your browser’s site permissions, then start a fresh session. No voice session was started.</p>}
+      {!live && !["idle", "denied"].includes(session.status) && <p className="aoede-recovery">Start fresh with saved text and current Chat results. Recent speech may be missing; completed work will not be repeated.</p>}
+      </main>
+      <ConversationControls session={session} live={live} />
+      {/* react-doctor-disable-next-line react-doctor/media-has-caption -- live WebRTC has no caption-file URL: provider transcript deltas are displayed in the Voice captions region above; this hidden element only plays its media track. */}
+      <audio ref={audioRef} aria-hidden="true" />
+    </DialogContent>
+  </Dialog>;
+}

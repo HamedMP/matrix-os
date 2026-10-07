@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 
 const SpeechMonthlyAuthorizationSchema = z.object({
-  capability: z.literal("speech:transcribe"),
+  capability: z.enum(["speech:transcribe", "speech:live"]),
   fundingPolicy: z.literal("speech_monthly_v1"),
 }).passthrough();
 

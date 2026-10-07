@@ -24,6 +24,8 @@ import { resolveSyncScope, syncScopeRegistryKey } from "../sync/runtime-scope.js
 import { createSyncPeerLifecycle } from "../sync/ws-peer-lifecycle.js";
 import { initializeSyncInfrastructure } from "../sync/infrastructure.js";
 import { MainWsClientMessageSchema, type MainWsClientMessage } from "../ws-message-schema.js";
+import { AoedeClientMessageSchema } from "@matrix-os/contracts";
+import type { RequestPrincipal } from "../request-principal.js";
 import type { GatewayConfig, ServerMessage } from "./types.js";
 import { kernelEventToServerMessage, kernelResultFallbackText, send, sendClientAck } from "./main-ws-messages.js";
 import { wsConnectionsActive } from "../metrics.js";
@@ -58,6 +60,8 @@ export interface MainWebSocketRouteOptions {
   reconnectableAbortControllers: Map<string, ReconnectableAbortEntry>;
   clients: Set<WSContext>;
   clientOwnerIds: WeakMap<WSContext, string>;
+  clientConnectionIds?: WeakMap<WSContext, string>;
+  onAoedeClientMessage?(principal: RequestPrincipal, connectionId: string, message: unknown): Promise<void>;
   conversations: ConversationStore;
   dispatcher: Dispatcher;
   approvalPolicy: ApprovalPolicy;
@@ -86,8 +90,11 @@ export function registerMainWebSocketRoutes(options: MainWebSocketRouteOptions):
       let syncPeerSocket: WSContext | null = null;
       let conversationOwnerScope: ReturnType<typeof ownerScopeFromPrincipal> | undefined;
       let connectionOwnerId: string | undefined;
+      let connectionPrincipal: RequestPrincipal | undefined;
+      const connectionId = randomUUID();
       try {
         const wsPrincipal = requireRequestPrincipal(c);
+        connectionPrincipal = wsPrincipal;
         const wsScope = resolveSyncScope({
           ownerId: wsPrincipal.userId,
           runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
@@ -182,6 +189,7 @@ export function registerMainWebSocketRoutes(options: MainWebSocketRouteOptions):
           evictOldestMainWsClientIfNeeded();
           clients.add(ws);
           if (connectionOwnerId) clientOwnerIds.set(ws, connectionOwnerId);
+          options.clientConnectionIds?.set(ws, connectionId);
           wsConnectionsActive.inc();
           captureGatewayProductEvent("shell_ws_open", {
             active_clients: clients.size,
@@ -217,6 +225,18 @@ export function registerMainWebSocketRoutes(options: MainWebSocketRouteOptions):
             return;
           }
 
+          const aoede = AoedeClientMessageSchema.safeParse(rawMessage);
+          if (aoede.success) {
+            if (!connectionPrincipal || !options.onAoedeClientMessage) {
+              send(ws, { type: "kernel:error", message: "Voice is unavailable" });
+              return;
+            }
+            void options.onAoedeClientMessage(connectionPrincipal, connectionId, aoede.data).catch((error: unknown) => {
+              console.warn("[aoede/ws] request failed", error instanceof Error ? error.name : "UnknownError");
+              send(ws, { type: "kernel:error", message: "Voice request failed" });
+            });
+            return;
+          }
           const parsedResult = MainWsClientMessageSchema.safeParse(rawMessage);
           if (!parsedResult.success) {
             captureGatewayProductEvent("shell_ws_invalid_message");

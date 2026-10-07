@@ -1,4 +1,5 @@
 import { migrateAccountDeletion } from './migrations/account-deletion.js';
+import { migrateAoedeLive } from './migrations/aoede-live.js';
 import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
 import { migrateUserMachines } from './migrations/user-machines.js';
@@ -31,6 +32,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'ai-funded', run: migrateAiFunded },
   { name: 'ai-credit-history', run: migrateAiCreditHistory },
   { name: 'speech', run: migrateSpeech },
+  { name: 'aoede-live', run: migrateAoedeLive },
   { name: 'provisioning-jobs', run: migrateProvisioningJobs },
   { name: 'checkout', run: migrateCheckout },
   { name: 'onboarding', run: migrateOnboarding },

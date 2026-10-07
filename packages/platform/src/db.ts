@@ -232,6 +232,12 @@ export interface AiFundedPromotionalGrantBalancesTable {
 }
 
 export interface SpeechOperationsTable {
+  live_provider_id: Generated<string | null>;
+  live_runtime_epoch: Generated<number | null>;
+  live_usage_seconds: Generated<number | null>;
+  live_rate_microusd_per_minute: Generated<number | null>;
+  live_attachment_id: Generated<string | null>;
+  live_confirmed: Generated<boolean>;
   owner_id: string;
   machine_id: string;
   runtime_slot: string;

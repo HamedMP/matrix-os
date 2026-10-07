@@ -1,4 +1,5 @@
 import type { SpawnFn } from "../dispatcher.js";
+import type { AoedeServerMessage } from "@matrix-os/contracts";
 
 export interface GatewayConfig {
   homePath: string;
@@ -11,6 +12,7 @@ export interface GatewayConfig {
 }
 
 export type ServerMessage =
+  | AoedeServerMessage
   | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
   | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
