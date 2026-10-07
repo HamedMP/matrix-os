@@ -14,6 +14,7 @@ export class AoedeMedia {
     gatewayUrl: string; audio: HTMLAudioElement; fetchFn?: typeof fetch;
     onEvent: (event: CaptionEvent) => void; onFailure: () => void;
   }) {}
+  get microphoneStream() { return this.disposed ? undefined : this.stream; }
   private current() { if (this.disposed) throw new Error("AoedeInvocationDismissed"); }
   private async endRemote(sessionId: string) {
     try {

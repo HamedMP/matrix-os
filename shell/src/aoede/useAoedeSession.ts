@@ -170,5 +170,6 @@ export function useAoedeSession(active: boolean, onUi: (frame: Extract<AoedeServ
       console.warn("[aoede] Recovery deletion unavailable:", error instanceof Error ? error.name : "UnknownError"); dispatch({ actionError: true });
     }
   };
-  return { ...state, audioRef, start, stop, approval, cancel, clearRecovery, connected: socket.connected };
+  const inputStream = useCallback(() => media.current?.microphoneStream, []);
+  return { ...state, audioRef, inputStream, start, stop, approval, cancel, clearRecovery, connected: socket.connected };
 }

@@ -28,6 +28,9 @@ export const SHELL_Z_INDEX = {
   // "always on top" by default, Win11 keeps it above app windows too) but
   // below Settings, which must stay reachable over shell chrome.
   taskbar: 650,
+  // Full-screen voice covers desktop chrome, but never Settings or hard gates.
+  voiceBackdrop: 660,
+  voiceCompanion: 665,
   settings: 700,
   hardGate: 800,
   // Simulated OS session overlays (lock screens, XP welcome/log-off/shutdown

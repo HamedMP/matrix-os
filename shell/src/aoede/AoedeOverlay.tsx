@@ -42,38 +42,91 @@ function ConversationControls({ session, live }: { session: SessionView; live: b
     <Button variant="ghost" onClick={() => void session.clearRecovery()}>Delete saved voice text</Button>
   </div></details></footer>;
 }
+function VoiceCaptions({ captions, live }: { captions: SessionView["captions"]; live: boolean }) {
+  const captionRef = useRef<HTMLElement | null>(null);
+  const follow = useRef(true);
+  const latest = captions.at(-1);
+  useEffect(() => {
+    if (follow.current && captionRef.current) captionRef.current.scrollTop = captionRef.current.scrollHeight;
+  }, [latest]);
+  const role = latest?.role === "user" ? "You" : "Aoede";
+  const previousRole = latest?.role === "user" ? "Previous request" : "Previous response";
+  return <section ref={captionRef} aria-label="Voice captions" className="aoede-captions" tabIndex={latest ? 0 : undefined}
+    onScroll={(event) => { const node = event.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32; }}>
+    {latest ? <p><strong>{live ? role : previousRole}</strong>{latest.text}</p>
+      : <p>{live ? "Speak naturally. There’s nothing to press." : "Open an app, take a note, or work on something together."}</p>}
+  </section>;
+}
+function useOrbMeter(active: boolean, status: SessionView["status"], inputStream: SessionView["inputStream"]) {
+  const orbRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const orb = orbRef.current;
+    if (!active || status !== "active" || !orb || typeof AudioContext === "undefined"
+      || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const stream = inputStream();
+    if (!stream) return;
+    let context: AudioContext | undefined;
+    let source: MediaStreamAudioSourceNode;
+    let analyser: AnalyserNode;
+    try {
+      context = new AudioContext();
+      source = context.createMediaStreamSource(stream);
+      analyser = context.createAnalyser();
+    } catch (error) {
+      console.warn("[aoede] Orb metering unavailable:", error instanceof Error ? error.name : "UnknownError");
+      void context?.close().catch((failure: unknown) => console.warn("[aoede] Orb metering cleanup unavailable:", failure instanceof Error ? failure.name : "UnknownError"));
+      return;
+    }
+    analyser.fftSize = 256;
+    source.connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    let frame = 0, previous = 0, lastSample = 0;
+    const update = (time: number) => {
+      if (time - lastSample >= 40) {
+        lastSample = time;
+        analyser.getFloatTimeDomainData(samples);
+        const rms = Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
+        // Reuse the previous Aoede orb's immediate attack and soft release.
+        const target = Math.min(1, Math.sqrt(Math.max(0, rms)) * 1.8);
+        previous = target >= previous ? target : previous * .72 + target * .28;
+        orb.style.setProperty("--aoede-level", previous.toFixed(3));
+      }
+      frame = requestAnimationFrame(update);
+    };
+    frame = requestAnimationFrame(update);
+    void context.resume().catch((error: unknown) => console.warn("[aoede] Orb metering unavailable:", error instanceof Error ? error.name : "UnknownError"));
+    return () => {
+      cancelAnimationFrame(frame); source.disconnect(); analyser.disconnect();
+      orb.style.setProperty("--aoede-level", "0");
+      void context?.close().catch((error: unknown) => console.warn("[aoede] Orb metering cleanup unavailable:", error instanceof Error ? error.name : "UnknownError"));
+    };
+  }, [active, status, inputStream]);
+  return orbRef;
+}
 export function AoedeOverlay({ active, onUi }: {
   active: boolean; onUi: (frame: Extract<AoedeServerMessage, { type: "aoede:ui" }>) => UiResult;
 }) {
   const { audioRef, ...session } = useAoedeSession(active, onUi);
   const priorFocus = useRef<HTMLElement | null>(null);
-  const captionRef = useRef<HTMLElement | null>(null);
-  const follow = useRef(true);
-  const latest = session.captions.at(-1);
-  useEffect(() => {
-    if (follow.current && captionRef.current) captionRef.current.scrollTop = captionRef.current.scrollHeight;
-  }, [latest]);
+  const orbRef = useOrbMeter(active, session.status, session.inputStream);
   const dismiss = () => { session.stop("closed"); useVocalStore.getState().setActive(false); };
   const live = session.status === "active" || session.status === "connecting";
   return <Dialog open={active} onOpenChange={(open) => { if (!open) dismiss(); }}>
     <DialogContent className="aoede-live ph-no-capture" showCloseButton={false}
-      style={{ zIndex: SHELL_Z_INDEX.desktopDrawer }}
-      overlayStyle={{ zIndex: SHELL_Z_INDEX.desktopDrawerBackdrop, background: "rgba(3, 4, 10, .92)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)" }}
+      data-state={session.status}
+      style={{ zIndex: SHELL_Z_INDEX.voiceCompanion }}
+      overlayStyle={{ zIndex: SHELL_Z_INDEX.voiceBackdrop, background: "rgba(3, 4, 10, .92)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)" }}
       onOpenAutoFocus={() => { priorFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; }}
       onCloseAutoFocus={(event) => { event.preventDefault(); priorFocus.current?.focus(); }}>
       <header className="aoede-header"><DialogHeader><DialogTitle>Aoede</DialogTitle><DialogDescription>Voice preview</DialogDescription></DialogHeader>
         <Button variant="ghost" size="icon" aria-label="Close Aoede" onClick={dismiss}><XIcon /></Button></header>
       <main className="aoede-stage" data-tasks={session.cards.length > 0}>
       <div className="aoede-presence" data-live={session.status === "active"} data-captioning={session.captioning}>
-        <div className="aoede-orb" aria-hidden="true"><span className="aoede-orb-glow" /><span className="aoede-orb-ring" />
-          <span className="aoede-orb-blob aoede-orb-a" /><span className="aoede-orb-blob aoede-orb-b" /><span className="aoede-orb-blob aoede-orb-c" /><span className="aoede-orb-glass" /></div>
+        <div ref={orbRef} className="aoede-orb" aria-hidden="true"><span className="aoede-orb-glow" /><span className="aoede-orb-ring" />
+          <span className="aoede-orb-core"><span className="aoede-orb-blob aoede-orb-a" /><span className="aoede-orb-blob aoede-orb-b" /><span className="aoede-orb-blob aoede-orb-c" /><span className="aoede-orb-glass" /></span></div>
         <p role="status">{session.status === "active" && session.captioning ? "Aoede · Microphone still on" : messages[session.status]}</p>
       </div>
-      <section ref={captionRef} aria-label="Voice captions" className="aoede-captions" tabIndex={latest ? 0 : undefined}
-        onScroll={(event) => { const node = event.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32; }}>
-        {latest ? <p><strong>{latest.role === "user" ? "You" : "Aoede"}</strong>{latest.text}</p>
-          : <p>{live ? "Speak naturally. There’s nothing to press." : "Open an app, take a note, or work on something together."}</p>}
-      </section>
+      <VoiceCaptions captions={session.captions} live={live} />
       {session.cards.length > 0 && <section aria-label="Voice tasks" className="aoede-tasks" aria-live="polite" tabIndex={0}>
         {session.cards.map((card) => <TaskCard key={card.id} card={card} session={session} live={live} />)}
       </section>}

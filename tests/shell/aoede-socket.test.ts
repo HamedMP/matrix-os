@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const harness = vi.hoisted(() => ({
   handler: null as null | ((frame: unknown) => void), event: null as null | ((event: unknown) => void),
   send: vi.fn(), close: vi.fn(), connected: true, epoch: 1, startupError: null as Error | null,
+  microphoneStream: undefined as MediaStream | undefined,
   sessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 }));
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: harness.connected, connectionEpoch: harness.epoch,
@@ -12,6 +13,7 @@ vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: harness.con
 }) }));
 vi.mock("../../shell/src/aoede/media", () => ({ AoedeMedia: class {
   sessionId = harness.sessionId;
+  get microphoneStream() { return harness.microphoneStream; }
   constructor(options: { onEvent: (event: unknown) => void }) { harness.event = options.onEvent; }
   start = async () => { if (harness.startupError) throw harness.startupError; return this.sessionId; };
   started = vi.fn(); close = harness.close;
@@ -31,10 +33,48 @@ function start() {
   return { ...hook, onUi };
 }
 function emit(frame: unknown) { act(() => harness.handler?.(frame)); }
-beforeEach(() => { harness.startupError = null; harness.connected = true; harness.epoch = 1; harness.send.mockClear(); harness.close.mockClear();
+beforeEach(() => { harness.microphoneStream = undefined; harness.startupError = null; harness.connected = true; harness.epoch = 1; harness.send.mockClear(); harness.close.mockClear();
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ session: null })))); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("Aoede invoking-shell authority", () => {
+  it("keeps voice usable if cosmetic microphone metering cannot initialize", async () => {
+    harness.microphoneStream = {} as MediaStream;
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+    vi.stubGlobal("AudioContext", vi.fn(function () { throw new DOMException("Unavailable", "NotSupportedError"); }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(React.createElement(AoedeOverlay, { active: true, onUi: () => ({ status: "failed" }) }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start fresh session" })); });
+    act(() => harness.event?.({ type: "session.started" }));
+    expect(screen.getByRole("button", { name: "End session" })).toBeTruthy();
+    expect(harness.close).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith("[aoede] Orb metering unavailable:", expect.any(String));
+    warn.mockRestore();
+  });
+  it("meters the existing stream and releases its audio graph when voice ends", async () => {
+    harness.microphoneStream = {} as MediaStream;
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+    const source = { connect: vi.fn(), disconnect: vi.fn() };
+    const analyser = { fftSize: 0, getFloatTimeDomainData: vi.fn((samples: Float32Array) => samples.fill(.25)), disconnect: vi.fn() };
+    const context = { createMediaStreamSource: vi.fn(() => source), createAnalyser: () => analyser,
+      resume: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
+    vi.stubGlobal("AudioContext", vi.fn(function () { return context; }));
+    let tick!: FrameRequestCallback;
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { tick = callback; return 42; }));
+    const cancel = vi.fn(); vi.stubGlobal("cancelAnimationFrame", cancel);
+    render(React.createElement(AoedeOverlay, { active: true, onUi: () => ({ status: "failed" }) }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start fresh session" })); });
+    act(() => harness.event?.({ type: "session.started" }));
+    expect(context.createMediaStreamSource).toHaveBeenCalledExactlyOnceWith(harness.microphoneStream);
+    act(() => tick(80));
+    const orb = document.querySelector<HTMLElement>(".aoede-orb")!;
+    expect(orb.style.getPropertyValue("--aoede-level")).toBe("0.900");
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    expect(cancel).toHaveBeenCalledWith(42);
+    expect(source.disconnect).toHaveBeenCalledOnce();
+    expect(analyser.disconnect).toHaveBeenCalledOnce();
+    expect(context.close).toHaveBeenCalledOnce();
+    expect(orb.style.getPropertyValue("--aoede-level")).toBe("0");
+  });
   it("ignores another session and duplicate UI execution, then stops on supersession", () => {
     const hook = start();
     const frame = { type: "aoede:ui", sessionId: harness.sessionId, correlationId: decision.clientRequestId, phase: "execute", action: "open_app", target: "notes" };
