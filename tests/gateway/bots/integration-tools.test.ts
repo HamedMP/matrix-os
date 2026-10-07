@@ -52,7 +52,7 @@ beforeEach(async () => {
 });
 afterEach(async () => destroy());
 
-function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>) {
+function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>, assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>) {
   const baseTransact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
   let transactions = 0;
   const transact: BotStateTransactions = async (ownerId, work) => {
@@ -61,7 +61,7 @@ function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject
   };
   const client = { inventory: vi.fn(async () => connected), call };
   const tools = createBotIntegrationTools({
-    client, transact, recipes: createBotRecipeCatalog([RECIPE]),
+    client, transact, recipes: createBotRecipeCatalog([RECIPE]), assertSource,
     agents: { get: vi.fn(async () => ({ id: BOT, recipeRef: { recipeId: "mail-helper", version: "1" } }) as never) },
     now: () => toolClock,
   });
@@ -227,6 +227,55 @@ describe("bot integration tools", () => {
     await expect(tools.call(binding, read)).rejects.toEqual(new BotBrokerActionError("not_granted"));
     expect(call).not.toHaveBeenCalled();
   });
+
+  it.each(["revoked", "revised", "expired"])("refuses a grant %s while source qualification waits", async mutation => {
+    const granted = await grant(WORK);
+    if (mutation === "expired") await db.updateTable("bot_grants").set({ expires_at: "2026-09-28T10:30:00.000Z" }).where("grant_id", "=", granted.grantId).execute();
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let checks = 0;
+    const assertSource = vi.fn(async () => { if (++checks === 1) { entered(); await held; } });
+    const { tools, call } = setup(undefined, undefined, assertSource);
+    const signal = new AbortController().signal;
+    const result = tools.call(binding, read, signal);
+    await started;
+    try {
+      if (mutation === "revoked") await createBotGrantsRepository(db).revoke({ ownerId: OWNER, grantId: granted.grantId, now: AT });
+      else if (mutation === "revised") await createBotGrantsRepository(db).updateEffects({ ownerId: OWNER, grantId: granted.grantId, baseRevision: granted.revision, effects: ["read"], now: AT });
+      else toolClock = new Date("2026-09-28T11:00:00.000Z");
+    } finally { release(); }
+    await expect(result).rejects.toEqual(new BotBrokerActionError("not_granted"));
+    expect(signal.aborted).toBe(false);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("refuses expiration during source qualification under the final grant lock", async () => {
+    const granted = await grant(WORK);
+    await db.updateTable("bot_grants").set({ expires_at: "2026-09-28T10:30:00.000Z" }).where("grant_id", "=", granted.grantId).execute();
+    let checks = 0;
+    const { tools, call } = setup(undefined, undefined, async () => {
+      if (++checks === 2) toolClock = new Date("2026-09-28T11:00:00.000Z");
+    });
+    await expect(tools.call(binding, read)).rejects.toEqual(new BotBrokerActionError("not_granted"));
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it.each(["abort", "deadline"])("releases the grant lock on source-check %s even when the source ignores cancellation", async cancellation => {
+    const granted = await grant(WORK);
+    let entered!: () => void, checks = 0;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const { tools, call } = setup(undefined, undefined, async () => {
+      if (++checks === 2) { entered(); await new Promise<void>(() => {}); }
+    });
+    const controller = new AbortController();
+    const result = tools.call(binding, read, controller.signal);
+    await started;
+    if (cancellation === "abort") controller.abort();
+    await expect(result).rejects.toEqual(new BotBrokerActionError("timeout"));
+    await expect(createBotGrantsRepository(db).revoke({ ownerId: OWNER, grantId: granted.grantId, now: AT })).resolves.toBe(true);
+    expect(call).not.toHaveBeenCalled();
+  }, 12_000);
 
   it("invalidates an approval when the grant changed, and honors a denial", async () => {
     const granted = await grant(WORK);
