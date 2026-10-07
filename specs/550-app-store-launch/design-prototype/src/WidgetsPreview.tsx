@@ -2,6 +2,7 @@ import { useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { Glyph } from './shared';
 import { initialWidgets, updateWidgets, visibleWidgets, widgetCatalog, type WidgetAction, type WidgetId, type WidgetScope } from './widget-model';
 import WidgetContent from './WidgetContent';
+import WidgetPicker from './WidgetPicker';
 import './WidgetsPreview.css';
 
 export default function WidgetsPreview() {
@@ -30,8 +31,13 @@ export default function WidgetsPreview() {
     dispatch(action);
     setAnnouncement(message);
   }
+  function dismissPicker() {
+    pendingFocus.current = 'add';
+    setAdding(false);
+  }
 
   return <main className="widgets-preview">
+    <div inert={adding}>
     <header className="store-intro">
       <h1>A desktop with your kind of day.</h1>
       <p>Useful little windows into what matters.<br />Arrange a few and make the space feel yours.</p>
@@ -47,18 +53,6 @@ export default function WidgetsPreview() {
         }}>Reset example</button>
       </div>
     </div>
-    <section id="widget-picker" className="widget-picker" aria-label="Choose a widget" hidden={!adding}>
-      <header><h2>A little something useful</h2><p>Add one of eight example widgets. This board stays in memory and resets on reload.</p></header>
-      <div>{widgetCatalog.map(widget => <button key={widget.id} disabled={widgets.includes(widget.id)} aria-label={`Add ${widget.name}`} onClick={() => {
-        change({ type: 'add', id: widget.id }, 'add', `${widget.name} added to the example desktop.`);
-        setAdding(false);
-        if (scope !== 'all' && scope !== widget.category) setScope(widget.category);
-      }}>
-        <Glyph name={widget.glyph} size={24} />
-        <span><strong>{widget.name}</strong><small>{widget.description}</small></span>
-        <span>{widgets.includes(widget.id) ? 'Added' : '+'}</span>
-      </button>)}</div>
-    </section>
     <p className="widget-demo-notice"><span />Fictional demo data · reorder with the move buttons · no owner records or live feeds</p>
     <p role="status" className="sr-only">{announcement}</p>
     <ul className="widget-board" aria-label="Example desktop widgets">{widgets.map(id => {
@@ -73,6 +67,13 @@ export default function WidgetsPreview() {
         <WidgetContent id={id} />
       </li>;
     })}</ul>
-    {!visible.length && <div className="store-empty"><h3>A clean slate.</h3><p>Add a widget or switch the collection to see your other examples.</p><button className="quiet-button" onClick={() => setAdding(true)}>Choose a widget</button></div>}
+    {!visible.length && <div className="store-empty"><Glyph name="grid" size={30} /><h3>A clean slate.</h3><p>Add a widget or switch the collection to see your other examples.</p><button className="quiet-button" onClick={() => setAdding(true)}>Choose a widget</button></div>}
+    </div>
+    {adding && <WidgetPicker widgets={widgets} onClose={dismissPicker} onAdd={id => {
+      const widget = widgetCatalog.find(item => item.id === id)!;
+      change({ type: 'add', id }, 'add', `${widget.name} added to the example desktop.`);
+      setAdding(false);
+      if (scope !== 'all' && scope !== widget.category) setScope(widget.category);
+    }} />}
   </main>;
 }

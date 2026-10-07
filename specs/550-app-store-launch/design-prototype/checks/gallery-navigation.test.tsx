@@ -5,6 +5,7 @@ vi.mock('../src/DemoFrame', () => ({ default: ({ id }: { id: string }) => create
 import GalleryShell from '../src/GalleryShell';
 import WidgetsPreview from '../src/WidgetsPreview';
 import Storefront from '../src/Storefront';
+import ToolsPreview from '../src/ToolsPreview';
 import { apps } from '../src/shared';
 afterEach(cleanup);
 const props = () => ({ apps, connected: ['gmail', 'google_calendar'] as const as unknown as ('gmail' | 'google_calendar')[], collection: 'all' as const, onCollection: vi.fn(), onConnect: vi.fn(), onPick: vi.fn() });
@@ -89,5 +90,62 @@ describe('gallery and widget preview interactions', () => {
     fireEvent.click(earlier);
     expect((screen.getByRole('button', { name: 'Move Agenda earlier' }) as HTMLButtonElement).disabled).toBe(true);
     expect(document.activeElement).toBe(agenda);
+  });
+  it('opens a focused picker dialog and dismisses with Escape, close and outside clicks', () => {
+    render(createElement(WidgetsPreview));
+    const add = screen.getByRole('button', { name: 'Add widget' });
+    for (const dismiss of ['escape', 'close', 'outside']) {
+      add.focus(); fireEvent.click(add);
+      const picker = screen.getByRole('dialog', { name: 'A little something useful' });
+      expect(picker.contains(document.activeElement)).toBe(true);
+      expect(document.body.style.overflow).toBe('hidden');
+      if (dismiss === 'escape') fireEvent.keyDown(picker, { key: 'Escape' });
+      else if (dismiss === 'close') fireEvent.click(screen.getByRole('button', { name: 'Close widget picker' }));
+      else fireEvent.click(picker.parentElement!);
+      expect(screen.queryByRole('dialog', { name: 'A little something useful' })).toBeNull();
+      expect(document.activeElement).toBe(add);
+      expect(document.body.style.overflow).toBe('');
+    }
+  });
+  it('keeps Tab focus inside the widget picker and leaves the widget board mounted', () => {
+    render(createElement(WidgetsPreview));
+    const board = screen.getByRole('list', { name: 'Example desktop widgets' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add widget' }));
+    const picker = screen.getByRole('dialog', { name: 'A little something useful' });
+    const controls = within(picker).getAllByRole('button').filter(button => !(button as HTMLButtonElement).disabled);
+    controls.at(-1)!.focus(); fireEvent.keyDown(picker, { key: 'Tab' });
+    expect(document.activeElement).toBe(controls[0]);
+    fireEvent.keyDown(picker, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(controls.at(-1));
+    expect(screen.getByRole('list', { name: 'Example desktop widgets' })).toBe(board);
+  });
+  it('explains unmatched Tools and recovers to the real four-item list', () => {
+    render(createElement(ToolsPreview, { connected: [], onConnect: vi.fn() }));
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Tools' }), { target: { value: 'unknown-tool' } });
+    const empty = screen.getByRole('heading', { name: 'No Tools found.' }).parentElement!;
+    expect(empty.querySelector('svg')).toBeTruthy();
+    expect(within(empty).getByText(/Try another name/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all Tools' }));
+    expect(screen.getByRole('heading', { name: 'Gmail' })).toBeTruthy();
+  });
+  it('explains an empty connected collection and starts the example connection flow', () => {
+    const connect = vi.fn();
+    render(createElement(ToolsPreview, { connected: [], onConnect: connect }));
+    fireEvent.click(screen.getByRole('button', { name: 'Example connected' }));
+    const empty = screen.getByRole('heading', { name: 'No example connections yet.' }).parentElement!;
+    expect(empty.querySelector('svg')).toBeTruthy();
+    expect(within(empty).getByText(/Connect an example Tool/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Try an example connection' }));
+    expect(connect).toHaveBeenCalledOnce();
+  });
+  it('gives an empty widget collection an icon and a working picker action', () => {
+    render(createElement(WidgetsPreview));
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Agenda' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Notes' }));
+    const empty = screen.getByRole('heading', { name: 'A clean slate.' }).parentElement!;
+    expect(empty.querySelector('svg')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose a widget' }));
+    expect(screen.getByRole('dialog', { name: 'A little something useful' })).toBeTruthy();
   });
 });

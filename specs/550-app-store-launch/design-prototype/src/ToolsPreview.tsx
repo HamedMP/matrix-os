@@ -1,11 +1,35 @@
 import { useState } from 'react';
 import type { ToolId } from './types';
 import { Glyph, tools } from './shared';
+
 export default function ToolsPreview({ connected, onConnect }: { connected: ToolId[]; onConnect: () => void }) {
-  const [search, setSearch] = useState(''), [onlyConnected, setOnlyConnected] = useState(false);
+  const [search, setSearch] = useState('');
+  const [onlyConnected, setOnlyConnected] = useState(false);
   const shown = tools.filter(tool => (!onlyConnected || connected.includes(tool.id)) && `${tool.name} ${tool.description}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const connectedEmpty = onlyConnected && !search.trim() && !connected.length;
+  function showAll() { setSearch(''); setOnlyConnected(false); }
   return <main className="tools-preview">
     <header className="store-intro"><h1>Tools that make your apps useful.</h1><p>Bring the context you already have.<br />Choose exactly what each app can use.</p></header>
-    <div className="tools-workspace"><aside><div className="gallery-collections"><button aria-pressed={!onlyConnected} onClick={() => setOnlyConnected(false)}>All Tools</button><button aria-pressed={onlyConnected} onClick={() => setOnlyConnected(true)}>Example connected</button></div><p>This walkthrough changes example connections only. Your real accounts stay untouched.</p></aside><section><label className="store-search"><Glyph name="search" size={18} /><input aria-label="Search Tools" type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search Tools" /></label><div className="tool-preview-list">{shown.map(tool => <article key={tool.id}><span className={`tool-art tool-${tool.id}`}><Glyph name={tool.id} size={28} /></span><div><h2>{tool.name}</h2><p>{tool.description}</p><small>{connected.includes(tool.id) ? 'Example connected' : 'Available in this design walkthrough'}</small></div><button aria-label={`Manage ${tool.name} example connection`} onClick={onConnect}><Glyph name={connected.includes(tool.id) ? 'check' : 'link'} size={20} /></button></article>)}</div>{!shown.length && <div className="store-empty"><h3>No Tools found.</h3><button className="quiet-button" onClick={() => { setSearch(''); setOnlyConnected(false); }}>Show all Tools</button></div>}<p className="tools-boundary">Real consent, account selection and permission checks are part of the Matrix connection flow. This preview never receives account credentials.</p></section></div>
+    <div className="tools-workspace">
+      <aside><div className="gallery-collections"><button aria-pressed={!onlyConnected} onClick={() => setOnlyConnected(false)}>All Tools</button><button aria-pressed={onlyConnected} onClick={() => setOnlyConnected(true)}>Example connected</button></div><p>This walkthrough changes example connections only. Your real accounts stay untouched.</p></aside>
+      <section>
+        <label className="store-search"><Glyph name="search" size={18} /><input aria-label="Search Tools" type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search Tools" /></label>
+        <div className="tool-preview-list">{shown.map(tool => <article key={tool.id}>
+          <span className={`tool-art tool-${tool.id}`}><Glyph name={tool.id} size={28} /></span>
+          <div><h2>{tool.name}</h2><p>{tool.description}</p><small>{connected.includes(tool.id) ? 'Example connected' : 'Available in this design walkthrough'}</small></div>
+          <button aria-label={`Manage ${tool.name} example connection`} onClick={onConnect}><Glyph name={connected.includes(tool.id) ? 'check' : 'link'} size={20} /></button>
+        </article>)}</div>
+        {!shown.length && <div className="store-empty">
+          <Glyph name={connectedEmpty ? 'link' : 'search'} size={30} />
+          <h3>{connectedEmpty ? 'No example connections yet.' : 'No Tools found.'}</h3>
+          <p>{connectedEmpty ? 'Connect an example Tool to see how account selection and app recommendations work.' : 'Try another name or browse all Tools to find an example connection.'}</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
+            {connectedEmpty && <button className="quiet-button" onClick={onConnect}>Try an example connection</button>}
+            <button className="quiet-button" onClick={showAll}>Show all Tools</button>
+          </div>
+        </div>}
+        <p className="tools-boundary">Real consent, account selection and permission checks are part of the Matrix connection flow. This preview never receives account credentials.</p>
+      </section>
+    </div>
   </main>;
 }
