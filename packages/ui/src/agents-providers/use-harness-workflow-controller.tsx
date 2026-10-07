@@ -6,7 +6,7 @@ import type {
   ProviderWorkflowConnectionOption,
 } from "@matrix-os/contracts";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
-import { hasConfiguredConnection } from "./harness-connection.js";
+import { hasConfiguredConnection, hasStaleHermesConnection } from "./harness-connection.js";
 import { managedConnectionCapability } from "./managed-connection-capability.js";
 import { useWorkflowPolling } from "./use-workflow-polling.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
@@ -19,7 +19,7 @@ export type HarnessWorkflowPanelProps = {
   harness: Pick<
     ProviderHarnessInstance,
     "id" | "harness" | "displayName" | "installState" | "authState"
-  > & Partial<Pick<ProviderHarnessInstance, "enabled" | "configuredEnabled" | "localObservation" | "selectedAccountId">>;
+  > & Partial<Pick<ProviderHarnessInstance, "enabled" | "configuredEnabled" | "localObservation" | "selectedAccountId" | "route" | "accessSourceId">>;
   source?: ProviderAccessSource;
   capability: ProviderWorkflowUICapability;
   client: ProviderWorkflowClient;
@@ -75,6 +75,7 @@ export function useHarnessWorkflowController({
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const connected = hasConfiguredConnection(harness, source);
+  const connectionPresent = connected || hasStaleHermesConnection(harness, source);
   const previousConnection = useRef(connected);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [uninstall, setUninstall] = useState(false);
@@ -337,6 +338,6 @@ export function useHarnessWorkflowController({
     setOperation(null);
   };
 
-  return { selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, failure, setFailure, connected, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
+  return { selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, failure, setFailure, connected, connectionPresent, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
 }
 export type HarnessWorkflowController = ReturnType<typeof useHarnessWorkflowController>;

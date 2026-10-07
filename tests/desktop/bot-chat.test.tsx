@@ -22,6 +22,17 @@ beforeAll(() => {
 });
 afterEach(cleanup);
 
+it("keeps Bot definition discovery loading rather than reporting an identity failure", async () => {
+  const client = createCanonicalChatWorkspaceClient();
+  const list = vi.fn(() => new Promise<{ enabled: boolean; agents: never[] }>(() => undefined));
+  const directBot = vi.fn(async () => "bot_research1");
+  client.agents = { list, bots: { directBot } } as unknown as ChatAgentClient;
+  render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation" active catalog={providerCatalog}/>);
+  await waitFor(() => expect(list.mock.calls.length).toBeGreaterThanOrEqual(2));
+  expect(screen.getByText("Loading Chat identity…").closest('[role="status"]')).toBeTruthy();
+  expect(screen.queryByText("Chat identity could not be loaded. Try again.")).toBeNull();
+});
+
 describe("Electron Desktop bot Chat", () => {
   it("preserves visible Bot details and unsaved edits across focus changes, then cleans up when hidden", async () => {
     const client = createCanonicalChatWorkspaceClient();

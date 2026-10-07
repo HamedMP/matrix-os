@@ -119,9 +119,11 @@ export function SettingsSidebar({
 export default function SettingsView({
   section: controlledSection,
   onSectionChange,
+  visible = true,
 }: {
   section?: SettingsSectionId;
   onSectionChange?: (section: SettingsSectionId) => void;
+  visible?: boolean;
 } = {}) {
   const [localSection, setLocalSection] = useState<SettingsSectionId>("account");
   const requestedSection = useUi((s) => s.requestedSettingsSection);
@@ -150,7 +152,7 @@ export default function SettingsView({
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "organization" ? <OrganizationSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
-          {section === "agents-providers" ? <AgentsProvidersAdapter /> : null}
+          {section === "agents-providers" ? <AgentsProvidersAdapter observationRenewalActive={visible} /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
           {section === "services" ? <IntegrationsSettingsSection /> : null}
           {section === "mcps" ? <McpServersSection /> : null}

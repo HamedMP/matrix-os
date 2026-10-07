@@ -70,11 +70,13 @@ function ConnectedAgentsProvidersAdapter({
   identityKey,
   platformHost,
   runtimeSlot,
+  observationRenewalActive,
 }: {
   api: ApiClient;
   identityKey: string;
   platformHost: string;
   runtimeSlot: string;
+  observationRenewalActive: boolean;
 }) {
   const runtimeApi = useMemo(() => api.forRuntime(runtimeSlot), [api, runtimeSlot]);
   const transport = useMemo(
@@ -84,7 +86,7 @@ function ConnectedAgentsProvidersAdapter({
   const onCatalogChanged = useCallback(() => {
     useConnection.getState().invalidateProviderCatalog(identityKey);
   }, [identityKey]);
-  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged });
+  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, observationRenewalActive });
   const [actionError, setActionError] = useState<string | null>(null);
   const checkoutLifetime = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -205,7 +207,7 @@ function ConnectedAgentsProvidersAdapter({
   );
 }
 
-export default function AgentsProvidersAdapter() {
+export default function AgentsProvidersAdapter({ observationRenewalActive = true }: { observationRenewalActive?: boolean } = {}) {
   const status = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
   const platformHost = useConnection((state) => state.platformHost);
@@ -231,6 +233,7 @@ export default function AgentsProvidersAdapter() {
       identityKey={identityKey}
       platformHost={platformHost}
       runtimeSlot={runtimeSlot}
+      observationRenewalActive={observationRenewalActive}
     />
   );
 }

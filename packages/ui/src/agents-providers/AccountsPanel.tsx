@@ -8,6 +8,7 @@ import type {
   ProviderHarnessInstance,
   ProviderHarnessKind,
 } from "@matrix-os/contracts";
+import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { hasConfiguredConnection } from "./harness-connection.js";
 import { RemovalDialog } from "./RemovalDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
@@ -293,7 +294,7 @@ export function AccountsPanel({
           <>
             {selectedSource?.kind === "harness_profile" && selectedSource.localObservation?.state === "present_unverified" ? (
               <article className="matrix-ap-account" data-testid={`native-account-${harness.id}`}>
-                <div className="matrix-ap-account-main"><span className="matrix-ap-avatar" aria-hidden="true">{selectedSource.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{selectedSource.displayName}</strong><span>{hasConfiguredConnection(harness, selectedSource) ? "Connected" : "Not connected"}</span></div></div>
+                <div className="matrix-ap-account-main"><span className="matrix-ap-avatar" aria-hidden="true">{selectedSource.displayName.slice(0, 1).toUpperCase()}</span><div><strong>{selectedSource.displayName}</strong><span>{resolvedWorkflowRowStatus(harness, selectedSource)}</span></div></div>
                 <div className="matrix-ap-account-usage">
                   <strong>{usageLines(selectedSource.usage).primary}</strong>
                   <AllowanceMeter label={selectedSource.displayName} usage={selectedSource.usage} />

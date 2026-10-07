@@ -121,6 +121,8 @@ export type ConversationTurnTimelinePresentation =
   | { kind: "user-followup"; message: ConversationMessagePresentation };
 
 export interface ConversationTurnPresentation {
+  /** All attempts belong to this persisted turn; Bot tasks bind by run ID. */
+  runIds?: string[];
   agentLabel?: string;
   runContext?: ChatRunContext;
   executionRoot?: CanonicalChatExecutionRootRef;

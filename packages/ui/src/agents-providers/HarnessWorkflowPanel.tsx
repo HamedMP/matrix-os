@@ -6,7 +6,7 @@ const active = (operation: import("@matrix-os/contracts").ProviderWorkflow | nul
 
 export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const state = useHarnessWorkflowController(props);
-  const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, failure, setFailure, connected, setDisconnectOpen, uninstall, setUninstall, connectionPanel, pendingStart, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
+  const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, failure, setFailure, connected, connectionPresent, setDisconnectOpen, uninstall, setUninstall, connectionPanel, pendingStart, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
   const terminalOnly = !capability.connectionOptions && capability.loginMethods.includes("terminal") && !inlineLogin;
   const canChangeAccount = capability.connectionOptions
     ? capability.connectionOptions.some(option => option.availability === "available" && (option.authKind === "api_key" ? Boolean(client.submitConnectionKey) : Boolean(client.startConnection)))
@@ -33,18 +33,18 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       aria-label={`${harness.displayName} connection`}
       aria-busy={pending}
     >
-      {harness.installState === "installed" && connected ? renderConnection?.(changeAccountAction) : null}
+      {harness.installState === "installed" && connectionPresent ? renderConnection?.(changeAccountAction) : null}
       {renderAccountActions?.(disabled || pending || connecting
         || (operationId !== null && operation?.id !== operationId))}
       {onConnectSaved && !connected ? <button type="button" className="matrix-ap-button"
         disabled={disabled || connectSavedDisabled || pending || connecting} onClick={() => void run(onConnectSaved)}>Connect saved connection</button> : null}
-      {harness.installState === "installed" && !connected
+      {harness.installState === "installed" && !connectionPresent
         && !capability.connectionOptions && !inlineLogin && !terminalOnly && capability.apiKeyProviders.length === 0 ? (
         <p className="matrix-ap-help" role="status">
           Connection in Settings is unavailable for this agent on this computer.
         </p>
       ) : null}
-      {terminalOnly && harness.installState === "installed" && (!connected || method !== null || failed || connecting) ? (
+      {terminalOnly && harness.installState === "installed" && (!connectionPresent || method !== null || failed || connecting) ? (
         <div className="matrix-ap-workflow-actions">
             <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting}
               onClick={() => void start("login", true)}>Log in in Terminal</button>
@@ -118,9 +118,9 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
               ) : null}
             </div>
           ) : null}
-          {capability.connectionOptions ? ((!connected || method !== null || failed) ? <WorkflowConnectionChooser state={state} /> : null) : (inlineLogin ||
+          {capability.connectionOptions ? ((!connectionPresent || method !== null || failed) ? <WorkflowConnectionChooser state={state} /> : null) : (inlineLogin ||
             capability.apiKeyProviders.length > 0) &&
-          (!connected ||
+          (!connectionPresent ||
             method !== null ||
             failed) ? (
             <>

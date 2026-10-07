@@ -1,3 +1,4 @@
+import { renewProviderSettingsNativeObservation } from "./provider-settings-native-renewal.js";
 import { verifyNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
@@ -281,6 +282,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<ProviderSettingsSnapshot> {
     if (options.admissionScope === "managed_matrix") return await this.#managedMatrixSnapshot(options);
     const refresh = options.refresh === true;
+    const observationScope = { signal: options.signal, deadline: +this.#now() + 13000 };
     await this.#serialize(() => this.#readRuntimeRecovery(refresh));
     // All inventory, funding, catalog and native probes run outside mutation
     // admission. Only configuration reconciliation and the final cheap fence
@@ -297,7 +299,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         })]);
         return { canonical, enrichment };
       };
-      let captured = await read();
+      let captured = await renewProviderSettingsNativeObservation(await read(), this.#reader, observationScope);
       let config = await this.#serialize(async () => generation === this.#mutationGeneration
         ? this.#configuration(captured.canonical, captured.enrichment) : null);
       if (!config) continue;
@@ -321,6 +323,16 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         }
       }
       options.signal?.throwIfAborted();
+      // Optional funding/account metadata must not turn profile expiry into logout.
+      // Reobserve outside the writer lock; the existing generation/revision fence
+      // still rejects an owner mutation raced by this read.
+      const renewed = await renewProviderSettingsNativeObservation(captured, this.#reader, observationScope);
+      if (renewed !== captured) {
+        captured = renewed;
+        config = await this.#serialize(async () => generation === this.#mutationGeneration
+          ? this.#configuration(captured.canonical, captured.enrichment) : null);
+        if (!config) continue;
+      }
       const snapshot = await this.#project(captured.canonical, config, refresh, captured.enrichment, metadata, hermesMetadata);
       const accepted = await this.#serialize(async () => {
         options.signal?.throwIfAborted();
