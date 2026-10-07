@@ -112,6 +112,33 @@ describe("new saved app workflows", () => {
     expect(screen.getByText("1400 g")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Edit Rice" })[0]); expect(p.onEdit).toHaveBeenCalled();
   });
+  it("can stop a partially saved meal rotation without losing saved meals and plan a new week", async () => {
+    const recipe = row("recipe", { title: "Rice", status: "Recipe", servings: 2, ingredients: "rice | 200 | g" });
+    const p = props("meal-planner", [recipe]); p.onSave.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("failure"));
+    const view = render(<NewWorkflows {...p} />);
+    fireEvent.change(screen.getByLabelText("Week starts"), { target: { value: "2026-10-07" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview seven-day rotation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save this rotation" }));
+    await screen.findByRole("alert");
+    const persistedMeal = p.onSave.mock.calls[0][0], failedMeal = p.onSave.mock.calls[1][0];
+    view.rerender(<NewWorkflows {...p} records={[recipe, persistedMeal]} />);
+    expect(screen.getByText("200 g")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop remaining saves" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry remaining meals" })).toBeNull();
+    expect((screen.getByLabelText("Week starts") as HTMLInputElement).disabled).toBe(false);
+    expect((screen.getByLabelText("Portions each meal") as HTMLInputElement).disabled).toBe(false);
+    expect(screen.getByText("200 g")).toBeTruthy();
+    expect(p.onSave).toHaveBeenCalledTimes(2);
+    fireEvent.change(screen.getByLabelText("Week starts"), { target: { value: "2026-10-14" } });
+    fireEvent.change(screen.getByLabelText("Portions each meal"), { target: { value: "3" } });
+    expect(screen.getByText("Other saved meal plans (1)")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Preview seven-day rotation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save this rotation" }));
+    await waitFor(() => expect(p.onSave).toHaveBeenCalledTimes(9));
+    const newWeek = p.onSave.mock.calls.slice(2).map(([meal]) => meal);
+    expect(newWeek.every(meal => meal.id !== persistedMeal.id && meal.id !== failedMeal.id && meal.fields["planned-portions"] === 3 && String(meal.fields.date) >= "2026-10-14" && String(meal.fields.date) <= "2026-10-20")).toBe(true);
+  });
   it("freezes reviewed meal dates and portions through a failed save and retry", async () => {
     const recipe = row("recipe", { title: "Rice", status: "Recipe", servings: 2, ingredients: "rice | 200 | g" });
     const p = props("meal-planner", [recipe]); p.onSave.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("failure"));
