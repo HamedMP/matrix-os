@@ -30,6 +30,8 @@ export interface HomeState {
   nextSessionTtlMs: number;
   requests: Array<{ method: string; url: string; headers: Headers; body: string }>;
   renewFails: boolean;
+  /** A shared project's overview; an older home without the route answers 404. */
+  projectOverview?: Json;
 }
 
 /** Paths the platform itself serves; with the relay on the platform origin every other path reaches the home. */
@@ -136,6 +138,8 @@ export function fakeDirectWorld(options: { endpointOrigin?: string } = {}) {
     if (!ok) return json({ error: "Collaboration request denied" }, 401);
     if (record.generation !== home.generation) { home.sessions.delete(sessionId!); return json({ error: "Collaboration request denied" }, 401); }
     if (url.pathname === `/api/collaboration/scopes/${record.scopeId}/chat`) return json({ id: "chat-1", scopeId: record.scopeId, title: "Design review" });
+    if (url.pathname === `/api/collaboration/scopes/${record.scopeId}/project`) return json({ id: "proj-1", scopeId: record.scopeId, status: "active", resources: [] });
+    if (url.pathname === `/api/collaboration/scopes/${record.scopeId}/project/overview` && home.projectOverview) return json(home.projectOverview);
     if (url.pathname === `/api/collaboration/scopes/${record.scopeId}`) return json({ id: record.scopeId, kind: "chat", role: "editor" });
     if (url.pathname.endsWith("/chat/messages") && method === "POST") return json({ accepted: true, echo: JSON.parse(body) });
     if (url.pathname.startsWith("/api/collaboration/invitations/")) return json({ id: url.pathname.split("/")[4], revision: "4", role: "editor", owner: { displayName: "Owner" } });

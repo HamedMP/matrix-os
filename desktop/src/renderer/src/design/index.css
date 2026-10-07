@@ -1,5 +1,8 @@
 @import "@fontsource-variable/geist/wght.css";
 @import "tailwindcss";
+@source "../../../../../packages/ui/src/integrations";
+@source "../../../../../packages/ui/src/chat-import";
+@source "../../../../../packages/ui/src/organization-drive";
 @source "../../../../../packages/ui/src/chat";
 @source "../../../../../packages/ui/src/chat-agents";
 @source "../../../../../packages/ui/src/collaboration";
@@ -12,6 +15,7 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
+@import "./brand-fonts.css";
 @import "@matrix-os/ui/chat-agents.css";
 
 @keyframes native-desktop-window-hide {

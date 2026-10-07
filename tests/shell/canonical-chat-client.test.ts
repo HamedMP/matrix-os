@@ -33,7 +33,7 @@ describe("canonical shell Chat client", () => {
     expect(opened).toBe(response);
     expect(opened.bodyUsed).toBe(false);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1",
+      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1",
       expect.objectContaining({
         method: "GET",
         headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "1" },
@@ -46,7 +46,7 @@ describe("canonical shell Chat client", () => {
   });
 
   it.each([
-    ["provider_unavailable", "This connection is currently unavailable. Open Agents & providers to check it."],
+    ["provider_unavailable", "Connection unavailable. Check Agents & providers."],
     ["model_unavailable", "The selected model is unavailable. Choose another model."],
     ["chat_conflict", "This Chat changed before the message was sent. Refresh and try again."],
     ["authorization_failed", "You do not have permission to send this message."],
@@ -99,12 +99,12 @@ describe("canonical shell Chat client", () => {
     })).resolves.toEqual(record);
     expect(fetchFn).toHaveBeenNthCalledWith(
       1,
-      "https://matrix.test/api/chats?limit=100&scope=global&readStateVersion=1",
+      "https://matrix.test/api/chats?limit=100&scope=global&readStateVersion=1&fundingVersion=1",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(fetchFn).toHaveBeenNthCalledWith(
       2,
-      "https://matrix.test/api/chats?readStateVersion=1",
+      "https://matrix.test/api/chats?readStateVersion=1&fundingVersion=1",
       expect.objectContaining({ method: "POST", headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "1" } }),
     );
   });
@@ -119,7 +119,7 @@ describe("canonical shell Chat client", () => {
       title: "Release plan",
     })).resolves.toEqual(renamed);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/chat_shell_test/title?readStateVersion=1",
+      "https://matrix.test/api/chats/chat_shell_test/title?readStateVersion=1&fundingVersion=1",
       expect.objectContaining({
         method: "PATCH",
         headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "1" },
@@ -183,7 +183,7 @@ describe("canonical shell Chat client", () => {
     });
     await client.submitApproval("chat_shell_test", "run_shell", "approval_1", "approve", "req_shell_approval");
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/chat_shell_test/runs/run_shell/approvals/approval_1?readStateVersion=1",
+      "https://matrix.test/api/chats/chat_shell_test/runs/run_shell/approvals/approval_1?readStateVersion=1&fundingVersion=1",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ clientRequestId: "req_shell_approval", decision: "approve" }) }),
     );
   });

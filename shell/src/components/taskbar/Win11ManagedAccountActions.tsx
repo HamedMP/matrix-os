@@ -49,6 +49,10 @@ export function Win11ManagedAccountActions({ onClose }: { onClose: () => void })
         <UserIcon aria-hidden="true" />
         <span>Manage account</span>
       </button>
+      <a role="menuitem" className="win11-power-flyout-item" href="https://app.matrix-os.com/account/delete" target="_blank" rel="noreferrer" onClick={onClose}>
+        <UserIcon aria-hidden="true" />
+        <span>Account data and deletion</span>
+      </a>
       <button
         type="button"
         role="menuitem"

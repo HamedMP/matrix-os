@@ -366,19 +366,28 @@ describe("Codex app-server runner reliability", () => {
     }
   });
 
-  it("settles an in-flight tool as cancelled before an interrupted turn is replayed", async () => {
+  it.each([
+    undefined,
+    {
+      message: "synthetic-private-provider-error",
+      codexErrorInfo: "tooManyDenials",
+      additionalDetails: "synthetic-secret-context",
+    },
+  ])("settles in-flight tools on interrupted turns with 0.159 error metadata %j", async error => {
     const runtime = await startFakeRuntime("tool_cleanup", [
       initialize,
       startThread,
       "else if (message.method === 'turn/start') {",
       "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
       "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'native-tool', type: 'commandExecution', status: 'inProgress' } } }));",
-      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'interrupted' } } }));",
+      `  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'interrupted', error: ${JSON.stringify(error) ?? "null"} } } }));`,
       "}",
     ], { stubControlServer: true });
 
     try {
       const transcript = await waitForTranscript(runtime.eventPath, /"type":"turn\.aborted"/);
+      expect(transcript).not.toContain("synthetic-private-provider-error");
+      expect(transcript).not.toContain("synthetic-secret-context");
       expect(runtime.child.exitCode).toBeNull();
       runtime.child.kill("SIGTERM");
       const exitCode = await waitForExit(runtime.child);

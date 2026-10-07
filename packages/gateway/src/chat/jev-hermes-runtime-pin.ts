@@ -1,8 +1,9 @@
+import type { JevHermesCredentials } from "./jev-hermes-credentials.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { boundedOperation } from "../bounded-operation.js";
-import { hermesDependencyArguments } from "./jev-hermes-python.js";
+import { hermesDependencyArguments, hermesSdkRequirements } from "./jev-hermes-python.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 const PIN = "d337b736aa1e8ebecfab043842d13e4a2d2f48a3";
@@ -41,8 +42,8 @@ export async function verifyJevHermesRuntimePin(root: string, signal: AbortSigna
   }, 15_000, signal);
 }
 
-/** Import only the locked provider SDK in isolated Python; never load owner configuration or infer readiness from Git alone. */
-export async function verifyJevHermesDependencies(root: string, signal: AbortSignal,
+/** Import the locked core SDK and selected transport's optional SDK in isolated Python; never load owner configuration or infer readiness from Git alone. */
+export async function verifyJevHermesDependencies(root: string, apiMode: JevHermesCredentials["apiMode"], signal: AbortSignal,
   runPython: (executable: string, args: string[], signal: AbortSignal) => Promise<string> = async (executable, args, deadline) => {
     const result = await run(executable, args, { timeout: 10_000, maxBuffer: 4096, signal: deadline,
       env: { PATH: "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" } });
@@ -53,9 +54,9 @@ export async function verifyJevHermesDependencies(root: string, signal: AbortSig
     const cachePrefix = await mkdtemp(join(tmpdir(), "matrix-jev-dependency-cache-"));
     try {
       deadline.throwIfAborted();
-      const version = await runPython(join(root, "venv", "bin", "python"), hermesDependencyArguments(root, cachePrefix), deadline);
+      const version = await runPython(join(root, "venv", "bin", "python"), hermesDependencyArguments(root, cachePrefix, apiMode), deadline);
       deadline.throwIfAborted();
-      if (version !== "0.87.0\n") throw new Error("Restricted runtime setup required");
+      if (version !== hermesSdkRequirements(apiMode).map(sdk => `${sdk.version}\n`).join("")) throw new Error("Restricted runtime setup required");
     } finally { await rm(cachePrefix, { recursive: true, force: true }); }
   }, 10_000, signal);
 }

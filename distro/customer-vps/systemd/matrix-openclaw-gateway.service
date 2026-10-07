@@ -7,6 +7,8 @@ ConditionFileIsExecutable=/opt/matrix/runtime/node/bin/openclaw
 StartLimitIntervalSec=5min
 StartLimitBurst=3
 
+ConditionPathExists=!/var/lib/matrix-agent-runtime/disabled-openclaw
+
 [Service]
 Type=simple
 User=matrix

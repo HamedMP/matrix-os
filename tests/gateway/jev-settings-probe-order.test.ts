@@ -42,7 +42,8 @@ async function fixture() {
     jevInboxTriage: { version: 1, ownerId: baseInput.owner.ownerId, ...account } } };
   const paidJev = vi.fn(); const primary = fakeGateway(); const profile = vi.fn(async () => ({ emailAddress: "foreign@example.test" }));
   const runtime = createProductionJevInboxRuntime({ homePath: home, ownerId: baseInput.owner.ownerId, fundedOwnerId: "funded_fixture", settings,
-    getAgent: async () => agent, service: { evaluate: paidJev }, summary: { getFundingSummary: async () => ({ policy, funding }) },
+    getAgent: async () => agent, service: { evaluate: paidJev }, summary: { getFundingSummary: async () => ({ policy, funding, chatAvailability: { contractVersion: 1 as const,
+      asOf: funding.asOf, eligibleBalanceMicrousd: 5_000_000, availableBalanceMicrousd: 5_000_000 } }) },
     routes: { getRouteReadiness: paidJev }, internalBaseUrl: null,
     db: { listConnectedServices: async () => [{ id: account.connectionId, user_id: baseInput.owner.ownerId, service: "gmail", status: "active",
       account_label: "Work", account_email: account.expectedEmail, pipedream_account_id: "apn_fixture" }],
@@ -66,7 +67,8 @@ it.each(["pin", "catalog", "profile"])("real production resolver → SettingsSto
     const rejection = mode === "pin" ? expect(completed).rejects.toThrow() : completed;
     if (mode !== "pin") {
       await vi.waitFor(() => expect(f.primary.requests.some(request => request.method === "session.create")).toBe(true));
-      f.primary.event("session.info", { lazy: false, tools: { matrix_jev_recipe: mode === "catalog" ? ["forged_tool"] : ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
+      f.primary.event("session.info", { provider: "anthropic", model: "claude-sonnet-5", lazy: false,
+        tools: { matrix_jev_recipe: mode === "catalog" ? ["forged_tool"] : ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
     }
     await rejection;
     expect(f.genericProbe).not.toHaveBeenCalled(); expect(f.paidJev).not.toHaveBeenCalled();

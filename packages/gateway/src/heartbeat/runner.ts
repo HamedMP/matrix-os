@@ -55,7 +55,7 @@ export function createHeartbeatRunner(config: HeartbeatConfig): HeartbeatRunner 
       if (event.type === "text") {
         responseText += event.text;
       }
-    }, { channel: undefined, senderId: "heartbeat", senderName: "heartbeat" });
+    }, { channel: undefined, senderId: "heartbeat", senderName: "heartbeat" }, undefined, { fundedRequestClass: "background" });
 
     if (
       responseText.trim() === "HEARTBEAT_OK" ||

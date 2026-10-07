@@ -2,6 +2,7 @@ import { projectCanonicalNativeHarnessCatalog } from "./native-harness-canonical
 import {
   FundedAiEffectivePolicySchema,
   FundedAiFundingSummarySchema,
+  FundedAiRuntimeChatFundingSummaryResponseSchema,
   type AiProviderSnapshotV3,
   type ProviderGenericHarnessKind,
 } from "@matrix-os/contracts";
@@ -22,9 +23,13 @@ export async function readProviderSettingsEnrichment(input: {
       if (!input.fundingSummary) return undefined;
       try {
         const state = await input.fundingSummary.getFundingSummary();
+        const chatAvailability = state.chatAvailability
+          ? FundedAiRuntimeChatFundingSummaryResponseSchema.parse({ contractVersion: 1, ...state }).chatAvailability
+          : undefined;
         return {
           fundingSummary: FundedAiFundingSummarySchema.parse(state.funding),
           fundedPolicy: FundedAiEffectivePolicySchema.parse(state.policy),
+          ...(chatAvailability ? { chatAvailability } : {}),
         };
       } catch (error) {
         console.warn("[provider-settings] Matrix funding summary unavailable:",

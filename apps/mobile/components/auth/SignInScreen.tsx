@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { View, Text, Alert, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { View, Text, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -8,8 +8,11 @@ import { useSSO, useAuth } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Image } from "expo-image";
 import { describeSignInFailure } from "@/lib/clerk-sign-in";
+import { completePendingSignUp } from "@/lib/clerk-sign-up";
+import { useAppleSignIn } from "@/lib/use-apple-sign-in";
 import { SignInStepError, useEmailCodeSignIn } from "@/lib/use-email-code-sign-in";
 import { HostedSignInPanel } from "@/components/auth/HostedSignInPanel";
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, openLegalLink } from "@/lib/legal-links";
 import {
   HOSTED_GATEWAY_URL,
   getSelectedGatewayConnection,
@@ -72,12 +75,20 @@ export function SignInScreen() {
       await saveSelectedGatewayUrl(normalizedGatewayUrl);
       setGatewayUrl(normalizedGatewayUrl);
       setSignInError(null);
-      const { createdSessionId, setActive } = await startSSOFlow({
+      const { createdSessionId, setActive, signUp, authSessionResult } = await startSSOFlow({
         strategy,
         redirectUrl: clerkOAuthRedirectUrl,
       });
-      if (createdSessionId && setActive) {
-        await setActive({ session: createdSessionId });
+      // A first-time account comes back without a session until the sign-up's
+      // requirements are filled in. Only a finished browser round trip counts:
+      // a cancelled one may still hold an earlier attempt's pending sign-up.
+      const sessionId =
+        createdSessionId ??
+        (authSessionResult?.type === "success" && signUp?.status === "missing_requirements"
+          ? await completePendingSignUp(signUp)
+          : null);
+      if (sessionId && setActive) {
+        await setActive({ session: sessionId });
         redirectedRef.current = true;
         router.replace("/(drawer)" as any);
       }
@@ -131,6 +142,12 @@ export function SignInScreen() {
   }, [gatewayUrl]);
 
   const emailSignIn = useEmailCodeSignIn({
+    prepareGateway,
+    onError: setSignInError,
+    onSuccess: goToApps,
+  });
+
+  const appleSignIn = useAppleSignIn({
     prepareGateway,
     onError: setSignInError,
     onSuccess: goToApps,
@@ -206,10 +223,11 @@ export function SignInScreen() {
           {signInError ? <Text style={styles.errorText}>{signInError}</Text> : null}
 
           <HostedSignInPanel
-            loadingProvider={loadingProvider}
+            loadingProvider={appleSignIn.signingIn ? "apple" : loadingProvider}
             signingInWithPassword={emailSignIn.signingIn}
             sendingCode={emailSignIn.sending}
             verifyingCode={emailSignIn.verifying}
+            onApple={appleSignIn.signIn}
             onGoogle={handleGoogleSignIn}
             onGithub={handleGithubSignIn}
             onComputer={handleComputerSignIn}
@@ -227,14 +245,40 @@ export function SignInScreen() {
             onUseDifferentEmail={handleUseDifferentEmail}
           />
 
-          <Text style={styles.termsText}>
-            By continuing, you agree to our Terms of Service and Privacy Policy
-          </Text>
+          <View style={styles.terms}>
+            <Text style={styles.termsText}>By continuing, you agree to our</Text>
+            <View style={styles.termsLinks} testID="sign-in-legal-links">
+              <LegalLink label="Terms of Service" url={TERMS_OF_SERVICE_URL} />
+              <Text style={styles.termsText}>and</Text>
+              <LegalLink label="Privacy Policy" url={PRIVACY_POLICY_URL} />
+            </View>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
+
+// Pressables rather than nested <Text> spans: an inline span is only as tall as
+// its 18pt line, and these links have to be comfortably tappable before sign-in.
+// The 44pt target is the Pressable's own size, not a hitSlop, because a hitSlop
+// is not guaranteed to reach past the parent row's bounds. The link text sits at
+// the top of that target, so the extra height falls below the links, where
+// nothing else is tappable, and never over the consent sentence above them.
+function LegalLink({ label, url }: { label: string; url: string }) {
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={label}
+      onPress={() => openLegalLink(url)}
+      style={({ pressed }) => [styles.termsLinkTarget, pressed ? styles.termsLinkPressed : null]}
+    >
+      <Text style={styles.termsLink}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const LEGAL_LINK_TARGET = 44;
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -274,13 +318,39 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
     marginBottom: 12,
   },
+  terms: {
+    marginTop: 22,
+    paddingHorizontal: theme.v2.spacing.lg,
+    alignItems: "center",
+  },
+  termsLinks: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+    justifyContent: "center",
+  },
   termsText: {
     fontFamily: theme.v2.fonts.body,
     fontSize: 12,
     color: theme.v2.appColors.muted,
     textAlign: "center",
-    marginTop: 22,
     lineHeight: 18,
-    paddingHorizontal: theme.v2.spacing.lg,
+  },
+  // Padding, not literal spaces around "and": iOS trims a Text node's trailing
+  // whitespace, which leaves the gap after "and" narrower than the one before.
+  termsLinkTarget: {
+    minHeight: LEGAL_LINK_TARGET,
+    justifyContent: "flex-start",
+    paddingHorizontal: theme.v2.spacing.xs,
+  },
+  termsLink: {
+    fontFamily: theme.v2.fonts.medium,
+    fontSize: 12,
+    color: theme.v2.appColors.ink,
+    textDecorationLine: "underline",
+    lineHeight: 18,
+  },
+  termsLinkPressed: {
+    opacity: 0.6,
   },
 }));

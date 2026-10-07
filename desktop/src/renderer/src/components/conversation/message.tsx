@@ -1,4 +1,5 @@
 import { resolveChatMessageLink } from "@matrix-os/contracts";
+import { AttachmentImage } from "@matrix-os/ui";
 import { Check, Copy, FileText, Folder, WrapText } from "@renderer/lib/hugeicons";
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
@@ -182,6 +183,7 @@ export function MessageMetadata({
 const FILE_EXTENSION_PATTERN = /(?:^|\/)[^/]+\.[A-Za-z0-9]{1,12}$/;
 const RELATIVE_PATH_PATTERN = /^(?:[A-Za-z0-9_.@+-]+\/)+[A-Za-z0-9_.@+-]+\/?$/;
 const BARE_FILE_PATTERN = /^[A-Za-z0-9_.@+-]+\.[A-Za-z0-9]{1,12}$/;
+const IMAGE_FILE_PATTERN = /\.(?:png|jpe?g|webp|gif|avif|svg)$/i;
 
 function pathPresentation(value: string): { kind: "file" | "folder"; label: string } | null {
   const normalized = value.trim();
@@ -203,10 +205,12 @@ function CodeBlock({
   code,
   language,
   copyText,
+  displayContent,
 }: {
   code: string;
   language: string;
   copyText: ConversationPresentationCallbacks["copyText"];
+  displayContent?: React.ReactNode;
 }) {
   const [wrapped, setWrapped] = React.useState(false);
   return (
@@ -235,7 +239,7 @@ function CodeBlock({
         </span>
       </div>
       <pre className={cn("max-h-80 max-w-full overflow-x-auto p-3", wrapped && "whitespace-pre-wrap wrap-break-word")}>
-        <code className="font-mono text-xs" style={{ background: "transparent", border: 0, padding: 0 }}>{code}</code>
+        <code className="font-mono text-xs" style={{ background: "transparent", border: 0, padding: 0 }}>{displayContent ?? code}</code>
       </pre>
     </div>
   );
@@ -248,7 +252,16 @@ function escapeMarkdownCell(value: string): string {
 export function tableToMarkdown(table: HTMLTableElement | null): string {
   if (!table) return "";
   const rows = Array.from(table.rows).map((row) => (
-    Array.from(row.cells).map((cell) => escapeMarkdownCell(cell.textContent ?? ""))
+    Array.from(row.cells).map((cell) => {
+      // Table copy is derived from rendered cells, so replace an explicitly
+      // revealed button with the canonical marker before reading cell text.
+      const maskedCell = cell.cloneNode(true) as HTMLTableCellElement;
+      maskedCell.querySelectorAll<HTMLElement>("[data-chat-credential-marker]").forEach((element) => {
+        const marker = element.dataset.chatCredentialMarker;
+        if (marker === "[redacted]" || marker === "[redacted credential]") element.textContent = marker;
+      });
+      return escapeMarkdownCell(maskedCell.textContent ?? "");
+    })
   ));
   if (rows.length === 0) return "";
   const width = Math.max(...rows.map((row) => row.length));
@@ -287,37 +300,145 @@ function MarkdownTable({
 
 const ReferenceLinkContext = React.createContext<((href: string) => React.ReactNode | undefined) | undefined>(undefined);
 
+const CREDENTIAL_MARKER = /\[redacted(?: credential)?\]/g;
+type InlineMarkdownNode = {
+  type: string;
+  value?: string;
+  children?: InlineMarkdownNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } };
+  data?: { hName: string; hProperties: Record<string, string | number> };
+};
+
+/** Insert trusted inline nodes at source offsets without changing canonical Markdown. */
+function inlineCredentialMarkers(source: string) {
+  const sourceMarkers = [...source.matchAll(CREDENTIAL_MARKER)].map((match, index) => ({
+    offset: match.index,
+    marker: match[0],
+    number: index + 1,
+  }));
+  return () => (tree: InlineMarkdownNode) => {
+    const visit = (parent: InlineMarkdownNode) => {
+      // A disclosure button must never become a nested interactive descendant
+      // of a Markdown link. Those markers remain masked link text.
+      if (parent.type === "link" || parent.type === "linkReference") return;
+      if (!parent.children) return;
+      parent.children = parent.children.flatMap((node) => {
+        if ((node.type !== "text" && node.type !== "inlineCode") || typeof node.value !== "string" || !node.position) {
+          visit(node);
+          return [node];
+        }
+        const start = node.position.start.offset;
+        const end = node.position.end.offset;
+        if (start === undefined || end === undefined) return [node];
+        const rendered = [...node.value.matchAll(CREDENTIAL_MARKER)];
+        if (rendered.length === 0) return [node];
+        const inSource = sourceMarkers.filter((item) => item.offset >= start && item.offset + item.marker.length <= end);
+        // Markdown escapes and entities can change rendered character offsets.
+        // If source and rendered markers do not align exactly, leave the text masked.
+        if (rendered.length !== inSource.length || rendered.some((match, index) => match[0] !== inSource[index]?.marker)) return [node];
+        const pieces: InlineMarkdownNode[] = [];
+        let cursor = 0;
+        for (const [index, match] of rendered.entries()) {
+          if (match.index > cursor) pieces.push({ type: "text", value: node.value.slice(cursor, match.index) });
+          const item = inSource[index]!;
+          pieces.push({ type: "inlineCredentialMarker", data: { hName: "span", hProperties: {
+            "data-chat-credential-offset": item.offset,
+            "data-chat-credential-marker": item.marker,
+            "data-chat-credential-number": item.number,
+          } } });
+          cursor = match.index + match[0].length;
+        }
+        if (cursor < node.value.length) pieces.push({ type: "text", value: node.value.slice(cursor) });
+        if (node.type === "inlineCode") {
+          return [{ type: "inlineCredentialCode", children: pieces, data: {
+            hName: "code", hProperties: { "data-chat-credential-code": "true" },
+          } }];
+        }
+        return pieces;
+      });
+    };
+    visit(tree);
+  };
+}
+
+function codeCredentialContent(
+  source: string,
+  code: string,
+  position: InlineMarkdownNode["position"],
+  render: (offset: number, marker: string, number: number) => React.ReactNode,
+): React.ReactNode | undefined {
+  const start = position?.start.offset;
+  const end = position?.end.offset;
+  if (start === undefined || end === undefined) return undefined;
+  const rendered = [...code.matchAll(CREDENTIAL_MARKER)];
+  if (rendered.length === 0) return undefined;
+  const sourceMarkers = [...source.matchAll(CREDENTIAL_MARKER)]
+    .map((match, index) => ({ offset: match.index, marker: match[0], number: index + 1 }))
+    .filter((item) => item.offset >= start && item.offset + item.marker.length <= end);
+  if (rendered.length !== sourceMarkers.length || rendered.some((match, index) => match[0] !== sourceMarkers[index]?.marker)) return undefined;
+  const content: React.ReactNode[] = [];
+  let cursor = 0;
+  for (const [index, match] of rendered.entries()) {
+    if (match.index > cursor) content.push(code.slice(cursor, match.index));
+    const item = sourceMarkers[index]!;
+    content.push(<React.Fragment key={item.offset}>{render(item.offset, item.marker, item.number)}</React.Fragment>);
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < code.length) content.push(code.slice(cursor));
+  return content;
+}
+
 export function MessageResponse({
   children,
   copyText,
   openFile,
   openWebLink,
+  loadFileImage,
+  resolveApp,
+  openApp,
   renderReferenceLink,
+  renderCredentialMarker,
   className,
 }: {
   children: string;
   copyText: ConversationPresentationCallbacks["copyText"];
   openFile?: ConversationPresentationCallbacks["openFile"];
   openWebLink?: ConversationPresentationCallbacks["openWebLink"];
+  loadFileImage?: (path: string) => Promise<Blob>;
+  resolveApp?: ConversationPresentationCallbacks["resolveApp"];
+  openApp?: ConversationPresentationCallbacks["openApp"];
   renderReferenceLink?: (href: string) => React.ReactNode | undefined;
+  renderCredentialMarker?: (offset: number, marker: string, number: number) => React.ReactNode;
   className?: string;
 }) {
-  const callbacks = React.useRef({ copyText, openFile, openWebLink });
+  const callbacks = React.useRef({ copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp });
+  const credentialMarkerRef = React.useRef(renderCredentialMarker);
+  const markdownSourceRef = React.useRef(children);
+  credentialMarkerRef.current = renderCredentialMarker;
+  markdownSourceRef.current = children;
   React.useLayoutEffect(() => {
-    callbacks.current = { copyText, openFile, openWebLink };
-  }, [copyText, openFile, openWebLink]);
+    callbacks.current = { copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp };
+  }, [copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp]);
   const copy = React.useCallback((text: string) => callbacks.current.copyText(text), []);
   const hasFileNavigation = Boolean(openFile);
   const hasWebNavigation = Boolean(openWebLink);
+  const loadLocalImage = React.useCallback((path: string) => callbacks.current.loadFileImage!(path), []);
+  const openLocalFile = React.useCallback((path: string) => callbacks.current.openFile?.(path), []);
+  const hasImageLoader = Boolean(loadFileImage);
   // Keep Markdown element types stable across focus and controller updates.
   const markdownComponents = React.useMemo(() => {
     function Anchor({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) {
       const currentReferenceLink = React.useContext(ReferenceLinkContext);
       const reference = typeof href === "string" ? currentReferenceLink?.(href) : undefined;
       if (reference !== undefined) return reference;
+      const app = href && resolveApp?.(href);
+      if (app && openApp) return <button type="button" title={href} aria-label={`Open app ${app.name}`} className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[var(--highlight)] hover:bg-[var(--bg-hover)]" onClick={() => callbacks.current.openApp?.(href!)}>{app.name}</button>;
       const target = typeof href === "string" ? resolveChatMessageLink(href) : null;
       const external = target?.kind === "web";
       const editorPath = target?.kind === "file" ? target.path : null;
+      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath)) {
+        return <AttachmentImage src={href!} label={String(props.children ?? editorPath.split("/").at(-1))} path={href!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
+      }
       return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && hasFileNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
         callbacks.current.openFile?.(href!);
@@ -327,11 +448,22 @@ export function MessageResponse({
       } } : {})} />;
     }
     return {
+    span: ({ node: _node, ...props }: React.ComponentProps<"span"> & { node?: unknown }) => {
+      const offset = props["data-chat-credential-offset" as keyof typeof props];
+      const marker = props["data-chat-credential-marker" as keyof typeof props];
+      const number = props["data-chat-credential-number" as keyof typeof props];
+      const renderCredential = credentialMarkerRef.current;
+      if (renderCredential && typeof offset === "number" && typeof marker === "string" && typeof number === "number") {
+        return renderCredential(offset, marker, number);
+      }
+      return <span {...props} />;
+    },
     a: Anchor,
     img: ({ node: _node, src, alt, ...props }: React.ComponentProps<"img"> & { node?: unknown }) => {
       const target = typeof src === "string" ? resolveChatMessageLink(src) : null;
       const label = alt?.trim() || (target?.kind === "file" ? target.path.split("/").at(-1) : null) || "image";
       if (target?.kind === "file") {
+        if (hasImageLoader) return <AttachmentImage src={src!} label={label} path={src!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
         if (!hasFileNavigation) return <span aria-label={`Image file: ${label}`}>{label}</span>;
         return (
           <button
@@ -349,14 +481,26 @@ export function MessageResponse({
       if (target?.kind === "web") return <img {...props} src={target.url} alt={alt ?? ""} />;
       return <span aria-label={`Unavailable image: ${label}`}>{label}</span>;
     },
-    code: ({ node: _node, children: codeChildren, className, ...props }: React.ComponentProps<"code"> & { node?: unknown }) => {
+    code: ({ node: codeNode, children: codeChildren, className, ...props }: React.ComponentProps<"code"> & { node?: unknown }) => {
+      if (props["data-chat-credential-code" as keyof typeof props] === "true") {
+        return <code {...props} className={cn(className, "border border-[var(--border-subtle)]")}>{codeChildren}</code>;
+      }
       const value = String(codeChildren).replace(/\n$/, "");
       const blockLanguage = className?.match(/(?:^|\s)language-([^\s]+)/)?.[1];
       if (blockLanguage || String(codeChildren).endsWith("\n")) {
-        return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copy} />;
+        const renderCredential = credentialMarkerRef.current;
+        const displayContent = renderCredential
+          ? codeCredentialContent(markdownSourceRef.current, value, (codeNode as InlineMarkdownNode | undefined)?.position, renderCredential)
+          : undefined;
+        return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copy} displayContent={displayContent} />;
       }
+      const app = resolveApp?.(value);
+      if (app && openApp) return <button type="button" title={value} aria-label={`Open app ${app.name}`} className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[var(--highlight)] hover:bg-[var(--bg-hover)]" onClick={() => callbacks.current.openApp?.(value)}>{app.name}</button>;
       const path = className || !/[\\/]/.test(value) ? null : pathPresentation(value);
       const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
+      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath) && resolveChatMessageLink(value)?.kind === "file") {
+        return <AttachmentImage src={value} label={path!.label} path={value} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
+      }
       if (path && editorPath && hasFileNavigation) {
         return (
           <button
@@ -402,7 +546,7 @@ export function MessageResponse({
       <MarkdownTable {...props} copyText={copy} />
     ),
     };
-  }, [copy, hasFileNavigation, hasWebNavigation]);
+  }, [copy, hasFileNavigation, hasWebNavigation, hasImageLoader, loadLocalImage, openLocalFile, resolveApp, openApp]);
 
   return (
     <div
@@ -412,7 +556,7 @@ export function MessageResponse({
     >
       <ReferenceLinkContext.Provider value={renderReferenceLink}>
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={renderCredentialMarker ? [remarkGfm, inlineCredentialMarkers(children)] : [remarkGfm]}
           components={markdownComponents}
         >
           {children}

@@ -1,8 +1,89 @@
 import { isAbsolute, relative, sep } from "node:path";
+import type { CanonicalChatMessagePart } from "@matrix-os/contracts";
 
 const SECRET_TEXT = /(?:authorization\s*[:=]|bearer\s+|(?:api[_-]?(?:key|token)|access[_-]?token|secret|password|credential)\s*[:=]|\bprivate\s+raw\b|ghp_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]+)/i;
 const SECRET_ASSIGNMENT = /\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
+const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]*/g;
+const SENSITIVE_PATH_VALUE = /[?&](?:token|key|api[_-]?key|access[_-]?token|password|secret|credential)=/i;
+// Fixed public collection names are product references, not host locations.
+// No descendants, query strings, or arbitrary /api paths are exempted.
+const PUBLIC_PRODUCT_ROUTES = new Set(["/api/integrations", "/api/apps"]);
+function redactAbsolutePath(match: string, prefix: string): string {
+  const path = match.slice(prefix.length).replace(/[.,;!]+$/, "");
+  return PUBLIC_PRODUCT_ROUTES.has(path) ? match : `${prefix}[redacted path]`;
+}
+export function redactAssistantPaths(value: string): string {
+  return value.replace(ABSOLUTE_PATH, redactAbsolutePath);
+}
+export function redactAssistantCredentials(value: string): string {
+  return value.replace(BEARER_VALUE, "Bearer [redacted]").replace(SECRET_ASSIGNMENT, "[redacted credential]");
+}
+export function redactSharedAssistantText(value: string): string {
+  return redactAssistantCredentials(redactAssistantPaths(value));
+}
+/** Join only text parts crossed by one protected token; preserve other block boundaries. */
+function projectAssistantParts(parts: CanonicalChatMessagePart[], redactPaths: boolean): CanonicalChatMessagePart[] {
+  const projected: CanonicalChatMessagePart[] = [];
+  let textRun: Extract<CanonicalChatMessagePart, { type: "text" }>[] = [];
+  const pushText = (safe: string) => {
+    for (let offset = 0; offset < safe.length;) {
+      let end = Math.min(offset + 32_000, safe.length);
+      if (end < safe.length && /[\uD800-\uDBFF]/u.test(safe[end - 1]!)) end -= 1;
+      projected.push({ type: "text", text: safe.slice(offset, end) });
+      offset = end;
+    }
+  };
+  const flush = () => {
+    if (!textRun.length) return;
+    const joined = textRun.map((part) => part.text).join("");
+    const boundaries: number[] = [];
+    let offset = 0;
+    for (const part of textRun.slice(0, -1)) {
+      offset += part.text.length;
+      boundaries.push(offset);
+    }
+    const mergeAfter = boundaries.map(() => false);
+    for (const pattern of redactPaths
+      ? [ABSOLUTE_PATH, SECRET_ASSIGNMENT, BEARER_VALUE]
+      : [SECRET_ASSIGNMENT, BEARER_VALUE]) {
+      for (const match of joined.matchAll(pattern)) {
+        const start = match.index + (pattern === ABSOLUTE_PATH ? match[1]!.length : 0);
+        const end = match.index + match[0].length;
+        boundaries.forEach((boundary, index) => {
+          if (start < boundary && boundary < end) mergeAfter[index] = true;
+        });
+      }
+    }
+    let group = "";
+    textRun.forEach((part, index) => {
+      group += part.text;
+      if (!mergeAfter[index]) {
+        pushText(redactPaths ? redactSharedAssistantText(group) : redactAssistantCredentials(group));
+        group = "";
+      }
+    });
+    textRun = [];
+  };
+  for (const part of parts) {
+    if (part.type === "text") textRun.push(part);
+    else { flush(); projected.push(part); }
+  }
+  flush();
+  return projected;
+}
+export function redactAssistantParts(parts: CanonicalChatMessagePart[]): CanonicalChatMessagePart[] {
+  return projectAssistantParts(parts, true);
+}
+export function redactAssistantCredentialParts(parts: CanonicalChatMessagePart[]): CanonicalChatMessagePart[] {
+  return projectAssistantParts(parts, false);
+}
+function preservePrivatePath(match: string, prefix: string): string {
+  const path = match.slice(prefix.length);
+  return SECRET_TEXT.test(path) || /[?#]/.test(path)
+    ? redactAbsolutePath(match, prefix) : match;
+}
+type PathProjectionOptions = { homePath: string; executionRoot?: string; showPrivatePaths?: boolean };
 const DANGLING_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+$/i;
 const ACTIVE_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+/i;
 const DANGLING_SECRET_ASSIGNMENT = /(?:^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*(?:=\s*)?$/i;
@@ -34,17 +115,26 @@ export function classifyAssistantCredentialBoundaryPrefix(value: string): "pendi
   return "continuation";
 }
 
+/** Hermes can publish raw deltas before their authoritative interim text. Hold
+ * a segment as soon as its trailing token could become a credential key. */
+export function hasAssistantCredentialBoundaryCandidate(value: string): boolean {
+  if (redactAssistantCredentials(value) !== value) return true;
+  const tail = /(?:^|[^A-Za-z0-9_])([A-Za-z][A-Za-z0-9_-]*(?:\s*=?\s*)?)$/u.exec(value)?.[1];
+  return tail !== undefined && classifyAssistantCredentialBoundaryPrefix(tail) !== "continuation";
+}
+
 function normalizedRoot(value: string): string {
   return value.replace(/[\\/]+$/, "");
 }
 
 export function safeDisplayPath(
   value: unknown,
-  options: { homePath: string; executionRoot?: string },
+  options: PathProjectionOptions,
 ): string | undefined {
   if (typeof value !== "string") return undefined;
   const path = value.trim();
-  if (!path || path.includes("\0") || SECRET_TEXT.test(path)) return undefined;
+  if (!path || path.includes("\0") || SECRET_TEXT.test(path) || /[?#]/.test(path)) return undefined;
+  if (options.showPrivatePaths && isAbsolute(path)) return path.replaceAll("\\", "/");
   const homePath = normalizedRoot(options.homePath);
   const executionRoot = options.executionRoot ? normalizedRoot(options.executionRoot) : undefined;
   if (path === homePath) return "~";
@@ -63,40 +153,75 @@ export function safeDisplayPath(
 
 export function safePublishedText(
   value: unknown,
-  options: { homePath: string; executionRoot?: string; maxChars?: number },
+  options: PathProjectionOptions & { maxChars?: number },
 ): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
-  if (!trimmed || SECRET_TEXT.test(trimmed)) return undefined;
+  if (!trimmed || SECRET_TEXT.test(trimmed) || SENSITIVE_PATH_VALUE.test(trimmed)) return undefined;
+  if (options.showPrivatePaths) {
+    const maxChars = options.maxChars ?? 2_000;
+    return Array.from(trimmed.replace(ABSOLUTE_PATH, preservePrivatePath)).slice(0, maxChars).join("");
+  }
   const homePath = normalizedRoot(options.homePath);
   const executionRoot = options.executionRoot ? normalizedRoot(options.executionRoot) : undefined;
   let projected = trimmed.replaceAll(`${homePath}/`, "~/").replaceAll(homePath, "~");
   if (executionRoot && !executionRoot.startsWith(`${homePath}/`)) {
     projected = projected.replaceAll(`${executionRoot}/`, "").replaceAll(executionRoot, ".");
   }
-  projected = projected.replace(ABSOLUTE_PATH, (match, prefix: string) => `${prefix}[redacted path]`);
+  projected = projected.replace(ABSOLUTE_PATH, redactAbsolutePath);
   const maxChars = options.maxChars ?? 2_000;
   return Array.from(projected).slice(0, maxChars).join("");
 }
 
 export function sanitizeAssistantText(
   value: string,
-  options: { homePath: string; executionRoot?: string },
+  options: PathProjectionOptions,
 ): string {
+  if (options.showPrivatePaths) {
+    return redactAssistantCredentials(value).replace(ABSOLUTE_PATH, preservePrivatePath);
+  }
   const homePath = normalizedRoot(options.homePath);
   const executionRoot = options.executionRoot ? normalizedRoot(options.executionRoot) : undefined;
   let projected = value.replaceAll(`${homePath}/`, "~/").replaceAll(homePath, "~");
   if (executionRoot && !executionRoot.startsWith(`${homePath}/`)) {
     projected = projected.replaceAll(`${executionRoot}/`, "").replaceAll(executionRoot, ".");
   }
-  return projected
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
-    .replace(SECRET_ASSIGNMENT, "[redacted credential]")
-    .replace(ABSOLUTE_PATH, (match, prefix: string) => `${prefix}[redacted path]`);
+  return redactAssistantCredentials(projected).replace(ABSOLUTE_PATH, redactAbsolutePath);
+}
+
+export type AssistantCredentialCapture = { offset: number; length: number; value: string };
+export type CapturedAssistantText = { text: string; captures: AssistantCredentialCapture[] };
+
+/** Capture only values already recognized by the existing redactor. Offsets are
+ * UTF-16 positions in the safe text returned here, never in provider text. */
+export function projectAssistantTextWithCaptures(value: string, options: PathProjectionOptions): CapturedAssistantText {
+  const matches = /\bBearer\s+[A-Za-z0-9._~+/=-]+|\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
+  let text = "";
+  let cursor = 0;
+  const captures: AssistantCredentialCapture[] = [];
+  for (const match of value.matchAll(matches)) {
+    text += sanitizeAssistantText(value.slice(cursor, match.index), options);
+    const raw = match[0];
+    const bearer = /^Bearer\s+/i.exec(raw);
+    const secret = bearer ? raw.slice(bearer[0].length) : raw.slice(raw.indexOf("=") + 1).trimStart();
+    const marker = bearer ? "[redacted]" : "[redacted credential]";
+    const prefix = bearer ? "Bearer " : "";
+    if (secret && Buffer.byteLength(secret, "utf8") <= 2_048 && captures.length < 16) {
+      captures.push({ offset: text.length + prefix.length, length: marker.length, value: secret });
+    }
+    text += prefix + marker;
+    cursor = match.index + raw.length;
+  }
+  text += sanitizeAssistantText(value.slice(cursor), options);
+  // Credential patterns intentionally run in a particular order in the
+  // longstanding sanitizer. Ambiguous overlapping forms stay masked-only.
+  const canonical = sanitizeAssistantText(value, options);
+  if (text !== canonical) return { text: canonical, captures: [] };
+  return { text, captures };
 }
 
 /** Project streamed text only after its path or credential token is complete. */
-export function createAssistantTextStreamProjector(options: { homePath: string; executionRoot?: string }) {
+export function createAssistantTextStreamProjector(options: PathProjectionOptions) {
   let pending = "";
   let droppingOversizedToken = false;
   const spacedRoots = [options.homePath, options.executionRoot]
@@ -115,22 +240,26 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
     const token = /[A-Za-z][A-Za-z0-9_-]*$/u.exec(pending)?.[0].toLowerCase();
     return token !== undefined && SECRET_KEYWORDS.some((keyword) => keyword.startsWith(token));
   };
-  const finishPending = () => {
+  const finishPending = (): CapturedAssistantText => {
     if (droppingOversizedToken) {
       droppingOversizedToken = false;
       pending = "";
-      return "";
+      return { text: "", captures: [] };
     }
     const safeTail = pending
       .replace(DANGLING_BEARER, (match) => `${match.slice(0, match.toLowerCase().indexOf("bearer"))}Bearer [redacted]`)
       .replace(DANGLING_SECRET_VALUE, (_match, prefix: string) => `${prefix}[redacted credential]`);
     pending = "";
-    return sanitizeAssistantText(safeTail, options);
+    return projectAssistantTextWithCaptures(safeTail, options);
   };
 
-  return {
-    push(value: string): string {
+  const pushCaptured = (value: string): CapturedAssistantText => {
       let projected = "";
+      const captures: AssistantCredentialCapture[] = [];
+      const append = (result: CapturedAssistantText) => {
+        captures.push(...result.captures.map((capture) => ({ ...capture, offset: capture.offset + projected.length })));
+        projected += result.text;
+      };
       for (const character of value) {
         if (droppingOversizedToken) {
           if (/\s/u.test(character)) {
@@ -145,7 +274,7 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
           && !DANGLING_BEARER.test(pending)
           && !DANGLING_SECRET_ASSIGNMENT.test(pending)
           && !incompleteKnownRoot()) {
-          projected += sanitizeAssistantText(pending, options);
+          append(projectAssistantTextWithCaptures(pending, options));
           pending = "";
         } else if (character.codePointAt(0)! > 0x7f
           && !/\s/u.test(character)
@@ -163,8 +292,12 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
           projected += "[redacted]";
         }
       }
-      return projected;
-    },
+      return { text: projected, captures };
+    };
+
+  return {
+    pushCaptured,
+    push(value: string): string { return pushCaptured(value).text; },
     flushBoundary(nextCharacter?: string): string {
       if (droppingOversizedToken || pending.includes("/") || ACTIVE_BEARER.test(pending)
         || DANGLING_SECRET_ASSIGNMENT.test(pending)
@@ -189,8 +322,10 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
         && !SECRET_TEXT.test(pending) && !ACTIVE_BEARER.test(pending)
         && !DANGLING_SECRET_ASSIGNMENT.test(pending) && !incompleteSecretKeyword();
     },
-    flush: finishPending,
-    flushIndependentBoundary: finishPending,
+    flushCaptured: finishPending,
+    flush: (): string => finishPending().text,
+    flushIndependentBoundaryCaptured: finishPending,
+    flushIndependentBoundary: (): string => finishPending().text,
     discard(): void {
       pending = "";
       droppingOversizedToken = false;
@@ -201,7 +336,7 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
 export function safeToolPreview(
   name: string,
   args: unknown,
-  options: { homePath: string; executionRoot?: string },
+  options: PathProjectionOptions,
 ): { preview?: string; previewKind?: "command" | "path" | "text"; detail?: string } {
   if (typeof args !== "object" || args === null || Array.isArray(args)) return {};
   const values = args as Record<string, unknown>;
@@ -244,7 +379,7 @@ export function safeToolPreview(
 export function safeToolActivity(
   name: string,
   args: unknown,
-  options: { homePath: string; executionRoot?: string },
+  options: PathProjectionOptions,
 ): {
   displayName: string;
   kind: "command" | "file_change" | "dynamic_tool" | "web_search";

@@ -293,6 +293,7 @@ function createUnifiedRuntimeSource(options: {
       ["openclaw", baseDescriptor("openclaw", selected, hostStatus?.openclaw)],
     ]);
     let providers: AgentRuntimeSettingsSnapshot["providers"] = [];
+    let messagingObserved = false;
     let messaging = AgentMessagingSelectionSchema.parse({
       runtime: selected,
       provider: null,
@@ -337,6 +338,8 @@ function createUnifiedRuntimeSource(options: {
       if ([probeResult, catalogResult, selectionResult]
         .some((result) => result.status === "rejected")) {
         console.warn("[agent-config] Active runtime inventory is degraded");
+      } else {
+        messagingObserved = true;
       }
     }
 
@@ -345,7 +348,7 @@ function createUnifiedRuntimeSource(options: {
       options: [descriptors.get("hermes"), descriptors.get("openclaw")],
       transition: null,
     });
-    return { runtime, providers, messaging };
+    return { runtime, providers, messaging, messagingObserved };
   };
 }
 

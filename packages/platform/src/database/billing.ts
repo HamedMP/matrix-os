@@ -1,3 +1,4 @@
+import { withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
 import { sql } from 'kysely';
 import type {
   BillingCustomerRecord,
@@ -17,24 +18,28 @@ import {
 /** Extracted verbatim from packages/platform/src/db.ts (S01 / T007): billing customer and subscription queries. */
 
 export async function upsertBillingCustomer(db: PlatformDB, record: NewBillingCustomer): Promise<void> {
-  await db.ready;
-  await db.executor
-    .insertInto('billing_customers')
-    .values(toBillingCustomerRow(record))
-    .onConflict((oc) => oc.column('clerk_user_id').doUpdateSet({
-      stripe_customer_id: record.stripeCustomerId,
-      updated_at: record.updatedAt,
-    }))
-    .execute();
+  return withAccountDeletionOwnerLock(db, record.clerkUserId, async (trx, admission) => {
+    if (!admission.newWorkAllowed) return undefined;
+    await trx.executor
+      .insertInto('billing_customers')
+      .values(toBillingCustomerRow(record))
+      .onConflict((oc) => oc.column('clerk_user_id').doUpdateSet({
+        stripe_customer_id: record.stripeCustomerId,
+        updated_at: record.updatedAt,
+      }))
+      .execute();
+  });
 }
 
 export async function insertBillingCustomerIfAbsent(db: PlatformDB, record: NewBillingCustomer): Promise<void> {
-  await db.ready;
-  await db.executor
-    .insertInto('billing_customers')
-    .values(toBillingCustomerRow(record))
-    .onConflict((oc) => oc.column('clerk_user_id').doNothing())
-    .execute();
+  return withAccountDeletionOwnerLock(db, record.clerkUserId, async (trx, admission) => {
+    if (!admission.newWorkAllowed) return undefined;
+    await trx.executor
+      .insertInto('billing_customers')
+      .values(toBillingCustomerRow(record))
+      .onConflict((oc) => oc.column('clerk_user_id').doNothing())
+      .execute();
+  });
 }
 
 export async function getBillingCustomerByClerkUserId(
@@ -78,75 +83,77 @@ export async function hasBillingSubscriptionHistory(
 }
 
 export async function upsertBillingSubscription(db: PlatformDB, record: NewBillingSubscription): Promise<boolean> {
-  await db.ready;
-  const row = toBillingSubscriptionRow(record);
-  const applied = await db.executor
-    .insertInto('billing_subscriptions')
-    .values(row)
-    .onConflict((oc) => oc.column('stripe_subscription_id').doUpdateSet({
-      stripe_customer_id: row.stripe_customer_id,
-      clerk_user_id: row.clerk_user_id,
-      runtime_slot: row.runtime_slot,
-      plan_slug: row.plan_slug,
-      stripe_price_id: row.stripe_price_id,
-      billing_interval: row.billing_interval,
-      price_unit_amount_minor: sql<number | null>`CASE
-        WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
-          THEN COALESCE(EXCLUDED.price_unit_amount_minor, billing_subscriptions.price_unit_amount_minor)
-        ELSE EXCLUDED.price_unit_amount_minor
-      END`,
-      price_currency: sql<string | null>`CASE
-        WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
-          THEN COALESCE(EXCLUDED.price_currency, billing_subscriptions.price_currency)
-        ELSE EXCLUDED.price_currency
-      END`,
-      price_interval_count: sql<number | null>`CASE
-        WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
-          THEN COALESCE(EXCLUDED.price_interval_count, billing_subscriptions.price_interval_count)
-        ELSE EXCLUDED.price_interval_count
-      END`,
-      price_quantity: sql<number | null>`CASE
-        WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
-          THEN COALESCE(EXCLUDED.price_quantity, billing_subscriptions.price_quantity)
-        ELSE EXCLUDED.price_quantity
-      END`,
-      status: row.status,
-      current_period_end: row.current_period_end,
-      grace_period_ends_at: row.grace_period_ends_at,
-      trial_started_at: sql<string | null>`COALESCE(
-        billing_subscriptions.trial_started_at,
-        EXCLUDED.trial_started_at
-      )`,
-      trial_ends_at: sql<string | null>`COALESCE(
-        billing_subscriptions.trial_ends_at,
-        EXCLUDED.trial_ends_at
-      )`,
-      trial_converted_at: sql<string | null>`COALESCE(
-        billing_subscriptions.trial_converted_at,
-        EXCLUDED.trial_converted_at
-      )`,
-      first_trial_payment_failed_at: sql<string | null>`CASE
-        WHEN billing_subscriptions.trial_converted_at IS NOT NULL
-          OR EXCLUDED.trial_converted_at IS NOT NULL
-          THEN NULL
-        ELSE COALESCE(
-          billing_subscriptions.first_trial_payment_failed_at,
-          EXCLUDED.first_trial_payment_failed_at
-        )
-      END`,
-      latest_event_created_at: row.latest_event_created_at,
-      latest_event_id: row.latest_event_id,
-      updated_at: row.updated_at,
-    }).where((eb) => eb.or([
-      eb('billing_subscriptions.latest_event_created_at', '<', row.latest_event_created_at),
-      eb.and([
-        eb('billing_subscriptions.latest_event_created_at', '=', row.latest_event_created_at),
-        eb('billing_subscriptions.latest_event_id', '<', row.latest_event_id),
-      ]),
-    ])))
-    .returning('stripe_subscription_id')
-    .executeTakeFirst();
-  return Boolean(applied);
+  return withAccountDeletionOwnerLock(db, record.clerkUserId, async (trx, admission) => {
+    if (!admission.newWorkAllowed) return false;
+    const row = toBillingSubscriptionRow(record);
+    const applied = await trx.executor
+      .insertInto('billing_subscriptions')
+      .values(row)
+      .onConflict((oc) => oc.column('stripe_subscription_id').doUpdateSet({
+        stripe_customer_id: row.stripe_customer_id,
+        clerk_user_id: row.clerk_user_id,
+        runtime_slot: row.runtime_slot,
+        plan_slug: row.plan_slug,
+        stripe_price_id: row.stripe_price_id,
+        billing_interval: row.billing_interval,
+        price_unit_amount_minor: sql<number | null>`CASE
+          WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
+            THEN COALESCE(EXCLUDED.price_unit_amount_minor, billing_subscriptions.price_unit_amount_minor)
+          ELSE EXCLUDED.price_unit_amount_minor
+        END`,
+        price_currency: sql<string | null>`CASE
+          WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
+            THEN COALESCE(EXCLUDED.price_currency, billing_subscriptions.price_currency)
+          ELSE EXCLUDED.price_currency
+        END`,
+        price_interval_count: sql<number | null>`CASE
+          WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
+            THEN COALESCE(EXCLUDED.price_interval_count, billing_subscriptions.price_interval_count)
+          ELSE EXCLUDED.price_interval_count
+        END`,
+        price_quantity: sql<number | null>`CASE
+          WHEN billing_subscriptions.stripe_price_id = EXCLUDED.stripe_price_id
+            THEN COALESCE(EXCLUDED.price_quantity, billing_subscriptions.price_quantity)
+          ELSE EXCLUDED.price_quantity
+        END`,
+        status: row.status,
+        current_period_end: row.current_period_end,
+        grace_period_ends_at: row.grace_period_ends_at,
+        trial_started_at: sql<string | null>`COALESCE(
+          billing_subscriptions.trial_started_at,
+          EXCLUDED.trial_started_at
+        )`,
+        trial_ends_at: sql<string | null>`COALESCE(
+          billing_subscriptions.trial_ends_at,
+          EXCLUDED.trial_ends_at
+        )`,
+        trial_converted_at: sql<string | null>`COALESCE(
+          billing_subscriptions.trial_converted_at,
+          EXCLUDED.trial_converted_at
+        )`,
+        first_trial_payment_failed_at: sql<string | null>`CASE
+          WHEN billing_subscriptions.trial_converted_at IS NOT NULL
+            OR EXCLUDED.trial_converted_at IS NOT NULL
+            THEN NULL
+          ELSE COALESCE(
+            billing_subscriptions.first_trial_payment_failed_at,
+            EXCLUDED.first_trial_payment_failed_at
+          )
+        END`,
+        latest_event_created_at: row.latest_event_created_at,
+        latest_event_id: row.latest_event_id,
+        updated_at: row.updated_at,
+      }).where((eb) => eb.or([
+        eb('billing_subscriptions.latest_event_created_at', '<', row.latest_event_created_at),
+        eb.and([
+          eb('billing_subscriptions.latest_event_created_at', '=', row.latest_event_created_at),
+          eb('billing_subscriptions.latest_event_id', '<', row.latest_event_id),
+        ]),
+      ])))
+      .returning('stripe_subscription_id')
+      .executeTakeFirst();
+    return Boolean(applied);
+  });
 }
 
 export async function persistBillingSubscriptionPriceSnapshot(

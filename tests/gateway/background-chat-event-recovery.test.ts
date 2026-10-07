@@ -33,8 +33,8 @@ describe("background Chat durable observation", () => {
     try {
       bridge.attachThreadStore(f.store);
       const path = codexProviderEventPath(f.homePath, f.sessionId);
-      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true })).resolves.toEqual({ path, offset: 0 });
-      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId })).resolves.toEqual({ path });
+      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true })).resolves.toEqual({ path, offset: 0, canonical: false });
+      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId })).resolves.toEqual({ path, canonical: false });
       const first = JSON.stringify({ type: "item.completed", item: { id: "msg_first", type: "agent_message", text: "first part" } }) + "\n";
       await writeFile(path, first);
       await bridge.drain();

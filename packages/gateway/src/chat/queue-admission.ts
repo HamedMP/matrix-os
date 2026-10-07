@@ -9,6 +9,7 @@ import {
   type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatSafeError,
   type CanonicalQueueChatTurnRequest,
+  canonicalExecutionRootProjectId,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
@@ -21,6 +22,7 @@ import type { CanonicalChatProviderRegistry } from "./provider-adapter.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { admissionPolicyForTurn, type VoiceSessionPolicyLookup } from "./voice-session-policy.js";
+import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 
 export class CanonicalQueueAdmissionError extends Error {
   constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
@@ -109,21 +111,25 @@ export async function enqueueCanonicalQueuedTurn(options: {
   }
   const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
   const effective = { ...input, ...prepared, permissionMode: admissionPolicy.permissionMode };
-  const catalog = await options.catalog.getCatalog(options.principal);
+  const catalog = await options.catalog.getCatalog(options.principal, effective.selection);
+  const requirements = chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
+    part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
   const validated = validateChatProviderSelection({
     catalog,
     selection: effective.selection,
     ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
     requirements: {
-      ...chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
-        part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
+      ...requirements,
       ...(admissionPolicy.runPolicy?.source === "voice" || admissionPolicy.runPolicy?.voiceSessionId ? voiceProviderSelectionRequirements() : {}),
       ...(admissionPolicy.runPolicy?.executionPolicy ? { qualifiedPolicy: admissionPolicy.runPolicy.executionPolicy } : {}),
     },
   });
   if (!validated.ok) {
+    const agentModeError = validated.error.code === "capability_mismatch"
+      ? unsupportedAgentPermissionMode(catalog, effective.selection, requirements, Boolean(prepared?.context?.agent))
+      : null;
     throw new CanonicalQueueAdmissionError(
-      validated.error,
+      agentModeError ?? validated.error,
       validated.error.code === "provider_instance_locked" ? 409 : 400,
     );
   }
@@ -140,9 +146,18 @@ export async function enqueueCanonicalQueuedTurn(options: {
     console.warn("[chat/queue] action policy qualification failed", error instanceof Error ? error.name : "UnknownError");
     throw new CanonicalQueueAdmissionError(safeError("capability_mismatch", "The selected Provider cannot enforce this execution policy."), 400);
   }
+  // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
+  // so no ordinary Chat can mount a bot's private files.
+  if (input.executionRoot?.kind === "bot_workspace") {
+    throw new CanonicalQueueAdmissionError(
+      safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
+      400,
+    );
+  }
   const rootRef = input.executionRoot
     ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
-  if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
+  if (input.executionRoot && record.projectId
+      && canonicalExecutionRootProjectId(input.executionRoot) !== record.projectId) {
     throw new CanonicalQueueAdmissionError(
       safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
       400,

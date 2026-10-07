@@ -38,6 +38,11 @@ export function createDesktopCollaborationApi(platformHost: string): Collaborati
   }
 }
 
+export function releaseDesktopCollaborationApi(api: CollaborationDirectApi): void {
+  liveApis.delete(api);
+  api.direct.close();
+}
+
 /** Ends every direct session this renderer holds; called when the desktop auth state changes. */
 export function closeDesktopCollaborationSessions(): void {
   for (const api of liveApis) {

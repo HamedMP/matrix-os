@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { ChatSharingButton } from "@matrix-os/ui";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
-import { collaborationRuntimeFromSystemInfo, createShellCollaborationApi } from "@/lib/collaboration";
-import { CollaborationOrganization } from "@/lib/collaboration-organization";
+import { collaborationRuntimeFromSystemInfo } from "@/lib/collaboration";
+import { useShellCollaborationApi } from "@/lib/collaboration-organization";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
 export function ChatSharing({ chatId }: { chatId: string }) {
   const platformHost = useBrowserOrigin();
@@ -14,25 +15,32 @@ export function ChatSharing({ chatId }: { chatId: string }) {
 }
 
 function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platformHost: string }) {
-  const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string; runtimeId: string | null; collaborationEnabled: boolean }>({
-    handle: null, runtimeSlot: "primary", runtimeId: null, collaborationEnabled: false,
+  const { status: organizationStatus, organizationId } = useCollaborationOrganization();
+  const verifiedOrganizationId = organizationStatus === "member" ? organizationId : null;
+  const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string; runtimeId: string | null }>({
+    handle: null, runtimeSlot: "primary", runtimeId: null,
   });
   const gatewayUrl = getGatewayUrl();
   const api = useMemo(() => createChatSharingApi(gatewayUrl), [gatewayUrl]);
-  const collaborationApi = useMemo(() => createShellCollaborationApi(platformHost), [platformHost]);
+  const collaborationApi = useShellCollaborationApi(platformHost, organizationStatus !== "none") ?? undefined;
   useEffect(() => {
     let active = true;
     void api.get("/api/system/info").then((value) => {
-      if (active) setRuntime(collaborationRuntimeFromSystemInfo(value));
+      const { handle, runtimeSlot, runtimeId } = collaborationRuntimeFromSystemInfo(value);
+      if (active) setRuntime({ handle, runtimeSlot, runtimeId });
     }).catch((failure: unknown) => {
-      console.warn("[chat-collaboration] runtime identity unavailable", failure instanceof Error ? failure.name : "UnknownError");
+      console.warn("[chat-share] runtime identity unavailable", failure instanceof Error ? failure.name : "UnknownError");
     });
     return () => { active = false; };
   }, [api]);
-  return <CollaborationOrganization>{(organizationId) => <ChatSharingButton api={api} collaborationEnabled={runtime.collaborationEnabled}
-    collaborationApi={collaborationApi} runtimeId={runtime.runtimeId} organizationId={organizationId}
+  return <ChatSharingButton key={verifiedOrganizationId ?? organizationStatus} api={api}
     chatId={chatId} handle={runtime.handle} runtimeSlot={runtime.runtimeSlot}
-    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)} />}</CollaborationOrganization>;
+    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)}
+    legacyCollaboration={collaborationApi ? {
+      api: collaborationApi,
+      runtimeId: runtime.runtimeId,
+      organizationId: verifiedOrganizationId,
+    } : undefined} />;
 }
 
 function createChatSharingApi(baseUrl: string) {

@@ -14,6 +14,12 @@ vi.mock("@aws-sdk/client-s3", () => {
   }
   return {
     S3Client: MockS3Client,
+    ListMultipartUploadsCommand: class {
+      constructor(readonly input: unknown) {}
+    },
+    HeadObjectCommand: class {
+      constructor(readonly input: unknown) {}
+    },
     GetObjectCommand: class {
       Bucket: string;
       Key: string;
@@ -365,5 +371,34 @@ describe("key builders", () => {
       /Invalid sync user id/,
     );
     expect(() => buildManifestKey("bad/user")).toThrow(/Invalid sync user id/);
+  });
+});
+
+
+describe("private import storage recovery", () => {
+  const key = "matrixos-sync/user_test/files/.chat-imports/job/original.jsonl";
+  async function client() { return createR2Client({ endpoint: "https://r2.example.test", accessKeyId: "test", secretAccessKey: "test", bucket: "test" }); }
+  beforeEach(() => { vi.clearAllMocks(); });
+  it("lists only exact-key uploads with a bounded timed request", async () => {
+    mockSend.mockResolvedValue({ Uploads: [{ Key: key, UploadId: "one" }, { Key: key + ".other", UploadId: "other" }] });
+    const r2 = await client(); expect(await r2.listMultipartUploads(key)).toEqual([{ key, uploadId: "one" }]);
+    expect(mockSend.mock.calls[0]?.[0].input).toEqual({ Bucket: "test", Prefix: key, MaxUploads: 11 });
+    expect(mockSend.mock.calls[0]?.[1].abortSignal).toBeInstanceOf(AbortSignal); r2.destroy();
+  });
+  it("fails closed when upload enumeration is truncated", async () => {
+    mockSend.mockResolvedValue({ IsTruncated: true, Uploads: [] });
+    const r2 = await client(); await expect(r2.listMultipartUploads(key)).rejects.toThrow(); r2.destroy();
+  });
+  it("treats a missing multipart upload as already aborted, but preserves other errors", async () => {
+    const r2 = await client(); mockSend.mockRejectedValueOnce(Object.assign(new Error("missing"), { name: "NoSuchUpload" }));
+    await expect(r2.abortMultipartUpload(key, "gone")).resolves.toBeUndefined();
+    mockSend.mockRejectedValueOnce(Object.assign(new Error("denied"), { name: "AccessDenied" }));
+    await expect(r2.abortMultipartUpload(key, "gone")).rejects.toMatchObject({ name: "AccessDenied" }); r2.destroy();
+  });
+  it("maps only missing-object HEAD errors to absence", async () => {
+    const r2 = await client(); mockSend.mockRejectedValueOnce(Object.assign(new Error("missing"), { name: "NoSuchKey" }));
+    expect(await r2.headObject(key)).toEqual({ exists: false });
+    mockSend.mockRejectedValueOnce(Object.assign(new Error("denied"), { name: "AccessDenied" }));
+    await expect(r2.headObject(key)).rejects.toMatchObject({ name: "AccessDenied" }); r2.destroy();
   });
 });

@@ -281,7 +281,7 @@ function rollbackUiPatch(
   });
 }
 
-async function fetchShellSessions(api: ApiClient): Promise<ShellSessionSummary[]> {
+export async function readShellSessions(api: ApiClient): Promise<ShellSessionSummary[]> {
   const response = await api.get<{ workspaces: unknown }>("/api/terminal/workspaces");
   return parseShellSessions(response.workspaces);
 }
@@ -299,7 +299,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     const sequence = get().loadSequence + 1;
     set({ loading: true, error: null, loadSequence: sequence });
     try {
-      const sessions = await fetchShellSessions(api);
+      const sessions = await readShellSessions(api);
       if (!isCurrentRuntimeGeneration(generation) || sequence !== get().loadSequence) return null;
       set((state) => ({
         sessions,
@@ -343,7 +343,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       const refreshSequence = get().loadSequence + 1;
       set({ loadSequence: refreshSequence });
       try {
-        const sessions = await fetchShellSessions(api);
+        const sessions = await readShellSessions(api);
         if (!isCurrentRuntimeGeneration(generation)) return null;
         if (refreshSequence !== get().loadSequence) {
           set({ creating: false, error: null });

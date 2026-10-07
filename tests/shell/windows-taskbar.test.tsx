@@ -354,7 +354,7 @@ describe("WindowsTaskbar", () => {
     expect(container.querySelector("[data-win11-start-menu]")).toBeNull();
   });
 
-  it("includes the Switch computer link in account-flyout arrow navigation", async () => {
+  it("includes account deletion and Switch computer links in account-flyout arrow navigation", async () => {
     setDesign("win11");
     const { container } = await renderTaskbar();
 
@@ -367,6 +367,10 @@ describe("WindowsTaskbar", () => {
     const switchComputer = within(flyout).getByRole("menuitem", { name: "Switch computer" });
     expect(document.activeElement).toBe(manageAccount);
 
+    fireEvent.keyDown(flyout, { key: "ArrowDown" });
+    const deletion = within(flyout).getByRole("menuitem", { name: "Account data and deletion" });
+    expect(document.activeElement).toBe(deletion);
+    expect(deletion.getAttribute("href")).toBe("https://app.matrix-os.com/account/delete");
     fireEvent.keyDown(flyout, { key: "ArrowDown" });
     expect(document.activeElement).toBe(within(flyout).getByRole("menuitem", { name: "Sign out" }));
     fireEvent.keyDown(flyout, { key: "ArrowDown" });

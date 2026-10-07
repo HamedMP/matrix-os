@@ -91,3 +91,24 @@ tool separately when enforcing a remote-only workflow.
 ## License
 
 AGPL-3.0-or-later.
+
+
+### Import local Chat transcripts
+
+Matrix CLI 0.3.21 supports Codex and Claude Code JSONL transcripts with a
+compatible Matrix gateway:
+
+```bash
+matrix chats discover --project /absolute/path/to/repository --json
+matrix chats import claude /absolute/path/session.jsonl --json
+matrix chats import claude /absolute/path/session.jsonl --apply --sha256 <preview-hash>
+```
+
+Use `codex` instead of `claude` for Codex transcripts. Discovery lists metadata
+from active, archived, and subagent transcript roots without uploading or
+reading message previews. Imports preserve original bytes in a private archive
+and reconstruct readable Chat history, including saved tools and supported
+embedded media. External files are not followed automatically. Imports remain
+private until their owner chooses sharing. The same unchanged source resumes an
+interrupted upload; distinct changed snapshots and earlier text-only imports
+require reconciliation rather than automatic re-import.

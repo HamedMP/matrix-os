@@ -8,6 +8,8 @@ import { admitChatTurn } from "./turn-admission-repository.js";
 import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
 import { captureChatFailureMetadata } from "./failure-telemetry.js";
+import { redactAssistantCredentials, redactSharedAssistantText } from "./safe-activity-projection.js";
+import { createOwnerToolOutputProjection } from "./owner-tool-output.js";
 import type { ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
   CanonicalChatRunActivitySchema,
@@ -67,6 +69,7 @@ import {
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
 import { canonicalJsonStringify } from "./argument-digest.js";
+import type { SealedAssistantCredential } from "./assistant-credential-crypto.js";
 import {
   reconcileProviderBindings,
   type ProviderBindingReconciliationResult,
@@ -338,7 +341,14 @@ async function toPrincipalRecord(
     latestSuccessfulCompletion,
     userState?.attention_acknowledged_at,
   );
-  return { ...record, readState: await projectChatReadState(executor, owner, row.id) };
+  return { ...record,
+    ...(record.chat.lastMessagePreview
+      ? { chat: { ...record.chat, lastMessagePreview: effectiveProjection?.mode === "shared"
+        ? redactSharedAssistantText(record.chat.lastMessagePreview)
+        : redactAssistantCredentials(record.chat.lastMessagePreview) } }
+      : {}),
+    readState: await projectChatReadState(executor, owner, row.id),
+  };
 }
 
 /**
@@ -573,6 +583,11 @@ export class ChatRepository {
 
   registerOutboxSink(sink: ChatOutboxSink): { dispose(): void } {
     return this.outboxDelivery.registerSink(sink);
+  }
+
+  /** Deliver an event written by another owner-database transaction after its commit. */
+  publishCommittedExternalOutbox(owner: ChatOwner, event: ChatOutboxEvent): void {
+    this.outboxDelivery.flush([{ owner, event }]);
   }
 
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
@@ -1559,6 +1574,7 @@ export class ChatRepository {
     delta: string;
     createdAt: string;
     snapshot?: boolean;
+    credentials?: readonly SealedAssistantCredential[];
   }): Promise<CanonicalChatMessage> {
     return this.runLifecycle.appendAssistantDelta(ownerInput, input);
   }
@@ -1655,12 +1671,16 @@ export class ChatRepository {
         .orderBy("occurred_at").orderBy("run_id").orderBy("run_seq").orderBy("id").execute(),
       this.kysely.selectFrom("chat_attachments").selectAll().where("chat_id", "=", chatId).orderBy("created_at").execute(),
     ]);
+    const content = { record: chat, messages: messages.map(toMessage), activities: toActivities(activities) };
+    const projected = chat.chat.collaboration?.mode === "shared"
+      ? createOwnerToolOutputProjection(undefined, [])(owner, content)
+      : content;
     return {
-      chat,
-      messages: messages.map(toMessage),
+      chat: projected.record,
+      messages: projected.messages,
       turns: turns.map(toTurn),
       runs: runs.map(toRun),
-      activities: toActivities(activities),
+      activities: projected.activities,
       attachments: attachments.map((row) => ({
         id: row.id,
         messageId: row.message_id,

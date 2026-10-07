@@ -70,6 +70,8 @@ describe("scope runtime supervisor", () => {
       ok: true,
       supervisorVersion: "1.0.0",
       profile: { ...SCOPE_RUNTIME_PROFILE, executionGeneration: "9" },
+      // Without a launcher report the bot profile is not launchable, so only Chat is listed.
+      profiles: [{ ...SCOPE_RUNTIME_PROFILE, executionGeneration: "9" }],
     });
     expect(SCOPE_RUNTIME_PROFILE.identity).toEqual({
       mode: "dynamic",
@@ -113,6 +115,7 @@ describe("scope runtime supervisor", () => {
     expect(native.start).toHaveBeenCalledWith({
       runtimeHandle: RUNTIME_HANDLE,
       scopeHandle: SCOPE_HANDLE,
+      profileId: "scope-runtime-chat-v1",
       workload: "chat_ai",
       adapterId: "codex",
       harnessVersion: "0.154.0",
@@ -141,6 +144,7 @@ describe("scope runtime supervisor", () => {
     expect(native.start).toHaveBeenCalledWith({
       runtimeHandle: RUNTIME_HANDLE,
       scopeHandle: SCOPE_HANDLE,
+      profileId: "scope-runtime-chat-v1",
       workload: "chat_ai",
       adapterId: "claude-code",
       harnessVersion: "2.1.240",

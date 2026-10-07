@@ -1,3 +1,7 @@
+import { createCatalogReadinessCache } from "./catalog-readiness-cache.js";
+import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_CODING_DRIVERS as CODING_DRIVERS } from "./catalog-discovery-scope.js";
+import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
+import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
 import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
@@ -34,19 +38,15 @@ import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
-import { managedChatInstances } from "./managed-chat-catalog.js";
+import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
 import { unavailableInstance } from "./configured-harness-catalog.js";
+import { fundedSelectionError } from "./funded-chat-error.js";
 
 const ADAPTER_VERSION = "1.0.0";
-const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
 type SystemDriverKind = typeof SYSTEM_DRIVERS[number];
-const CODING_DRIVERS = ["codex", "claude_code", "opencode", "pi"] as const;
 const MAX_EFFORTS = 4;
 const MAX_SKILLS = 64;
-const MAX_CATALOG_CACHE_TTL_MS = 60_000;
-const MAX_CATALOG_CACHE_ENTRIES = 64;
-const UNAVAILABLE_CATALOG_CACHE_TTL_MS = 2_000;
 const CODING_SETUP: Record<CodingDriverKind, {
   command: string;
   installPackage: string;
@@ -80,13 +80,17 @@ export interface CodingModelCatalogProjection {
   defaultModel: string;
 }
 
+export interface ChatProviderCatalogReadOptions {
+  includeSettingsSetupActions?: boolean;
+}
+
 export interface ChatProviderCatalogService {
-  getCatalog(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
-  refresh(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
+  getCatalog(principal: RequestPrincipal, selection?: CanonicalChatModelSelection, readOptions?: ChatProviderCatalogReadOptions): Promise<CanonicalProviderCatalog>;
+  refresh(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions): Promise<CanonicalProviderCatalog>;
 }
 
 export interface HarnessSettingsSnapshotReader {
-  getSnapshot(): Promise<ProviderSettingsSnapshot>;
+  getSnapshot(options?: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot>;
 }
 
 export class ProviderCatalogUnavailableError extends Error {
@@ -101,7 +105,7 @@ function driverDisplayName(kind: CanonicalProviderDriverKind): string {
   if (kind === "claude_code") return "Claude Code";
   if (kind === "openclaw") return "OpenClaw";
   if (kind === "opencode") return "OpenCode";
-  if (kind === "pi") return "Pi";
+  if (kind === "pi" || kind === "matrix_pi") return "Pi";
   return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
@@ -139,7 +143,7 @@ function codingSupports(
     approvals: isCodex,
     userInput: true,
     worktrees: "optional",
-    resources: ["file", "folder", "project", "task", "app", "terminal_session"],
+    resources: ["file", "folder", "project", "task", "app", "terminal_session", ],
     interactionModes: supportedModes,
     permissionModes: driverKind === "pi" || driverKind === "opencode"
       ? ["supervised"]
@@ -159,11 +163,14 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
   const parsedModel = provider.defaultModel === undefined
     ? null
     : CanonicalChatModelSelectionSchema.shape.model.safeParse(provider.defaultModel);
-  if (parsedModel?.success !== true
-    && (codingDriverKind(provider) === "pi" || codingDriverKind(provider) === "opencode")) {
-    return [];
-  }
-  const id = parsedModel?.success === true ? parsedModel.data : "provider-default";
+  // Without a real, parseable model id there is nothing safe to offer: a
+  // synthetic placeholder id (e.g. "provider-default") is not a model this
+  // driver's CLI actually recognizes, and sending it would fail the turn
+  // silently. Report no models instead, exactly like Pi and OpenCode already
+  // do -- this only affects Codex, since Claude Code returns its own fixed
+  // model list above and never reaches this branch.
+  if (parsedModel?.success !== true) return [];
+  const id = parsedModel.data;
   const availability = provider.availability === "available"
     ? "available" as const
     : provider.availability === "auth_required"
@@ -171,7 +178,7 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
       : "unavailable" as const;
   return [{
     id,
-    displayName: parsedModel?.success === true ? parsedModel.data : `${provider.displayName} default`,
+    displayName: id,
     availability,
     capabilities: ["reasoning", "tools"],
     supportsVision: false,
@@ -506,6 +513,7 @@ export function createChatProviderCatalogService(options: {
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
   credentialedDriverKinds?: readonly CanonicalProviderDriverKind[];
   now?: () => Date;
+  driveContextReady?: () => boolean;
   runtimeTimeoutMs?: number;
   skillsSource?: () => Array<{ name: string; description: string }>;
   codingModelCatalogSource?: (
@@ -525,71 +533,21 @@ export function createChatProviderCatalogService(options: {
   preferredCodingProviderId?: string;
 }): ChatProviderCatalogService {
   const nowMs = () => (options.now?.() ?? new Date()).getTime();
-  const cacheTtlMs = Math.min(MAX_CATALOG_CACHE_TTL_MS, Math.max(0, Math.trunc(options.cacheTtlMs ?? 0)));
-  const cached = new Map<string, { catalog: CanonicalProviderCatalog; expiresAt: number }>();
-  const inFlight = new Map<string, Promise<CanonicalProviderCatalog>>();
+  // Matrix funding must be re-observed on every read, even with readiness reuse enabled.
+  const reuseReadiness = !options.aiProviderSource && (options.cacheTtlMs ?? 0) > 0;
+  const readinessCache = createCatalogReadinessCache<CanonicalProviderCatalog>({
+    ttlMs: reuseReadiness ? options.cacheTtlMs ?? 0 : 0, now: nowMs,
+    usable: (catalog) => catalog.instances.some((instance) => instance.defaultSelection
+      && validateChatProviderSelection({ catalog, selection: instance.defaultSelection }).ok),
+  });
 
-  // Bootstrap finds a usable route by validating instance.defaultSelection.
-  // Keep catalogs without one briefly to coalesce cold-host probes without
-  // preserving a startup false-negative for the full readiness window.
-  // A thrown read leaves nothing behind, and refresh() always re-reads.
-  function remember(principal: RequestPrincipal): Promise<CanonicalProviderCatalog> {
-    if (cacheTtlMs === 0) return readCatalog(principal);
-    const ownerId = principal.userId;
-    const read = readCatalog(principal).then((catalog) => {
-      // A refresh may have registered and completed a newer read while this
-      // one was pending. Only the currently registered read may update cache.
-      if (inFlight.get(ownerId) !== read) return catalog;
-      cached.delete(ownerId);
-      if (cached.size >= MAX_CATALOG_CACHE_ENTRIES) {
-        const oldest = cached.keys().next().value;
-        if (oldest !== undefined) cached.delete(oldest);
-      }
-      const hasUsableProvider = catalog.instances.some((instance) => instance.defaultSelection
-        && validateChatProviderSelection({ catalog, selection: instance.defaultSelection }).ok);
-      const ttlMs = hasUsableProvider
-        ? cacheTtlMs
-        : Math.min(cacheTtlMs, UNAVAILABLE_CATALOG_CACHE_TTL_MS);
-      cached.set(ownerId, { catalog, expiresAt: nowMs() + ttlMs });
-      return catalog;
-    }).finally(() => {
-      if (inFlight.get(ownerId) === read) inFlight.delete(ownerId);
-    });
-    inFlight.set(ownerId, read);
-    return read;
-  }
-
-  const service: ChatProviderCatalogService = {
-    async refresh(principal) {
-      cached.delete(principal.userId);
-      options.invalidateCodingModelCatalog?.(principal);
-      options.codingProviders.invalidate(principal.userId);
-      options.agentRuntimeSource.invalidate?.();
-      for (const source of Object.values(options.systemRuntimeSources ?? {})) {
-        source?.invalidate?.();
-      }
-      if (options.aiProviderSource) {
-        try {
-          await options.aiProviderSource.getSnapshot({ refresh: true });
-        } catch (_error) {
-          console.warn("[chat-providers] AI Provider inventory refresh unavailable");
-        }
-      }
-      // A refresh never joins a read that started before the invalidation above.
-      return remember(principal);
-    },
-    getCatalog(principal) {
-      const entry = cached.get(principal.userId);
-      if (entry && entry.expiresAt > nowMs()) return Promise.resolve(entry.catalog);
-      return inFlight.get(principal.userId) ?? remember(principal);
-    },
-  };
-
-  /** One full read across every inventory source. */
-  async function readCatalog(principal: RequestPrincipal): Promise<CanonicalProviderCatalog> {
-    const preferredCodingProviderId = options.preferredCodingProviderId;
-    const systemRuntimeReads = preferredCodingProviderId === undefined
-      ? Promise.all(SYSTEM_DRIVERS.map(async (kind) => {
+  // Project one current AI observation per catalog read. Explicit refresh used
+  // to discard its receipt, then take a second sequential funded observation.
+  // Keep refresh mode local to this call; never cache owner/funding authority.
+  async function readCatalog(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions,
+    refreshAiProvider = false, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
+    const scope = chatCatalogDiscoveryScope(selection ?? (options.preferredCodingProviderId === "codex" ? { instanceId: "codex_default", model: "unused" } : undefined));
+    const systemRuntimeReads = Promise.all(scope.systems.map(async (kind) => {
       const source = options.systemRuntimeSources?.[kind];
       if (!source) return [kind, null] as const;
       try {
@@ -598,18 +556,12 @@ export function createChatProviderCatalogService(options: {
         console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
         return [kind, null] as const;
       }
-      }))
-      : Promise.resolve([]);
+    }));
     const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
-      options.codingProviders.listProviders(principal,
-        preferredCodingProviderId === undefined ? undefined : [preferredCodingProviderId]),
-      preferredCodingProviderId === undefined
-        ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs)
-        : Promise.resolve(undefined),
-      preferredCodingProviderId === undefined
-        ? options.aiProviderSource?.getSnapshot({ refresh: false }) ?? Promise.resolve(undefined)
-        : Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot() ?? Promise.resolve(undefined),
+      scope.coding.length > 0 ? options.codingProviders.listProviders(principal, options.preferredCodingProviderId ? [options.preferredCodingProviderId] : undefined) : Promise.resolve([]),
+      scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
+      scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
+      options.harnessSettingsSource?.getSnapshot(selection ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
       systemRuntimeReads,
     ]);
     if (codingResult.status === "rejected") {
@@ -623,13 +575,16 @@ export function createChatProviderCatalogService(options: {
     }
     if (settingsResult.status === "rejected") {
       console.warn("[chat-providers] Harness settings unavailable");
-      if (settingsResult.reason instanceof ProviderSettingsStoreError
-        && settingsResult.reason.status === 503) {
+      if (selection || (settingsResult.reason instanceof ProviderSettingsStoreError
+        && settingsResult.reason.status === 503)) {
         throw new ProviderCatalogUnavailableError(true);
       }
     }
 
-    const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
+    const coding = codingResult.status === "fulfilled" ? codingResult.value.filter(provider => {
+      const kind = codingDriverKind(provider);
+      return kind !== null && scope.coding.some(driver => driver === kind);
+    }) : [];
     const skills = projectSkills(options.skillsSource?.() ?? []);
     const seenCodingDrivers: CanonicalProviderDriverKind[] = [];
     const codingInstances: InstanceDraft[] = [];
@@ -637,18 +592,16 @@ export function createChatProviderCatalogService(options: {
     // together; Promise.all preserves registry order even if probes finish out of order.
     const projectedInstances = await Promise.all(coding.map(async (provider) => {
       let projectedCatalog: CodingModelCatalogProjection | null = null;
-      let discoveryFailed = false;
       if (options.codingModelCatalogSource) {
         try {
           projectedCatalog = await options.codingModelCatalogSource(provider, principal);
-          discoveryFailed = provider.kind === "codex" && provider.availability === "available" && projectedCatalog === null;
         } catch (_error) {
           console.warn("[chat-providers] Coding model catalog unavailable");
-          discoveryFailed = true;
         }
       }
-      const instance = codingInstance(provider, skills, projectedCatalog);
-      return instance && discoveryFailed ? unavailableInstance(instance, "runtime_unavailable") : instance;
+      const projected = codingInstance(provider, skills, projectedCatalog);
+      return projected && options.codingModelCatalogSource && projectedCatalog === null && projected.driverKind === "codex"
+        ? unavailableInstance(projected, "runtime_unavailable") : projected;
     }));
     for (const instance of projectedInstances) {
       if (instance === null) continue;
@@ -665,7 +618,7 @@ export function createChatProviderCatalogService(options: {
         ? systemRuntimeResult.value.flatMap(([kind, value]) => value === null ? [] : [[kind, value]])
         : [],
     );
-    const systemInstances = SYSTEM_DRIVERS.map((kind) => {
+    const systemInstances = scope.systems.map((kind) => {
       const nativeSnapshot = systemRuntimeSnapshots.get(kind);
       const instanceSnapshot = nativeSnapshot ?? snapshot;
       return systemInstance({
@@ -684,7 +637,7 @@ export function createChatProviderCatalogService(options: {
         skills,
       });
     });
-    const completeCodingInstances = CODING_DRIVERS.map((kind) =>
+    const completeCodingInstances = scope.coding.map((kind) =>
       codingInstances.find((instance) => instance.driverKind === kind)
         ?? unavailableCodingInstance(kind, skills, codingResult.status === "fulfilled")
     );
@@ -696,27 +649,38 @@ export function createChatProviderCatalogService(options: {
       systemRepairAction,
       now: options.now?.() ?? new Date(),
       instances: [
-      ...managedChatInstances(aiSnapshot, skills),
+      ...(!selection || scope.managedMatrix ? managedPiChatInstances(aiSnapshot, (options.now?.() ?? new Date()).getTime()) : []),
       ...systemInstances,
       ...completeCodingInstances,
       ],
       settings: settingsResult.status === "fulfilled" ? settingsResult.value ?? null : null,
       settingsRequired: options.harnessSettingsSource !== undefined,
       settingsAvailable: settingsResult.status === "fulfilled",
+      includeSettingsSetupActions: readOptions?.includeSettingsSetupActions,
       executableDriverKinds,
       credentialedDriverKinds: options.credentialedDriverKinds,
       aiSnapshot,
     });
+    // Availability is finalized by the owner runtime and funding projection.
+    // Never advertise a tool when registration-time dependencies are missing.
+    if (options.driveContextReady?.()) {
+      for (const instance of instances) {
+        if (instance.driverKind === "claude_code" && instance.availability === "available") {
+          instance.supports = { ...instance.supports, resources: [...instance.supports.resources, "organization_drive"] };
+        }
+      }
+    }
     const driverKinds: CanonicalProviderDriverKind[] = [
       ...(instances.some((instance) => instance.driverKind === "kernel") ? ["kernel" as const] : []),
+      ...(instances.some((instance) => instance.driverKind === "matrix_pi") ? ["matrix_pi" as const] : []),
       ...SYSTEM_DRIVERS,
       ...CODING_DRIVERS,
     ];
-    const drivers = driverKinds.map((kind) => ({
+    const drivers = driverKinds.filter(scope.acceptsDriver).map((kind) => ({
       kind,
       displayName: driverDisplayName(kind),
       adapterVersion: ADAPTER_VERSION,
-      capabilityClass: kind === "kernel" || SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
+      capabilityClass: kind === "matrix_pi" || kind === "kernel" || SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
         ? "system_agent" as const
         : "coding_agent" as const,
     }));
@@ -724,7 +688,7 @@ export function createChatProviderCatalogService(options: {
     const parsed = CanonicalProviderCatalogSchema.safeParse({
       revision,
       drivers,
-      instances: instances.map((instance) => ({ ...instance, catalogRevision: revision })),
+      instances: instances.filter(instance => scope.acceptsInstance(instance.id)).map((instance) => ({ ...instance, catalogRevision: revision })),
     });
     if (!parsed.success) {
       const safeIssuePaths = parsed.error.issues.slice(0, 16).map((issue) => (
@@ -735,10 +699,26 @@ export function createChatProviderCatalogService(options: {
     }
     return parsed.data;
   }
+  const service: ChatProviderCatalogService = {
+    async refresh(principal, readOptions) {
+      options.invalidateCodingModelCatalog?.(principal);
+      options.codingProviders.invalidate(principal.userId);
+      options.agentRuntimeSource.invalidate?.();
+      for (const source of Object.values(options.systemRuntimeSources ?? {})) {
+        source?.invalidate?.();
+      }
+      return reuseReadiness && !readOptions ? readinessCache.refresh(principal.userId, () => readCatalog(principal)) : readCatalog(principal, readOptions, true);
+    },
+    getCatalog(principal, selection, readOptions) {
+      if (reuseReadiness && !selection && !readOptions) return readinessCache.get(principal.userId, () => readCatalog(principal));
+      return readCatalog(principal, readOptions, false, selection);
+    },
+  };
+
   return service;
 }
 
-interface ProviderSelectionRequirements {
+export interface ProviderSelectionRequirements {
   attachments?: CanonicalChatAttachmentKind[];
   resources?: CanonicalChatResourceKind[];
   interactionMode?: string;
@@ -820,10 +800,20 @@ export function validateChatProviderSelection(input: {
       ["fork_chat", "start_new_chat"],
     );
   }
+  if (isRetiredMatrixSdkInstance(selection.data.instanceId)) {
+    return { ok: false, error: matrixSdkRetirementError() };
+  }
   const instance = input.catalog.instances.find((candidate) =>
     candidate.id === selection.data.instanceId
   );
   if (instance?.availability !== "available") {
+    const fundingError = fundedSelectionError(instance);
+    if (fundingError) {
+      if (!instance?.models.some(candidate => candidate.id === selection.data.model)) {
+        return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
+      }
+      return { ok: false, error: fundingError };
+    }
     return selectionError(
       "provider_unavailable",
       "The selected Provider is not available.",

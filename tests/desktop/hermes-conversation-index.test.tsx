@@ -80,8 +80,10 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  // Radix defers unmount autofocus; drain it while the jsdom realm is active.
+  await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
   vi.restoreAllMocks();
 });
 

@@ -15,19 +15,32 @@ export function createChatProviderRoutes(options: {
   routes.get("/api/chat-providers", async (context) => {
     const principal = options.getPrincipal(context);
     try {
+      if ((context.req.queries("includeSettingsSetupActions")?.length ?? 0) > 1) {
+        return context.json({ error: "Invalid request" }, 400);
+      }
       const query = z.object({
         refresh: z.enum(["true", "false"]).optional(),
         includeConnectionLabels: z.enum(["true", "false"]).optional(),
         includeConnectionState: z.enum(["true", "false"]).optional(),
+        includeFundingState: z.enum(["true", "false"]).optional(),
+        includeChatFunding: z.enum(["true", "false"]).optional(),
+        includeSettingsSetupActions: z.enum(["true", "false"]).optional(),
       }).strict().safeParse({
         refresh: context.req.query("refresh"),
         includeConnectionLabels: context.req.query("includeConnectionLabels"),
         includeConnectionState: context.req.query("includeConnectionState"),
+        includeFundingState: context.req.query("includeFundingState"),
+        includeChatFunding: context.req.query("includeChatFunding"),
+        includeSettingsSetupActions: context.req.query("includeSettingsSetupActions"),
       });
       if (!query.success) return context.json({ error: "Invalid request" }, 400);
+      const readOptions = query.data.includeSettingsSetupActions === "true"
+        ? { includeSettingsSetupActions: true } : undefined;
       const catalog = query.data.refresh === "true"
-        ? await options.catalog.refresh(principal)
-        : await options.catalog.getCatalog(principal);
+        ? await options.catalog.refresh(principal, ...(readOptions ? [readOptions] : []))
+        : readOptions
+          ? await options.catalog.getCatalog(principal, undefined, readOptions)
+          : await options.catalog.getCatalog(principal);
       // Older clients validate instances strictly. Presentation additions must be
       // negotiated on the wire, without modifying the authoritative admission catalog.
       return context.json({
@@ -35,7 +48,11 @@ export function createChatProviderRoutes(options: {
         instances: catalog.instances.map(({ connectionLabel, connectionState, ...legacy }) => ({
           ...legacy,
           ...(query.data.includeConnectionLabels === "true" && connectionLabel !== undefined ? { connectionLabel } : {}),
-          ...(query.data.includeConnectionState === "true" && connectionState !== undefined ? { connectionState } : {}),
+          ...(query.data.includeConnectionState === "true" && connectionState !== undefined ? {
+            connectionState: connectionState === "budget_exceeded" && query.data.includeChatFunding !== "true"
+              ? "unavailable" : connectionState === "credit_reserved" && query.data.includeFundingState !== "true"
+                ? "credit_required" : connectionState,
+          } : {}),
         })),
       });
     } catch (error: unknown) {

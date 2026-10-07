@@ -3,17 +3,19 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
-import { CanonicalChatRequestIdSchema } from "../../packages/contracts/src/index";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
+import { saved } from "../desktop/chat-agents-fixture";
 import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client";
 
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
+  useAuth: () => ({userId:null,sessionId:null}),
 }));
 
 const agent = { kind: "agent" as const, id: "bot_meeting01", label: "Meeting helper" };
 const source = { kind: "chat" as const, id: "chat_notes", label: "Meeting notes" };
+const botDefinition = { ...saved, id: agent.id, name: agent.label, recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" } };
 let client: ChatAgentClient;
 beforeEach(() => {
   window.localStorage.clear();
@@ -33,7 +35,7 @@ const base = {
   sessionId: "chat_original", busy: false, connected: true, conversations: [],
   onNewChat: vi.fn(), onSwitchConversation: vi.fn(),
 };
-it("uses the existing Web Chat input with typed mentions and preserves rejected drafts", async () => {
+it("refuses an Agent mention without Bot navigation and preserves the ordinary draft", async () => {
   const submit = vi.fn(async () => false);
   render(<ChatApp {...base} onSubmit={submit} agentClient={client} />);
   await waitFor(() => expect((screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement).disabled).toBe(false));
@@ -41,12 +43,16 @@ it("uses the existing Web Chat input with typed mentions and preserves rejected 
   fireEvent.change(editor, { target: { value: "@mee" } });
   fireEvent.click(await screen.findByRole("option", { name: /Meeting helper/ }));
   expect(submit).not.toHaveBeenCalled();
+  await screen.findByText("Could not open this bot’s Chat. Your draft is preserved. Try again.");
+  expect((editor as HTMLTextAreaElement).value).toBe("@mee");
+  expect(screen.queryByRole("button", { name: "Remove Meeting helper" })).toBeNull();
   fireEvent.change(editor, { target: { value: "Prepare the meeting" } });
-  fireEvent.click(screen.getByRole("checkbox", { name: /Allow Full access/ }));
+  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(submit).toHaveBeenCalled());
-  expect(submit.mock.calls[0]![2]).toMatchObject({ resources: [agent], permissionMode: "full_access", instanceId: "codex_fixture" });
-  expect(CanonicalChatRequestIdSchema.safeParse(submit.mock.calls[0]![2]?.clientRequestId).success).toBe(true);
+  expect(submit.mock.calls[0]![2]).toMatchObject({ permissionMode: "supervised", instanceId: "codex_fixture" });
+  expect(submit.mock.calls[0]![2]?.resources).toBeUndefined();
+  expect(submit.mock.calls[0]![2]?.clientRequestId).toBeUndefined();
   expect((editor as HTMLTextAreaElement).value).toBe("Prepare the meeting");
   expect(screen.getByText("Original Chat text")).toBeTruthy();
 });
@@ -95,19 +101,20 @@ it("does not show the new picker when the feature switch is off", async () => {
   await waitFor(() => expect(client.search).toHaveBeenCalled());
   expect(screen.queryByRole("listbox", { name: "Agents and Chat context" })).toBeNull();
 });
-it("supports choosing a reference from the keyboard", async () => {
+it("supports choosing a Chat context reference from the keyboard", async () => {
+  vi.mocked(client.search).mockResolvedValue({ enabled: true, resources: [source] });
   render(<ChatApp {...base} onSubmit={vi.fn()} agentClient={client} />);
   const editor = screen.getByRole("textbox", { name: "Message chat" });
   await waitFor(() => expect((editor as HTMLTextAreaElement).disabled).toBe(false));
   fireEvent.change(editor, { target: { value: "@mee" } });
-  const option = await screen.findByRole("option", { name: /Meeting helper/ });
+  const option = await screen.findByRole("option", { name: /Meeting notes/ });
   fireEvent.keyDown(editor, { key: "ArrowDown" });
   expect(document.activeElement).toBe(option);
   fireEvent.click(option);
   expect(document.activeElement).toBe(editor);
 });
 
-it.each(["chat", "agent"] as const)("keeps a long %s label inspectable through selection and removal", async (kind) => {
+it.each(["chat", "agent"] as const)("keeps a long %s label inspectable with its appropriate entry behavior", async (kind) => {
   const long = { kind, id: kind === "chat" ? "chat_long" : "bot_longlabel", label: "A".repeat(kind === "chat" ? 200 : 80) };
   vi.mocked(client.search).mockResolvedValue({ enabled: true, resources: [long] });
   render(<ChatApp {...base} onSubmit={vi.fn()} agentClient={client} />);
@@ -117,6 +124,12 @@ it.each(["chat", "agent"] as const)("keeps a long %s label inspectable through s
   const option = await screen.findByRole("option", { name: long.label });
   expect(screen.getByTitle(long.label)).toBeTruthy();
   fireEvent.click(option);
+  if (kind === "agent") {
+    await screen.findByText("Could not open this bot’s Chat. Your draft is preserved. Try again.");
+    expect((editor as HTMLTextAreaElement).value).toBe("@A");
+    expect(screen.queryByRole("button", { name: `Remove ${long.label}` })).toBeNull();
+    return;
+  }
   expect(screen.getAllByTitle(long.label).length).toBeGreaterThan(0);
   const remove = screen.getByRole("button", { name: `Remove ${long.label}` });
   fireEvent.click(remove);
@@ -189,7 +202,7 @@ it("preserves the existing text-only busy composer behavior without treating tex
   expect((editor as HTMLTextAreaElement).value).toBe("Ordinary text while running");
 });
 
-it("requires fresh consent when a website handoff replaces a draft with the same Agent", async () => {
+it("resets optional Full access when a website handoff replaces a draft with the same Agent", async () => {
   const submit = vi.fn(async () => false);
   function Workspace() {
     const [draft, setDraft] = React.useState<{ id: number; text: string; resources: typeof agent[] } | null>({
@@ -210,5 +223,64 @@ it("requires fresh consent when a website handoff replaces a draft with the same
   fireEvent.click(screen.getByRole("button", { name: "Replace recipe" }));
   expect(editor().value).toBe("Replacement recipe");
   expect((screen.getByRole("checkbox", { name: /Allow Full access/ }) as HTMLInputElement).checked).toBe(false);
-  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+
+it("preserves a drive draft on an unsupported route and sends its exact typed reference when the catalog supports it",async()=>{
+ const ref={kind:"organization_drive" as const,id:"00000000-0000-4000-8000-000000000001",label:"Authority",drive:{kind:"drive" as const,organizationId:"org_company",scopeId:"00000000-0000-4000-8000-000000000001"}};
+ const submit=vi.fn(async()=>false),draft={id:999,text:"Summarize the plan",resources:[ref]};
+ const view=render(<ChatApp {...base} onSubmit={submit} agentClient={client} composerDraftRequest={draft}/>);
+ await screen.findByRole("button",{name:"Remove Authority"});expect((screen.getByRole("button",{name:"Send"}) as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.keyDown(screen.getByRole("textbox",{name:"Message chat"}),{key:"Enter"});expect(submit).not.toHaveBeenCalled();
+ view.unmount();
+ const catalog=createCanonicalProviderCatalogFixture();catalog.instances[0]!.supports.resources.push("organization_drive");
+ vi.stubGlobal("fetch",vi.fn(async()=>Response.json(catalog)));
+ render(<ChatApp {...base} onSubmit={submit} agentClient={client} composerDraftRequest={draft}/>);
+ await waitFor(()=>expect((screen.getByRole("button",{name:"Send"}) as HTMLButtonElement).disabled).toBe(false));
+ fireEvent.click(screen.getByRole("button",{name:"Send"}));await waitFor(()=>expect(submit).toHaveBeenCalled());expect(submit.mock.calls[0]![2]).toMatchObject({resources:[ref]});
+ expect(screen.getByRole("button",{name:"Remove Authority"})).toBeTruthy();
+});
+
+it('opens @Bot with a prefilled draft and keeps the original Chat provider and text', async () => {
+  const open = vi.fn(), submit = vi.fn();
+  client.bots = { directChat:vi.fn(async()=> 'chat_bot'), ensureDirectChat:vi.fn(async()=> 'chat_bot'), directBot:vi.fn(async(id:string)=>id === 'chat_bot' ? agent.id:null), interactions:vi.fn(async()=>[]), tasks:vi.fn(async()=>[]), authority:vi.fn(async()=>({grants:[],connections:[],memory:{items:[]},routines:[],pendingInteractions:[]})) } as never;
+  vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[botDefinition]});
+  const props={...base,onSwitchConversation:open,onSubmit:submit,agentClient:client};
+  const {rerender}=render(<ChatApp {...props}/>);
+  const editor=screen.getByRole('textbox',{name:'Message chat'});
+  fireEvent.change(editor,{target:{value:'Please draft a note @mee'}});
+  fireEvent.click(await screen.findByRole('option',{name:/Meeting helper/}));
+  await waitFor(()=>expect(open).toHaveBeenCalledWith('chat_bot'));
+  expect(client.bots!.ensureDirectChat).toHaveBeenCalledWith(agent.id);
+  expect(submit).not.toHaveBeenCalled();
+  expect((editor as HTMLTextAreaElement).value).toBe('Please draft a note @mee');
+  rerender(<ChatApp {...props} sessionId='chat_bot'/>);
+  expect((screen.getByRole('textbox',{name:'Message chat'}) as HTMLTextAreaElement).value).toBe('Please draft a note');
+  expect(screen.queryByRole('button',{name:'Remove Meeting helper'})).toBeNull();
+});
+it.each([undefined,'chat_original'])('returns a conflicting Bot handoff to retained Web source %s with references',async(sourceId)=>{
+ const submit=vi.fn();
+ client.bots={directChat:vi.fn(async()=> 'chat_bot'), ensureDirectChat:vi.fn(async()=> 'chat_bot'),directBot:vi.fn(async(id:string)=>id==='chat_bot'?agent.id:null),interactions:vi.fn(async()=>[]),tasks:vi.fn(async()=>[]),authority:vi.fn(async()=>({grants:[],connections:[],memory:{items:[]},routines:[],pendingInteractions:[]}))} as never;
+ vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[botDefinition]});
+ function Workspace(){const[id,setId]=React.useState<string|undefined>('chat_bot');return <><button onClick={()=>setId(sourceId)}>Begin original source</button><ChatApp {...base} messages={id?base.messages:[]} sessionId={id} onNewChat={()=>setId(undefined)} onSwitchConversation={setId} onSubmit={submit} agentClient={client}/></>;}
+ render(<Workspace/>);const editor=()=>screen.getByRole('textbox',{name:'Message chat'}) as HTMLTextAreaElement;
+ await waitFor(()=>expect(editor().disabled).toBe(false));fireEvent.change(editor(),{target:{value:'Protected target draft'}});
+ fireEvent.click(screen.getByRole('button',{name:'Begin original source'}));
+ fireEvent.change(editor(),{target:{value:'@no'}});fireEvent.click(await screen.findByRole('option',{name:/Meeting notes/}));
+ fireEvent.change(editor(),{target:{value:'Recover this original draft @mee'}});fireEvent.click(await screen.findByRole('option',{name:/Meeting helper/}));
+ await screen.findByRole('button',{name:'Return to original draft'});expect(editor().value).toBe('Protected target draft');expect(screen.queryByRole('button',{name:'Remove Meeting notes'})).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Return to original draft'}));
+ await waitFor(()=>expect(editor().value).toBe('Recover this original draft @mee'));expect(screen.getByRole('button',{name:'Remove Meeting notes'})).toBeTruthy();expect(submit).not.toHaveBeenCalled();
+ fireEvent.click(screen.getAllByRole('button',{name:'New chat'})[0]!);await waitFor(()=>expect(editor().value).toBe(''));expect(screen.queryByRole('button',{name:'Return to original draft'})).toBeNull();
+});
+it('keeps Web local files and draft in place instead of navigating to a Bot',async()=>{
+ const open=vi.fn(),submit=vi.fn();client.bots={directChat:vi.fn(async()=> 'chat_bot'), ensureDirectChat:vi.fn(async()=> 'chat_bot'),directBot:vi.fn(async()=>null)} as never;
+ vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[botDefinition]});
+ const catalog=createCanonicalProviderCatalogFixture();catalog.instances[0]!.supports.attachments=['file'];vi.stubGlobal('fetch',vi.fn(async()=>Response.json(catalog)));
+ render(<ChatApp {...base} onSubmit={submit} agentClient={client} onSwitchConversation={open}/>);
+ await waitFor(()=>expect((screen.getByRole('button',{name:'Attach files'}) as HTMLButtonElement).disabled).toBe(false));
+ fireEvent.change(screen.getByLabelText('Attach files',{selector:'input'}),{target:{files:[new File(['Source'],'original.txt',{type:'text/plain'})]}});
+ const editor=screen.getByRole('textbox',{name:'Message chat'});fireEvent.change(editor,{target:{value:'Keep this file and text @mee'}});fireEvent.click(await screen.findByRole('option',{name:/Meeting helper/}));
+ await screen.findByText(/Remove or send the attached files/);expect((editor as HTMLTextAreaElement).value).toBe('Keep this file and text @mee');expect(screen.getByRole('button',{name:'Remove original.txt'})).toBeTruthy();expect(open).not.toHaveBeenCalled();expect(submit).not.toHaveBeenCalled();
 });

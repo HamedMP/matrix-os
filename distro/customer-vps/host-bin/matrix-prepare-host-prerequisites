@@ -93,6 +93,82 @@ prerequisites_ready() {
     && prerequisites_present
 }
 
+# A loaded predecessor updater executes this newly installed helper before it
+# starts the new supervisor. Run even on already-certified hosts: optional bind
+# sources must exist when the supervisor creates its protected home namespace.
+prepare_workload_roots() {
+  local account name password uid gid remainder lookup_status
+  # Golden-image certification precedes account/home activation.
+  if account="$(getent passwd matrix 2>/dev/null)"; then
+    :
+  else
+    lookup_status=$?
+    if [ "$lookup_status" -eq 2 ]; then return 0; fi
+    echo "matrix workload account lookup failed" >&2
+    return 64
+  fi
+  IFS=: read -r name password uid gid remainder <<<"$account"
+  if [ "$name" != matrix ] || [[ ! "$uid" =~ ^[0-9]+$ ]] || [[ ! "$gid" =~ ^[0-9]+$ ]]; then
+    echo "matrix workload account is invalid" >&2
+    return 64
+  fi
+  /usr/bin/python3 -I - "$root" "$uid" "$gid" <<'PY'
+import os
+import stat
+import sys
+
+root, uid, gid = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+names = ("bots", "agent-workspaces", "projects", "worktrees")
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+home_fd = None
+try:
+    # Pin every existing parent without following links. Fresh activation owns
+    # creation of the owner home itself; this helper only prepares fixed roots.
+    home_fd = os.open("/", flags)
+    for component in (root.rstrip("/") + "/home/matrix/home").split("/"):
+        if not component:
+            continue
+        if component in (".", ".."):
+            raise ValueError("Invalid parent")
+        try:
+            child = os.open(component, flags, dir_fd=home_fd)
+        except FileNotFoundError:
+            sys.exit(0)
+        os.close(home_fd)
+        home_fd = child
+    # Reject all invalid existing roots before creating any missing root.
+    for name in names:
+        try:
+            entry = os.stat(name, dir_fd=home_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(entry.st_mode):
+            raise ValueError("Invalid workload root")
+    for name in names:
+        created = False
+        try:
+            os.mkdir(name, 0o750, dir_fd=home_fd)
+            created = True
+        except FileExistsError:
+            pass
+        directory = os.open(name, flags, dir_fd=home_fd)
+        try:
+            if created:
+                os.fchown(directory, uid, gid)
+                os.fchmod(directory, 0o750)
+        finally:
+            os.close(directory)
+except (OSError, ValueError):
+    print("matrix workload root preparation failed", file=sys.stderr)
+    sys.exit(64)
+finally:
+    if home_fd is not None:
+        os.close(home_fd)
+PY
+}
+
+prepare_workload_roots
+
 if [ "$mode" = --certify-only ]; then
   certify_prerequisites
   exit 0

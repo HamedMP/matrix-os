@@ -94,6 +94,8 @@ describe("Files workspace", () => {
       platformHost: "https://app.matrix-os.com",
       runtimeSlot: "pr-919",
       authGeneration: 3,
+      organizationId: "org_matrix_team",
+      organizationStatus: "member",
       api: api as never,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
@@ -105,6 +107,38 @@ describe("Files workspace", () => {
     vi.restoreAllMocks();
     URL.createObjectURL = originalCreate;
     URL.revokeObjectURL = originalRevoke;
+  });
+
+  it("keeps the organization drive pane mounted across ordinary Files tab switches", async () => {
+    const view = render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    expect(view.container.querySelector("[data-retained-pane] h2")?.textContent).not.toBe("Organization drives");
+    fireEvent.click(screen.getByRole("tab", { name: "Organization drives" }));
+    const heading = await screen.findByRole("heading", { name: "Organization drives" });
+    fireEvent.click(screen.getByRole("tab", { name: "Matrix home" }));
+    expect(heading.isConnected).toBe(true);
+    expect(heading.closest("[data-retained-pane]")?.getAttribute("aria-hidden")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: "Organization drives" }));
+    expect(screen.getByRole("heading", { name: "Organization drives" })).toBe(heading);
+  });
+
+  it("hides Organization drives when a complete listing confirms no organizations", () => {
+    useConnection.setState({ organizationId: null, organizationStatus: "none" });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+
+    expect(screen.queryByRole("tab", { name: "Organization drives" })).toBeNull();
+  });
+
+  it("clears a selected organization drive when membership ends", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.click(screen.getByRole("tab", { name: "Organization drives" }));
+    await screen.findByRole("heading", { name: "Organization drives" });
+
+    act(() => useConnection.setState({ organizationId: null, organizationStatus: "none" }));
+    expect(screen.queryByRole("tab", { name: "Organization drives" })).toBeNull();
+
+    act(() => useConnection.setState({ organizationId: "org_matrix_team", organizationStatus: "member" }));
+    expect(screen.getByRole("tab", { name: "Organization drives" }).getAttribute("aria-selected")).toBe("false");
+    expect(screen.queryByRole("heading", { name: "Organization drives" })).toBeNull();
   });
 
   it("retains same-tab Back and Forward history after the parent tab path updates", async () => {
@@ -197,6 +231,19 @@ describe("Files workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
     expect(await screen.findByRole("region", { name: "File preview" })).toBeTruthy();
     expect(screen.getByTestId("files-workspace-panes").getAttribute("data-layout")).toBe("preview");
+  });
+
+  it("offers no standalone file or folder share: projects are the only live-shareable resource", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const workspaces = await screen.findByRole("button", { name: "Open workspaces" });
+
+    fireEvent.click(workspaces);
+    expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
+
+    fireEvent.doubleClick(workspaces);
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    expect(await screen.findByRole("region", { name: "File preview" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
   });
 
   it("shows the designed empty-folder preview state", async () => {

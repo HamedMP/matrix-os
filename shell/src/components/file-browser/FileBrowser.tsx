@@ -1,5 +1,7 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
+import { getGatewayUrl } from "@/lib/gateway";
 import { useEffect, useRef, useState } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
@@ -16,19 +18,39 @@ import { StatusBar } from "./StatusBar";
 import { FileContextMenu } from "./FileContextMenu";
 import { QuickLook } from "./QuickLook";
 import { FileDownloadProvider } from "./FileDownloadProvider";
-import { FileResourceSharing } from "./FileResourceSharing";
 import { XpExplorer } from "./XpExplorer";
+import { organizationDriveNavigationIdentity, useOrganizationDriveNavigation } from "@/stores/organization-drive-navigation";
 import { OrganizationDrivesView } from "./OrganizationDrivesView";
+import { FileResourceSharing } from "./FileResourceSharing";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
 interface FileBrowserProps {
   windowId: string;
   mobile?: boolean;
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing browser coordinates keyboard shortcuts, trash, search and organization drives; this change only removes a share row. Splitting it belongs in a focused refactor.
 export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [showingTrash, setShowingTrash] = useState(false);
   const [showingOrganizationDrives, setShowingOrganizationDrives] = useState(false);
+  const { status: organizationStatus } = useCollaborationOrganization();
+  const organizationDrivesAvailable = organizationStatus !== "none";
+  const organizationDrivesVisible = showingOrganizationDrives && organizationDrivesAvailable;
+  const {userId, sessionId} = useAuth();
+  const identity = organizationDriveNavigationIdentity(userId, sessionId, getGatewayUrl());
+  const driveRequest = useOrganizationDriveNavigation(state => state.request);
+  const [openedDriveRequest, setOpenedDriveRequest] = useState<typeof driveRequest>(null);
+  const activeDriveRequest = openedDriveRequest?.identity === identity ? openedDriveRequest : null;
+  useEffect(() => {
+    setOpenedDriveRequest(null); setShowingOrganizationDrives(false);
+  }, [identity]);
+  useEffect(() => {
+    if (!driveRequest) return;
+    useOrganizationDriveNavigation.getState().consume(driveRequest);
+    if (driveRequest.identity !== identity || !organizationDrivesAvailable) return;
+    setOpenedDriveRequest(driveRequest); setShowingOrganizationDrives(true);
+  }, [driveRequest, identity, organizationDrivesAvailable]);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
   const currentPath = useFileBrowser((s) => s.currentPath);
@@ -294,21 +316,22 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
       aria-label="File browser"
       // react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex -- intentional focus target: this container hosts the file browser keyboard shortcut handler (arrows, copy/paste, F2, Enter)
       tabIndex={0}
-      onKeyDown={showingOrganizationDrives ? undefined : handleKeyDown}
+      onKeyDown={organizationDrivesVisible ? undefined : handleKeyDown}
     >
       <FileDownloadProvider>
       <div className="flex gap-2 border-b px-3 py-2 text-xs">
-        <button type="button" aria-current={!showingOrganizationDrives ? "page" : undefined}
+        <button type="button" aria-current={!organizationDrivesVisible ? "page" : undefined}
           onClick={() => setShowingOrganizationDrives(false)}
           className="rounded px-3 py-1.5 hover:bg-accent aria-[current=page]:bg-accent">My files</button>
-        <button type="button" aria-current={showingOrganizationDrives ? "page" : undefined}
+        {organizationDrivesAvailable ? <button type="button" aria-current={organizationDrivesVisible ? "page" : undefined}
           onClick={() => setShowingOrganizationDrives(true)}
-          className="rounded px-3 py-1.5 hover:bg-accent aria-[current=page]:bg-accent">Organization drives</button>
+          className="rounded px-3 py-1.5 hover:bg-accent aria-[current=page]:bg-accent">Organization drives</button> : null}
       </div>
-      {selectedKind && selectedPath && !showingTrash && !searchResults && !showingOrganizationDrives ? <div className="flex justify-end border-b px-3 py-1.5">
-        <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath} />
-      </div> : null}
-      {showingOrganizationDrives ? <OrganizationDrivesView /> : isXpExplorer ? (
+      {selectedKind && selectedPath && !showingTrash && !searchResults && !organizationDrivesVisible
+        ? <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath}
+          containerClassName="flex justify-end border-b px-3 py-1.5" />
+        : null}
+      {organizationDrivesVisible ? <OrganizationDrivesView mobile={mobile} draftIdentity={identity} key={identity} requestedScopeId={activeDriveRequest?.scopeId} requestedIntentId={activeDriveRequest?.id} /> : isXpExplorer ? (
         <XpExplorer
           renamingPath={renamingPath}
           onStartRename={setRenamingPath}

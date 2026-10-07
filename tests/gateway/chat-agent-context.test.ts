@@ -115,6 +115,21 @@ describe("server-resolved Chat mention context", () => {
     })).rejects.toMatchObject({ code: "context_unavailable" });
   });
 
+  it("preserves Supervised mode for a saved Codex Agent", async () => {
+    const agent = await agents.create(owner, {
+      clientRequestId: "req_supervised_bot", name: "Supervised helper", description: "Reviews work",
+      instructions: "Review before editing.",
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+    });
+    const prepared = await context.prepare(owner, "chat_current", {
+      ...request, permissionMode: "supervised",
+      parts: [...request.parts, mention("agent", agent.id)],
+    });
+    expect(prepared.permissionMode).toBe("supervised");
+    expect(prepared.selection).toEqual(agent.selection);
+    expect(prepared.context?.agent?.id).toBe(agent.id);
+  });
+
   it("pins recipe instructions and renders explicit integration and output guidance", async () => {
     const agent = await agents.create(owner, {
       clientRequestId: "req_recipe_bot",
@@ -228,6 +243,68 @@ describe("server-resolved Chat mention context", () => {
     expect(prepared.context?.chats[0]?.truncated).toBe(true);
     expect(prepared.context?.chats[0]?.text).not.toContain("INTERNAL_TOOL_OUTPUT");
   });
+  describe("recipe bot chats", () => {
+    const botSelection = { instanceId: "matrix_bot_default", model: "auto" };
+    function botContext(directBot: (chatId: string) => string | null) {
+      return new ChatAgentContext({
+        repository, agents, enabled: () => true,
+        botChats: { directBot: async (_owner, chatId) => directBot(chatId) },
+      });
+    }
+
+    it("runs a bot's own chat on the bot runtime by capability set, whatever was selected", async () => {
+      await agents.createRecipeBot(owner, {
+        id: "bot_0123456789abcdef01234567", createHash: "b".repeat(64),
+        fields: { name: "Writing Bot", description: "", instructions: "Revise.", selection: botSelection },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" },
+      });
+      const bots = botContext((chatId) => (chatId === "chat_current" ? "bot_0123456789abcdef01234567" : null));
+      await expect(bots.prepare(owner, "chat_current", { ...request, permissionMode: "read_only" }))
+        .resolves.toEqual({ selection: botSelection, interactionMode: "default", permissionMode: "default" });
+      await expect(bots.prepare(owner, "chat_current", { ...request, parts: [...request.parts, mention("chat", "chat_source")] }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+    });
+
+    it("preserves exact owner subscription options through the canonical direct Bot adapter", async () => {
+      const plan = { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [
+        { id: "accountId", value: "account_own" }, { id: "grantRevision", value: "3" },
+      ] };
+      const id = "bot_0123456789abcdef01234567";
+      await agents.createRecipeBot(owner, { id, createHash: "c".repeat(64),
+        fields: { name: "Subscription Bot", description: "", instructions: "Revise.", selection: plan },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" },
+      });
+      const bots = botContext(chatId => chatId === "chat_current" ? id : null);
+      await expect(bots.prepare(owner, "chat_current", request)).resolves.toMatchObject({
+        selection: { ...plan, instanceId: "matrix_bot_default" }, permissionMode: "default",
+      });
+      await expect(context.prepare(owner, "chat_source", { ...request, selection: plan }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+    });
+
+    it("refuses a Bot-only subscription saved on a custom Agent rather than forwarding it to ordinary execution", async () => {
+      const agent = await agents.create(owner, { clientRequestId: "req_custom_subscription", name: "Custom", description: "", instructions: "Revise.",
+        selection: { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [{ id: "accountId", value: "account_own" }, { id: "grantRevision", value: "3" }] } });
+      const custom = botContext(chatId => chatId === "chat_current" ? agent.id : null);
+      await expect(custom.prepare(owner, "chat_current", { ...request, permissionMode: "supervised" })).rejects.toMatchObject({ code: "context_unavailable" });
+      await expect(context.prepare(owner, "chat_current", { ...request, parts: [...request.parts, mention("agent", agent.id)] })).rejects.toMatchObject({ code: "context_unavailable" });
+    });
+
+    it("refuses the bot runtime in any other chat, directly or through a mention", async () => {
+      const bots = botContext(() => null);
+      await expect(bots.prepare(owner, "chat_current", { ...request, selection: botSelection }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+      await expect(context.prepare(owner, "chat_current", { ...request, selection: botSelection }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+      const bot = await agents.createRecipeBot(owner, {
+        id: "bot_0123456789abcdef01234567", createHash: "a".repeat(64),
+        fields: { name: "Writing Bot", description: "", instructions: "Revise.", selection: botSelection },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" },
+      });
+      await expect(bots.prepare(owner, "chat_current", { ...request, parts: [...request.parts, mention("agent", bot.id)] }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+    });
+  });
 });
 
 it("marks unavailable ordinary integration steps while retaining real pinned and custom skill text", async () => {
@@ -259,4 +336,5 @@ it("marks unavailable ordinary integration steps while retaining real pinned and
   expect(full).toContain(bundledBody);
   expect(full).toContain(customBody);
   expect(full).toContain("Before making integration calls, call list_integration_inventory");
+
 });

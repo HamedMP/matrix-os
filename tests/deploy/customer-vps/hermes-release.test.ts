@@ -1,4 +1,7 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { constants } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -20,6 +23,59 @@ describe("customer VPS Hermes release", () => {
       'bash "$HERMES_INSTALLER_PATH" --branch main --commit "$HERMES_COMMIT" --force-commit --skip-setup',
     );
     expect(installer).not.toContain("NousResearch/hermes-agent/main/scripts/install.sh");
+  });
+
+  it("installs the optional native SDK from the pinned upstream dependency contract", async () => {
+    const installer = await readFile(installerPath, "utf8");
+    const sourceInstall = installer.indexOf('bash "$HERMES_INSTALLER_PATH" --branch main');
+    const extraInstall = installer.indexOf('"${HERMES_HOME}/hermes-agent[anthropic]"');
+    expect(extraInstall).toBeGreaterThan(sourceInstall);
+    expect(installer).toContain('timeout 300 uv --no-config pip install');
+    expect(installer).toContain('--python "${HERMES_HOME}/hermes-agent/venv/bin/python"');
+    expect(installer).toContain('--index-url https://pypi.org/simple');
+    expect(installer).not.toMatch(/anthropic==|openai==/);
+  });
+
+  it.each([0, 42])("propagates dependency install status %i before reporting success", async status => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-provision-"));
+    try {
+      const installer = await readFile(installerPath, "utf8");
+      const block = installer.slice(installer.indexOf('log "installing pinned Hermes native-provider dependencies"'), installer.indexOf("for cli in uv uvx hermes; do"));
+      await mkdir(join(root, ".local/bin"), { recursive: true });
+      // macOS has no GNU timeout; this fixture only checks process status wiring.
+      await writeFile(join(root, ".local/bin/timeout"), '#!/bin/sh\n[ "$1" = 300 ] || exit 99\nshift\nexec "$@"\n', { mode: 0o755 });
+      await writeFile(join(root, ".local/bin/uv"), `#!/bin/sh\nprintf '%s\\n' "$UV_HTTP_TIMEOUT" "$@" > "$HOME/invocation"\nexit ${status}\n`, { mode: 0o755 });
+      const script = `set -eu\nMATRIX_RUNTIME_HOME="$1"\nHERMES_HOME="$1/.hermes"\nlog() { :; }\nrun_installer_as_runtime_user() { "$@"; }\n${block}\nprintf success > "$1/success"\n`;
+      let exitStatus = 0;
+      try { execFileSync("bash", ["-c", script, "fixture", root]); }
+      catch (error) { exitStatus = (error as { status: number }).status; }
+      expect(exitStatus).toBe(status);
+      expect(await readFile(join(root, "invocation"), "utf8")).toBe([
+        "60", "--no-config", "pip", "install", "--python", `${root}/.hermes/hermes-agent/venv/bin/python`,
+        "--index-url", "https://pypi.org/simple", "--editable", `${root}/.hermes/hermes-agent[anthropic]`, "",
+      ].join("\n"));
+      if (status === 0) expect(await readFile(join(root, "success"), "utf8")).toBe("success");
+      else await expect(access(join(root, "success"))).rejects.toThrow();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("uses managed runtime uv when the owner-local uv is absent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-managed-uv-"));
+    try {
+      const installer = await readFile(installerPath, "utf8");
+      const managedBin = join(root, "managed/bin");
+      const block = installer.slice(installer.indexOf('log "installing pinned Hermes native-provider dependencies"'),
+        installer.indexOf("for cli in uv uvx hermes; do")).replaceAll("/opt/matrix/runtime/node/bin", managedBin);
+      await mkdir(join(root, ".local/bin"), { recursive: true });
+      await mkdir(managedBin, { recursive: true });
+      await writeFile(join(root, ".local/bin/timeout"), '#!/bin/sh\n[ "$1" = 300 ] || exit 99\nshift\nexec "$@"\n', { mode: 0o755 });
+      await writeFile(join(managedBin, "uv"), '#!/bin/sh\nprintf managed > "$HOME/invocation"\n', { mode: 0o755 });
+      await expect(access(join(root, ".local/bin/uv"))).rejects.toThrow();
+      const script = `set -eu\nMATRIX_RUNTIME_HOME="$1"\nHERMES_HOME="$1/.hermes"\nlog() { :; }\nrun_installer_as_runtime_user() { "$@"; }\n${block}\nprintf success > "$1/success"\n`;
+      execFileSync("bash", ["-c", script, "fixture", root]);
+      expect(await readFile(join(root, "invocation"), "utf8")).toBe("managed");
+      expect(await readFile(join(root, "success"), "utf8")).toBe("success");
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
   it("keeps owner state outside the managed source update", async () => {

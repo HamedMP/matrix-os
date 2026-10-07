@@ -18,6 +18,9 @@ import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
 import type { TerminalSizeListener } from "./workspace-resize.js";
 import { TerminalFrameQueue } from "./input-frame-queue.js";
 import { presentZellijSnapshot } from "./zellij-screen-dump.js";
+import { TerminalCommandStateSchema, type TerminalCommandState } from "./terminal-command-state.js";
+import type { TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
+import { TerminalRuntimeError } from "./errors.js";
 import {
   MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
   TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS,
@@ -29,6 +32,8 @@ import {
 } from "./socket-protocol.js";
 
 export interface TerminalRuntimeControlApi {
+  archiveEndedTab?(ref: TerminalRef, input: TerminalEndedTabArchiveInput): Promise<TerminalTab>;
+  getCommandState?(ref: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState>;
   scrollState?(ref: TerminalRef, line?: number): Promise<TerminalScrollState | null>;
   listWorkspaces(): Promise<TerminalWorkspace[]>;
   ensureWorkspace(input?: { projectId?: string }): Promise<TerminalWorkspace>;
@@ -352,12 +357,23 @@ export class TerminalRuntimeSocketServer {
     };
   }
 
-  private dispatch(request: TerminalRuntimeRequest): Promise<unknown> {
+  private async dispatch(request: TerminalRuntimeRequest): Promise<unknown> {
     switch (request.operation) {
       case "ListWorkspaces": return this.options.runtime.listWorkspaces();
       case "EnsureWorkspace": return this.options.runtime.ensureWorkspace(request.input);
       case "CreateTab": return this.options.runtime.createTab(request.input.workspaceId, request.input);
       case "GetSnapshot": return this.options.runtime.getSnapshot(request.input);
+      case "GetCommandState": {
+        const { workspaceId, tabId, expectedIncarnation } = request.input;
+        const result = await this.options.runtime.getCommandState?.({ workspaceId, tabId }, expectedIncarnation);
+        const state = TerminalCommandStateSchema.safeParse(result);
+        return state.success ? state.data : "unknown";
+      }
+      case "ArchiveEndedTab": {
+        if (!this.options.runtime.archiveEndedTab) throw new TerminalRuntimeError("unavailable");
+        const { workspaceId, tabId, ...input } = request.input;
+        return this.options.runtime.archiveEndedTab({ workspaceId, tabId }, input);
+      }
       case "RenameTab": return this.options.runtime.renameTab(
         { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
         { name: request.input.name, baseRevision: request.input.baseRevision },

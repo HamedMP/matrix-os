@@ -3,10 +3,17 @@ import type { Context, Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { AiProviderService } from "../ai-providers/service.js";
 import { createAiProviderRoutes } from "../ai-providers/routes.js";
-import { ProviderSettingsStore } from "../ai-providers/provider-settings-store.js";
+import type { ProviderSettingsStoreWriter } from "../ai-providers/provider-settings-store.js";
 import type { GmailAccountRow } from "../chat/jev-recipe-authority.js";
 import { createProviderSettingsRoutes } from "../ai-providers/provider-settings-routes.js";
 import { createChatAgentRoutes } from "../chat/agent-routes.js";
+import { createCodexChatImportRoutes } from "../chat/codex-import-routes.js";
+import { registerLocalChatImports } from "../chat/local-import/runtime.js";
+import type { R2Client } from "../sync/r2-client.js";
+import { CodexChatImporter } from "../chat/codex-importer.js";
+import { createBotContinuationAdmitter } from "../bots/continuations.js";
+import { createBotRoutes } from "../bots/routes.js";
+import type { BotServices } from "../startup/bots.js";
 import { registerCanonicalChatEventHttpRoute } from "../chat/event-http-route.js";
 import { registerCanonicalChatEventWebSocketRoute } from "../chat/event-websocket-route.js";
 import { createGatewayChatEventStream } from "../chat/gateway-event-stream.js";
@@ -19,6 +26,8 @@ import { createCanonicalChatRoutes } from "../chat/routes.js";
 import { createCanonicalChatService, createUnavailableCanonicalChatService } from "../chat/service.js";
 import { ChatSharing } from "../chat/sharing.js";
 import { createChatSharingRoutes } from "../chat/sharing-routes.js";
+import { ChatCredentialRepository } from "../chat/credential-repository.js";
+import { createChatCredentialRoutes } from "../chat/credential-routes.js";
 import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import type { OwnerToolOutputProjection } from "../chat/owner-tool-output.js";
 import type { ChatRepository } from "../chat/repository.js";
@@ -43,16 +52,22 @@ export interface CollaborationChatRouteOptions {
   /** Targeted canonical action cancellation; the route fails closed when absent. */
   canonicalActionAuthority?: CanonicalActionAuthority | null;
   aiProviderService: AiProviderService;
-  providerSettingsStore: ProviderSettingsStore;
+  providerSettingsStore: ProviderSettingsStoreWriter;
+  syncR2?: R2Client | null;
+  runtimeOwnerId?: string;
+  runtimeSlot?: string;
+  credentialKey?: Buffer;
+  runtimeOwnerIds: readonly string[];
   listGmailAccounts?: (ownerId: string) => Promise<readonly GmailAccountRow[]>;
+  botServices?: BotServices;
 }
 
-export function registerCollaborationChatRoutes(options: CollaborationChatRouteOptions): void {
+export function registerCollaborationChatRoutes(options: CollaborationChatRouteOptions): { close(): Promise<void> } {
   const { app, upgradeWebSocket, canonicalChatEventStream, chatRepository,
     gatewayCollaboration, collaborationFailClosedReason, canonicalChatOrchestrator,
     canonicalChatExecutionRoots, canonicalChatCollaborationGuard, projectOwnerToolOutput,
-    canonicalChatRuntime, canonicalChatProviderCatalog, canonicalActionAuthority,
-    aiProviderService,
+    canonicalChatRuntime, canonicalChatProviderCatalog, canonicalActionAuthority, aiProviderService,
+    botServices,
     providerSettingsStore, listGmailAccounts } = options;
   if (canonicalChatEventStream) {
     registerCanonicalChatEventWebSocketRoute({
@@ -68,7 +83,18 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     });
   }
   app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
+  app.route("/", createChatCredentialRoutes({
+    repository: chatRepository ? new ChatCredentialRepository(chatRepository.kysely,
+      options.credentialKey, options.runtimeOwnerIds) : null,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
   registerOwnerCollaborationRoutes({ app, upgradeWebSocket, gatewayCollaboration, collaborationFailClosedReason });
+  app.route("/", createCodexChatImportRoutes({
+    importer: chatRepository ? new CodexChatImporter(chatRepository) : null,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
+  const localImports = registerLocalChatImports({ app, repository: chatRepository, storage: options.syncR2,
+    runtimeOwnerId: options.runtimeOwnerId, runtimeSlot: options.runtimeSlot, getPrincipal: c => requireRequestPrincipal(c) });
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
@@ -77,10 +103,31 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
           ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
           ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
+          ...(gatewayCollaboration?.projectChatAssignments
+            ? { projectAssignments: gatewayCollaboration.projectChatAssignments }
+            : {}),
         })
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
     ...(canonicalActionAuthority ? { actionAuthority: canonicalActionAuthority } : {}),
+  }));
+  app.route("/", createBotRoutes({
+    ...(botServices ? {
+      recipes: botServices.recipes,
+      botChats: botServices.botChats,
+      tasks: botServices.tasks,
+      instantiation: botServices.instantiation,
+      interactions: botServices.interactions,
+      memory: botServices.memory,
+      grants: botServices.grants,
+      authority: botServices.authority,
+      providerConnections: botServices.providerConnections,
+      chatgptPlanPeers: botServices.chatgptPlanPeers,
+    } : {}),
+    ...(botServices && chatRepository && canonicalChatOrchestrator ? {
+      admitContinuation: createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }),
+    } : {}),
+    getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createChatAgentRoutes({
     ...(canonicalChatRuntime && chatRepository ? {
@@ -104,7 +151,8 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }));
   app.route("/api/ai", createProviderSettingsRoutes({
     store: providerSettingsStore,
+    canReadNativeAccountMetadata: (c) => Boolean(options.runtimeOwnerId) && requireRequestPrincipal(c).userId === options.runtimeOwnerId,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
-
+  return localImports;
 }

@@ -12,7 +12,8 @@ import {
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 import { CodingAgentCanonicalExecutionSchema, type CodingAgentCanonicalExecution } from "./coding-agents/provider-adapter.js";
-import { MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
+import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
+import { buildMatrixAgentOrientation } from "../../contracts/matrix-agent-orientation.mjs";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
@@ -69,6 +70,7 @@ export interface AgentLaunchInput {
   claudeOutputFormat?: "stream-json";
   claudeIncludePartialMessages?: boolean;
   matrixCustomMcp?: boolean;
+  matrixDriveContext?: boolean;
   matrixCustomMcpScope?: "call" | "discovery";
 }
 
@@ -212,12 +214,13 @@ const ClaudeEditPermissionRuleSchema = z.string()
 const ClaudeAllowRuleSchema = z.union([
   ClaudeEditPermissionRuleSchema,
   z.enum(MATRIX_CUSTOM_MCP_TOOLS),
+  z.enum(MATRIX_COMPANY_DRIVE_TOOLS),
 ]);
 const ClaudeLaunchSettingsSchema = z.object({
   permissions: z.object({
     // The sandbox permits 20 writable roots; a scoped Claude Run adds only
-    // the three fixed Custom MCP broker wrappers to that existing ceiling.
-    allow: z.array(ClaudeAllowRuleSchema).max(23).optional(),
+    // the three fixed Custom MCP wrappers and two scoped drive read tools.
+    allow: z.array(ClaudeAllowRuleSchema).max(25).optional(),
     deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
   }).strict().optional(),
   sandbox: z.object({
@@ -285,7 +288,7 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
     input.mode !== "plan" &&
     input.mode !== "review";
   const mcpTools = input.matrixCustomMcp
-    ? [...(mode === "read-only" || claudePermissionMode(input) === "default"
+    ? [...(input.matrixDriveContext ? MATRIX_COMPANY_DRIVE_TOOLS : []), ...(mode === "read-only" || claudePermissionMode(input) === "default"
       ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
     : [];
   if (mode === "read-only") {
@@ -320,6 +323,10 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
 function claudeLaunchArgs(input: AgentLaunchInput): string[] {
   const permissionMode = ClaudePermissionModeSchema.parse(claudePermissionMode(input));
   const settings = JSON.stringify(claudeLaunchSettings(input));
+  const discoveryOnly = input.mode === "plan" || input.mode === "review"
+    || input.sandbox?.mode === "read-only" || permissionMode === "plan"
+    || input.matrixCustomMcpScope === "discovery";
+  const effectiveMcpScope = discoveryOnly ? "discovery" : "call";
   return [
     "--setting-sources",
     "",
@@ -328,7 +335,10 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     "--permission-mode",
     permissionMode,
     "--strict-mcp-config",
-    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(input.matrixCustomMcpScope)] : []),
+    ...(input.runtimeHome ? ["--append-system-prompt", buildMatrixAgentOrientation({
+      surface: "claude", customMcpScope: input.matrixCustomMcp ? effectiveMcpScope : "none",
+    })] : []),
+    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(effectiveMcpScope, input.matrixDriveContext)] : []),
     "--no-chrome",
     ...(input.model ? ["--model", input.model] : []),
     ...(modelOption(input, "effort") ? ["--effort", modelOption(input, "effort")!] : []),

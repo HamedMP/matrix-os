@@ -12,6 +12,10 @@ describe("Electron Desktop OS-view persistence projection", () => {
       .toBe("__terminal__:calm-cedar");
   });
 
+  it.each(["Plugins", "Connect Apps"])("preserves the canonical shortcut path for %s windows", title => {
+    expect(nativeTabOsViewPath({ id: "apps", kind: "settings", title, closable: false }, [])).toBe("__plugins__");
+  });
+
   it("projects app state separately from Desktop geometry", () => {
     const tab = { id: "chat", kind: "work" as const, title: "Chat", closable: false };
     const patch = nativeOsViewPatch({

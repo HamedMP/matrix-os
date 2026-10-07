@@ -7,6 +7,7 @@ import { loadHandle } from "./identity.js";
 import { listTasks } from "./ipc.js";
 import { createMemoryStore } from "./memory.js";
 import type { MatrixDB } from "./db.js";
+import { buildMatrixAgentOrientation } from "../../contracts/matrix-agent-orientation.mjs";
 
 function warnPromptFallback(context: string, err: unknown): void {
   console.warn(`[prompt] ${context}: ${err instanceof Error ? err.message : String(err)}`);
@@ -27,6 +28,7 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
   } else {
     sections.push("You are the Matrix OS kernel.");
   }
+  sections.push(buildMatrixAgentOrientation({ surface: "kernel" }));
 
   // SOUL -- personality and behavior (L0, always present)
   const soul = loadSoul(homePath);
@@ -106,32 +108,13 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
 
 ## App Data (CRITICAL -- READ THIS FIRST)
 
-App data is in Postgres. Do NOT read files in ~/data/. Do NOT search for databases. Do NOT read app HTML files. Use Bash with curl to call the gateway API at http://localhost:4000/api/bridge/query.
+Structured app records live in owner-controlled Postgres. Do not infer records from ~/data files or search for a separate database. Discover actual apps/tables before querying; do not assume built-in todo, notes or expense schemas. The gateway structured-data API is http://localhost:4000/api/bridge/query; use the run's authorized gateway access and handle auth/errors explicitly. Do not expose credentials or bypass permissions.
 
-Add a todo:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"insert","app":"todo","table":"tasks","data":{"text":"Buy milk","done":false}}'
-
-List todos:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"find","app":"todo","table":"tasks","orderBy":{"created_at":"desc"}}'
-
-Complete a todo (replace ID):
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"update","app":"todo","table":"tasks","id":"UUID","data":{"done":true}}'
-
-Delete a todo (replace ID):
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"delete","app":"todo","table":"tasks","id":"UUID"}'
-
-Add expense:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"insert","app":"expense-tracker","table":"expenses","data":{"amount":25.50,"description":"Lunch","category":"food","date":"2026-03-23"}}'
-
-Add note:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"insert","app":"notes","table":"notes","data":{"title":"Meeting","content":"Discuss roadmap","pinned":false}}'
-
-List all apps and tables:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"listApps","app":"_"}'
-
-Filter syntax: {"done":false}, {"amount":{"$gt":10}}, {"text":{"$ilike":"%milk%"}}
-
-IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/data which is the old KV path).`,
+Discovery body: {"action":"listApps","app":"_"}
+Read body: {"action":"find","app":"<actual slug>","table":"<declared table>","limit":50,"orderBy":{"created_at":"desc"}}
+Mutations use insert/update/delete with validated fields and the actual record ID. Related writes must be atomic; do not claim a sequence of bridge calls is a transaction.
+Filter examples: {"done":false}, {"amount":{"$gt":10}}, {"text":{"$ilike":"%milk%"}}
+Use /api/bridge/query for structured records; /api/bridge/data is legacy KV state. App code uses window.MatrixOS.db through the shell bridge, never a direct gateway fetch.`,
   );
 
   sections.push("\n## Matrix Integrations\n");
@@ -202,7 +185,7 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
         );
         sections.push(
           `${appNames.length} apps: ${appNames.join(", ")}\n` +
-          "Use the app_data tool to read/write app data. Apps store data in ~/data/{appName}/{key}.json."
+          "Structured app records live in the owner's Postgres database. Discover app tables and records through the gateway query API above."
         );
       } else {
         sections.push("No apps installed yet.");
@@ -215,37 +198,9 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
     sections.push("No apps installed yet.");
   }
 
-  // App data summary
-  const dataPath = join(homePath, "data");
+  // Database contents cannot be inferred from a legacy filesystem listing.
   sections.push("\n## App Data\n");
-  if (existsSync(dataPath)) {
-    try {
-      const appDirs = readdirSync(dataPath).filter((f) => {
-        try {
-          return readdirSync(join(dataPath, f)).some((k) => k.endsWith(".json"));
-        } catch (err: unknown) {
-          warnPromptFallback(`Could not inspect app data for ${f}`, err);
-          return false;
-        }
-      });
-      if (appDirs.length > 0) {
-        const lines = appDirs.map((app) => {
-          const keys = readdirSync(join(dataPath, app))
-            .filter((k) => k.endsWith(".json"))
-            .map((k) => k.replace(".json", ""));
-          return `- ${app}: ${keys.join(", ")}`;
-        });
-        sections.push(lines.join("\n"));
-      } else {
-        sections.push("No app data stored yet.");
-      }
-    } catch (err: unknown) {
-      warnPromptFallback("Could not summarize app data", err);
-      sections.push("No app data stored yet.");
-    }
-  } else {
-    sections.push("No app data stored yet.");
-  }
+  sections.push("App record contents have not been queried for this prompt. Use the owner-scoped Postgres query API when the user's task needs them; files under ~/data are not a database inventory.");
 
   // Recent conversation summaries
   const summariesDir = join(homePath, "system", "summaries");
@@ -299,18 +254,16 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
     sections.push("No knowledge files yet.");
   }
 
-  // Design System (always injected — apps must follow the Matrix OS brand)
+  // Product direction is independent of platform branding; full references load lazily.
   sections.push(`\n## Design System (ALWAYS apply when building apps)\n
-Apps must inherit the shell theme by default through injected --matrix-* CSS variables. Use literal Matrix colors only as fallbacks, and add explicit app branding only when the user asks for it or the app has a clear domain reason.
-Palette defaults: Forest #434E3F (primary), Cream #E0E1CA (secondary), Ember #D06F25 (accent CTA — one per view), Deep #32352E (text). Sand shades: #F7F1E7, #F3EAE0, #D6AB8B.
+Generated products use app-local semantic tokens and a coherent full visual style chosen from the user brief, mood and references: bright minimalism, neo-brutalism, playful, retro or selective neumorphism. Style includes typography, shapes, borders, spacing, imagery and motion, not only accents. For surprise/random requests, choose once and record the direction in DESIGN.md. Keep contrast, visible focus and readable controls. Platform chrome, auth and billing keep the shared Matrix brand; never change OS appearance for a product.
 Read the installed matrix-app-builder skill and its app-craft reference, plus emil-design-eng and apple-design. Use animate for specific motion tasks. Report missing skills honestly. Choose layout, density, and hierarchy for the primary task; avoid generic dashboards, decorative statistics, and welcome heroes.
-Typography: inherit shell fonts with var(--matrix-font-sans) and var(--matrix-font-mono). Do not load remote font stylesheets from generated apps. Inter is the fallback for UI text; JetBrains Mono is the fallback for code.
-Surfaces: inherit light/dark tokens. Solid backgrounds are valid. Glass, gradients, capsule controls, and cards are optional tools for hierarchy, not requirements.
+Typography: shell fonts are a baseline; choose available local fonts to suit the product. Do not load remote font stylesheets from generated apps. Inter is the fallback for UI text; JetBrains Mono is the fallback for code.
+Surfaces: define accessible light/dark behavior for the chosen product palette. Solid backgrounds are valid. Glass, gradients, capsule controls, and cards are optional tools for hierarchy, not requirements.
 Icons: use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps. NEVER text characters (+, ×, →).
 Launcher app logos: set matrix.json "icon" to the app slug and create ~/system/icons/<slug>.png in the shipped Matrix OS style: light iOS/macOS skeuomorphic artwork, bright warm off-white or pale pastel background, forest/cream/ember/deep accents, glossy ceramic/glass 3D object, no text/logos, no transparency, no empty padding, and no separate icon frame.
 Motion: keep keyboard/repeated actions immediate. Use short ease-out transitions for occasional feedback and interruptible springs for gestures. Respect reduced motion; no blanket mount staggering.
 Before claiming completion: run the builder manifest preflight (owner-built apps need listingTrust:first_party), launch in Matrix, inspect the primary flow and visual states, and verify save/reopen. Report any unavailable checks.
-Shadows: rgba(50,53,46,X) — never pure black. Never use #000000.
 Full reference: ~/agents/knowledge/matrix-design-system.md`);
 
   // Skills TOC

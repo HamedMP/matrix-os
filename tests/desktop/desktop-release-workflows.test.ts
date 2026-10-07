@@ -226,16 +226,16 @@ describe("desktop release workflows", () => {
     expect(builder).toContain('- "!**/node_modules/@matrix-os/contracts/**"');
   });
 
-  it("bundles runtime schema dependencies into the Electron main process", () => {
+  it("bundles runtime source dependencies into the Electron main process", () => {
     const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
-    const bundledMainDependencies = config.match(
-      /externalizeDepsPlugin\(\{ exclude: \["zod", "@matrix-os\/contracts", "@finnaai\/matrix"\] \}\)/g,
-    );
+    const bundledMainDependencies = config.match(/main: \{[\s\S]*?externalizeDepsPlugin\(\{ exclude: \[([^\]]+)\]/)?.[1];
     const bundledPreloadDependencies = config.match(
       /externalizeDepsPlugin\(\{ exclude: \["zod", "@matrix-os\/contracts"\] \}\)/g,
     );
 
-    expect(bundledMainDependencies).toHaveLength(1);
+    for (const dependency of ["zod", "@matrix-os/contracts", "@matrix-os/ui", "@finnaai/matrix"]) {
+      expect(bundledMainDependencies).toContain(`"${dependency}"`);
+    }
     expect(bundledPreloadDependencies).toHaveLength(1);
   });
 

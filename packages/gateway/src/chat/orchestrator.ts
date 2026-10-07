@@ -1,21 +1,20 @@
+import { contextForChatSession } from "./session-history.js";
+import { admitCanonicalRetry } from "./retry-admission.js";
 import { createOrderedRunControls } from "./ordered-run-controls.js";
 import { admitCanonicalTurn, type TurnAdmissionExecutionHints } from "./turn-admission.js";
 import { truthfulCancellationGranularity } from "./argument-digest.js";
 import { contextPrompt, type ChatAgentContext } from "./agent-context.js";
-import { promptFor, retryPromptFor } from "./orchestration-input.js";
+import { promptFor } from "./orchestration-input.js";
 import { submitCanonicalInput } from "./input-control.js";
 import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
 import { activityPersistenceId } from "./activity-persistence.js";
 import { createHash, randomUUID } from "node:crypto";
+import { assistantMessageId } from "./assistant-credential-crypto.js";
 import {
-  CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
-  CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunSteeringResponseSchema,
-  CanonicalChatRunSchema,
   CanonicalQueueChatTurnRequestSchema,
-  CanonicalRetryChatTurnRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalSteerChatRunRequestSchema,
   CanonicalSteerQueuedChatTurnRequestSchema,
@@ -58,7 +57,6 @@ import {
   CanonicalChatProviderRegistry,
 } from "./provider-adapter.js";
 import {
-  ChatBusyError,
   ChatConflictError,
   ChatNotFoundError,
   ChatRunNotActiveError,
@@ -156,13 +154,6 @@ function mapSteerFinalizationError(error: unknown): never {
   );
 }
 
-function assistantMessageId(runId: string, providerMessageId?: string): string {
-  if (!providerMessageId) return `msg_${runId.slice("run_".length)}_assistant`;
-  const digest = createHash("sha256").update(`${runId}\0${providerMessageId}`).digest("hex").slice(0, 32);
-  return `msg_${digest}`;
-}
-
-
 export class CanonicalChatOrchestrator {
   private readonly active = new Map<string, ActiveRun>();
   private readonly pendingDispatch = new Set<string>();
@@ -176,6 +167,7 @@ export class CanonicalChatOrchestrator {
   constructor(private readonly options: {
     actions?: import("./action-authority.js").CanonicalActionAuthority;
     repository: Pick<ChatRepository,
+      | "getDetailPage"
       | "get"
       | "admitTurn"
       | "findTurnAdmission"
@@ -362,213 +354,20 @@ export class CanonicalChatOrchestrator {
     }
   }
 
-  async retryTurn(
-    principal: RequestPrincipal,
-    owner: ChatOwner,
-    chatId: string,
-    turnId: string,
-    inputValue: CanonicalRetryChatTurnRequest,
+  async retryTurn(principal: RequestPrincipal, owner: ChatOwner, chatId: string,
+    turnId: string, inputValue: CanonicalRetryChatTurnRequest,
   ): Promise<CanonicalChatRunAdmissionResponse> {
-    this.assertOpen();
-    await this.assertPersonalExecutionAllowed(owner, chatId);
-    await this.reconcileActiveRuns(owner);
-    const input = CanonicalRetryChatTurnRequestSchema.parse(inputValue);
-    try {
-      const duplicate = await this.options.repository.findRetryAdmission(owner, chatId, turnId, input.clientRequestId);
-      if (duplicate) return CanonicalChatRunAdmissionResponseSchema.parse({ record: duplicate.chat,
-        turn: duplicate.turn, run: duplicate.run, admission: "already_accepted" });
-    } catch (error: unknown) { return mapRepositoryError(error); }
-    const admissionKey = dispatchAdmissionKey("retry", input.clientRequestId, turnId);
-    if (hasStoppingChatExecution(this.active.values(), owner, chatId, admissionKey)) {
-      return mapRepositoryError(new ChatBusyError(chatId));
-    }
-    const context = await this.options.repository.getTurnRunContext(owner, chatId, turnId);
-    if (!context) {
-      throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
-    }
-    try { await this.options.agentContext?.revalidate(owner, chatId, context.latestRun.context); }
-    catch (error: unknown) { return mapRepositoryError(error); }
-    let sessionPolicy;
-    try {
-      sessionPolicy = this.options.voiceSessionPolicy?.policyForChat(chatId);
-    } catch (error: unknown) {
-      console.warn("[chat/orchestrator] Voice session policy lookup failed during retry:", error instanceof Error ? error.name : "UnknownError");
-      throw new CanonicalChatOrchestrationError(
-        safeError("service_unavailable", "Chat admission is temporarily unavailable.", true, ["retry"]),
-        503,
-      );
-    }
-    const persistedPolicy = { permissionMode: context.latestRun.permissionMode, ...(context.latestRun.runPolicy ? { runPolicy: context.latestRun.runPolicy } : {}) };
-    const retryPolicy = sessionPolicy ? admissionPolicyForTurn(persistedPolicy, sessionPolicy) : persistedPolicy;
-    const catalog = await this.options.catalog.getCatalog(principal);
-    const validated = validateChatProviderSelection({
-      catalog,
-      selection: context.latestRun.selection,
-      boundInstanceId: context.latestRun.instanceId,
-      requirements: {
-        interactionMode: context.latestRun.interactionMode,
-        permissionMode: retryPolicy.permissionMode,
-        worktree: context.latestRun.executionRoot?.kind === "worktree",
-        ...(retryPolicy.runPolicy?.source === "voice" || retryPolicy.runPolicy?.voiceSessionId ? voiceProviderSelectionRequirements() : {}),
-        ...(retryPolicy.runPolicy?.executionPolicy ? { qualifiedPolicy: retryPolicy.runPolicy.executionPolicy } : {}),
-      },
-    });
-    if (!validated.ok) throw new CanonicalChatOrchestrationError(validated.error, 400);
-    const adapter = this.options.adapters.get(context.latestRun.driverKind);
-    if (!adapter) {
-      throw new CanonicalChatOrchestrationError(
-        safeError("provider_unavailable", "The selected Provider cannot run yet.", false, ["select_provider"]),
-        503,
-      );
-    }
-    await revalidateActionPolicy(adapter, { driverKind: context.latestRun.driverKind, selection: validated.selection, permissionMode: retryPolicy.permissionMode }, retryPolicy.runPolicy);
-    let resolvedRoot: ResolvedChatExecutionRoot | undefined;
-    if (context.latestRun.executionRoot) {
-      if (!this.options.executionRoots) {
-        throw new CanonicalChatOrchestrationError(
-          safeError("project_unavailable", "The Project workspace is unavailable.", true, ["retry"]),
-          503,
-        );
-      }
-      try {
-        resolvedRoot = await this.options.executionRoots.resolve(owner, context.latestRun.executionRoot);
-      } catch (error: unknown) {
-        console.warn("[chat/orchestrator] Retry root resolution failed:", error instanceof Error ? error.name : "UnknownError");
-        throw new CanonicalChatOrchestrationError(
-          safeError("project_unavailable", "The Project workspace is unavailable.", true, ["retry"]),
-          503,
-        );
-      }
-    }
-    const resumeDecision = await loadChatResumeDecision({
-      repository: this.options.repository, owner, chatId, adapter,
-      instanceId: context.latestRun.instanceId,
-      executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
-      mode: "retry",
-      retainedHistorySupported: true,
-      historyBoundarySeq: context.turn.baseMessageSeq,
-      ...(retryPolicy.runPolicy ? { runPolicy: retryPolicy.runPolicy } : {}),
-    });
-    if (resumeDecision?.mode === "rebuild" && context.turn.baseMessageSeq > 0
-      && !resumeDecision.retainedHistory) {
-      throw new ChatResumeHistoryUnavailableError();
-    }
-    const resumeState = resumeDecision?.resumeState;
-    // A prior run may carry only the gap beyond a native checkpoint. Preserve
-    // that gap when the same checkpoint remains eligible; a rebuild decision
-    // supplies a full heard-safe projection and replaces it.
-    const retainedHistory = resumeDecision?.retainedHistory
-      ?? context.latestRun.context?.history;
-    const availability = await retryAvailability(adapter, owner, resumeState, () => this.options.repository.getAdapterState(owner, {
-      runId: context.latestRun.id, driverKind: context.latestRun.driverKind, instanceId: context.latestRun.instanceId,
-    }), () => this.options.repository.hasRetryRequest(owner, { chatId, turnId, clientRequestId: input.clientRequestId }));
-    if (availability !== "ready") {
-      throw new CanonicalChatOrchestrationError(availability === "busy"
-        ? safeError("chat_busy", "The previous Run is still active. Wait for it to finish.", true, ["retry"])
-        : safeError("run_unavailable", "The previous Run could not be checked. Try again shortly.", true, ["retry"]),
-      availability === "busy" ? 409 : 503);
-    }
-    const adapterState = resumeState === undefined ? undefined : {
-      schemaVersion: adapter.stateSchemaVersion,
-      state: adapter.serializeState(resumeState),
-    };
-    const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
-    const run = CanonicalChatRunSchema.parse({
-      id: id("run_"),
-      chatId,
-      turnId,
-      attempt: context.latestRun.attempt + 1,
-      driverKind: validated.instance.driverKind,
-      instanceId: validated.instance.id,
-      selection: validated.selection,
-      interactionMode: context.latestRun.interactionMode,
-      permissionMode: retryPolicy.permissionMode,
-      // A live voice session may tighten the previous policy for this retry;
-      // the repository allows only that provenance-bound transition.
-      ...(retryPolicy.runPolicy ? { runPolicy: retryPolicy.runPolicy } : {}),
-      ...(context.latestRun.context ? { context: context.latestRun.context } : {}),
-      ...(resolvedRoot ? {
-        executionRoot: resolvedRoot.ref,
-        executionRootFingerprint: resolvedRoot.fingerprint,
-      } : {}),
-      status: "accepted",
-      historyBoundarySeq: context.turn.baseMessageSeq,
-      capabilitySnapshot: {
-        revision: validated.instance.catalogRevision,
-        rootChat: validated.instance.supports.rootChat,
-        attachments: validated.instance.supports.attachments,
-        resources: validated.instance.supports.resources,
-        tools: validated.instance.supports.tools,
-        approvals: validated.instance.supports.approvals,
-        userInput: validated.instance.supports.userInput,
-        resume: validated.instance.supports.resume,
-        cancellation: truthfulCancellationGranularity(validated.instance.supports.cancellation, adapter),
-        ...(validated.instance.supports.approvalBinding
-          ? { approvalBinding: validated.instance.supports.approvalBinding }
-          : {}),
-        steering: validated.instance.supports.steering ?? "none",
-        worktrees: validated.instance.supports.worktrees,
-        interactionModes: validated.instance.supports.interactionModes,
-        permissionModes: validated.instance.supports.permissionModes,
-      },
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-    let admitted;
-    this.reservePendingDispatch(run.id);
-    try {
-      this.assertOpen();
-      admitted = await this.options.repository.admitRetry(owner, {
-        chatId,
-        turnId,
-        clientRequestId: input.clientRequestId,
-        baseRevision: input.baseRevision,
-        run,
-        ...(adapterState ? { adapterState } : {}),
-      });
-    } catch (error: unknown) {
-      this.pendingDispatch.delete(run.id);
-      return mapRepositoryError(error);
-    }
-    try {
-      if (!admitted.alreadyAccepted) {
-        const stopping = hasStoppingChatExecution(this.active.values(), owner, chatId);
-        if (stopping || this.atCapacity(owner)) {
-          await this.options.repository.finishRun(owner, {
-            chatId,
-            runId: admitted.run.id,
-            outcome: "failed",
-            completedAt: timestamp,
-          });
-          if (stopping) return mapRepositoryError(new ChatBusyError(chatId));
-          throw new CanonicalChatOrchestrationError(
-            safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
-            503,
-          );
-        }
-        this.startDispatch(
-          owner,
-          context.message,
-          admitted.run,
-          adapter,
-          resolvedRoot,
-          resumeState,
-          retryPromptFor(context.userMessages),
-          admissionKey,
-          undefined,
-          undefined,
-          retainedHistory,
-        );
-      }
-      return CanonicalChatRunAdmissionResponseSchema.parse({
-        record: admitted.chat,
-        turn: admitted.turn,
-        run: admitted.run,
-        admission: admitted.alreadyAccepted ? "already_accepted" : "accepted",
-      });
-    } finally {
-      this.pendingDispatch.delete(run.id);
-    }
+    return admitCanonicalRetry({
+      ...this.options,
+      assertOpen: () => this.assertOpen(),
+      assertPersonalExecutionAllowed: (owner, chatId) => this.assertPersonalExecutionAllowed(owner, chatId),
+      reconcileActiveRuns: (owner) => this.reconcileActiveRuns(owner),
+      reservePendingDispatch: (runId) => this.reservePendingDispatch(runId),
+      releasePendingDispatch: (runId) => { this.pendingDispatch.delete(runId); },
+      atCapacity: (owner) => this.atCapacity(owner),
+      hasStoppingExecution: (owner, chatId, admissionKey) => hasStoppingChatExecution(this.active.values(), owner, chatId, admissionKey),
+      startDispatch: (...args) => this.startDispatch(...args),
+    }, principal, owner, chatId, turnId, inputValue);
   }
 
   private startDispatch(
@@ -699,7 +498,7 @@ export class CanonicalChatOrchestrator {
         this.startDispatch(
           owner,
           claimed.message,
-          claimed.run,
+          { ...claimed.run, context: contextForChatSession(claimed.run.context, resumeState, Boolean(retainedHistory || claimed.run.runPolicy)) },
           adapter,
           resolvedRoot,
           resumeState,
@@ -777,8 +576,9 @@ export class CanonicalChatOrchestrator {
         interactionMode: run.interactionMode,
         permissionMode: run.permissionMode,
         ...(run.runPolicy ? { runPolicy: run.runPolicy } : {}),
+        ...(sharedScopeId ? { sharedScopeId } : {}),
         ...(resolvedRoot ? { executionRoot: resolvedRoot.primaryWorkspaceRoot } : {}),
-        ...(resolvedRoot ? { projectSlug: resolvedRoot.projectSlug } : {}),
+        ...(resolvedRoot?.projectSlug ? { projectSlug: resolvedRoot.projectSlug } : {}),
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
         signal: controller.signal,
@@ -824,6 +624,7 @@ export class CanonicalChatOrchestrator {
             runId: run.id,
             messageId,
             delta: event.delta,
+            ...(event.credentials ? { credentials: event.credentials } : {}),
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
           await this.sharedExecution.notify(sharedScopeId);

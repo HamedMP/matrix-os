@@ -383,6 +383,10 @@ describe("canonical computer inventory route", () => {
       imageVersion: "stable",
       provisionedAt: "2026-07-11T01:00:00.000Z",
     });
+    // The class allowlist is NOT VALID, so a row written before it existed can
+    // still hold an unknown class. Drop it here to reproduce such a legacy row.
+    await sql`ALTER TABLE user_machines DROP CONSTRAINT user_machines_provisioning_class_check`
+      .execute(db.executor);
     await sql`UPDATE user_machines SET provisioning_class = 'operator-data' WHERE handle = 'alice-corrupt'`
       .execute(db.executor);
     const app = createApp({
@@ -421,6 +425,10 @@ describe("canonical computer inventory route", () => {
       imageVersion: "stable",
       provisionedAt: "2026-07-11T01:00:00.000Z",
     });
+    // The class allowlist is NOT VALID, so a row written before it existed can
+    // still hold an unknown class. Drop it here to reproduce such a legacy row.
+    await sql`ALTER TABLE user_machines DROP CONSTRAINT user_machines_provisioning_class_check`
+      .execute(db.executor);
     await sql`UPDATE user_machines SET provisioning_class = 'operator-data' WHERE handle = 'alice-corrupt'`
       .execute(db.executor);
     const issued = await issueSyncJwt({
