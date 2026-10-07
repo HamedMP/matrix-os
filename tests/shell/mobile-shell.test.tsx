@@ -535,7 +535,12 @@ describe("mobile shell", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     fireEvent.click(screen.getByRole("button", { name: "Open Chat sidebar" }));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(screen.getByRole("button", { name: `Chat with ${agent.name}` }).getAttribute("data-agent-rail-state")).toBe("working");
+    const expectWorkingAgent = () => {
+      const button = screen.getByRole("button", { name: `Chat with ${agent.name}` });
+      expect(button.closest("[data-agent-rail-state]")?.getAttribute("data-agent-rail-state")).toBe("working");
+      expect(button.querySelector('[data-slot="chat-agent-indicator"]')?.getAttribute("data-state")).toBe("working");
+    };
+    expectWorkingAgent();
     const reads = tasks.mock.calls.length;
     fireEvent.click(within(screen.getByTestId("mobile-bottom-dock")).getByRole("button", { name: destination, exact: true }));
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
@@ -543,7 +548,7 @@ describe("mobile shell", () => {
     fireEvent.click(within(screen.getByTestId("mobile-bottom-dock")).getByRole("button", { name: "Hermes", exact: true }));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(tasks.mock.calls.length).toBeGreaterThan(reads);
-    expect(screen.getByRole("button", { name: `Chat with ${agent.name}` }).getAttribute("data-agent-rail-state")).toBe("working");
+    expectWorkingAgent();
   });
 
 });
