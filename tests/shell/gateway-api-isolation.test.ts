@@ -22,7 +22,12 @@ describe("explicit computer API isolation", () => {
     const source = readFileSync("shell/src/components/AppViewer.tsx", "utf8");
 
     expect(source).not.toContain("await fetch(url,");
-    expect(source).toContain("await fetch(`${getGatewayUrl()}${url}`,");
+    expect(source).not.toContain("await fetch(requestUrl,");
+    expect(source).toContain("await fetch(`${getGatewayUrl()}${requestUrl}`,");
+    // Integration inventory binds the app in a query string before dispatch;
+    // the resulting relative URL must still use the selected computer gateway.
+    expect(source).toContain("const bound = prepareAppIntegrationRequest(appName, url, requestInit);");
+    expect(source).toContain("requestUrl = bound.url;");
     expect(source).toContain('const baseHref = `${GATEWAY_URL}/apps/${slug}/`;');
     expect(source).not.toContain('const baseHref = `/apps/${slug}/`;');
   });

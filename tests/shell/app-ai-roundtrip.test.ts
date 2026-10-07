@@ -1,13 +1,27 @@
 import { runInNewContext } from "node:vm";
 import { MessageChannel } from "node:worker_threads";
 import { expect, it, vi } from "vitest";
+import { Hono, type Context } from "hono";
+import type { AppAiRequest } from "@matrix-os/contracts";
 import { buildBridgeScript } from "../../shell/src/lib/os-bridge.js";
 import { prepareAppAiRequest } from "../../shell/src/components/app-ai-request.js";
 import { createAppAiRoutes } from "../../packages/gateway/src/app-ai/routes.js";
+import { markAuthContextReady, requireRequestPrincipal, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 
 it("executes the injected app API through postMessage and the authenticated route seam", async () => {
-  const generate = vi.fn(async () => ({ text: "brain summary" }));
-  const routes = createAppAiRoutes({ authorize: async (_c, app) => app === "brain", generate });
+  const caller = new AbortController();
+  const generate = vi.fn<(request: AppAiRequest, signal: AbortSignal, context: Context) => Promise<{ text: string }>>(
+    async () => ({ text: "brain summary" }),
+  );
+  const authorize = vi.fn(async (context: Context, app: string) =>
+    requireRequestPrincipal(context).userId === "owner" && app === "brain");
+  const routes = new Hono();
+  routes.use("*", async (context, next) => {
+    markAuthContextReady(context);
+    setPlatformVerifiedPrincipal(context, "owner");
+    await next();
+  });
+  routes.route("/", createAppAiRoutes({ authorize, generate }));
   const window: {
     MatrixOS?: { ai: { generate(input: { prompt: string }): Promise<{ text: string }> } };
     addEventListener: ReturnType<typeof vi.fn>;
@@ -15,7 +29,9 @@ it("executes the injected app API through postMessage and the authenticated rout
   } = {
     addEventListener: vi.fn(),
     parent: { postMessage: async (message: { payload: { init: RequestInit } }, _origin: string, ports: MessagePort[]) => {
-      const response = await routes.request("/", prepareAppAiRequest("brain", message.payload.init));
+      const response = await routes.request("/", {
+        ...prepareAppAiRequest("brain", message.payload.init), signal: caller.signal,
+      });
       ports[0].postMessage({ ok: response.ok, body: await response.json() });
       ports[0].close();
     } },
@@ -25,7 +41,16 @@ it("executes the injected app API through postMessage and the authenticated rout
     document: { documentElement: { dataset: {} }, createElement: () => ({}), head: { appendChild: vi.fn() } },
   });
   expect(await window.MatrixOS!.ai.generate({ prompt: "notes" })).toEqual({ text: "brain summary" });
-  expect(generate).toHaveBeenCalledWith({ app: "brain", prompt: "notes" }, expect.any(AbortSignal));
+  expect(generate).toHaveBeenCalledOnce();
+  const [, signal, context] = generate.mock.calls[0];
+  expect(generate).toHaveBeenCalledWith({ app: "brain", prompt: "notes" }, expect.any(AbortSignal), context);
+  expect(context).toBe(authorize.mock.calls[0][0]);
+  expect(requireRequestPrincipal(context)).toEqual({ userId: "owner", source: "platform-verified" });
+  expect(context.req.raw.signal.aborted).toBe(false);
+  expect(signal.aborted).toBe(false);
+  caller.abort();
+  expect(context.req.raw.signal.aborted).toBe(true);
+  expect(signal.aborted).toBe(true);
 });
 
 it("keeps legacy kernel submission alongside the new text API in the injected Web bridge", async () => {
