@@ -141,6 +141,7 @@ export function fakeDirectWorld(options: { endpointOrigin?: string } = {}) {
     if (url.pathname === `/api/collaboration/scopes/${record.scopeId}/project`) return json({ id: "proj-1", scopeId: record.scopeId, status: "active", resources: [] });
     if (url.pathname === `/api/collaboration/scopes/${record.scopeId}/project/overview` && home.projectOverview) return json(home.projectOverview);
     if (url.pathname === `/api/collaboration/scopes/${record.scopeId}`) return json({ id: record.scopeId, kind: "chat", role: "editor" });
+    if (url.pathname.endsWith("/execution-policy") && method === "PUT") return json(JSON.parse(body));
     if (url.pathname.endsWith("/chat/messages") && method === "POST") return json({ accepted: true, echo: JSON.parse(body) });
     if (url.pathname.startsWith("/api/collaboration/invitations/")) return json({ id: url.pathname.split("/")[4], revision: "4", role: "editor", owner: { displayName: "Owner" } });
     return json({ error: "not found" }, 404);
@@ -156,4 +157,3 @@ export function fakeDirectWorld(options: { endpointOrigin?: string } = {}) {
   };
   return { home, platform, fetchImpl, webSocketFactory, sockets, now, advance, verifyTicket, issue };
 }
-
