@@ -291,6 +291,21 @@ machine that starts the build, and with pnpm's global virtual store the result
 depends on where the checkout sits on disk, so builds started from a laptop and
 updates published from CI would not agree on the runtime.
 
+## Store Purchase Policy
+
+Native builds ship as a free companion to the paid web service (App Store
+Guideline 3.1.3(f); Google Play payments policy is similar). They must contain
+no in-app purchasing and no calls to action to buy outside the app: no plan,
+pricing, checkout, upgrade, or billing-portal buttons or links, and no
+server-provided copy or URLs that point at buying. Read-only plan status is
+fine.
+
+`allowsExternalPurchaseLinks()` in `apps/mobile/lib/store-policy.ts` is the
+only place that decides this; it returns `true` only for the web build. Gate
+any purchase-related UI on it instead of checking `Platform.OS`, and keep a
+native test proving the call to action is absent (see
+`__tests__/JourneyGate.test.tsx` and `__tests__/billing-settings-screen.test.tsx`).
+
 ## iOS TestFlight Release
 
 From a clean manual worktree on the latest `origin/main`, with cwd `apps/mobile`:
