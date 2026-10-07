@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import {
   createImageClient,
   DEFAULT_ICON_STYLE,
+  loadIconStyle,
+  buildIconPrompt,
   generateIconBatch,
   type ImageClient,
   type ImageResult,
@@ -391,10 +393,54 @@ describe("generateIconBatch", () => {
 });
 
 describe("DEFAULT_ICON_STYLE", () => {
-  it("keeps generated app icons aligned with the Matrix shell and landing palette", () => {
-    expect(DEFAULT_ICON_STYLE).toContain("warm off-white or pale pastel background");
-    expect(DEFAULT_ICON_STYLE).toContain("forest");
-    expect(DEFAULT_ICON_STYLE).toContain("ember");
+  let home: string;
+  beforeEach(() => { home = mkdtempSync(join(tmpdir(), "icon-style-")); });
+  afterEach(() => { rmSync(home, { recursive: true, force: true }); vi.restoreAllMocks(); });
+
+  it("requests an individual tactile icon in the gallery family", () => {
+    expect(DEFAULT_ICON_STYLE).toContain("one individual app icon");
+    expect(DEFAULT_ICON_STYLE).toContain("matte or satin ceramic and clay");
+    expect(DEFAULT_ICON_STYLE).toContain("subtle tactile grain");
+    expect(DEFAULT_ICON_STYLE).toContain("one large rounded sculptural object");
+    expect(DEFAULT_ICON_STYLE).toContain("pale near-white lavender opaque background");
+    expect(DEFAULT_ICON_STYLE).toContain("mist blue, blush, indigo, mint and cream");
+    expect(DEFAULT_ICON_STYLE).toContain("soft upper-left studio lighting");
+    expect(DEFAULT_ICON_STYLE).toContain("contact shadows");
+    expect(DEFAULT_ICON_STYLE).toContain("no text, letters, numbers, logos or watermarks");
     expect(DEFAULT_ICON_STYLE).toContain("Matrix shell owns the final corner radius");
+    expect(DEFAULT_ICON_STYLE).toContain("no sprite sheet or grid");
+    expect(DEFAULT_ICON_STYLE).not.toMatch(/glossy|glass|plastic|forest|ember/i);
+  });
+
+  it("keeps the new-home desktop template identical to the kernel fallback", () => {
+    const template = JSON.parse(readFileSync(new URL("../../home/system/desktop.json",import.meta.url),"utf8"));
+    expect(template.iconStyle).toBe(DEFAULT_ICON_STYLE);
+  });
+
+  it("uses the tactile fallback when the owner has no saved style", async () => {
+    expect(loadIconStyle(home)).toBe(DEFAULT_ICON_STYLE);
+    mkdirSync(join(home,"system"));
+    await writeFile(join(home,"system/desktop.json"),JSON.stringify({ pinnedApps: [] }));
+    expect(loadIconStyle(home)).toBe(DEFAULT_ICON_STYLE);
+  });
+
+  it("honors the exact saved owner style through the single-icon prompt", async () => {
+    const custom = "Owner-selected ink illustration with a coral background";
+    mkdirSync(join(home,"system"));
+    const configuration = JSON.stringify({ iconStyle: custom, pinnedApps: ["notes"] });
+    await writeFile(join(home,"system/desktop.json"),configuration);
+    const style = loadIconStyle(home);
+    expect(style).toBe(custom);
+    expect(buildIconPrompt("trip-companion",style)).toBe(`App icon for 'trip companion': ${custom}, no text, 1:1 square`);
+    expect(readFileSync(join(home,"system/desktop.json"),"utf8")).toBe(configuration);
+  });
+
+  it("falls back safely on malformed configuration without rewriting owner data", async () => {
+    mkdirSync(join(home,"system"));
+    await writeFile(join(home,"system/desktop.json"),"{invalid");
+    const warning = vi.spyOn(console,"warn").mockImplementation(() => {});
+    expect(loadIconStyle(home)).toBe(DEFAULT_ICON_STYLE);
+    expect(warning).toHaveBeenCalledOnce();
+    expect(readFileSync(join(home,"system/desktop.json"),"utf8")).toBe("{invalid");
   });
 });

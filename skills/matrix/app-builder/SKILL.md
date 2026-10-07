@@ -124,15 +124,20 @@ The launcher loads each app's icon from `~/system/icons/<icon>.svg` (or `.png`) 
 icon.** So always:
 
 1. Set `"icon": "<slug>"` in `matrix.json` (use the app slug unless you have a better concept name).
-2. Create `~/system/icons/<slug>.png` using the Matrix OS shipped-icon style:
-   light premium iOS/macOS skeuomorphic app icon artwork, refined Apple-like product rendering,
-   bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy
-   highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly
-   represents the app. Keep the icon family aligned with Matrix OS forest, cream, ember, and deep accents.
-   Do not include text, logos, watermarks, transparent backgrounds, black/dark dock
-   backgrounds, empty padding, or a separate visible icon frame; the Matrix shell owns the final corner
-   radius. Keep lighting and material treatment consistent with the shipped default app PNGs in
-   `~/system/icons/`.
+2. Create one individual `~/system/icons/<slug>.png`. Use the owner's saved
+   `system/desktop.json` `iconStyle` when present; preserve custom art direction exactly.
+   Otherwise use the Matrix default: one large rounded sculptural subject in matte or satin
+   ceramic and clay, subtle tactile grain and a distinct silhouette. Use mist blue, blush,
+   indigo, mint and cream, with a full opaque 1:1 pale near-white lavender background.
+   Center the prominent subject with comfortable breathing room, soft upper-left studio
+   light, ambient occlusion and grounded contact shadows. Keep scale, perspective,
+   lighting and materials consistent across the family. No text, letters, numbers, logos,
+   watermarks, transparent background, dark dock backdrop, borders or baked-in rounded
+   tiles/frames; the Matrix shell owns the final corner radius.
+
+Generate a grid or sprite sheet only when explicitly requested as a separate artwork;
+never use a multi-icon sheet as an individual launcher icon. Updating this default does
+not authorize regenerating installed icons or changing the owner's saved style.
 
 For first-party/default apps, prefer committed PNG icons from `home/system/icons/`. SVGs are acceptable
 only for system chrome or simple compatibility fallbacks, not for newly generated app logos.
