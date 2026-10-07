@@ -127,7 +127,7 @@ describe("mobile Android release configuration", () => {
   it("declares the Expo config plugin dependency used by native plugins", () => {
     // Expo config plugins must stay aligned with SDK 57; upgrades should update
     // this pin deliberately instead of accepting an arbitrary transitive version.
-    expect(packageConfig.devDependencies?.["@expo/config-plugins"]).toBe("57.0.2");
+    expect(packageConfig.devDependencies?.["@expo/config-plugins"]).toBe("57.0.9");
   });
 
   it("builds a versioned Android App Bundle with the supported toolchain", () => {
@@ -161,7 +161,7 @@ describe("mobile Sign in with Apple configuration", () => {
   });
 
   it("ships the native module and the plugin that writes its entitlement", () => {
-    expect(packageConfig.dependencies?.["expo-apple-authentication"]).toBe("~57.0.0");
+    expect(packageConfig.dependencies?.["expo-apple-authentication"]).toBe("~57.0.2");
     expect(pluginNames).toContain("expo-apple-authentication");
   });
 });
@@ -187,7 +187,7 @@ describe("workspace package extensions", () => {
     );
 
     expect(keys).toEqual(["react-native-edge-to-edge@*"]);
-    expect(extensions[keys[0]]?.dependencies?.["@expo/config-plugins"]).toBe("57.0.2");
+    expect(extensions[keys[0]]?.dependencies?.["@expo/config-plugins"]).toBe("57.0.9");
   });
 
   it("keeps package extensions out of pnpm-workspace.yaml, where they are ignored", () => {
@@ -197,7 +197,7 @@ describe("workspace package extensions", () => {
 
 describe("mobile over-the-air update configuration", () => {
   it("ships expo-updates so builds can fetch JS updates without a store release", () => {
-    expect(packageConfig.dependencies?.["expo-updates"]).toBe("~57.0.8");
+    expect(packageConfig.dependencies?.["expo-updates"]).toBe("~57.0.24");
   });
 
   it("points updates at the EAS Update endpoint for this project", () => {

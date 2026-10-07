@@ -137,6 +137,18 @@ carries `packageExtensions` for `@react-native/jest-preset` and
 `react-native-worklets`. Without these the suite cannot start at all — it fails
 during config load, before any test runs.
 
+**Move the Expo SDK patch set together.** Expo's Android modules ship as
+prebuilt AARs, so a module newer than the installed `expo-modules-core` builds
+cleanly and only fails on device with `NoClassDefFoundError`. Bumping one
+`expo-*` / `@expo/*` package while the lockfile holds `expo` on an older patch
+is how `@expo/ui` crashed every Compose `Host` on Android. Run
+`pnpm exec expo install --check` from `apps/mobile`, apply the versions it
+expects, then `pnpm install` from the repo root and rebuild the dev client.
+`apps/mobile/__tests__/expo-native-core-compat.test.ts` fails when a module
+imports a core class the installed core does not ship. A patch-set bump changes
+native code, so it also needs the `version` bump described under
+"When an update cannot be used: native changes".
+
 Other environment notes:
 
 - Run everything through `flox activate -d <repo root> --` so you get Node 24.
