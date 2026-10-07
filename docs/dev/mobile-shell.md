@@ -265,6 +265,36 @@ Testing notes:
 - Local runs use the production Clerk instance, so every test creates a real
   user. Delete test users afterwards.
 
+## Account Deletion (App Review)
+
+App Store Review Guideline 5.1.1(v) requires an app that lets people create an
+account to let them delete it from inside the app. Native Mobile does this
+natively against the platform account API (contract:
+`specs/547-account-deletion/rollout.md`) instead of linking to the web page.
+
+- Entry points: **Settings → Account → Delete account**, and a **Delete
+  account** link under the journey gate (`app/index.tsx`), so an account with no
+  plan or computer, which never reaches Settings, can still delete itself.
+- The screen is `app/settings-detail/delete-account.tsx`. Requests live in
+  `lib/requests/account-deletion.ts` and always go to `HOSTED_GATEWAY_URL`,
+  because the account API does not need a provisioned computer.
+- It shows the five-day deadline and whether billing has stopped, offers the
+  export actions (backed-up file links, account records as a file, the web
+  computers page) and cancellation, and asks for confirmation before scheduling.
+- The Apple access-removal note stays visible in every state and is worded for
+  after deletion. Do not prompt for it during the grace period.
+- A failed request carries a reason only (`ownership_transfer_required`,
+  `conflict`, `unavailable`); the copy is chosen in `lib/account-deletion.ts`.
+  Server error text is never displayed.
+- A self-hosted computer login has no Matrix OS account, so the entry is hidden
+  there.
+
+**Never confirm deletion with a real account to test this.** Scheduling cancels
+the subscription immediately, and cancelling the deletion does not restore it.
+Point the app at a stand-in for `/api/account/*` (for example the platform route
+module mounted on an in-memory service) or use a disposable identity, as the
+rollout doc requires.
+
 ## Over-the-Air Updates (EAS Update)
 
 OTA landed in v0.2.1. Builds published before it shipped without `expo-updates`

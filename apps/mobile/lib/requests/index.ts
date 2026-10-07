@@ -1,4 +1,16 @@
 export {
+  AccountDeletionRequestError,
+  cancelAccountDeletion,
+  fetchAccountDeletionStatus,
+  fetchAccountExportFiles,
+  fetchAccountRecords,
+  scheduleAccountDeletion,
+  type AccountDeletionFailure,
+  type AccountDeletionStatus,
+  type AccountExportFile,
+  type AccountExportPage,
+} from "./account-deletion";
+export {
   buildAppIconUrl,
   createAppSession,
   fetchInstalledApps,
