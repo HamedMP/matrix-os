@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { LegacyLiveAccessButton } from "../../packages/ui/src/collaboration/LegacyLiveAccessButton";
+import { LegacyResourceAccessButton } from "../../packages/ui/src/collaboration/LegacyResourceAccessButton";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
@@ -37,6 +38,27 @@ const scope = {
 };
 
 describe("legacy live access", () => {
+  it("looks up an existing catalog identity without registering a private resource", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(),
+      post: vi.fn(async () => ({ entry: null })),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    };
+
+    const view = render(<LegacyResourceAccessButton api={api} runtimeId="vps:owner"
+      organizationId={organizationId} kind="file" path="notes/private.md" />);
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/api/collaboration/runtimes/vps%3Aowner/catalog/lookup",
+      { kind: "file", path: "notes/private.md", organizationId },
+    ));
+    expect(view.container).toBeEmptyDOMElement();
+    expect(api.post.mock.calls.some(([path]) => String(path).endsWith("/catalog/resolve"))).toBe(false);
+    expect(api.post.mock.calls.some(([path]) => String(path).endsWith("/scopes/preflight"))).toBe(false);
+  });
+
   it("stays hidden and never creates a scope when the resource was never shared", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",

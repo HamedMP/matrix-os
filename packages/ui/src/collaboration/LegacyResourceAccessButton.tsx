@@ -1,20 +1,11 @@
 import {
   CollaborationAppInstanceIdSchema,
-  CollaborationIdSchema,
+  CollaborationOwnerCatalogLookupResponseSchema,
   isSafeCollaborationRelativePath,
 } from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
-import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { LegacyLiveAccessButton } from "./LegacyLiveAccessButton.js";
-
-const CatalogResolutionSchema = z.object({
-  id: CollaborationIdSchema,
-  kind: z.enum(["file", "folder", "app"]),
-  path: z.string().min(1).max(4_096),
-  incarnation: z.string().min(1).max(256),
-  revision: z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/),
-}).strict();
 
 function identifies(kind: "file" | "folder" | "app", value: string): boolean {
   return kind === "app"
@@ -39,8 +30,9 @@ export function LegacyResourceAccessButton({ api, runtimeId, organizationId, kin
     setResourceId(null);
     if (!runtimeId || !organizationId || !identifies(kind, path)) return () => { active = false; };
     const runtime = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}`;
-    void api.post(`${runtime}/catalog/resolve`, { kind, path, organizationId }).then((value) => {
-      const resolved = CatalogResolutionSchema.parse(value);
+    void api.post(`${runtime}/catalog/lookup`, { kind, path, organizationId }).then((value) => {
+      const resolved = CollaborationOwnerCatalogLookupResponseSchema.parse(value).entry;
+      if (!resolved) return;
       if (resolved.kind !== kind || resolved.path !== path) throw new Error("Catalog mismatch");
       if (active) setResourceId(resolved.id);
     }).catch((failure: unknown) => {

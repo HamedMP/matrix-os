@@ -273,7 +273,10 @@ describe("owner runtime direct client", () => {
           evidenceExpiresAt: new Date(now.getTime() + 20_000).toISOString(), renewAfter: new Date(now.getTime() + 240_000).toISOString(),
         }, { status: 201 });
       }
-      expect(url.pathname).toBe(`/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/resolve`);
+      expect([
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/lookup`,
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/resolve`,
+      ]).toContain(url.pathname);
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBe("Bearer owner");
       expect(headers.get("x-matrix-collaboration-session")).toBe("20000000-0000-4000-8000-000000000001");
@@ -283,14 +286,17 @@ describe("owner runtime direct client", () => {
       };
       expect(envelope.signature.path).toBe(url.pathname);
       expect(verifyEd25519(proofPublicKey, requestSigningPayload(envelope.signature), envelope.proof)).toBe(true);
-      return Response.json({ id: "30000000-0000-4000-8000-000000000001", kind: "file", path: "notes.txt" });
+      const entry = { id: "30000000-0000-4000-8000-000000000001", kind: "file", path: "notes.txt" };
+      return Response.json(url.pathname.endsWith("/catalog/lookup") ? { entry } : entry);
     });
     const api = createCollaborationDirectApi({ platformBaseUrl: platform, fetchImpl: fetchImpl as typeof fetch,
       getHeaders: async () => ({ Authorization: "Bearer owner" }), clientOrigin: platform, now: () => now });
-    const path = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/resolve`;
-    await expect(api.post(path, { kind: "file", path: "notes.txt", organizationId }))
+    const prefix = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog`;
+    await expect(api.post(`${prefix}/lookup`, { kind: "file", path: "notes.txt", organizationId }))
+      .resolves.toMatchObject({ entry: { kind: "file", path: "notes.txt" } });
+    await expect(api.post(`${prefix}/resolve`, { kind: "file", path: "notes.txt", organizationId }))
       .resolves.toMatchObject({ kind: "file", path: "notes.txt" });
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
     await expect(api.direct.requestOwnerRuntime(runtimeId, organizationId, "/api/private/files", {})).rejects.toMatchObject({ code: "invalid_request" });
   });
 

@@ -57,6 +57,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["PATCH", "/api/collaboration/scopes/:scopeId/grants/:grantId"],
   ["DELETE", "/api/collaboration/scopes/:scopeId/grants/:grantId"],
   ["POST", "/api/collaboration/scopes/:scopeId/policy/preflight"],
+  ["POST", "/api/collaboration/runtimes/:runtimeId/catalog/lookup"],
   ["POST", "/api/collaboration/runtimes/:runtimeId/catalog/resolve"],
   ["GET", "/api/collaboration/scopes/:scopeId/user-state"],
   ["PATCH", "/api/collaboration/scopes/:scopeId/user-state"],
