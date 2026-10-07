@@ -98,7 +98,7 @@ importers:
     dependencies:
       '@clerk/clerk-expo':
         specifier: ^2.10.0
-        version: 2.19.31(1f78f8560aad72e18b29157b323672e6)
+        version: 2.19.31(2ed26355e9365a5c075a741a716db8fa)
       '@expo-google-fonts/bricolage-grotesque':
         specifier: ^0.4.1
         version: 0.4.1
@@ -150,6 +150,9 @@ importers:
       expo:
         specifier: ^57.0.0
         version: 57.0.2(c8814aec5e369b9c7be7f09c8d465912)
+      expo-apple-authentication:
+        specifier: ~57.0.0
+        version: 57.0.2(expo@57.0.2)(react-native@0.86.0(@babel/core@7.29.0)(@react-native/jest-preset@0.86.0(@babel/core@7.29.0)(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       expo-application:
         specifier: ~57.0.0
         version: 57.0.0(expo@57.0.2)
@@ -9449,6 +9452,13 @@ packages:
     resolution: {integrity: sha512-2Zks0hf1VLFYI1kbh0I5jP3KHHyCHpkfyHBzsSXRFgl/Bg9mWYfMW8oD+PdMPlEwy5HNsR9JutYy6pMeOh61nw==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
 
+  expo-apple-authentication@57.0.2:
+    resolution: {integrity: sha512-00KnlyRceRKski+ljZz8q8JhJZ4D3ZScU+Y0RqS6ElJ8GaCWfd7Qh5tMr47yIU/dKDrOnkzkFUM+6vyHS5HI7Q==}
+    peerDependencies:
+      expo: '*'
+      react: '*'
+      react-native: '*'
+
   expo-application@57.0.0:
     resolution: {integrity: sha512-vNrnYlqtRS5pFUm1tjut4dogZxW/uhmMOD5GeLQ8Z9Ji3KMYKLOy5dG0BlUsMrcSgyPJvJqP0TFopkEZ02ec6g==}
     peerDependencies:
@@ -16566,7 +16576,7 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/clerk-expo@2.19.31(1f78f8560aad72e18b29157b323672e6)':
+  '@clerk/clerk-expo@2.19.31(2ed26355e9365a5c075a741a716db8fa)':
     dependencies:
       '@clerk/clerk-js': 5.125.5(@solana/web3.js@1.98.4(bufferutil@4.1.0)(encoding@0.1.13)(typescript@6.0.3)(utf-8-validate@6.0.6))(@types/react@19.2.14)(bufferutil@4.1.0)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.0(@babel/core@7.29.0)(@react-native/jest-preset@0.86.0(@babel/core@7.29.0)(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)(use-sync-external-store@1.6.0(react@19.2.3))(utf-8-validate@6.0.6)(zod@4.4.3)
       '@clerk/clerk-react': 5.61.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -16581,6 +16591,7 @@ snapshots:
       react-native-url-polyfill: 2.0.0(react-native@0.86.0(@babel/core@7.29.0)(@react-native/jest-preset@0.86.0(@babel/core@7.29.0)(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))
       tslib: 2.8.1
     optionalDependencies:
+      expo-apple-authentication: 57.0.2(expo@57.0.2)(react-native@0.86.0(@babel/core@7.29.0)(@react-native/jest-preset@0.86.0(@babel/core@7.29.0)(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       expo-crypto: 57.0.0(expo@57.0.2)
       expo-local-authentication: 57.0.0(expo@57.0.2)
       expo-secure-store: 57.0.0(expo@57.0.2)
@@ -25718,6 +25729,12 @@ snapshots:
       jest-matcher-utils: 29.7.0
       jest-message-util: 29.7.0
       jest-util: 29.7.0
+
+  expo-apple-authentication@57.0.2(expo@57.0.2)(react-native@0.86.0(@babel/core@7.29.0)(@react-native/jest-preset@0.86.0(@babel/core@7.29.0)(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3):
+    dependencies:
+      expo: 57.0.2(c8814aec5e369b9c7be7f09c8d465912)
+      react: 19.2.3
+      react-native: 0.86.0(@babel/core@7.29.0)(@react-native/jest-preset@0.86.0(@babel/core@7.29.0)(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(@react-native/metro-config@0.86.0(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)
 
   expo-application@57.0.0(expo@57.0.2):
     dependencies:

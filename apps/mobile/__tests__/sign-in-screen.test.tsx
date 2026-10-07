@@ -18,6 +18,15 @@ jest.mock("expo-web-browser", () => ({
   maybeCompleteAuthSession: jest.fn(),
 }));
 
+// The native Apple button and sheet have their own suite in
+// sign-in-screen-apple.test.tsx; here they only need to load.
+jest.mock("expo-apple-authentication", () => ({
+  AppleAuthenticationButton: () => null,
+  AppleAuthenticationButtonType: { SIGN_IN: 0 },
+  AppleAuthenticationButtonStyle: { WHITE: 0, BLACK: 2 },
+  AppleAuthenticationScope: { FULL_NAME: 0, EMAIL: 1 },
+}));
+
 const mockStartSSOFlow = jest.fn();
 const mockSetActive = jest.fn(() => Promise.resolve());
 const mockCreate = jest.fn();
@@ -34,6 +43,7 @@ jest.mock("@clerk/clerk-expo", () => ({
     setActive: mockSetActive,
     signIn: { create: mockCreate },
   }),
+  useSignUp: () => ({ isLoaded: true, signUp: { create: jest.fn() } }),
 }));
 
 const mockNormalizeGatewayUrl = jest.fn((url: string) => url);
