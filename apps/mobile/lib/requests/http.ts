@@ -87,7 +87,7 @@ export async function fetchAuthenticatedResponse<T>(
   }
 }
 
-function createRequestTimeout(timeoutMs: number): { signal: AbortSignal; cancel: () => void } {
+export function createRequestTimeout(timeoutMs: number): { signal: AbortSignal; cancel: () => void } {
   const timeout = (AbortSignal as { timeout?: (milliseconds: number) => AbortSignal }).timeout;
   if (typeof timeout === "function") {
     return { signal: timeout(timeoutMs), cancel: () => undefined };

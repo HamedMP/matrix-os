@@ -1,5 +1,5 @@
 import "@/lib/hermes-polyfills";
-import { View, Text, Linking } from "react-native";
+import { View, Text, Linking, Pressable } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
@@ -99,15 +99,32 @@ function SignedInJourneyGate() {
     }
   }
 
+  // An account can exist without ever getting past this gate (no plan, a failed
+  // build), and deletion has to be reachable from inside the app for every
+  // account (App Store Guideline 5.1.1(v)). The account API needs no computer.
+  const canDeleteAccount = result?.status === "ok" && result.journey.phase !== "account_required";
+
   return (
-    <JourneyGate
-      result={result}
-      working={working}
-      onRetry={handleRetry}
-      onRefresh={reload}
-      onSignOut={handleSignOut}
-      onOpenUrl={(url) => { void Linking.openURL(url); }}
-    />
+    <View style={styles.gate}>
+      <JourneyGate
+        result={result}
+        working={working}
+        onRetry={handleRetry}
+        onRefresh={reload}
+        onSignOut={handleSignOut}
+        onOpenUrl={(url) => { void Linking.openURL(url); }}
+      />
+      {canDeleteAccount ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Delete account"
+          onPress={() => router.push("/settings-detail/delete-account" as any)}
+          style={({ pressed }) => [styles.deleteAccount, pressed && styles.deleteAccountPressed]}
+        >
+          <Text style={styles.deleteAccountLabel}>Delete account</Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -156,6 +173,30 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // Same ground as JourneyGate, so the footer reads as part of the gate.
+  gate: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  // In flow below the gate rather than overlaid, so it cannot cover the gate's
+  // buttons on a short screen. The bottom padding clears the home indicator.
+  deleteAccount: {
+    alignSelf: "center",
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing.lg,
+    marginBottom: 40,
+  },
+  deleteAccountPressed: {
+    opacity: 0.6,
+  },
+  deleteAccountLabel: {
+    fontFamily: theme.fonts.sans,
+    fontSize: 14,
+    color: theme.colors.forest,
+    opacity: 0.8,
+    textDecorationLine: "underline",
+  },
   container: {
     flex: 1,
     backgroundColor: theme.v2.appColors.canvas,
