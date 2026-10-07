@@ -90,13 +90,13 @@ describe("portable connected starter", () => {
       );
     }
   });
-  it("shows a precise supported-view message and disables record/import actions without the bridge", () => {
+  it("shows a precise connection-readiness message and disables record/import actions without the bridge", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     delete window.MatrixOS;
     render(createElement(App, { app: folio }));
     expect(
       screen.getByText(
-        /Open this app in Web Desktop, Web Canvas or Electron Desktop/,
+        /The app connection is not ready/,
       ),
     ).toBeDefined();
     expect(

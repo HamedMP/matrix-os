@@ -8,7 +8,7 @@ export default function Agenda(props: ViewProps) {
   return (
     <>
       <div className="date-nav">
-        <h2>A little room for your day.</h2>
+        <h2>Make room for your day.</h2>
         <label>
           View date{" "}
           <input
@@ -23,7 +23,7 @@ export default function Agenda(props: ViewProps) {
       {!grouped.length ? (
         <Empty app={props.app} onAdd={props.onAdd} />
       ) : (
-        <div className="agenda">
+        <div className="agenda" aria-label="Scheduled timeline">
           {grouped.map((group) => (
             <section key={group.date}>
               <div className="agenda-date">
