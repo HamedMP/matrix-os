@@ -2,7 +2,7 @@
 import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 import { useChatProviderCatalog } from "../../desktop/src/renderer/src/features/chat/chat-provider-catalog";
 import { SharedChatComposer } from "@desktop/renderer/src/features/chat/SharedChatComposer";
@@ -12,28 +12,61 @@ import { createCanonicalChatWorkspaceClient } from "../desktop/canonical-chat-wo
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup";
+import { disconnectedSnapshot } from "./chat-provider-settings-fixture";
+import {
+  startDesktopProviderCatalogCoordinator,
+  stopDesktopProviderCatalogCoordinator,
+} from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 
 vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("@clerk/nextjs", async (original) => ({ ...(await original<typeof import("@clerk/nextjs")>()), useOrganization: () => ({ organization: null }), useAuth: () => ({ userId: null, sessionId: null }) }));
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); useConnection.setState(useConnection.getInitialState(), true); });
+beforeEach(() => {
+  stopDesktopProviderCatalogCoordinator();
+  useConnection.setState(useConnection.getInitialState(), true);
+  useConnection.setState({ status: "signed-in", handle: "operator", platformHost: "https://platform.test",
+    runtimeSlot: "primary", authGeneration: 1, api: null });
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+});
+afterEach(() => {
+  cleanup();
+  stopDesktopProviderCatalogCoordinator();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  useConnection.setState(useConnection.getInitialState(), true);
+});
+
+function startCatalogCoordinator(api: Pick<ApiClient, "get">) {
+  const settings = disconnectedSnapshot();
+  settings.harnesses.forEach((harness) => { harness.authState = "authenticated"; });
+  const runtimeApi = {
+    baseUrl: "https://matrix.test",
+    forRuntime: vi.fn(() => runtimeApi),
+    get: vi.fn((path: string, options?: Parameters<ApiClient["get"]>[1]) =>
+      path.startsWith("/api/ai/provider-settings?") ? Promise.resolve(settings) : api.get(path, options)),
+  };
+  useConnection.setState({ api: runtimeApi as unknown as ApiClient });
+  startDesktopProviderCatalogCoordinator();
+  return runtimeApi as unknown as ApiClient;
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((yes) => { resolve = yes; });
   return { promise, resolve };
 }
 
-it("marks initial and forced Electron reads busy, retains its saved model, and blocks sending and model changes until resolved", async () => {
+it("blocks cold Electron reads and retains working selection, sending, and model controls during warm refresh", async () => {
   const catalog = createCanonicalProviderCatalogFixture();
   const initial = deferred<typeof catalog>();
   const refreshed = deferred<typeof catalog>();
   const get = vi.fn().mockReturnValueOnce(initial.promise).mockReturnValueOnce(refreshed.promise);
-  const api = { get };
+  const api = startCatalogCoordinator({ get });
   const submit = vi.fn();
   const change = vi.fn();
   function Composer() {
     const state = useChatProviderCatalog(catalog, { api });
     return <><button onClick={state.refresh}>Refresh catalog</button><SharedChatComposer value="Keep my draft" onChange={vi.fn()} onSubmit={submit} busy={false} canSubmit
-      catalog={state.catalog} providerCatalogLoading={state.status === "loading"}
+      catalog={state.catalog} providerCatalogLoading={state.initialLoading}
       selection={{ instanceId: "codex_fixture", model: "gpt-5.6-sol", options: [], interactionMode: "default", permissionMode: "supervised" }}
       instanceLocked={false} onSelectionChange={change} /></>;
   }
@@ -48,17 +81,18 @@ it("marks initial and forced Electron reads busy, retains its saved model, and b
   expect(get).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: "Refresh catalog" }));
   await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
-  expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
-  expect(screen.getByRole("listbox")).toHaveAttribute("aria-busy", "true");
-  expect(within(screen.getByRole("listbox")).getByRole("option")).toBeDisabled();
+  expect(within(trigger).queryByRole("status", { name: "Checking model availability" })).toBeNull();
+  expect(within(trigger).getByText("GPT-5.6-Sol · Codex fixture")).toBeVisible();
+  expect(screen.getByRole("listbox")).not.toHaveAttribute("aria-busy", "true");
+  expect(within(screen.getByRole("listbox")).getByRole("option")).toBeEnabled();
   fireEvent.click(within(screen.getByRole("listbox")).getByRole("option"));
-  expect(change).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  expect(change).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(submit).toHaveBeenCalledOnce();
   await act(async () => refreshed.resolve(catalog));
-  await waitFor(() => expect(within(screen.getByRole("listbox")).getByRole("option")).toBeEnabled());
   expect(screen.queryByRole("status", { name: "Checking model availability" })).toBeNull();
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
-  expect(submit).not.toHaveBeenCalled();
 });
 
 it("shows shared Web loading in the trigger and open picker for initial and explicit revalidation without sending", async () => {
@@ -91,31 +125,37 @@ it("shows shared Web loading in the trigger and open picker for initial and expl
   expect(submit).not.toHaveBeenCalled();
 });
 
-it("wires loading through the production Electron workspace for initial and stale foreground reads", async () => {
+it("wires cold loading and quiet five-minute background refresh through the production Electron workspace", async () => {
+  vi.useFakeTimers();
   const catalog = createCanonicalProviderCatalogFixture();
   const initial = deferred<typeof catalog>();
   const refreshed = deferred<typeof catalog>();
   let reads = 0;
   const get = vi.fn((path: string) => path.startsWith("/api/chat-providers") ? (++reads === 1 ? initial.promise : refreshed.promise) : Promise.resolve({}));
+  const api = startCatalogCoordinator({ get } as unknown as Pick<ApiClient, "get">);
   window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };
-  render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()} api={{ get } as unknown as ApiClient} projectId={null} active initialView="draft" />);
-  const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
+  render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()} api={api} projectId={null} active initialView="draft" />);
+  await act(async () => {});
+  const trigger = screen.getByRole("button", { name: "Choose model and provider" });
   expect(trigger).toBeEnabled();
   expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   await act(async () => initial.resolve(catalog));
-  await waitFor(() => expect(within(trigger).queryByRole("status")).toBeNull());
+  expect(within(trigger).queryByRole("status")).toBeNull();
   expect(trigger).toHaveAttribute("data-provider-instance", "codex_fixture");
   fireEvent.click(trigger);
   expect(reads).toBe(1);
-  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
   act(() => window.dispatchEvent(new Event("focus")));
-  await waitFor(() => expect(reads).toBe(2));
-  expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  expect(reads).toBe(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(240_000); });
+  expect(reads).toBe(2);
+  expect(within(trigger).queryByRole("status", { name: "Checking model availability" })).toBeNull();
   expect(within(trigger).getByText("GPT-5.6-Sol · Codex fixture")).toBeVisible();
-  expect(within(screen.getByRole("listbox")).getByRole("option")).toBeDisabled();
+  expect(within(screen.getByRole("listbox")).getByRole("option")).toBeEnabled();
   await act(async () => refreshed.resolve(catalog));
-  await waitFor(() => expect(within(screen.getByRole("listbox")).getByRole("option")).toBeEnabled());
+  expect(within(screen.getByRole("listbox")).getByRole("option")).toBeEnabled();
 });
 
 it("preserves held credit identity and reason during loading while keeping Stop available", () => {
@@ -150,8 +190,8 @@ it("preserves held credit identity and reason during loading while keeping Stop 
   expect(cancel).toHaveBeenCalledOnce();
 });
 
-it.each(["credit_reserved", "credit_required"] as const)("keeps the confirmed %s reason on the actual bound workspace model row during stale foreground refresh", async (creditState) => {
-  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+it.each(["credit_reserved", "credit_required"] as const)("keeps the confirmed %s reason on the actual bound workspace model row during quiet background refresh", async (creditState) => {
+  vi.useFakeTimers();
   const { canonicalChatRecord, snapshot } = await import("../desktop/canonical-chat-workspace-test-utils");
   const catalog = createCanonicalProviderCatalogFixture();
   const instance = catalog.instances[0]!;
@@ -173,28 +213,31 @@ it.each(["credit_reserved", "credit_required"] as const)("keeps the confirmed %s
   const refreshed = deferred<typeof catalog>();
   let reads = 0;
   const get = vi.fn((path: string) => path.startsWith("/api/chat-providers") ? (++reads === 1 ? Promise.resolve(catalog) : refreshed.promise) : Promise.resolve({}));
+  const api = startCatalogCoordinator({ get } as unknown as Pick<ApiClient, "get">);
   window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };
-  render(<CanonicalChatWorkspace client={client} api={{ get } as unknown as ApiClient} projectId={null} active initialChatId={record.chat.id} />);
-  const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
-  await waitFor(() => expect(trigger).toHaveAttribute("data-provider-instance", instance.id));
-  await waitFor(() => expect(within(trigger).queryByRole("status")).toBeNull());
+  render(<CanonicalChatWorkspace client={client} api={api} projectId={null} active initialChatId={record.chat.id} />);
+  await act(async () => {});
+  const trigger = screen.getByRole("button", { name: "Choose model and provider" });
+  expect(trigger).toHaveAttribute("data-provider-instance", instance.id);
+  expect(within(trigger).queryByRole("status")).toBeNull();
   fireEvent.click(trigger);
   expect(reads).toBe(1);
-  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
   act(() => window.dispatchEvent(new Event("focus")));
-  await waitFor(() => expect(reads).toBe(2));
+  expect(reads).toBe(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+  expect(reads).toBe(2);
   const option = within(screen.getByRole("listbox")).getByRole("option");
   expect(option).toBeDisabled();
   expect(within(option).getByText(creditState === "credit_reserved" ? /Matrix AI credit reserved/ : /Matrix AI credit required/)).toBeVisible();
-  expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
+  expect(within(trigger).queryByRole("status", { name: "Checking model availability" })).toBeNull();
   expect(trigger).toHaveAttribute("data-provider-instance", instance.id);
   expect(trigger).toHaveAttribute("data-model", instance.models[0]!.id);
   fireEvent.click(option);
   expect(client.admitTurn).not.toHaveBeenCalled();
   fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
-  await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("listbox")).toBeNull();
-  expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
+  expect(within(trigger).queryByRole("status", { name: "Checking model availability" })).toBeNull();
   if (creditState === "credit_reserved") expect(within(trigger).getByText("Credit reserved")).toBeVisible();
   await act(async () => refreshed.resolve(catalog));
 });

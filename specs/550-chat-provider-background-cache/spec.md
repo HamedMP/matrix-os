@@ -21,6 +21,14 @@ This client-session optimization covers Electron Desktop ordinary/project Chat, 
 - Persistence/transactions: no new database/file writes, migrations or owner-data modifications. Existing settings mutations and funding rules remain server-owned.
 - Deferred: application-restart disk cache, new main-process IPC client, gateway endpoints, other-shell cache rollout, default model substitution, production deployment and fleet promotion.
 
+Existing network boundaries remain unchanged:
+
+| Existing route | Authentication and authority | Public |
+|---|---|---|
+| `GET /api/chat-providers` | Trusted Electron core injects native bearer credentials; gateway validates the current owner/runtime. Renderer validates the canonical catalog schema. | No |
+| Chat turn, queued-turn and run submissions | Existing native bearer authentication and gateway/local-subscription admission. Cache availability cannot approve execution or funding. | No |
+| Provider Settings mutations | Existing validated Settings transport and accepted server revision; only accepted changes invalidate cached authority. | No |
+
 ## Wiring and acceptance
 The existing desktopQueryClient stores provider snapshots; an application-root coordinator owns scheduling. useChatProviderCatalog projects/subscribes; Chat active/live flags cannot own cache lifetime. Ordinary/project Chat, agent conversations, Bot selectors and recovery, and accepted Settings invalidation use this shared path. Do not turn a background fetch flag into picker loading or a composer send gate.
 

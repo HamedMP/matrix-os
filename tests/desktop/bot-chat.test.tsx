@@ -2,7 +2,7 @@
 import React from "react";
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { createCanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
@@ -10,6 +10,9 @@ import { ChatAgentsWorkspace, useChatAgentsNavigation, type ChatAgentClient } fr
 import type { CanonicalChatEventSource, CanonicalChatInvalidation } from "@matrix-os/ui";
 import { createCanonicalChatWorkspaceClient, canonicalChatRecord, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
 import { BotDetailsContext, BotHeaderContext } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { stopDesktopProviderCatalogCoordinator } from "@desktop/renderer/src/features/chat/provider-catalog-coordinator";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
@@ -20,7 +23,19 @@ beforeAll(() => {
     disconnect() {}
   };
 });
-afterEach(cleanup);
+beforeEach(() => {
+  stopDesktopProviderCatalogCoordinator();
+  resetProviderPreferences({ hydrated: true });
+  useConnection.setState(useConnection.getInitialState(), true);
+  useConnection.setState({ status: "signed-in", handle: "operator", platformHost: "https://platform.test",
+    runtimeSlot: "primary", authGeneration: 1, api: null });
+});
+afterEach(() => {
+  cleanup();
+  stopDesktopProviderCatalogCoordinator();
+  useConnection.setState(useConnection.getInitialState(), true);
+  vi.restoreAllMocks();
+});
 
 describe("Electron Desktop bot Chat", () => {
   it("preserves visible Bot details and unsaved edits across focus changes, then cleans up when hidden", async () => {
@@ -171,6 +186,8 @@ describe("Electron Desktop bot Chat", () => {
 
 it("admits a direct bot turn when the ordinary provider catalog is empty", async () => {
   const client = createCanonicalChatWorkspaceClient();
+  vi.mocked(client.admitTurn).mockResolvedValue({ record: canonicalChatRecord, message: snapshot.messages[0]!,
+    turn: snapshot.turns[0]!, run: snapshot.runs[0]!, admission: "accepted" });
   client.agents = { bots: { directBot: vi.fn(async () => "bot_research1"), interactions: vi.fn(async () => []),
     tasks: vi.fn(async () => []), authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1,
       grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) },
@@ -184,6 +201,7 @@ it("admits a direct bot turn when the ordinary provider catalog is empty", async
   expect(screen.queryByRole("button", { name: "Add company drive context" })).toBeNull();
   const composer = screen.getByRole("textbox", { name: "Reply to chat" });
   await setSharedComposerText(composer, "Check the pages");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
     expect.objectContaining({ selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default" }), expect.anything()));
