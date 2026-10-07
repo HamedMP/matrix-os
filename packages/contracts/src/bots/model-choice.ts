@@ -1,11 +1,33 @@
 import type { CanonicalProviderCatalog, CanonicalProviderInstanceDescriptor } from "#canonical-chat-provider";
 import type { CanonicalChatModelSelection } from "#canonical-chat";
 import { MATRIX_BOT_SELECTION } from "#bots/selection";
+import { MatrixAnthropicCredentialGenerationSchema } from "#matrix-anthropic-connection";
 
 export const MATRIX_PI_CHAT_INSTANCE_ID = "matrix_pi_default";
 export const MATRIX_CHATGPT_PLAN_INSTANCE_ID = "matrix_chatgpt_plan";
 /** Ordinary private Chat uses its own Pi admission, never the recipe-only Bot route. */
 export const MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID = "matrix_pi_chatgpt_plan";
+export const MATRIX_PI_ANTHROPIC_API_INSTANCE_ID = "matrix_pi_anthropic_api";
+export const MATRIX_ANTHROPIC_API_INSTANCE_ID = "matrix_anthropic_api";
+export function isMatrixAnthropicChatRoute(route: { instanceId: string; driverKind: string }): boolean {
+  return route.instanceId === MATRIX_PI_ANTHROPIC_API_INSTANCE_ID && route.driverKind === "matrix_pi";
+}
+export function isMatrixAnthropicBotRoute(route: { instanceId: string; driverKind: string }): boolean {
+  return route.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID && route.driverKind === "matrix_bot";
+}
+export interface MatrixAnthropicBinding { connectionRevision: number; credentialGeneration: string }
+export function matrixAnthropicSelectionBinding(options?: CanonicalChatModelSelection["options"]): MatrixAnthropicBinding | null {
+  if (options?.length !== 2) return null;
+  const revision = options.find(option => option.id === "connectionRevision")?.value;
+  const generation = options.find(option => option.id === "credentialGeneration")?.value;
+  if (typeof revision !== "string" || !/^[1-9][0-9]{0,15}$/.test(revision) || !Number.isSafeInteger(Number(revision))) return null;
+  const parsed = MatrixAnthropicCredentialGenerationSchema.safeParse(generation);
+  return parsed.success ? { connectionRevision: Number(revision), credentialGeneration: parsed.data } : null;
+}
+export function sameMatrixAnthropicSelectionBinding(left?: CanonicalChatModelSelection["options"], right?: CanonicalChatModelSelection["options"]): boolean {
+  const a = matrixAnthropicSelectionBinding(left), b = matrixAnthropicSelectionBinding(right);
+  return !!a && !!b && a.connectionRevision === b.connectionRevision && a.credentialGeneration === b.credentialGeneration;
+}
 export function isChatgptPlanChatRoute(route: { instanceId: string; driverKind: string }): boolean {
   return route.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && route.driverKind === "matrix_pi";
 }
@@ -15,7 +37,7 @@ export function isChatgptPlanBotRoute(route: { instanceId: string; driverKind: s
 }
 
 export function isPiBotCoordinatorRoute(route: { instanceId: string; driverKind: string }): boolean {
-  return isManagedPiBotRoute(route) || isChatgptPlanBotRoute(route);
+  return isManagedPiBotRoute(route) || isChatgptPlanBotRoute(route) || isMatrixAnthropicBotRoute(route);
 }
 
 /** Nonsecret source binding must survive account switches and grant revocation. */
@@ -64,6 +86,12 @@ export function botModelRoutingLabel(selection: CanonicalChatModelSelection | nu
   if (isAutomaticBotSelection(selection)) return "Model routing: automatic";
   const instance = catalog?.instances.find((candidate) => candidate.id === selection.instanceId);
   const model = instance?.models.find((candidate) => candidate.id === selection.model);
+  if (selection.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID) {
+    const unavailable = !instance || instance.availability !== "available" || model?.availability !== "available"
+      || !isMatrixAnthropicBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })
+      || !sameMatrixAnthropicSelectionBinding(selection.options, instance.defaultSelection?.options);
+    return `Anthropic API · ${model?.displayName ?? selection.model}${unavailable ? " · unavailable" : ""}`;
+  }
   if (selection.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID) {
     const unavailable = !instance || instance.availability !== "available" || model?.availability !== "available"
       || !isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })
@@ -119,6 +147,8 @@ export function canonicalProviderAvailabilityReasonLabel(
 export function canonicalProviderModelRouteLabel(instance: CanonicalProviderInstanceDescriptor | undefined,
   modelLabel: string): string {
   if (!instance) return modelLabel;
+  if (isMatrixAnthropicChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })
+    || isMatrixAnthropicBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })) return `${modelLabel} · Matrix AI · Anthropic API`;
   if (isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })) return `${modelLabel} · Matrix AI · ChatGPT subscription`;
   if (isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })) return `${modelLabel} · ChatGPT subscription`;
   if (isManagedPiBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isLegacyMatrixSdkProvider(instance)) {

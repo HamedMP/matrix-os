@@ -1,3 +1,4 @@
+import { startDesktopProviderCatalogCoordinator } from "./features/chat/provider-catalog-coordinator";
 import { NativeChatBadge } from "./features/chat/NativeChatBadge";
 import RuntimeCompatibilityGate from "./features/updates/RuntimeCompatibilityGate";
 import DesktopAoedeHost from "./features/aoede/DesktopAoedeHost";
@@ -22,6 +23,7 @@ export default function App() {
   const loadAppearance = useAppearance((s) => s.load);
 
   useEffect(() => wireNativeAppOpening(), []);
+  useEffect(() => startDesktopProviderCatalogCoordinator(), []);
 
   useEffect(() => {
     wireConnectionEvents();

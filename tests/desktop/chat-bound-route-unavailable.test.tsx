@@ -78,7 +78,7 @@ it("keeps an explicit supported model in the bound instance when catalog refresh
   expect(client.admitTurn).not.toHaveBeenCalled();
 });
 
-it.each(["auth", "runtime", "chat", "instance", "permission", "options", "unavailable"] as const)("does not retain a touched selection across invalid %s boundaries", async (boundary) => {
+it.each(["auth", "runtime", "chat", "instance", "permission", "options"] as const)("does not retain a touched selection across invalid %s boundaries", async (boundary) => {
   const catalog: CanonicalProviderCatalog = { ...routes(false), instances: routes(false).instances.map((instance) => instance.id === "codex_fixture" ? {
     ...instance, defaultSelection: { instanceId: instance.id, model: "gpt-6-sol" },
     models: [{ ...instance.models[0]!, availability: "unavailable" }, { ...instance.models[0]!, id: "gpt-6-sol", displayName: "GPT-6-Sol" }],
@@ -119,4 +119,14 @@ it.each(["chat", "auth", "runtime"] as const)("resets explicit unbound draft ins
   if (boundary === "runtime") act(() => useConnection.setState({ runtimeSlot: "other" }));
   hook.rerender({ ...base, chatId: boundary === "chat" ? "draft_two" : base.chatId, catalog: { ...catalog, revision: "refresh" } });
   expect(hook.result.current.selection?.instanceId).toBe("codex_fixture");
+});
+
+
+it("retains a touched draft model after discovery revokes its route instead of choosing another provider", () => {
+  const base = { catalog: routes(false), catalogReady: true, initializeImmediately: true, chatId: null };
+  const hook = renderHook(props => useCanonicalComposerSelection(props), { initialProps: base });
+  const selected = { instanceId: "codex_fixture", model: "gpt-5.6-sol", options: [], permissionMode: "supervised", interactionMode: "default" };
+  act(() => hook.result.current.onSelectionChange(selected));
+  hook.rerender({ ...base, catalog: routes(true) });
+  expect(hook.result.current.selection).toEqual(selected);
 });

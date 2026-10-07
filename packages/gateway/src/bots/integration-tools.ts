@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import type { BotEffect, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import { getAction, getService } from "../integrations/registry.js";
-import { BotBrokerActionError } from "./broker-actions.js";
+import { BotBrokerActionError, untilAborted } from "./broker-actions.js";
 import type { BotStateTransaction, BotStateTransactions } from "./events.js";
 import { BotIntegrationError, type BotIntegrationClient, type BotIntegrationConnection } from "./integration-client.js";
 import type { BotRecipeCatalog } from "./recipe-catalog.js";
@@ -33,6 +33,7 @@ const CONNECT_LIFETIME_MS = 15 * 60_000;
 const MAX_RESULT_CHARS = 60 * 1024;
 const MAX_PREVIEW_CHARS = 3_000;
 const MAX_ACCOUNT_OPTIONS = 10;
+const SOURCE_CHECK_TIMEOUT_MS = 5_000;
 
 type CallArgs = Extract<BotToolRequest, { capability: "integration.call" }>["args"];
 type InventoryArgs = Extract<BotToolRequest, { capability: "integration.inventory" }>["args"];
@@ -76,9 +77,25 @@ export function createBotIntegrationTools(deps: {
   transact: BotStateTransactions;
   recipes: BotRecipeCatalog;
   agents: Pick<ChatAgentStore, "get">;
+  /** Live source check at the last local checkpoint before service invocation. */
+  assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>;
   now?: () => Date;
 }) {
   const now = () => deps.now?.() ?? new Date();
+
+  async function qualifySource(binding: BotRuntimeBinding, signal?: AbortSignal) {
+    if (!deps.assertSource) return;
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), SOURCE_CHECK_TIMEOUT_MS);
+    const bounded = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
+    try {
+      if (bounded.aborted) throw new BotBrokerActionError("timeout");
+      await untilAborted(deps.assertSource(binding, bounded), bounded);
+    } catch (error: unknown) {
+      if (bounded.aborted) throw new BotBrokerActionError("timeout");
+      throw error;
+    } finally { clearTimeout(timer); }
+  }
 
   /** The effects the bot's recipe declares for a service; nothing for an undeclared service. */
   async function declaredEffects(ownerId: string, botId: string, service: string): Promise<readonly BotEffect[]> {
@@ -252,15 +269,24 @@ export function createBotIntegrationTools(deps: {
         const decision = await approved(binding, args, grant, preview);
         if (!decision.approved) return text(decision.message);
       }
-      // A grant can change while the owner decides or while inventory is read.
-      // Check its identity and revision again at the last gateway checkpoint before dispatch.
-      const live = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).findUsable({
-        ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
-        audience: AUDIENCE, effect, now: now().toISOString(),
-      }, tx.db));
-      if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
-        throw new BotBrokerActionError("not_granted");
-      }
+      // A revoked grant must be reread after awaited source preparation.
+      await qualifySource(binding, signal);
+      await deps.transact(binding.ownerId, async (tx) => {
+        const live = await createBotGrantsRepository(tx.db).findUsable({
+          ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
+          audience: AUDIENCE, effect, now: now().toISOString(), lockForDispatch: true,
+        }, tx.db);
+        if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
+          throw new BotBrokerActionError("not_granted");
+        }
+        // Recheck source changes during the grant read while its row lock
+        // prevents revocation/revision updates. This is the joint authority
+        // checkpoint; commit/release precedes any network transport.
+        await qualifySource(binding, signal);
+        if (live.expiresAt && Date.parse(live.expiresAt) <= now().getTime()) {
+          throw new BotBrokerActionError("not_granted");
+        }
+      });
       try {
         const result = await deps.client.call(binding.ownerId, {
           service: args.service, action: args.action, label: grant.accountLabel, params: args.params, read: effect === "read",

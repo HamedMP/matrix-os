@@ -19,6 +19,11 @@ import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/proje
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
 import { createLegacyProjectProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
+import {
+  desktopProviderCatalogCache,
+  startDesktopProviderCatalogCoordinator,
+  stopDesktopProviderCatalogCoordinator,
+} from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
@@ -142,6 +147,23 @@ function mockOperator({ createImpl, summary = summaryFixture() }: {
     configurable: true,
     value: { invoke, on: vi.fn(() => () => undefined) },
   });
+  if (!useConnection.getState().api) {
+    const providerSettings = disconnectedSnapshot();
+    // This suite tests catalog admission; advisory Settings connection evidence
+    // is unknown unless a test supplies its own authenticated snapshot.
+    providerSettings.harnesses.forEach((harness) => { harness.authState = "unknown"; });
+    const api = {
+      baseUrl: "https://matrix.test",
+      forRuntime: vi.fn(() => api),
+      get: vi.fn(async (path: string) => {
+        if (path.startsWith("/api/chat-providers")) return createLegacyProjectProviderCatalog(summary);
+        if (path.startsWith("/api/ai/provider-settings?")) return providerSettings;
+        throw new Error(`unexpected GET ${path}`);
+      }),
+    };
+    useConnection.setState({ api: api as never });
+  }
+  startDesktopProviderCatalogCoordinator();
   return { invoke };
 }
 
@@ -152,6 +174,8 @@ class MockResizeObserver {
 }
 
 function resetStores() {
+  stopDesktopProviderCatalogCoordinator();
+  useConnection.setState(useConnection.getInitialState(), true);
   clearDraftChats();
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {}, resolveNewChatTarget: defaultResolveNewChatTarget });
@@ -188,6 +212,7 @@ function resetStores() {
 async function openDraft() {
   render(<ProjectChatsView projectId="matrix-os" active />);
   await screen.findByRole("region", { name: "Conversation Plan the auth work" });
+  await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().lastSuccessAt).not.toBeNull());
   fireEvent.click(screen.getByRole("button", { name: "New chat in Matrix OS" }));
   return await screen.findByLabelText("Message new chat");
 }
@@ -207,6 +232,8 @@ describe("draft chat implicit thread creation", () => {
 
   afterEach(() => {
     cleanup();
+    stopDesktopProviderCatalogCoordinator();
+    useConnection.setState(useConnection.getInitialState(), true);
     vi.restoreAllMocks();
   });
 

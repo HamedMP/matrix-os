@@ -1,3 +1,4 @@
+import { recipeCoordinatorSelection } from "./coordinator-selection.js";
 /**
  * Runs one bot turn in the bot workload (spec 536). For each canonical run:
  *
@@ -219,10 +220,7 @@ export function createBotTaskOrchestrator(deps: {
 
     let resolved: ResolvedBotRoute;
     try {
-      resolved = await deps.resolveRoute(input.selection && input.selection.model !== "auto"
-        ? input.selection.instanceId === "matrix_chatgpt_plan" || input.selection.options?.some(o => o.id === "accountId")
-          ? { ...input.selection, instanceId: "matrix_chatgpt_plan" } : { ...input.selection, instanceId: "matrix_pi_default" }
-        : ["matrix_pi_default", "matrix_chatgpt_plan"].includes(agent.selection.instanceId) ? agent.selection : undefined);
+      resolved = await deps.resolveRoute(recipeCoordinatorSelection(input.selection, agent.selection));
     } catch (error: unknown) {
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
@@ -254,7 +252,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       runtime = await deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
-        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), capabilities, requestClass: "interactive",
+        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: "interactive",
       });
     } catch (error: unknown) {
       if (!(error instanceof BotAdmissionError)) throw error;
