@@ -267,6 +267,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
             conversationKey={snapshot.binding?.chatId}
             surface={controller.surface()}
             canSendText={controller.canSendText()}
+            pendingText={snapshot.pendingText}
             canOpenConversation={Boolean(snapshot.binding)}
             focusRevision={snapshot.focusRevision}
             scopeLabel={snapshot.binding?.scope.label ?? "Workspace"}
@@ -281,6 +282,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
             subscribeInputLevel={controller.subscribeInputLevel}
             commands={{
               sendText: controller.sendText,
+              retryPendingText: controller.retryPendingText,
               start: () => void controller.start(),
               dismiss: () => void controller.dismiss(),
               end: () => void controller.end(),

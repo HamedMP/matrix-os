@@ -1,4 +1,4 @@
-import { createAoedeTextSender } from "./text-turn.js";
+import { createAoedeTextSender, type PendingAoedeText } from "./text-turn.js";
 import type { ReactNode } from "react";
 import { CanonicalActionIdSchema, type CanonicalChatDetailResponse, type CanonicalChatApprovalView, type CanonicalChatApprovalDecision, type CanonicalChatInputView, type CanonicalSubmitChatInputRequest, type CanonicalChatModelSelection, type CanonicalChatRecord, type CanonicalUpdateChatSelectionRequest, type CanonicalChatActionCancellationResponse, type CanonicalProviderCatalog, type AoedeBootstrapRequest, type AoedeBootstrapResponse } from "@matrix-os/contracts";
 import type { SafeVoiceError } from "@matrix-os/contracts/voice-session";
@@ -48,6 +48,7 @@ export interface AoedeSelectionApi {
 export type AoedeControllerApi = AoedeApi & Partial<AoedeSelectionApi>;
 
 export interface AoedeSnapshot {
+  pendingText: PendingAoedeText | null;
   visible: boolean;
   focusRevision: number;
   status: AoedeStatus;
@@ -80,7 +81,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     inputDeviceId: prefs.inputDeviceId ?? null,
     outputDeviceId: prefs.outputDeviceId ?? null,
     devicesRevision: 0,
-    binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null,
+    pendingText: null, binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null,
     canonical: projectAoedeCanonical(null), error: null,
   };
   // Bound subscriptions; unsubscribe and disposal are eviction. No global registry.
@@ -425,12 +426,14 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       await refresh();
       return true;
     },
-    context: () => disposed || suspended || unavailable || newFlight || !snapshot.visible || !snapshot.binding || !detail || !api.createTurn ? null
+    context: () => disposed || suspended || unavailable || newFlight || !snapshot.binding || !detail || !api.createTurn ? null
       : { generation, chatId: snapshot.binding.chatId, revision: detail.record.chat.revision, selection: detail.record.chat.currentSelection ?? snapshot.binding.selection, running: Boolean(detail.record.activeRun) },
+    onPendingChange: pendingText => patch({ pendingText }),
     catalog: () => controller.listProviders(), createTurn: (chatId, input) => api.createTurn!(chatId, input), refresh, fail,
   });
   const controller = {
     sendText,
+    retryPendingText: () => snapshot.pendingText ? sendText(snapshot.pendingText.text) : Promise.resolve(false),
     canSendText: () => Boolean(api.createTurn && detail && (detail.record.chat.currentSelection ?? snapshot.binding?.selection) && !detail.record.activeRun && !unavailable && !disposed && !suspended && !newFlight),
     presentation: options.presentation ?? "halo",
     surface: () => options.surface,
@@ -503,7 +506,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
         autoNavigatedOperations.clear(); autoNavigationBaselineReady = false;
         if (disposed) return;
         unavailable = false;
-        patch({ binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null, canonical: projectAoedeCanonical(null) });
+        patch({ pendingText: null, binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null, canonical: projectAoedeCanonical(null) });
         await bootstrap("new");
       })().finally(() => { if (newFlight === pending) newFlight = null; });
       newFlight = pending; return pending;
