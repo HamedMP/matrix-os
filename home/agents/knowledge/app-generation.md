@@ -1,5 +1,7 @@
 # App Generation Knowledge
 
+Read the installed matrix-app-builder references/matrix-capabilities.md for installation, account-scoped imports, AI, reminder/heartbeat/host-worker scheduling and notification paths. Its references/distinctive-apps.md covers distinct app identities and landing-page prompting; references/expo-loading-and-cache.md covers actual Expo loading, session renewal and safe caches. These references require checking installed capabilities and authorized scope; complete the build artifact and independent checks before handing off a concrete missing host operation.
+
 ## Default: Apps In `~/apps/<slug>/`
 
 The default output type is a **pre-built React app** using Vite in `~/apps/<slug>/`. These are static builds served through the gateway with no separate dev server. CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite apps by default; use Matrix bridge APIs for data instead of creating a Next.js server.
@@ -244,16 +246,20 @@ Do not create Next.js, `.next/`, app router folders, API routes, `runtime: "node
 
 Apps can call connected external services through the bridge API. The user connects services in Settings > Integrations via OAuth.
 
+The current gateway permits inventory but blocks direct `MatrixOS.service` execution in production. Use an authorized kernel-mediated workflow via `MatrixOS.generate` and read persisted progress/results; a queued request does not prove completion. Direct-call examples below apply only where the installed route permits execution. Never remove the production gate or expose credentials.
+
 ### Check Connected Services
 ```javascript
 const services = await window.MatrixOS.integrations();
-const gmail = services.find(s => s.service === "gmail" && s.status === "active");
-if (!gmail) { /* show "Connect Gmail in Settings" */ }
+// selectedAccountLabel comes from the user's explicit account selection.
+const matches = services.filter(s => s.service === "gmail" && s.status === "active" && s.account_label === selectedAccountLabel);
+if (!selectedAccountLabel || matches.length !== 1) throw new Error("Select an active Gmail account");
+const gmail = matches[0];
 ```
 
 ### Call a Service Action
 ```javascript
-const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxResults: 20 });
+const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxResults: 20 }, gmail.account_label);
 // data.messages = [{id, threadId}, ...]
 ```
 

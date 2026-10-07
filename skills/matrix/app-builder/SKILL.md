@@ -2,7 +2,7 @@
 triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app"]
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.3.0
+version: 1.4.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
@@ -19,12 +19,17 @@ metadata:
 
 Use this when the user asks to build, create, fix, redesign, or publish a Matrix OS app.
 
+Before implementation, read [Matrix capabilities and host workflows](references/matrix-capabilities.md). Use the installed release and actual registered tools to choose installation, integrations, AI, scheduled sync, background workers and notification delivery. Finish the authorized artifact and verification before a handoff; a restricted project run does not define the capabilities of the owner Linux computer. Respect actual denials and repair missing host dependencies without inventing an API.
+
+For app collections, redesigns and landing pages, read [Distinctive apps and prompting](references/distinctive-apps.md). Give each product its own task-driven composition, typography, imagery and useful signature interaction. Compare silhouettes across the collection; changing names and accent colors on one dashboard is insufficient. Read [Expo loading and caching](references/expo-loading-and-cache.md) for actual native launch, cold/warm loading, scoped caches, session renewal and foreground revalidation.
+
 ## Non-Negotiables
 
 - Build user-facing apps in `~/apps/<slug>/`.
 - Default to Vite, React 19, TypeScript, and `runtime: "vite"`.
 - CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite React SPAs by default. Use Matrix/Postgres bridge APIs for data instead of creating Next.js API routes.
 - Do not create Next.js, `.next/`, `app/` router files, `runtime: "node"`, `serve.start`, or `npm start` unless the user explicitly requests a server runtime or Next.js.
+- This rule concerns the app UI runtime. An importer, scheduled script or background worker required by the user's app may use an authorized owner Linux service without turning the Vite UI into a separate server. Follow the capability reference; neither a browser timer nor an idle-shutdown app process is a durable worker.
 - Do not create plain HTML apps unless the user explicitly asks for a plain HTML app.
 - Always create or update `matrix.json`. For apps built for the owner, include `listingTrust: "first_party"` and `scope: "personal"`; missing trust blocks launch even if the build succeeds. Never relabel downloaded/store/community apps to bypass policy.
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.

@@ -161,7 +161,7 @@ describe("responsive app and landing guidance", () => {
   it("makes phone workflows mandatory and documents the evidence needed for host-dependent readiness", () => {
     const skill = readFileSync(skillPath("app-builder"), "utf8");
     const guide = readFileSync(reference, "utf8");
-    expect(skill).toContain("version: 1.3.0");
+    expect(skill).toContain("version: 1.4.0");
     expect(skill).toContain("Web Mobile and Native Mobile are required for the primary flow");
     expect(skill).toContain("references/responsive-layout.md");
     expect(guide).toContain("actual Native Mobile app");

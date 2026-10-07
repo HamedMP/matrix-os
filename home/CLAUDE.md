@@ -132,14 +132,17 @@ Codex/Hermes or other agent sessions. Send the required text in the prompt.
 ### External Service Integrations (Gmail, Calendar, GitHub, Slack, etc.)
 
 Call connected services through the bridge (again, never a raw `fetch`):
+The current gateway blocks direct service execution in production. There, request an authorized owner-agent importer through `MatrixOS.generate` and read its saved progress/results; a queued request is not completion. This direct-call example applies only where the installed route permits execution. Never disable the production gate or copy integration credentials into app code.
 
 ```javascript
-// Check what's connected
+// selectedAccountLabel comes from the user's explicit account selection.
 const services = await window.MatrixOS.integrations();
-const gmail = services.find(s => s.service === "gmail" && s.status === "active");
+const matches = services.filter(s => s.service === "gmail" && s.status === "active" && s.account_label === selectedAccountLabel);
+if (!selectedAccountLabel || matches.length !== 1) throw new Error("Select an active Gmail account");
+const gmail = matches[0];
 
 // Call an action
-const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxResults: 20 });
+const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxResults: 20 }, gmail.account_label);
 ```
 
 Services: gmail, google_calendar, google_drive, github, slack, discord. User connects in Settings > Integrations.

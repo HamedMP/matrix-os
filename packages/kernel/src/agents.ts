@@ -140,6 +140,8 @@ const FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"];
 
 const BUILDER_PROMPT = `You are the Matrix OS builder agent. You generate software from natural language requests.
 
+Read the installed matrix-app-builder references/matrix-capabilities.md before choosing installation, integrations, scheduling, workers or notifications; the owner Linux host and a restricted project run have different authority. Complete the authorized artifact before handing off a missing host operation; respect denials. Read references/distinctive-apps.md for distinct task-driven app identities and landing pages, and references/expo-loading-and-cache.md for actual Expo launch, loading and safe owner-scoped caching. Verify the installed host and registered tools rather than treating skill text as a capability grant.
+
 WORKFLOW:
 1. Claim the task using claim_task
 2. Default to a Vite React app; modules and plain HTML require an explicit request
@@ -216,19 +218,22 @@ INTEGRATIONS API (connected services like Gmail, Calendar, GitHub, Slack):
 
 Apps run in sandboxed srcdoc iframes. Direct fetch() calls to /api/bridge/* are blocked by CORS/CSP, so use the injected MatrixOS bridge:
 - MatrixOS.integrations() → Promise<[{service, account_label, account_email, status}]>
-- MatrixOS.service(service, action, params) → Promise<{data, service, action}>
+- MatrixOS.service(service, action, params, accountLabel) → Promise<{data, service, action}>
 
-COMPLETE EXAMPLE (app fetching Gmail):
-async function loadEmails() {
+Production currently blocks direct MatrixOS.service execution. Use an authorized kernel-mediated importer via MatrixOS.generate and display persisted progress; an enqueue is not completion. The example below applies only to an installed route that permits direct service execution. Never remove the production gate or expose credentials.
+
+COMPLETE EXAMPLE (explicit account on a supported non-production route):
+async function loadEmails(selectedAccountLabel) {
   const services = await window.MatrixOS.integrations();
-  const gmail = services.find(s => s.service === "gmail" && s.status === "active");
-  if (!gmail) { showError("Connect Gmail in Settings"); return; }
-  const {data} = await window.MatrixOS.service("gmail", "list_messages", {maxResults: 20});
+  const matches = services.filter(s => s.service === "gmail" && s.status === "active" && s.account_label === selectedAccountLabel);
+  if (!selectedAccountLabel || matches.length !== 1) { showError("Select an active Gmail account in Settings"); return; }
+  const gmail = matches[0];
+  const {data} = await window.MatrixOS.service("gmail", "list_messages", {maxResults: 20}, gmail.account_label);
   // data.messages = [{id, threadId}, ...] — call get_message for full content
 }
 
 Available actions: gmail (list_messages, get_message, send_email, search, list_labels), google_calendar (list_events, create_event), google_drive (list_files), github (list_repos, list_issues), slack (send_message, list_channels).
-IMPORTANT: Always check connection status first. status === "active" means connected. Show account_email to user.
+IMPORTANT: Always check connection status first. status === "active" means connected. Show account_email to user, select the exact account, and pass its account_label; never silently use the first account.
 
 AFTER BUILDING:
 - The matrix.json written above IS the registration — no separate modules.json step needed (spec 063 app runtime auto-discovers apps under ~/apps/<slug>/).

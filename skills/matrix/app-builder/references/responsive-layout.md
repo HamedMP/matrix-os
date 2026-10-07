@@ -1,5 +1,7 @@
 # Mobile-first apps and responsive landing pages
 
+Read [Expo loading and caching](expo-loading-and-cache.md) for the actual Native Mobile session/WebView path, safe asset/read/view caches, foreground revalidation and required cold/warm launch measurements. Responsive CSS alone does not verify native launch, persistence or cache behavior.
+
 Web Mobile and Native Mobile are required for the primary flow. Start with the phone task, navigation and data states, then adapt the same information and actions to larger Matrix windows. Design for the actual app container width, not the device label: a narrow Electron Desktop or Web Canvas window also needs the compact composition. Record the observed viewport and container width; do not branch layout on user-agent strings. Keep the selected product style coherent across layouts.
 
 ## Compose for the space
