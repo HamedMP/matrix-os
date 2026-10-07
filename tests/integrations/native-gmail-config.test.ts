@@ -4,6 +4,13 @@ const env = { GMAIL_OAUTH_ENABLED: 'true', GMAIL_OAUTH_CLIENT_ID: 'client.apps.g
   GMAIL_OAUTH_CALLBACK_URL: 'https://app.matrix-os.com/api/integrations/gmail/oauth/callback', GMAIL_CREDENTIAL_ENCRYPTION_KEY: '12'.repeat(32) };
 describe('native Gmail startup config', () => {
   it('is off until explicitly configured', () => expect(loadNativeGmailConfig({})).toBeNull());
+  it('retains complete credentials for cleanup when new consent and mailbox access are off', () => {
+    expect(loadNativeGmailConfig({ ...env, GMAIL_OAUTH_ENABLED: 'false' })).toMatchObject({ clientId: env.GMAIL_OAUTH_CLIENT_ID });
+  });
+  it('rejects partially retained cleanup credentials instead of claiming cleanup is available', () => {
+    expect(() => loadNativeGmailConfig({ GMAIL_OAUTH_ENABLED: 'false', GMAIL_OAUTH_CLIENT_ID: env.GMAIL_OAUTH_CLIENT_ID }))
+      .toThrow('Gmail OAuth configuration unavailable');
+  });
   it('validates complete configuration', () => expect(loadNativeGmailConfig(env)).toMatchObject({ clientId: env.GMAIL_OAUTH_CLIENT_ID, redirectUri: env.GMAIL_OAUTH_CALLBACK_URL, encryptionKey: Buffer.from('12'.repeat(32), 'hex') }));
   it.each(['GMAIL_OAUTH_CLIENT_ID', 'GMAIL_OAUTH_CLIENT_SECRET', 'GMAIL_OAUTH_CALLBACK_URL', 'GMAIL_CREDENTIAL_ENCRYPTION_KEY'])('fails closed when %s missing', key => {
     const invalid: Record<string, string | undefined> = { ...env, [key]: undefined }; expect(() => loadNativeGmailConfig(invalid)).toThrow('Gmail OAuth configuration unavailable');

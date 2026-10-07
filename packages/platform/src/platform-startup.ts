@@ -1,4 +1,4 @@
-import { createConfiguredPlatformGmail, initializeOwnedIntegrationDb } from './native-gmail-startup.js';
+import { createConfiguredPlatformGmail, initializeOwnedIntegrationDb, requiresPlatformGmailRuntime } from './native-gmail-startup.js';
 import { z } from 'zod/v4';
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { createConfiguredAccountDeletionRuntime } from './account-deletion/wiring.js';
@@ -165,6 +165,7 @@ interface GatewayIntegrationRoutesModule {
     db: GatewayPlatformDb;
     pipedream: unknown;
     nativeGmail?: unknown;
+    nativeGmailCleanup?: unknown;
     webhookSecret: string;
     resolveUserId: (c: Context) => Promise<string | null>;
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
@@ -477,7 +478,7 @@ async function startPlatformServerWithCleanup(
     disconnect: (userId: string, connectionId: string) => managedMcpPresetBroker?.disconnect(userId, connectionId) ?? Promise.resolve(false),
   };
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
-  if (process.env.GMAIL_OAUTH_ENABLED === 'true' && !integrationConfig) throw new Error('Gmail integration runtime unavailable');
+  if (requiresPlatformGmailRuntime(process.env) && !integrationConfig) throw new Error('Gmail integration runtime unavailable');
   if (integrationConfig) {
     const [
       { createIntegrationRoutes, authorizeInternalJevLabels },
@@ -502,7 +503,7 @@ async function startPlatformServerWithCleanup(
     gmailLaunchRoutes = gmail.launchRoutes;
     const pipedream = gmail.client;
     deletionPipedream = legacyPipedream;
-    deletionNativeGmail = gmail.oauth;
+    deletionNativeGmail = gmail.cleanup;
     const verifiedConnectedWebhook=process.env.ACCOUNT_DELETION_SECRET===undefined?undefined:
       createAccountDeletionIntegrationWebhookAdmission({db,pipedream,env:process.env});
     const webhookSecret = integrationConfig.pipedreamWebhookSecret;
@@ -533,6 +534,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       nativeGmail: gmail.oauth,
+      nativeGmailCleanup: gmail.cleanup,
       webhookSecret,
       verifiedConnectedWebhook,
       resolveUserId: async (c) => {
@@ -546,6 +548,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       nativeGmail: gmail.oauth,
+      nativeGmailCleanup: gmail.cleanup,
       webhookSecret,
       verifiedConnectedWebhook,
       authorizeJevLabelCall: authorizeInternalJevLabels,

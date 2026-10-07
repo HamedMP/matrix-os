@@ -20,12 +20,19 @@ export async function initializeOwnedIntegrationDb<T extends { migrate(): Promis
 export interface PlatformGmailRuntime {
   client: LegacyClient;
   launchRoutes?: Hono;
+  cleanup?: { revoke(input: { userId: string; connectionId: string }): Promise<boolean> };
   oauth?: { revoke(input: { userId: string; connectionId: string }): Promise<boolean> };
 }
 interface RuntimeModule {
   createNativeGmailRuntime(options: { env: NodeJS.ProcessEnv; db: unknown; legacy: LegacyClient;
     resolveUserId?: (c: Context) => Promise<string | null>;
     admit(userId: string, persist: () => Promise<void>): Promise<void> }): PlatformGmailRuntime;
+}
+
+/** Retained configuration keeps grant cleanup available during feature-off rollback. */
+export function requiresPlatformGmailRuntime(env: NodeJS.ProcessEnv): boolean {
+  return env.GMAIL_OAUTH_ENABLED === 'true' || [env.GMAIL_OAUTH_CLIENT_ID, env.GMAIL_OAUTH_CLIENT_SECRET,
+    env.GMAIL_OAUTH_CALLBACK_URL, env.GMAIL_CREDENTIAL_ENCRYPTION_KEY].some(value => Boolean(value?.trim()));
 }
 
 /** Keep gateway OAuth/transport composition out of the large platform entrypoint. */
@@ -36,7 +43,7 @@ export async function createConfiguredPlatformGmail(options: {
   resolveUserId?: (c: Context) => Promise<string | null>;
   loadModule?: () => Promise<RuntimeModule>;
 }): Promise<PlatformGmailRuntime> {
-  if (options.env.GMAIL_OAUTH_ENABLED !== 'true') return { client: options.legacy };
+  if (!requiresPlatformGmailRuntime(options.env)) return { client: options.legacy };
   const module: RuntimeModule = await (options.loadModule ?? (() => import(new URL('../../gateway/dist/integrations/native-gmail/runtime.js', import.meta.url).href)))();
   return module.createNativeGmailRuntime({ db: options.integrationDb, legacy: options.legacy, env: options.env, resolveUserId: options.resolveUserId,
     admit: async (userId, persist) => {

@@ -1,3 +1,4 @@
+import { createNativeGmailDisconnectRoutes } from "./native-gmail/disconnect-routes.js";
 import { createNativeGmailRoutes, type NativeGmailLifecycle } from "./native-gmail/routes.js";
 import { executeIntegrationAction } from "./action-execution.js";
 import { getErrorStatusCode, integrationActionFailure, integrationActionSuccess } from "./call-outcome.js";
@@ -131,6 +132,7 @@ export interface IntegrationBroadcast {
 export interface IntegrationRoutesOpts {
   db: PlatformDb;
   nativeGmail?: NativeGmailLifecycle;
+  nativeGmailCleanup?: Pick<NativeGmailLifecycle, "revoke">;
   pipedream: PipedreamConnectClient;
   webhookSecret: string;
   resolveUserId: (c: Context) => Promise<string | null>;
@@ -166,6 +168,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const emit = broadcast ?? (() => {});
   const app = new Hono();
   if (opts.nativeGmail) app.route("/", createNativeGmailRoutes({ db, oauth: opts.nativeGmail, resolveUserId, broadcast }));
+  else if (opts.nativeGmailCleanup) app.route("/", createNativeGmailDisconnectRoutes({ db, cleanup: opts.nativeGmailCleanup, resolveUserId, broadcast }));
   app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 

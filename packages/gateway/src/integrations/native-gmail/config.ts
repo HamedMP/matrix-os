@@ -1,6 +1,8 @@
 import { parseCustomMcpEncryptionKey } from '../custom-mcp/crypto.js';
 export function loadNativeGmailConfig(env: NodeJS.ProcessEnv) {
-  if (env.GMAIL_OAUTH_ENABLED !== 'true') return null;
+  const retained = [env.GMAIL_OAUTH_CLIENT_ID, env.GMAIL_OAUTH_CLIENT_SECRET,
+    env.GMAIL_OAUTH_CALLBACK_URL, env.GMAIL_CREDENTIAL_ENCRYPTION_KEY].some(value => Boolean(value?.trim()));
+  if (env.GMAIL_OAUTH_ENABLED !== 'true' && !retained) return null;
   try {
     const clientId = env.GMAIL_OAUTH_CLIENT_ID;
     const clientSecret = env.GMAIL_OAUTH_CLIENT_SECRET;

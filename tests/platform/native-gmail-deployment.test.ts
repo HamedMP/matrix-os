@@ -52,13 +52,14 @@ describe('Native Gmail Cloud Run deployment', () => {
     expect(validate().status).toBe(0);
   });
 
-  it('binds both dedicated secrets at pinned versions only when enabled', () => {
-    const validation = validate(enabledEnv);
+  it.each(['true', 'false'])('retains configured credentials for cleanup when the feature switch is %s', enabled => {
+    const configuredEnv = { ...enabledEnv, GMAIL_OAUTH_ENABLED: enabled };
+    const validation = validate(configuredEnv);
     expect(validation.status, validation.stderr).toBe(0);
-    const result = deploy({ ...enabledEnv, GMAIL_OAUTH_CLIENT_SECRET_VERSION: '3', GMAIL_CREDENTIAL_ENCRYPTION_KEY_VERSION: '7' });
+    const result = deploy({ ...configuredEnv, GMAIL_OAUTH_CLIENT_SECRET_VERSION: '3', GMAIL_CREDENTIAL_ENCRYPTION_KEY_VERSION: '7' });
     const env = bindings(result, '--set-env-vars').slice(3).split('|');
     const secrets = bindings(result, '--set-secrets').split(',');
-    expect(env).toContain('GMAIL_OAUTH_ENABLED=true');
+    expect(env).toContain(`GMAIL_OAUTH_ENABLED=${enabled}`);
     expect(env).toContain(`GMAIL_OAUTH_CALLBACK_URL=${callback}`);
     expect(env).toContain('GMAIL_OAUTH_CLIENT_ID=fixture.apps.googleusercontent.com');
     expect(env.some(value => /^GMAIL_(OAUTH_CLIENT_SECRET|CREDENTIAL_ENCRYPTION_KEY)=/.test(value))).toBe(false);
@@ -66,7 +67,7 @@ describe('Native Gmail Cloud Run deployment', () => {
     expect(secrets).toContain('GMAIL_CREDENTIAL_ENCRYPTION_KEY=gmail-credential-encryption-key:7');
   });
 
-  it('clears Gmail bindings when disabled without requiring registration or secret access', () => {
+  it('requires no Gmail registration or secret bindings for an unconfigured disabled deployment', () => {
     const result = deploy();
     expect(bindings(result, '--set-env-vars').slice(3).split('|')).toContain('GMAIL_OAUTH_ENABLED=false');
     expect(bindings(result, '--set-secrets')).not.toContain('GMAIL_');
@@ -100,6 +101,16 @@ describe('Native Gmail Cloud Run deployment', () => {
   });
 
   it.each([
+    { GMAIL_OAUTH_CLIENT_ID: enabledEnv.GMAIL_OAUTH_CLIENT_ID },
+    { GMAIL_OAUTH_CALLBACK_URL: callback },
+    { ...enabledEnv, GMAIL_OAUTH_ENABLED: 'false', GMAIL_CREDENTIAL_ENCRYPTION_KEY_VERSION: 'latest' },
+    { ...enabledEnv, GMAIL_OAUTH_ENABLED: 'false', GMAIL_OAUTH_CLIENT_SECRET_VERSION: '0' },
+    { ...enabledEnv, GMAIL_OAUTH_ENABLED: 'false', GMAIL_OAUTH_CALLBACK_URL: `${callback}?wrong=1` },
+  ])('fails closed on partial or invalid retained cleanup configuration: %j', overrides => {
+    expect(validate(overrides).status).not.toBe(0);
+  });
+
+  it.each([
     ['ENABLED', true, false, 0],
     ['DISABLED', true, false, 1],
     ['DESTROYED', true, false, 1],
@@ -107,7 +118,7 @@ describe('Native Gmail Cloud Run deployment', () => {
     ['ENABLED', true, true, 1],
   ])('verifies both secret versions and unconditional runtime access (%s, %s, %s)', (state, access, conditional, expectedStatus) => {
     const verification = step('Verify Gmail OAuth secrets');
-    expect(verification).toHaveProperty('if', "${{ env.GMAIL_OAUTH_ENABLED == 'true' }}");
+    expect(verification).toHaveProperty('if', "${{ env.GMAIL_OAUTH_ENABLED == 'true' || env.GMAIL_OAUTH_CLIENT_ID != '' || env.GMAIL_OAUTH_CALLBACK_URL != '' }}");
     const policy = JSON.stringify({ bindings: access ? [{ role: 'roles/secretmanager.secretAccessor',
       members: ['serviceAccount:fixture'], ...(conditional ? { condition: { expression: 'false' } } : {}) }] : [] });
     const result = execute(`gcloud() {

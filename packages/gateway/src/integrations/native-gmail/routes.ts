@@ -1,3 +1,4 @@
+import { createNativeGmailDisconnectRoutes } from './disconnect-routes.js';
 import { createHash } from 'node:crypto';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { Hono, type Context } from 'hono';
@@ -30,7 +31,7 @@ export function createNativeGmailRoutes(options: {
   resolveUserId(c: Context): Promise<string | null>;
   broadcast?: IntegrationBroadcast;
 }): Hono {
-  const app = new Hono();
+  const app = new Hono().route('/', createNativeGmailDisconnectRoutes({ db: options.db, cleanup: options.oauth, resolveUserId: options.resolveUserId, broadcast: options.broadcast }));
   const notify = (event: { type: 'integration:connected'; service: string; accountLabel: string } | { type: 'integration:disconnected'; service: string; id: string }) => {
     try { if (event.type === 'integration:connected') options.broadcast?.(event); else options.broadcast?.(event); }
     catch (error) { console.warn('[native-gmail] Connection notification failed:', error); }
@@ -83,26 +84,18 @@ export function createNativeGmailRoutes(options: {
       return c.html(success);
     } catch (error) { console.warn('[native-gmail] OAuth callback failed:', error); return c.json({ error: 'Connection unavailable. Start again from Matrix.' }, 502); }
   });
-  for (const method of ['delete', 'post'] as const) {
-    const path = method === 'delete' ? '/:id' : '/:id/refresh';
-    app[method](path, bodyLimit({ maxSize: 1024 }), async (c, next) => {
-      const userId = await options.resolveUserId(c);
-      if (!userId) return c.json({ error: 'Unauthorized' }, 401);
-      const id = Id.safeParse(c.req.param('id')); if (!id.success) return c.json({ error: 'Invalid ID' }, 400);
-      const row = await options.db.getConnectedService(id.data);
-      if (!row || !isNativeGmailAccount(row.pipedream_account_id)) return next();
-      if (row.user_id !== userId) return c.json({ error: 'Forbidden' }, 403);
-      try {
-        if (method === 'delete') {
-          if (!await options.oauth.revoke({ userId, connectionId: id.data })) return c.json({ error: 'Not found' }, 404);
-          notify({ type: 'integration:disconnected', service: 'gmail', id: id.data });
-          return c.json({ ok: true });
-        }
-        await options.oauth.refresh({ userId, connectionId: id.data });
-        return c.json({ id: id.data, service: 'gmail', status: 'active' });
-      } catch (error) { console.warn('[native-gmail] Account lifecycle failed:', error); return c.json({ error: 'Connection unavailable' }, 502); }
-    });
-  }
+  app.post('/:id/refresh', bodyLimit({ maxSize: 1024 }), async (c, next) => {
+    const userId = await options.resolveUserId(c);
+    if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+    const id = Id.safeParse(c.req.param('id')); if (!id.success) return c.json({ error: 'Invalid ID' }, 400);
+    const row = await options.db.getConnectedService(id.data);
+    if (!row || !isNativeGmailAccount(row.pipedream_account_id)) return next();
+    if (row.user_id !== userId) return c.json({ error: 'Forbidden' }, 403);
+    try {
+      await options.oauth.refresh({ userId, connectionId: id.data });
+      return c.json({ id: id.data, service: 'gmail', status: 'active' });
+    } catch (error) { console.warn('[native-gmail] Account lifecycle failed:', error); return c.json({ error: 'Connection unavailable' }, 502); }
+  });
   return app;
 }
 

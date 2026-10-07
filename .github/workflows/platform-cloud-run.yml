@@ -75,7 +75,7 @@ jobs:
       MCP_OAUTH_CALLBACK_URL: ${{ vars.MCP_OAUTH_CALLBACK_URL }}
       MCP_OAUTH_CLIENT_ID: ${{ vars.MCP_OAUTH_CLIENT_ID }}
       MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: ${{ vars.MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION || '1' }}
-      # Matrix-owned Gmail consent remains off until Google registration is complete.
+      # Disable consent/mailbox calls with false; retain registration variables for grant cleanup.
       GMAIL_OAUTH_ENABLED: ${{ vars.GMAIL_OAUTH_ENABLED || 'false' }}
       GMAIL_OAUTH_CLIENT_ID: ${{ vars.GMAIL_OAUTH_CLIENT_ID }}
       GMAIL_OAUTH_CALLBACK_URL: ${{ vars.GMAIL_OAUTH_CALLBACK_URL }}
@@ -138,18 +138,25 @@ jobs:
             fi
           done
           case "${GMAIL_OAUTH_ENABLED:-false}" in
-            true)
-              if ! [[ "${GMAIL_OAUTH_CLIENT_ID:-}" =~ ^[A-Za-z0-9._-]+$ ]] || [ "${#GMAIL_OAUTH_CLIENT_ID}" -gt 512 ]; then
-                echo "Gmail OAuth requires a registered client ID." >&2
+            true|false) ;;
+            *)
+              echo "GMAIL_OAUTH_ENABLED must be true or false." >&2
+              exit 1
+              ;;
+          esac
+          # Existing grants still need revocation when consent and mailbox execution are disabled.
+          if [ "${GMAIL_OAUTH_ENABLED:-false}" = "true" ] || [ -n "${GMAIL_OAUTH_CLIENT_ID:-}" ] || [ -n "${GMAIL_OAUTH_CALLBACK_URL:-}" ]; then
+            if ! [[ "${GMAIL_OAUTH_CLIENT_ID:-}" =~ ^[A-Za-z0-9._-]+$ ]] || [ "${#GMAIL_OAUTH_CLIENT_ID}" -gt 512 ]; then
+              echo "Gmail OAuth requires a registered client ID." >&2
+              exit 1
+            fi
+            for name in GMAIL_OAUTH_CLIENT_SECRET_VERSION GMAIL_CREDENTIAL_ENCRYPTION_KEY_VERSION; do
+              if ! [[ "${!name:-}" =~ ^[1-9][0-9]{0,8}$ ]]; then
+                echo "Gmail OAuth secrets must use pinned positive numeric versions." >&2
                 exit 1
               fi
-              for name in GMAIL_OAUTH_CLIENT_SECRET_VERSION GMAIL_CREDENTIAL_ENCRYPTION_KEY_VERSION; do
-                if ! [[ "${!name:-}" =~ ^[1-9][0-9]{0,8}$ ]]; then
-                  echo "Gmail OAuth secrets must use pinned positive numeric versions." >&2
-                  exit 1
-                fi
-              done
-              node <<'NODE'
+            done
+            node <<'NODE'
           try {
             const origin = new URL(process.env.PLATFORM_PUBLIC_URL);
             const callback = new URL(process.env.GMAIL_OAUTH_CALLBACK_URL);
@@ -161,13 +168,7 @@ jobs:
             process.exit(1);
           }
           NODE
-              ;;
-            false) ;;
-            *)
-              echo "GMAIL_OAUTH_ENABLED must be true or false." >&2
-              exit 1
-              ;;
-          esac
+          fi
           # gcloud uses | as the separator so comma-separated browser origins remain one value.
           for name in CUSTOM_MCP_ENABLED MCP_OAUTH_CALLBACK_URL MCP_OAUTH_CLIENT_ID MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION MATRIX_MCP_ENABLED MATRIX_MCP_RESOURCE_URL MATRIX_MCP_OAUTH_ISSUER MATRIX_MCP_OAUTH_JWKS_URL MATRIX_MCP_ALLOWED_ORIGINS MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID MATRIX_COLLABORATION_ALLOWED_ORIGINS; do
             if [[ "${!name:-}" == *"|"* ]]; then
@@ -340,7 +341,7 @@ jobs:
           fi
 
       - name: Verify Gmail OAuth secrets
-        if: ${{ env.GMAIL_OAUTH_ENABLED == 'true' }}
+        if: ${{ env.GMAIL_OAUTH_ENABLED == 'true' || env.GMAIL_OAUTH_CLIENT_ID != '' || env.GMAIL_OAUTH_CALLBACK_URL != '' }}
         run: |
           set -euo pipefail
           # Inspect metadata only. Registration and encryption-key rotation happen out of band.
@@ -899,7 +900,7 @@ jobs:
           custom_mcp_secret_bindings=""
           gmail_env_bindings="|GMAIL_OAUTH_ENABLED=${GMAIL_OAUTH_ENABLED:-false}"
           gmail_secret_bindings=""
-          if [ "${GMAIL_OAUTH_ENABLED:-false}" = "true" ]; then
+          if [ "${GMAIL_OAUTH_ENABLED:-false}" = "true" ] || [ -n "${GMAIL_OAUTH_CLIENT_ID:-}" ] || [ -n "${GMAIL_OAUTH_CALLBACK_URL:-}" ]; then
             gmail_env_bindings="${gmail_env_bindings}|GMAIL_OAUTH_CLIENT_ID=${GMAIL_OAUTH_CLIENT_ID}|GMAIL_OAUTH_CALLBACK_URL=${GMAIL_OAUTH_CALLBACK_URL}"
             gmail_secret_bindings=",GMAIL_OAUTH_CLIENT_SECRET=gmail-oauth-client-secret:${GMAIL_OAUTH_CLIENT_SECRET_VERSION},GMAIL_CREDENTIAL_ENCRYPTION_KEY=gmail-credential-encryption-key:${GMAIL_CREDENTIAL_ENCRYPTION_KEY_VERSION}"
           fi

@@ -132,6 +132,12 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
     }
     const deviceReturn = normalizeDeviceReturnPath(url.searchParams.get('device_return'));
     if (deviceReturn) params.set('device_return', deviceReturn);
+    // Consent survives browser sign-in only on its exact launcher route.
+    const states = url.searchParams.getAll('state');
+    if (path === '/auth/gmail' && !/[\x00-\x1f\x7f]/.test(rawUrl)
+      && states.length === 1 && /^[A-Za-z0-9_-]{43}$/.test(states[0])) {
+      params.set('state', states[0]);
+    }
     const query = params.toString();
     return query ? `${path}?${query}` : path;
   } catch (err: unknown) {
@@ -145,7 +151,7 @@ export function normalizePostAuthRedirectPath(value: string | undefined): string
   try {
     const url = new URL(value, 'https://app.matrix-os.com');
     if (url.origin !== 'https://app.matrix-os.com') return '/';
-    return buildPostAuthRedirectPath(url.toString());
+    return buildPostAuthRedirectPath(value);
   } catch (err: unknown) {
     console.warn('[platform] Failed to normalize app-session redirect:', err instanceof Error ? err.message : String(err));
     return '/';
