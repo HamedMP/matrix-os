@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import { SLACK_INSTALL_URL } from '@matrix-os/contracts/slack-bridge';
 
-const style: CSSProperties = {display:'inline-flex',alignItems:'center',justifyContent:'center',gap:10,minHeight:44,padding:'10px 18px',border:'1px solid var(--matrix-border)',borderRadius:'var(--matrix-radius-md, 10px)',background:'var(--matrix-card)',color:'var(--matrix-fg)',fontWeight:600,textDecoration:'none',fontSize:14,maxWidth:'100%',cursor:'pointer'};
+const style: CSSProperties = {display:'inline-flex',alignItems:'center',justifyContent:'center',gap:10,minHeight:44,padding:'10px 18px',border:'1px solid var(--matrix-border, var(--border-subtle, var(--border)))',borderRadius:'var(--matrix-radius-md, 10px)',background:'var(--matrix-card, var(--bg-surface, var(--card)))',color:'var(--matrix-fg, var(--text-primary, var(--foreground)))',fontWeight:600,textDecoration:'none',fontSize:14,maxWidth:'100%',cursor:'pointer'};
 export function SlackMark() {
   return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
     <rect x="10" y="1" width="4" height="9" rx="2"/><rect x="15" y="10" width="9" height="4" rx="2"/>
