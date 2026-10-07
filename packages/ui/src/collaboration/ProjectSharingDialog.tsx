@@ -79,6 +79,16 @@ export function ProjectSharingDialog({
     readiness: item.compatibility,
   }));
 
+  const refreshAfterAccessChange = async () => {
+    const result = await onAccessChanged?.();
+    if (scope.lifecycle === "shared" || scope.lifecycle === "archived") return;
+    const parsed = CollaborationProjectInventorySchema.safeParse(result);
+    const refreshed = parsed.success
+      ? parsed.data
+      : CollaborationProjectInventorySchema.parse(await refreshInventory());
+    if (alive.current) setCurrentInventory(refreshed);
+  };
+
   const confirm = async () => {
     if (!presentation?.canConfirm || pending || confirmed || !currentInventory) return;
     setPending(true);
@@ -138,7 +148,7 @@ export function ProjectSharingDialog({
 
     {scope.organizationId ? <ProjectAccessManager api={api} scope={scope}
       organizationName={organizationName}
-      onChanged={onAccessChanged} /> : null}
+      onChanged={refreshAfterAccessChange} /> : null}
 
     {currentInventory && !published ? <section aria-labelledby="project-contents-heading">
       <h3 id="project-contents-heading" className="font-medium">Complete project inventory</h3>

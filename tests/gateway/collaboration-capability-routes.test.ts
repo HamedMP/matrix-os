@@ -15,6 +15,7 @@ import { createCollaborationTestDatabase, type CollaborationTestDatabase } from 
 
 const ownerId = "user_capability_owner";
 const memberId = "user_capability_member";
+const secondMemberId = "user_capability_second_member";
 const outsiderId = "user_capability_outsider";
 const organizationId = "org_capability_routes";
 const scopeId = "10000000-0000-4000-8000-00000000a915";
@@ -145,13 +146,19 @@ describe("collaboration capability HTTP routes", () => {
     const directGrantId = randomUUID();
     await fixture.db.insertInto("collaboration_grants").values([{
       id: organizationGrantId, scope_id: scopeId, organization_id: organizationId,
-      audience_kind: "organization", audience_actor_id: null, preset: "contributor", state: "active",
+      audience_kind: "organization", audience_actor_id: null, preset: "viewer", state: "active",
       policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
       created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
     }, {
       id: directGrantId, scope_id: scopeId, organization_id: organizationId,
-      audience_kind: "member", audience_actor_id: memberId, preset: "viewer", state: "pending",
+      audience_kind: "member", audience_actor_id: memberId, preset: "contributor", state: "pending",
       policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }, {
+      id: randomUUID(), scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "member", audience_actor_id: secondMemberId, preset: "contributor", state: "active",
+      policy_version: "v1", source_id: null, legacy_ceiling: null,
+      expires_at: new Date(now.getTime() - 1_000), revision: 1,
       created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
     }]).execute();
     await fixture.db.insertInto("collaboration_grant_activations").values({
@@ -164,9 +171,9 @@ describe("collaboration capability HTTP routes", () => {
     expect(response.status).toBe(200);
     expect(CollaborationProjectAccessPresentationSchema.parse(await response.json())).toMatchObject({
       owner: { actorId: ownerId },
-      generalAccess: { grantId: organizationGrantId, preset: "contributor" },
-      people: [{ actor: { actorId: memberId }, status: "active", effectivePreset: "contributor", inherited: true,
-        directGrant: { grantId: directGrantId, preset: "viewer" } }],
+      generalAccess: { grantId: organizationGrantId, preset: "viewer" },
+      people: [{ actor: { actorId: memberId }, status: "active", effectivePreset: "viewer", inherited: true,
+        directGrant: { grantId: directGrantId, preset: "contributor" } }],
     });
     expect((await signed({ actorId: memberId, method: "GET", path })).status).toBe(403);
   });

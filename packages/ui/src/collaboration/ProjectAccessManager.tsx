@@ -84,8 +84,11 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
         listed,
       );
     if (alive.current) {
-      const grantedActors = new Set(next.people.map((person) => person.actor.actorId));
-      const selectable = listed.filter((member) => member.actorId !== scope.ownerId && !grantedActors.has(member.actorId));
+      const directlyGrantedActors = new Set(next.people
+        .filter((person) => person.directGrant)
+        .map((person) => person.actor.actorId));
+      const selectable = listed.filter((member) => member.actorId !== scope.ownerId
+        && !directlyGrantedActors.has(member.actorId));
       setOrganizationDisplayName(displayName);
       setOrganizationMembers(listed);
       setAccess(next);
@@ -96,15 +99,24 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
     return next;
   }, [api, base, organizationName, scope.lifecycle, scope.organizationId, scope.ownerId]);
 
-  useEffect(() => {
-    alive.current = true;
+  const reload = useCallback(async () => {
     setLoading(true);
-    void load().catch((failure: unknown) => {
+    setError(false);
+    try {
+      await load();
+    } catch (failure: unknown) {
       console.warn("[project-collaboration] access load failed", failure instanceof Error ? failure.name : "UnknownError");
       if (alive.current) setError(true);
-    }).finally(() => { if (alive.current) setLoading(false); });
-    return () => { alive.current = false; };
+    } finally {
+      if (alive.current) setLoading(false);
+    }
   }, [load]);
+
+  useEffect(() => {
+    alive.current = true;
+    void reload();
+    return () => { alive.current = false; };
+  }, [reload]);
 
   const mutate = async (operation: (current: CollaborationProjectAccessPresentation) => Promise<unknown>) => {
     if (!access || pending) return;
@@ -156,8 +168,11 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
   });
 
   const availableMembers = useMemo(() => {
-    const granted = new Set(access?.people.map((person) => person.actor.actorId) ?? []);
-    return organizationMembers.filter((member) => member.actorId !== scope.ownerId && !granted.has(member.actorId));
+    const directlyGranted = new Set(access?.people
+      .filter((person) => person.directGrant)
+      .map((person) => person.actor.actorId) ?? []);
+    return organizationMembers.filter((member) => member.actorId !== scope.ownerId
+      && !directlyGranted.has(member.actorId));
   }, [access?.people, organizationMembers, scope.ownerId]);
 
   return <section aria-labelledby="project-access-heading" className="grid gap-4">
@@ -168,7 +183,12 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
       </p>
     </div>
     {loading ? <p role="status" className="text-sm">Loading access…</p> : null}
-    {error ? <p role="alert" className="rounded-lg border p-3 text-sm">Access is unavailable. Refresh and try again.</p> : null}
+    {error ? <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
+      <span>Access is unavailable. Refresh and try again.</span>
+      <button type="button" className={buttonClass} disabled={loading || pending} onClick={() => { void reload(); }}>
+        Refresh access
+      </button>
+    </div> : null}
     {access ? <>
       <div className="flex items-center gap-3 rounded-xl border px-3 py-2">
         <span aria-hidden className="grid size-8 place-items-center rounded-full bg-[var(--bg-hover)] text-xs font-semibold">

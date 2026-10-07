@@ -6,6 +6,7 @@ import {
   CollaborationPatchGrantRequestSchema,
   CollaborationProjectAccessPresentationSchema,
   CollaborationReadinessSchema,
+  type CollaborationProjectAccessPresentation,
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import { z } from "zod/v4";
@@ -75,37 +76,48 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
     await grantManager(options, c, new Uint8Array(), "manage_members", scopeId);
     const scope = await requireScope(options.repository, scopeId);
     if (scope.kind !== "project") throw new CollaborationAuthorizationError("not_found", "Project scope not found");
-    const { grants } = requireCapabilities(options);
-    const live = (await grants.listGrants(scopeId)).filter((grant) => grant.state === "active" || grant.state === "pending");
+    const { grants, evaluator } = requireCapabilities(options);
+    const now = Date.now();
+    const live = (await grants.listGrants(scopeId)).filter((grant) =>
+      (grant.state === "active" || grant.state === "pending")
+      && (grant.expiresAt === undefined || Date.parse(grant.expiresAt) > now));
     const organizationGrant = live.find((grant) => grant.audience.kind === "organization") ?? null;
     const activations = organizationGrant ? (await grants.listActivations(organizationGrant.grantId))
       .filter((activation) => activation.state === "active") : [];
     const byActor = new Map<string, {
-      status: "pending" | "active";
-      effectivePreset: "viewer" | "contributor";
-      inherited: boolean;
-      directGrant?: { grantId: string; preset: "viewer" | "contributor"; revision: string };
+      organizationActivated: boolean;
+      directGrant?: GrantRecord;
     }>();
     for (const activation of activations) {
       if (activation.actorId === scope.ownerId || !organizationGrant) continue;
-      byActor.set(activation.actorId, {
-        status: "active", effectivePreset: organizationGrant.preset, inherited: true,
-      });
+      byActor.set(activation.actorId, { organizationActivated: true });
     }
     for (const grant of live) {
       if (grant.audience.kind !== "member" || grant.audience.actorId === scope.ownerId) continue;
-      const inherited = byActor.get(grant.audience.actorId);
-      const effectivePreset = inherited?.effectivePreset === "contributor" || grant.preset === "contributor"
-        ? "contributor" : "viewer";
       byActor.set(grant.audience.actorId, {
-        status: inherited?.status === "active" || grant.state === "active" ? "active" : "pending",
-        effectivePreset,
-        inherited: Boolean(inherited && (inherited.effectivePreset === "contributor" || grant.preset === "viewer")),
-        directGrant: { grantId: grant.grantId, preset: grant.preset, revision: String(grant.grantRevision) },
+        organizationActivated: byActor.get(grant.audience.actorId)?.organizationActivated ?? false,
+        directGrant: grant,
       });
     }
-    const people = await Promise.all([...byActor.entries()].sort(([left], [right]) => left.localeCompare(right))
-      .map(async ([actorId, access]) => ({ actor: await options.resolveParticipant(actorId), ...access })));
+    const people: CollaborationProjectAccessPresentation["people"] = [];
+    for (const [actorId, candidate] of [...byActor.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+      const effective = await evaluator.evaluateEffectiveAccess({ scopeId, actorId });
+      if (effective.preset === null && !candidate.directGrant) continue;
+      const directIsEffective = candidate.directGrant?.state === "active" && effective.preset !== null;
+      const inherited = candidate.organizationActivated && effective.preset !== null
+        && (!directIsEffective || organizationGrant?.preset === "contributor" || candidate.directGrant?.preset === "viewer");
+      people.push({
+        actor: await options.resolveParticipant(actorId),
+        status: effective.preset === null ? "pending" as const : "active" as const,
+        effectivePreset: effective.preset ?? candidate.directGrant?.preset ?? "viewer",
+        inherited,
+        ...(candidate.directGrant ? { directGrant: {
+          grantId: candidate.directGrant.grantId,
+          preset: candidate.directGrant.preset,
+          revision: String(candidate.directGrant.grantRevision),
+        } } : {}),
+      });
+    }
     return c.json(CollaborationProjectAccessPresentationSchema.parse({
       scopeId,
       revision: String(scope.revision),

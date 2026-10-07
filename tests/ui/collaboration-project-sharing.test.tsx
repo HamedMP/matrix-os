@@ -250,6 +250,46 @@ describe("whole-project sharing confirmation", () => {
     expect(await screen.findByText(/Preparing the shared project/i)).toBeVisible();
   });
 
+  it("uses the refreshed inventory revision after an access edit", async () => {
+    const privateScope: CollaborationScope = { ...scope, organizationId: "org_matrix_team" };
+    const first = completeInventory();
+    const refreshed = { ...completeInventory(), scopeRevision: "5", inventoryToken: "d".repeat(64) };
+    let preset: "viewer" | "contributor" = "contributor";
+    let grantRevision = "1";
+    const api = apiFixture();
+    api.get.mockImplementation(async (path: string) => {
+      if (path.endsWith("/members")) return { members: [] };
+      if (path.endsWith("/grants")) return [{ ...defaultOrganizationGrant(), preset, revision: grantRevision }];
+      return privateScope;
+    });
+    api.patch.mockImplementation(async (_path: string, body: { preset: "viewer" | "contributor" }) => {
+      preset = body.preset;
+      grantRevision = "2";
+      return {};
+    });
+    api.post.mockImplementation(async (path: string) => {
+      if (path.endsWith("/policy/preflight")) return undefined;
+      if (path.endsWith("/project/confirm")) return {
+        id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id, status: "prepared", inventoryRevision: "7",
+        createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z",
+      };
+      throw new Error("unexpected route");
+    });
+    const onAccessChanged = vi.fn(async () => refreshed);
+    render(<ProjectSharingDialog api={api} scope={privateScope} projectName="Launch" organizationName="Matrix Team" inventory={first}
+      refreshInventory={async () => refreshed} onAccessChanged={onAccessChanged} onClose={vi.fn()} />);
+
+    const general = await screen.findByRole("combobox", { name: "General access" });
+    fireEvent.change(general, { target: { value: "viewer" } });
+    await waitFor(() => expect(onAccessChanged).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Share whole project" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/project/confirm`,
+      expect.objectContaining({ expectedScopeRevision: "5", inventoryToken: "d".repeat(64) }),
+    ));
+  });
+
   it("waits for publication after confirming, then opens collaborators on the shared project", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

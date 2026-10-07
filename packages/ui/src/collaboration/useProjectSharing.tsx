@@ -81,7 +81,9 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
     const base = `/api/collaboration/scopes/${encodeURIComponent(currentScope.id)}`;
     const live = GrantsSchema.parse(await api.get(`${base}/grants`))
       .filter((grant) => grant.state === "active" || grant.state === "pending");
-    if (live.some((grant) => grant.audience.kind === "organization")) return currentScope;
+    // Defaults apply only to a genuinely untouched scope. Any live grant means
+    // the owner already selected an audience, including Restricted + direct people.
+    if (live.length > 0) return currentScope;
     await api.post(`${base}/grants`, {
       clientRequestId: crypto.randomUUID(), expectedRevision: currentScope.revision,
       audience: { kind: "organization" }, preset: "contributor",
@@ -118,8 +120,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
       const preflight = CollaborationScopePreflightResponseSchema.parse(preflightValue);
       if (!preflight.eligible || !preflight.confirmationToken) throw new Error("Project unavailable");
       if (preflight.existingScopeId) {
-        let refreshed = await refreshScope(preflight.existingScopeId);
-        if (refreshed.lifecycle === "private") refreshed = await ensureDefaultGrant(refreshed);
+        const refreshed = await refreshScope(preflight.existingScopeId);
         if (refreshed.lifecycle !== "shared" && refreshed.lifecycle !== "archived") await refreshInventory(refreshed.id);
         if (alive.current) setSurface("dialog");
         return;
