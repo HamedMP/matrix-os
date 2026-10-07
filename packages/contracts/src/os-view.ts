@@ -122,7 +122,7 @@ export const OS_VIEW_PLACEABLE_BUILTIN_APPS = Object.freeze([
   { appId: "editor", name: "Editor", path: "__editor__" },
   { appId: "vscode", name: "VS Code", path: "__vscode__" },
   { appId: "settings", name: "Settings", path: "__settings__" },
-  { appId: "plugins", name: "Plugins", path: "__plugins__" },
+  { appId: "plugins", name: "Connect Apps", path: "__plugins__" },
   { appId: "browser", name: "Browser", path: "__browser__" },
   { appId: "notes", name: "Notes", path: "apps/notes/index.html" },
   { appId: "whiteboard", name: "Whiteboard", path: "apps/whiteboard/index.html" },

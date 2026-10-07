@@ -30,7 +30,7 @@ import { ChatContextMenu } from "@/components/ChatContextMenu";
 const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
   { route: "files", label: "Files", icon: Folder01Icon },
   { route: "terminal", label: "Terminal", icon: ComputerTerminal01Icon },
-  { route: "integrations", label: "Integrations", icon: PuzzleIcon },
+  { route: "integrations", label: "Connect Apps", icon: PuzzleIcon },
   { route: "apps", label: "Apps", icon: GridViewIcon },
   { route: "shared", label: "Shared with me", icon: UserMultiple02Icon },
 ];

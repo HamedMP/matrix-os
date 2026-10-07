@@ -181,7 +181,7 @@ describe("authenticated drawer layout", () => {
     expect(screen.queryByLabelText("Switch computer")).toBeNull();
     expect(screen.getByLabelText("Files")).toBeTruthy();
     expect(screen.getByLabelText("Terminal")).toBeTruthy();
-    expect(screen.getByLabelText("Integrations")).toBeTruthy();
+    expect(screen.getByLabelText("Connect Apps")).toBeTruthy();
     expect(screen.getByLabelText("Apps")).toBeTruthy();
     expect(screen.getByLabelText("Shared with me, 3 pending invitations")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
@@ -220,7 +220,7 @@ describe("authenticated drawer layout", () => {
         } as unknown as React.ComponentProps<typeof DrawerContent>)}
       />,
     );
-    for (const label of ["Files", "Terminal", "Integrations", "Apps", "Shared with me, 3 pending invitations"]) {
+    for (const label of ["Files", "Terminal", "Connect Apps", "Apps", "Shared with me, 3 pending invitations"]) {
       // The button stacks its vertical Spacers around the row. Laid out as a
       // row itself, those Spacers become flex items on either side of the
       // label and `space-between` pushes the label to the center.
