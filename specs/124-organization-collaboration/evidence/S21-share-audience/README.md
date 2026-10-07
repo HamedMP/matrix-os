@@ -12,3 +12,5 @@ therefore component renders on the real shell, not a live two-account journey.
 | `web-shared-with-you-pending.png` | #2144 | Shared with me with two unopened pending grants (one addressed to this member, one organization-wide), both labelled "Shared with you" |
 | `web-mobile-shared-with-you-pending.png` | #2144 | The same at a 390×844 phone viewport |
 | `web-private-project-choose-access.png` | #2145 | Manage collaborators on a private project: the working picker ("Choose who gets access"), the pre-share copy, and two member grants marked "Starts when shared" (members shown by id because #2146 is not in this branch) |
+| `web-private-project-member-names.png` | #2146 | The private-project picker with members shown as "Name · email" (the selected audience and both grant rows) |
+| `web-shared-project-member-names.png` | #2146 | Manage collaborators on a shared project: names in the picker, and grant rows marked "Active" and "Pending until opened" |

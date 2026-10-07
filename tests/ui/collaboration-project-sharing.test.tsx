@@ -153,7 +153,7 @@ describe("whole-project sharing confirmation", () => {
     expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
       expectedRevision: "4", audience: { kind: "member", actorId: "user_ada" }, preset: "viewer",
     }));
-    expect(await screen.findByRole("combobox", { name: "Preset for user_ada" })).toBeVisible();
+    expect(await screen.findByRole("combobox", { name: "Preset for Ada" })).toBeVisible();
     // Every grant, including an organization grant stored active, reads as starting at share time.
     expect(screen.getAllByText("Starts when shared")).toHaveLength(2);
     expect(screen.queryByText("Active")).toBeNull();
