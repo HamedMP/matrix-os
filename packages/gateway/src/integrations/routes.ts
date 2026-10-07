@@ -154,6 +154,7 @@ export interface IntegrationRoutesOpts {
       service: ServiceDefinition;
       actionId: string;
       params?: Record<string, unknown>;
+      connectionId?: string;
     }): Promise<unknown>;
     disconnect(userId: string, connectionId: string): Promise<boolean>;
   };
@@ -163,7 +164,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
-  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId }));
+  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 
   // Pending labels from /connect that need to survive the OAuth round-trip.
@@ -512,7 +513,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: `Unknown service: ${service}` }, 400);
     }
 
-    if (def.connectorKind === "mcp_preset") {
+    if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Service connection unavailable" }, 503);
       try {
         const result = await mcpPresetBroker.connect(uid, def);
@@ -600,7 +601,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }, 400);
     }
 
-    if (def.connectorKind === "mcp_preset") {
+    if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Integration service unavailable" }, 503);
       try {
         const data = await mcpPresetBroker.call({

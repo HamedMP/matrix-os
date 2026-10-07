@@ -12,7 +12,12 @@
     "./codex-chat-import-client": "./src/codex-chat-import-client.ts",
     "./local-chat-import": "./src/local-chat-import/index.ts",
     "./bots": "./src/bots/index.ts",
-    "./integration-marketplace": "./src/integration-marketplace.ts"
+    "./integration-marketplace": "./src/integration-marketplace.ts",
+    "./file-upload": "./src/file-upload.ts",
+    "./managed-integrations": "./src/managed-integrations.ts",
+    "./bokio-integration": "./src/bokio-integration.ts",
+    "./selected-import-preview": "./src/selected-import-preview.ts",
+    "./data-imports": "./src/data-imports.ts"
   },
   "imports": {
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
@@ -27,6 +32,7 @@
     "#sync": "./src/sync.ts",
     "#app-ai": "./src/app-ai.ts",
     "#file-download": "./src/file-download.ts",
+    "#file-upload": "./src/file-upload.ts",
     "#release-alignment": "./src/release-alignment.ts",
     "#runtime-compatibility": "./src/runtime-compatibility.ts",
     "#chat-message-wire": "./src/chat-message-wire.ts",

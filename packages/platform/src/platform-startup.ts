@@ -48,6 +48,12 @@ import {
   createGranolaPresetBroker,
   type ManagedMcpPresetBroker,
 } from './granola-preset-broker.js';
+import { MATRIX_OAUTH_CLIENT_METADATA, MATRIX_OAUTH_CLIENT_METADATA_URL } from './oauth-client-metadata.js';
+import { createManagedOAuthPresetBroker } from './managed-oauth-preset-broker.js';
+import { createManagedPresetRouter } from './managed-preset-router.js';
+import { BokioOAuthManager, type BokioCredentialStore, type BokioCredentialCrypto } from './bokio-oauth.js';
+import { createBokioPresetBroker } from './bokio-preset-broker.js';
+import { createManagedPresetLifecycle } from './managed-preset-lifecycle.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import {
@@ -97,7 +103,7 @@ export function parseGoldenSnapshotReconciliationInterval(raw: string | undefine
   return value;
 }
 
-interface GatewayPlatformDb {
+interface GatewayPlatformDb extends BokioCredentialStore {
   migrate(): Promise<void>;
   destroy(): Promise<void>;
   sweepCustomMcpApprovals(now: Date): Promise<number>;
@@ -120,21 +126,22 @@ interface GatewayCustomMcpModules {
       shutdown(): Promise<void>;
       getPreset(userId: string, presetId: string): Promise<any>;
       ensurePreset(input: { userId: string; presetId: string; name: string; url: string }): Promise<any>;
-      activatePreset(input: { userId: string; presetId: string; allowedTools: readonly string[]; requiredTools?: readonly string[] }): Promise<any>;
+      activatePreset(input: { userId: string; presetId: string; allowedTools: readonly string[]; requiredTools?: readonly string[]; expectedRevision?: number }): Promise<any>;
       callSelectedTool(input: { userId: string; serverId: string; toolName: string; arguments?: Record<string, unknown>; approvalGranted: boolean }): Promise<unknown>;
+      callManagedPresetTool(input: { userId: string; serverId: string; presetId: string; toolName: string; arguments?: Record<string, unknown> }): Promise<unknown>;
       remove(userId: string, serverId: string): Promise<void>;
       removeForAccountDeletion(userId: string, serverId: string): Promise<void>;
     };
   };
   oauth: {
     CustomMcpOAuthManager: new (options: Record<string, unknown>) => {
-      start(userId: string, serverId: string): Promise<string>;
-      complete(userId: string, state: string, code: string): Promise<{ serverId: string }>;
+      start(userId: string, serverId: string, options?: { scopes?: readonly string[] }): Promise<string>;
+      complete(state: string, code: string): Promise<{ serverId: string }>;
       resolveAuthorization(userId: string, row: unknown): Promise<string | undefined>;
       revoke(credential: unknown): Promise<void>;
     };
   };
-  crypto: { parseCustomMcpEncryptionKey(value?: string): Buffer; decryptCustomMcpOAuthState(state:string,key:Buffer):unknown };
+  crypto: BokioCredentialCrypto & { parseCustomMcpEncryptionKey(value?: string): Buffer };
   routes: {
     createCustomMcpRoutes(options: Record<string, unknown>): Hono;
   };
@@ -594,13 +601,26 @@ async function startPlatformServerWithCleanup(
       dispatcher: customerVpsProxyDispatcher,
       logError: logPlatformRouteError,
     });
-    let oauthManager: InstanceType<GatewayCustomMcpModules['oauth']['CustomMcpOAuthManager']>;
+    const oauthManager = new oauthModule.CustomMcpOAuthManager({
+      db: customDb,
+      encryptionKey,
+      clientId: oauthClientId,
+      redirectUri: oauthRedirectUri,
+      ...(MATRIX_OAUTH_CLIENT_METADATA.redirect_uris.includes(oauthRedirectUri) ? { clientMetadataUrl: MATRIX_OAUTH_CLIENT_METADATA_URL } : {}),
+    });
+    const bokioOAuth = new BokioOAuthManager({ db: customDb, encryptionKey, credentialCrypto: cryptoModule,
+      clientId: process.env.BOKIO_CLIENT_ID, clientSecret: process.env.BOKIO_CLIENT_SECRET,
+      redirectUri: process.env.BOKIO_OAUTH_REDIRECT_URI ?? oauthRedirectUri });
+    const bokioBroker = createBokioPresetBroker({ db: customDb, oauth: bokioOAuth });
+    const managedLifecycle = createManagedPresetLifecycle({ db: customDb, oauth: oauthManager,
+      bokioOAuth, bokioBroker, activatePreset: input => broker.activatePreset(input), decodeState: state => cryptoModule.decryptCustomMcpOAuthState<{ kind?: unknown; userId?: unknown }>(state, encryptionKey) });
     const broker = new brokerModule.CustomMcpBroker({
       db: customDb,
       encryptionKey,
       projection,
       resolveOAuthAuthorization: (userId: string, row: unknown) => oauthManager.resolveAuthorization(userId, row),
       revokeOAuth: (credential: unknown) => oauthManager.revoke(credential),
+      removeManagedPreset: managedLifecycle.removeManagedPreset,
     });
     let customMcpClosed = false;
     customMcpShutdown = async () => {
@@ -614,17 +634,17 @@ async function startPlatformServerWithCleanup(
       }
     };
     registerCustomMcpStartupCleanup(customMcpShutdown);
-    oauthManager = new oauthModule.CustomMcpOAuthManager({
-      db: customDb,
-      encryptionKey,
-      clientId: oauthClientId,
-      redirectUri: oauthRedirectUri,
-    });
     deletionCustomMcp = { remove: (userId,serverId) => broker.removeForAccountDeletion(userId,serverId) };
-    managedMcpPresetBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
+    const granolaBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
+    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker, oauth: oauthManager });
+    managedMcpPresetBroker = createManagedPresetRouter({
+      granola: granolaBroker, posthog_oauth: managedOAuthBroker, loops: managedOAuthBroker, lemlist: managedOAuthBroker,
+      bokio: bokioBroker,
+    });
+    const managedOAuthFlow = managedLifecycle.oauth;
     const publicCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
-      oauth: oauthManager,
+      oauth: managedOAuthFlow,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
         c.get('platformUserId') as string | undefined,
         c.get('platformHandle') as string | undefined,
@@ -640,7 +660,7 @@ async function startPlatformServerWithCleanup(
     customMcpRoutes.route('/',publicCustomMcpRoutes);
     internalCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
-      oauth: oauthManager,
+      oauth: managedOAuthFlow,
       allowToolCalls: true,
       resolveActorId: (c: Context) => c.get('internalContainerClerkUserId') as string | null,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(

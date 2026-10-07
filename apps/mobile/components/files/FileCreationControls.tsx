@@ -16,9 +16,10 @@ import {
 } from "@/components/ui";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 import { isValidNewFileEntryName } from "@/lib/requests";
+import { SelectedDeviceUploadPanel } from "./SelectedDeviceUploadPanel";
 
 type CreationType = "folder" | "file";
-type CreationScreen = "options" | "name";
+type CreationScreen = "options" | "name" | "upload";
 
 export function FileCreationControls({ currentPath }: { currentPath: string }) {
   const [isCreateSheetVisible, setIsCreateSheetVisible] = useState(false);
@@ -27,7 +28,7 @@ export function FileCreationControls({ currentPath }: { currentPath: string }) {
   const [isCreating, setIsCreating] = useState(false);
   const [nextName, setNextName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
-  const { entries, createFolder, createFile } = useComputerDirectory(currentPath);
+  const { computer, entries, createFolder, createFile } = useComputerDirectory(currentPath);
 
   const noun = creationType === "folder" ? "folder" : "file";
 
@@ -45,7 +46,14 @@ export function FileCreationControls({ currentPath }: { currentPath: string }) {
         testID="files-create-sheet"
       >
         {sheetScreen === "options" ? (
-          <CreationOptions onSelect={openNameScreen} />
+          <CreationOptions onSelect={openNameScreen} onUpload={computer ? () => setSheetScreen("upload") : undefined} />
+        ) : sheetScreen === "upload" && computer ? (
+          <>
+            <IconButton accessibilityLabel="Back to creation options" icon={ArrowLeft01Icon}
+              iconSize={22} buttonSize={32} onPress={openOptionsScreen} />
+            {isCreateSheetVisible ? <SelectedDeviceUploadPanel currentPath={currentPath} computer={computer} /> : null}
+            <Spacer size="4xl" />
+          </>
         ) : (
           <NameCreationScreen
             noun={noun}
@@ -121,7 +129,7 @@ export function FileCreationControls({ currentPath }: { currentPath: string }) {
   }
 }
 
-function CreationOptions({ onSelect }: { onSelect: (type: CreationType) => void }) {
+function CreationOptions({ onSelect, onUpload }: { onSelect: (type: CreationType) => void; onUpload?: () => void }) {
   return (
     <>
       <View style={styles.nameHeader}>
@@ -134,6 +142,10 @@ function CreationOptions({ onSelect }: { onSelect: (type: CreationType) => void 
       <CreateOption label="New folder" onPress={() => onSelect("folder")} />
       <Divider testID="files-create-divider" />
       <CreateOption label="New file" onPress={() => onSelect("file")} />
+      {onUpload ? <>
+        <Divider testID="files-create-divider" />
+        <CreateOption label="Upload from device" onPress={onUpload} />
+      </> : null}
       <Spacer size="4xl" />
     </>
   );

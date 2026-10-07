@@ -172,6 +172,16 @@ describe("file browser modal stack", () => {
     expect(NativeStyleSheet.flatten(screen.getByTestId("file-preview-screen").props.style).flex).toBe(1);
   });
 
+  it("shows the same inert table summary and retains raw selected file content", () => {
+    mockParams.path = "imports/bank.csv";
+    mockParams.name = "bank.csv";
+    const source = "Name,Value\nAlice,=1+2";
+    mockUseComputerFilePreview.mockReturnValue({ preview: { kind: "text", content: source }, isPending: false, isError: false, refresh: mockRefreshFilePreview });
+    render(<FileDetailScreen />);
+    expect(screen.getByText("Table preview · 1 row\nName | Value\nAlice | =1+2")).toBeTruthy();
+    expect(screen.getByTestId("file-preview-text").props.children).toBe(source);
+  });
+
   it("shows a centered empty-file state for a zero-length text file", () => {
     mockParams.name = "empty.txt";
     mockParams.path = "Projects/empty.txt";

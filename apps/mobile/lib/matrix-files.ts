@@ -14,7 +14,7 @@ const MAX_PROJECTS = 500;
 /** Default preview cap for owner file reads (~512KB). */
 export const DEFAULT_TEXT_PREVIEW_BYTES = 512 * 1024;
 
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "heic", "heif"]);
 
 // Bounded projections of the gateway file-browser shapes. Unknown keys are
 // stripped by default so newer gateways stay forward-compatible, while caps keep

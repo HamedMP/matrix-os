@@ -9,7 +9,7 @@ function fixture(withEndpoint = true) {
   const key = Buffer.alloc(32);
   const credential = { oauth: { refreshToken: 'private_refresh', clientId: 'client',
     ...(withEndpoint ? { revocationEndpoint: 'https://oauth.example.test/revoke' } : {}) } };
-  const row = { id: serverId, auth_mode: 'oauth', revision: 1, enabled: true, status: 'ready',
+  const row = { id: serverId, user_id: userId, auth_mode: 'oauth', revision: 1, enabled: true, status: 'ready',
     encrypted_credentials: encryptCustomMcpCredential(credential, key, { userId, serverId }) };
   const db = {
     getCustomMcpServerForBroker: vi.fn(async (_id: string, owner: string) => owner === userId ? row : null),
@@ -18,7 +18,7 @@ function fixture(withEndpoint = true) {
       Object.assign(row, patch, { revision: row.revision + 1 });
       return { ...row };
     }),
-    deleteCustomMcpServer: vi.fn(async () => true),
+    deleteCustomMcpServerIfRevision: vi.fn(async (_id: string, _owner: string, revision: number) => revision === row.revision),
   };
   const projection = { upsert: vi.fn(), remove: vi.fn(async () => { throw Error('runtime destroyed'); }) };
   const revokeOAuth = vi.fn(async () => undefined);
@@ -32,7 +32,7 @@ describe('Custom MCP account deletion revocation', () => {
     await f.broker.removeForAccountDeletion(f.userId, f.serverId);
     expect(f.revokeOAuth).toHaveBeenCalledWith(f.credential);
     expect(f.projection.remove).not.toHaveBeenCalled();
-    expect(f.db.deleteCustomMcpServer).toHaveBeenCalledWith(f.serverId, f.userId);
+    expect(f.db.deleteCustomMcpServerIfRevision).toHaveBeenCalledWith(f.serverId, f.userId, 2);
     await expect(f.broker.removeForAccountDeletion('foreign_owner', f.serverId)).rejects.toMatchObject({ code: 'not_found' });
   });
 
@@ -40,19 +40,19 @@ describe('Custom MCP account deletion revocation', () => {
     const f = fixture();
     f.revokeOAuth.mockRejectedValueOnce(Error('remote unavailable'));
     await expect(f.broker.removeForAccountDeletion(f.userId, f.serverId)).rejects.toMatchObject({ code: 'action_required' });
-    expect(f.db.deleteCustomMcpServer).not.toHaveBeenCalled();
+    expect(f.db.deleteCustomMcpServerIfRevision).not.toHaveBeenCalled();
     expect(f.row.status).toBe('action_required');
     expect(f.row.encrypted_credentials).toEqual(expect.any(String));
     await f.broker.removeForAccountDeletion(f.userId, f.serverId);
     expect(f.revokeOAuth).toHaveBeenCalledTimes(2);
-    expect(f.db.deleteCustomMcpServer).toHaveBeenCalledOnce();
+    expect(f.db.deleteCustomMcpServerIfRevision).toHaveBeenCalledOnce();
   });
 
   it('retains OAuth evidence when no revocation endpoint is available', async () => {
     const f = fixture(false);
     await expect(f.broker.removeForAccountDeletion(f.userId, f.serverId)).rejects.toMatchObject({ code: 'action_required' });
     expect(f.revokeOAuth).not.toHaveBeenCalled();
-    expect(f.db.deleteCustomMcpServer).not.toHaveBeenCalled();
+    expect(f.db.deleteCustomMcpServerIfRevision).not.toHaveBeenCalled();
   });
 
   it('keeps ordinary connection removal dependent on successful runtime projection', async () => {
@@ -60,6 +60,6 @@ describe('Custom MCP account deletion revocation', () => {
     await expect(f.broker.remove(f.userId,f.serverId)).rejects.toMatchObject({code:'action_required'});
     expect(f.projection.remove).toHaveBeenCalledWith(f.userId,f.serverId);
     expect(f.revokeOAuth).not.toHaveBeenCalled();
-    expect(f.db.deleteCustomMcpServer).not.toHaveBeenCalled();
+    expect(f.db.deleteCustomMcpServerIfRevision).not.toHaveBeenCalled();
   });
 });

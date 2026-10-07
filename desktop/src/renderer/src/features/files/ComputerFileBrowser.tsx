@@ -585,7 +585,7 @@ export default function ComputerFileBrowser({
       </div>
       </ContextMenu>
 
-      <UploadStatusList uploads={fileUploads.uploads} onRetry={fileUploads.retry} onRemove={fileUploads.remove} />
+      <UploadStatusList uploads={fileUploads.uploads} onRetry={fileUploads.retry} onRemove={fileUploads.remove} onCancel={fileUploads.cancel} />
 
       {onChooseFolder ? (
         <FolderPickerFooter

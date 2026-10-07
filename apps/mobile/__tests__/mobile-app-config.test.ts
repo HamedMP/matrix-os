@@ -14,12 +14,16 @@ type MobileAppConfig = {
     };
     android?: {
       package?: string;
+      permissions?: string[];
+      blockedPermissions?: string[];
     };
     ios?: {
       supportsTablet?: boolean;
       usesAppleSignIn?: boolean;
       bundleIdentifier?: string;
       appleTeamId?: string;
+      infoPlist?: Record<string, unknown>;
+      entitlements?: Record<string, unknown>;
     };
     plugins?: (string | [string, unknown])[];
     extra?: {
@@ -29,6 +33,32 @@ type MobileAppConfig = {
     };
   };
 };
+
+describe("selected device import permissions", () => {
+  it("keeps existing QR and voice permissions while blocking broad device library access", () => {
+    const picker = appConfig.expo?.plugins?.find(plugin => Array.isArray(plugin) && plugin[0] === "expo-image-picker") as [string, Record<string, unknown>] | undefined;
+    expect(picker?.[1]).toEqual({
+      photosPermission: "Choose photos to upload to your selected Matrix computer.",
+      cameraPermission: "Scan Matrix OS codes",
+      microphonePermission: "Voice input for chat messages",
+    });
+    expect(appConfig.expo?.android?.permissions).toEqual(expect.arrayContaining(["CAMERA", "RECORD_AUDIO"]));
+    const blocked = appConfig.expo?.android?.blockedPermissions ?? [];
+    for (const permission of ["READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "MANAGE_EXTERNAL_STORAGE", "READ_MEDIA_IMAGES", "READ_MEDIA_VIDEO", "READ_MEDIA_AUDIO", "READ_MEDIA_VISUAL_USER_SELECTED"]) {
+      expect(blocked).toContain(`android.permission.${permission}`);
+      expect(appConfig.expo?.android?.permissions?.some(value => value.endsWith(permission))).toBe(false);
+    }
+  });
+  it("does not add health, alarm or background data access for selected uploads", () => {
+    const names = (appConfig.expo?.plugins ?? []).map(plugin => typeof plugin === "string" ? plugin : plugin[0]);
+    expect(names.some(name => /health|alarm|media-library/i.test(name))).toBe(false);
+    expect(Object.keys(appConfig.expo?.ios?.entitlements ?? {}).some(name => /health|alarm/i.test(name))).toBe(false);
+    expect(Object.keys(appConfig.expo?.ios?.infoPlist ?? {}).some(name => /NSHealth|NSAlarm/i.test(name))).toBe(false);
+    expect(appConfig.expo?.android?.permissions?.some(name => /health|alarm|READ_MEDIA|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE/i.test(name))).toBe(false);
+    expect(packageConfig.dependencies?.["expo-document-picker"]).toMatch(/^~57\./);
+    expect(packageConfig.dependencies?.["expo-image-picker"]).toMatch(/^~57\./);
+  });
+});
 
 type MobilePackageConfig = {
   dependencies?: Record<string, string>;

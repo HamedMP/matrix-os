@@ -1,5 +1,6 @@
 "use client";
 
+import { selectedImportPreviewText } from "@matrix-os/contracts/selected-import-preview";
 import { FileDownloadAction } from "./FileDownloadProvider";
 import { useState, useEffect } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -76,7 +77,7 @@ export function PreviewPanel() {
         .then((r) => (r.ok ? r.text() : null))
         .then((text) => {
           if (active && text) {
-            setPreview(text.split("\n").slice(0, 20).join("\n"));
+            setPreview(selectedImportPreviewText(selectedName, text) ?? text.split("\n").slice(0, 20).join("\n"));
           }
         })
         .catch((error: unknown) => {
@@ -147,7 +148,7 @@ export function PreviewPanel() {
       {preview && (
         <div className="mt-3">
           <div className="text-xs font-medium text-muted-foreground mb-1">Preview</div>
-          <pre className="text-xs bg-muted/50 rounded p-2 overflow-auto max-h-48 whitespace-pre-wrap break-all">
+          <pre className="ph-no-capture text-xs bg-muted/50 rounded p-2 overflow-auto max-h-48 whitespace-pre-wrap break-all">
             {preview}
           </pre>
         </div>
@@ -174,5 +175,5 @@ function isCode(name: string): boolean {
 }
 
 function isTextLike(name: string): boolean {
-  return /\.(md|txt|log|csv|json|yaml|yml|toml|js|ts|jsx|tsx|py|html|css|sh|xml|ini|cfg|conf|env|gitignore|editorconfig)$/i.test(name);
+  return /\.(md|txt|log|csv|tsv|pgn|json|yaml|yml|toml|js|ts|jsx|tsx|py|html|css|sh|xml|ini|cfg|conf|env|gitignore|editorconfig)$/i.test(name);
 }

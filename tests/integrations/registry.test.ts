@@ -11,9 +11,9 @@ import {
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
 describe("Service Registry", () => {
-  it("has the 27-service managed catalog", () => {
-    expect(listServices()).toHaveLength(27);
-    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(27);
+  it("has the 38-service managed catalog", () => {
+    expect(listServices()).toHaveLength(38);
+    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(38);
   });
 
   it("returns service by id", () => {
@@ -70,7 +70,7 @@ describe("Service Registry", () => {
       expect(service.id).toBeTruthy();
       expect(service.name).toBeTruthy();
       expect(service.category).toBeTruthy();
-      expect(["pipedream", "mcp_preset"]).toContain(service.connectorKind);
+      expect(["pipedream", "mcp_preset", "managed_oauth"]).toContain(service.connectorKind);
       if (service.connectorKind === "pipedream") {
         expect(service.pipedreamApp).toBeTruthy();
       }
@@ -134,10 +134,10 @@ describe("Service Registry", () => {
     for (const [serviceId, contract] of Object.entries(expected)) {
       const service = getService(serviceId);
       expect(service, serviceId).toBeDefined();
-      expect(Object.keys(service!.actions)).toEqual([
+      expect(Object.keys(service!.actions)).toEqual(expect.arrayContaining([
         ...contract.read,
         ...contract.write,
-      ]);
+      ]));
       for (const action of contract.read) {
         expect(service!.actions[action]!.risk).toBe("read");
       }

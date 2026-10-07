@@ -32,6 +32,18 @@ describe("FilePreviewContent", () => {
     expect(screen.getByText("42")).toBeTruthy();
   });
 
+  it("uses the shared import bounds and rejects malformed rows without interpreting formulas", async () => {
+    const rows = Array.from({ length: 120 }, (_, index) => `Row${index},=1+2`).join("\n");
+    const view = render(<FilePreviewContent descriptor={base} contentUrl="/content" loadText={async () => `Name,Value\n${rows}`} />);
+    await screen.findByRole("table");
+    expect(screen.getAllByRole("row")).toHaveLength(101);
+    expect(screen.getByText("Preview truncated after 100 rows.")).toBeTruthy();
+    view.unmount();
+    render(<FilePreviewContent descriptor={base} contentUrl="/bad" loadText={async () => 'Name,Value\n"unfinished'} />);
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
   it.each([
     ["pdf", "application/pdf", "Document preview: report.pdf"],
     ["audio", "audio/mpeg", "Audio preview: report.pdf"],

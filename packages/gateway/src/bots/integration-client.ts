@@ -17,6 +17,9 @@ const LIST_TIMEOUT_MS = 10_000;
 const CALL_TIMEOUT_MS = 25_000;
 const MAX_LIST_BYTES = 128 * 1024;
 const MAX_CALL_BYTES = 256 * 1024;
+// One reviewed binary read returns inline base64url: 1 MiB decoded plus JSON
+// framing fits below this cap. No caller-supplied limits or generic expansion.
+const MAX_GMAIL_ATTACHMENT_CALL_BYTES = 1536 * 1024;
 const MAX_CATALOG_BYTES = 1024 * 1024;
 const MAX_CONNECTIONS = 256;
 
@@ -170,14 +173,16 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
       }, signal);
     },
     /** Runs one action on the account with `label`. Reads use the read-only route, which never syncs. */
-    async call(ownerId: string, input: { service: string; action: string; label: string; params: Record<string, unknown>; read: boolean }, signal?: AbortSignal) {
+    async call(ownerId: string, input: { service: string; action: string; label: string; connectionId?: string; params: Record<string, unknown>; read: boolean }, signal?: AbortSignal) {
+      const maxBytes = input.read && input.service === "gmail" && input.action === "get_attachment"
+        ? MAX_GMAIL_ATTACHMENT_CALL_BYTES : MAX_CALL_BYTES;
       return send(ownerId, {
         method: "POST",
         path: input.read ? "/read-call" : "/call",
-        body: { service: input.service, action: input.action, label: input.label, params: input.params },
+        body: { service: input.service, action: input.action, label: input.label, params: input.params, ...(input.read && input.connectionId ? { connectionId: input.connectionId } : {}) },
         readScope: input.read,
       }, CALL_TIMEOUT_MS, async (response, bounded) => {
-        const result = CallResultSchema.safeParse(await readJson(response, MAX_CALL_BYTES, bounded));
+        const result = CallResultSchema.safeParse(await readJson(response, maxBytes, bounded));
         if (!result.success) throw new BotIntegrationError("unavailable");
         return { data: result.data.data, ...(result.data.summary !== undefined ? { summary: result.data.summary } : {}) };
       }, signal, !input.read);

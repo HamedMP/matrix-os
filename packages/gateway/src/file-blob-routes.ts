@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, posix } from "node:path";
 import { Readable } from "node:stream";
 import { Hono, type Context } from "hono";
@@ -22,11 +22,14 @@ const BoolQuerySchema = z
   .transform((value) => value === "true");
 
 const BlobQuerySchema = z.object({
-  path: z.string().trim().min(1).max(4096),
+  path: z.string().min(1).max(4096)
+    .refine(value => !/[\\\u0000-\u001f\u007f]/u.test(value)
+      && value.split("/").filter(Boolean).every(segment => Buffer.byteLength(segment) <= 255)),
   filename: z.string()
     .min(1)
     .max(255)
-    .regex(/^[^/\0]+$/)
+    .regex(/^[^/\\\u0000-\u001f\u007f]+$/u)
+    .refine(value => Buffer.byteLength(value) <= 255)
     .refine((value) => value !== "." && value !== "..")
     .optional(),
   download: BoolQuerySchema,
@@ -201,16 +204,26 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
     const operation = async (): Promise<Response> => {
       const body = Buffer.from(await c.req.arrayBuffer());
       const parent = dirname(uploadPath);
-      const tmpPath = `${uploadPath}.matrix-upload-${randomUUID()}.tmp`;
+      const tmpPath = `${parent}/.matrix-upload-${randomUUID()}.tmp`;
       const mode = parsed.secret ? 0o600 : 0o644;
 
       try {
         await mkdir(parent, { recursive: true, mode: 0o700 });
         await writeFile(tmpPath, body, { flag: "wx", mode });
-        await rename(tmpPath, uploadPath);
+        if (parsed.force) {
+          await rename(tmpPath, uploadPath);
+        } else {
+          // Atomic create: another device may upload the same name after the
+          // initial stat. Linking a completed file cannot replace that winner.
+          await link(tmpPath, uploadPath);
+          await safeUnlink(tmpPath);
+        }
         return c.json({ ok: true, path: destinationPath, size: body.byteLength });
       } catch (err: unknown) {
         await safeUnlink(tmpPath);
+        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST") {
+          return c.json({ error: "file_exists" }, 409);
+        }
         if (
           err instanceof Error &&
           "code" in err &&

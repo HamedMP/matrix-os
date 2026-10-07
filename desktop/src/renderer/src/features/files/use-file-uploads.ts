@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useConnection } from "../../stores/connection";
 import type { ApiClient } from "../../lib/api";
 import { createFileUploadController, type FileUploadRow } from "./file-upload-controller";
 
@@ -31,7 +32,10 @@ export function useFileUploads({
     }
     const controller = createFileUploadController({
       api,
-      getScope: () => browserScope,
+      getScope: () => {
+        const { runtimeSlot, authGeneration } = useConnection.getState();
+        return `${runtimeSlot}|${authGeneration}`;
+      },
       onUploaded: (directory) => {
         if (directory === currentPathRef.current) onUploaded(directory);
       },
@@ -50,6 +54,7 @@ export function useFileUploads({
   }, []);
   const retry = useCallback((id: string) => controllerRef.current?.retry(id), []);
   const remove = useCallback((id: string) => controllerRef.current?.remove(id), []);
+  const cancel = useCallback((id: string) => controllerRef.current?.cancel(id), []);
 
-  return { uploads, enqueue, retry, remove };
+  return { uploads, enqueue, retry, remove, cancel };
 }

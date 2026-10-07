@@ -49,6 +49,15 @@
         "android.permission.USE_FINGERPRINT",
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.MANAGE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
       ]
     },
     "web": {
@@ -74,6 +83,12 @@
         }
       ],
       "expo-web-browser",
+      "expo-document-picker",
+      ["expo-image-picker", {
+        "photosPermission": "Choose photos to upload to your selected Matrix computer.",
+        "cameraPermission": "Scan Matrix OS codes",
+        "microphonePermission": "Voice input for chat messages"
+      }],
       "react-native-edge-to-edge",
       [
         "expo-splash-screen",

@@ -23,6 +23,7 @@ import { organizationDriveNavigationIdentity, useOrganizationDriveNavigation } f
 import { OrganizationDrivesView } from "./OrganizationDrivesView";
 import { FileResourceSharing } from "./FileResourceSharing";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
+import { UploadFromDevice } from "./UploadFromDevice";
 
 interface FileBrowserProps {
   windowId: string;
@@ -327,6 +328,10 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
           onClick={() => setShowingOrganizationDrives(true)}
           className="rounded px-3 py-1.5 hover:bg-accent aria-[current=page]:bg-accent">Organization drives</button> : null}
       </div>
+      {!organizationDrivesVisible && !showingTrash && !searchResults
+        ? <UploadFromDevice identity={identity} gatewayUrl={getGatewayUrl()} currentPath={currentPath}
+          onUploaded={directory => { if (directory === useFileBrowser.getState().currentPath) refresh(); }} />
+        : null}
       {selectedKind && selectedPath && !showingTrash && !searchResults && !organizationDrivesVisible
         ? <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath}
           containerClassName="flex justify-end border-b px-3 py-1.5" />

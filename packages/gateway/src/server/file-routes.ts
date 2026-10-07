@@ -18,6 +18,7 @@ import { getMissingFileFallback } from "../file-fallbacks.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "../file-ops.js";
 import { createFileBlobRoutes } from "../file-blob-routes.js";
 import { createFilePreviewRoutes } from "../file-preview-routes.js";
+import { createFileImportPreviewRoutes } from "../file-import-preview-routes.js";
 import type { FilePreviewService } from "../file-preview-service.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { fileSearch } from "../file-search.js";
@@ -125,6 +126,7 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     return c.json(result);
   });
   app.route("/api/files", createFileBlobRoutes({ homePath, withProjectFileAdmission }));
+  app.route("/api/files", createFileImportPreviewRoutes({ homePath, getPrincipal: deps.getPrincipal }));
 
   app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
     const body = await parseJson<{ path: string }>(c);

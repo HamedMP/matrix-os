@@ -1,3 +1,4 @@
+import { selectedImportPreviewText } from "@matrix-os/contracts/selected-import-preview";
 import {
   ActivityIndicator,
   RefreshControl,
@@ -18,6 +19,7 @@ export function ComputerFilePreview({ name, path }: { name: string; path: string
   const { preview, isPending, isError, refresh } = useComputerFilePreview(path);
   const pullToRefresh = usePullToRefresh(refresh);
   const { theme } = useUnistyles();
+  const importSummary = preview?.kind === "text" ? selectedImportPreviewText(name, preview.content) : null;
   const isImage = preview?.kind === "image";
   const isTextWithContent = preview?.kind === "text" && preview.content.length > 0;
 
@@ -96,6 +98,8 @@ export function ComputerFilePreview({ name, path }: { name: string; path: string
             iconTestID="empty-file-icon"
           />
         ) : null}
+
+        {importSummary ? <NativeText selectable style={styles.code}>{importSummary}</NativeText> : null}
 
         {preview?.kind === "text" && preview.content.length > 0 ? (
           <>

@@ -3,8 +3,8 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
-import { request as httpsRequest } from "node:https";
-import { createPinnedCustomMcpLookup } from "./pinned-lookup.js";
+import { pinnedOAuthRequest as pinnedRequest } from "./oauth-request.js";
+import { resolveCustomMcpOAuthAuthorization } from "./oauth-refresh.js";
 import type { PlatformDb, CustomMcpServerBrokerRow } from "../../platform-db.js";
 import {
   decryptCustomMcpOAuthState,
@@ -15,11 +15,10 @@ import {
 import { validateCustomMcpUrl } from "./security.js";
 import { CustomMcpBrokerError, type CustomMcpCredential } from "./broker.js";
 
-const OAUTH_TIMEOUT_MS = 10_000;
-const OAUTH_RESPONSE_LIMIT = 64 * 1024;
 const STATE_TTL_MS = 10 * 60 * 1000;
 
 interface OAuthMetadata {
+  client_id_metadata_document_supported?: boolean;
   issuer?: string;
   authorization_endpoint: string;
   token_endpoint: string;
@@ -47,62 +46,6 @@ interface OAuthClientRegistrationResponse {
   client_id: string;
   token_endpoint_auth_method?: string;
   client_secret?: string;
-}
-
-async function pinnedRequest(input: {
-  method: "GET" | "POST";
-  url: string;
-  headers?: Record<string, string>;
-  body?: string;
-}): Promise<{ status: number; body: unknown }> {
-  const target = await validateCustomMcpUrl(input.url);
-  const lookup = createPinnedCustomMcpLookup(target);
-  return new Promise((resolve, reject) => {
-    const request = httpsRequest(target.url, {
-      method: input.method,
-      headers: {
-        accept: "application/json",
-        ...(input.body ? { "content-length": String(Buffer.byteLength(input.body)) } : {}),
-        ...input.headers,
-      },
-      lookup,
-      servername: target.url.hostname,
-      timeout: OAUTH_TIMEOUT_MS,
-    }, (response) => {
-      const status = response.statusCode ?? 502;
-      if (status >= 300 && status < 400) {
-        response.resume();
-        reject(new Error("OAuth redirects are not allowed during discovery or token exchange"));
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let size = 0;
-      response.on("data", (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > OAUTH_RESPONSE_LIMIT) {
-          response.destroy(new Error("OAuth response limit exceeded"));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      response.on("error", reject);
-      response.on("end", () => {
-        const raw = Buffer.concat(chunks).toString("utf8");
-        try {
-          resolve({ status, body: raw ? JSON.parse(raw) : undefined });
-        } catch (parseError: unknown) {
-          console.warn(
-            "[custom-mcp/oauth] response parse failed:",
-            parseError instanceof Error ? parseError.message : String(parseError),
-          );
-          reject(new Error("OAuth server returned invalid JSON"));
-        }
-      });
-    });
-    request.on("timeout", () => request.destroy(new Error("OAuth request timed out")));
-    request.on("error", reject);
-    request.end(input.body);
-  });
 }
 
 function exactStateMatch(left: string | undefined, right: string): boolean {
@@ -191,6 +134,8 @@ export class CustomMcpOAuthManager {
     db: PlatformDb;
     encryptionKey: Buffer;
     clientId?: string;
+    /** Public HTTPS metadata document owned by Matrix, used only with advertised CIMD support. */
+    clientMetadataUrl?: string;
     redirectUri: string;
     scopes?: string[];
     now?: () => Date;
@@ -200,9 +145,16 @@ export class CustomMcpOAuthManager {
     const redirect = new URL(options.redirectUri);
     if (redirect.protocol !== "https:") throw new Error("Custom MCP OAuth redirect URI must use HTTPS");
     this.configuredClientId = options.clientId?.trim() || undefined;
+    if (options.clientMetadataUrl) {
+      const metadataUrl = new URL(options.clientMetadataUrl);
+      if (metadataUrl.protocol !== "https:" || metadataUrl.origin !== redirect.origin
+        || metadataUrl.username || metadataUrl.password || metadataUrl.hash || metadataUrl.search) {
+        throw new Error("OAuth client metadata must be hosted on the callback origin");
+      }
+    }
   }
 
-  async start(userId: string, serverId: string): Promise<string> {
+  async start(userId: string, serverId: string, options?: { scopes?: readonly string[] }): Promise<string> {
     const row = await this.requireOAuthRow(userId, serverId);
     const request = this.options.request ?? pinnedRequest;
     const validateUrl = this.options.validateUrl ?? validateCustomMcpUrl;
@@ -243,17 +195,22 @@ export class CustomMcpOAuthManager {
     const verifier = randomBytes(64).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     const now = this.options.now?.() ?? new Date();
-    const scopes = this.options.scopes ?? resource.scopes_supported ?? metadata.scopes_supported ?? [];
+    // Advertising a scope is not a request to grant it. In particular PostHog
+    // publishes both read and write scopes; managed presets choose least privilege.
+    const scopes = options?.scopes ? [...options.scopes] : this.options.scopes ?? resource.scopes_supported ?? metadata.scopes_supported ?? [];
     const existingCredential = this.decrypt(userId, row);
     const persistedClientId = existingCredential.oauth?.clientIssuer === clientIssuer
       ? existingCredential.oauth.clientId
       : undefined;
     const clientId = persistedClientId
       ?? this.configuredClientId
+      ?? (metadata.client_id_metadata_document_supported === true ? this.options.clientMetadataUrl : undefined)
       ?? await this.registerClient(metadata);
     const credential: CustomMcpCredential = {
       oauth: {
         ...existingCredential.oauth,
+        refreshing: undefined,
+        refreshStartedAt: undefined,
         state,
         stateExpiresAt: new Date(now.getTime() + STATE_TTL_MS).toISOString(),
         verifier,
@@ -281,7 +238,7 @@ export class CustomMcpOAuthManager {
     return authorizationUrl.href;
   }
 
-  async complete(state: string, code: string): Promise<{ serverId: string }> {
+  async complete(state: string, code: string): Promise<{ serverId: string; revision?: number }> {
     let binding: { userId: string; serverId: string };
     try {
       const decoded = decryptCustomMcpOAuthState<unknown>(state, this.options.encryptionKey);
@@ -346,6 +303,8 @@ export class CustomMcpOAuthManager {
         state: undefined,
         stateExpiresAt: undefined,
         verifier: undefined,
+        refreshing: undefined,
+        refreshStartedAt: undefined,
         accessToken: token.access_token,
         refreshToken: token.refresh_token,
         expiresAt: token.expires_in
@@ -354,43 +313,13 @@ export class CustomMcpOAuthManager {
       },
     };
     await this.persistCredential(userId, { ...row, revision: claimed.revision }, next, "disabled");
-    return { serverId: row.id };
+    return { serverId: row.id, revision: claimed.revision };
   }
 
   async resolveAuthorization(userId: string, row: CustomMcpServerBrokerRow): Promise<string | undefined> {
-    if (row.auth_mode !== "oauth") return undefined;
-    let credential = this.decrypt(userId, row);
-    const oauth = credential.oauth;
-    if (!oauth?.accessToken) return undefined;
-    const now = this.options.now?.() ?? new Date();
-    const needsRefresh = oauth.expiresAt
-      ? new Date(oauth.expiresAt).getTime() <= now.getTime() + 30_000
-      : false;
-    if (!needsRefresh) return `Bearer ${oauth.accessToken}`;
-    if (!oauth.refreshToken || !oauth.tokenEndpoint || !oauth.resource) {
-      throw new CustomMcpBrokerError("action_required");
-    }
-    const extended = oauth as typeof oauth & { clientId?: string };
-    const clientId = extended.clientId ?? this.configuredClientId;
-    if (!clientId) throw new CustomMcpBrokerError("action_required");
-    const token = await this.exchangeToken(oauth.tokenEndpoint, {
-      grant_type: "refresh_token",
-      refresh_token: oauth.refreshToken,
-      client_id: clientId,
-      resource: oauth.resource,
-    });
-    credential = {
-      oauth: {
-        ...oauth,
-        accessToken: token.access_token,
-        refreshToken: token.refresh_token ?? oauth.refreshToken,
-        expiresAt: token.expires_in
-          ? new Date(now.getTime() + token.expires_in * 1_000).toISOString()
-          : undefined,
-      },
-    };
-    await this.persistCredential(userId, row, credential, row.status);
-    return `Bearer ${token.access_token}`;
+    return resolveCustomMcpOAuthAuthorization({ db: this.options.db, encryptionKey: this.options.encryptionKey,
+      userId, row, now: this.options.now?.() ?? new Date(), configuredClientId: this.configuredClientId,
+      exchangeToken: (endpoint, fields) => this.exchangeToken(endpoint, fields) });
   }
 
   async revoke(credential: CustomMcpCredential): Promise<void> {
@@ -426,7 +355,9 @@ export class CustomMcpOAuthManager {
     });
     if (response.status < 200 || response.status >= 300) throw new CustomMcpBrokerError("upstream");
     const object = assertObject(response.body);
-    if (typeof object.access_token !== "string"
+    if (typeof object.access_token !== "string" || object.access_token.length < 1 || object.access_token.length > 8192 || /[\s\x00-\x1f\x7f]/.test(object.access_token)
+      || (object.refresh_token !== undefined && (typeof object.refresh_token !== "string" || object.refresh_token.length < 1 || object.refresh_token.length > 8192 || /[\s\x00-\x1f\x7f]/.test(object.refresh_token)))
+      || (object.expires_in !== undefined && (typeof object.expires_in !== "number" || !Number.isInteger(object.expires_in) || object.expires_in < 1 || object.expires_in > 31_536_000))
       || typeof object.token_type !== "string"
       || object.token_type.toLowerCase() !== "bearer") {
       throw new CustomMcpBrokerError("upstream");
