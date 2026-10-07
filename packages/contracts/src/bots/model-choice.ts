@@ -119,7 +119,7 @@ export function canonicalProviderAvailabilityReasonLabel(
 export function canonicalProviderModelRouteLabel(instance: CanonicalProviderInstanceDescriptor | undefined,
   modelLabel: string): string {
   if (!instance) return modelLabel;
-  if (isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })) return `${modelLabel} · Codex · ChatGPT subscription`;
+  if (isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })) return `${modelLabel} · Matrix AI · ChatGPT subscription`;
   if (isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })) return `${modelLabel} · ChatGPT subscription`;
   if (isManagedPiBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isLegacyMatrixSdkProvider(instance)) {
     return `${modelLabel} · Matrix AI`;

@@ -128,12 +128,13 @@ export function deriveCanonicalProviderChoices(
     const permissionMode = instance.supports.permissionModes[0];
     if (!interactionMode || !permissionMode) return [];
     const managedExecution = instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default";
-    const harnessLabel = instance.id === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID ? "Codex · ChatGPT subscription" : managedExecution ? "Matrix AI" : isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "ChatGPT subscription" : instance.displayName;
+    const personalChat = isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind });
+    const harnessLabel = managedExecution || personalChat ? "Matrix AI" : isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "ChatGPT subscription" : instance.displayName;
     return instance.models.flatMap((model) => model.availability === "available" && canonicalChatSubscriptionSelectionMatches(instance, selectedOptionsFor(instance, model.id)) ? [{
       instanceId: instance.id,
       driverKind: instance.driverKind,
       harnessLabel,
-      ...(instance.connectionLabel && instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID ? { connectionLabel: instance.connectionLabel } : {}),
+      ...(personalChat ? { connectionLabel: "ChatGPT subscription" } : instance.connectionLabel ? { connectionLabel: instance.connectionLabel } : {}),
       modelId: model.id,
       modelLabel: model.displayName,
       interactionMode,

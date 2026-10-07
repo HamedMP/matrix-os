@@ -80,3 +80,11 @@ Render an available ordinary subscription alongside custom coding routes: the cu
 ### 7. Wrong vs Correct
 
 Wrong: `isChatAgentDriver(instance.driverKind)` alone establishes custom Bot applicability. Correct: apply the route's context-specific identity constraint at both the editor and authenticated save boundary; preserve downstream admission as defense in depth.
+
+## Matrix AI presentation grouping
+
+`deriveChatPickerEntries(catalog)` groups the exact ordinary `matrix_pi_chatgpt_plan` and funded `matrix_pi_default` identities under the existing `matrix-ai` category and rabbit glyph. Native Coding Codex stays independent. `deriveCanonicalProviderChoices` and `canonicalProviderModelRouteLabel` show personal GPT as Matrix AI with `ChatGPT subscription` funding; Web and Electron consume the same derivation. Grouping is presentation only: selection retains its real `instanceId`, model and current `accountId`/`grantRevision` options.
+
+An available source makes the category available, but each row still checks its own instance/model eligibility and binding. Funded-unavailable/subscription-ready permits only the subscription rows; the inverse permits only funded rows. First-turn locking compares the actual instance ID even within one category. Equal model IDs from separate sources stay separate. A selected unavailable source exposes its own recovery action even when another source makes the category ready; it is never replaced or authorized by that source.
+
+Good: choose a qualified GPT inside Matrix AI and persist the personal instance with its complete binding. Base: a reopened subscription Chat highlights Matrix AI and its actual selected row. Bad: rewriting the selection to `matrix_pi_default`, granting every row from category readiness, or hiding selected-source recovery. Tests must cover both independent availability states, exact selection options, stale recovery, locks, duplicate model IDs, source search, no search autofocus and cached reopening. Actual Electron acceptance must select GPT inside Matrix AI, receive a subscription reply and verify the durable instance/binding; a separate Codex menu or fixture reply is insufficient.

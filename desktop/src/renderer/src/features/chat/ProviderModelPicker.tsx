@@ -43,7 +43,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
         data-slot="provider-model-trigger"
         className="relative flex h-8 min-w-0 max-w-[18rem] items-center gap-1.5 @max-[42rem]/chat-composer:w-8 @max-[42rem]/chat-composer:shrink-0 @max-[42rem]/chat-composer:justify-center @max-[42rem]/chat-composer:gap-0 @max-[42rem]/chat-composer:px-0 rounded-lg px-2 text-sm font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
         style={{ color: "var(--text-secondary)" }}>
-        {selectedInstance ? <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) ? "kernel" : isChatgptPlanChatRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) ? "codex" : selectedInstance.driverKind} /> : <Cpu size={15} />}
+        {selectedInstance ? <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) || isChatgptPlanChatRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) ? "kernel" : selectedInstance.driverKind} /> : <Cpu size={15} />}
         <span data-slot="provider-model-label" className="truncate @max-[42rem]/chat-composer:hidden">{routeLabel}</span>
         {loading ? <ChatProviderLoadingIndicator /> : null}
         {showUnavailable ? <span className="shrink-0 @max-[42rem]/chat-composer:hidden">{unavailableLabel}</span> : null}
@@ -59,7 +59,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
       data-slot="provider-model-picker" data-preferred-side={menuSide}>
       <CompactChatProviderChoices loading={loading} catalog={catalog} choices={deriveCanonicalProviderChoices(catalog)}
         renderDriverIcon={(kind) => <ProviderDriverGlyph kind={kind} size={17} />}
-        renderIcon={(choice) => <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: choice.instanceId, driverKind: choice.driverKind }) ? "kernel" : isChatgptPlanChatRoute(choice) ? "codex" : choice.driverKind} size={13} />}
+        renderIcon={(choice) => <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: choice.instanceId, driverKind: choice.driverKind }) || isChatgptPlanChatRoute(choice) ? "kernel" : choice.driverKind} size={13} />}
         selected={selection ? { instanceId: selection.instanceId, modelId: selection.model } : null}
         lockedInstanceId={instanceLocked ? selection?.instanceId : undefined}
         onSetupAction={onSetupAction ? (instance, action) => {
