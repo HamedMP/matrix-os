@@ -195,3 +195,92 @@ it.each(['Chat', 'client'])('keeps committed Details scope when a changed %s ren
   expect(screen.getByLabelText('Details target').textContent).toBe('chat_bot');
   expect(screen.getByLabelText('Details target').getAttribute('data-original-client')).toBe('true');
 });
+
+
+it.each(['accepted', 'client', 'Chat', 'navigation', 'unmount'])('settles a delayed host that synchronously closed Agents with %s scope', async mode => {
+  const base = clientFixture();
+  base.list.mockResolvedValue({enabled: true, agents: [saved]});
+  const client = {...base, bots: {ensureDirectChat: vi.fn(async () => 'chat_bot')}} as unknown as import('../../../packages/ui/src/chat-agents/client.js').ChatAgentClient;
+  let finishHost!: () => void;
+  const transition = new Promise<void>(resolve => { finishHost = resolve; });
+  const opened = vi.fn();
+  const committedHost = vi.fn();
+  const start = vi.fn();
+  function Host({current = client, chatOverride}: {current?: typeof client; chatOverride?: string}) {
+    const navigation = useChatAgentsNavigation();
+    const [chatId, setChatId] = useState<string>();
+    useEffect(() => { if (chatId) committedHost(chatId); }, [chatId]);
+    return <><ChatAgentsRailSection client={current} activeChatId={chatOverride ?? chatId} onOpen={opened} onStartChat={start}
+      onOpenBotChat={chatId => { navigation?.close(); setChatId(chatId); return transition; }}/>
+      <BotChatPanel key={chatOverride ?? chatId} client={current} chatId={chatOverride ?? chatId} directBotId={chatId ? saved.id : null}/></>;
+  }
+  const rail = (current = client, chatOverride?: string) => <ChatAgentsWorkspace><Host current={current} chatOverride={chatOverride}/></ChatAgentsWorkspace>;
+  const view = render(rail());
+  fireEvent.keyDown(await screen.findByRole('button', {name: `Actions for ${saved.name}`}), {key: 'Enter'});
+  const details = await screen.findByRole('menuitem', {name: 'Details'});
+  await React.act(async () => { fireEvent.click(details); });
+  // Wait for the host's navigation/Chat change to commit while its promise is pending.
+  await waitFor(() => expect(committedHost).toHaveBeenCalledWith('chat_bot'));
+  expect(screen.queryByRole('complementary', {name: 'Bot details'})).toBeNull();
+  if (mode === 'client') {
+    const replacement = clientFixture();
+    replacement.list.mockResolvedValue({enabled: true, agents: [saved]});
+    view.rerender(rail(replacement));
+  } else if (mode === 'Chat') view.rerender(rail(client, 'chat_other'));
+  else if (mode === 'navigation') {
+    fireEvent.click(screen.getByRole('button', {name: 'Agents', exact: true}));
+    opened.mockClear();
+  } else if (mode === 'unmount') view.unmount();
+  await React.act(async () => { finishHost(); });
+  if (mode === 'accepted') {
+    expect(await screen.findByRole('complementary', {name: 'Bot details'})).toBeTruthy();
+    expect(opened).toHaveBeenCalledOnce();
+  } else {
+    expect(screen.queryByRole('complementary', {name: 'Bot details'})).toBeNull();
+    expect(opened).not.toHaveBeenCalled();
+    if (mode === 'navigation') expect(screen.getByRole('button', {name: 'Agents', exact: true}).getAttribute('aria-pressed')).toBe('true');
+  }
+  expect(start).not.toHaveBeenCalled();
+});
+
+
+it('rejects an older delayed host completion when a newer Details lookup starts after its accepted close', async () => {
+  const base = clientFixture();
+  base.list.mockResolvedValue({enabled: true, agents: [saved]});
+  let finishSecondBinding!: (chatId: string) => void;
+  let finishFirstHost!: () => void;
+  const secondBinding = new Promise<string>(resolve => { finishSecondBinding = resolve; });
+  const firstHost = new Promise<void>(resolve => { finishFirstHost = resolve; });
+  const ensureDirectChat = vi.fn().mockResolvedValueOnce('chat_bot').mockImplementationOnce(() => secondBinding);
+  const client = {...base, bots: {ensureDirectChat}} as unknown as import('../../../packages/ui/src/chat-agents/client.js').ChatAgentClient;
+  const committedHost = vi.fn();
+  const accepted = vi.fn();
+  const onOpenBotChat = vi.fn();
+  function Host() {
+    const navigation = useChatAgentsNavigation();
+    const [chatId, setChatId] = useState<string>();
+    useEffect(() => { if (chatId) committedHost(chatId); }, [chatId]);
+    return <><ChatAgentsRailSection client={client} activeChatId={chatId} onOpen={accepted}
+      onOpenBotChat={chatId => {
+        onOpenBotChat(chatId); navigation?.close(); setChatId(chatId);
+        return onOpenBotChat.mock.calls.length === 1 ? firstHost : Promise.resolve();
+      }}/><BotChatPanel key={chatId} client={client} chatId={chatId} directBotId={chatId ? saved.id : null}/></>;
+  }
+  render(<ChatAgentsWorkspace><Host/></ChatAgentsWorkspace>);
+  const openDetails = async () => {
+    fireEvent.keyDown(await screen.findByRole('button', {name: `Actions for ${saved.name}`}), {key: 'Enter'});
+    const details = await screen.findByRole('menuitem', {name: 'Details'});
+    await React.act(async () => { fireEvent.click(details); });
+  };
+  await openDetails();
+  await waitFor(() => expect(committedHost).toHaveBeenCalledWith('chat_bot'));
+  await openDetails();
+  await waitFor(() => expect(ensureDirectChat).toHaveBeenCalledTimes(2));
+  await React.act(async () => { finishFirstHost(); });
+  expect(accepted).not.toHaveBeenCalled();
+  expect(screen.queryByRole('complementary', {name: 'Bot details'})).toBeNull();
+  await React.act(async () => { finishSecondBinding('chat_bot'); });
+  expect(await screen.findByRole('complementary', {name: 'Bot details'})).toBeTruthy();
+  expect(accepted).toHaveBeenCalledOnce();
+  expect(onOpenBotChat).toHaveBeenCalledTimes(2);
+});

@@ -35,8 +35,11 @@ export function ChatAgentsRailSection({ activeChatId, client, visible = true, on
   useEffect(() => {
     setOpeningBot(null);
     setOpenError(null);
-    return () => { openSequence.current += 1; opening.current = false; };
+    opening.current = false;
   }, [client, navigation?.generation]);
+  // Navigation has its own generation fence: the accepted host close must not
+  // invalidate this operation. Sequences still reject newer opens/client lifetimes.
+  useEffect(() => () => { openSequence.current += 1; opening.current = false; }, [client]);
   const [localDisclosure, setLocalDisclosure] = useState(() => ({client, expanded: true}));
   let local = localDisclosure;
   if (local.client !== client) { local = {client, expanded: true}; setLocalDisclosure(local); }
@@ -72,7 +75,7 @@ export function ChatAgentsRailSection({ activeChatId, client, visible = true, on
       // generation, then reject any newer navigation while its promise settles.
       const acceptedGeneration = navigation.getGeneration();
       await hostTransition;
-      if (!mounted.current || currentClient.current !== client || navigation.getGeneration() !== acceptedGeneration) return;
+      if (!mounted.current || currentClient.current !== client || sequence !== openSequence.current || navigation.getGeneration() !== acceptedGeneration) return;
       // A different Chat accepted during the host transition must not get this request.
       if (currentChatId.current !== sourceChatId && currentChatId.current !== chatId) return;
       // The host may close Agents as part of this accepted navigation.
