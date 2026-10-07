@@ -1,3 +1,4 @@
+import { stopDesktopProviderCatalogCoordinator, desktopProviderCatalogCache } from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -12,14 +13,14 @@ function deferred<T>() {
   return { promise: new Promise<T>(yes => { resolve = yes; }), resolve: (value: T) => resolve(value) };
 }
 function withRevision(catalog: ReturnType<typeof createCanonicalProviderCatalogFixture>, revision: string) {
-  return { ...catalog, revision, instances: catalog.instances.map(instance => ({ ...instance, catalogRevision: revision })) };
+  return { ...catalog, revision, instances: catalog.instances.map(instance => ({ ...instance, displayName: `${instance.displayName} ${revision}`, catalogRevision: revision })) };
 }
 function foregroundEvents() {
   window.dispatchEvent(new Event("focus"));
   document.dispatchEvent(new Event("visibilitychange"));
 }
 afterEach(() => {
-  cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+  cleanup(); stopDesktopProviderCatalogCoordinator(); vi.unstubAllGlobals(); vi.restoreAllMocks();
   useConnection.setState(useConnection.getInitialState(), true);
 });
 
@@ -48,46 +49,24 @@ it("reuses freshly trusted native discovery when opening a picker also activates
   expect(result.current.hasTrustedCatalog).toBe(true);
 });
 
-it("coalesces stale native lifecycle revalidation and reuses its completed discovery for another minute", async () => {
-  let now = 1_000_000;
-  vi.spyOn(Date, "now").mockImplementation(() => now);
+it("does not start expired discovery on foreground events and keeps explicit refresh failures usable", async () => {
   const catalog = createCanonicalProviderCatalogFixture();
-  const pending = deferred<typeof catalog>();
-  const api = { get: vi.fn().mockResolvedValueOnce(catalog).mockReturnValueOnce(pending.promise).mockResolvedValue(catalog) };
-  const { result } = renderHook(() => useChatProviderCatalog(catalog, { api }));
+  const get = vi.fn().mockResolvedValueOnce(catalog).mockRejectedValueOnce(new Error("refresh_failed")).mockResolvedValue(catalog);
+  const { result } = renderHook(() => useChatProviderCatalog(catalog, { api: { get } }));
   await waitFor(() => expect(result.current.status).toBe("ready"));
-  now += 59_999;
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 300_000);
   act(foregroundEvents);
-  expect(api.get).toHaveBeenCalledOnce();
-  expect(result.current.status).toBe("ready");
-  now += 1;
-  act(foregroundEvents);
-  expect(api.get).toHaveBeenCalledTimes(2);
-  expect(result.current.status).toBe("loading");
-  await act(async () => pending.resolve(catalog));
-  expect(result.current.status).toBe("ready");
-  act(() => window.dispatchEvent(new Event("focus")));
-  expect(api.get).toHaveBeenCalledTimes(2);
-  now += 60_000;
-  act(foregroundEvents);
-  await waitFor(() => expect(result.current.status).toBe("ready"));
-  expect(api.get).toHaveBeenCalledTimes(3);
-});
-
-it("bypasses fresh lifecycle reuse for explicit refresh and immediately retries its failure", async () => {
-  const catalog = createCanonicalProviderCatalogFixture();
-  const get = vi.fn().mockResolvedValueOnce(catalog).mockRejectedValueOnce(new Error("refresh_failed"))
-    .mockResolvedValue(catalog);
-  const api = { get };
-  const { result } = renderHook(() => useChatProviderCatalog(catalog, { api }));
-  await waitFor(() => expect(result.current.status).toBe("ready"));
+  expect(get).toHaveBeenCalledOnce();
   act(() => result.current.refresh());
+  expect(result.current.initialLoading).toBe(false);
   await waitFor(() => expect(result.current.status).toBe("error"));
-  expect(get).toHaveBeenCalledTimes(2);
-  expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", { timeoutMs: 15_000 });
+  expect(result.current.hasTrustedCatalog).toBe(true);
   act(foregroundEvents);
+  expect(get).toHaveBeenCalledTimes(2);
+  act(() => result.current.refresh());
   await waitFor(() => expect(result.current.status).toBe("ready"));
   expect(get).toHaveBeenCalledTimes(3);
+  expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
 });
 
 it.each(["pending", "ready"] as const)("does not restart %s same-scope discovery when a fallback presentation is rebuilt", async status => {
@@ -113,9 +92,10 @@ it("does not discard an explicit post-change native refresh just because an olde
   const api = { get: vi.fn().mockReturnValueOnce(older.promise).mockResolvedValue(newer) };
   const { result } = renderHook(() => useChatProviderCatalog(catalog, { api }));
   act(() => result.current.refresh());
+  expect(api.get).toHaveBeenCalledTimes(1);
+  await act(async () => older.resolve(catalog));
   await waitFor(() => expect(result.current.catalog.revision).toBe(newer.revision));
   expect(api.get).toHaveBeenCalledTimes(2);
-  await act(async () => older.resolve(catalog));
   expect(result.current.catalog.revision).toBe(newer.revision);
 });
 

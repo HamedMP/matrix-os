@@ -1,3 +1,4 @@
+import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
@@ -218,7 +219,7 @@ export function createCanonicalChatClient(
 ): CanonicalChatClient {
   const api: Pick<ApiClient, "get" | "post" | "patch" | "delete"> = {
     get: (path, ...args) => transport.get(chatReadStateVersionUrl(path), ...args),
-    post: (path, ...args) => transport.post(chatReadStateVersionUrl(path), ...args),
+    post: (path, body, requestOptions) => postWithProviderCatalogRecovery(transport, chatReadStateVersionUrl(path), body, requestOptions),
     patch: (path, ...args) => transport.patch(chatReadStateVersionUrl(path), ...args),
     delete: (path, ...args) => transport.delete(chatReadStateVersionUrl(path), ...args),
   };

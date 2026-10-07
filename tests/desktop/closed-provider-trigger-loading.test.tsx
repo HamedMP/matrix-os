@@ -1,3 +1,4 @@
+import { stopDesktopProviderCatalogCoordinator, desktopProviderCatalogCache } from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
@@ -44,9 +45,9 @@ beforeEach(() => {
   resetProviderPreferences({ hydrated: true });
   clearDraftChats();
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); clearDraftChats(); });
+afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); vi.unstubAllGlobals(); vi.restoreAllMocks(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); clearDraftChats(); });
 
-it.each(["project draft", "canonical project draft", "existing agent conversation"] as const)("reuses the loaded %s picker while initial and lifecycle loading still blocks sending", async (surface) => {
+it.each(["project draft", "canonical project draft", "existing agent conversation"] as const)("reuses the loaded %s picker while only first load blocks sending", async (surface) => {
   const catalog = createLegacyProjectProviderCatalog(summary);
   const initial = deferred<CanonicalProviderCatalog>();
   const refreshed = deferred<CanonicalProviderCatalog>();
@@ -84,14 +85,13 @@ it.each(["project draft", "canonical project draft", "existing agent conversatio
   expect(get).toHaveBeenCalledTimes(1);
   fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
   await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
-  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
-  act(() => window.dispatchEvent(new Event("focus")));
+  act(() => desktopProviderCatalogCache.refresh());
   await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   expect(screen.queryByRole("listbox")).toBeNull();
-  expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
+  expect(within(trigger).queryByRole("status", { name: "Checking model availability" })).toBeNull();
   expect(trigger).toHaveAttribute("data-model", model);
-  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  // The delayed discovery itself cannot gate the existing canonical send path.
   expect(send).not.toHaveBeenCalled();
   expect(create).not.toHaveBeenCalled();
   await act(async () => refreshed.resolve(catalog));

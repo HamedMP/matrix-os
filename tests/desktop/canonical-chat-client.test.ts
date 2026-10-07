@@ -629,3 +629,17 @@ function admissionResponse(input: {
     admission: "accepted",
   };
 }
+
+it("refreshes only the rejected route after live provider admission fails and preserves the original error", async () => {
+  const { useConnection } = await import("@desktop/renderer/src/stores/connection");
+  const before = useConnection.getState().providerCatalogGeneration;
+  const failure = new AppError("server", { detail: "provider_unavailable" });
+  const client = createCanonicalChatClient(api({ post: vi.fn().mockRejectedValue(failure) }));
+  const input = { clientRequestId: "req_rejected", baseRevision: 0,
+    selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+    parts: [{ type: "text" as const, text: "hello" }], interactionMode: "default", permissionMode: "supervised" };
+  await expect(client.admitTurn(record.chat.id, input)).rejects.toBe(failure);
+  expect(useConnection.getState().providerCatalogGeneration).toBe(before + 1);
+  expect(useConnection.getState().providerCatalogAffectedInstanceIds).toEqual(["codex_default"]);
+  useConnection.setState(useConnection.getInitialState(), true);
+});

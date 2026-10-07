@@ -1,8 +1,10 @@
+import { startDesktopProviderCatalogCoordinator, stopDesktopProviderCatalogCoordinator } from "@desktop/renderer/src/features/chat/provider-catalog-coordinator";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useBoard } from "@desktop/renderer/src/stores/board";
@@ -80,4 +82,30 @@ describe("canonical native empty Chat connection wiring", () => {
     expect(await screen.findByRole("button", { name: "Explore and understand code" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Connect Claude Code" })).not.toBeInTheDocument();
   });
+});
+
+
+afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); vi.unstubAllGlobals(); });
+it("mounted signed-in onboarding does not invalidate the warmed provider cache on twenty application switches", async () => {
+  resetProviderPreferences({ hydrated: true });
+  const settings = disconnectedSnapshot(); settings.harnesses[0]!.authState = "unknown";
+  const get = vi.fn(async (path: string) => path.startsWith("/api/chat-providers") ? providerCatalog : settings);
+  const api = { forRuntime: () => api, get };
+  useConnection.setState({ status: "signed-in", handle: "owner", api: api as unknown as ApiClient });
+  const stop = startDesktopProviderCatalogCoordinator();
+  render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()} api={api as unknown as ApiClient} projectId={null} initialView="draft" active />);
+  const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
+  await waitFor(() => expect(trigger.querySelector('[role="status"]')).toBeNull());
+  await setSharedComposerText(screen.getByRole("textbox", { name: "Start a chat" }), "Keep the warmed draft");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
+  const reads = get.mock.calls.length;
+  for (let index = 0; index < 20; index++) act(() => {
+    window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await act(async () => undefined);
+  expect(get.mock.calls).toHaveLength(reads);
+  expect(useConnection.getState().providerCatalogGeneration).toBe(0);
+  expect(trigger.querySelector('[role="status"]')).toBeNull();
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  act(() => stop());
 });

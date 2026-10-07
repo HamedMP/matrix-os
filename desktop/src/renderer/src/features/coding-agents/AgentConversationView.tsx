@@ -643,14 +643,19 @@ function ConversationComposer({
   const providerStillExists = Boolean(summary?.providers.some((provider) => provider.id === providerId));
   const [selection, setSelection] = useState<CanonicalComposerSelection | null>(
     () => providerStillExists
-      ? createCanonicalComposerSelection(fallbackCatalog, preferredInstanceId)
+      ? createCanonicalComposerSelection(projectCatalog, preferredInstanceId)
       : null,
   );
   const handleProviderSetup = useProviderSetup(summary?.providers ?? [], refreshSummary);
 
+  const observedProviderCatalog = useRef(false);
   useEffect(() => {
+    const hadObservedCatalog = observedProviderCatalog.current;
+    observedProviderCatalog.current = liveCatalog.lastSuccessAt !== null;
     setSelection((current) => {
       if (!providerStillExists) return null;
+      if (current && hadObservedCatalog && !projectCatalog.instances.some(instance => instance.id === current.instanceId
+        && instance.availability === "available" && instance.models.some(model => model.id === current.model && model.availability === "available"))) return current;
       const preferred = createCanonicalComposerSelection(projectCatalog, preferredInstanceId);
       if (!preferred) return null;
       return current
@@ -662,7 +667,7 @@ function ConversationComposer({
         ? current
         : preferred;
     });
-  }, [preferredInstanceId, projectCatalog, providerStillExists]);
+  }, [preferredInstanceId, projectCatalog, providerStillExists, liveCatalog.lastSuccessAt]);
   // Stop renders while the thread is busy and the preload bridge carries the
   // "runtime:abort-thread" channel (see abort-thread.ts).
   const abortSupported = agentThreadAbortSupported();
@@ -670,7 +675,7 @@ function ConversationComposer({
   async function submit(submission: SharedChatComposerSubmission) {
     if (
       (!submission.agentPrompt && attachments.items.length === 0)
-      || liveCatalog.status === "loading"
+      || liveCatalog.initialLoading
       || readiness?.blocked
       || waitingForAction
       || threadBusy
@@ -740,7 +745,7 @@ function ConversationComposer({
             && (message.trim().length > 0 || attachments.items.length > 0 || referenceTokens.length > 0)
           }
           catalog={projectCatalog}
-          providerCatalogLoading={liveCatalog.status === "loading"}
+          providerCatalogLoading={liveCatalog.initialLoading}
           selection={selection}
           onSelectionChange={setSelection}
           onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}
