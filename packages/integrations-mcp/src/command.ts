@@ -10,8 +10,10 @@ import {
 } from "../../kernel/dist/tools/integrations.js";
 import { z } from "zod/v4";
 import { wrapExternalContent } from "../../kernel/dist/security/external-content.js";
+import { MailReadRequestSchema } from '@matrix-os/contracts';
+import { readMail } from './mail.js';
 
-const usage = "Usage: matrix-integrations <inventory|list|describe|connect|sync|call|disconnect> [arguments]";
+const usage = "Usage: matrix-integrations <inventory|list|describe|connect|sync|call|disconnect> [arguments]; mail <edition|folio|atlas> <sources|messages|message> <JSON payload>";
 const serviceSchema = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
 const catalogSchema = z.array(z.object({
   id: z.string(),
@@ -68,6 +70,12 @@ export async function runIntegrationsCommand(
 ): Promise<string> {
   const [command, ...rest] = args;
   switch (command) {
+    case 'mail': {
+      if(rest.length!==3 || Buffer.byteLength(rest[2]??'')>16384)throw new Error(usage);
+      let payload:unknown;try{payload=JSON.parse(rest[2]!);}catch(error){if(error instanceof SyntaxError)throw new Error(usage);throw error;}
+      const parsed=MailReadRequestSchema.safeParse({appId:rest[0],action:rest[1],payload});if(!parsed.success)throw new Error(usage);
+      const result=await readMail(parsed.data,fetcher);if('isError' in result && result.isError)throw new Error(result.content[0]!.text);return text(result);
+    }
     case "inventory":
       if (rest.length !== 0) throw new Error(usage);
       return text(await listIntegrationInventoryHandler(fetcher));

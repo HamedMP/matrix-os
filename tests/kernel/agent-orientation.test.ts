@@ -18,6 +18,8 @@ describe("Matrix agent orientation", () => {
     expect(prompt).toContain("DESIGN.md");
     expect(prompt).toContain("manage_cron");
     expect(prompt).toContain("Only use tools present in this run");
+    expect(prompt).toContain("read_mail_archive");
+    expect(prompt).toContain("matrix-integrations mail");
   });
 
   it("never interprets JSON files as the state of the owner's Postgres database", () => {

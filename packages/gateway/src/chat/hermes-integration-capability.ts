@@ -63,6 +63,7 @@ export function resolveHermesIntegrationCapability(token: string, methodOrPath: 
   const record = active.get(digest(token));
   if (!record) return null;
   if (record.scope) return method === "POST" && path === "/api/jev/inbox/preview" ? record.actorId : null;
+  if (method === "POST" && path === "/api/mail/read") return record.actorId;
   if (path !== "/api/integrations" && !path.startsWith("/api/integrations/")
     && path !== "/api/jev" && !path.startsWith("/api/jev/")) return null;
   return record.actorId;

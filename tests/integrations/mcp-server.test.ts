@@ -104,6 +104,7 @@ describe("Matrix integrations MCP server", () => {
     const listed = await client.listTools();
 
     expect(listed.tools.map((tool) => tool.name)).toEqual([
+      "read_mail_archive",
       "list_integration_inventory",
       "list_connected_services",
       "describe_service",
@@ -118,7 +119,7 @@ describe("Matrix integrations MCP server", () => {
       "list_chat_agent_options",
       "create_chat_agent",
     ]);
-    expect(listed.tools[0]?.description).toContain("new conversation");
+    expect(listed.tools.find(tool=>tool.name==='list_integration_inventory')?.description).toContain("new conversation");
 
     await client.close();
     await server.close();

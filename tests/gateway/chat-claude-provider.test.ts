@@ -50,7 +50,7 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
-  it("registers only the scoped Matrix Custom MCP broker on fresh and resumed supervised Runs", async () => {
+  it("registers separate scoped Custom MCP and mail readers on fresh and resumed supervised Runs", async () => {
     vi.stubEnv("MATRIX_CLERK_USER_ID", "owner_claude");
     const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([
       JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "claude_mcp_session" }),
@@ -83,7 +83,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       const config = JSON.parse(args[mcpConfigIndexes[0]! + 1]!) as {
         mcpServers: Record<string, { command: string; args?: string[] }>;
       };
-      expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations"]);
+      expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations","matrix-mail"]);
       expect(config.mcpServers["matrix-integrations"]).toEqual({
         command: "/opt/matrix/bin/matrix-integrations-mcp",
         args: ["--require-scoped-capability", "--tool-surface=custom-mcp-call"],
@@ -98,6 +98,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       expect(settings.permissions.allow?.filter((rule) => rule.startsWith("mcp__"))).toEqual([
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
+        "mcp__matrix-mail__read_mail_archive",
       ]);
       expect(args.includes("--resume")).toBe(index === 1);
     }
@@ -137,6 +138,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       expect(settings.permissions.allow).toEqual([
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
+        "mcp__matrix-mail__read_mail_archive",
       ]);
       expect(settings.permissions.deny).toEqual(["Edit", "Write", "NotebookEdit"]);
       expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBeNull();

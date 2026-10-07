@@ -24,6 +24,7 @@ export const MATRIX_COMPANY_DRIVE_TOOLS = [
   "mcp__matrix-integrations__search_company_drive",
   "mcp__matrix-integrations__read_company_drive_file",
 ] as const;
+export const MATRIX_MAIL_TOOLS = ['mcp__matrix-mail__read_mail_archive'] as const;
 
 export type MatrixMcpRunScope = "discovery" | "call" | "integration_read";
 
@@ -35,7 +36,7 @@ export interface MatrixMcpRunContext {
 }
 
 /** The configured stdio server only exposes Matrix's stable broker contract. */
-export function matrixMcpConfig(scope: "call" | "discovery" = "call", driveContext = false): string {
+export function matrixMcpConfig(scope: "call" | "discovery" = "call", driveContext = false, mailRead = false): string {
   return JSON.stringify({
     mcpServers: {
       "matrix-integrations": {
@@ -44,6 +45,7 @@ export function matrixMcpConfig(scope: "call" | "discovery" = "call", driveConte
         // the host launcher deny machine-bearer fallback for this Chat Run.
         args: ["--require-scoped-capability", `--tool-surface=custom-mcp-${scope}${driveContext ? "-drive" : ""}`],
       },
+      ...(mailRead ? {'matrix-mail':{command:'/opt/matrix/bin/matrix-integrations-mcp',args:['--require-scoped-capability','--tool-surface=mail-read']}} : {}),
     },
   });
 }
@@ -70,7 +72,7 @@ function digest(token: string): string {
 function permitted(method: string, path: string, scope: MatrixMcpRunScope): boolean {
   if (scope === "integration_read") {
     return (method === "GET" && (path === "/api/integrations" || path === "/api/integrations/agent-catalog"))
-      || (method === "POST" && path === "/api/integrations/read-call");
+      || (method === "POST" && (path === "/api/integrations/read-call" || path === "/api/mail/read"));
   }
   return (method === "GET" && (path === "/api/mcp-servers" || DETAIL_PATH.test(path)))
     || (scope === "call" && method === "POST" && CALL_PATH.test(path));
