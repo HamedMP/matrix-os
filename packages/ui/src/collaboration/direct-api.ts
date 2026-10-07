@@ -140,7 +140,8 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     const scopeId = scopeFor(path);
     const prepared = scopeId ? preparedProjects.get(scopeId) : undefined;
     const ownerProject = parseOwnerProjectPath(path);
-    if (prepared && ownerProject && ownerProject.scopeId === scopeId && ownerProjectRouteAllows(ownerProject.route, method)) {
+    if (method !== "PUT" && prepared && ownerProject && ownerProject.scopeId === scopeId
+      && ownerProjectRouteAllows(ownerProject.route, method)) {
       try {
         const result = method === "DELETE"
           ? await direct.requestOwnerProject(prepared.runtimeId, prepared.organizationId, method, path, undefined,
