@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { SLACK_OAUTH_COMPLETION_PATH, SlackOAuthCallbackQuerySchema } from '@matrix-os/contracts/slack-bridge';
+import { SLACK_OAUTH_COMPLETION_PATH, SLACK_INSTALL_PATH, SlackInstallRequestSchema, SlackOAuthCallbackQuerySchema } from '@matrix-os/contracts/slack-bridge';
 import { createSlackContextRoutes } from "./context-routes.js";
 import { createSlackLinkPage } from "./link-page.js";
 import { createSlackReplyRoutes } from "./reply-routes.js";
@@ -10,7 +10,7 @@ import { createSlackReactionRoutes } from "./reaction-routes.js";
 import { SLACK_BOT_SCOPES } from "./api.js";
 import { SlackRepositoryError, type SlackRepository } from "./repository.js";
 import { decryptSlackToken, encryptSlackToken, verifySlackSignature } from "./security.js";
-import { ActorIdSchema, OrganizationIdSchema, SlackAppIdSchema, SlackChannelIdSchema, SlackTeamIdSchema, SlackTokenSchema,
+import { ActorIdSchema, SlackAppIdSchema, SlackChannelIdSchema, SlackTeamIdSchema, SlackTokenSchema,
   SlackTimestampSchema, SlackUserIdSchema, type SlackApi, type SlackAppConfig, type SlackAuthorityDependencies, type SlackInboundEvent } from "./types.js";
 
 const EventSchema = z.object({ type: z.string().max(80), user: SlackUserIdSchema.optional(), channel: SlackChannelIdSchema.optional(),
@@ -55,7 +55,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
 
   app.post("/api/slack/install", limit, async (c) => {
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
-    const request = await parse(c, z.object({ organizationId: OrganizationIdSchema }).strict());
+    const request = await parse(c, SlackInstallRequestSchema);
     if (!request) return fail(c, "Invalid request", 422);
     if (!await options.requireOrgAdmin({ actorId, organizationId: request.organizationId })) return fail(c, "Forbidden", 403);
     const token = randomBytes(32).toString("base64url");
@@ -67,16 +67,21 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
 
   app.get("/api/slack/oauth/callback", limit, async (c) => {
     c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer');
+    const parsed = CallbackQuerySchema.safeParse(c.req.query());
+    const browser = c.req.header('accept')?.includes('text/html') && !c.req.header('authorization');
+    if (!parsed.success && browser) {
+      // Stateless Slack distribution links cannot authorize installation. Drop the code and start afresh.
+      return c.redirect(SLACK_INSTALL_PATH + '?restart=1', 303);
+    }
     const actorId = await actor(c);
     if (!actorId) {
-      const query = CallbackQuerySchema.safeParse(c.req.query());
-      if (query.success && c.req.header('accept')?.includes('text/html') && !c.req.header('authorization')) {
+      if (parsed.success && browser) {
         // The browser refreshes its own Clerk session. State never supplies identity.
-        return c.redirect(SLACK_OAUTH_COMPLETION_PATH + '?' + new URLSearchParams(query.data).toString(), 303);
+        return c.redirect(SLACK_OAUTH_COMPLETION_PATH + '?' + new URLSearchParams(parsed.data).toString(), 303);
       }
       return fail(c, "Unauthorized", 401);
     }
-    const parsed = CallbackQuerySchema.safeParse(c.req.query()); if (!parsed.success) return fail(c, "Invalid request", 422);
+    if (!parsed.success) return fail(c, "Invalid request", 422);
     const hash = digest(parsed.data.state);
     const state = await options.repository.getOAuthState(hash);
     if (!state) return fail(c, "Request expired", 409);
