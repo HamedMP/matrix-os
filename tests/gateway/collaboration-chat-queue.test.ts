@@ -215,7 +215,7 @@ describe("shared Chat canonical queue", () => {
       });
   });
 
-  it("rejects an accepted Codex request if the owner model selection changes before claim", async () => {
+  it("keeps an accepted policy-selected Codex request usable when the Chat selection changes before claim", async () => {
     await fixture.db.updateTable("chats").set({
       current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
       bound_driver_kind: "codex",
@@ -240,9 +240,10 @@ describe("shared Chat canonical queue", () => {
       runId: "run_stale_codex_model",
       messageId: "msg_stale_codex_model",
       claimedAt: now,
-    })).resolves.toBeNull();
-    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
-      .resolves.toEqual([expect.objectContaining({ id: admitted.id, state: "unavailable" })]);
+    })).resolves.toMatchObject({
+      queuedTurn: { id: admitted.id },
+      run: { selection: { instanceId: "codex_default", model: "gpt-5.6-sol" } },
+    });
   });
 
   it("rejects an accepted request after the execution generation changes", async () => {
@@ -306,7 +307,7 @@ describe("shared Chat canonical queue", () => {
     expect(admitted.selection).toEqual(policySelection);
     await expect(fixture.db.selectFrom("chats").select("current_selection")
       .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
-      .resolves.toMatchObject({ current_selection: policySelection });
+      .resolves.toMatchObject({ current_selection: productionClaudeSelection });
     const claimed = await repository.claimNextQueuedTurn(owner, {
       chatId: collaborationIds.chat,
       collaborationScopeId: collaborationIds.scope,
@@ -324,6 +325,31 @@ describe("shared Chat canonical queue", () => {
         bound_driver_kind: "claude_code",
         bound_instance_id: productionClaudeSelection.instanceId,
       });
+  });
+
+  it("does not let a later prompt with another allowed model invalidate an older queued prompt", async () => {
+    const firstSelection = productionClaudeSelection;
+    const secondSelection = { ...productionClaudeSelection, model: "claude-sonnet-5" };
+    const first = await repository.enqueueSharedQueuedTurn(owner, {
+      ...request(53, collaborationActors.editor),
+      canonicalProviderAuthority: { driverKind: "claude_code", selection: firstSelection },
+    });
+    await repository.enqueueSharedQueuedTurn(owner, {
+      ...request(54, collaborationActors.editor, 2),
+      canonicalProviderAuthority: { driverKind: "claude_code", selection: secondSelection },
+    });
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_first_policy_model",
+      runId: "run_first_policy_model",
+      messageId: "msg_first_policy_model",
+      claimedAt: now,
+    })).resolves.toMatchObject({
+      queuedTurn: { id: first.id },
+      run: { selection: firstSelection },
+    });
   });
 
   it("rejects partial or mismatched immutable bindings without changing provider authority", async () => {
@@ -397,13 +423,13 @@ describe("shared Chat canonical queue", () => {
     expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toEqual([]);
   });
 
-  it("terminalizes a queued selection that no longer exactly matches canonical authority", async () => {
+  it("terminalizes a queued selection whose Instance no longer matches its immutable authority", async () => {
     const admitted = await repository.enqueueSharedQueuedTurn(
       owner,
       request(25, collaborationActors.editor),
     );
     await fixture.db.updateTable("chat_queued_turns").set({
-      selection: JSON.stringify({ instanceId: "claude_code_default", model: "sonnet" }),
+      selection: JSON.stringify({ instanceId: "claude_code_other", model: "sonnet" }),
     }).where("id", "=", admitted.id).execute();
 
     await expect(repository.claimNextQueuedTurn(owner, {

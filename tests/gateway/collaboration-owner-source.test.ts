@@ -249,7 +249,7 @@ describe("S08 owner-selected AI source", () => {
       })).rejects.toMatchObject({ code: "conflict" });
     });
 
-    it("offers and accepts only sources compatible with an immutable shared Chat harness", async () => {
+    it("does not let one bound Chat lock the whole project to its harness", async () => {
       await fixture.db.insertInto("chats").values({
         id: collaborationIds.chat, owner_type: "personal", owner_id: collaborationActors.owner,
         create_request_id: "req_bound_policy_chat", project_id: "project_collaboration_primary",
@@ -262,12 +262,10 @@ describe("S08 owner-selected AI source", () => {
       }).execute();
 
       const options = await policies.options(PROJECT_SCOPE, collaborationActors.owner);
-      expect(options.options).toHaveLength(2);
-      expect(options.options.every((option) => option.source.harness === "claude_code")).toBe(true);
+      expect(options.options).toHaveLength(3);
       await expect(ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CODEX, {
         allowedModelIds: ["gpt-5.6"],
-      })).rejects.toMatchObject({ code: "invalid_source" });
-      await expect(ownerPolicy()).resolves.toMatchObject({ source: { harness: "claude_code" } });
+      })).resolves.toMatchObject({ source: { harness: "codex" } });
     });
 
     it.skipIf(!hasRealPostgres)("resolves the owner's source and the organization policy outside the scope lock", async () => {

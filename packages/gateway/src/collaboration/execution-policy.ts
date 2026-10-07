@@ -24,7 +24,7 @@ import {
   type CollaborationSharedHarness,
   type CollaborationSubmitMode,
 } from "@matrix-os/contracts";
-import { sharedHarnessForDriver, type OwnerAccountEligibility } from "./account-eligibility.js";
+import type { OwnerAccountEligibility } from "./account-eligibility.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import {
   appendMutationRecords,
@@ -41,7 +41,6 @@ import {
 
 export const COLLABORATION_EXECUTION_POLICY_MIGRATION_VERSION = 10;
 const OPERATION_KIND = "execution_policy";
-const MAX_POLICY_BOUND_CHATS = 256;
 
 export async function migrateExecutionPoliciesV10(trx: Transaction<OwnerCollaborationDatabase>): Promise<void> {
   await sql`
@@ -252,15 +251,11 @@ export class CollaborationExecutionPolicyRepository {
 
   async options(scopeId: string, actorId: string): Promise<CollaborationExecutionPolicyOptions> {
     const resolution = await this.requireOwnedExecutionScope(this.db, scopeId, actorId);
-    const [policy, ownerOptions, organizationAiSubmission, boundHarnesses] = await Promise.all([
+    const [policy, options, organizationAiSubmission] = await Promise.all([
       this.resolve(scopeId),
       this.eligibility.listSelections(resolution.scope.owner_id),
       this.readOrganizationAiSubmission(resolution.scope.organization_id, resolution.scope.owner_id),
-      this.boundHarnesses(this.db, resolution),
     ]);
-    const options = boundHarnesses !== null && boundHarnesses.size <= 1
-      ? ownerOptions.filter((option) => boundHarnesses.size === 0 || boundHarnesses.has(option.source.harness))
-      : [];
     return CollaborationExecutionPolicyOptionsSchema.parse({
       organizationAiSubmission,
       policy,
@@ -299,11 +294,6 @@ export class CollaborationExecutionPolicyRepository {
       if (Number(scope.revision) !== Number(preview.scope.revision) || scope.owner_id !== preview.scope.owner_id
         || scope.organization_id !== preview.scope.organization_id) {
         throw new CollaborationExecutionPolicyError("conflict", "Scope changed while the source was resolved");
-      }
-      const boundHarnesses = await this.boundHarnesses(trx, resolution, true);
-      if (boundHarnesses === null || boundHarnesses.size > 1 || (boundHarnesses.size === 1
-        && !boundHarnesses.has(resolved.source.harness))) {
-        throw new CollaborationExecutionPolicyError("invalid_source", "Selected source cannot run the bound shared Chats");
       }
       const replayKey = {
         scopeId: scope.id, actorId: input.actorId, clientRequestId: request.clientRequestId, payloadHash: input.payloadHash,
@@ -398,38 +388,6 @@ export class CollaborationExecutionPolicyRepository {
         error instanceof Error ? error.name : "UnknownError");
       return "unknown";
     }
-  }
-
-  /** Existing shared Chat harness bindings are immutable and constrain project policy choices. */
-  private async boundHarnesses(
-    db: Executor,
-    resolution: ExecutionScopeResolution,
-    lock = false,
-  ): Promise<Set<CollaborationSharedHarness> | null> {
-    let query = db.selectFrom("collaboration_scopes as child")
-      .innerJoin("chats as chat", (join) => join
-        .onRef("chat.id", "=", "child.resource_id")
-        .onRef("chat.owner_type", "=", "child.owner_type")
-        .onRef("chat.owner_id", "=", "child.owner_id"))
-      .select("chat.bound_driver_kind")
-      .where("child.kind", "=", "chat")
-      .where("child.lifecycle", "=", "shared")
-      .where("child.deleted_at", "is", null)
-      .where("chat.lifecycle", "=", "active");
-    query = resolution.ref.kind === "project"
-      ? query.where("child.parent_scope_id", "=", resolution.ref.scopeId)
-      : query.where("child.id", "=", resolution.ref.scopeId);
-    if (lock) query = query.forShare();
-    const rows = await query.limit(MAX_POLICY_BOUND_CHATS + 1).execute();
-    if (rows.length > MAX_POLICY_BOUND_CHATS) return null;
-    const harnesses = new Set<CollaborationSharedHarness>();
-    for (const row of rows) {
-      if (row.bound_driver_kind === null) continue;
-      const harness = sharedHarnessForDriver(row.bound_driver_kind);
-      if (!harness) return null;
-      harnesses.add(harness);
-    }
-    return harnesses;
   }
 
   private async project(

@@ -156,6 +156,7 @@ describe("organization ready-to-work presentation", () => {
       onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
 
     const enable = await screen.findByRole("button", { name: "Use this AI source for contributors" });
+    expect(screen.getByText(/Chats already bound to another agent remain unavailable/i)).toBeVisible();
     expect(enable).toBeDisabled();
     fireEvent.click(screen.getByRole("checkbox", { name: /may incur charges/i }));
     expect(enable).toBeEnabled();

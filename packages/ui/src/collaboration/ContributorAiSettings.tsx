@@ -104,6 +104,9 @@ export function ContributorAiSettings({ api, scope, onPolicyUpdated }: {
       <p className="mt-2">{enabled
         ? "Contributors can send prompts using this owner-selected source and model. Change their access to Viewer to make them read-only."
         : "Choose the owner-funded source and model that contributor prompts may use."}</p>
+      {scope.kind === "project" ? <p className="mt-2 text-xs text-muted-foreground">
+        This source applies to compatible project Chats. Chats already bound to another agent remain unavailable.
+      </p> : null}
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="grid gap-1">Owner AI source
           <select className={controlClass} value={sourceKey} onChange={(event) => {
