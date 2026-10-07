@@ -24,8 +24,8 @@ export function importPrompt(
   if (selection.context.length > 2000)
     throw new Error("Source context is too long.");
   if (
-    app.services.some(
-      (s) => !selection.accounts.some((a) => a.service === s.id),
+    !selection.accounts.length || app.services.some(
+      (s) => !s.optional && !selection.accounts.some((a) => a.service === s.id),
     ) ||
     selection.accounts.length > 16
   )
@@ -51,13 +51,13 @@ export function importPrompt(
       );
   }
   if (
-    app.services.some((s) =>
+    app.services.some((s) => selection.accounts.some(a => a.service === s.id) &&
       [
         "github",
         "linear",
         "slack",
         "notion",
-        "google_drive",
+        "google_drive", "google_docs", "jira",
         "posthog",
       ].includes(s.id),
     ) &&
@@ -82,7 +82,7 @@ export function importPrompt(
         expectedEmail: a.expectedEmail,
       },
     })),
-    allowedReadActions: app.services.map((s) => ({
+    allowedReadActions: app.services.filter(s => selection.accounts.some(a => a.service === s.id)).map((s) => ({
       service: s.id,
       actions: s.actions,
     })),

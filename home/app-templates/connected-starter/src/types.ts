@@ -25,7 +25,7 @@ export interface Definition {
     | "focus";
   entity: string;
   fields: Field[];
-  services: { id: string; name: string; actions: string[] }[];
+  services: { id: string; name: string; actions: string[]; optional?: boolean }[];
   importGoal: string;
   highlights: string[];
 }

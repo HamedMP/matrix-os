@@ -232,3 +232,21 @@ button:active{transform:none!important}
 @media(prefers-contrast:more){.readiness,.illustration-label,.muted,.card-description,.description{color:var(--fg)}
 .preview-window{border-color:var(--fg)}
 }
+
+/* Shared visual family with the apps this gallery installs. */
+:root:root {
+  --bg:var(--matrix-bg,#edf0f9);--fg:var(--matrix-fg,#25283d);--card:var(--matrix-card,#fff);
+  --primary:var(--matrix-primary,#5954bd);--primary-fg:var(--matrix-primary-fg,#fff);
+  --muted:var(--matrix-muted,#ecebf7);--muted-fg:var(--matrix-muted-fg,#656a80);--border:var(--matrix-border,#dddfea);
+}
+.gallery{background:radial-gradient(ellipse at 95% 0%,#f6e6eb,transparent 65%),var(--bg)}
+.collections{border-radius:999px;background:color-mix(in srgb,var(--card) 70%,transparent);padding:5px;box-shadow:0 4px 18px #33365408}
+.collections button,.install-button,.open-button,.primary-button{border-radius:999px;min-height:44px}
+.gallery-logo,.app-symbol{border-radius:18px;box-shadow:inset 0 1px 1px #ffffff80,0 5px 10px #50488a18}
+.app-card{border-radius:26px;box-shadow:0 6px 22px #33365408;border-color:color-mix(in srgb,var(--border) 65%,transparent)}
+.preview{background:linear-gradient(145deg,#e2eafb,#f0e8f3);border-radius:25px 25px 0 0}
+.preview-window{border-radius:16px;box-shadow:0 9px 24px #44426b14}
+.detail{border-radius:30px 0 0 30px}.detail-header{padding-top:30px}.detail-footer{background:color-mix(in srgb,var(--card) 92%,transparent)}
+.search{border-radius:999px;background:color-mix(in srgb,var(--card) 80%,transparent)}
+@media(max-width:600px){.detail{border-radius:0}.heading h1{font-size:34px}.gallery-grid{gap:24px}}
+@media(prefers-color-scheme:dark){:root:root{--bg:var(--matrix-bg,#202437);--fg:var(--matrix-fg,#f0eff8);--card:var(--matrix-card,#2b2f43);--primary:var(--matrix-primary,#aaa6f0);--primary-fg:var(--matrix-primary-fg,#202338);--muted:var(--matrix-muted,#35374c);--muted-fg:var(--matrix-muted-fg,#bbbace);--border:var(--matrix-border,#42455e)}.gallery{background:radial-gradient(ellipse at 95% 0%,#36283b,transparent 65%),var(--bg)}.preview{background:linear-gradient(145deg,#293852,#38304b)}}

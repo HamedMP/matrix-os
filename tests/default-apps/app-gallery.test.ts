@@ -52,7 +52,7 @@ describe("app gallery", () => {
       gatewayFetch: vi.fn().mockResolvedValue({ version: 1, apps }),
       integrations: vi.fn().mockRejectedValue(new Error("private failure")),
     });
-    expect(result.apps).toHaveLength(24);
+    expect(result.apps).toHaveLength(31);
     expect(result.connections).toBeNull();
   });
   it("keeps exact account labels and detects multiple accounts", async () => {
@@ -98,6 +98,11 @@ describe("app gallery", () => {
     expect(() =>
       parseListing({ version: 1, apps: [{ ...apps[0], id: "../evil" }] }),
     ).toThrow();
+  });
+  it("accepts the canonical forty-app limit while rejecting larger listings", () => {
+    const bounded = Array.from({ length: 40 }, (_, index) => ({ ...apps[0], id: `boundary-${index}` }));
+    expect(parseListing({ version: 1, apps: bounded })).toHaveLength(40);
+    expect(() => parseListing({ version: 1, apps: [...bounded, { ...apps[0], id: "boundary-40" }] })).toThrow("Gallery unavailable");
   });
   it("installs through the exact owner endpoint and opens the returned app", async () => {
     const result = {

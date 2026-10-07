@@ -17,6 +17,9 @@ const APP_IFRAME_CSP = [
   "base-uri 'self'",
   "object-src 'none'",
   "script-src 'self' 'unsafe-inline'",
+  // Bundled local analysis runs in an opaque-origin Blob worker. The worker
+  // inherits this document policy; external worker URLs remain disallowed.
+  "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",

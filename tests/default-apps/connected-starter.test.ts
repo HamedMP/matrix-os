@@ -61,7 +61,7 @@ describe("portable connected starter", () => {
         filterRecords([], { query: "", scope: "all", account: "" }),
       ).toEqual([]);
       expect(validateFields(app as Definition, {})).toContain(
-        "Title is required",
+        `${app.fields.find(field => field.key === "title")!.label} is required`,
       );
     }
     expect(financeSummary([])).toEqual({
@@ -84,7 +84,14 @@ describe("portable connected starter", () => {
           onSave: async () => {},
         }),
       );
-      expect(html).toMatch(/Add|Begin focus/);
+      const emptyAction = app.id === "journal-memory"
+        ? /<button[^>]*>Save entry<\/button>/
+        : app.id === "workout-coach"
+          ? /<button[^>]*>Save set<\/button>/
+          : app.id === "focus"
+            ? /<button[^>]*>Begin focus<\/button>/
+            : /<button[^>]*>[^<]*Add[^<]*<\/button>/;
+      expect(html, `${app.id} should offer its actual first-use action`).toMatch(emptyAction);
       expect(html).not.toMatch(
         /Sample receipt|London|Acme Inc|seeded|Import completed/,
       );

@@ -7,7 +7,13 @@ import Travel from "./views/Travel";
 import Habits from "./views/Habits";
 import Focus from "./views/Focus";
 import MeetingBriefs from "./views/MeetingBriefs";
+import ExistingWorkflows from "./ExistingWorkflows";
+import NewWorkflows from "./workflows/NewWorkflows";
+const existing = ["subscriptions", "folio", "agenda", "atlas", "meeting-briefs", "people", "cashflow", "projects"];
+const added = ["workout-coach", "paycheck-runway", "meal-planner", "job-search", "study-notes", "journal-memory", "chess-coach"];
 export default function Views(props: ViewProps) {
+  if (existing.includes(props.app.id)) return <ExistingWorkflows {...props} />;
+  if (added.includes(props.app.id)) return <NewWorkflows {...props} />;
   switch (props.app.view) {
     case "finance":
       return <Finance {...props} />;

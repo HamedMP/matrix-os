@@ -14,6 +14,7 @@ interface Props {
   onEvidence: (r: OwnerRecord) => void;
   onAdd: () => void;
   onSave: (r: OwnerRecord) => Promise<unknown>;
+  creationScope?: "personal" | "work";
 }
 export default function WorkspaceContent({
   app,
@@ -29,6 +30,7 @@ export default function WorkspaceContent({
   onEvidence,
   onAdd,
   onSave,
+  creationScope,
 }: Props) {
   return (
     <main>
@@ -57,6 +59,7 @@ export default function WorkspaceContent({
             onEvidence={onEvidence}
             onAdd={onAdd}
             onSave={onSave}
+            creationScope={creationScope}
           />
         )}
       <p className="workspace-foot">
@@ -86,7 +89,7 @@ function Heading({
     <section className="page-heading">
       <div>
 
-        <h1>{app.id === "atlas" ? "Places to look forward to." : app.id === "folio" ? "A clear view of your spending." : app.id === "focus" ? "Your attention, here." : app.id === "agenda" ? "A day with room to think." : app.id === "meeting-briefs" ? "Walk in prepared." : app.id === "subscriptions" ? "Know what keeps coming around." : app.id === "projects" ? "Good work, moving forward." : app.id === "revenue" ? "Money coming in." : app.name}</h1>
+        <h1>{headlines[app.id] || app.name}</h1>
         <p>{app.description}</p>
       </div>
       <div className="record-count">
@@ -105,3 +108,9 @@ function Heading({
     </section>
   );
 }
+
+const headlines: Record<string,string> = {
+ folio: "Make room for a clearer money picture.", atlas: "Your next journey, all together.", agenda: "Your day, with room to think.",
+ subscriptions: "Keep your commitments in view.", "meeting-briefs": "Good conversations. Clear next steps.", people: "A little closer to your people.",
+ cashflow: "Keep the follow-up thoughtful.", projects: "Good work, moving forward.", revenue: "Money coming in.", focus: "Your attention, here."
+};

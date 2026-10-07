@@ -46,7 +46,7 @@ describe("bundled gallery through client, authenticated route, and portable runt
   it.skipIf(process.platform !== "linux")("loads the complete shipped catalog through the actual client parser", async () => {
     const { bridge } = await fixture();
     const { apps, connections } = await loadGallery(bridge);
-    expect(apps).toHaveLength(24);
+    expect(apps).toHaveLength(31);
     expect(apps.every(app => !app.installed)).toBe(true);
     expect(connections).toEqual([]);
   });
@@ -54,7 +54,7 @@ describe("bundled gallery through client, authenticated route, and portable runt
     const { bridge } = await fixture();
     await expect(loadGallery(bridge)).rejects.toThrow("Gallery unavailable");
   });
-  it.skipIf(process.platform !== "linux")("installs and opens all 24 actual compiled portable starters", async () => {
+  it.skipIf(process.platform !== "linux")("installs and opens all 31 actual compiled portable starters", async () => {
     const { bridge, homePath, opened } = await fixture();
     for (const definition of (await loadGallery(bridge)).apps) {
       const installed = await installGalleryApp(bridge, definition.id);

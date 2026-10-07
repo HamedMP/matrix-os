@@ -1,0 +1,49 @@
+/* A common gallery family; the workflow, rather than its chrome, supplies the shape. */
+.workbench .workflow-panel { background: color-mix(in srgb,var(--card) 94%,transparent); border: 1px solid var(--border); border-radius: 28px; padding: 28px; margin: 0 0 24px; box-shadow: 0 12px 38px #455ca008; }
+.workflow-introduction { display:flex; align-items:center; gap:22px; margin-bottom:28px; }
+.workflow-introduction h2 { font-size:clamp(23px,2.7vw,34px); letter-spacing:-.04em; font-weight:550; margin:7px 0 10px; }
+.workflow-introduction p { max-width:740px; color:var(--muted); font-size:14px; line-height:1.7; margin:0; }
+.workflow-object,.person-object { width:76px; height:76px; display:grid; place-items:center; flex-shrink:0; border-radius:24px; color:var(--brand); font-size:42px; line-height:1; background:linear-gradient(145deg,#fff 12%,#e6eafa 60%,#c4cbed); box-shadow:inset 2px 2px 4px #fff,inset -3px -4px 8px #697bc62e,0 12px 20px #7888bd14; transform:rotate(-7deg); }
+.workflow-section-title { display:flex; align-items:center; justify-content:space-between; gap:15px; margin-bottom:12px; }
+.workflow-section-title h3 { margin:0; font-size:16px; }
+.workflow-section-title >span { font-size:12px; color:var(--muted); }
+.workflow-review-row,.renewal-row { display:flex; justify-content:space-between; align-items:center; gap:18px; padding:20px 0; border-top:1px solid var(--border); }
+.workflow-review-row h3,.renewal-row h3,.brief-events h3,.meeting-actions h3,.person-heading h3,.invoice-row h3,.project-risk-grid h3 { font-size:17px; letter-spacing:-.02em; margin:0 0 8px; }
+.workflow-signals { display:flex; flex-wrap:wrap; list-style:none; padding:0; gap:6px; margin:8px 0 0; }
+.workflow-signals li { background:#f6f0ef; color:#775558; border-radius:12px; padding:7px 10px; font-size:11px; line-height:1.4; }
+.workflow-clear { padding:22px; background:var(--bg); border-radius:18px; font-size:14px; line-height:1.7; color:var(--muted); }
+.renewal-row >div:nth-child(2) { flex:1; }
+.renewal-row p { margin:6px 0; color:var(--muted); font-size:14px; }
+.renewal-day { width:100px; min-height:92px; flex-shrink:0; background:color-mix(in srgb,var(--card) 85%,#d4d0f7); border-radius:20px; padding:14px; text-align:center; }
+.renewal-day strong { display:block; font-size:30px; color:var(--brand); letter-spacing:-.05em; }
+.renewal-day span { font-size:10px; color:var(--muted); line-height:1.4; display:block; }
+.workflow-panel label { display:flex; flex-direction:column; gap:8px; font-size:12px; color:var(--muted); }
+.workflow-panel select { max-width:440px; background:var(--card); }
+.brief-date { max-width:200px; margin-bottom:20px; }
+.brief-events { list-style:none; padding:0; margin:0; }
+.brief-events li { display:flex; gap:20px; align-items:center; padding:20px 0; border-top:1px solid var(--border); }
+.brief-events li >div:nth-child(2) { flex:1; }
+.brief-events time { min-width:95px; font-size:20px; color:var(--brand); letter-spacing:-.04em; }
+.brief-events p,.meeting-actions p { color:var(--muted); font-size:14px; line-height:1.6; margin:4px 0; }
+.trip-checks { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); list-style:none; gap:10px; padding:0; margin:20px 0; }
+.trip-checks li { border:1px solid var(--border); border-radius:18px; padding:18px 14px; display:grid; gap:10px; }
+.trip-checks li >span { font-size:24px; color:var(--brand); }.trip-checks strong { font-size:12px; }.trip-checks small { font-size:11px; color:var(--muted); }
+.trip-checks .ready { background:color-mix(in srgb,var(--card) 86%,#a6d9c5); }.trip-checks .missing { background:color-mix(in srgb,var(--card) 86%,#edc0c4); }
+.workflow-draft { margin:20px 0; }.workflow-draft textarea { min-height:110px; resize:vertical; line-height:1.65; background:var(--card); }.workflow-draft p { font-size:14px; line-height:1.6; }
+.draft-save { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }.draft-save >span { color:var(--brand); font-size:12px; }
+.meeting-decisions { margin:22px 0; padding:22px; background:color-mix(in srgb,var(--card) 85%,#c1c9ed); border-radius:20px; }.meeting-decisions h3 { font-size:15px; margin:0 0 10px; }.meeting-decisions p { white-space:pre-wrap; font-size:14px; line-height:1.8; }
+.meeting-actions { padding:0; list-style:none; }.meeting-actions li { display:flex; gap:16px; padding:17px 0; border-bottom:1px solid var(--border); }.meeting-actions .badge { align-self:flex-start; }
+.workflow-panel .workflow-toggle { flex-direction:row; align-items:center; margin-bottom:20px; gap:10px; }.workflow-toggle input { width:22px; min-height:44px; margin:0; accent-color:var(--brand); }
+.people-desk { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); gap:20px; }.person-panel { background:var(--card); border:1px solid var(--border); border-radius:24px; padding:24px; min-width:0; }
+.person-heading { display:flex; align-items:center; gap:16px; }.person-object { width:55px; height:55px; font-size:28px; border-radius:18px; }.person-heading p { font-size:14px; color:var(--muted); overflow-wrap:anywhere; margin:5px 0 9px; }
+.relationship-dates { display:grid; gap:14px; margin:22px 0; }.relationship-dates dt { font-size:11px; color:var(--muted); }.relationship-dates dd { margin:6px 0 0; font-size:13px; }
+.workflow-caution { background:#faf1ee; padding:12px; border-radius:12px; color:#78584e; font-size:14px; line-height:1.6; }
+.invoice-totals { display:flex; flex-wrap:wrap; gap:14px; margin:22px 0; }.invoice-totals article { min-width:190px; padding:22px; border-radius:22px; background:color-mix(in srgb,var(--card) 85%,#b9c6ef); }.invoice-totals span { display:block; font-size:11px; color:var(--muted); }.invoice-totals strong { display:block; font-size:29px; letter-spacing:-.05em; margin-top:12px; }
+.invoice-filter { margin-bottom:22px; }.invoice-row { padding:24px; border:1px solid var(--border); border-radius:22px; margin-bottom:16px; }.invoice-row-title { display:flex; justify-content:space-between; gap:20px; }.invoice-row h3 { margin-top:12px; }.invoice-row p { color:var(--muted); font-size:14px; }.invoice-value { text-align:right; }.invoice-value strong { font-size:22px; font-weight:550; letter-spacing:-.035em; }.badge.attention { background:#fae9e5; color:#8c4940; }
+.project-risk-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr)); gap:16px; }.project-risk-grid article { border:1px solid var(--border); padding:22px; border-radius:22px; background:color-mix(in srgb,var(--card) 95%,var(--bg)); }.project-risk-grid p { color:var(--muted); font-size:14px; }.project-risk-grid .record-actions { margin-top:16px; }
+@media(max-width:700px) {
+ .workbench .workflow-panel { padding:20px; border-radius:24px; }.workflow-introduction { gap:14px; align-items:flex-start; }.workflow-object { width:52px; height:52px; font-size:30px; border-radius:17px; }.workflow-introduction h2 { font-size:25px; }.workflow-introduction p { font-size:14px; }
+ .workflow-review-row,.renewal-row { flex-wrap:wrap; }.renewal-day { width:75px; padding:10px; min-height:80px; }.workflow-review-row .record-actions,.renewal-row .record-actions { flex-basis:100%; justify-content:flex-end; }
+ .brief-events li { flex-wrap:wrap; gap:12px; }.brief-events time { min-width:70px; font-size:18px; }.brief-events .record-actions { flex-basis:100%; justify-content:flex-end; }
+ .invoice-row-title { flex-direction:column; gap:10px; }.invoice-value { text-align:left; }.invoice-row,.person-panel { padding:18px; }.invoice-totals article { width:100%; }.trip-checks { grid-template-columns:1fr 1fr; }
+}

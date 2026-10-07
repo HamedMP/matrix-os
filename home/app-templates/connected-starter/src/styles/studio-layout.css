@@ -84,3 +84,33 @@
   .workbench input, .workbench select, .workbench textarea { font-size: 16px; }
   .workbench .section-heading { flex-wrap: wrap; gap: 8px; }
 }
+
+/* Gallery family, shared by every installed connected app. Host theme tokens still win. */
+.workbench {
+ --bg:var(--matrix-bg,#eef2fb); --fg:var(--matrix-fg,#252b46); --card:var(--matrix-card,#fff);
+ --muted:var(--matrix-muted-fg,#6f778e); --border:var(--matrix-border,#e2e7f1); --brand:var(--matrix-primary,#596bc3); --brand-fg:var(--matrix-primary-foreground,#fff);
+ background:radial-gradient(ellipse at 85% 5%,color-mix(in srgb,var(--bg) 87%,#f4e5ed),transparent 48%),radial-gradient(ellipse at 0% 50%,color-mix(in srgb,var(--bg) 87%,#e4edfb),transparent 60%),var(--bg);
+}
+.workbench[data-app] { --bg:var(--matrix-bg,#eef2fb); --brand:var(--matrix-primary,#596bc3); }
+.workbench .sidebar { margin:18px 28px 0; padding:14px 20px; border:1px solid color-mix(in srgb,var(--border) 80%,transparent); border-radius:28px; background:color-mix(in srgb,var(--card) 80%,transparent); box-shadow:0 8px 30px #4c639408; }
+.workbench .brand-mark { width:46px; height:46px; border-radius:16px; background:linear-gradient(145deg,#fff,#e3e9fc 70%,#c7cff0); color:var(--brand); box-shadow:inset 1px 2px 3px #fff,inset -2px -3px 7px #7685b529; }
+.brand-mark svg { width:29px; height:29px; overflow:visible; }.workbench .brand strong { font-size:20px; letter-spacing:-.025em; }
+.workbench .topbar button,.workbench button { border-radius:14px; min-height:44px; }.workbench .topbar .primary,.workbench button.primary { background:var(--brand); color:var(--brand-fg,#fff); }
+.workbench .workspace-controls .connection-card { border-radius:20px; }.workbench input,.workbench select,.workbench textarea { border-radius:12px; font-size:16px; }
+.workbench .record-card,.workbench .spending-desk,.workbench .chart-card,.workbench .commitments,.workbench .journey-detail,.workbench .meeting-document,.workbench .revenue-overview { border-radius:24px; background:var(--card); }
+.workbench .board-column { border-radius:24px; }.workbench .board-column { background:color-mix(in srgb,var(--card) 60%,var(--bg)); }.workbench .board-column .record-card { border-radius:18px; }
+.workbench .destination-canvas { border-radius:26px; }.workbench .empty-state { border-radius:28px; background:color-mix(in srgb,var(--card) 80%,transparent); }
+.workbench .revenue-overview { color:var(--fg); }.workbench .revenue-overview .eyebrow,.workbench .revenue-overview p { color:var(--muted); }
+@media(max-width:700px) {
+ .workbench .sidebar { margin:calc(10px + env(safe-area-inset-top)) 12px 0; padding:12px; gap:10px; border-radius:24px; }.workbench .brand { gap:8px; }.workbench .brand strong { font-size:17px; }.workbench .brand-mark { width:38px; height:38px; border-radius:13px; }.brand-mark svg { width:25px; height:25px; }.workbench main { padding:20px 14px calc(30px + env(safe-area-inset-bottom)); }.workbench .topbar { padding:12px 14px 4px; }.workbench .page-heading h1 { font-size:32px; }
+}
+
+.workbench .revenue-overview .bar-column { color:var(--muted); }.workbench .revenue-overview .segmented { border-color:var(--border); }.workbench .revenue-overview .segmented button[aria-pressed="true"] { background:var(--brand); color:var(--card); }
+
+.workbench .brand-mark.sculptural-mark { background-color:transparent; border-radius:16px; box-shadow:none; }
+
+@media(prefers-color-scheme:dark) {
+ .workbench,.workbench[data-app] { --bg:var(--matrix-bg,#1e2435); --fg:var(--matrix-fg,#f3f2fa); --card:var(--matrix-card,#2b3045); --muted:var(--matrix-muted-fg,#bcc2d7); --border:var(--matrix-border,#474e69); --brand:var(--matrix-primary,#9faeec); --brand-fg:var(--matrix-primary-foreground,#202338); }
+}
+
+.workbench .page-heading p { font-size:14px; }

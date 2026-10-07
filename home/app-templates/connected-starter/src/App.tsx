@@ -104,6 +104,7 @@ export default function App({ app }: { app: Definition }) {
           app={app}
           records={records}
           visible={visible}
+          creationScope={scope === "all" ? (app.collection === "business" ? "work" : "personal") : scope}
           error={error}
           exportError={exportError}
           loading={loading}
