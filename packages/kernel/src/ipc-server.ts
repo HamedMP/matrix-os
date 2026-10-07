@@ -736,11 +736,12 @@ export async function createIpcServer(
                   text: `Image generated and saved to ${result.localPath}\nModel: ${result.model}\nCost: $${result.cost.toFixed(4)}\n\nTo display: ~/data/images/${result.localPath.split("/").pop()}`,
                 }],
               };
-            } catch (e) {
+            } catch (error: unknown) {
+              console.warn("[ipc] BYOK image generation failed", error);
               return {
                 content: [{
                   type: "text" as const,
-                  text: `Image generation failed: ${e instanceof Error ? e.message : String(e)}`,
+                  text: "Image generation is unavailable. Try again later.",
                 }],
               };
             }

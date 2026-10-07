@@ -195,6 +195,20 @@ describe("platform funded image service", () => {
             await rm(dir, { recursive: true, force: true });
         }
     });
+    it.each([new Error("provider rejected /private/owner/image.png with token=secret"), "private validation detail"])("sanitizes registered Nano BYOK failures while logging their server details (%s)", async (failure) => {
+        const dir = await mkdtemp(join(tmpdir(), "matrix-image-byok-error-"));
+        try {
+            vi.stubEnv("GEMINI_API_KEY", "owner-key");
+            vi.spyOn(imageModule, "createImageClient").mockReturnValue({ isConfigured: () => true, generateImage: vi.fn(async () => { throw failure; }) });
+            vi.spyOn(usageModule, "createUsageTracker").mockReturnValue({ track: vi.fn() } as unknown as ReturnType<typeof usageModule.createUsageTracker>);
+            const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+            await createIpcServer({} as MatrixDB, dir);
+            const config = sdk.createSdkMcpServer.mock.calls.at(-1)![0] as { tools: Array<{ name: string; handler: (input: unknown) => Promise<{ content: Array<{ text: string }> }> }> };
+            const result = await config.tools.find(tool => tool.name === "generate_image")!.handler({ prompt: "Original illustration", model: "gemini-nano-banana-2.1", funding_source: "byok" });
+            expect(result.content[0]!.text).toBe("Image generation is unavailable. Try again later.");
+            expect(warning).toHaveBeenCalledWith("[ipc] BYOK image generation failed", failure);
+        } finally { await rm(dir, { recursive: true, force: true }); }
+    });
     it("reconciles an uncertain charge once using reviewed evidence without resetting spent", async () => {
         const { service } = setup(vi.fn(async () => Response.json({ ...providerResponse(), usage: undefined })), 2000000);
         await expect(service.generate(identity, request())).rejects.toThrow();
