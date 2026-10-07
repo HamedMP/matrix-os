@@ -90,7 +90,7 @@ export function ChatHistory(props: ChatHistoryProps) {
       if (mounted.current) setRenameError(true);
     } finally { pendingRef.current = false; if (mounted.current) setPending(false); }
   };
-  return <nav className="matrix-chat-history" aria-label="Conversation navigation">
+  return <nav className="matrix-chat-history ph-no-capture" aria-label="Conversation navigation">
     <header className="matrix-chat-history__header"><h2 className="text-[14px] font-medium leading-[20px]">Chats</h2>
       <button type="button" aria-label="Search chats" aria-expanded={searchOpen} onClick={() => { if (searchOpen) clearSearch(); else setSearchOpen(true); }}>{props.searchIcon ?? <ChatIcon name="search" />}</button>
     </header>
