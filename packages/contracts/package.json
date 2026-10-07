@@ -14,7 +14,8 @@
     "./bots": "./src/bots/index.ts",
     "./integration-marketplace": "./src/integration-marketplace.ts",
     "./managed-integrations": "./src/managed-integrations.ts",
-    "./bokio-integration": "./src/bokio-integration.ts"
+    "./bokio-integration": "./src/bokio-integration.ts",
+    "./data-imports": "./src/data-imports.ts"
   },
   "imports": {
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",

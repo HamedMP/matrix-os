@@ -179,6 +179,7 @@ import { createLocalIntegrationTransport, createPlatformIntegrationTransport } f
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
+import { createRuntimeDataImportRoutes } from "./startup/data-imports.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -1279,6 +1280,12 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
     audit: agentActionAuditService,
+  }));
+  app.route("/api/data-imports", await createRuntimeDataImportRoutes({
+    ownerDatabase: kyselyInstance, homePath, runtimeOwnerIds: terminalRuntimeOwnerIds,
+    transport: internalIntegrationBaseUrl && internalPlatformToken
+      ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
+      : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null,
   }));
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
