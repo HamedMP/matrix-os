@@ -15,14 +15,38 @@ import {
 const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
-function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean): ProviderSettingsSnapshot {
-  const publicSnapshot = { ...snapshot, harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness) };
+function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeModels = false,
+  includeInventory = false, includeFundingState = false, includeAccountDetails = false, includeChatFunding = false): ProviderSettingsSnapshot {
+  const { matrixModelInventory, ...baseSnapshot } = snapshot;
+  const publicSnapshot = {
+    ...baseSnapshot,
+    accounts: snapshot.accounts.map(({ connectionDetails, ...account }) => ({
+      ...account, ...(includeAccountDetails && connectionDetails ? { connectionDetails } : {}),
+    })),
+    ...(includeInventory && matrixModelInventory ? { matrixModelInventory } : {}),
+    modelProviders: snapshot.modelProviders.map(provider => ({ ...provider,
+      models: provider.models.map(({ capabilities, ...model }) => includeModels
+        ? { ...model, ...(capabilities ? { capabilities } : {}) } : model),
+    })),
+    accessSources: snapshot.accessSources.map(source => {
+      const safeReason = source.readiness.safeReason === "credit_reserved" && !includeFundingState
+        ? "credit_required" as const
+        : source.readiness.safeReason === "budget_exceeded" && !includeChatFunding
+          ? "policy" as const : source.readiness.safeReason;
+      if (source.usage.kind !== "managed_credit" || includeChatFunding) {
+        return { ...source, readiness: { ...source.readiness, safeReason } };
+      }
+      const { chatAvailability: _chatAvailability, ...usage } = source.usage;
+      return { ...source, usage, readiness: { ...source.readiness, safeReason } };
+    }),
+    harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness),
+  };
   if (include) return { ...publicSnapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
     && snapshot.supportedActions.includes("set_harness_enabled") };
   return {
     ...publicSnapshot,
     harnesses: publicSnapshot.harnesses.map(({ configuredEnabled: _configuredEnabled, configuredAccessSourceId: _configuredAccessSourceId, localObservation: _localObservation, ...harness }) => harness),
-    accessSources: snapshot.accessSources.map(({ localObservation: _localObservation, ...source }) => source),
+    accessSources: publicSnapshot.accessSources.map(({ localObservation: _localObservation, ...source }) => source),
   };
 }
 const DeleteAccountBodySchema = z.object({
@@ -34,6 +58,7 @@ const DeleteAccountBodySchema = z.object({
 
 export interface ProviderSettingsRouteOptions {
   store: ProviderSettingsStoreWriter;
+  canReadNativeAccountMetadata?: (context: Context) => boolean;
   getPrincipal: (context: Context) => unknown;
 }
 
@@ -146,13 +171,29 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
   });
 
   app.get("/provider-settings", async (context) => {
+    context.header("Cache-Control", "private, no-store");
     const authError = authorize(context, options);
     if (authError) return authError;
     const refresh = RefreshQuerySchema.safeParse(context.req.query("refresh"));
+    const accountDetails = RefreshQuerySchema.safeParse(context.req.query("includeAccountDetails"));
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
-    if (!refresh.success || !capabilities.success) return invalidRequest(context);
+    const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
+    const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
+    const chatFunding = RefreshQuerySchema.safeParse(context.req.query("includeChatFunding"));
+    const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
+    if (!accountDetails.success || !refresh.success || !capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success) return invalidRequest(context);
     try {
-      return context.json(withCapabilities(await options.store.getSnapshot({ refresh: refresh.data === "true" }), capabilities.data === "true"));
+      const ownerMetadata = options.canReadNativeAccountMetadata?.(context) === true;
+      const snapshot = await options.store.getSnapshot({ refresh: refresh.data === "true", ...(ownerMetadata ? { includeNativeAccountMetadata: true } : {}) });
+      if (options.canReadNativeAccountMetadata && !ownerMetadata) {
+        snapshot.accessSources = snapshot.accessSources.map(source => source.id === "owner_openai_profile"
+          || source.kind === "harness_profile" && source.harness === "hermes"
+          ? { ...source, displayName: source.kind === "harness_profile" ? "Hermes account" : source.displayName,
+              usage: { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "account", reason: "read_only", asOf: null } } : source);
+        snapshot.accounts = snapshot.accounts.map(account => account.accessSourceId === "owner_openai_profile"
+          ? { ...account, displayName: account.authMethod === "api_key" ? "API key" : "Codex account" } : account);
+      }
+      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", ownerMetadata && accountDetails.data === "true", chatFunding.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -162,12 +203,16 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const authError = authorize(context, options);
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
-    if (!capabilities.success) return invalidRequest(context);
+    const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
+    const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
+    const chatFunding = RefreshQuerySchema.safeParse(context.req.query("includeChatFunding"));
+    const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
+    if (!capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse(await readJson(context));
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -177,7 +222,11 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const authError = authorize(context, options);
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
-    if (!capabilities.success) return invalidRequest(context);
+    const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
+    const fundingState = RefreshQuerySchema.safeParse(context.req.query("includeFundingState"));
+    const chatFunding = RefreshQuerySchema.safeParse(context.req.query("includeChatFunding"));
+    const inventory = RefreshQuerySchema.safeParse(context.req.query("includeMatrixModelInventory"));
+    if (!capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success) return invalidRequest(context);
     const body = DeleteAccountBodySchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse({
@@ -191,7 +240,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }

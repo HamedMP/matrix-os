@@ -71,6 +71,9 @@ export interface HandlerContext {
   saveFileContent: (request: FileWriteRequest) => Promise<FileWriteResponse>;
   downloadFile: (request: InvokeRequest<"runtime:download-file">) => Promise<InvokeResponse<"runtime:download-file">>;
   cancelFileDownload: (requestId: string) => InvokeResponse<"runtime:cancel-file-download">;
+  uploadOrganizationDrive: (request: InvokeRequest<"runtime:organization-drive-upload">) => Promise<InvokeResponse<"runtime:organization-drive-upload">>;
+  downloadOrganizationDrive: (request: InvokeRequest<"runtime:organization-drive-download">) => Promise<InvokeResponse<"runtime:organization-drive-download">>;
+  cancelOrganizationDriveTransfer: () => InvokeResponse<"runtime:organization-drive-cancel">;
   prepareSourceCommit: (
     request: SourceControlPrepareCommitRequest,
   ) => Promise<SourceControlPrepareCommitResponse>;
@@ -168,13 +171,17 @@ function toWebContentsViewBounds(
     y: Math.round(bounds.y * factor),
     width: Math.round(bounds.width * factor),
     height: Math.round(bounds.height * factor),
+    ...(bounds.cornerRadius !== undefined ? { cornerRadius: Math.round(bounds.cornerRadius * factor) } : {}),
   };
 }
 
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): void {
   const buildSource = BuildSourceSchema.nullable().parse(ctx.buildSource);
-  const { downloadFile, cancelFileDownload } = ctx;
-  if (typeof downloadFile !== "function" || typeof cancelFileDownload !== "function") {
+  const { downloadFile, cancelFileDownload, uploadOrganizationDrive, downloadOrganizationDrive,
+    cancelOrganizationDriveTransfer } = ctx;
+  if (typeof downloadFile !== "function" || typeof cancelFileDownload !== "function"
+    || typeof uploadOrganizationDrive !== "function" || typeof downloadOrganizationDrive !== "function"
+    || typeof cancelOrganizationDriveTransfer !== "function") {
     throw new Error("download service unavailable");
   }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
@@ -246,6 +253,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:search-files", (request) => ctx.fetchFileSearch(request));
   handle("runtime:get-file-content", (request) => ctx.fetchFileContent(request));
   handle("runtime:download-file", (request) => downloadFile(request));
+  handle("runtime:organization-drive-upload", (request) => uploadOrganizationDrive(request));
+  handle("runtime:organization-drive-download", (request) => downloadOrganizationDrive(request));
+  handle("runtime:organization-drive-cancel", () => cancelOrganizationDriveTransfer());
   handle("runtime:cancel-file-download", ({ requestId }) => cancelFileDownload(requestId));
   handle("runtime:save-file-content", (request) => ctx.saveFileContent(request));
   handle("runtime:prepare-source-commit", (request) => ctx.prepareSourceCommit(request));

@@ -57,6 +57,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["PATCH", "/api/collaboration/scopes/:scopeId/grants/:grantId"],
   ["DELETE", "/api/collaboration/scopes/:scopeId/grants/:grantId"],
   ["POST", "/api/collaboration/scopes/:scopeId/policy/preflight"],
+  ["POST", "/api/collaboration/runtimes/:runtimeId/catalog/lookup"],
   ["POST", "/api/collaboration/runtimes/:runtimeId/catalog/resolve"],
   ["GET", "/api/collaboration/scopes/:scopeId/user-state"],
   ["PATCH", "/api/collaboration/scopes/:scopeId/user-state"],
@@ -76,6 +77,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/api/collaboration/scopes/:scopeId/terminal/actions"],
   ["PATCH", "/api/collaboration/scopes/:scopeId/terminal"],
   ["GET", "/api/collaboration/scopes/:scopeId/project"],
+  ["GET", "/api/collaboration/scopes/:scopeId/project/overview"],
   ["GET", "/api/collaboration/scopes/:scopeId/project/inventory"],
   // S10 project readiness and Git brokerage register inside the project block.
   ["GET", "/api/collaboration/scopes/:scopeId/project/readiness"],
@@ -98,9 +100,15 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/api/collaboration/scopes/:scopeId/apps/:appId/actions"],
   ["PUT", "/api/collaboration/scopes/:scopeId/drive"],
   ["GET", "/api/collaboration/scopes/:scopeId/drive"],
+  // Context search registers body limit and signed-request authorization before its handler.
+  ["POST", "/api/collaboration/scopes/:scopeId/drive/context/search"],
+  ["POST", "/api/collaboration/scopes/:scopeId/drive/context/search"],
+  ["POST", "/api/collaboration/scopes/:scopeId/drive/context/search"],
+  ["GET", "/api/collaboration/scopes/:scopeId/drive/files/:fileId/context"],
   ["POST", "/api/collaboration/scopes/:scopeId/drive/uploads"],
   ["POST", "/api/collaboration/scopes/:scopeId/drive/uploads/:uploadId/commit"],
   ["DELETE", "/api/collaboration/scopes/:scopeId/drive/uploads/:uploadId"],
+  ["POST", "/api/collaboration/scopes/:scopeId/drive/files/lookup"],
   ["GET", "/api/collaboration/scopes/:scopeId/drive/files/:fileId"],
 ];
 

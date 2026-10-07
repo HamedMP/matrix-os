@@ -454,6 +454,7 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
+    expect(screen.getByTestId("chat-welcome-matrix-logo").style.maskImage).toContain("matrix-logo.svg");
     expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Choose project for chat" }).closest(".prompt-card"))

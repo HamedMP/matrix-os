@@ -16,12 +16,16 @@ import { useProjectActions } from "@desktop/renderer/src/features/work/work-rail
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 
 const alpha = { id: "proj_alpha", slug: "alpha", name: "Alpha", kind: "folder" as const, description: "Old notes" };
-function setup(patch = vi.fn().mockResolvedValue({ project: { ...alpha, name: "Renamed", pinned: true } })) {
+function setup(
+  patch = vi.fn().mockResolvedValue({ project: { ...alpha, name: "Renamed", pinned: true } }),
+  shared = false,
+) {
   useConnection.setState({ api: { patch } as never });
   useBoard.setState({ projects: [alpha] });
   const onDeleteProject = vi.fn();
   const onNewChat = vi.fn();
   render(<WorkRailProjectGroup group={{ id: alpha.id, slug: alpha.slug, name: alpha.name, project: alpha, chats: [] }}
+    shared={shared}
     expanded={false} pinning={{}} onToggle={vi.fn()} onNewChat={onNewChat} onDeleteProject={onDeleteProject}
     onSelectChat={vi.fn()} renamingChatId={null} renamePending={false} onRenameChat={vi.fn()}
     onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onPinChat={vi.fn()} onDeleteChat={vi.fn()} />);
@@ -32,6 +36,11 @@ function openMenu() {
 }
 afterEach(() => { cleanup(); useConnection.setState({ api: null }); vi.restoreAllMocks(); });
 describe("project sidebar actions", () => {
+  it("marks the owner's canonical project as shared without creating another project row", () => {
+    setup(undefined, true);
+    expect(screen.getAllByRole("button", { name: "Alpha" })).toHaveLength(1);
+    expect(screen.getByRole("img", { name: "Shared project" })).toBeTruthy();
+  });
   it("replaces inline delete with ellipsis while preserving New Chat", () => {
     const { onNewChat } = setup();
     expect(screen.queryByRole("button", { name: "Delete Alpha project" })).toBeNull();

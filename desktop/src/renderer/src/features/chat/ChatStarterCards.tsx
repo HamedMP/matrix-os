@@ -18,7 +18,7 @@ export function ChatStarterCards({
 }) {
   const columns = density === "compact"
     ? "grid-cols-1"
-    : `grid-cols-2 ${layout === "responsive" ? "sm:grid-cols-4" : ""}`;
+    : `grid-cols-2 ${layout === "responsive" ? "sm:grid-cols-4" : "@min-[34rem]/chat-home:grid-cols-4"}`;
   return (
     <div className={`grid gap-3 ${columns}`} data-slot="chat-starter-cards">
       {STARTERS.map(({ label, Icon, tone }) => (
@@ -27,13 +27,13 @@ export function ChatStarterCards({
           type="button"
           aria-label={label}
           onClick={() => onSelect(label)}
-          className={`flex flex-col items-start justify-between rounded-xl border text-left outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${density === "compact" ? "min-h-20 p-3" : "min-h-32 p-4"}`}
+          className={`flex flex-col items-start gap-3 rounded-xl border text-left outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${density === "compact" ? "min-h-20 p-3" : "min-h-[120px] p-[15px]"}`}
           style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
         >
-          <span className="flex size-8 items-center justify-center rounded-lg" style={{ background: "var(--bg-sunken)", color: tone }}>
-            <Icon size={17} aria-hidden />
+          <span className="flex size-[30px] shrink-0 items-center justify-center rounded-[8px]" style={{ background: `color-mix(in srgb, ${tone} 12%, var(--bg-surface))`, color: tone }}>
+            <Icon size={16} aria-hidden />
           </span>
-          <span className="max-w-32 text-[13px] font-medium leading-[18px]" style={{ color: "var(--text-primary)" }}>
+          <span className="text-[14px] font-medium leading-[18px]" style={{ color: "var(--text-primary)" }}>
             {label}
           </span>
         </button>

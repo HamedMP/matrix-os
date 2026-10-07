@@ -1,4 +1,4 @@
-import { WindowResizeControls } from "@matrix-os/ui";
+import { constrainFloatingWindow, WindowResizeControls } from "@matrix-os/ui";
 import {
   useCallback,
   useEffect,
@@ -24,7 +24,7 @@ import {
   OS_WINDOW_SIDEBAR_WIDTH,
   TopBar,
 } from "./OSWindow";
-import { SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
+import { BotDetailsContext, SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
 import { HostedWorkSidebar, HOSTED_WORK_SIDEBAR_WIDTH } from "../work/HostedWorkSidebar";
 import { WorkSurfaceRuntimeProvider } from "../work/WorkSurfaceRuntime";
 
@@ -71,6 +71,7 @@ export default function DesktopSurfaceFrame({
   overlayOpen,
   presentation,
   interactionScale = 1,
+  viewport,
   workspaceRevision = "",
   desktopTransition = null,
   desktopHiddenSurfaceIds = [],
@@ -87,6 +88,7 @@ export default function DesktopSurfaceFrame({
   overlayOpen: boolean;
   presentation: NativeDesktopMode;
   interactionScale?: number;
+  viewport?: { width: number; height: number };
   workspaceRevision?: string;
   desktopTransition?: DesktopTransition | null;
   desktopHiddenSurfaceIds?: readonly string[];
@@ -112,6 +114,14 @@ export default function DesktopSurfaceFrame({
     : isDesktopHidden || isDesktopTransition || (isDesktopWindow && !tabWorkspaceActive) || (isTabbed && tabWorkspaceActive && active);
   const interactive = visible && active;
   const isNativeEmbed = tab.kind === "home" || tab.kind === "app" || tab.kind === "browser" || tab.kind === "vscode";
+  const nativeClearance = isNativeEmbed && !isCanvas && viewport;
+  const minimum = { width: Math.min(440, surface.bounds.width), height: Math.min(300, surface.bounds.height) };
+  const bounds = nativeClearance
+    ? constrainFloatingWindow(surface.bounds, nativeClearance, minimum, undefined, { resizeTargetClearance: NATIVE_DESKTOP_LAYOUT.resizeHandleSize })
+    : surface.bounds;
+  const changeBounds = useCallback((next: DesktopSurfaceBounds) => onBoundsChange(nativeClearance
+    ? constrainFloatingWindow(next, nativeClearance, minimum, bounds, { resizeTargetClearance: NATIVE_DESKTOP_LAYOUT.resizeHandleSize })
+    : next), [nativeClearance, minimum.width, minimum.height, bounds, onBoundsChange]);
   const isWorkSurface = tab.kind === "work"
     || tab.kind === "chat"
     || tab.kind === "projects"
@@ -142,6 +152,7 @@ export default function DesktopSurfaceFrame({
     isDesktopTransition,
   });
   const interactionCleanupRef = useRef<(() => void) | null>(null);
+  const [botDetailsHost, setBotDetailsHost] = useState<HTMLElement | null>(null);
   const [surfaceChrome, setSurfaceChrome] = useState<SurfaceChromeSpec | null>(null);
   const surfaceChromeHost = useMemo(() => ({ setChrome: setSurfaceChrome }), []);
 
@@ -158,12 +169,12 @@ export default function DesktopSurfaceFrame({
     onFocus();
     const startX = event.clientX;
     const startY = event.clientY;
-    const initial = surface.bounds;
+    const initial = bounds;
     const move = (pointerEvent: PointerEvent) => {
       const scale = Math.max(0.01, interactionScale);
       const deltaX = (pointerEvent.clientX - startX) / scale;
       const deltaY = (pointerEvent.clientY - startY) / scale;
-      onBoundsChange({ ...initial, x: initial.x + deltaX, y: initial.y + deltaY });
+      changeBounds({ ...initial, x: initial.x + deltaX, y: initial.y + deltaY });
     };
     const captureTarget = event.currentTarget as HTMLElement;
     const pointerId = event.pointerId;
@@ -189,35 +200,35 @@ export default function DesktopSurfaceFrame({
     window.addEventListener("pointercancel", finish);
     window.addEventListener("blur", finish);
     captureTarget.addEventListener("lostpointercapture", finish);
-  }, [interactionScale, isWindow, onBoundsChange, onFocus, surface.bounds]);
+  }, [interactionScale, isWindow, changeBounds, onFocus, bounds]);
 
   if (surface.mode === "closed") return null;
 
   const layoutRevision = [
     surface.mode,
-    surface.bounds.x,
-    surface.bounds.y,
-    surface.bounds.width,
-    surface.bounds.height,
+    bounds.x,
+    bounds.y,
+    bounds.width,
+    bounds.height,
     presentation,
     workspaceRevision,
   ].join(":");
 
   const frameStyle: CSSProperties = isWindow ? {
-    left: `${surface.bounds.x}px`,
-    top: `${surface.bounds.y}px`,
-    width: `${surface.bounds.width}px`,
-    height: `${surface.bounds.height}px`,
+    left: `${bounds.x}px`,
+    top: `${bounds.y}px`,
+    width: `${bounds.width}px`,
+    height: `${bounds.height}px`,
     zIndex: surface.zIndex,
     display: visible ? "flex" : "none",
     ...(isDesktopTransition ? {
-      ...desktopWindowMotion(surface.tabId, surface.bounds),
+      ...desktopWindowMotion(surface.tabId, bounds),
       animation: desktopTransition?.phase === "hiding"
         ? "native-desktop-window-hide 280ms cubic-bezier(0.22, 1, 0.36, 1) both"
         : "native-desktop-window-show 280ms cubic-bezier(0.22, 1, 0.36, 1) both",
       pointerEvents: "none",
     } : isDesktopHidden ? {
-      ...desktopWindowMotion(surface.tabId, surface.bounds),
+      ...desktopWindowMotion(surface.tabId, bounds),
       transform: "translate3d(var(--desktop-exit-x), var(--desktop-exit-y), 0)",
       pointerEvents: "none",
     } : {}),
@@ -244,17 +255,17 @@ export default function DesktopSurfaceFrame({
     <SurfaceChromeContext.Provider value={surfaceChromeHost}>
     <OSWindow
       surfaceId={tab.id}
-      sidebarWidth={tab.kind === "settings" ? 208 : isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined}
+      sidebarWidth={tab.kind === "settings" ? 248 : isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined}
       sidebar={tab.kind === "settings" ? (
         <SettingsSidebar section={settingsSection} onSectionChange={setSettingsSection} />
       ) : isWorkSurface ? (
-        <HostedWorkSidebar tab={tab} active={visible} />
+        <HostedWorkSidebar tab={tab} active={visible} searchShortcutActive={paneActive} />
       ) : undefined}
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
       topBarReservesSafeArea={isWindow || !isWorkSurface}
       topBar={showsSurfaceTopBar ? (
         <TopBar
-          title={workChatTitle ?? (sidebarHidesTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title)}
+          title={surfaceChrome?.hideTitle ? undefined : workChatTitle ?? (sidebarHidesTitle && !surfaceChrome?.showTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title)}
           leftActions={surfaceChrome?.leftActions}
           rightActions={surfaceChrome?.rightActions}
           leftPaneWidth={surfaceChrome?.leftPaneWidth ?? (isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined)}
@@ -275,27 +286,27 @@ export default function DesktopSurfaceFrame({
       aria-hidden={!visible}
       onContextMenu={(event) => event.stopPropagation()}
       frameControls={isWindow && visible ? (
-        <WindowResizeControls bounds={surface.bounds} scale={interactionScale}
-          minimum={{ width: Math.min(440, surface.bounds.width), height: Math.min(300, surface.bounds.height) }}
-          onFocus={onFocus} onBoundsChange={onBoundsChange} />
+        <WindowResizeControls bounds={bounds} scale={interactionScale}
+          placement={isNativeEmbed ? "outside" : "inside"}
+          minimum={minimum}
+          onFocus={onFocus} onBoundsChange={changeBounds} />
       ) : undefined}
       data-window-click-buffer={isWindow && visible && !isDesktopHidden && !isDesktopTransition || undefined}
       data-surface-mode={surface.mode}
       data-active={active || undefined}
-      className="pointer-events-auto absolute min-h-0 min-w-0 flex-col overflow-hidden transition-[box-shadow,border-color] duration-150"
+      className={`pointer-events-auto absolute min-h-0 min-w-0 flex-col ${isNativeEmbed && isWindow ? "overflow-visible" : "overflow-hidden"} transition-[box-shadow,border-color] duration-150`}
       style={frameStyle}
       onPointerDown={isWindow ? onFocus : undefined}
     >
+      <BotDetailsContext.Provider value={isWorkSurface ? botDetailsHost : null}>
       <div
+        ref={isWorkSurface ? setBotDetailsHost : undefined}
         key="surface-content"
         data-testid={`desktop-surface-content-${tab.kind}`}
+        data-bot-details-host={isWorkSurface || undefined}
+        style={isWorkSurface ? { "--matrix-bot-details-overlay-layer": DESKTOP_Z_INDEX.popover } as CSSProperties : undefined}
         className="relative flex min-h-0 flex-1 flex-col"
         inert={!interactive ? true : undefined}
-        style={isNativeEmbed && isWindow ? {
-          paddingLeft: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
-          paddingRight: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
-          paddingBottom: `${NATIVE_DESKTOP_LAYOUT.resizeHandleSize / Math.max(0.5, interactionScale)}px`,
-        } : undefined}
       >
         <TabErrorBoundary tabTitle={tab.title} onClose={onClose}>
           <TabPane
@@ -309,10 +320,11 @@ export default function DesktopSurfaceFrame({
           />
         </TabErrorBoundary>
       </div>
+      </BotDetailsContext.Provider>
     </OSWindow>
     </SurfaceChromeContext.Provider>
   );
   return isWorkSurface ? (
-    <WorkSurfaceRuntimeProvider active={visible}>{frame}</WorkSurfaceRuntimeProvider>
+    <WorkSurfaceRuntimeProvider active={visible} tabId={tab.id}>{frame}</WorkSurfaceRuntimeProvider>
   ) : frame;
 }

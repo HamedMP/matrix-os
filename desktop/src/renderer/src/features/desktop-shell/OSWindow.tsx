@@ -6,8 +6,10 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useContext,
+  useRef,
   useState,
 } from "react";
+import { useChatDialogAnchor } from "./chat-dialog-anchor";
 import { SURFACE_BASE_BACKGROUND } from "../../design/surface";
 
 export const OS_WINDOW_GESTURE_HEIGHT = 48;
@@ -184,12 +186,12 @@ export function TopBar({
   };
 
   return (
-    <div className="relative shrink-0" style={{ height: OS_WINDOW_GESTURE_HEIGHT }}>
+    <div className="relative shrink-0" style={{ height: OS_WINDOW_GESTURE_HEIGHT, pointerEvents: "none" }}>
       {onDragStart ? (
         <div
           data-os-window-gesture-layer
           data-testid="desktop-window-drag-handle"
-          className="absolute inset-0 z-20"
+          className="pointer-events-auto absolute inset-0 z-20"
           onPointerDown={onDragStart}
           onDoubleClick={handleDoubleClick}
         />
@@ -300,6 +302,8 @@ export function OSWindow({
   safeAreaLayout?: OSWindowSafeArea;
 }) {
   const [sidebarShown, setSidebarShown] = useState(true);
+  const mainRef = useRef<HTMLElement | null>(null);
+  useChatDialogAnchor(mainRef, style, sidebarShown);
   const sidebarAvailable = Boolean(sidebarWidth);
   const sidebarId = `os-window-sidebar-${surfaceId}`;
   const paneSurface = {
@@ -331,6 +335,7 @@ export function OSWindow({
       style={{ ...paneSurface, ...style }}
       {...props}
     >
+      <div data-os-window-clip className="absolute inset-0 overflow-hidden" style={{ borderRadius: "inherit" }}>
       <div data-os-window-body className="absolute inset-0 flex min-h-0">
         {sidebarWidth ? (
           <aside
@@ -351,7 +356,7 @@ export function OSWindow({
             </OSWindowSafeView>
           </aside>
         ) : null}
-        <main data-os-window-main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <main ref={mainRef} data-os-window-main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {safeAreaLayout === "pane" ? (
             <OSWindowSafeView area="pane" data-os-window-safe-view="pane" className="flex min-h-0 flex-1 flex-col">
               {children}
@@ -360,10 +365,11 @@ export function OSWindow({
         </main>
       </div>
       {topBar ? (
-        <div data-os-window-top-bar-overlay className="absolute inset-x-0 top-0 z-20">
+        <div data-os-window-top-bar-overlay className="absolute inset-x-0 top-0 z-20" style={{ pointerEvents: "none" }}>
           {topBar}
         </div>
       ) : null}
+      </div>
       {frameControls}
     </section>
     </OSWindowSafeAreaContext.Provider>

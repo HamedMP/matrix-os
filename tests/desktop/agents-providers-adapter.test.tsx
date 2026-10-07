@@ -12,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   )),
 }));
 
-vi.mock("@matrix-os/ui", () => ({
+vi.mock("@matrix-os/ui", async () => ({
+  ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   AgentsProvidersView: mocks.view,
   useProviderSettingsController: mocks.controller,
 }));

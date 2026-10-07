@@ -431,6 +431,15 @@ export class CustomMcpBroker {
   }
 
   async remove(userId: string, serverId: string): Promise<void> {
+    return this.removeConnection(userId,serverId,false);
+  }
+
+  /** Platform deletion calls this only after all owner runtimes have been destroyed. */
+  async removeForAccountDeletion(userId: string, serverId: string): Promise<void> {
+    return this.removeConnection(userId,serverId,true);
+  }
+
+  private async removeConnection(userId: string, serverId: string, runtimeDestroyed: boolean): Promise<void> {
     const row = await this.requirePrivate(userId, serverId);
     const disabled = await this.options.db.updateCustomMcpServer(serverId, userId, row.revision, {
       enabled: false,
@@ -438,10 +447,14 @@ export class CustomMcpBroker {
     });
     if (!disabled) throw new CustomMcpBrokerError("conflict");
     try {
-      await this.options.projection.remove(userId, serverId);
-      if (row.auth_mode === "oauth" && this.options.revokeOAuth) {
+      if (!runtimeDestroyed) await this.options.projection.remove(userId, serverId);
+      if (row.auth_mode === "oauth") {
         const credential = this.readCredential(userId, row);
-        await this.options.revokeOAuth(credential);
+        const hasGrant = Boolean(credential.oauth?.refreshToken || credential.oauth?.accessToken);
+        if (runtimeDestroyed && hasGrant && (!credential.oauth?.revocationEndpoint || !this.options.revokeOAuth)) {
+          throw new CustomMcpBrokerError('action_required');
+        }
+        if (this.options.revokeOAuth) await this.options.revokeOAuth(credential);
       }
     } catch (error) {
       console.error("[custom-mcp] removal requires action:", error instanceof Error ? error.message : String(error));

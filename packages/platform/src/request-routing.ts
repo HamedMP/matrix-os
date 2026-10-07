@@ -190,7 +190,12 @@ export function shouldProxyAuthShellForUnroutedUser(input: {
 }): boolean {
   return (
     input.isAppDomain &&
-    (input.method === 'GET' || input.method === 'HEAD') &&
+    (input.method === 'GET' || input.method === 'HEAD'
+      // Clerk's Next cache invalidation is a POST Server Action on auth pages.
+      || (input.method === 'POST' && (
+        input.path === '/sign-in' || input.path.startsWith('/sign-in/')
+        || input.path === '/sign-up' || input.path.startsWith('/sign-up/')
+      ))) &&
     !isRuntimeDataPath(input.path) &&
     !input.path.startsWith('/vps') &&
     !input.path.startsWith('/internal/') &&

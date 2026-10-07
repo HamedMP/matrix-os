@@ -1,10 +1,12 @@
 ---
+triggers: ["connected services", "Gmail", "Calendar", "GitHub", "integration"]
 name: matrix-integrations
 description: Use Matrix OS platform-owned integrations from apps or agents without exposing provider secrets on customer VPSes or inside Agent.
 version: 1.0.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-app-builder]
 metadata:
   agent:
     tags: [Matrix OS, integrations, Pipedream, OAuth, platform]

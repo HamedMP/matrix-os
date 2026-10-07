@@ -1,5 +1,7 @@
+import type { JevInboxBatchStore } from "./inbox-batch-store.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
-import { JEV_MODEL_ID, FundedAiRuntimeFundingSummaryResponseSchema, type ChatAgent, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import type { AgentRuntimeSource } from "../agent-config/service.js";
+import { JEV_MODEL_ID, FundedAiRuntimeChatFundingSummaryResponseSchema, type ChatAgent, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { createJevHermesCredentialResolver } from "../chat/jev-hermes-credentials.js";
 import { verifyJevHermesRuntimePin, verifyJevHermesDependencies } from "../chat/jev-hermes-runtime-pin.js";
 import { createFundedAiReadinessReader } from "../funded-ai-readiness.js";
@@ -8,6 +10,7 @@ import type { FundedAiRouteReadinessReader } from "../funded-ai-route-readiness-
 import type { PlatformDb } from "../platform-db.js";
 import type { PipedreamConnectClient } from "../integrations/pipedream.js";
 import { createJevRecipeReadClient } from "./recipe-read-client.js";
+import { createJevRecipeLabelClient } from "./recipe-label-client.js";
 import { createJevInboxRuntime } from "./inbox-runtime.js";
 import { InboxPreviewError } from "./inbox-broker.js";
 import type { JevService } from "./service.js";
@@ -19,6 +22,8 @@ import { createJevRoutes } from "./routes.js";
 /** One production authority composition; no credential inheritance, transport fallback after failure, or alternate funding path. */
 export function createProductionJevInboxRuntime(options: {
   homePath: string; ownerId: string; fundedOwnerId?: string;
+  batchStore?: JevInboxBatchStore;
+  runtimeSource?: AgentRuntimeSource;
   settings: { getSnapshot(options?: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot> };
   getAgent: (ownerId: string, agentId: string) => Promise<ChatAgent | null>;
   service: JevService | null;
@@ -28,24 +33,25 @@ export function createProductionJevInboxRuntime(options: {
   db?: PlatformDb | null; pipedream?: PipedreamConnectClient | null;
 }) {
   const readiness = options.summary && options.routes
-    ? createFundedAiReadinessReader({ summary: options.summary, routes: {
+    ? createFundedAiReadinessReader({ modelId: JEV_MODEL_ID, summary: options.summary, routes: {
       getRouteReadiness: call => options.routes!.getRouteReadiness({ ...call, modelId: JEV_MODEL_ID }),
     } }) : null;
   const read = createJevRecipeReadClient(options);
   const runtime = createJevInboxRuntime({ ownerId: options.ownerId, getAgent: options.getAgent,
     resolveCredentials: createJevHermesCredentialResolver(options),
-    verifyRuntime: async (root, signal) => {
+    verifyRuntime: async (root, signal, apiMode) => {
       await verifyJevHermesRuntimePin(root, signal);
-      await verifyJevHermesDependencies(root, signal);
+      await verifyJevHermesDependencies(root, apiMode, signal);
     },
     fundedPolicyReady: async signal => {
       if (!options.service || !options.fundedOwnerId || !options.summary) return false;
       const raw = await options.summary.getFundingSummary({ signal }); signal.throwIfAborted();
-      const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
+      if (!raw.chatAvailability) return false;
+      const { policy, funding, chatAvailability } = FundedAiRuntimeChatFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
       const now = Date.now();
       return policy.enabled && policy.allowedModelIds.includes(JEV_MODEL_ID)
         && Date.parse(policy.checkedAt) <= now && Date.parse(policy.staleAfter) > now
-        && funding.remainingBudgetMicrousd > 0 && funding.remainingBalanceMicrousd > 0
+        && funding.remainingBudgetMicrousd > 0 && chatAvailability.availableBalanceMicrousd > 0
         && Date.parse(funding.asOf) <= now + 60_000 && now - Date.parse(funding.asOf) < 300_000;
     },
     fundedReady: async signal => {
@@ -55,7 +61,8 @@ export function createProductionJevInboxRuntime(options: {
       const result = await readiness.read({ signal }); signal.throwIfAborted();
       return result.readiness.state === "ready" && result.allowedModelIds.includes(JEV_MODEL_ID);
     },
-    read,
+    read, batchStore: options.batchStore,
+    label: createJevRecipeLabelClient(options),
     evaluate: async (owner, input, signal) => {
       if (owner !== options.ownerId || !options.service || !options.fundedOwnerId) throw new InboxPreviewError("denied");
       return options.service.evaluate(options.fundedOwnerId, input, signal);

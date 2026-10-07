@@ -1,4 +1,4 @@
-import { Children, Fragment, type ReactNode } from "react";
+import { Children, Fragment, type ReactNode, type Ref } from "react";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import {
   Pressable,
@@ -12,9 +12,14 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Divider, Icon, Spacer, type IconData } from "@/components/ui";
 
-export function SettingsPage({ children }: { children: ReactNode }) {
+export function SettingsPage({ children, scrollRef }: {
+  children: ReactNode;
+  /** For screens that scroll themselves, e.g. back to a notice after an action. */
+  scrollRef?: Ref<ScrollView>;
+}) {
   return (
     <ScrollView
+      ref={scrollRef}
       style={styles.screen}
       contentContainerStyle={styles.pageContent}
       contentInsetAdjustmentBehavior="automatic"

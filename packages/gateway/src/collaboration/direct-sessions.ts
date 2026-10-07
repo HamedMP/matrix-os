@@ -46,6 +46,8 @@ interface SessionRecord {
   actionsRemaining: number;
   pendingActions: number;
   budgetVersion: number;
+  /** The project whose membership admitted a project Chat; the session's own scope otherwise. */
+  membershipScopeId: string;
   /** Set when the record is detached, so a call holding it from before can refuse. */
   ended?: boolean;
 }
@@ -138,7 +140,7 @@ export class DirectSessionService {
     if (ticket.purpose !== "direct_session") throw new DirectAuthError("invalid_ticket", "Ticket purpose does not admit a session");
     this.options.verifier.requireClientOrigin(parsed.data.clientOrigin);
     this.options.verifier.verifyPossession({ ticket, proofPublicKey: parsed.data.proofPublicKey, possession: parsed.data.possession });
-    const evidenceExpiresAt = await this.admit(ticket);
+    const { evidenceExpiresAt, membershipScopeId } = await this.admit(ticket);
     // Admission awaits the scope read, the membership evidence and the authority check, so the
     // fence can land while this call is in flight. Refuse at the point of registration rather
     // than register and end: an end hook would fire into registries the fence has detached,
@@ -164,7 +166,7 @@ export class DirectSessionService {
       evidenceExpiresAt: new Date(Math.min(evidenceExpiresAt, issuedAt.getTime() + EVIDENCE_TTL_MS)).toISOString(),
       renewAfter: new Date(issuedAt.getTime() + RENEW_AFTER_MS).toISOString(),
     });
-    this.sessions.set(session.id, { session, proofPublicKey: parsed.data.proofPublicKey, connections: 0, actionsRemaining: ticket.maxActions, pendingActions: 0, budgetVersion: 0 });
+    this.sessions.set(session.id, { session, proofPublicKey: parsed.data.proofPublicKey, connections: 0, actionsRemaining: ticket.maxActions, pendingActions: 0, budgetVersion: 0, membershipScopeId });
     this.notifyAdmitted(session);
     return session;
   }
@@ -192,7 +194,7 @@ export class DirectSessionService {
       || ticket.organizationId !== record.session.organizationId || ticket.proofKeyThumbprint !== record.session.proofKeyThumbprint) {
       throw new DirectAuthError("invalid_ticket", "Renewal ticket does not match the session");
     }
-    const evidenceExpiresAt = await this.admit(ticket);
+    const { evidenceExpiresAt } = await this.admit(ticket);
     this.assertServing();
     this.assertRecordLive(record);
     this.options.verifier.consume(ticket);
@@ -349,13 +351,13 @@ export class DirectSessionService {
     };
   }
 
-  /** Ends every session the denial covers and reports their ids. */
+  /** Ends every session the denial covers, including a project's Chats for a project denial, and reports their ids. */
   revoke(denial: Pick<CollaborationDenial, "organizationId" | "actorId" | "scopeId">): string[] {
     const ended: string[] = [];
     for (const record of [...this.sessions.values()]) {
       const { session } = record;
       if ((denial.actorId && session.actorId !== denial.actorId)
-        || (denial.scopeId && session.scopeId !== denial.scopeId)
+        || (denial.scopeId && session.scopeId !== denial.scopeId && record.membershipScopeId !== denial.scopeId)
         || (denial.organizationId && session.organizationId !== denial.organizationId)) continue;
       this.end(record, "revoked");
       ended.push(session.id);
@@ -449,7 +451,7 @@ export class DirectSessionService {
   }
 
   /** Admission at exchange: scope exists on this home in the ticket's organization; actor is a member or an invitee; evidence is fresh. */
-  private async admit(ticket: CollaborationConnectionTicket): Promise<number> {
+  private async admit(ticket: CollaborationConnectionTicket): Promise<{ evidenceExpiresAt: number; membershipScopeId: string }> {
     const scope = await this.options.repository.db.selectFrom("collaboration_scopes")
       .select(["id", "organization_id", "authority_runtime_id", "authority_generation", "kind", "membership_mode", "parent_scope_id", "deleted_at"])
       .where("id", "=", ticket.resource.scopeId).executeTakeFirst();
@@ -465,16 +467,22 @@ export class DirectSessionService {
       const member = await this.options.repository.getMember(membershipScopeId, ticket.actorId);
       if (member?.status === "revoked" || member?.status === "expired") throw denied();
       const grant = await this.options.repository.db.selectFrom("collaboration_grants")
-        .select(["scope_id", "organization_id", "audience_kind", "state", "expires_at"])
+        .select(["scope_id", "organization_id", "audience_kind", "audience_actor_id", "state", "expires_at"])
         .where("id", "=", ticket.resource.pendingGrantId).executeTakeFirst();
       if (!grant || grant.scope_id !== scope.id || grant.organization_id !== ticket.organizationId
-        || grant.audience_kind !== "organization" || grant.state !== "active"
         || (grant.expires_at !== null && new Date(grant.expires_at).getTime() <= this.now().getTime())) throw denied();
-      return evidence;
+      // An organization-wide grant is always active and pends per member. A member grant is
+      // pending until its one addressee accepts it; it stays admissible once active so a
+      // ticket signed before the platform learned of the acceptance still settles.
+      const admissible = grant.audience_kind === "organization"
+        ? grant.state === "active"
+        : grant.audience_actor_id === ticket.actorId && (grant.state === "pending" || grant.state === "active");
+      if (!admissible) throw denied();
+      return { evidenceExpiresAt: evidence, membershipScopeId };
     }
     try {
       await this.options.authority.authorize({ scopeId: ticket.resource.scopeId, actorId: ticket.actorId, action: "read" });
-      return evidence;
+      return { evidenceExpiresAt: evidence, membershipScopeId };
     } catch (error: unknown) {
       if (!(error instanceof CollaborationAuthorizationError) || error.code === "unavailable") throw denied();
     }
@@ -482,7 +490,7 @@ export class DirectSessionService {
     if (ticket.purpose !== "direct_session") throw denied();
     const member = await this.options.repository.getMember(membershipScopeId, ticket.actorId);
     if (!member || member.status !== "pending") throw denied();
-    return evidence;
+    return { evidenceExpiresAt: evidence, membershipScopeId };
   }
 
   private async evidenceFor(organizationId: string, actorId: string): Promise<number> {

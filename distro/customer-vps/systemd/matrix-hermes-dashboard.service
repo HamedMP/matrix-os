@@ -4,6 +4,8 @@ After=matrix-hermes.service network-online.target
 Wants=network-online.target
 ConditionPathExists=/opt/matrix/bin/matrix-hermes-dashboard
 
+ConditionPathExists=!/var/lib/matrix-agent-runtime/disabled-hermes
+
 [Service]
 User=matrix
 Group=matrix

@@ -56,3 +56,11 @@ it("enforces the included model allowlist before leasing credentials", async () 
   expect((await request()).status).toBe(503);
   expect(mocks.launch).not.toHaveBeenCalled();
 });
+
+it("blocks retired Matrix SDK app generation without invoking the generator", async () => {
+  await allow();
+  mocks.sources.mockResolvedValue({ selectedAccessSourceId: "matrix_included" });
+  mocks.launch.mockRejectedValueOnce(new Error("Selected AI access is unavailable"));
+  expect((await request()).status).toBe(503);
+  expect(mocks.generate).not.toHaveBeenCalled();
+});

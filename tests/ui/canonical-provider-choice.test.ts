@@ -5,6 +5,8 @@ import {
   deriveCanonicalProviderChoices,
 } from "../../packages/ui/src/canonical-provider-choice.js";
 import { createCanonicalComposerSelection } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state.js";
+import { managedChatInstances, managedPiChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 
 const catalog = CanonicalProviderCatalogSchema.parse({
   revision: "catalog_test",
@@ -73,6 +75,23 @@ describe("managed model default parity", () => {
 });
 
 describe("canonical Provider choice presentation", () => {
+  it("offers only Matrix AI without exposing the managed execution driver", () => {
+    const snapshot = makeAiProviderSnapshot();
+    const value = CanonicalProviderCatalogSchema.parse({
+      revision: "managed-pi-and-kernel",
+      drivers: [
+        { kind: "kernel", displayName: "Claude SDK", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+        { kind: "matrix_pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "system_agent" },
+      ],
+      instances: [...managedChatInstances(snapshot, []), ...managedPiChatInstances(snapshot)]
+        .map((instance) => ({ ...instance, catalogRevision: "managed-pi-and-kernel" })),
+    });
+    expect(deriveCanonicalProviderChoices(value).map(({ instanceId, modelId, harnessLabel, connectionLabel }) =>
+      ({ instanceId, modelId, harnessLabel, connectionLabel }))).toEqual([
+      { instanceId: "matrix_pi_default", modelId: "claude-sonnet-5", harnessLabel: "Matrix AI", connectionLabel: "Matrix AI" },
+    ]);
+  });
+
   it("retains historical expired Codex local evidence without claiming current access without removing the route", () => {
     const codex = {
       ...catalog.instances[0]!, driverKind: "codex" as const,
@@ -98,6 +117,7 @@ describe("canonical Provider choice presentation", () => {
       permissionModes: ["supervised", "full_access"],
       options: catalog.instances[0]!.options,
       selectedOptions: [{ id: "effort", value: "high" }, { id: "thinking", value: true }],
+      supportsCompanyDriveContext: false,
       supportsFileAttachments: false,
     }]);
   });

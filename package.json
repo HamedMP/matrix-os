@@ -86,6 +86,11 @@
       }
     },
     "packageExtensions": {
+      "eslint-config-next@16.2.3": {
+        "dependencies": {
+          "next": "16.2.6"
+        }
+      },
       "electron-vite@*": {
         "dependencies": {
           "electron": "^41.0.3"
@@ -98,7 +103,7 @@
       },
       "@react-native/jest-preset@*": {
         "dependencies": {
-          "react-native": "0.86.0",
+          "react-native": "0.86.3",
           "@babel/runtime": "^7.29.0"
         }
       },
@@ -110,7 +115,7 @@
       },
       "react-native-edge-to-edge@*": {
         "dependencies": {
-          "@expo/config-plugins": "57.0.2"
+          "@expo/config-plugins": "57.0.9"
         }
       },
       "langium@4.2.1": {
@@ -124,6 +129,11 @@
     },
     "patchedDependencies": {
       "app-builder-lib@26.15.3": "patches/app-builder-lib@26.15.3.patch"
+    },
+    "overrides": {
+      "@earendil-works/pi-ai": "1.0.0",
+      "@earendil-works/chord": "1.0.0",
+      "@earendil-works/pi-telemetry": "1.0.0"
     }
   },
   "devDependencies": {

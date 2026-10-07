@@ -32,6 +32,12 @@ export interface AgentRuntimeSettingsSnapshot {
   runtime: AgentRuntimeSelection;
   providers: AgentProviderDescriptor[];
   messaging: AgentMessagingSelection;
+  /**
+   * True only when the selected runtime's route was actually read. An
+   * unconfigured selection is then either empty or outside the live catalog;
+   * Agent settings can reapply neither, so neither is a restorable route.
+   */
+  messagingObserved?: boolean;
   /** Internal native profile evidence; selection remains a separate owner choice. */
   nativeProfileObservations?: Array<Omit<NonNullable<AgentRuntimeDescriptor["nativeRouteObservation"]>, "modelId">>;
 }

@@ -200,6 +200,7 @@ describe("mobile terminal client", () => {
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "lease-revoked" }));
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "output", data: "follow" }));
     expect((ws as unknown as MockWebSocket).closed).toBe(false);
+    connection.close();
   });
 
   it("uses text input for emulator replies when connected to an older runtime", () => {

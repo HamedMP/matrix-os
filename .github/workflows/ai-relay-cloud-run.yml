@@ -38,7 +38,16 @@ jobs:
       AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT }}
       PLATFORM_INTERNAL_URL: ${{ vars.PLATFORM_INTERNAL_URL }}
       CLOUDFLARE_AI_GATEWAY_URL: ${{ vars.CLOUDFLARE_AI_GATEWAY_URL }}
+      MATRIX_JEV_PRICING_REVIEW_VERSION: ${{ vars.MATRIX_JEV_PRICING_REVIEW_VERSION }}
+      MATRIX_JEV_PRICING_REVIEWED_AT: ${{ vars.MATRIX_JEV_PRICING_REVIEWED_AT }}
+      MATRIX_JEV_PRICING_VALID_THROUGH: ${{ vars.MATRIX_JEV_PRICING_VALID_THROUGH }}
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: ${{ vars.MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION }}
+      MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT: ${{ vars.MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT }}
+      MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: ${{ vars.MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH }}
+      MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: ${{ vars.MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION }}
+      MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT: ${{ vars.MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT }}
+      MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH: ${{ vars.MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -58,6 +67,15 @@ jobs:
             AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT
             PLATFORM_INTERNAL_URL
             CLOUDFLARE_AI_GATEWAY_URL
+            MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION
+            MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT
+            MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH
+            MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION
+            MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT
+            MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH
+            MATRIX_JEV_PRICING_REVIEW_VERSION
+            MATRIX_JEV_PRICING_REVIEWED_AT
+            MATRIX_JEV_PRICING_VALID_THROUGH
           )
           for name in "${required[@]}"; do
             if [ -z "${!name:-}" ]; then
@@ -65,6 +83,39 @@ jobs:
               exit 1
             fi
           done
+          if [ "$MATRIX_JEV_PRICING_REVIEW_VERSION" != "typesafe-jev-input-2026-09" ]; then
+            echo "Jev review must match the supported immutable price version." >&2
+            exit 1
+          fi
+          for name in MATRIX_JEV_PRICING_REVIEWED_AT MATRIX_JEV_PRICING_VALID_THROUGH; do
+            if ! [[ "${!name}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ ]]; then
+              echo "Jev review dates must use canonical UTC ISO timestamps." >&2
+              exit 1
+            fi
+          done
+          python3 - <<'PYTHON'
+          import os
+          import sys
+          from datetime import datetime, timedelta, timezone
+
+          try:
+              dates = []
+              for name in ("MATRIX_JEV_PRICING_REVIEWED_AT", "MATRIX_JEV_PRICING_VALID_THROUGH"):
+                  value = os.environ[name]
+                  parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+                  if parsed.isoformat(timespec="milliseconds").replace("+00:00", "Z") != value:
+                      raise ValueError("noncanonical date")
+                  dates.append(parsed)
+              reviewed_at, valid_through = dates
+              now = datetime.now(timezone.utc)
+              if not timedelta(0) < valid_through - reviewed_at <= timedelta(days=90):
+                  raise ValueError("invalid review window")
+              if not reviewed_at <= now <= valid_through:
+                  raise ValueError("review is not current")
+          except (KeyError, ValueError):
+              print("Jev review must use valid UTC dates and a current window of at most 90 days.", file=sys.stderr)
+              sys.exit(1)
+          PYTHON
           if ! [[ "$PLATFORM_INTERNAL_URL" =~ ^https://[^/?#]+/?$ ]]; then
             echo "PLATFORM_INTERNAL_URL must be an HTTPS origin." >&2
             exit 1
@@ -152,7 +203,7 @@ jobs:
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
-            --set-env-vars "^|^MATRIX_FUNDED_AI_ENABLED=true|MATRIX_FUNDED_AI_RESERVATION_MODE=usage|MATRIX_FUNDED_AI_BETAS=claude-code-20250219,structured-outputs-2025-11-13,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24|PLATFORM_INTERNAL_URL=${PLATFORM_INTERNAL_URL}|CLOUDFLARE_AI_GATEWAY_URL=${CLOUDFLARE_AI_GATEWAY_URL}|MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY=16|MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=2|MATRIX_FUNDED_AI_GLOBAL_RATE_LIMIT=60|MATRIX_FUNDED_AI_RATE_LIMIT=20" \
+            --set-env-vars "^|^MATRIX_FUNDED_AI_ENABLED=true|MATRIX_FUNDED_AI_RESERVATION_MODE=usage|MATRIX_FUNDED_AI_BETAS=claude-code-20250219,structured-outputs-2025-11-13,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24|PLATFORM_INTERNAL_URL=${PLATFORM_INTERNAL_URL}|CLOUDFLARE_AI_GATEWAY_URL=${CLOUDFLARE_AI_GATEWAY_URL}|MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION=${MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION}|MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT=${MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT}|MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH=${MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH}|MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION=${MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION}|MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT=${MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT}|MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH=${MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH}|MATRIX_JEV_PRICING_REVIEW_VERSION=${MATRIX_JEV_PRICING_REVIEW_VERSION}|MATRIX_JEV_PRICING_REVIEWED_AT=${MATRIX_JEV_PRICING_REVIEWED_AT}|MATRIX_JEV_PRICING_VALID_THROUGH=${MATRIX_JEV_PRICING_VALID_THROUGH}|MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY=16|MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=2|MATRIX_FUNDED_AI_GLOBAL_RATE_LIMIT=60|MATRIX_FUNDED_AI_RATE_LIMIT=20" \
             --set-secrets "CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest,CLOUDFLARE_WORKERS_AI_TOKEN=cloudflare-workers-ai-token-preview:latest,AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest" \
             --quiet
           candidate_url=""

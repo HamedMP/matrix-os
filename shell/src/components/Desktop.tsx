@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } fro
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
-import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
+import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
@@ -13,6 +13,7 @@ import { parseDesktopFirstRunStatus, type DesktopFirstRunStatus } from "@/lib/de
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
 import { Settings, type SettingsSectionId } from "./Settings";
+import { OrganizationSwitcher } from "./organization/OrganizationSwitcher";
 import { CanvasRenderer } from "./canvas/CanvasRenderer";
 import {
   Tooltip,
@@ -29,7 +30,6 @@ import { useThemeStyle } from "./window/useThemeStyle";
 import { OsSessionHost } from "./os-session/OsSessionHost";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
-import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { nameToSlug } from "@/lib/utils";
@@ -52,9 +52,6 @@ import {
   createOsViewLayoutMemory,
   transitionOsViewLayout,
 } from "@/lib/os-view-layout-memory";
-import {
-  loadWebOsViewPresentation,
-} from "@/lib/os-view-state-client";
 import { useCanvasTransformPersistence } from "@/hooks/useOsViewStatePersistence";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MatrixLoadingScreen } from "./MatrixLoadingScreen";
@@ -70,24 +67,18 @@ import {
 } from "@/lib/canonical-provider-setup";
 import {
   loadShellSnapshot,
-  saveShellSnapshot,
   type ShellSnapshotScope,
 } from "@/lib/shell-snapshot-cache";
 import {
-  isBuiltInAppPath,
-  isRestorableBuiltInAppPath,
   isRetiredBuiltInAppPath,
   normalizeBuiltInAppPath,
-  normalizeBuiltInLayoutWindow,
 } from "@/lib/builtin-apps";
 import {
   DESKTOP_GATEWAY_FETCH_TIMEOUT_MS as GATEWAY_FETCH_TIMEOUT_MS,
-  gatewayFetchSignal,
-  registryPathToRelativePath,
-  type ModuleMeta,
-  type ShellBootstrap,
 } from "./desktop/desktop-app-routing";
 import { DockIcon } from "./desktop/DesktopDockControls";
+import { useDesktopBootstrap } from "./desktop/useDesktopBootstrap";
+import { useDesktopChatStartup } from "./desktop/useDesktopChatStartup";
 import { DesktopWindow, hasActiveWindowInteraction } from "./desktop/DesktopWindow";
 import { WebDesktopSurface } from "./desktop/WebDesktopSurface";
 import {
@@ -125,7 +116,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   const wmReconcileWindowsToViewport = useWindowManager((s) => s.reconcileWindowsToViewport);
   const wmGetWindow = useWindowManager((s) => s.getWindow);
   const wmSetWindows = useWindowManager((s) => s.setWindows);
-  const wmLoadLayout = useWindowManager((s) => s.loadLayout);
   const fullscreenWindowId = useWindowManager((s) => s.fullscreenWindowId);
   const wmToggleFullscreen = useWindowManager((s) => s.toggleFullscreen);
   const wmExitFullscreen = useWindowManager((s) => s.exitFullscreen);
@@ -157,6 +147,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   );
 
   const [interacting, setInteracting] = useState(false);
+  const [taskBoardOpen, setTaskBoardOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDefaultSection, setSettingsDefaultSection] = useState<SettingsSectionId>("appearance");
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
@@ -164,7 +155,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   // Shell hydration always uses the shared Matrix brand surface. Theme-specific
   // OS boot screens are reserved for actual OS-session transitions so this
   // account → journey → Desktop handoff cannot visually swap designs.
-  const launchPathConsumedRef = useRef<string | null>(null);
 
   const dock = useDesktopConfigStore((s) => s.dock);
   const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? EMPTY_PINNED_APPS;
@@ -497,212 +487,14 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     };
   }, [openExistingProviderTerminal]);
 
-  useEffect(() => {
-    if (!launchAppPath) return;
-    const launchRequestKey = sharedTerminalScopeId
-      ? `${launchAppPath}?sharedScope=${encodeURIComponent(sharedTerminalScopeId)}`
-      : launchAppPath;
-    if (launchPathConsumedRef.current === launchRequestKey) return;
-    if (sharedTerminalScopeId) {
-      launchPathConsumedRef.current = launchRequestKey;
-      const existing = useWindowManager.getState().windows.find((windowRecord) => (
-        windowRecord.path === "__terminal__"
-        && windowRecord.sharedTerminalScopeId === sharedTerminalScopeId
-      ));
-      if (existing) {
-        wmRestoreAndFocusWindow(existing.id);
-        focusCanvasWindow(existing.id);
-      } else {
-        wmOpenWindow("Shared Terminal", "__terminal__", dockXOffset, {
-          terminalPersistence: "ephemeral",
-          sharedTerminalScopeId,
-        });
-        requestAnimationFrame(() => {
-          const opened = useWindowManager.getState().windows.find((windowRecord) => (
-            windowRecord.path === "__terminal__"
-            && windowRecord.sharedTerminalScopeId === sharedTerminalScopeId
-          ));
-          if (opened) focusCanvasWindow(opened.id);
-        });
-      }
-      return;
-    }
-    const match = apps.find((app) => app.path === launchAppPath);
-    if (!match) return;
-    launchPathConsumedRef.current = launchRequestKey;
-    openAppOrFocus(match.path, match.name);
-  }, [apps, dockXOffset, focusCanvasWindow, launchAppPath, openAppOrFocus,
-    sharedTerminalScopeId, wmOpenWindow, wmRestoreAndFocusWindow]);
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
-  const loadModules = useCallback(async (signal?: AbortSignal) => {
-    const isLoadAborted = () => signal?.aborted === true;
-    const fetchForLoad = async (input: RequestInfo | URL): Promise<Response | null> => {
-      if (isLoadAborted()) return null;
-      const response = await fetch(input, {
-        signal: gatewayFetchSignal(signal),
-      });
-      return isLoadAborted() ? null : response;
-    };
-    const readJsonForLoad = async <T,>(response: Response): Promise<T | null> => {
-      if (isLoadAborted()) return null;
-      const data = await response.json() as T;
-      return isLoadAborted() ? null : data;
-    };
-    const applyBootstrap = async (
-      bootstrap: ShellBootstrap,
-      options: { resolveModuleMetadata: boolean },
-    ) => {
-      if (isLoadAborted()) return;
-
-      const savedLayout: { windows?: LayoutWindow[] } =
-        !isPreVpsBillingSetupRoute() ? bootstrap.layout ?? {} : {};
-      const savedWindows = (savedLayout.windows ?? []).map(normalizeBuiltInLayoutWindow);
-      const layoutMap = new Map(savedWindows.map((w) => [w.path, w]));
-
-      const layoutToLoad: LayoutWindow[] = [];
-      const queuedLayoutPaths = new Set<string>();
-      const queueSavedLayout = (saved: LayoutWindow | undefined) => {
-        if (!saved || queuedLayoutPaths.has(saved.path)) return;
-        queuedLayoutPaths.add(saved.path);
-        layoutToLoad.push(saved);
-      };
-
-      const savedBuiltIns = savedWindows.filter((w) => isRestorableBuiltInAppPath(w.path));
-      for (const saved of savedBuiltIns) {
-        queueSavedLayout(saved);
-      }
-
-      // Load pre-installed apps from /api/apps (apps/ directory)
-      if (Array.isArray(bootstrap.apps)) {
-        for (const app of bootstrap.apps) {
-          if (isLoadAborted()) return;
-          const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
-          const saved = layoutMap.get(relativePath);
-          queueSavedLayout(saved);
-          // Don't auto-open pre-installed apps - let users open from dock/store
-        }
-      }
-
-      // Load modules from modules.json (Node/Python apps with ports)
-      if (Array.isArray(bootstrap.modules)) {
-        const registry = bootstrap.modules;
-
-        for (const mod of registry) {
-          if (isLoadAborted()) return;
-          if (mod.status !== "active") continue;
-          if (!options.resolveModuleMetadata) {
-            const relativeBasePath = registryPathToRelativePath(mod.path);
-            if (!relativeBasePath) continue;
-            const defaultEntryFile = mod.type === "react-app" ? "dist/index.html" : "index.html";
-            const path = normalizeBuiltInAppPath(`${relativeBasePath}/${defaultEntryFile}`);
-            const saved = layoutMap.get(path);
-            queueSavedLayout(saved);
-            continue;
-          }
-
-          try {
-            const relativeBasePath = registryPathToRelativePath(mod.path);
-            if (!relativeBasePath) continue;
-
-            const metaCandidates = relativeBasePath.startsWith("apps/")
-              ? [
-                  `${GATEWAY_URL}/files/${relativeBasePath}/matrix.json`,
-                  `${GATEWAY_URL}/files/${relativeBasePath}/module.json`,
-                  `${GATEWAY_URL}/files/${relativeBasePath}/manifest.json`,
-                ]
-              : [
-                  `${GATEWAY_URL}/files/${relativeBasePath}/manifest.json`,
-                  `${GATEWAY_URL}/files/${relativeBasePath}/module.json`,
-                  `${GATEWAY_URL}/files/${relativeBasePath}/matrix.json`,
-                ];
-
-            let metaRes: Response | undefined;
-            for (const candidate of metaCandidates) {
-              // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design priority fallback: tries the candidate manifest filenames in order and breaks on the first that exists; parallelizing would always fire every request and lose the priority semantics
-              const res = await fetchForLoad(candidate);
-              if (!res) return;
-              if (res.ok) {
-                metaRes = res;
-                break;
-              }
-            }
-
-            const defaultEntryFile =
-              mod.type === "react-app" ? "dist/index.html" : "index.html";
-            let path = `${relativeBasePath}/${defaultEntryFile}`;
-            let appName = mod.name;
-
-            if (!metaRes?.ok) {
-              path = normalizeBuiltInAppPath(path);
-              const saved = layoutMap.get(path);
-              queueSavedLayout(saved);
-              continue;
-            }
-
-            const meta = await readJsonForLoad<ModuleMeta>(metaRes);
-            if (!meta) return;
-            const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
-            path = normalizeBuiltInAppPath(`${relativeBasePath}/${entryFile}`);
-            appName = meta.name ?? mod.name;
-
-            const saved = layoutMap.get(path);
-            if (saved) {
-              queueSavedLayout(saved);
-            } else {
-              openWindow(appName, path);
-            }
-          } catch (err) {
-            if (isLoadAborted()) return;
-            console.warn(`[desktop] Failed to load module "${mod.name}":`, err);
-          }
-        }
-      }
-
-      if (isLoadAborted()) return;
-      if (layoutToLoad.length > 0) {
-        wmLoadLayout(layoutToLoad);
-      }
-    };
-
-    try {
-      const cachedBootstrap = loadShellSnapshot(cacheScope)?.bootstrap as ShellBootstrap | undefined;
-      if (cachedBootstrap) {
-        await applyBootstrap(cachedBootstrap, { resolveModuleMetadata: false });
-      }
-
-      const bootstrapRes = await fetchForLoad(`${GATEWAY_URL}/api/shell/bootstrap`).catch((err) => {
-        if (isLoadAborted()) return null;
-        console.warn("[desktop] Failed to fetch shell bootstrap:", err);
-        return undefined;
-      });
-      if (bootstrapRes === null) return;
-      const bootstrap = bootstrapRes?.ok ? await readJsonForLoad<ShellBootstrap>(bootstrapRes) : {};
-      if (bootstrap === null) return;
-      if (!isPreVpsBillingSetupRoute()) {
-        const presentation = await loadWebOsViewPresentation(GATEWAY_URL, useDesktopMode.getState().mode, signal);
-        if (presentation) {
-          bootstrap.layout = { windows: presentation.windows };
-          useCanvasTransform.getState().setTransform(
-            presentation.transform.zoom,
-            presentation.transform.panX,
-            presentation.transform.panY,
-          );
-        }
-      }
-      if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
-      await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
-    } catch (err) {
-      if (isLoadAborted()) return;
-      console.warn("[desktop] Failed to load desktop modules:", err);
-    }
-  }, [cacheScope, openWindow, wmLoadLayout]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void loadModules(controller.signal);
-    return () => controller.abort();
-  }, [loadModules]);
+  const entryKey = JSON.stringify([cacheScope?.storageKey ?? null, getGatewayUrl()]);
+  const { loadModules, settled, navigationChangedRef } = useDesktopBootstrap({
+    cacheScope, entryKey, openWindow,
+  });
+  useDesktopChatStartup({
+    entryKey, settled, navigationChangedRef, launchAppPath, sharedTerminalScopeId,
+    apps, dockXOffset, focusCanvasWindow, openAppOrFocus,
+  });
 
   useFileWatcher((path: string, event: string) => {
     if (path === "system/modules.json" && event !== "unlink") {
@@ -756,7 +548,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     setInteracting(hasActiveWindowInteraction(dragRef.current, resizeRef.current));
   };
 
-  const [taskBoardOpen, setTaskBoardOpen] = useState(false);
 
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);
@@ -1448,6 +1239,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                   onOpenFirstWork={openGettingStartedWork}
                 />
               )}
+              headerLeadingAction={<OrganizationSwitcher onOpenSettings={openWebSettings} />}
               onOpenSettings={(section: WebDesktopSettingsSection) => {
                 setSettingsDefaultSection(section);
                 setSettingsOpen(true);
@@ -1543,6 +1335,11 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         onOpenProviderTerminalSession={(sessionId) => {
           setSettingsOpen(false);
           openExistingProviderTerminal(sessionId);
+        }}
+        onOpenImportedChat={(chatId) => {
+          chat?.switchConversation(chatId);
+          setSettingsOpen(false);
+          openAppOrFocus("__chat__", "Chat");
         }}
       />
       {/* No fullscreen exit pill: every maximized window keeps its own header

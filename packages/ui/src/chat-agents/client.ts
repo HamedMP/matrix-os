@@ -1,3 +1,4 @@
+import { createChatDriveProjectClient, type ChatDriveProjectClient } from "../organization-drive/chat-project-client.js";
 import {
   CanonicalChatIdSchema, CanonicalProviderCatalogSchema,
   ChatAgentIdSchema, ChatAgentSchema, ChatAgentListResponseSchema, ChatMentionSearchResponseSchema,
@@ -8,6 +9,8 @@ import {
   type CanonicalProviderCatalog, type CanonicalChatResourceReference,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { createBotClient, type BotClient } from "./bots/client.js";
+import { canonicalChatProviderCatalogPath } from "../provider-projection-paths.js";
 
 export type ChatAgentDraftRequest = { id: number; text: string; resources?: CanonicalChatResourceReference[] };
 export type StartAgentChat = (text: string, resources?: CanonicalChatResourceReference[]) => void;
@@ -24,6 +27,8 @@ const IntegrationConnectionListSchema = z.array(IntegrationConnectionSchema).max
 export type ChatAgentIntegrationConnection = z.infer<typeof IntegrationConnectionSchema>;
 
 export interface ChatAgentClient {
+  driveProjects?: ChatDriveProjectClient;
+  bots?: BotClient;
   list(): Promise<ChatAgentListResponse>;
   catalog(): Promise<CanonicalProviderCatalog>;
   recipeCatalog(): Promise<ChatAgentRecipeCatalog>;
@@ -36,11 +41,13 @@ export interface ChatAgentClient {
 
 /** The surface supplies its existing authenticated, timeout-bounded transport. */
 export function createChatAgentClient(request: (
-  path: string, method: "GET" | "POST" | "PATCH", body?: unknown,
+  path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown,
 ) => Promise<unknown>): ChatAgentClient {
   return {
+    driveProjects: createChatDriveProjectClient(request),
+    bots: createBotClient(request),
     list: async () => ChatAgentListResponseSchema.parse(await request("/api/chat-agents", "GET")),
-    catalog: async () => CanonicalProviderCatalogSchema.parse(await request("/api/chat-providers", "GET")),
+    catalog: async () => CanonicalProviderCatalogSchema.parse(await request(canonicalChatProviderCatalogPath(), "GET")),
     recipeCatalog: async () => ChatAgentRecipeCatalogSchema.parse(await request("/api/chat-agents/recipe-catalog", "GET")),
     integrations: async () => IntegrationConnectionListSchema.parse(await request("/api/integrations", "GET")),
     create: async (input) => ChatAgentSchema.parse(await request("/api/chat-agents", "POST", CreateChatAgentRequestSchema.parse(input))),

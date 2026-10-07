@@ -10,7 +10,7 @@ export function SettingsSectionHeader({
   className?: string;
 }) {
   return (
-    <div data-testid="settings-section-header" className={`mb-6 flex flex-col gap-1 ${className}`}>
+    <div data-testid="settings-section-header" className={`mb-5 flex flex-col gap-1 ${className}`}>
       <h3 data-testid="settings-section-header-title" className="text-lg font-normal tracking-[-0.4px]" style={{ color: "var(--text-primary)" }}>
         {title}
       </h3>

@@ -32,6 +32,7 @@ export interface R2ClientConfig {
 export interface R2Client {
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
+  listMultipartUploads(key: string): Promise<{ key: string; uploadId: string }[]>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<string>;
   completeMultipartUpload(
@@ -49,6 +50,7 @@ export interface R2Client {
     body: string | Uint8Array | ReadableStream<Uint8Array> | Readable,
     options?: { signal?: AbortSignal; contentLength?: number },
   ): Promise<{ etag?: string }>;
+  headObject(key: string): Promise<{ exists: boolean; etag?: string }>;
   deleteObject(key: string): Promise<void>;
   destroy(): void;
 }
@@ -63,9 +65,11 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
   const {
     S3Client,
     GetObjectCommand,
+    HeadObjectCommand,
     PutObjectCommand,
     DeleteObjectCommand,
     CreateMultipartUploadCommand,
+    ListMultipartUploadsCommand,
     UploadPartCommand,
     CompleteMultipartUploadCommand,
     AbortMultipartUploadCommand,
@@ -119,6 +123,16 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
         signingDate: new Date(),
         unhoistableHeaders: new Set(["content-length"]),
       }));
+    },
+
+    async listMultipartUploads(key: string): Promise<{ key: string; uploadId: string }[]> {
+      const response = await s3.send(new ListMultipartUploadsCommand({ Bucket: bucket, Prefix: key, MaxUploads: 11 }), {
+        abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+      });
+      if (response.IsTruncated) throw new Error("Storage recovery capacity exceeded");
+      const matches = (response.Uploads ?? []).filter(upload => upload.Key === key);
+      if (matches.length > 10 || matches.some(upload => !upload.UploadId)) throw new Error("Storage recovery capacity exceeded");
+      return matches.map(upload => ({ key, uploadId: upload.UploadId! }));
     },
 
     async createMultipartUpload(key: string): Promise<string> {
@@ -180,9 +194,11 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
         Key: key,
         UploadId: uploadId,
       });
-      await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
-      });
+      try {
+        await s3.send(command, { abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS) });
+      } catch (error: unknown) {
+        if (!(error instanceof Error) || error.name !== "NoSuchUpload") throw error;
+      }
     },
 
     async getObject(
@@ -220,6 +236,18 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
         abortSignal: options?.signal ?? AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
       });
       return { etag: response.ETag ?? undefined };
+    },
+
+    async headObject(key: string): Promise<{ exists: boolean; etag?: string }> {
+      try {
+        const response = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }), {
+          abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+        });
+        return { exists: true, etag: response.ETag ?? undefined };
+      } catch (error: unknown) {
+        if (error instanceof Error && (error.name === "NoSuchKey" || error.name === "NotFound")) return { exists: false };
+        throw error;
+      }
     },
 
     async deleteObject(key: string): Promise<void> {

@@ -47,6 +47,32 @@ export async function migrateHostBundles(db: PlatformMigrationExecutor): Promise
   await sql`ALTER TABLE host_bundle_releases ALTER COLUMN size TYPE BIGINT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_channel ON host_bundle_releases(channel)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_created_at ON host_bundle_releases(created_at)`.execute(db);
+  // Spec 537: which same-repository PR produced a bundle, so a Private Preview
+  // owner can confirm exactly that PR's code. Bounded at the database as well.
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS source_pr INTEGER`.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS source_author TEXT`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'host_bundle_releases'::regclass
+          AND conname = 'host_bundle_releases_source_check'
+      ) THEN
+        ALTER TABLE host_bundle_releases
+          ADD CONSTRAINT host_bundle_releases_source_check
+          CHECK (
+            (source_pr IS NULL OR source_pr BETWEEN 1 AND 999999999)
+            AND (source_author IS NULL OR source_author ~ '^[A-Za-z0-9-]{1,39}$')
+          ) NOT VALID;
+      END IF;
+    END $$
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_source_pr
+    ON host_bundle_releases(source_pr, created_at DESC)
+    WHERE source_pr IS NOT NULL
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS host_bundle_channels (

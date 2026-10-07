@@ -11,6 +11,9 @@ import { createCanonicalChatRuntime } from "../../packages/gateway/src/chat/runt
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalChatProviderAdapter, type CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
+import { createCustomBotChats } from "../../packages/gateway/src/bots/custom-direct-chat.js";
+import { bootstrapBotDatabase } from "../../packages/gateway/src/bots/database.js";
+import { ownerBotExecutor } from "../../packages/gateway/src/bots/instantiation.js";
 import { ChatAgentContextError } from "../../packages/gateway/src/chat/agent-context.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_bot_runs" };
@@ -34,6 +37,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
   let failBeforeCheckpoint: "failed" | "aborted" | undefined;
   let agentId: string;
   let recipeSkillsRoot: string;
+  let botChats: ReturnType<typeof createCustomBotChats> | undefined;
   let jevAdmission: "ready" | "setup" | "funding" | undefined;
 
   beforeEach(async () => {
@@ -50,11 +54,12 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     }
     repository = new ChatRepository((await KyselyPGlite.create()).dialect);
     await repository.bootstrap();
+    botChats = undefined;
     enabled = true; jevAdmission = undefined; failBeforeCheckpoint = undefined; failHermes = false; calls = []; release = undefined; hold = undefined;
     const catalog = createCanonicalProviderCatalogFixture();
     const hermes = { ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes" as const,
       models: [{ ...catalog.instances[0]!.models[0]!, id: agentSelection.model }],
-      supports: { ...catalog.instances[0]!.supports, resources: [], permissionModes: ["full_access"] },
+      supports: { ...catalog.instances[0]!.supports, attachments: [], resources: [], permissionModes: ["full_access"] },
     };
     catalog.drivers.push({ ...catalog.drivers[0]!, kind: "hermes", displayName: "Hermes" });
     catalog.instances.push(hermes);
@@ -78,6 +83,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
       };
     };
     const runtime = await createCanonicalChatRuntime({
+      botChats: { directBot: async (actor, chatId) => await botChats?.directBot(actor, chatId) ?? null },
       homePath: home, recipeSkillsRoot, enabled: () => enabled,
       admitJevWorkflow: async (actor, agent) => {
         expect(actor).toEqual(owner); expect(agent.id).toBe(agentId);
@@ -119,6 +125,51 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     return result;
   }
 
+  it("executes a dedicated custom Bot through its saved harness with durable history and safe request consent", async () => {
+    await bootstrapBotDatabase(ownerBotExecutor(repository.kysely));
+    botChats = createCustomBotChats({ chats: repository, agents });
+    const chatId = await botChats.ensureDirectChat(owner, agentId);
+    const consent = { type: "resource_reference" as const, resource: { kind: "agent" as const, id: agentId, label: "Partner helper", revision: "1" } };
+    const request = { clientRequestId: "req_dedicated_one", baseRevision: 0, selection, interactionMode: "default", permissionMode: "supervised", parts: [{ type: "text" as const, text: "Prepare a read-only brief" }] };
+    await expect(orchestrator.admitTurn(principal, owner, chatId, request)).rejects.toMatchObject({ safeError: { code: "agent_full_access_required" } });
+    expect(calls).toEqual([]);
+    await orchestrator.admitTurn(principal, owner, chatId, { ...request, permissionMode: "full_access", parts: [...request.parts, consent] });
+    await complete();
+    expect(calls.map(call => call.driver)).toEqual(["hermes"]);
+    expect(calls[0].input.context?.agent).toMatchObject({ id: agentId, revision: 1, instructions: "Separate decisions from open questions." });
+    const revision = (await repository.get(owner, chatId))!.chat.revision;
+    await orchestrator.admitTurn(principal, owner, chatId, { ...request, baseRevision: revision, clientRequestId: "req_dedicated_two", permissionMode: "full_access", parts: [{ type: "text", text: "Continue the brief" }, consent] });
+    await complete();
+    expect(calls.map(call => call.driver)).toEqual(["hermes", "hermes"]);
+    expect(calls[1].input.context?.history?.text).toContain("Agent result: Thursday review.");
+    expect(await botChats.directBot(owner, chatId)).toBe(agentId);
+    expect((await repository.getDetailPage(owner, "chat_parent", { limit: 10 }))?.messages).toEqual([]);
+  });
+
+  it("revalidates dedicated custom Bot queue and retry against the bound definition", async () => {
+    await bootstrapBotDatabase(ownerBotExecutor(repository.kysely));
+    botChats = createCustomBotChats({chats:repository,agents});
+    const chatId = await botChats.ensureDirectChat(owner,agentId);
+    const parts = [{type:"text" as const,text:"Saved request"}, {type:"resource_reference" as const,resource:{kind:"agent" as const,id:agentId,label:"Helper",revision:"1"}}];
+    const req = {clientRequestId:"req_bound_failure",baseRevision:0,selection,interactionMode:"default",permissionMode:"full_access",parts};
+    failHermes=true;
+    const accepted = await orchestrator.admitTurn(principal,owner,chatId,req);
+    await complete();
+    failHermes=false;
+    const retried = await orchestrator.retryTurn(principal,owner,chatId,accepted.turn.id,{clientRequestId:"req_bound_retry",baseRevision:(await repository.get(owner,chatId))!.chat.revision});
+    await complete();
+    expect(retried.run.context?.agent?.id).toBe(agentId);
+    expect(calls.map(call=>call.driver)).toEqual(["hermes","hermes"]);
+    hold=new Promise<void>(resolve=>{release=resolve;});
+    await orchestrator.admitTurn(principal,owner,chatId,{...req,clientRequestId:"req_bound_hold",baseRevision:(await repository.get(owner,chatId))!.chat.revision});
+    await vi.waitFor(()=>expect(calls).toHaveLength(3));
+    await orchestrator.enqueueQueuedTurn(principal,owner,chatId,{...req,clientRequestId:"req_bound_queue",baseRevision:(await repository.get(owner,chatId))!.chat.revision});
+    await agents.update(owner,agentId,{baseRevision:1,instructions:"Changed definition"});
+    release?.(); await complete();
+    expect(calls).toHaveLength(3);
+    expect((await repository.getDetailPage(owner,"chat_parent",{limit:10}))?.messages).toEqual([]);
+  });
+
   it("rejects a bound Jev invocation before primary inference or any provider tool is launched", async () => {
     const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
       integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Review proposals" };
@@ -149,7 +200,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
       expect(calls[0]?.input.context?.agent?.recipe?.jevInboxTriage?.connectionId).toBe("conn_own");
     } else {
       await expect(pending).rejects.toMatchObject({ safeError: { safeMessage: mode === "setup"
-        ? "Inbox triage requires a ready selected Hermes owner API-key account. Check Agents & providers."
+        ? "Inbox triage requires a supported configured Hermes account. Check Agents & providers."
         : "Inbox triage funding is unavailable. Check Matrix AI readiness and retry." } });
       expect(calls).toEqual([]);
     }
@@ -181,6 +232,90 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     expect(detail?.runs.at(-1)?.context?.agent?.id).toBe(agentId);
     expect(detail?.runs.at(-1)?.status).toBe("completed");
     expect(detail?.record.chat.currentSelection).toEqual(selection);
+  });
+
+  it("admits a mentioned Codex Agent in Supervised mode", async () => {
+    await agents.update(owner, agentId, { baseRevision: 1, selection });
+    const request = {
+      ...await input("req_codex_supervised", [mention("agent", agentId), { type: "text" as const, text: "Review safely" }]),
+      permissionMode: "supervised" as const,
+    };
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_parent", request);
+    await complete();
+    expect(admitted.run.driverKind).toBe("codex");
+    expect(calls[0]?.input.permissionMode).toBe("supervised");
+    expect(calls[0]?.input.prompt).toContain("Separate decisions from open questions.");
+  });
+
+  it("explains when a saved Agent runtime cannot use Supervised mode", async () => {
+    const request = {
+      ...await input("req_hermes_supervised", [mention("agent", agentId), { type: "text" as const, text: "Review safely" }]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.admitTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "agent_full_access_required", safeMessage: "This Agent's runtime requires Full access. Enable it for this request or choose a different Agent model." },
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("preserves another capability error when Full access would not make the Agent request runnable", async () => {
+    const request = {
+      ...await input("req_hermes_supervised_attachment", [
+        mention("agent", agentId),
+        { type: "text" as const, text: "Review safely" },
+        {
+          type: "attachment_reference" as const,
+          attachmentId: "attachment_agent_unsupported",
+          kind: "file" as const,
+          label: "notes.txt",
+          mimeType: "text/plain",
+          ownerReference: "uploads/notes.txt",
+        },
+      ]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.admitTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "capability_mismatch" },
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects an unsupported Supervised Agent before queueing it", async () => {
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_held", [{ type: "text", text: "Current work" }]));
+    const request = {
+      ...await input("req_hermes_supervised_queue", [mention("agent", agentId), { type: "text" as const, text: "Review next" }]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "agent_full_access_required", safeMessage: "This Agent's runtime requires Full access. Enable it for this request or choose a different Agent model." },
+    });
+    release?.();
+    await complete();
+  });
+
+  it("preserves another capability error before queueing an Agent request", async () => {
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_held_attachment", [{ type: "text", text: "Current work" }]));
+    const request = {
+      ...await input("req_hermes_supervised_attachment_queue", [
+        mention("agent", agentId),
+        {
+          type: "attachment_reference" as const,
+          attachmentId: "attachment_agent_queue_unsupported",
+          kind: "file" as const,
+          label: "notes.txt",
+          mimeType: "text/plain",
+          ownerReference: "uploads/notes.txt",
+        },
+      ]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "capability_mismatch" },
+    });
+    release?.();
+    await complete();
   });
 
   it("queues a saved Codex Agent behind an active run without dropping its context", async () => {

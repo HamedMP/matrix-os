@@ -142,6 +142,32 @@ describe("Work Files and Terminal inspector", () => {
       authGeneration: 1,
       api: {
         baseUrl: "https://matrix.test",
+        forRuntime(runtimeSlot: string) {
+          expect(runtimeSlot).toBe("primary");
+          return this;
+        },
+        get: vi.fn(async (url: string) => {
+          const query = new URL(url, "https://matrix.test").searchParams;
+          const path = query.get("path") ?? "README.md";
+          return {
+            resource: {
+              kind: "project",
+              projectId: query.get("projectId") ?? "matrix-os",
+              ...(query.get("worktreeId") ? { worktreeId: query.get("worktreeId") } : {}),
+              path,
+            },
+            name: path.split("/").at(-1),
+            mimeType: "text/plain",
+            sizeBytes: path === "src/alpha.txt" ? 5 : path === "src/beta.txt" ? 4 : 6,
+            kind: "text",
+            version: "etag_readme",
+            canDownload: true,
+          };
+        }),
+        getBlob: vi.fn(async (url: string) => {
+          const path = new URL(url, "https://matrix.test").searchParams.get("path");
+          return new Blob([path === "src/alpha.txt" ? "alpha" : path === "src/beta.txt" ? "beta" : "README"], { type: "text/plain" });
+        }),
         post: vi.fn(async (path: string, body: { name?: string }) => path.endsWith("/ensure")
           ? { workspace: { id: WORKSPACE_ID } }
           : {

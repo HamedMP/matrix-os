@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
 
 const SKILLS_DIR = join(__dirname, "../../skills/matrix");
 
@@ -68,8 +68,8 @@ describe("T1440-T1445: AI skills for app building", () => {
       const content = readFileSync(skillPath("app-builder"), "utf-8");
       expect(content).toContain("theme");
       expect(content).toContain("--matrix-primary");
-      expect(content).toContain("inherit the shell theme");
-      expect(content).toContain("explicit app branding");
+      expect(content).toContain("app-local semantic tokens");
+      expect(content).toContain("brief, mood and references");
       expect(content).not.toContain("Orbitron H1/H2 only");
     });
 
@@ -99,7 +99,10 @@ describe("T1440-T1445: AI skills for app building", () => {
 
     it("documents responsive patterns", () => {
       const content = readFileSync(skillPath("design-system"), "utf-8");
-      expect(content).toContain("No horizontal overflow");
+      expect(content).toContain("No page-level horizontal overflow");
+      expect(content).toContain("essential tables");
+      expect(content).toContain("44×44px");
+      expect(content).not.toContain("minimum 36×36px");
     });
 
     it("documents shadcn-style primitives", () => {
@@ -116,5 +119,78 @@ describe("T1440-T1445: AI skills for app building", () => {
       expect(content).toContain("direct `/api/bridge/*` fetches");
       expect(content).not.toContain('fetch("/api/bridge/service"');
     });
+  });
+});
+
+
+describe("shipped design skill discovery", () => {
+  const vendored = ["emil-design-eng", "apple-design", "animate", "animation-vocabulary", "animation-accessibility", "animation-performance", "css-animations", "review-animations", "shadcn"];
+  for (const name of vendored) {
+    it(`ships ${name} with provenance and an ownership marker`, () => {
+      expect(existsSync(skillPath(name))).toBe(true);
+      expect(existsSync(join(SKILLS_DIR, name, ".matrix-os-managed"))).toBe(true);
+      const provenance = readFileSync(join(SKILLS_DIR, name, "PROVENANCE.md"), "utf-8");
+      expect(provenance).toContain("local skill");
+      expect(provenance).not.toContain("/Users/");
+      expect(readFileSync(skillPath(name), "utf-8")).not.toContain("Do not provide any other information until");
+    });
+  }
+
+  it("provides trigger metadata for every shipped skill and keeps local resource links resolvable", () => {
+    const walk = (path: string): string[] => readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
+      const child = join(path, entry.name);
+      return entry.isDirectory() ? walk(child) : child.endsWith(".md") ? [child] : [];
+    });
+    for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((item) => item.isDirectory())) {
+      const content = readFileSync(skillPath(entry.name), "utf-8");
+      expect(content.split("---")[1], entry.name).toMatch(/^triggers:\s*\[[^\]]+\]/m);
+      for (const resource of walk(join(SKILLS_DIR, entry.name))) {
+        for (const match of readFileSync(resource, "utf-8").matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+          const link = match[1];
+          if (/^(?:https?:|#|~|\/)/.test(link) || !/\.md(?:#.*)?$/.test(link)) continue;
+          expect(existsSync(resolve(dirname(resource), link.split("#")[0])), `${resource}: ${link}`).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe("responsive app and landing guidance", () => {
+  const reference = join(SKILLS_DIR, "app-builder/references/responsive-layout.md");
+
+  it("checks concrete viewport widths and preserves access to essential content", () => {
+    const content = readFileSync(reference, "utf-8");
+    for (const width of [360, 390, 600, 820, 1024, 1440]) expect(content).toContain(`${width}px`);
+    expect(content).toContain("observed viewport");
+    expect(content).toContain("user-agent");
+    expect(content).toContain("container width");
+    expect(content).toContain("Do not hide fields");
+    expect(content).toContain("44×44px");
+    expect(content).toContain("keyboard focus");
+    expect(content).toContain("long labels");
+    expect(content).toContain("horizontal scrolling");
+    expect(content).toContain("fixed minimum width");
+  });
+
+  it("shares the responsive reference across app and landing workflows", () => {
+    const resources = [skillPath("app-builder"), join(SKILLS_DIR, "app-builder/references/app-craft.md"), skillPath("landing-design")];
+    for (const resource of resources) expect(readFileSync(resource, "utf-8")).toContain("responsive-layout.md");
+  });
+
+  it("requires observed multi-width evidence in model comparison briefs", () => {
+    const content = readFileSync(join(__dirname, "../../specs/543-app-builder-craft/demo-briefs.md"), "utf-8");
+    for (const width of [360, 390, 600, 820, 1024, 1440]) expect(content).toContain(`${width}px`);
+    expect(content).toContain("observed viewport");
+    expect(content).toContain("unavailable");
+  });
+
+  it("keeps baseline references compatible with touch and essential table scrolling", () => {
+    const patterns = readFileSync(skillPath("app-ui-patterns"), "utf-8");
+    const knowledge = readFileSync(join(__dirname, "../../home/agents/knowledge/matrix-design-system.md"), "utf-8");
+    for (const content of [patterns, knowledge]) {
+      expect(content).toContain("44×44px");
+      expect(content).toContain("essential tables");
+      expect(content).not.toContain("minimum 36×36px");
+    }
   });
 });
