@@ -6,11 +6,11 @@ import { getAction } from "../../packages/gateway/src/integrations/registry.js";
 const catalog = async () => AppGalleryCatalogSchema.parse(JSON.parse(await readFile(new URL("../../home/system/app-gallery.json", import.meta.url), "utf8")));
 
 describe("curated gallery contract", () => {
-  it("offers 12 distinct personal and 12 business apps backed by real read actions", async () => {
+  it("offers 19 distinct personal and 12 business apps backed by real read actions", async () => {
     const { apps } = await catalog();
-    expect(apps.filter(a => a.collection === "personal")).toHaveLength(12);
+    expect(apps.filter(a => a.collection === "personal")).toHaveLength(19);
     expect(apps.filter(a => a.collection === "business")).toHaveLength(12);
-    expect(new Set(apps.map(a => a.id)).size).toBe(24);
+    expect(new Set(apps.map(a => a.id)).size).toBe(31);
     for (const app of apps) for (const service of app.services) for (const action of service.actions) {
       expect(getAction(service.id, action), `${app.id}: ${service.id}/${action}`).toMatchObject({ risk: "read" });
     }
