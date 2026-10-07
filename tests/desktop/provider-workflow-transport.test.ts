@@ -101,3 +101,8 @@ it("negotiates legacy discovery only for a real missing V2 endpoint", async () =
  await expect(createDesktopProviderWorkflowClient(api,()=>true).capabilities(new AbortController().signal)).resolves.toEqual([]);
  expect(urls).toEqual(["/api/ai/provider-settings/workflows/v2/capabilities", "/api/ai/provider-settings/workflows/capabilities"]);
 });
+
+it.each(["conflict", "unknown"])("preserves safe connection admission %s without leaking private errors", async code => {
+  const client = createDesktopProviderWorkflowClient(createApiClient({baseUrl:"https://matrix.invalid",getRuntimeSlot:()=>"primary",fetchFn:async()=>Response.json({error:{code,message:"private /credential/file"}}, {status:409})}),()=>true);
+  await expect(client.start({harnessInstanceId:"claude",kind:"login",method:"browser",idempotencyKey:"fixture"},new AbortController().signal)).rejects.toMatchObject({reason:code === "conflict" ? "conflict" : "unavailable",message:"Provider action is unavailable."});
+});

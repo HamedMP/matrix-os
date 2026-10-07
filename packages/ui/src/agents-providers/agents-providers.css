@@ -364,6 +364,10 @@
 .matrix-ap-workflow-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .matrix-ap-key-form { display: grid; gap: 10px; margin-top: 16px; max-width: 520px; }
 .matrix-ap-key-form input[aria-invalid="true"] { border-color: var(--matrix-ap-danger); }
+.matrix-ap-loading-status { display: flex; align-items: center; gap: 8px; }
+.matrix-ap-loading-spinner { flex-shrink: 0; animation: matrix-ap-loading 1s linear infinite; }
+@keyframes matrix-ap-loading { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .matrix-ap-loading-spinner { animation: none; } }
 .matrix-ap-device-login { margin: 16px 0; }
 .matrix-ap-device-code { display: flex; align-items: center; gap: 12px; padding: 12px; margin: 12px 0; background: var(--matrix-ap-sunken); border: 1px solid var(--matrix-ap-border); border-radius: 10px; }
 .matrix-ap-device-code code { font-size: 20px; letter-spacing: .08em; }

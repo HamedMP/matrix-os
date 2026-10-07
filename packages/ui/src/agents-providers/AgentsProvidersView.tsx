@@ -347,6 +347,11 @@ export function AgentsProvidersView({
                     disabled={mutationsDisabled}
                     onSetupHarness={onSetupHarness}
                     onRefresh={refreshSettings}
+                    onRefreshAfterLogin={async () => {
+                      if (!onRefreshForConnection) { refreshSettings(); return; }
+                      const refreshed = await onRefreshForConnection();
+                      if (!refreshed) throw new Error("connection refresh unavailable");
+                    }}
                     onOpenTerminal={onOpenTerminal}
                     onOpenAuthorizationUrl={onOpenAuthorizationUrl}
                     onStateChange={(status) =>

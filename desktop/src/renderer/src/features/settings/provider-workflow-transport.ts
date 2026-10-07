@@ -21,6 +21,7 @@ function scopedProviderRequest(api: ApiClient, isIdentityCurrent: () => boolean)
       throw new ProviderWorkflowClientError(error instanceof AppError && error.detail === "forbidden" ? "forbidden"
         : error instanceof AppError && error.category === "unauthorized" ? "unauthorized"
         : error instanceof AppError && error.category === "notFound" ? "unsupported"
+        : error instanceof AppError && error.category === "server" && error.detail === "conflict" ? "conflict"
         : error instanceof AppError && error.detail === "rejected" ? "rejected" : "unavailable");
     }
     if (!isIdentityCurrent() || input.signal.aborted) throw unavailable();

@@ -1327,3 +1327,28 @@ function setupProps(
     ...overrides,
   };
 }
+
+
+it("keeps the real grouped Claude row Connecting until scoped refresh settles", async () => {
+  vi.useFakeTimers();
+  const next = snapshot(); const row = next.harnesses.find(h=>h.harness === "claude")!;
+  row.authState = "unauthenticated";row.enabled=false;row.configuredEnabled=false;
+  const option = {id:"claude:anthropic:browser",providerId:"anthropic",authKind:"subscription",method:"browser",billingKind:"subscription",executionKind:"native",availability:"available"} as const;
+  const operation = {id:"new-login",harnessInstanceId:row.id,kind:"login",state:"running",expiresAt:new Date(Date.now()+60000).toISOString(),terminalSessionId:null,deviceCode:null,authorizationUrl:null,safeFailure:null,connectionOption:option} as const;
+  let finish!: (s:ProviderSettingsSnapshot)=>void;
+  const fresh = new Promise<ProviderSettingsSnapshot>(resolve=>{finish=resolve;});
+  const onRefreshForConnection=vi.fn(()=>fresh);
+  const workflowClient = {capabilities:vi.fn().mockResolvedValue([{harnessInstanceId:row.id,harness:"claude",displayName:"Claude Code",installState:"installed",loginMethods:["browser"],apiKeyProviders:[],install:false,uninstall:false,logs:false,connectionOptions:[option]}]),start:vi.fn(),startConnection:vi.fn().mockResolvedValue(operation),get:vi.fn().mockResolvedValue({...operation,state:"succeeded"}),cancel:vi.fn(),submitKey:vi.fn(),submitCode:vi.fn(),logs:vi.fn()};
+  const view = setup({snapshot:next,selectedHarnessId:row.id,workflowClient,onRefreshForConnection});
+  await act(async()=>{});
+  await act(async()=>fireEvent.click(screen.getByRole("button",{name:/Claude account · Sign in in browser/})));
+  await act(()=>vi.advanceTimersByTimeAsync(2000));
+  expect(onRefreshForConnection).toHaveBeenCalledOnce();
+  expect(screen.getByRole("status",{name:"Updating connection"})).toBeVisible();
+  expect(screen.getByRole("button",{name:/Claude Code.*Connecting/})).toBeVisible();
+  const connected=structuredClone(next);const current=connected.harnesses.find(h=>h.id===row.id)!;
+  current.authState="authenticated";current.enabled=true;current.configuredEnabled=true;connected.refreshedAt=new Date().toISOString();
+  await act(async()=>{view.rerender(<AgentsProvidersView {...view.props} snapshot={connected} />);finish(connected);});
+  expect(screen.queryByRole("status",{name:"Updating connection"})).not.toBeInTheDocument();
+  expect(screen.getByRole("button",{name:/Claude Code.*Connected/})).toBeVisible();
+});
