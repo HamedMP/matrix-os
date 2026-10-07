@@ -217,7 +217,7 @@ it("client calls providers, PATCH selection and POST action cancel with schema v
   expect(cancelled.cancellation).toBe("requested");
   expect(cancelled.operation.id).toBe("action_timer");
   const cancelCall = vi.mocked(fetcher).mock.calls[2];
-  expect(String(cancelCall[0])).toBe("https://runtime.test/api/chats/chat_aoede/actions/action_timer/cancel");
+  expect(String(cancelCall[0])).toBe("https://runtime.test/api/chats/chat_aoede/actions/action_timer/cancel?runVersion=1");
   expect(cancelCall[1]?.method).toBe("POST");
   expect(JSON.parse(cancelCall[1]?.body as string)).toEqual({});
   expect(cancelCall[1]?.signal).toBeInstanceOf(AbortSignal);
