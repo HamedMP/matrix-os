@@ -9,7 +9,8 @@ import { safeExternalHttpUrl } from "../external-url";
 import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
 import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
 import { isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
-import { NATIVE_APP_GALLERY_BRIDGE_ARG, NATIVE_APP_INTEGRATIONS_BRIDGE_ARG, NATIVE_APP_ACTIVITY_BRIDGE_ARG, isNativeAppActivityIdentity } from "../../shared/native-app-gateway";
+import { isMailConsumer } from "@matrix-os/contracts";
+import { NATIVE_APP_GALLERY_BRIDGE_ARG, NATIVE_APP_INTEGRATIONS_BRIDGE_ARG, NATIVE_APP_ACTIVITY_BRIDGE_ARG, NATIVE_APP_MAIL_BRIDGE_ARG, isNativeAppActivityIdentity } from "../../shared/native-app-gateway";
 
 const MAX_PUBLIC_BROWSER_ORIGINS = 64;
 const MAX_EMBED_SNAPSHOT_BYTES = 3_000_000;
@@ -73,6 +74,8 @@ export function createWebContentsView(options: {
             ? [NATIVE_APP_ACTIVITY_BRIDGE_ARG] : []),
           ...(isAppGalleryIdentity(options.appBridge.appIdentity, options.appBridge.routeSlug) ? [NATIVE_APP_GALLERY_BRIDGE_ARG] : []),
           ...(isAppGalleryInventoryIdentity(options.appBridge.appIdentity, options.appBridge.routeSlug) ? [NATIVE_APP_INTEGRATIONS_BRIDGE_ARG] : []),
+          ...(options.appBridge.appIdentity === options.appBridge.routeSlug && isMailConsumer(options.appBridge.appIdentity)
+            ? [`${NATIVE_APP_MAIL_BRIDGE_ARG}${options.appBridge.appIdentity}`] : []),
         ],
       } : {}),
     },

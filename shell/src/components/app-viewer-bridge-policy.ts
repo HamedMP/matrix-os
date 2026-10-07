@@ -1,4 +1,5 @@
 import { isAllowedAppGalleryBridgeRequest } from "@matrix-os/contracts/app-gallery-bridge-policy";
+import { isMailConsumer } from "@matrix-os/contracts";
 
 const RESOURCE_MANAGER_ACTIVITY_PATH = /^\/api\/system\/activity(?:[?#]|$)/;
 
@@ -20,6 +21,7 @@ export function isAllowedBridgeFetchUrl(
   )
     return false;
   const slug = appSlugFromName(appName);
+  if (url === "/api/mail/action") return isMailConsumer(appName) && method === "POST";
   if (slug === "app-gallery") return isAllowedAppGalleryBridgeRequest(url, method);
   if (
     parsed.pathname === "/api/bridge/ai" ||

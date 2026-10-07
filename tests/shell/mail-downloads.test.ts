@@ -1,0 +1,9 @@
+import {describe,it,expect} from 'vitest';
+import {createBrowserMailDownloads,clearBrowserMailDownloads} from '../../shell/src/lib/mail-downloads.js';
+const valid=JSON.stringify({messages:[],sources:[],pending:[]});
+function storage(){const rows=new Map<string,string>();return{getItem:(k:string)=>rows.get(k)??null,setItem:(k:string,v:string)=>{rows.set(k,v);},removeItem:(k:string)=>{rows.delete(k);},get length(){return rows.size;},key:(i:number)=>[...rows.keys()][i]??null};}
+describe('trusted Web device downloads',()=>{
+ it('clears device copies and fences already open bridges when signing out',async()=>{const s=storage();s.setItem('unrelated','keep');const a=createBrowserMailDownloads('scope',s);await a({action:'save',raw:valid});clearBrowserMailDownloads(s);expect(s.getItem('unrelated')).toBe('keep');await expect(a({action:'save',raw:valid})).rejects.toThrow();expect(await createBrowserMailDownloads('scope',s)({action:'load'})).toMatchObject({raw:null});});
+ it('persists only the authenticated owner/runtime scope and clears on request',async()=>{const s=storage(),a=createBrowserMailDownloads('owner:computer:primary',s),b=createBrowserMailDownloads('other:computer:primary',s);await a({action:'save',raw:valid});expect(await a({action:'load'})).toEqual({scope:'owner:computer:primary',raw:valid});expect(await b({action:'load'})).toMatchObject({raw:null});await a({action:'clear'});expect(await a({action:'load'})).toMatchObject({raw:null});});
+ it('rejects caller-selected scopes, invalid cached payloads and stale authenticated views',async()=>{const s=storage();let current=true;const a=createBrowserMailDownloads('scope',s,()=>current);await expect(a({action:'load',scope:'victim'})).rejects.toThrow();await expect(a({action:'save',raw:'{"token":"secret"}'})).rejects.toThrow();current=false;await expect(a({action:'save',raw:valid})).rejects.toThrow();});
+});

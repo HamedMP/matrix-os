@@ -1,10 +1,12 @@
 "use client";
 
+import { useAppDownloadScope } from "./AppDownloadScope";
+import { createMailDownloadMessageHandler } from "@/lib/mail-downloads";
 import { prepareBridgeFetchRequest } from "./app-viewer-bridge-request";
 import { FileResourceSharing } from "./file-browser/FileResourceSharing";
 import { APP_AI_TIMEOUT_MS } from "@matrix-os/contracts";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useSocket } from "@/hooks/useSocket";
 import {
@@ -58,11 +60,13 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
   try {
     const { url, init: requestInit } = prepareBridgeFetchRequest(appName, payload);
     const isAi = url === "/api/bridge/ai";
+    const isMailCleanup = url === "/api/mail/action" && typeof requestInit.body === "string" && JSON.parse(requestInit.body).action.startsWith("cleanup-");
+    // react-doctor-disable-next-line react-doctor/no-fetch-response-used-without-status-check -- this bridge deliberately forwards success and error envelopes with response.ok/status; the caller checks that status before accepting the body.
     const response = await fetch(`${getGatewayUrl()}${url}`, {
       method: requestInit.method,
       headers: requestInit.headers,
       body: requestInit.body,
-      signal: AbortSignal.timeout(isAi ? APP_AI_TIMEOUT_MS + 2_000 : BRIDGE_FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(isAi ? APP_AI_TIMEOUT_MS + 2_000 : isMailCleanup ? 35_000 : BRIDGE_FETCH_TIMEOUT_MS),
       redirect: "error",
     });
     const body = await response.json().catch((err: unknown) => {
@@ -103,6 +107,12 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const downloadScope = useAppDownloadScope();
+  const currentDownloadScope = useRef(downloadScope);
+  useLayoutEffect(()=>{
+    currentDownloadScope.current=downloadScope;
+    return()=>{currentDownloadScope.current=null;};
+  },[downloadScope]);
   const { send, subscribe } = useSocket();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
   const appName = appNameFromPath(path);
@@ -178,6 +188,17 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     return () => observer.disconnect();
   }, [refreshKey]);
 
+  // Bind device storage once to this authenticated scope, independently of chat handlers.
+  useEffect(()=>{
+    const handle=createMailDownloadMessageHandler({scope:downloadScope,appName,
+      storage:{getItem:key=>localStorage.getItem(key),setItem:(key,value)=>localStorage.setItem(key,value),removeItem:key=>localStorage.removeItem(key)},
+      expectedSource:()=>iframeRef.current?.contentWindow,origin:window.location.origin,
+      current:()=>currentDownloadScope.current===downloadScope});
+    const listener=(event:MessageEvent)=>{void handle(event);};
+    window.addEventListener('message',listener);
+    return()=>window.removeEventListener('message',listener);
+  },[downloadScope,appName]);
+
   // Handle bridge messages from iframe
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect only registers a window "message" listener; the fetch fires from the iframe bridge handler when a postMessage arrives (event-driven, not on mount/render) and already carries AbortSignal.timeout.
   useEffect(() => {
@@ -210,7 +231,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [send, sessionId, onOpenApp, appName, bridgeDataHandler]);
+  }, [send, sessionId, onOpenApp, appName]);
 
   // Forward data:change events to iframe for auto-update
   useEffect(() => {

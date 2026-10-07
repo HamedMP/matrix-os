@@ -1,4 +1,5 @@
 import { APP_GENERATE_CHANNEL, createAppGenerateClient, APP_AI_CHANNEL, createAppAiClient } from "@matrix-os/contracts";
+import {NATIVE_MAIL_DOWNLOADS_CHANNEL,createNativeMailDownloads} from '../shared/mail-device-downloads';
 // The only bridge between renderer and trusted core. Exposes exactly the
 // typed contract — payloads are validated here AND in main (defense in depth,
 // FR-081). The credential never crosses this boundary.
@@ -22,6 +23,8 @@ import {
   createNativeAppIntegrations,
   NATIVE_APP_GATEWAY_CHANNEL,
   createNativeAppGatewayFetch,
+  createNativeAppMail,
+  NATIVE_APP_MAIL_BRIDGE_ARG,
 } from "../shared/native-app-gateway";
 
 const NATIVE_APP_BRIDGE_ARG = "--matrix-app-bridge";
@@ -52,6 +55,7 @@ const api = {
 export type OperatorBridge = typeof api;
 
 if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
+  const mailIdentity = process.argv.find(arg => arg.startsWith(NATIVE_APP_MAIL_BRIDGE_ARG))?.slice(NATIVE_APP_MAIL_BRIDGE_ARG.length);
   const database = createNativeAppDatabase((query: NativeAppQuery) =>
     ipcRenderer.invoke(NATIVE_APP_QUERY_CHANNEL, query));
   contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({
@@ -67,6 +71,8 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
     ...(process.argv.includes(NATIVE_APP_INTEGRATIONS_BRIDGE_ARG) ? {
       integrations: createNativeAppIntegrations((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
     } : {}),
+    ...(mailIdentity ? { mail: createNativeAppMail(mailIdentity, request => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)) } : {}),
+    ...(mailIdentity==='edition'?{mailDownloads:createNativeMailDownloads(request=>ipcRenderer.invoke(NATIVE_MAIL_DOWNLOADS_CHANNEL,request))}:{}),
   }));
 } else {
   contextBridge.exposeInMainWorld("operator", api);

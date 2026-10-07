@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { isAllowedMailBridgeBody, isMailConsumer, MailActionRequestSchema } from "@matrix-os/contracts";
 import { isAllowedAppGalleryBridgeRequest, isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
 import { parseGalleryInventory } from "@matrix-os/contracts/app-gallery-inventory";
 
@@ -6,6 +7,7 @@ export const NATIVE_APP_GATEWAY_CHANNEL = "native-app:gateway-fetch";
 export const NATIVE_APP_ACTIVITY_BRIDGE_ARG = "--matrix-app-activity-bridge";
 export const NATIVE_APP_GALLERY_BRIDGE_ARG = "--matrix-app-gallery-bridge";
 export const NATIVE_APP_INTEGRATIONS_BRIDGE_ARG = "--matrix-app-integrations-bridge";
+export const NATIVE_APP_MAIL_BRIDGE_ARG = "--matrix-mail-app=";
 export const NATIVE_APP_GATEWAY_TIMEOUT_MS = 10_000;
 export const NATIVE_APP_GALLERY_INSTALL_TIMEOUT_MS = 35_000;
 
@@ -38,17 +40,24 @@ export const NativeAppGatewayRequestSchema = z.strictObject({
   init: z.strictObject({
     method: z.enum(["GET", "POST"]).optional(),
     headers: z.strictObject({ "Content-Type": z.literal("application/json").optional(), "content-type": z.literal("application/json").optional() }).optional(),
-    body: z.string().max(4096).refine(emptyJsonBody).optional(),
+    body: z.string().max(16_384).optional(),
   }).optional(),
 }).refine(({ url, init }) => {
   const method = init?.method ?? "GET";
+  if (url === "/api/mail/action") {
+    if (method !== "POST" || !init?.body) return false;
+    try { return MailActionRequestSchema.safeParse(JSON.parse(init.body)).success; }
+    catch (error) { if (!(error instanceof SyntaxError)) throw error; return false; }
+  }
   if (!isActivityRead(url, method) && !isAllowedAppGalleryBridgeRequest(url, method)) return false;
-  return method === "POST" ? init?.body !== undefined : init?.body === undefined && init?.headers === undefined;
+  return method === "POST" ? init?.body !== undefined && emptyJsonBody(init.body) : init?.body === undefined && init?.headers === undefined;
 });
 export type NativeAppGatewayRequest = z.infer<typeof NativeAppGatewayRequestSchema>;
 
 export function isAllowedNativeAppGatewayRequest(appIdentity: string, routeSlug: string, request: NativeAppGatewayRequest): boolean {
   const method = request.init?.method ?? "GET";
+  if (request.url === "/api/mail/action") return appIdentity === routeSlug && isMailConsumer(appIdentity)
+    && method === "POST" && Boolean(request.init?.body && isAllowedMailBridgeBody(appIdentity, request.init.body));
   if (isNativeAppActivityIdentity(appIdentity, routeSlug)) return isActivityRead(request.url, method);
   if (isAppGalleryIdentity(appIdentity, routeSlug)) return isAllowedAppGalleryBridgeRequest(request.url, method);
   return isAppGalleryInventoryIdentity(appIdentity, routeSlug) && request.url === "/api/bridge/service" && method === "GET";
@@ -78,5 +87,12 @@ export function createNativeAppIntegrations(invoke: (request: NativeAppGatewayRe
     const value = await createNativeAppGatewayFetch(invoke)<unknown>("/api/bridge/service");
     if (!value || typeof value !== "object" || !("services" in value)) throw new Error("Connection inventory unavailable");
     return parseGalleryInventory(value.services);
+  };
+}
+export function createNativeAppMail(identity: string, invoke: (request: NativeAppGatewayRequest) => Promise<unknown>) {
+  return async <T>(action: string, payload: unknown = {}): Promise<T> => {
+    const body = JSON.stringify({appId:identity,action,payload});
+    if (!isAllowedMailBridgeBody(identity,body)) throw new Error("Invalid email app request");
+    return createNativeAppGatewayFetch(invoke)<T>("/api/mail/action",{method:"POST",headers:{"Content-Type":"application/json"},body});
   };
 }

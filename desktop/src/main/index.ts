@@ -57,6 +57,7 @@ import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
+import {createMailDeviceStore,startMailDeviceStore} from './persistence/mail-device-store';
 import { installAppMenu } from "./platform/menu";
 import { registerWindowsProtocolClients } from "./platform/protocol-registration";
 import { installMainRendererMediaPermissions } from "./media-permissions";
@@ -103,6 +104,9 @@ let drainingDownloads = false;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
 let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null = null;
 let handleAnalyticsBeforeQuit: ((event: { preventDefault(): void }) => boolean) | null = null;
+let mailDeviceStore:ReturnType<typeof createMailDeviceStore>|null=null;
+let mailDownloadsDrained=false;
+let drainingMailDownloads=false;
 let completePendingAnalyticsFlush: (() => void) | null = null;
 
 function isMatrixOsDeepLink(value: string): boolean {
@@ -247,6 +251,7 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          void mailDeviceStore?.authChanged().catch(error=>logMainError('reading downloads cleanup failed',error));
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
           fileDownloads?.cancelAll();
@@ -263,6 +268,7 @@ if (!gotLock) {
         },
       });
       await auth.init();
+      mailDeviceStore=await startMailDeviceStore(createMailDeviceStore({dir:userData,auth}));
       chatgptPlan = createNativeChatgptPlanService({
         auth, vault: createPlanVault({ dir: userData, safeStorage }),
         openBrowser: async url => {
@@ -301,6 +307,7 @@ if (!gotLock) {
       );
 
       const nativeAppBridge = new NativeAppBridge({
+        deviceStore:mailDeviceStore??undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
         openApp: (app) => {
           const status = auth.getStatus();
@@ -607,6 +614,11 @@ if (!gotLock) {
     });
 
   app.on("before-quit", (event) => {
+    if(!mailDownloadsDrained&&mailDeviceStore){
+      event.preventDefault();
+      if(!drainingMailDownloads){drainingMailDownloads=true;void mailDeviceStore.dispose().catch(error=>logMainError('reading downloads shutdown failed',error)).finally(()=>{mailDownloadsDrained=true;app.quit();});}
+      return;
+    }
     organizationDriveTransfers?.cancelAll();
     if (handleAnalyticsBeforeQuit?.(event)) return;
     if (!planDrained && chatgptPlan) {
