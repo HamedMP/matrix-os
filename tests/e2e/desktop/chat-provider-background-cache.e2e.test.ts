@@ -116,8 +116,8 @@ suite("Electron Desktop application-owned provider background cache", () => {
     await page.clock.install();
     await page.reload();
     await chat().waitFor({ timeout: 20_000 });
-    await expect.poll(() => picker().getAttribute("aria-busy")).toBe("false");
-    await expect.poll(() => picker().getAttribute("data-model")).toBe("gpt-5.6-sol");
+    await chat().locator('[data-slot="provider-model-trigger"][aria-busy="false"][data-model="gpt-5.6-sol"]')
+      .waitFor({ timeout: 20_000 });
     const client = await page.evaluate(() => window.operator.invoke("app:get-version", {}));
     if (process.env.MATRIX_EXPECTED_CLIENT_COMMIT) expect(client.source?.commit).toBe(process.env.MATRIX_EXPECTED_CLIENT_COMMIT);
     writeFileSync(join(output, "provenance.json"), JSON.stringify({ client, executablePath, main,
