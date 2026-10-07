@@ -5,6 +5,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ChatTab from "../../desktop/src/renderer/src/features/chat/ChatTab";
 import { createLegacyGlobalProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
+import {
+  desktopProviderCatalogCache,
+  startDesktopProviderCatalogCoordinator,
+  stopDesktopProviderCatalogCoordinator,
+} from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
 import { resetProviderPreferences } from "./provider-preferences-test-utils";
 import { useDesktopEditor } from "../../desktop/src/renderer/src/features/editor/desktop-editor-store";
@@ -19,6 +24,20 @@ import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useThreads, type AgentThread } from "../../desktop/src/renderer/src/stores/threads";
 import { appendSharedComposerText, setSharedComposerText } from "./shared-chat-composer-test-utils";
+
+async function prewarmHermesCatalog(overrides: Record<string, unknown> = {}) {
+  const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
+  const get = vi.fn(async (path: string) => {
+    if (path.startsWith("/api/chat-providers")) return catalog;
+    if (path.startsWith("/api/chats")) return { legacy: true };
+    throw new Error(`unexpected GET ${path}`);
+  });
+  useConnection.setState({
+    api: { baseUrl: "https://matrix.test", get, ...overrides } as never,
+  });
+  startDesktopProviderCatalogCoordinator();
+  await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().lastSuccessAt).not.toBeNull());
+}
 
 function thread(id: string, title: string): AgentThread {
   return {
@@ -71,6 +90,8 @@ function codingAgentSummaryFixture() {
 
 describe("ChatTab", () => {
   beforeEach(() => {
+    stopDesktopProviderCatalogCoordinator();
+    useConnection.setState(useConnection.getInitialState(), true);
     class MockResizeObserver {
       observe() {}
       unobserve() {}
@@ -129,6 +150,8 @@ describe("ChatTab", () => {
 
   afterEach(() => {
     cleanup();
+    stopDesktopProviderCatalogCoordinator();
+    useConnection.setState(useConnection.getInitialState(), true);
     vi.restoreAllMocks();
   });
 
@@ -449,11 +472,12 @@ describe("ChatTab", () => {
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expected));
   });
 
-  it("renders the approved centered empty state and only working composer controls", () => {
+  it("renders the approved centered empty state and only working composer controls", async () => {
     useHermesChat.setState({ messages: [], status: "idle", send: vi.fn(() => true), abort: vi.fn() });
+    await prewarmHermesCatalog();
     render(<ChatTab />);
 
-    expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "What should we build today?" })).toBeTruthy();
     expect(screen.getByTestId("chat-welcome-matrix-logo").style.maskImage).toContain("matrix-logo.svg");
     expect(screen.getByRole("textbox", { name: "How can I help you today?" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
@@ -561,10 +585,10 @@ describe("ChatTab", () => {
       size: file.size,
     }));
     useHermesChat.setState({ messages: [], status: "idle", send, abort: vi.fn() });
-    useConnection.setState({ api: { putBytes } as never });
+    await prewarmHermesCatalog({ putBytes });
     render(<React.StrictMode><ChatTab /></React.StrictMode>);
 
-    const pane = screen.getByRole("region", { name: "Hermes conversation" });
+    const pane = await screen.findByRole("region", { name: "Hermes conversation" });
     const pasted = new File(["screen"], "screen.png", { type: "image/png" });
     fireEvent.paste(pane, { clipboardData: { files: [pasted] } });
 
@@ -591,10 +615,11 @@ describe("ChatTab", () => {
       send,
       abort: vi.fn(),
     });
+    await prewarmHermesCatalog();
     render(<ChatTab />);
 
     await setSharedComposerText(
-      screen.getByRole("textbox", { name: "How can I help you today?" }),
+      await screen.findByRole("textbox", { name: "How can I help you today?" }),
       "Continue the release check",
     );
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -912,7 +937,9 @@ describe("ChatTab", () => {
     try {
       let conversationCalls = 0;
       const get = vi.fn(async (path: string) => {
+        if (path.startsWith("/api/chat-providers")) return createLegacyGlobalProviderCatalog({ hasProject: true });
         if (path.startsWith("/api/chats")) return { legacy: true };
+        if (path !== "/api/conversations") throw new Error(`unexpected GET ${path}`);
         conversationCalls += 1;
         if (conversationCalls === 1) throw new Error("offline");
         return [{

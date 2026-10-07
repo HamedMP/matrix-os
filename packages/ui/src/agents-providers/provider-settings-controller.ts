@@ -56,7 +56,7 @@ export interface ProviderSettingsControllerOptions {
   identityKey: string;
   transport: ProviderSettingsTransport;
   /** Called only after an explicit refresh or mutation snapshot is accepted. */
-  onCatalogChanged?: () => void;
+  onCatalogChanged?: (intent?: ProviderSettingsMutationIntent, previousSnapshot?: ProviderSettingsSnapshot) => void;
   /** Retained Settings panes explicitly suspend read-only evidence renewal. */
   observationRenewalActive?: boolean;
 }
@@ -256,7 +256,7 @@ export class ProviderSettingsController {
         operationId,
         connectionAttempt: parsed.data.kind === "login_attempt" ? parsed.data.attempt : null,
       });
-      if (applied) this.options.onCatalogChanged?.();
+      if (applied) this.options.onCatalogChanged?.(intent, current);
       if (applied && !this.disposed && intent.type === "start_login"
         && parsed.data.kind === "login_attempt" && parsed.data.attempt.state === "pending"
         && this.state.connectionAttempt?.id === parsed.data.attempt.id && options?.onLoginAction) {

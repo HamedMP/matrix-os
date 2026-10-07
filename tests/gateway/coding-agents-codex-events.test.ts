@@ -182,6 +182,9 @@ describe("Codex structured event normalization", () => {
     expect(codexExecContractStatus("codex-cli 0.160.1")).toEqual({
       status: "verified", version: "0.160.1",
     });
+    expect(codexExecContractStatus("codex-cli 0.161.0")).toEqual({
+      status: "verified", version: "0.161.0",
+    });
     expect(codexExecContractStatus("codex-cli 0.161.1")).toEqual({
       status: "unverified_newer", version: "0.161.1",
     });
