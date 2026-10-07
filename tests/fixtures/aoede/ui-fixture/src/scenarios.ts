@@ -23,7 +23,7 @@ import {
 import type { FixtureVoicePlan, VoiceStep } from "./fixture-media";
 import { voiceFrames } from "./fixture-media";
 
-export type DriveStep = "open" | "palette" | "start" | "allow" | "ptt-hold";
+export type DriveStep = "open" | "palette" | "start" | "allow" | "ptt-hold" | "native-start";
 
 export interface ScenarioReady {
   /** `.matrix-aoede[data-state]` value expected once the scenario settles. */
@@ -32,6 +32,8 @@ export interface ScenarioReady {
   closed?: boolean;
   /** Strings that must appear inside the panel DOM. */
   texts?: string[];
+  /** Portaled presentations expose their own text root outside the host. */
+  textRoot?: string;
   /** Extra selectors that must resolve inside the panel. */
   selectors?: string[];
 }
@@ -67,8 +69,11 @@ export const AOEDE_SCENARIOS: readonly AoedeScenario[] = [
       { type: "companion.caption", speaker: "assistant", turnId: "vresp_native", text: "I've accepted the task in Chat. What would you like to track?", final: false, interrupted: false },
       { type: "companion.task", chatId: "chat_live_task_fixture", runId: "run_native", state: "running", label: "Build a habit tracker" },
     ] },
-    drive: ["open"],
-    ready: { selectors: ["[data-aoede-live]"] },
+    drive: ["open", "native-start"],
+    ready: { selectors: ["[data-aoede-live]"], textRoot: "[data-aoede-live]", texts: [
+      "Build a habit tracker, and let's keep talking.",
+      "I've accepted the task in Chat. What would you like to track?",
+    ] },
   },
   {
     id: "idle",

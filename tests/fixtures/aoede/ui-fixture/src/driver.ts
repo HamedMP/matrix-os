@@ -32,8 +32,8 @@ async function waitFor(predicate: () => boolean, timeoutMs: number, what: string
   return `timed out waiting for ${what}`;
 }
 
-function panelButton(text: string): HTMLElement | null {
-  const panel = document.querySelector(PANEL);
+function panelButton(text: string, root = PANEL): HTMLElement | null {
+  const panel = document.querySelector(root);
   if (!panel) return null;
   for (const button of panel.querySelectorAll("button")) {
     if (button.textContent?.trim() === text && !button.hasAttribute("disabled")) return button as HTMLElement;
@@ -66,6 +66,13 @@ async function step(name: string): Promise<string | null> {
         5_000,
         "permission status",
       );
+    }
+    case "native-start": {
+      const root = "[data-aoede-live]";
+      const error = await waitFor(() => panelButton("Start talking", root) !== null, 5_000, "native Start talking button");
+      if (error) return error;
+      panelButton("Start talking", root)!.click();
+      return null; // Actual caption checks wait for the simulated frames.
     }
     case "allow": {
       const error = await waitFor(() => panelButton("Allow microphone") !== null, 5_000, "Allow microphone button");
@@ -112,7 +119,7 @@ async function checkReady(ready: AoedeScenario["ready"]): Promise<string[]> {
   }
   for (const text of ready.texts ?? []) {
     const error = await waitFor(
-      () => document.querySelector(HOST)?.textContent?.includes(text) === true,
+      () => document.querySelector(ready.textRoot ?? HOST)?.textContent?.includes(text) === true,
       timeoutMs,
       `panel text "${text}"`,
     );
