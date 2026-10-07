@@ -32,6 +32,12 @@ interface SendChatMessageInput {
    */
   chatRequestId: string;
   turnRequestId: string;
+  /**
+   * Called with the new chat's id as a draft is bound to it, in the same tick
+   * as the bind -- so UI attached to the draft (the optimistically shown
+   * message) moves to that chat without a frame where it belongs to neither.
+   */
+  onChatCreated?: (chatId: string) => void;
 }
 
 export function useSendChatMessage() {
@@ -50,6 +56,7 @@ export function useSendChatMessage() {
       projectId,
       chatRequestId,
       turnRequestId,
+      onChatCreated,
     }: SendChatMessageInput) => {
       const token = await getToken();
       if (!token) throw new Error("Not signed in.");
@@ -86,6 +93,7 @@ export function useSendChatMessage() {
 
       if (!chatId) {
         bindDraftChatId(targetChatId);
+        onChatCreated?.(targetChatId);
       }
 
       const computerKey = `${computer.handle}:${computer.runtimeSlot}`;

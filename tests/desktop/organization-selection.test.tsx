@@ -23,6 +23,18 @@ import { DesktopDefaultOrganization } from "@desktop/renderer/src/features/colla
 
 const KEY = "matrix.desktop.selectedOrganization:";
 
+function organization(organizationId: string, name: string) {
+  return {
+    organizationId,
+    name,
+    slug: name.toLowerCase().replace(/\s+/g, "-"),
+    role: "org:member" as const,
+    memberCount: 1,
+    aiSubmission: "members" as const,
+    membershipEpoch: 1,
+  };
+}
+
 // Controlled open state the menu can actually change: a fixed `open` prop would pin it
 // open whatever the item does, so the stays-open assertion could never fail.
 function MenuHarness() {
@@ -127,8 +139,8 @@ describe("connection store organization selection", () => {
 describe("DesktopOrganizationMenuItems", () => {
   it("lists the member's organizations and selects the one they choose", async () => {
     apiState.get.mockResolvedValue({ complete: true, organizations: [
-      { organizationId: "org_finna", name: "Finna" },
-      { organizationId: "org_matrix", name: "Matrix" },
+      organization("org_finna", "Finna"),
+      organization("org_matrix", "Matrix"),
     ] });
     renderMenu();
 
@@ -141,8 +153,8 @@ describe("DesktopOrganizationMenuItems", () => {
   it("announces the active organization to assistive technology", async () => {
     useConnection.setState({ organizationId: "org_matrix" });
     apiState.get.mockResolvedValue({ complete: true, organizations: [
-      { organizationId: "org_finna", name: "Finna" },
-      { organizationId: "org_matrix", name: "Matrix" },
+      organization("org_finna", "Finna"),
+      organization("org_matrix", "Matrix"),
     ] });
     renderMenu();
 
@@ -152,8 +164,8 @@ describe("DesktopOrganizationMenuItems", () => {
 
   it("keeps the menu open after a choice so the result is visible", async () => {
     apiState.get.mockResolvedValue({ complete: true, organizations: [
-      { organizationId: "org_finna", name: "Finna" },
-      { organizationId: "org_matrix", name: "Matrix" },
+      organization("org_finna", "Finna"),
+      organization("org_matrix", "Matrix"),
     ] });
     renderMenu();
 
@@ -182,7 +194,7 @@ describe("DesktopOrganizationMenuItems", () => {
 
   it("rejects a malformed listing instead of trusting it", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    apiState.get.mockResolvedValue({ complete: true, organizations: [{ organizationId: "not-an-org", name: "Bad" }] });
+    apiState.get.mockResolvedValue({ complete: true, organizations: [{ ...organization("org_bad", "Bad"), organizationId: "not-an-org" }] });
     renderMenu();
 
     expect(await screen.findByRole("alert")).toBeTruthy();
@@ -192,8 +204,8 @@ describe("DesktopOrganizationMenuItems", () => {
   it("moves a member off an organization they have since left, onto their oldest remaining one", async () => {
     useConnection.getState().selectOrganization("org_left");
     apiState.get.mockResolvedValue({ complete: true, organizations: [
-      { organizationId: "org_matrix", name: "Matrix" },
-      { organizationId: "org_finna", name: "Finna" },
+      organization("org_matrix", "Matrix"),
+      organization("org_finna", "Finna"),
     ] });
     renderMenu();
 
@@ -211,7 +223,7 @@ describe("DesktopOrganizationMenuItems", () => {
   });
 
   it("never judges a newly signed-in user's choice against the previous user's list", async () => {
-    apiState.get.mockResolvedValueOnce({ complete: true, organizations: [{ organizationId: "org_a", name: "A" }] });
+    apiState.get.mockResolvedValueOnce({ complete: true, organizations: [organization("org_a", "A")] });
     renderMenu();
     await screen.findByRole("menuitemradio", { name: "A" });
 
@@ -228,8 +240,7 @@ describe("DesktopOrganizationMenuItems", () => {
   it("keeps a remembered organization that a capped listing cannot rule out", async () => {
     useConnection.setState({ organizationId: "org_beyond_cap", organizationStatus: "loading" });
     const organizations = Array.from({ length: 100 }, (_, index) => ({
-      organizationId: `org_${String(index).padStart(3, "0")}`,
-      name: `Org ${index}`,
+      ...organization(`org_${String(index).padStart(3, "0")}`, `Org ${index}`),
     }));
     apiState.get.mockResolvedValue({ complete: false, organizations });
     renderMenu();
@@ -249,7 +260,7 @@ describe("DesktopOrganizationMenuItems", () => {
   });
 
   it("releases its collaboration API once the menu has its listing", async () => {
-    apiState.get.mockResolvedValue({ complete: true, organizations: [{ organizationId: "org_finna", name: "Finna" }] });
+    apiState.get.mockResolvedValue({ complete: true, organizations: [organization("org_finna", "Finna")] });
     const { unmount } = renderMenu();
     await screen.findByRole("menuitemradio", { name: "Finna" });
 
@@ -333,15 +344,15 @@ describe("DesktopDefaultOrganization", () => {
     renderMenu();
     await waitFor(() => expect(useConnection.getState().organizationId).toBeNull());
 
-    await act(async () => { resolveSignIn({ complete: true, organizations: [{ organizationId: "org_left", name: "Left" }] }); });
+    await act(async () => { resolveSignIn({ complete: true, organizations: [organization("org_left", "Left")] }); });
 
     expect(useConnection.getState().organizationId).toBeNull();
   });
 
   it("activates the oldest organization at sign-in without the member opening any menu", async () => {
     apiState.get.mockResolvedValue({ complete: true, organizations: [
-      { organizationId: "org_matrix", name: "Matrix" },
-      { organizationId: "org_finna", name: "Finna" },
+      organization("org_matrix", "Matrix"),
+      organization("org_finna", "Finna"),
     ] });
     render(<DesktopDefaultOrganization />);
 
@@ -352,8 +363,8 @@ describe("DesktopDefaultOrganization", () => {
   it("keeps an organization the member chose over the default", async () => {
     useConnection.getState().selectOrganization("org_matrix");
     apiState.get.mockResolvedValue({ complete: true, organizations: [
-      { organizationId: "org_matrix", name: "Matrix" },
-      { organizationId: "org_finna", name: "Finna" },
+      organization("org_matrix", "Matrix"),
+      organization("org_finna", "Finna"),
     ] });
     render(<DesktopDefaultOrganization />);
 
@@ -380,7 +391,7 @@ describe("DesktopDefaultOrganization", () => {
     await waitFor(() => expect(apiState.get).toHaveBeenCalledTimes(1));
 
     act(() => { useConnection.setState({ userId: "user_b", organizationId: null }); });
-    await act(async () => { resolveFirst({ complete: true, organizations: [{ organizationId: "org_finna", name: "Finna" }] }); });
+    await act(async () => { resolveFirst({ complete: true, organizations: [organization("org_finna", "Finna")] }); });
 
     expect(useConnection.getState().organizationId).toBeNull();
   });

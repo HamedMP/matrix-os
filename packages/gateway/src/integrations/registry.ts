@@ -1,3 +1,6 @@
+import { INTEGRATION_PRESENTATION } from "@matrix-os/contracts/integration-marketplace";
+import { INTEGRATION_LOGOS } from "./registry-logos.js";
+import { OAUTH_SERVICE_REGISTRY } from "./registry-oauth.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import { EXPANSION_SERVICE_REGISTRY } from "./registry-expansion.js";
 import { X_SERVICE_REGISTRY } from "./registry-x.js";
@@ -73,6 +76,8 @@ function defineServiceRegistry(
     serviceId,
     {
       ...service,
+      ...INTEGRATION_PRESENTATION[serviceId],
+      logoUrl: INTEGRATION_LOGOS[serviceId] ?? service.logoUrl,
       connectorKind: service.connectorKind ?? "pipedream",
     },
   ])) as Record<string, ServiceDefinition>;
@@ -82,6 +87,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
   gmail: GMAIL_SERVICE,
 
   ...GOOGLE_SERVICES,
+  ...OAUTH_SERVICE_REGISTRY,
 
   github: {
     id: "github",
@@ -731,6 +737,11 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
 
 export function getService(id: string): ServiceDefinition | undefined {
   return SERVICE_REGISTRY[id];
+}
+
+/** Resolve only the provider's exact connector slug, preserving Matrix's canonical service ID. */
+export function getServiceByPipedreamApp(slug: string): ServiceDefinition | undefined {
+  return Object.values(SERVICE_REGISTRY).find(service => service.connectorKind === "pipedream" && service.pipedreamApp === slug);
 }
 
 export function listServices(): ServiceDefinition[] {

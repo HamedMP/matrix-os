@@ -20,20 +20,22 @@ export function CanonicalNewChatContent({ projectId, showWelcome = projectId ===
     >
       <div
         data-slot={projectId === null ? "chat-starter-scroll" : "chat-project-draft-scroll"}
-        className={`flex min-h-0 flex-1 items-start justify-center overflow-y-auto ${workspaceLayout === "narrow" ? "px-3 py-3" : "px-5 py-8"}`}
-        style={{ scrollbarGutter: "stable" }}
+        className={`flex min-h-0 flex-1 items-start justify-center overflow-y-auto ${workspaceLayout === "narrow" ? "px-3 py-3" : "px-5 pt-8 pb-[53px]"}`}
+        style={{ scrollbarGutter: "stable both-edges" }}
       >
         <div
           data-slot="chat-starter-stack"
-          className="@container/chat-home my-auto w-full max-w-[640px]"
+          className="@container/chat-home my-auto w-full max-w-[716px]"
         >
           <ChatProviderOnboarding>
-            <div className="mb-7 grid justify-items-center gap-2 text-center">
-              <BrandLogo size={48} className="block" testId="chat-welcome-matrix-logo" />
-              <h1 className="text-[24px] font-medium leading-[32px]" style={{ color: "var(--text-primary)" }}>
+            <div className="mb-4 grid justify-items-center gap-4 text-center">
+              <span className="flex size-11 items-center justify-center rounded-full" style={{ background: "var(--text-primary)", color: "var(--bg-surface)" }}>
+                <BrandLogo size={28} color="currentColor" className="block" testId="chat-welcome-matrix-logo" />
+              </span>
+              <h1 className="text-[26px] font-medium leading-[31px]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-heading)" }}>
                 What should we build today?
               </h1>
-              <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>I’m Matrix. What should I start on?</p>
+              <p className="text-[15px] leading-[22px]" style={{ color: "var(--text-tertiary)" }}>I’m Matrix. What should I start on?</p>
             </div>
             <ChatStarterCards
               layout="two-by-two"
@@ -43,7 +45,7 @@ export function CanonicalNewChatContent({ projectId, showWelcome = projectId ===
           </ChatProviderOnboarding>
         </div>
       </div>
-      <div className={cn("mx-auto w-full max-w-3xl shrink-0", workspaceLayout === "narrow" ? "px-3 pb-3" : "px-6 pb-5")}>
+      <div className={cn("mx-auto w-full max-w-[808px] shrink-0", workspaceLayout === "narrow" ? "px-3 pb-3" : "px-6 pb-5")}>
         {composer}
       </div>
     </div>

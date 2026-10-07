@@ -278,7 +278,7 @@ function reconcileProviderSettingsConfiguration(
     const fallback = defaultHarnessConfiguration(driver, canonical, genericModelCatalog, now);
     const existing = config.harnesses.find((harness) => harness.driverId === driver.id);
     if (genericModelCatalog && existing?.enablementOrigin === "generated_default"
-      && (existing.harness === "pi" || existing.harness === "opencode" || existing.harness === "hermes")) {
+      && (existing.harness === "pi" || existing.harness === "opencode" || existing.harness === "hermes" || existing.harness === "openclaw")) {
       const native = generatedNativeHarnessConfiguration(driver, genericModelCatalog, now);
       // Bind an unconfigured generated default once. Fresh availability never
       // rewrites durable permission or replaces a previously usable native route.

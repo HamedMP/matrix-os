@@ -1,4 +1,4 @@
-import { TerminalSharingButton } from "@matrix-os/ui";
+import { LegacyTerminalAccessButton } from "@matrix-os/ui";
 import { useConnection } from "../../stores/connection";
 import { DesktopCollaborationOrganization, useDesktopCollaborationApi } from "../collaboration/DesktopCollaborationOrganization";
 import { useCollaborationRuntimeId } from "../collaboration/useCollaborationRuntime";
@@ -10,7 +10,7 @@ export function DesktopTerminalSharing({ terminalId }: { terminalId: string }) {
   const collaborationApi = useDesktopCollaborationApi(platformHost, organizationStatus !== "none");
   const runtimeId = useCollaborationRuntimeId(organizationStatus !== "none" ? api : null);
   return collaborationApi && runtimeId
-    ? <DesktopCollaborationOrganization>{(organizationId) => <TerminalSharingButton api={collaborationApi}
+    ? <DesktopCollaborationOrganization>{(organizationId) => <LegacyTerminalAccessButton api={collaborationApi}
       runtimeId={runtimeId} organizationId={organizationId} terminalId={terminalId} />}</DesktopCollaborationOrganization>
     : null;
 }

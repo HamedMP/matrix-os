@@ -21,6 +21,7 @@ function fixture(agents: ChatAgent[] = [legacy]) {
   let activeAgents = [...agents];
   client.list.mockImplementation(async () => ({ enabled: true, agents: activeAgents }));
   const bots = {
+    ensureDirectChat: vi.fn(async (id: string) => activeAgents.some(agent => agent.id === id) ? "chat_custombrief" : null),
     directChat: vi.fn(async (id: string) => activeAgents.some(agent => agent.id === id && agent.recipeRef?.recipeId === recipe.recipeId) ? "chat_dailybrief" : null),
     recipes: vi.fn(async () => [recipe]),
     instantiate: vi.fn(async () => {
@@ -55,30 +56,30 @@ it("creates a deliberate new Daily Brief even when an existing recipe Bot is sav
   expect(client.calls.instantiate).toHaveBeenCalledWith({ recipe: { recipeId: recipe.recipeId, version: recipe.version }, clientRequestId: expect.stringMatching(/^req_[a-f0-9]{32}$/), name: "Another briefing", selection: { instanceId: "matrix_pi_default", model: "sonnet" } });
   expect(client.calls.directChat).not.toHaveBeenCalled(); expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled();
 });
-it("redirects the legacy built-in skill entry from the sidebar while preserving its owner definition", async () => {
+it("opens the exact legacy skill entry without replacing its owner definition", async () => {
   const client = fixture(), open = vi.fn(), start = vi.fn();
   render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onOpenBotChat={open} onStartChat={start} /></ChatAgentsWorkspace>);
   fireEvent.click(await screen.findByRole("button", { name: "Chat with Renamed brief" }));
-  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_dailybrief"));
+  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_custombrief"));
   expect(start).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled();
 });
 it("routes a legacy Daily Brief mention with its draft into the persistent Bot rather than attaching a custom Agent", async () => {
   const client = fixture(), open = vi.fn(async () => true), insert = vi.fn();
   const { result } = renderHook(() => useBotMentionNavigation(client, "source", open));
   act(() => { result.current.select({ kind: "agent", id: legacy.id, label: legacy.name }, "Keep my draft", insert); });
-  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_dailybrief", "Keep my draft"));
+  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_custombrief", "Keep my draft"));
   expect(insert).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled();
 });
 it("never classifies a custom Agent as Daily Brief from its name alone", async () => {
   const client = fixture([{ ...saved, name: "Personal Daily Brief" }]), open = vi.fn(), insert = vi.fn();
   const { result } = renderHook(() => useBotMentionNavigation(client, "source", open));
   act(() => { result.current.select({ kind: "agent", id: saved.id, label: "Personal Daily Brief" }, "Draft", insert); });
-  await waitFor(() => expect(insert).toHaveBeenCalledOnce());
-  expect(open).not.toHaveBeenCalled(); expect(client.calls.instantiate).not.toHaveBeenCalled();
+  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_custombrief", "Draft"));
+  expect(insert).not.toHaveBeenCalled(); expect(client.calls.instantiate).not.toHaveBeenCalled();
 });
 it("preserves the draft and avoids inline fallback when Daily Brief creation fails", async () => {
   const client = fixture(), open = vi.fn(), insert = vi.fn();
-  client.calls.instantiate.mockRejectedValue(new Error("unavailable"));
+  client.calls.ensureDirectChat.mockRejectedValue(new Error("unavailable"));
   const { result } = renderHook(() => useBotMentionNavigation(client, "source", open));
   act(() => { result.current.select({ kind: "agent", id: legacy.id, label: legacy.name }, "Draft", insert); });
   await waitFor(() => expect(result.current.error).toMatch(/draft is preserved/));
@@ -98,15 +99,13 @@ it("does not replace a canonical Bot whose authenticated binding is temporarily 
   await expect(resolveDailyBriefChat(client)).rejects.toThrow("Missing bot binding");
   expect(client.calls.recipes).not.toHaveBeenCalled(); expect(client.calls.instantiate).not.toHaveBeenCalled();
 });
-it("does not create a Bot after a source change during recipe lookup", async () => {
-  const client = fixture(); let finish!: (value: typeof recipe[]) => void;
-  client.calls.recipes.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+it("does not open a legacy identity after the source changes during explicit ensure", async () => {
+  const client = fixture(); let finish!: (value: string) => void;
+  client.calls.ensureDirectChat.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   const open = vi.fn(), insert = vi.fn();
   const { result, rerender } = renderHook(({ scope }) => useBotMentionNavigation(client, scope, open), { initialProps: { scope: "source" } });
   act(() => { result.current.select({ kind: "agent", id: legacy.id, label: legacy.name }, "Draft", insert); });
-  await waitFor(() => expect(client.calls.recipes).toHaveBeenCalledOnce());
-  rerender({ scope: "other" });
-  await act(async () => { finish([recipe]); });
+  rerender({ scope: "other" }); await act(async () => finish("chat_custombrief"));
   expect(client.calls.instantiate).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled(); expect(insert).not.toHaveBeenCalled();
 });
 it("preserves attachments without creating a Bot for a blocked legacy mention", async () => {
@@ -132,12 +131,12 @@ it("renders legacy and ordinary saved cards with the same full-width settings in
   expect(client.calls.instantiate).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled();
 });
 
-it("keeps a deliberately customized two-skill specialist inline instead of replacing its instructions", async () => {
+it("opens a customized specialist directly without replacing its instructions", async () => {
   const client = fixture([{ ...legacy, instructions: "Only summarize my investment research notes." }]), open = vi.fn(), insert = vi.fn();
   const { result } = renderHook(() => useBotMentionNavigation(client, "source", open));
   act(() => { result.current.select({ kind: "agent", id: legacy.id, label: legacy.name }, "Draft", insert); });
-  await waitFor(() => expect(insert).toHaveBeenCalledOnce());
-  expect(open).not.toHaveBeenCalled(); expect(client.calls.instantiate).not.toHaveBeenCalled();
+  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_custombrief", "Draft"));
+  expect(insert).not.toHaveBeenCalled(); expect(client.calls.instantiate).not.toHaveBeenCalled();
 });
 
 it("does not reopen an archived Bot returned by a stable creation replay", async () => {
@@ -173,7 +172,7 @@ it("preserves the source text when a legacy Daily Brief target has its own draft
   const { result } = renderHook(() => useBotMentionNavigation(client, "source", open));
   act(() => { result.current.select({ kind: "agent", id: legacy.id, label: legacy.name }, "Draft remains", insert); });
   await waitFor(() => expect(result.current.notice).toMatch(/text is still in the original Chat/));
-  expect(open).toHaveBeenCalledWith("chat_dailybrief", "Draft remains");
+  expect(open).toHaveBeenCalledWith("chat_custombrief", "Draft remains");
   expect(insert).not.toHaveBeenCalled();
 });
 

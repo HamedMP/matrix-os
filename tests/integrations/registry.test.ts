@@ -11,9 +11,9 @@ import {
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
 describe("Service Registry", () => {
-  it("has the 15-service managed catalog", () => {
-    expect(listServices()).toHaveLength(15);
-    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(15);
+  it("has the 27-service managed catalog", () => {
+    expect(listServices()).toHaveLength(27);
+    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(27);
   });
 
   it("returns service by id", () => {

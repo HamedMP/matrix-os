@@ -39,7 +39,7 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
         try { agents = (await reads.library(token)).agents; }
         catch (error: unknown) { failed = true; console.warn('[bots] List unavailable:', error instanceof Error ? error.name : 'UnknownError'); }
         if (!current) return;
-        await bounded(agents.filter(agent => agent.recipeRef), async agent => {
+        await bounded(agents.filter(agent => !agent.archived), async agent => {
           if (!current) return;
           try { const chatId = await reads.directChat(agent.id, token); if (chatId) bindings.set(chatId, { agentId: agent.id, name: agent.name }); }
           catch (error: unknown) { failed = true; console.warn('[bots] Binding unavailable:', error instanceof Error ? error.name : 'UnknownError'); }
@@ -54,7 +54,7 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
         });
         const conversations = [...bindings].map(([chatId, bot]) => ({ chatId, ...bot, pendingApprovalCount: 0 }));
         await bounded(conversations, async conversation => {
-          if (!current) return;
+          if (!current || !agents.find(agent => agent.id === conversation.agentId)?.recipeRef) return;
           try { const interactions = await reads.interactions(conversation.chatId, attentionToken);
             conversation.pendingApprovalCount = interactions.filter(item => item.kind === 'approval' && item.status === 'pending' && item.expiresAt > new Date().toISOString()).length;
           } catch (error: unknown) { failed = true; console.warn('[bots] Attention unavailable:', error instanceof Error ? error.name : 'UnknownError'); }

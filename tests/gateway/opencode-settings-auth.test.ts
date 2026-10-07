@@ -110,14 +110,16 @@ it("fails closed without a supported exact native source/model and preserves own
   const mutate = vi.fn();
   await expect(enableOpenCodeConnectedRoute({ getSnapshot: vi.fn().mockResolvedValue({ harnesses: [], accessSources: [], modelProviders: [] }), mutate } as never, "missing", "connect-missing")).rejects.toThrow("unavailable"); expect(mutate).not.toHaveBeenCalled();
 });
-it("wires discovered OpenCode methods to the direct Settings adapter without creating Terminal tabs", async () => {
+it("wires qualified OpenCode keys while rejecting legacy subscription starts without Terminal tabs", async () => {
   const { createNativeProviderWorkflowAdapters } = await import("../../packages/gateway/src/ai-providers/provider-workflow-native.js");
   const connection = { close: vi.fn(async () => {}), capabilities: vi.fn().mockResolvedValue({ login: true, apiKey: true }), start: vi.fn().mockResolvedValue({ cancel: vi.fn() }), verifyKey: vi.fn() };
   const terminal = { createTab: vi.fn() };
   const store = { getSnapshot: vi.fn().mockResolvedValue({ access: { mode: "writable" }, harnesses: [{ id: "opencode", harness: "opencode", displayName: "OpenCode", installState: "installed", loginMethods: ["terminal"] }] }) };
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: store as never, terminal: terminal as never, hostControl: { available: false, run: vi.fn() }, opencodeConnection: connection });
-  expect(adapter!.loginMethods).toEqual(["device_code"]); expect(adapter!.apiKeyProviders).toEqual(["openai"]);
-  const publish = vi.fn(); await adapter!.start({ registerCleanup: () => {},  request, publish }); expect(connection.start).toHaveBeenCalledWith({ request, publish, registerCleanup: expect.any(Function) }); expect(terminal.createTab).not.toHaveBeenCalled();
+  expect(adapter!.loginMethods).toEqual([]); expect(adapter!.apiKeyProviders).toEqual(["openai"]);
+  expect(adapter!.verifyKey).toBe(connection.verifyKey);
+  await expect(adapter!.start({ registerCleanup: vi.fn(), request, publish: vi.fn() })).rejects.toThrow("unavailable");
+  expect(connection.start).not.toHaveBeenCalled(); expect(terminal.createTab).not.toHaveBeenCalled();
 });
 it("keeps unsupported OpenCode protocol capabilities closed without guessing a Terminal auth fallback", async () => {
   const { createNativeProviderWorkflowAdapters } = await import("../../packages/gateway/src/ai-providers/provider-workflow-native.js");
@@ -136,4 +138,43 @@ it('drains an already committing route writer before cancellation settles', asyn
   expect(await Promise.race([cancelling.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 20))])).toBe(false);
   finish(); await cancelling;
   expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }); await connection.close();
+});
+
+it.each(["anthropic", "openrouter"] as const)("qualifies and persists %s only when the native API method exists", async providerId => {
+  const session = mockSession({ "/provider/auth": { ...methods, [providerId]: [{ type: "api", label: "API key" }] }, [`/auth/${providerId}`]: true });
+  const enableProviderConnected = vi.fn(); const connection = createOpenCodeSettingsConnection({ session: async () => session, enableConnected: vi.fn(), enableProviderConnected, fetch: vi.fn(async () => new Response(null, { status: 200 })) });
+  expect(await connection.apiKeyProviders()).toContain(providerId);
+  await connection.verifyKey({ harnessInstanceId: "opencode", providerId, apiKey: "test-secret" });
+  expect(session.request).toHaveBeenCalledWith(`/auth/${providerId}`, "PUT", { type: "api", key: "test-secret" });
+  expect(enableProviderConnected).toHaveBeenCalledWith("opencode", providerId, expect.any(String));
+  await connection.close();
+});
+
+it("releases a proven read-only discovery failure after session drain but fences an uncertain PUT",async()=>{
+ const {mkdir,mkdtemp,rm}=await import("node:fs/promises"),{join}=await import("node:path"),{tmpdir}=await import("node:os");
+ const {createGenericNativeWriter,guardGenericNativeKeys}=await import("../../packages/gateway/src/ai-providers/generic-native-writer.js");
+ const root=await mkdtemp(join(tmpdir(),"opencode-discovery-")),home=join(root,"home");await mkdir(home);
+ const failed=mockSession({"/global/health":{healthy:false,version:"1.18.34"}}),next=mockSession();
+ const sessions=vi.fn().mockResolvedValueOnce(failed).mockResolvedValueOnce(next);
+ const create=()=>guardGenericNativeKeys(createGenericNativeWriter(home),"opencode",createOpenCodeSettingsConnection({session:sessions,enableConnected:vi.fn(),fetch:async()=>new Response(null,{status:200})}));
+ const first=create(),second=create(); const input={harnessInstanceId:"opencode",providerId:"openai" as const,apiKey:"synthetic"};
+ try{
+  await expect(first.verifyKey(input)).rejects.toThrow();expect(failed.close).toHaveBeenCalled();expect(failed.request.mock.calls.some(call=>call[0].startsWith("/auth/"))).toBe(false);
+  await expect(second.verifyKey(input)).resolves.toBeUndefined();
+  next.request.mockImplementation(async(path)=>{if(path.startsWith("/auth/"))throw new Error("unknown write outcome");return path==="/global/health"?{healthy:true,version:"1.18.34"}:methods;});
+  sessions.mockResolvedValue(next);
+  await expect(second.verifyKey(input)).rejects.toThrow();
+  await expect(createGenericNativeWriter(home).run("opencode",async()=>"unsafe")).rejects.toThrow();
+ }finally{await first.close();await second.close();await rm(root,{recursive:true,force:true});}
+});
+
+it("keeps OpenCode read-only failure fenced when native session cleanup cannot prove drain",async()=>{
+ const {mkdir,mkdtemp,rm}=await import("node:fs/promises"),{join}=await import("node:path"),{tmpdir}=await import("node:os");
+ const {createGenericNativeWriter,guardGenericNativeKeys}=await import("../../packages/gateway/src/ai-providers/generic-native-writer.js");
+ const root=await mkdtemp(join(tmpdir(),"opencode-no-drain-")),home=join(root,"home");await mkdir(home);
+ const session=mockSession({"/global/health":{healthy:false}});session.close.mockRejectedValue(new Error("unknown native liveness"));
+ const connection=guardGenericNativeKeys(createGenericNativeWriter(home),"opencode",createOpenCodeSettingsConnection({session:async()=>session,enableConnected:vi.fn()}));
+ try{await expect(connection.verifyKey({harnessInstanceId:"opencode",providerId:"openai",apiKey:"synthetic"})).rejects.toThrow();
+  await expect(createGenericNativeWriter(home).run("opencode",async()=>"unsafe")).rejects.toThrow();
+ }finally{await expect(connection.close()).rejects.toMatchObject({code:"unavailable"});await rm(root,{recursive:true,force:true});}
 });

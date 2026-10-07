@@ -1,7 +1,9 @@
+import {BotTaskExecutorControl} from "./BotTaskExecutorControl.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { botModelRoutingLabel, type CanonicalChatModelSelection, type CanonicalProviderCatalog, type ChatAgent } from "@matrix-os/contracts";
+import { botExecutionPresentation, type CanonicalChatModelSelection, type CanonicalProviderCatalog, type ChatAgent } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "../client.js";
+import { AgentModelField } from "../AgentEditor.js";
 import { AgentAvatar } from "../AgentAvatar.js";
 import { deriveCanonicalProviderChoices } from "../../canonical-provider-choice.js";
 import { isAutomaticBotSelection, MatrixBotModelField } from "./MatrixBotModelField.js";
@@ -16,6 +18,7 @@ export function BotComposerControls({ agentId, client, catalog, catalogLoading =
   const [snapshot, setSnapshot] = useState<{ client: ChatAgentClient; agentId: string; agent: ChatAgent } | null>(null);
   const [failure, setFailure] = useState<{ client: ChatAgentClient; agentId: string; message: string } | null>(null);
   const [pending, setPending] = useState(false), [open, setOpen] = useState(false), [attempt, setAttempt] = useState(0);
+  const [modelDraft, setModelDraft] = useState<CanonicalChatModelSelection | null | undefined>(undefined);
   const owner = useRef({ client, agentId, sequence: 0, revision: -1 });
   useLayoutEffect(() => {
     if (owner.current.client === client && owner.current.agentId === agentId) return;
@@ -58,9 +61,8 @@ export function BotComposerControls({ agentId, client, catalog, catalogLoading =
     } finally { if (owner.current === identity && sequence === identity.sequence) setPending(false); }
   };
   // Automatic's concrete funding/provider is not projected by this endpoint. Never guess it.
-  const routing = agent ? isAutomaticBotSelection(agent.selection)
-    ? "Automatic" : botModelRoutingLabel(agent.selection, catalog) : error ? "Bot settings unavailable" : "Checking bot model…";
-  return <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
+  const routing = agent ? agent.recipeRef && isAutomaticBotSelection(agent.selection) ? "Automatic" : botExecutionPresentation(agent, catalog).modelLabel : error ? "Bot settings unavailable" : "Checking bot model…";
+  return <Popover.Root open={open && !disabled} onOpenChange={value => { setOpen(value); setModelDraft(undefined); }}>
     <Popover.Trigger asChild><button type="button" aria-label="Choose bot agent and model" aria-busy={!agent && !error || pending || catalogLoading}
       disabled={disabled || pending} title={`${agent?.name ?? "Your bot"} · ${routing}`} data-slot="bot-composer-model-trigger"
       onKeyDown={event => { if (event.key === "ArrowUp") { event.preventDefault(); setOpen(true); } }}
@@ -74,10 +76,11 @@ export function BotComposerControls({ agentId, client, catalog, catalogLoading =
     <Popover.Portal><Popover.Content side="top" align="end" sideOffset={8} collisionPadding={16} role="dialog" aria-label="Bot agent and model"
       className="matrix-chat-model-choices z-50 w-80 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-32px)] overflow-y-auto rounded-xl border p-4 shadow-xl" style={{ zIndex, borderColor: "var(--border-default,var(--border))", background: "var(--bg-overlay,var(--background))", color: "var(--text-primary,var(--foreground))" }}>
       <p className="mb-3 text-sm font-medium">{agent?.name ?? "Your bot"}</p>
-      {agent ? <MatrixBotModelField id={`bot-composer-model-${agentId}`} label="Bot model" selection={agent.selection} models={catalog ? deriveCanonicalProviderChoices(catalog) : []}
-        catalog={catalog} catalogLoading={catalogLoading} onSetup={onSetup ? () => { setOpen(false); onSetup(); } : undefined} onRefreshCatalog={onRefreshCatalog} pending={pending || !catalog || Boolean(agent.archived)} onChange={selection => { void changeModel(selection); }}/>
+      {agent && !agent.recipeRef ? <AgentModelField id={`bot-composer-custom-${agentId}`} selected={agent.selection} pending={pending || disabled || catalogLoading || !catalog || Boolean(agent.archived)} models={catalog ? deriveCanonicalProviderChoices(catalog) : []} hermesOnly={Boolean(agent.recipe?.skills.includes("matrix-jev-email-triage"))} onSetup={onSetup} change={value => { if (value.selection) void changeModel(value.selection); }}/> : agent ? <MatrixBotModelField botClient={client?.bots} id={`bot-composer-model-${agentId}`} label="Bot model" selection={modelDraft === undefined ? agent.selection ?? null : modelDraft} models={catalog ? deriveCanonicalProviderChoices(catalog) : []}
+        catalog={catalog} catalogLoading={catalogLoading} onSetup={onSetup ? () => { setOpen(false); onSetup(); } : undefined} onRefreshCatalog={onRefreshCatalog} pending={pending || !catalog || Boolean(agent.archived)} onChange={selection => { setModelDraft(selection); if (selection) void changeModel(selection); }}/>
         : !error ? <p role="status" className="text-xs">Loading bot settings…</p> : null}
-      <p className="mt-3 text-xs" style={chatAgentMutedStyle}>This conversation uses {agent?.name ?? "its bound bot"}. Automatic routing is managed by this computer.</p>
+      {agent?.recipeRef && client?.bots ? <BotTaskExecutorControl client={client.bots} agentId={agentId} pending={pending || disabled} onSetup={onSetup}/> : null}
+      <p className="mt-3 text-xs" style={chatAgentMutedStyle}>This conversation uses {agent?.name ?? "its bound bot"}. {agent?.recipeRef ? "Automatic routing is managed by this computer." : "This bot keeps its saved model and runtime permissions."}</p>
       {error ? <div className="mt-3 text-xs"><p role="alert">{error}</p><button type="button" className="mt-2 underline" onClick={() => setAttempt(value => value + 1)}>Refresh bot settings</button></div> : null}
     </Popover.Content></Popover.Portal>
   </Popover.Root>;

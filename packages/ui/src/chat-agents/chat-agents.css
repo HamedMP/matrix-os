@@ -349,7 +349,9 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding: 16px;
+  padding: 24px;
+  box-sizing: border-box;
+  font-size: 14px;
   background: var(--bg-surface, var(--matrix-card, var(--card)));
   color: var(--text-primary, var(--matrix-card-fg, var(--foreground)));
   border-left: 1px solid var(--border-default, var(--matrix-border, var(--border)));
@@ -357,8 +359,12 @@
 }
 .matrix-bot-details select { width: 100%; min-width: 0; }
 .matrix-bot-details .matrix-chat-agent-button { padding: 4px 8px; min-height: 28px; font-size: 12px; }
-.matrix-agent-edit-dialog .matrix-chat-agent-input { font-size: 12px; padding: 6px 8px; }
-.matrix-agent-edit-dialog form { gap: 12px; }
+.matrix-agent-edit-dialog .matrix-chat-agent-input { border-radius: 8px; font-size: 14px; line-height: 20px; padding: 9px 12px; }
+.matrix-agent-edit-dialog input.matrix-chat-agent-input,
+.matrix-agent-edit-dialog select.matrix-chat-agent-input { height: 41px; min-height: 41px; box-sizing: border-box; }
+.matrix-agent-edit-dialog .text-sm { font-size: 14px; line-height: 20px; }
+.matrix-agent-edit-dialog header h2 { font-size: 16px; line-height: 22px; font-weight: 500; }
+.matrix-agent-edit-dialog form { gap: 20px; }
 .matrix-agent-edit-dialog textarea { min-height: 96px; }
 .matrix-chat-agent-list-row { box-shadow: none; background: transparent; }
 .matrix-chat-agent-list-row:hover:enabled { background: var(--bg-hover, var(--matrix-secondary, var(--secondary))); }
@@ -368,8 +374,8 @@
 
 /* Compact template cards follow the shared desktop reference without new capabilities. */
 .matrix-chat-agent-recipes__intro { background: none; border: 0; }
-.matrix-chat-agent-recipe-card { background: var(--bg-surface, var(--matrix-card, var(--card))); box-shadow: none; gap: 12px; min-height: 144px; align-items: stretch; }
-.matrix-chat-agent-category { border: 0; min-height: 24px; background: var(--bg-hover, var(--matrix-secondary, var(--secondary))); }
+.matrix-chat-agent-recipe-card { background: var(--bg-surface, var(--matrix-card, var(--card))); box-shadow: none; gap: 8px; min-height: 132px; align-items: stretch; }
+.matrix-chat-agent-category { border: 0; min-height: 26px; font-size: 12px; line-height: 18px; background: var(--bg-hover, var(--matrix-secondary, var(--secondary))); }
 .matrix-chat-agent-category[aria-pressed="true"] { background: var(--text-primary, var(--foreground)); color: var(--bg-surface, var(--background)); }
 @container matrix-agent-recipes (min-width: 720px) {
   .matrix-chat-agent-recipes__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -384,3 +390,35 @@
 
 .matrix-bot-chat-layout { padding-inline-end: var(--matrix-bot-details-reserve, 0px); }
 .matrix-bot-details--hosted { top: 0; bottom: 0; height: 100%; max-height: none; box-sizing: border-box; }
+
+.matrix-chat-agents-heading { height: 32px; font-size: 14px; line-height: 20px; font-weight: 400; }
+.matrix-chat-agents-create { color: var(--text-secondary, var(--matrix-muted-fg, var(--muted-foreground))); }
+/* Shared Figma Agent rows: 24px avatar, two-line copy and truthful status dot. */
+.matrix-chat-agents-rail > [data-slot="chat-sidebar-section-heading"] { height: 32px; gap: 6px; padding-inline-end: 8px; }
+.matrix-chat-agents-heading { gap: 6px; }
+.matrix-chat-agents-heading > svg { width: 15px; height: 15px; }
+.matrix-chat-agents-create { width: 20px; }
+.matrix-chat-agents-rail .matrix-chat-agent-button { width: 24px; }
+.matrix-chat-agent-rail-row { min-height: 48px; height: 48px; box-sizing: border-box; padding: 7px 8px 7px 24px; gap: 10px; font-size: 14px; line-height: 18px; font-weight: 400; color: var(--matrix-chat-rail-text, var(--text-primary, var(--foreground))); }
+.matrix-chat-agent-rail-row > [data-agent-avatar] { width: 24px; height: 24px; flex-shrink: 0; }
+.matrix-chat-agent-rail-copy { display: flex; flex-direction: column; gap: 1px; }
+.matrix-chat-agent-rail-name { line-height: 18px; }
+.matrix-chat-agent-rail-status { font-size: 11px; line-height: 15px; color: var(--matrix-chat-rail-muted, var(--text-secondary, var(--matrix-muted-fg, var(--muted-foreground)))); }
+.matrix-chat-agent-rail-indicator { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--matrix-chat-rail-muted, var(--text-secondary, var(--muted-foreground))); opacity: .45; }
+.matrix-chat-agent-rail-indicator[data-state="working"], .matrix-chat-agent-rail-indicator[data-state="completed"] { background: var(--success, var(--matrix-success)); opacity: 1; }
+.matrix-chat-agent-rail-indicator[data-state="attention"] { background: var(--warning, var(--matrix-warning)); opacity: 1; }
+.matrix-chat-agent-recipes { max-width: 880px; gap: 20px; padding-block: clamp(24px, 4vw, 52px) 32px; }
+.matrix-chat-agent-recipes__intro h3 { font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif; font-size: 26px; font-weight: 500; line-height: 31px; letter-spacing: 0; }
+.matrix-template-search { position: relative; display: flex; align-items: center; }
+.matrix-template-search > svg { position: absolute; left: 15px; pointer-events: none; color: var(--text-secondary, var(--matrix-muted-fg, var(--muted-foreground))); }
+.matrix-template-search input { height: 41px; border-radius: 8px; padding: 10px 12px 10px 37px; font-size: 14px; line-height: 20px; }
+.matrix-template-categories { gap: 6px; }
+.matrix-template-card-heading { flex-direction: column; gap: 6px; }
+.matrix-template-card-heading > div { width: 100%; }
+.matrix-template-card-heading h4 { font-size: 14px; font-weight: 500; line-height: 20px; letter-spacing: 0; }
+.matrix-template-description { font-size: 12px; line-height: 18px; }
+.matrix-template-footer { display: flex; min-width: 0; gap: 8px; align-items: center; justify-content: space-between; margin-top: auto; }
+.matrix-template-footer .matrix-template-output { min-width: 0; flex: 1; font-size: 12px; line-height: 18px; }
+.matrix-template-footer .matrix-template-action { margin-top: 0; }
+.matrix-bot-details .text-sm { font-size: 14px; line-height: 22px; }
+.matrix-bot-details header h3 { font-size: 16px; line-height: 22px; font-weight: 500; }

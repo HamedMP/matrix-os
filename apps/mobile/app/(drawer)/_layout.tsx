@@ -113,7 +113,7 @@ export default function DrawerLayout() {
       <Drawer.Screen name="index" options={{ title: null, drawerLabel: "Home" }} />
       <Drawer.Screen name="files" options={{ title: null, drawerLabel: "Files" }} />
       <Drawer.Screen name="terminal" options={{ title: null, drawerLabel: "Terminal" }} />
-      <Drawer.Screen name="integrations" options={{ title: null, drawerLabel: "Integrations" }} />
+      <Drawer.Screen name="integrations" options={{ title: null, drawerLabel: "Connect Apps" }} />
       <Drawer.Screen name="apps" options={{ title: null, drawerLabel: "Apps" }} />
       {collaborationEnabled
         ? <Drawer.Screen name="shared" options={{ title: null, drawerLabel: "Shared with me" }} />

@@ -2,13 +2,14 @@ import { BotRunSpecSchema, BotRunOutcomeSchema, type BotEvent, type BotRunSpec }
 import { z } from "zod/v4";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "../bots/broker-actions.js";
 import { mapBotEvent, MAX_BOT_ACTIVITY_EVENTS } from "../bots/chat-adapter.js";
-import { BotRouteError, resolveManagedPiRoute } from "../bots/route-resolver.js";
+import { BotRouteError } from "../bots/route-resolver.js";
 import { BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type ManagedPiRuntimeBinding, type PiRuntimeBinding } from "../bots/runtime-registry.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { createCanonicalCliEventQueue } from "./cli-process.js";
 import { CanonicalProviderRunEventSchema, parseCanonicalProviderRunInput, type CanonicalChatProviderAdapter, type CanonicalProviderRunEvent, type CanonicalProviderRunInput } from "./provider-adapter.js";
 import type { ManagedPiAdmission } from "./managed-pi-admission.js";
+import { resolveManagedPiSelection } from "./managed-pi-route.js";
 import { fundedChatError, type FundedChatFailureReason } from "./funded-chat-error.js";
 
 const StateSchema = z.object({ runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/), executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/) }).strict();
@@ -38,6 +39,7 @@ interface Active {
 
 /** Two policies use one pinned worker/broker. Ordinary Chat has no recipe or bot grants. */
 export function createManagedPiRuntime(deps: {
+  chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
   ownerTools?: import("./managed-pi-owner-tools.js").ManagedPiOwnerTools;
   admission: ManagedPiAdmission; host: ScopeRuntimeHost; providers: AiProviderSnapshotReader; lifetime: AbortSignal;
   forgetRun(runId: string): void;
@@ -67,7 +69,7 @@ export function createManagedPiRuntime(deps: {
     signal.addEventListener("abort", onAbort, { once: true });
     let stage: "route" | "admission" | "tool_setup" | "run_spec" | "worker_dispatch" = "route";
     try {
-      const resolved = resolveManagedPiRoute(await deps.providers.getSnapshot(), input.selection);
+      const resolved = await resolveManagedPiSelection(input.selection, input.owner.ownerId, deps);
       if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
       stage = "admission";
       run.binding = await deps.admission.admit({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, resolved });

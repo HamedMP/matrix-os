@@ -18,10 +18,10 @@ import { StatusBar } from "./StatusBar";
 import { FileContextMenu } from "./FileContextMenu";
 import { QuickLook } from "./QuickLook";
 import { FileDownloadProvider } from "./FileDownloadProvider";
-import { FileResourceSharing } from "./FileResourceSharing";
 import { XpExplorer } from "./XpExplorer";
 import { organizationDriveNavigationIdentity, useOrganizationDriveNavigation } from "@/stores/organization-drive-navigation";
 import { OrganizationDrivesView } from "./OrganizationDrivesView";
+import { FileResourceSharing } from "./FileResourceSharing";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
 interface FileBrowserProps {
@@ -29,6 +29,7 @@ interface FileBrowserProps {
   mobile?: boolean;
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing browser coordinates keyboard shortcuts, trash, search and organization drives; this change only removes a share row. Splitting it belongs in a focused refactor.
 export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [showingTrash, setShowingTrash] = useState(false);
@@ -326,9 +327,10 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
           onClick={() => setShowingOrganizationDrives(true)}
           className="rounded px-3 py-1.5 hover:bg-accent aria-[current=page]:bg-accent">Organization drives</button> : null}
       </div>
-      {selectedKind && selectedPath && !showingTrash && !searchResults && !organizationDrivesVisible ? <div className="flex justify-end border-b px-3 py-1.5">
-        <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath} />
-      </div> : null}
+      {selectedKind && selectedPath && !showingTrash && !searchResults && !organizationDrivesVisible
+        ? <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath}
+          containerClassName="flex justify-end border-b px-3 py-1.5" />
+        : null}
       {organizationDrivesVisible ? <OrganizationDrivesView mobile={mobile} draftIdentity={identity} key={identity} requestedScopeId={activeDriveRequest?.scopeId} requestedIntentId={activeDriveRequest?.id} /> : isXpExplorer ? (
         <XpExplorer
           renamingPath={renamingPath}

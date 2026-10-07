@@ -21,6 +21,8 @@ interface AuthenticatedRequest {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  /** Non-2xx statuses that are an answer rather than a failure; `read` receives the response. */
+  expectedStatuses?: readonly number[];
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
@@ -63,6 +65,7 @@ export async function fetchAuthenticatedResponse<T>(
     method,
     headers,
     body,
+    expectedStatuses,
   }: AuthenticatedRequest,
   read: (response: Response) => Promise<T>,
 ): Promise<T> {
@@ -76,7 +79,7 @@ export async function fetchAuthenticatedResponse<T>(
       body,
       signal: timeout.signal,
     });
-    if (!response.ok) {
+    if (!response.ok && !expectedStatuses?.includes(response.status)) {
       throw new Error("Request failed");
     }
     return await read(response);

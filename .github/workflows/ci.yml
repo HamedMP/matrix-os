@@ -270,7 +270,8 @@ jobs:
     name: React Doctor
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    # Include observed 5m15s checkout, audit and cleanup/transfer variance.
+    timeout-minutes: 10
     # Non-blocking during rollout (matches typecheck baseline). Remove once the
     # React audit baseline is clean, then it gates merges. https://github.com/millionco/react-doctor
     continue-on-error: true
@@ -416,11 +417,11 @@ jobs:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, patterns, sync-client]
     runs-on: ubuntu-latest
-    # Shard 4 has grown past the previous 20-minute ceiling: run 35911423904 was
-    # cancelled at 20m18s with no failing assertion and no summary line, which reads
-    # as a product failure but is not one. Raise rather than let a passing shard be
-    # reported as red; split the shards if this approaches the new ceiling too.
-    timeout-minutes: 30
+    # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
+    # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
+    # bounded 40-minute window for runner variance and cleanup; split the shards if
+    # normal runs approach this ceiling too.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -659,8 +660,9 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
+          MATRIX_PROVIDER_AUTH_ELECTRON: "1"
           MATRIX_SETTINGS_EVIDENCE_DIR: output/playwright/settings-providers
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts
 
       - name: Upload Desktop provider auth evidence
         if: always() && needs.changes.outputs.should_run == 'true'

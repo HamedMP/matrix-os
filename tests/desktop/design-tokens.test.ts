@@ -17,6 +17,7 @@ const VAR_REFERENCE = /var\(\s*(--[A-Za-z0-9_-]+)/g;
 const CSS_DECLARATION = /(--[A-Za-z0-9_-]+)\s*:/g;
 const CSS_PROPERTY_RULE = /@property\s+(--[A-Za-z0-9_-]+)/g;
 const TS_CUSTOM_PROPERTY = /["'](--[A-Za-z0-9_-]+)["']\s*\]?\s*:/g;
+const TS_STYLE_PROPERTY_SETTER = /\.style\.setProperty\(\s*["'](--[A-Za-z0-9_-]+)["']/g;
 const FRAMEWORK_VARS = new Set(["--spacing", "--scroll-fade-reveal"]);
 
 function buildDefinitions(files: string[]): Set<string> {
@@ -28,6 +29,8 @@ function buildDefinitions(files: string[]): Set<string> {
       for (const match of source.matchAll(CSS_PROPERTY_RULE)) defined.add(match[1]!);
     } else {
       for (const match of source.matchAll(TS_CUSTOM_PROPERTY)) defined.add(match[1]!);
+      // Renderer bootstrap also defines canonical brand tokens through CSSOM.
+      for (const match of source.matchAll(TS_STYLE_PROPERTY_SETTER)) defined.add(match[1]!);
     }
   }
   return defined;

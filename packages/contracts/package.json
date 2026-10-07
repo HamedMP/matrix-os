@@ -11,9 +11,12 @@
     "./codex-chat-import": "./src/codex-chat-import.ts",
     "./codex-chat-import-client": "./src/codex-chat-import-client.ts",
     "./local-chat-import": "./src/local-chat-import/index.ts",
-    "./bots": "./src/bots/index.ts"
+    "./bots": "./src/bots/index.ts",
+    "./integration-marketplace": "./src/integration-marketplace.ts"
   },
   "imports": {
+    "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
+    "#chatgpt-plan-wire": "./src/chatgpt-plan-wire.ts",
     "#canonical-chat-import-parts": "./src/canonical-chat-import-parts.ts",
     "#local-chat-import/*": "./src/local-chat-import/*.ts",
     "#chat-subagent": "./src/chat-subagent.ts",
@@ -60,6 +63,7 @@
     "#collaboration-resources": "./src/collaboration-resources.ts",
     "#organization-billing": "./src/organization-billing.ts",
     "#organization-drive": "./src/organization-drive.ts",
+    "#organization-management": "./src/organization-management.ts",
     "#contract-primitives": "./src/primitives.ts",
     "#custom-mcp-availability": "./src/custom-mcp-availability.ts",
     "#custom-mcp-policy": "./src/custom-mcp-policy.ts",

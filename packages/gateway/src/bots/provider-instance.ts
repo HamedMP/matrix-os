@@ -59,6 +59,18 @@ export function withBotProviderInstance(
       // checks. Bot routing reads Provider V3 at dispatch, not ordinary harness settings.
       if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
         if (selection.model !== MATRIX_BOT_MODEL) {
+          if (selection.options?.length) {
+            const base = await catalog.getCatalog(principal, { ...selection, instanceId: "matrix_chatgpt_plan" });
+            const plan = base.instances.find(instance => instance.id === "matrix_chatgpt_plan");
+            if (plan) {
+              const instance = { ...plan, id: MATRIX_BOT_INSTANCE_ID, supports: { ...plan.supports, rootChat: true },
+                ...(plan.defaultSelection ? { defaultSelection: { ...plan.defaultSelection, instanceId: MATRIX_BOT_INSTANCE_ID } } : {}) };
+              return { revision: base.revision, drivers: [MATRIX_BOT_DRIVER], instances: [instance] };
+            }
+            const instance = botInstance(base.revision, selection.model);
+            instance.availability = "unavailable"; instance.models = []; delete instance.defaultSelection;
+            return { revision: base.revision, drivers: [MATRIX_BOT_DRIVER], instances: [instance] };
+          }
           const base = await catalog.getCatalog(principal, { ...selection, instanceId: MANAGED_PI_INSTANCE_ID });
           const managed = base.instances.find((instance) => instance.id === "matrix_pi_default");
           const chosen = managed?.models.find((model) => model.id === selection.model && model.availability === "available");

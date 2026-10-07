@@ -303,6 +303,21 @@ machine that starts the build, and with pnpm's global virtual store the result
 depends on where the checkout sits on disk, so builds started from a laptop and
 updates published from CI would not agree on the runtime.
 
+## Store Purchase Policy
+
+Native builds ship as a free companion to the paid web service (App Store
+Guideline 3.1.3(f); Google Play payments policy is similar). They must contain
+no in-app purchasing and no calls to action to buy outside the app: no plan,
+pricing, checkout, upgrade, or billing-portal buttons or links, and no
+server-provided copy or URLs that point at buying. Read-only plan status is
+fine.
+
+`allowsExternalPurchaseLinks()` in `apps/mobile/lib/store-policy.ts` is the
+only place that decides this; it returns `true` only for the web build. Gate
+any purchase-related UI on it instead of checking `Platform.OS`, and keep a
+native test proving the call to action is absent (see
+`__tests__/JourneyGate.test.tsx` and `__tests__/billing-settings-screen.test.tsx`).
+
 ## iOS TestFlight Release
 
 From a clean manual worktree on the latest `origin/main`, with cwd `apps/mobile`:
@@ -319,6 +334,21 @@ when you want the TestFlight build to be distinguishable from the previous one.
 Auto-submit uploads to App Store Connect using the stored API key; Apple then
 takes about 5-10 minutes to process before the build appears in TestFlight.
 Verify at https://appstoreconnect.apple.com/apps/6785629815/testflight/ios.
+
+### Legal Links (App Review)
+
+App Store Review Guideline 5.1.1(i) requires the privacy policy to be reachable
+inside the app, not only from the App Store Connect listing. Native Mobile links
+it from two places, both driven by `apps/mobile/lib/legal-links.ts`:
+
+- the signed-out sign-in screen, in the consent line under the sign-in options,
+  so it is reachable without an account;
+- **Settings → Help → Privacy Policy** for signed-in users.
+
+Both open `https://matrix-os.com/privacy` in the system browser. Terms of Service
+(`https://matrix-os.com/terms`) sits next to it in both places. Keep the App
+Store Connect "Privacy Policy URL" field pointing at the same page, and if either
+page moves, change `legal-links.ts` instead of adding a second copy of the URL.
 
 ## Android Store Release
 
@@ -409,6 +439,38 @@ Mobile resume state is intentionally small and validated before use.
 - Current fields: mode, last active app slug, last active terminal session id, Canvas entry timestamp, update timestamp.
 
 Do not persist raw paths, user-controlled URLs, or unvalidated terminal identifiers in mobile shell state.
+
+### Launch Cache (Native Mobile)
+
+Native Mobile keeps five query results on the device so the next cold start can
+draw the shell before the network answers: the active computer, the chat list
+(titles and last-message previews), the chat provider catalog, the project
+list, and system info. They live in AsyncStorage under
+`matrix_os_query_cache_v1:<kind>`, one entry per kind. The mechanism is
+`apps/mobile/lib/query-persistence.ts`; the list of kinds and their schemas is
+`apps/mobile/lib/query-cache-persistence.ts`.
+
+- Restored data is display state only. It is loaded with its original
+  timestamp, so each query still refetches when its screen mounts, and the
+  gateway validates whatever is sent with it.
+- Every entry is re-validated on restore against the same schema as a fresh
+  response, and dropped if it no longer parses, is older than seven days, or is
+  larger than 512 KiB.
+- Entries belong to one Clerk user. Signing out, or signing in as someone else,
+  removes them from disk and from the query cache.
+- Chat transcripts, files, terminal output and credentials are never written.
+
+To keep another query across launches, add a kind there with a matcher for its
+`mobileQueryKeys` builder and the schema its request already parses with.
+
+The journey gate works the same way. Once `/api/journey` has answered with a
+connectable phase, `apps/mobile/lib/journey-cache.ts` remembers that for the
+user (`matrix_os_journey_ready_v1`, seven days), and the next launch opens the
+shell on that answer while the request runs in the background. A definite
+non-connectable or unauthorized answer returns the user to the gate and forgets
+the remembered one; a check that could not be made leaves them in the shell.
+The remembered answer is a hint about where to land, not an entitlement: the
+platform checks machine access and billing on every request the shell makes.
 
 The Agents route relies on its root scroll view's automatic iOS content inset.
 Keep top and bottom content padding independent of safe-area values so the

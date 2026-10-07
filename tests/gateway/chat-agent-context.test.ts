@@ -265,6 +265,31 @@ describe("server-resolved Chat mention context", () => {
         .rejects.toMatchObject({ code: "context_unavailable" });
     });
 
+    it("preserves exact owner subscription options through the canonical direct Bot adapter", async () => {
+      const plan = { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [
+        { id: "accountId", value: "account_own" }, { id: "grantRevision", value: "3" },
+      ] };
+      const id = "bot_0123456789abcdef01234567";
+      await agents.createRecipeBot(owner, { id, createHash: "c".repeat(64),
+        fields: { name: "Subscription Bot", description: "", instructions: "Revise.", selection: plan },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" },
+      });
+      const bots = botContext(chatId => chatId === "chat_current" ? id : null);
+      await expect(bots.prepare(owner, "chat_current", request)).resolves.toMatchObject({
+        selection: { ...plan, instanceId: "matrix_bot_default" }, permissionMode: "default",
+      });
+      await expect(context.prepare(owner, "chat_source", { ...request, selection: plan }))
+        .rejects.toMatchObject({ code: "context_unavailable" });
+    });
+
+    it("refuses a Bot-only subscription saved on a custom Agent rather than forwarding it to ordinary execution", async () => {
+      const agent = await agents.create(owner, { clientRequestId: "req_custom_subscription", name: "Custom", description: "", instructions: "Revise.",
+        selection: { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [{ id: "accountId", value: "account_own" }, { id: "grantRevision", value: "3" }] } });
+      const custom = botContext(chatId => chatId === "chat_current" ? agent.id : null);
+      await expect(custom.prepare(owner, "chat_current", { ...request, permissionMode: "supervised" })).rejects.toMatchObject({ code: "context_unavailable" });
+      await expect(context.prepare(owner, "chat_current", { ...request, parts: [...request.parts, mention("agent", agent.id)] })).rejects.toMatchObject({ code: "context_unavailable" });
+    });
+
     it("refuses the bot runtime in any other chat, directly or through a mention", async () => {
       const bots = botContext(() => null);
       await expect(bots.prepare(owner, "chat_current", { ...request, selection: botSelection }))

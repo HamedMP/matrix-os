@@ -4,7 +4,7 @@ import { sql, type Kysely, type Transaction } from "kysely";
 export async function runPlatformMigration<Database>(
   db: Kysely<Database>,
   migrateSchema: (transaction: Transaction<Database>) => Promise<void>,
-  options: { scope?: 'core' | 'whatsapp'; revision?: { generation: number; fingerprint: string }; deadlockAttempts?: number } = {},
+  options: { scope?: 'core' | 'whatsapp' | 'organizations'; revision?: { generation: number; fingerprint: string }; deadlockAttempts?: number } = {},
 ): Promise<void> {
   const scope = options.scope ?? 'core';
   const maxAttempts = options.deadlockAttempts ?? 3;

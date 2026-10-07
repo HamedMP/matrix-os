@@ -38,6 +38,7 @@ const draftCallbacks = vi.hoisted(() => ({ starts: [] as StartAgentChat[], newCh
 
 vi.mock("@desktop/renderer/src/features/work/WorkRail", () => ({
   WorkRail: (props: {
+    newChatShortcutActive?: boolean;
     onChatRenamed?: (record: CanonicalChatRecord) => void;
     projectedChatTitles?: CanonicalChatTitleProjection[];
     onStartAgentChat?: StartAgentChat;
@@ -49,7 +50,7 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", () => ({
     if (props.onStartAgentChat) draftCallbacks.starts.push(props.onStartAgentChat);
     if (props.onNewGlobalChat) draftCallbacks.newChats.push(props.onNewGlobalChat);
     return (<>
-    <button onClick={() => props.onNewGlobalChat?.()}>New chat</button>
+    <button data-shortcut-active={String(props.newChatShortcutActive)} onClick={() => props.onNewGlobalChat?.()}>New chat</button>
     <button onClick={() => props.onSelectProject?.({ id: "project_alpha", slug: "alpha", name: "Alpha", kind: "folder" })}>Open Alpha</button>
     <button onClick={() => props.onNewProjectChat?.({ id: "project_alpha", slug: "alpha", name: "Alpha", kind: "folder" })}>New chat in Alpha</button>
     <button onClick={() => props.onOpenBotChat?.("chat_bound_bot")}>Open recipe bot</button>
@@ -98,6 +99,10 @@ afterEach(() => {
 });
 
 describe("HostedWorkSidebar", () => {
+  it.each([['chat', true, true], ['chat', false, false], ['project', true, false], ['projects', true, false]] as const)('advertises New Chat only for the focused Chat route (%s, %s)', (route, focused, expected) => {
+    render(<HostedWorkSidebar tab={{id:'hint',kind:'work',title:'Work',workRoute:route,closable:false}} active searchShortcutActive={focused} />);
+    expect(screen.getByRole('button', {name:'New chat',exact:true}).getAttribute('data-shortcut-active')).toBe(String(expected));
+  });
   it.each(["chat_bound_bot", "chat_existing", undefined])("opens an ordinary Project draft from %s without creating a server Chat", (chatId) => {
     useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatId, chatView: chatId ? "conversation" : "draft", closable: false });
     const tab = useTabs.getState().tabs[0]!;
