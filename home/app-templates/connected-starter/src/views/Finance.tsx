@@ -7,6 +7,9 @@ import {
   dateText,
 } from "../model";
 import type { OwnerRecord } from "../types";
+import Commitments from "./Commitments";
+import SpendingCategories from "./SpendingCategories";
+import RevenueTrend from "./RevenueTrend";
 import { Badge, Empty, type ViewProps } from "./common";
 function Obligations({
   records,
@@ -76,7 +79,7 @@ export default function Finance(props: ViewProps) {
       {app.id === "subscriptions" ? (
         <Obligations records={records} recurring />
       ) : (
-        <div className="finance-overview">
+        <div className={`finance-overview ${app.id === "revenue" ? "revenue-overview" : "spending-desk"}`}>
           <section className="balance">
             <span className="eyebrow">
               Settled {app.id === "revenue" ? "revenue" : "amounts"}
@@ -122,10 +125,12 @@ export default function Finance(props: ViewProps) {
             </div>
             {points.length ? (
               <div
-                className="bar-chart"
+                className={`bar-chart ${app.id === "revenue" ? "revenue-trend" : ""}`}
                 role="img"
                 aria-label={`${chosen} settled amounts by ${period}`}
               >
+                <div className={app.id === "revenue" ? "revenue-plot" : "bar-columns"} style={app.id === "revenue" ? { gridTemplateColumns: `repeat(${points.length}, minmax(96px, 1fr))`, minWidth: points.length * 96 } : undefined}>
+                {app.id === "revenue" && <RevenueTrend points={points} max={max} />}
                 {points.map(([label, value]) => (
                   <div className="bar-column" key={label}>
                     <span className="bar-value">
@@ -138,6 +143,7 @@ export default function Finance(props: ViewProps) {
                     <span>{period === "months" ? label : label.slice(5)}</span>
                   </div>
                 ))}
+                </div>
               </div>
             ) : (
               <div className="chart-empty">
@@ -147,10 +153,11 @@ export default function Finance(props: ViewProps) {
           </section>
         </div>
       )}
+      {app.id === "folio" && <SpendingCategories records={records} currency={chosen} />}
       {app.id === "cashflow" && (
         <Obligations records={records} recurring={false} />
       )}
-      <Ledger {...props} />
+      {app.id === "subscriptions" ? <Commitments {...props} /> : <Ledger {...props} />}
     </>
   );
 }
@@ -158,10 +165,10 @@ export default function Finance(props: ViewProps) {
 function Ledger(props: ViewProps) {
   const { records, app } = props;
   return (
-    <section className="ledger">
+    <section className={`ledger ${app.id === "revenue" ? "revenue-ledger" : "receipt-ledger"}`}>
       <div className="section-heading">
         <h3>
-          {app.id === "subscriptions" ? "Subscription ledger" : "All records"}
+          {app.id === "revenue" ? "Payment ledger" : "Receipts & invoices"}
         </h3>
         <span className="muted">Currencies stay separate</span>
       </div>

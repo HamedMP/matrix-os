@@ -70,6 +70,7 @@
   font-size: 9px;
   color: var(--muted);
 }
+.bar-columns { display: flex; gap: 14px; align-items: flex-end; width: 100%; }
 .bar {
   width: 70%;
   max-width: 42px;

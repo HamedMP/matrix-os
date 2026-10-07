@@ -6,12 +6,13 @@ import Board from "./views/Board";
 import Travel from "./views/Travel";
 import Habits from "./views/Habits";
 import Focus from "./views/Focus";
+import MeetingBriefs from "./views/MeetingBriefs";
 export default function Views(props: ViewProps) {
   switch (props.app.view) {
     case "finance":
       return <Finance {...props} />;
     case "agenda":
-      return <Agenda {...props} />;
+      return props.app.id === "meeting-briefs" ? <MeetingBriefs {...props} /> : <Agenda {...props} />;
     case "board":
       return <Board {...props} />;
     case "travel":

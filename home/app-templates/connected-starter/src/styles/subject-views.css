@@ -1,0 +1,113 @@
+.spending-desk { grid-template-columns: minmax(240px, .8fr) minmax(280px, 1.4fr); gap: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
+.spending-desk .balance, .spending-desk .chart-card { border: 0; background: transparent; border-radius: 0; padding: 30px; }
+.spending-desk .balance { border-right: 1px solid var(--border); }
+.spending-desk .balance h2 { font-size: clamp(32px, 4vw, 48px); margin: 16px 0; }
+.workbench .balance select { min-height: 44px; margin-top: 18px; }
+.spending-desk .bar { background: #537d66; border-radius: 3px 3px 0 0; }
+.workbench .segmented button { min-height: 40px; font-size: 12px; }
+.workbench .bar-value, .workbench .bar-column { font-size: 10px; }
+.receipt-ledger { border-radius: 12px; padding: 25px 30px; }
+.workbench th { font-size: 11px; }
+.workbench td { font-size: 13px; }
+.workbench td small { font-size: 11px; }
+.revenue-overview { grid-template-columns: minmax(220px, .8fr) minmax(280px, 1.7fr); background: #263741; color: #f3f7f9; border-radius: 14px; gap: 0; margin-bottom: 28px; }
+.revenue-overview .balance, .revenue-overview .chart-card { background: transparent; border: 0; padding: 32px; }
+.revenue-overview .balance h2 { font-size: clamp(32px, 4vw, 52px); }
+.revenue-overview .balance p, .revenue-overview .eyebrow, .revenue-overview .bar-column { color: #bccbd3; }
+.revenue-overview .balance select { color: #172c3b; background: #f3f7f9; }
+.revenue-overview .segmented { border-color: #536571; }
+.revenue-overview .segmented button[aria-pressed="true"] { color: #fff; background: #435966; }
+.revenue-trend { position: relative; color: #c5dfeb; }
+.revenue-plot { position: relative; display: grid; width: 100%; flex: 0 0 auto; }
+.revenue-plot .bar-column { min-width: 0; padding: 0 6px; }
+.trend-line { position: absolute; width: 100%; height: 160px; top: 0; pointer-events: none; }
+.revenue-trend .bar-column { z-index: 1; justify-content: space-between; height: 185px; }
+.revenue-trend .bar { visibility: hidden; }
+.revenue-ledger { border: 0; background: transparent; padding: 0 4px; }
+.commitments { margin-top: 32px; }
+.commitments .section-heading h2 { font-size: 25px; font-weight: 500; }
+.commitment-list { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--border); }
+.commitment-list > li { display: grid; grid-template-columns: 48px minmax(160px, 1fr) minmax(120px, .65fr) minmax(120px, .5fr); gap: 20px; padding: 24px 6px; align-items: center; border-bottom: 1px solid var(--border); }
+.provider-symbol { display: grid; place-items: center; width: 42px; height: 42px; background: var(--tint); color: var(--brand); font-size: 23px; border-radius: 12px; }
+.commitment-name h3 { font-size: 17px; margin-bottom: 4px; }
+.commitment-name p { font-size: 12px; color: var(--muted); margin-bottom: 9px; }
+.commitment-cost strong { display: block; font-size: 22px; font-weight: 500; letter-spacing: -.035em; }
+.commitment-cost span, .commitment-date { font-size: 12px; line-height: 1.8; color: var(--muted); }
+.commitment-date small { display: block; font-size: 11px; }
+.commitment-list .record-actions { grid-column: 2 / -1; border: 0; margin: 0; padding: 0; justify-content: flex-start; gap: 25px; }
+.workbench[data-app="subscriptions"] .obligations { background: var(--tint); border: 0; border-radius: 12px; }
+.workbench[data-app="subscriptions"] .obligation-grid article { background: var(--card); border: 0; border-radius: 8px; }
+.workbench[data-app="agenda"] .date-nav { border-bottom: 1px solid var(--border); padding-bottom: 22px; }
+.workbench[data-app="agenda"] .date-nav h2 { font-size: 17px; font-weight: 500; }
+.workbench[data-app="agenda"] .agenda > section { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 0 26px; }
+.workbench[data-app="agenda"] .agenda-date { grid-row: 1 / span 1000; align-self: start; flex-direction: column; align-items: flex-start; padding: 12px 0; }
+.workbench[data-app="agenda"] .agenda-date > span { width: auto; height: auto; font-size: 56px; font-weight: 350; background: transparent; letter-spacing: -.065em; }
+.workbench[data-app="agenda"] .agenda-date h3 { font-size: 12px; font-weight: 500; color: var(--muted); }
+.workbench[data-app="agenda"] .agenda-event { grid-column: 2; border: 0; border-left: 3px solid #b5a4d4; border-radius: 2px 10px 10px 2px; grid-template-columns: 70px minmax(0, 1fr) auto; padding: 24px; }
+.workbench[data-app="agenda"] .event-time { font-size: 14px; color: var(--brand); }
+.workbench[data-app="agenda"] .agenda-event h3 { font-size: 20px; font-weight: 500; }
+.workbench[data-app="focus"] .page-heading { margin-bottom: 12px; }
+.workbench[data-app="focus"] .page-heading h1 { font-size: 22px; letter-spacing: -.03em; }
+.workbench[data-app="focus"] .page-heading p, .workbench[data-app="focus"] .record-count { display: none; }
+.workbench[data-app="focus"] .focus-stage { background: transparent; border: 0; padding: 30px 0 65px; gap: 30px; }
+.workbench[data-app="focus"] .focus-stage > .eyebrow { color: var(--muted); }
+.workbench[data-app="focus"] .timer { font-size: clamp(90px, 17vw, 230px); font-weight: 250; letter-spacing: -.08em; line-height: 1; }
+.workbench[data-app="focus"] .timer > span { color: var(--fg); opacity: 1; }
+.workbench[data-app="focus"] .focus-stage > input { font-size: 22px; border: 0; max-width: 640px; }
+.workbench[data-app="focus"] .focus-stage .primary { min-height: 48px; min-width: 170px; border-radius: 26px; }
+.workbench[data-view="board"] .board-column { border: 0; background: var(--tint); border-radius: 8px; padding: 14px; min-width: 245px; }
+.workbench[data-view="board"] .board-column > header h3 { font-size: 14px; }
+.workbench[data-view="board"] .board-column .record-card { border: 1px solid var(--border); border-radius: 7px; padding: 20px 16px; }
+.workbench[data-view="board"] .board-column .record-card h3 { font-size: 17px; font-weight: 500; }
+.workbench[data-view="board"] .column-add { min-height: 44px; }
+.briefs-desk { display: grid; grid-template-columns: minmax(220px, .7fr) minmax(0, 1.6fr); gap: 30px; }
+.brief-index { padding: 8px 0; }
+.brief-index h2 { font-size: 16px; font-weight: 500; margin: 0 0 20px 16px; }
+.brief-index button { padding: 20px 16px; border-radius: 8px; display: grid; gap: 8px; text-align: left; width: 100%; margin-bottom: 8px; }
+.brief-index button[aria-pressed="true"] { background: var(--card); }
+.brief-index small, .brief-index span { font-size: 11px; color: var(--muted); line-height: 1.6; }
+.brief-index strong { font-size: 17px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.meeting-document { background: var(--card); padding: 42px 48px; border: 1px solid var(--border); border-radius: 5px; min-height: 550px; }
+.document-meta { display: flex; gap: 20px; font-size: 11px; color: var(--muted); margin-bottom: 26px; }
+.meeting-document h2 { font-family: Georgia, "Times New Roman", serif; font-size: 36px; letter-spacing: -.04em; font-weight: 400; line-height: 1.2; margin-bottom: 16px; }
+.document-people { font-size: 12px; color: var(--muted); padding-bottom: 26px; border-bottom: 1px solid var(--border); }
+.meeting-document section { margin-top: 28px; }
+.meeting-document section h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; letter-spacing: 0; }
+.meeting-document section p { font-family: Georgia, "Times New Roman", serif; font-size: 16px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 65ch; }
+.meeting-document .record-actions { margin-top: 35px; }
+@media (max-width: 900px) {
+  .spending-desk, .revenue-overview { grid-template-columns: 1fr; }
+  .spending-desk .balance { border-right: 0; border-bottom: 1px solid var(--border); }
+  .briefs-desk { grid-template-columns: minmax(170px, .6fr) minmax(0, 1.4fr); gap: 20px; }
+  .meeting-document { padding: 30px; }
+}
+@media (max-width: 700px) {
+  .spending-desk .balance, .spending-desk .chart-card, .revenue-overview .balance, .revenue-overview .chart-card { padding: 24px; }
+  .receipt-ledger { padding: 20px; }
+  .commitment-list > li { grid-template-columns: 38px minmax(0, 1fr); gap: 14px; }
+  .provider-symbol { width: 34px; height: 34px; }
+  .commitment-cost, .commitment-date { grid-column: 2; }
+  .workbench[data-app="agenda"] .agenda > section { grid-template-columns: 1fr; }
+  .workbench[data-app="agenda"] .agenda-date { grid-row: auto; flex-direction: row; align-items: center; margin-bottom: 14px; }
+  .workbench[data-app="agenda"] .agenda-date > span { font-size: 38px; }
+  .workbench[data-app="agenda"] .agenda-event { grid-column: 1; grid-template-columns: minmax(0, 1fr) auto; padding: 22px; }
+  .workbench[data-app="agenda"] .event-time { grid-column: 1/-1; }
+  .workbench[data-app="focus"] .focus-stage > input { font-size: 19px; padding: 8px; }
+  .briefs-desk { grid-template-columns: 1fr; gap: 18px; }
+  .brief-index { display: flex; overflow-x: auto; gap: 8px; }
+  .brief-index h2 { display: none; }
+  .brief-index button { flex: 0 0 200px; padding: 16px; margin: 0; }
+  .meeting-document { min-height: 0; padding: 30px 24px; }
+  .meeting-document h2 { font-size: 30px; }
+}
+.spending-categories { padding: 4px 6px 30px; }
+.category-breakdown { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px 30px; }
+.spending-category > div:first-child { display: flex; justify-content: space-between; gap: 14px; font-size: 12px; margin-bottom: 10px; }
+.spending-category span { overflow-wrap: anywhere; }
+.spending-category strong { font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.category-track { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.category-track > i { display: block; height: 5px; background: #537d66; border-radius: 3px; }
+.spending-categories > .fine-print { margin-top: 16px; }
+@media (max-width: 900px) { .category-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .category-breakdown { grid-template-columns: 1fr; gap: 22px; } }
+.map-pin:active { transform: translate(-50%, -50%); }

@@ -14,9 +14,9 @@ export default function App({ app }: { app: Definition }) {
       !!window.MatrixOS?.generate &&
       !!window.MatrixOS?.integrations;
   const unavailable = !canUseRecords
-    ? "Open this app in Web Desktop, Web Canvas or Electron Desktop to use saved records and connected imports."
+    ? "The app connection is not ready. Reopen the app in Matrix to use saved records and imports."
     : app.services.length && !canImport
-      ? "Open this app in Web Desktop, Web Canvas or Electron Desktop to use connected imports."
+      ? "The import connection is not ready. Reopen the app in Matrix or use manual entries."
       : "";
   const [query, setQuery] = useState(""),
     [scope, setScope] = useState<"all" | "personal" | "work">("all"),
@@ -58,7 +58,7 @@ export default function App({ app }: { app: Definition }) {
     }
   }
   return (
-    <div className="workbench" data-accent={app.accent}>
+    <div className="workbench" data-accent={app.accent} data-app={app.id} data-view={app.view}>
       <Sidebar
         app={app}
         count={canUseRecords ? records.length : null}

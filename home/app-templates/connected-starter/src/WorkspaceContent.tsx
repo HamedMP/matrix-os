@@ -85,8 +85,8 @@ function Heading({
   return (
     <section className="page-heading">
       <div>
-        <span className="eyebrow">{app.tagline}</span>
-        <h1>{app.name}</h1>
+
+        <h1>{app.id === "atlas" ? "Places to look forward to." : app.id === "folio" ? "A clear view of your spending." : app.id === "focus" ? "Your attention, here." : app.id === "agenda" ? "A day with room to think." : app.id === "meeting-briefs" ? "Walk in prepared." : app.id === "subscriptions" ? "Know what keeps coming around." : app.id === "projects" ? "Good work, moving forward." : app.id === "revenue" ? "Money coming in." : app.name}</h1>
         <p>{app.description}</p>
       </div>
       <div className="record-count">

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Account, Definition } from "./types";
 const labels = {
   finance: "Overview & ledger",
@@ -39,6 +40,7 @@ export default function Sidebar({
   onImport,
   onAdd,
 }: Props) {
+  const [controlsOpen, setControlsOpen] = useState(() => !canUseRecords || !!(query || scope !== "all" || account));
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -54,13 +56,13 @@ export default function Sidebar({
           </span>
         </div>
       </div>
-      <div className="sidebar-label">YOUR WORKSPACE</div>
+
       <div className="nav-active">
         <span>◈</span>
         {labels[app.view]}
         <span>{count}</span>
       </div>
-      <section className="sidebar-filters">
+      <details className="workspace-controls" open={controlsOpen} onToggle={(event) => setControlsOpen(event.currentTarget.open)}><summary>Filters &amp; connections</summary><section className="sidebar-filters">
         <label>
           <span>Search records</span>
           <input
@@ -135,6 +137,7 @@ export default function Sidebar({
           {app.services.length ? "Connect & import" : `Add ${app.entity}`}
         </button>
       </div>
+      </details>
       <footer>
         <span className="tiny-dot" />
         Owner-controlled data<p>Private to this Matrix computer</p>
