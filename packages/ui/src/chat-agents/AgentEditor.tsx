@@ -1,7 +1,7 @@
 import type {BotClient} from "./bots/client.js";
 import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotSelectableModelChoices, MatrixBotModelField } from "./bots/MatrixBotModelField.js";
 import { useId, type ReactNode } from "react";
-import { isChatgptPlanBotRoute, ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { isChatgptPlanBotRoute, isChatgptPlanChatRoute, ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { AgentRecipeEditor } from "./AgentRecipeEditor.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
@@ -18,7 +18,7 @@ export function AgentModelField({ id, selected, pending, models: suppliedModels,
   change(value: Partial<AgentDraft>): void; onSetup?: () => void;
   hermesOnly: boolean;
 }) {
-  const models = suppliedModels.filter(choice => !isChatgptPlanBotRoute(choice));
+  const models = suppliedModels.filter(choice => !isChatgptPlanBotRoute(choice) && !isChatgptPlanChatRoute(choice));
   const modelKey = selected ? JSON.stringify([selected.instanceId, selected.model]) : "";
   const available = models.some((choice) => choice.instanceId === selected?.instanceId && choice.modelId === selected?.model);
   return <>

@@ -44,3 +44,39 @@ Bot library metadata failure must not classify every ordinary Chat as unresolved
 ## Custom dedicated Bot identity
 
 Dedicated identity is independent of `recipeRef`. Use shared `botExecutionPresentation` and authenticated definition loading for custom versus recipe applicability. Custom selection is the saved canonical executor/model/options; never substitute Matrix Pi or interpret a missing catalog entry as Automatic. Unknown binding/definition or unavailable route disables Send and hides ordinary routing controls. Custom sends echo the exact Bot ID and revision; Full access is explicit per request and resets on accepted send. Recipe-only tasks/authority/memory reads are skipped for custom definitions. Text-only edits omit unchanged selection and recipe fields, including broker-stamped Jev authority. Sidebar and mention opens call explicit ensure POST; GET remains pure. Ensure checks canonical deletion tombstones after binding cascades and never adopts an ordinary Chat occupying its deterministic ID or request key. See `specs/545-custom-bot-dedicated-entry/spec.md`.
+
+
+## Ordinary subscription applicability
+
+### 1. Scope / Trigger
+
+Ordinary Chat and custom saved Bot editors can read the same provider catalog, but catalog availability does not imply execution support in a Bot-bound conversation.
+
+### 2. Signatures
+
+`AgentModelField` filters route applicability before rendering executable options. Generic `POST /api/chat-agents` and non-recipe `PATCH /api/chat-agents/:agentId` validate `selection.instanceId` before calling the store.
+
+### 3. Contracts
+
+The ordinary subscription identity `matrix_pi_chatgpt_plan` belongs to ordinary Pi Chat admission, which refuses Bot-bound Chats. Do not create or assign this identity to a custom definition. The recipe identity `matrix_chatgpt_plan` remains available only through supported recipe Bot flows. Keep both ordinary and recipe Chat pickers available in their actual supported contexts. No schema, environment, grants or credential format changes are required.
+
+### 4. Validation & Error Matrix
+
+- Fresh generic create with an ordinary-only subscription selection: HTTP 400, no definition or idempotency record written.
+- Exact historical create replay with the same owner/request hash: HTTP 201 with the existing definition, no new writes or execution authority.
+- Non-recipe PATCH with that selection: HTTP 400, no definition/revision/binding mutation.
+- Unrelated text edit omitting selection: retain the exact saved custom selection.
+- Existing unavailable saved identity: show its actual identity and unavailable state, without automatic replacement.
+- Supported recipe selection and ordinary Chat subscription selection: retain their existing admission and explicit-consent behavior.
+
+### 5. Good / Base / Bad Cases
+
+Good: ordinary Chat offers its connected subscription; a custom Bot editor offers only routes it can execute. Base: legacy Hermes/Codex definitions preserve IDs, instructions, selection and canonical bindings. Bad: saving an ordinary-only subscription on a custom Bot and letting its next send fail at the managed Pi boundary.
+
+### 6. Tests Required
+
+Render an available ordinary subscription alongside custom coding routes: the custom editor must exclude the former, and the ordinary picker must retain it. Exercise actual create/PATCH routes and assert 400 before writes plus unchanged definition/revision/binding. Include unrelated text edits and supported recipe choices as positive cases; retain the managed Pi refusal of Bot-bound Chats.
+
+### 7. Wrong vs Correct
+
+Wrong: `isChatAgentDriver(instance.driverKind)` alone establishes custom Bot applicability. Correct: apply the route's context-specific identity constraint at both the editor and authenticated save boundary; preserve downstream admission as defense in depth.
