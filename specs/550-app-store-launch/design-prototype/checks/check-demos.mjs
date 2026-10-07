@@ -47,7 +47,7 @@ try {
     assert.deepEqual((await iframeElement.getAttribute('sandbox')).split(/\s+/).sort(), ['allow-forms', 'allow-scripts'], `${label}: sandbox permissions`);
     const ui = page.frameLocator(`iframe[title="${name} interactive example preview"]`);
     await ui.locator('.workbench').waitFor();
-    const frame = page.frames().find(value => value.url() === new URL(`/demos/${id}/index.html`, origin).href);
+    let frame = await (await iframeElement.elementHandle()).contentFrame();
     assert.ok(frame, `${label}: live preview frame`);
     const isolation = await frame.evaluate(() => {
       let storage, parentAccess;
@@ -98,6 +98,7 @@ try {
     assert.equal(created.length, baseline.length + 1, `${label}: exactly one UI-created fixture row`);
     assert.equal(created.filter(row => row.payload.fields.title === title).length, 1, `${label}: saved title`);
     await ui.getByRole('button', { name: 'Check records', exact: true }).click();
+    await ui.locator('summary').filter({ hasText: 'Filters & connections' }).click();
     await ui.getByLabel('Search records', { exact: true }).fill(title);
     await ui.getByRole('button', { name: /^Edit/ }).first().click();
     const titleControl = ui.locator('.editor > label').first().locator('input');
@@ -109,7 +110,10 @@ try {
     const edited = await readRows();
     assert.equal(edited.length, created.length, `${label}: edit did not duplicate`);
     assert.equal(edited.filter(row => row.payload.fields.title === revised).length, 1, `${label}: updated fixture title`);
-    await frame.goto(new URL(`/demos/${id}/index.html`, origin).href);
+    await page.getByRole('button', { name: 'Desktop layout', exact: true }).click();
+    await page.getByRole('button', { name: 'Try phone layout', exact: true }).click();
+    const resetFrame = await (await page.getByTitle(`${name} interactive example preview`, { exact: true }).elementHandle()).contentFrame();
+    frame = resetFrame;
     await ui.locator('.workbench').waitFor();
     assert.deepEqual(await readRows(), baseline, `${label}: reload restored exact fictional baseline`);
 
@@ -137,7 +141,7 @@ try {
       }
     }, action);
     assert.deepEqual(blocked, { directive: 'form-action', disposition: 'enforce', blockedURI: action }, `${label}: native POST rejected by browser CSP`);
-    assert.equal(frame.url(), new URL(`/demos/${id}/index.html`, origin).href, `${label}: no form navigation`);
+    assert.equal(frame.url(), 'about:srcdoc', `${label}: no form navigation`);
     assert.deepEqual(counts, { errors: 0, externalRequests: 0, posts: 0, unexpectedConsoleErrors: 0 }, samples.join('\n'));
     completed++;
     console.log(`PASS ${label}: physical create/check/reopen/edit/reset; 44px; opaque; POST blocked`);

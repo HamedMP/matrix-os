@@ -62,3 +62,25 @@
 @media(max-width:1100px) { .store-app-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .store-layout { grid-template-columns: 180px minmax(0,1fr); } .store-sidebar { padding-left: 16px; padding-right: 12px; } .store-content { padding: 28px 24px; } .first-party-note { display: none; } .feature-copy { padding: 20px; } .feature-screenshot { margin: 0 16px; height: 155px; } }
 @media(max-width:760px) { .store-header { padding: 14px 18px; gap: 12px; flex-wrap: wrap; } .store-logo { font-size: 17px; } .store-tools { margin-left: auto; } .store-search { order: 3; width: 100%; margin: 0; } .store-search kbd { display: none; } .store-layout { display: block; } .store-sidebar { padding: 10px 14px; border-right: 0; border-bottom: 1px solid var(--border); } .store-sidebar > .sidebar-label, .sidebar-connections, .sidebar-phone { display: none; } .store-sidebar nav { display: flex; justify-content: space-between; gap: 2px; } .store-sidebar nav button { padding: 0 10px; gap: 6px; font-size: 11px; } .store-sidebar nav button svg { width: 15px; } .store-content { padding: 24px 18px; } .store-intro { margin-bottom: 20px; } .store-intro h1 { letter-spacing: -.9px; } .store-intro p { font-size: 11px; } .store-features { gap: 12px; } .feature-copy { padding: 18px 16px; } .feature-copy h2 { font-size: 21px; } .feature-kicker { font-size: 7px; line-height: 1.6; } .feature-screenshot { height: 116px; margin: 0 12px; } .catalog-heading > button { display: none; } .store-app-grid { gap: 24px 14px; } .listing-description .app-glyph { width: 36px; height: 36px; border-radius: 9px; } .listing-description .app-glyph svg { width: 19px; } .listing-get { display: none; } .listing-description { align-items: start; gap: 8px; } }
 @media(max-width:480px) { .store-features { grid-template-columns: minmax(0,1fr); } .feature-app { display: grid; grid-template-columns: minmax(0,.95fr) minmax(0,1.05fr); min-height: 182px; align-items: end; } .feature-copy { min-width: 0; align-self: center; padding: 19px 0 20px 18px; } .feature-copy h2 { font-size: 22px; } .feature-screenshot { height: 150px; width: 250px; margin: 0 0 0 14px; } .feature-atlas .feature-screenshot { height: 152px; } .listing-screenshot { padding: 8px 8px 0; } .listing-description { gap: 7px; } .listing-description .app-glyph { width: 32px; height: 32px; } .listing-description strong { font-size: 12px; } .listing-description small { font-size: 9px; } .listing-context { font-size: 8px; } .store-sidebar nav button { padding: 0 6px; font-size: 10px; gap: 5px; } .store-tools { padding: 0 10px; } }
+
+/* Purposeful apps carry the color; the store remains a quiet frame. */
+.store-eyebrow, .feature-kicker { letter-spacing: 0; text-transform: none; font-size: 12px; font-weight: 500; }
+.store-intro h1 { font-size: clamp(32px, 4vw, 48px); letter-spacing: -1.9px; margin: 12px 0; }
+.store-intro { margin-bottom: 32px; }
+.store-intro p { font-size: 14px; max-width: 560px; }
+.store-features { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 22px; }
+.feature-copy { padding: 30px 28px 24px; }
+.feature-copy h2 { font-size: clamp(27px, 2.8vw, 39px); letter-spacing: -1.3px; margin: 18px 0 22px; line-height: 1.09; }
+.feature-screenshot { height: auto; aspect-ratio: 1.75; margin: 0 20px; }
+.feature-screenshot .live-demo-thumbnail { aspect-ratio: 1.6; }
+.feature-atlas .feature-copy h2 { font-family: 'Instrument Serif', Georgia, serif; font-size: clamp(36px, 4vw, 56px); font-weight: 400; letter-spacing: -.7px; line-height: 1; }
+.feature-atlas .feature-copy { padding-bottom: 18px; }
+.store-listing .listing-screenshot { padding: 0; background: var(--paper); aspect-ratio: 1.6; }
+.store-app-grid { gap: 32px 20px; }
+.listing-description { margin-top: 16px; }
+.listing-description strong { font-size: 16px; }
+.listing-description small { font-size: 12px; line-height: 1.6; }
+.listing-context { margin-top: 12px; }
+.catalog-heading h2 { font-size: 24px; }
+.store-catalog { margin-top: 42px; }
+@media (max-width: 700px) { .store-features { grid-template-columns: 1fr; } .store-intro h1 { font-size: 36px; } .feature-copy h2 { font-size: 32px; } .feature-atlas .feature-copy h2 { font-size: 50px; } .store-app-grid { gap: 28px; } }

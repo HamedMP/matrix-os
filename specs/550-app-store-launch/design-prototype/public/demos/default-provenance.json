@@ -1,0 +1,136 @@
+{
+  "temporaryOnly": true,
+  "packaging": "Actual source entry bundled to a classic IIFE for opaque frames; CSS and JS never receive owner credentials. Notes lazy chunks are bundled locally.",
+  "editions": {
+    "current": {
+      "notes": {
+        "sourceSha256": "e2c95455d8b096f57c47361e689a72a71e473443ad4625ca82977f2beeb557d5",
+        "outputs": {
+          "app.js": "74cae0fa1cafc1a8a5ef1cca66f2c433082b51301553b1e4b56bfd471ae25644",
+          "app.css": "398a6de743989102b02a34c79ed65d7a10406920608c24faef31bc34b8e725fb"
+        }
+      },
+      "todo": {
+        "sourceSha256": "4535f8d4e09184949f1ce36e23a4894a5c3681dcbc1953fc39754df3648c1bdd",
+        "outputs": {
+          "app.js": "dd7ea9c91b9ce25bce01e41b084e19e401df4c4237a77b5a8f018b9acdc6096d",
+          "app.css": "7000f89820f26b649cd8522a70119ad7f872f5503a66bc241456ddd290797227"
+        }
+      },
+      "task-manager": {
+        "sourceSha256": "b7f7c8fae7632974dfce8398e0153b4879b5cb34621c1fcd6a7e361e1bdad474",
+        "outputs": {
+          "app.js": "d506bee511f88c228427263f984da6f437725f17f8c09f5f0f25500ff6ddc3fd",
+          "app.css": "59684975917198ebe8653af6f42b66d6c9a6f9200e38fb5ca76f9af8973c9a78"
+        }
+      },
+      "calculator": {
+        "sourceSha256": "e0810066241a8b5a5c8c79767ae148f28fc71bf85246f3e3d14efefe4568f328",
+        "outputs": {
+          "app.js": "5d7e6b4b55bc549df9080331b358590809f0b36df67e9f171a35307fff0cb94d",
+          "app.css": "b54cbd83cb5ad79e049bf6c9fc74a7885d1cf6a6095fcffa97c3aecfb63d715d"
+        }
+      },
+      "clock": {
+        "sourceSha256": "cc978bcc98fcee5ac09defeb4a283bbfeb05222629f0eb449ff60cb193ed3a29",
+        "outputs": {
+          "app.js": "36fb80cc3865fb678a700f2c38533deb266bb6d0ef29b4299005ee8c1701c118",
+          "app.css": "d6089eb586156bb4083225b4c0bf5309bfd69e81d6f7a36f3642a08fb895e457"
+        }
+      },
+      "weather": {
+        "sourceSha256": "b0b3e8bdee3d83de2cff08563b08f7cd5e622082d0ca2fc97f27fb5fd97a2558",
+        "outputs": {
+          "app.js": "3e8ecbf07131aab782709a186302b95b68917e8e1da959ad5a74e195caf59453",
+          "app.css": "045a82089c28c84dd53d5d96024f4f5324168f5ed12f2de5cb296b348e44ca61"
+        }
+      },
+      "expense-tracker": {
+        "sourceSha256": "8aa220e0bbe1c2d03078725548fcd774da3b81e0b28b2b012f0805e08ebe7583",
+        "outputs": {
+          "app.js": "5bfb75aef41001ef064844810a7394f4c99663a3f0bd4bff7a5e6b1ce57e622e",
+          "app.css": "4111bc463bda0b28abbdcbb9436f9f6d691ffd84e147147edf97524f95c9523e"
+        }
+      },
+      "stickies": {
+        "sourceSha256": "eb440f65f452be83bdea9003ac19502449ca1648a0c63ff7024d2329e111886a",
+        "outputs": {
+          "app.js": "4cbf9f4a85650bdf1571cb59273900836a4148c086ed1aebbeb42883d10b4e29",
+          "app.css": "4d1cd712fcb4d03b1f4fbe293d6fe88eb247bd23d107abed0099c5bf14ced684"
+        }
+      },
+      "pomodoro": {
+        "sourceSha256": "e69ae6c7e704285b98efd100f2810e4a377af858d079a0c72d5c131a3c9e7765",
+        "outputs": {
+          "app.js": "08f171a8a563099021e19e73152d802ac5cce3c7053c43b6529f90744ed3c689",
+          "app.css": "e4cbc86ae6eeb0e2f7123616d9f09b9882ad9956e962289263ada0d5a8705e31"
+        }
+      }
+    },
+    "original": {
+      "notes": {
+        "sourceSha256": "ef59bc19f131a6db29e0b9f6d73614765e783935f26b7dc190b1adf590a190fe",
+        "outputs": {
+          "app.js": "eda4adfd3f0c4ce460096c68e981c5bf438966aea2d817640e2b5e2ab028ac20",
+          "app.css": "1fb7cd405347eaee3aab00cd910a29e94d3d340ed8491f285469111a1644bd0f"
+        }
+      },
+      "todo": {
+        "sourceSha256": "619b25e14732a5ab835171d582e4216fcde1a59a84f8349e06b4841d7151a711",
+        "outputs": {
+          "app.js": "2d7323f0c6f562184308b488d61f966bec66769d33483abd1fdcf37a02dc443e",
+          "app.css": "f6e8e790c2fb92b2e981aeba075e090cf47689d3f00ffd1dc2c5a27a732611a2"
+        }
+      },
+      "task-manager": {
+        "sourceSha256": "823fced1369d7fe35ec2845efb6df5767648b4e5c70a65895e43b59d64605ea4",
+        "outputs": {
+          "app.js": "d506bee511f88c228427263f984da6f437725f17f8c09f5f0f25500ff6ddc3fd",
+          "app.css": "0dddede5575eef3cbb347d2190aa30e19daea7c6a1db47742dd5d37a080317bd"
+        }
+      },
+      "calculator": {
+        "sourceSha256": "e8a19dcd350c5e05620a4c685f381f8c31b19dd35065cd06c0cef06cd2c9f4ec",
+        "outputs": {
+          "app.js": "b6388f3c9bb05c5aa8319cfc0faf29572bb02ee239873d6f3e807acc01ef457d",
+          "app.css": "ac8097780102426a68af707af9248b8515ac30e21f1e40e5a936d85ca491416d"
+        }
+      },
+      "clock": {
+        "sourceSha256": "79cdc70cd9341b27c2322fbe9de516f102aeaf82b568ce63bbc1e3dcad0a2aca",
+        "outputs": {
+          "app.js": "85cc24fdc44a465ab4ef5e1f5bc748d47b04acb2a3f96697b1595ebd0228c31e",
+          "app.css": "c177fb40d8b8bd1b32e5494ee682344ec57cce11e7b468029780dbfdebdd3d56"
+        }
+      },
+      "weather": {
+        "sourceSha256": "0a7c5b3f4c9bdd505f792396b5f577f0e9870f59315f52df2d1607a8f72e4c86",
+        "outputs": {
+          "app.js": "de6950fc4f2c2297e7b29c9ee0249db343847616f584e659dbba430905bab5be",
+          "app.css": "3b5a7b871b4cae27d71afbd4cd9408c266d57806d9b5d4874706b539cd55bed2"
+        }
+      },
+      "expense-tracker": {
+        "sourceSha256": "2e141e3e23f8e4d0bdef00ce5ef1b043c4981db9e4f9447104433926879e0bd6",
+        "outputs": {
+          "app.js": "b019f267b29f8291ada8068fd6e30e2eadd6adf6665d4df356eef94140b18a77",
+          "app.css": "9dcf1543aa44d8532026153a13f8c83fec4187b04b41063765a6ff7bfcc54c5e"
+        }
+      },
+      "stickies": {
+        "sourceSha256": "d4e5dd08c21183cbee6d8e1581fd7ac18e9734686e69e7cbbdf26f7aebf6582e",
+        "outputs": {
+          "app.js": "fc2e32f323ed8da158dbd9782b80aef7fdc1be2359ba3e8f7a48b88fcff5d538",
+          "app.css": "21f7e321d1dac914528ba3e57d6fb5c40ac0fe224d99bd3b3f1ce6c097e866a0"
+        }
+      },
+      "pomodoro": {
+        "sourceSha256": "e69ae6c7e704285b98efd100f2810e4a377af858d079a0c72d5c131a3c9e7765",
+        "outputs": {
+          "app.js": "54ab04c9d297879a2095795b8397e81bb413aa4222ec2e3fc10cec3f15aa0dcc",
+          "app.css": "d9e13f77d2fe97527886676e638075a7eda935c52996a353583d4c5e78a3491e"
+        }
+      }
+    }
+  }
+}

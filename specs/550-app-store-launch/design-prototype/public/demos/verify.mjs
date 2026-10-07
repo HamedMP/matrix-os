@@ -59,6 +59,7 @@ assert.equal(notice.textContent,copy);
 notice.textContent='Your records could not be loaded. Try checking again.';observer.fn([]);
 assert.equal(notice.textContent,'Your records could not be loaded. Try checking again.','unrelated errors stay truthful');
 notice.textContent=oldNotice;observer.fn([]);assert.equal(notice.textContent,copy);
+notice.textContent='The import connection is not ready. Reopen the app in Matrix or use manual entries.';observer.fn([]);assert.equal(notice.textContent,copy);
 modeEvents.pagehide();assert.equal(cleaned,true);
 const assets=readdirSync(join(root,'assets'));
 const provenance=JSON.parse(readFileSync(join(root,'provenance.json'),'utf8'));
@@ -66,8 +67,8 @@ for(const [name,expected] of Object.entries(provenance.assetSha256)){
   assert.ok(assets.includes(name),'provenance identifies a bundled asset');
   assert.equal(createHash('sha256').update(readFileSync(join(root,'assets',name))).digest('hex'),expected,'actual compiled assets remain unchanged');
 }
-const bundle=assets.find(name=>name.endsWith('.js')&&name.startsWith('index-'));
-new Script(readFileSync(join(root,'assets',bundle),'utf8'));
+for (const name of assets.filter(name => name.endsWith('.js'))) new Script(readFileSync(join(root,'assets',name),'utf8'));
+const bundle=provenance.refreshed.script;
 const ids=['folio','atlas','agenda','subscriptions','focus','meeting-briefs','projects','revenue'];
 for(const id of ids){
   const html=readFileSync(join(root,id,'index.html'),'utf8').replaceAll('&#x27;', "'");

@@ -1,5 +1,5 @@
-@font-face { font-family: 'Instrument Sans'; src: url('/fonts/instrument-sans.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
-@font-face { font-family: 'Instrument Serif'; src: url('/fonts/instrument-serif.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Instrument Sans'; src: url('../public/fonts/instrument-sans.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: 'Instrument Serif'; src: url('../public/fonts/instrument-serif.woff2') format('woff2'); font-weight: 400; font-display: swap; }
 * { box-sizing: border-box; }
 body { margin: 0; font-family: 'Instrument Sans', system-ui, sans-serif; }
 button, select, input { font: inherit; }

@@ -1,6 +1,6 @@
 # Matrix App Store design exploration
 
-A React/TypeScript design review artifact for spec 550. Opens the premium/minimal storefront selected as a direction on October 6; earlier A–C explorations remain available for comparison. It has actual starter screenshots and eight actual starter phone demos, all with fictional records.
+A React/TypeScript design review artifact for spec 550. Opens the premium/minimal storefront selected as a direction on October 6; earlier A–C explorations remain available for comparison. It now shows the refreshed source interfaces directly, plus a comparison studio for eight store apps and nine everyday Matrix apps. Each has previous/refreshed editions and phone, tablet and desktop viewports, all with fictional records. The original screenshots remain historical assets; current cards use scaled live interfaces, not a claimed screenshot capture.
 
 **This does not connect accounts, install apps, import owner information or submit ratings.** Connection, account-label, permission and rating steps are explicitly example interactions held in memory. Reload resets them. The production OAuth, store routes, install receipts/ratings, bespoke app releases and Native Mobile host remain work in the launch plan.
 
@@ -13,7 +13,7 @@ pnpm exec vite --host 127.0.0.1 --port 3036
 pnpm exec tsc -p tsconfig.json
 pnpm exec vite build
 node public/demos/verify.mjs
-node --test checks/catalog-search.test.mjs
+node --test checks/*.test.mjs
 node checks/check-ui.mjs
 node checks/check-demos.mjs
 ```
@@ -38,3 +38,13 @@ Vite's relative build base allows the built artifact to be served under a direct
 The phone demos use a separate opaque sandboxed frame and fictional temporary data. They never receive an owner bridge or credentials. CSP and the fixture transport policy forbid source/kernel/API calls; reload restores the fixtures. Temporary interaction is not owner persistence. A desktop browser preview cannot verify Native Mobile, keyboard/safe-area or native Back behavior.
 
 Read the adjacent specification, onboarding UX and design document before turning this artifact into production behavior. Production previews need a separately reviewed credential-free origin, immutable release identity, response-header policy and real host/proxy integration checks.
+
+## Refresh packaging and review
+
+`checks/package-design-demos.mjs <connected-source-checkout> <default-source-checkout> <original-default-source-checkout>` packages the actual sources into 34 credential-free source documents. The default baseline is archived from commit `237e25fae`; connected baseline HTML and its unmodified production bundle are retained under `public/baseline/connected`. Connected refreshed assets are copied unchanged from their production Vite output; defaults use their actual `src/main.tsx` entry bundled into a classic IIFE so Notes' lazy editor also works in an opaque frame. No alternate display implementation is used.
+
+The parent lazily imports each document, then assigns it to an opaque `srcDoc` iframe. This avoids a nested authenticated app navigation; it adds no host permission, proxy exception or owner capability. The defaults adapter supplies bounded temporary tables/KV and a clearly labeled fixed weather example. Closing or resetting the frame discards edits. A 30-minute TTL caps retained default fixture state. VM/helper checks validate all document digests, syntax, CSP strings, bounds and fixture behavior; actual browser CSP and rendered results remain pending.
+
+`?review=apps` opens the comparison immediately. The new browser harness uses the titled srcDoc frame and opens the compact Filters & connections panel before searching. The current harness has not been executed since the access denial. Current screenshot capture and Matrix Expo validation are also pending; historical evidence cannot be reused as proof of these new layouts.
+
+A separate **App Design Studio** app can be staged in a Matrix computer for review. It contains this compiled review interface and fictional examples, rather than replacing any installed owner app. Source candidates, launch readiness and release approval remain separate.
