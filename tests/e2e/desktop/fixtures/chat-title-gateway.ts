@@ -1,5 +1,6 @@
 import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
+import { BotDirectChatResponseSchema, ChatAgentListResponseSchema } from "@matrix-os/contracts";
 import { startStubGateway } from "./stub-gateway";
 
 export const LONG_CHAT_TITLE = "我想设计一个个人主页。请先用 request_user_input 工具询问我喜欢的视觉风格，提供三个选项和简短说明。".repeat(3);
@@ -19,6 +20,11 @@ export async function startChatTitleGateway() {
   const server = createServer(async (req, res) => {
     const path = new URL(req.url!, base.url).pathname;
     const json = (body: unknown) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    // History rows require a verified ordinary Chat binding; unknown identities stay hidden.
+    if (path === "/api/chat-agents") return json(ChatAgentListResponseSchema.parse({ enabled: true, agents: [] }));
+    if ([TITLE_CHAT_ID, "chat_short", "chat_failed"].some(id => path === `/api/chats/${id}/bot`)) {
+      return json(BotDirectChatResponseSchema.parse({ agentId: null }));
+    }
     if (path === "/api/chats") return json({ items: [record(),
       { chat: { ...record().chat, id: "chat_short", title: SHORT_CHAT_TITLE } },
       { chat: { ...record().chat, id: "chat_failed", title: FAILED_CHAT_TITLE, attention: "failed",

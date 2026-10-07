@@ -4,6 +4,10 @@ import type { ChatDatabase } from "./database.js";
 import { toActivities, toMessage, toRun, toTurn, type ChatOwner, type ChatOutboxEventType, type ChatRecord } from "./records.js";
 import { toQueuedTurn } from "./queue-repository.js";
 
+const BOT_EVENT_TYPES: readonly ChatOutboxEventType[] = [
+  "bot.created", "interaction.requested", "interaction.resolved", "bot.task.updated", "bot.authority.changed", "bot.memory.remembered",
+];
+
 // Capture public changes under the mutation's transaction and Chat lock.
 // Text/activity events never hydrate the entire transcript.
 export async function captureChatContent(
@@ -13,6 +17,8 @@ export async function captureChatContent(
 ): Promise<CanonicalChatContent | undefined> {
   // Owner-local read/pin state does not advance Chat revision; keep its legacy refresh semantics.
   if (eventType === "chat.user_state_updated" || eventType === "chat.deleted") return undefined;
+  // Bot events change no Chat content; clients refetch bot state through authorized reads.
+  if (BOT_EVENT_TYPES.includes(eventType)) return undefined;
   const record = await getRecord(owner, chatId);
   if (!record) return undefined;
   if (eventType === "run.message") {

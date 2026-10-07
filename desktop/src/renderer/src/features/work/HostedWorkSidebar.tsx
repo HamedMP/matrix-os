@@ -4,12 +4,12 @@ import { useBoard, type Project } from "../../stores/board";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { WorkRail } from "./WorkRail";
-import { openWorkProject } from "./work-navigation";
+import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 
 export const HOSTED_WORK_SIDEBAR_WIDTH = 240;
 
-export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }) {
+export function HostedWorkSidebar({ tab, active, searchShortcutActive = active }: { tab: Tab; active: boolean; searchShortcutActive?: boolean }) {
   const runtime = useWorkSurfaceRuntime();
   const projects = useBoard((state) => state.projects);
   const route = tab.workRoute ?? (tab.kind === "projects" ? "projects" : tab.kind === "project" ? "project" : "chat");
@@ -21,7 +21,7 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
     closable: false,
   });
   const openGlobalDraft = () => {
-    runtime?.requestAgentDraft("", []);
+    if (runtime && !runtime.requestAgentDraft("", [])) return;
     navigateToGlobalDraft();
   };
   const selectChat = (record: CanonicalChatRecord, project?: Project) => {
@@ -46,6 +46,8 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       projectedChatTitles={runtime?.projectedChatTitles}
       projects={projects}
       active={active}
+      searchShortcutActive={searchShortcutActive}
+      newChatShortcutActive={searchShortcutActive && route === "chat"}
       activeChatId={tab.chatId}
       activeProjectSlug={route === "project" ? tab.projectSlug : undefined}
       className="h-full w-full border-r-0"
@@ -53,12 +55,20 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       showCollapseControl={false}
       onNewGlobalChat={openGlobalDraft}
       onStartAgentChat={(text, resources) => {
-        runtime?.requestAgentDraft(text, resources);
+        if (runtime && !runtime.requestAgentDraft(text, resources)) return;
         navigateToGlobalDraft();
       }}
+      onOpenBotChat={(chatId) => useTabs.getState().openTab({
+        kind: "work", title: "Chat", workRoute: "chat", chatId,
+        chatView: "conversation", closable: false,
+      })}
       onCreateProject={() => useUi.getState().openCreateProject()}
-      onNewProjectChat={openWorkProject}
+      onSelectProject={openWorkProject}
+      onNewProjectChat={openWorkProjectDraft}
       onSelectChat={selectChat}
+      onChatMoved={(record, project) => {
+        if (record.chat.id === tab.chatId) selectChat(record, project);
+      }}
       onChatRenamed={(record) => {
         useTabs.getState().updateChatTitle(record.chat.id, record.chat.title);
       }}

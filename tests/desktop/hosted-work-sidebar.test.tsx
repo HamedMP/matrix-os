@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { StartAgentChat } from "@matrix-os/ui";
 import { HostedWorkSidebar } from "@desktop/renderer/src/features/work/HostedWorkSidebar";
 import { WorkSurfaceRuntimeProvider, useWorkSurfaceRuntime } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import type { CanonicalChatTitleProjection } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
+import type { Project } from "@desktop/renderer/src/stores/board";
+import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical-chat-workspace-test-utils";
 import { appendSharedComposerText } from "./shared-chat-composer-test-utils";
@@ -32,15 +34,26 @@ const secondRenamedRecord: CanonicalChatRecord = {
   ...renamedRecord,
   chat: { ...renamedRecord.chat, id: "chat_second", title: "Second synced title" },
 };
+const draftCallbacks = vi.hoisted(() => ({ starts: [] as StartAgentChat[], newChats: [] as Array<() => void> }));
 
 vi.mock("@desktop/renderer/src/features/work/WorkRail", () => ({
   WorkRail: (props: {
+    newChatShortcutActive?: boolean;
     onChatRenamed?: (record: CanonicalChatRecord) => void;
     projectedChatTitles?: CanonicalChatTitleProjection[];
     onStartAgentChat?: StartAgentChat;
+    onOpenBotChat?: (chatId: string) => void;
     onNewGlobalChat?: () => void;
-  }) => (<>
-    <button onClick={() => props.onNewGlobalChat?.()}>New chat</button>
+    onSelectProject?: (project: Project) => void;
+    onNewProjectChat?: (project: Project) => void;
+  }) => {
+    if (props.onStartAgentChat) draftCallbacks.starts.push(props.onStartAgentChat);
+    if (props.onNewGlobalChat) draftCallbacks.newChats.push(props.onNewGlobalChat);
+    return (<>
+    <button data-shortcut-active={String(props.newChatShortcutActive)} onClick={() => props.onNewGlobalChat?.()}>New chat</button>
+    <button onClick={() => props.onSelectProject?.({ id: "project_alpha", slug: "alpha", name: "Alpha", kind: "folder" })}>Open Alpha</button>
+    <button onClick={() => props.onNewProjectChat?.({ id: "project_alpha", slug: "alpha", name: "Alpha", kind: "folder" })}>New chat in Alpha</button>
+    <button onClick={() => props.onOpenBotChat?.("chat_bound_bot")}>Open recipe bot</button>
     <button onClick={() => props.onStartAgentChat?.("", [{ kind: "agent", id: "bot_review", label: "Review agent", revision: "3" }])}>Start saved agent</button>
     <button onClick={() => props.onStartAgentChat?.("Create a research agent")}>Start recipe draft</button>
     <button type="button" onClick={() => props.onChatRenamed?.(renamedRecord)}>
@@ -49,7 +62,8 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", () => ({
     <span data-testid="hosted-rail-projected-title">
       {props.projectedChatTitles?.map((projection) => projection.title).join("|") || "No projection"}
     </span>
-  </>),
+  </>);
+  },
 }));
 
 function ProjectHeaderRename() {
@@ -72,6 +86,8 @@ function HostedComposer({ client }: { client: ReturnType<typeof createCanonicalC
 }
 
 beforeEach(() => {
+  draftCallbacks.starts = [];
+  draftCallbacks.newChats = [];
   useConnection.setState(useConnection.getInitialState(), true);
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
   useTabs.setState(useTabs.getInitialState(), true);
@@ -83,6 +99,30 @@ afterEach(() => {
 });
 
 describe("HostedWorkSidebar", () => {
+  it.each([['chat', true, true], ['chat', false, false], ['project', true, false], ['projects', true, false]] as const)('advertises New Chat only for the focused Chat route (%s, %s)', (route, focused, expected) => {
+    render(<HostedWorkSidebar tab={{id:'hint',kind:'work',title:'Work',workRoute:route,closable:false}} active searchShortcutActive={focused} />);
+    expect(screen.getByRole('button', {name:'New chat',exact:true}).getAttribute('data-shortcut-active')).toBe(String(expected));
+  });
+  it.each(["chat_bound_bot", "chat_existing", undefined])("opens an ordinary Project draft from %s without creating a server Chat", (chatId) => {
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatId, chatView: chatId ? "conversation" : "draft", closable: false });
+    const tab = useTabs.getState().tabs[0]!;
+    render(<WorkSurfaceRuntimeProvider active={false}><HostedWorkSidebar tab={tab} active /><HostedDraftReceipt /></WorkSurfaceRuntimeProvider>);
+    const focusRequest = useCodingAgentWorkspace.getState().composerFocusRequestId;
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Alpha" }));
+    expect(useTabs.getState().tabs[0]).toMatchObject({ workRoute: "project", projectSlug: "alpha", chatView: "draft", chatId: undefined });
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequest + 1);
+    expect(screen.getByTestId("hosted-agent-draft").textContent).toBe("null");
+    fireEvent.click(screen.getByRole("button", { name: "Open Alpha" }));
+    expect(useTabs.getState().tabs[0]?.chatView).toBe("index");
+  });
+
+  it("requests bot event wire v1 for the hosted Electron Chat stream", async () => {
+    const openStream = vi.fn(() => new Promise<Response>(() => {}));
+    useConnection.setState({ api: { openStream } as never });
+    render(<WorkSurfaceRuntimeProvider active><HostedDraftReceipt /></WorkSurfaceRuntimeProvider>);
+    await waitFor(() => expect(openStream).toHaveBeenCalled());
+    expect(openStream.mock.calls[0]![0]).toContain("eventVersion=1");
+  });
   it("replaces an already-open draft on every outer New chat click", async () => {
     useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false });
     const tab = useTabs.getState().tabs[0]!;
@@ -121,6 +161,47 @@ describe("HostedWorkSidebar", () => {
     expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!)).toMatchObject({ text: "Create a research agent" });
     expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!).resources).toBeUndefined();
   });
+  it("preserves an identity-bound draft when the API client becomes available, and clears changed credentials",()=>{
+    render(<WorkSurfaceRuntimeProvider active={false}><HostedDraftReceipt/><HostedWorkSidebar tab={{id:"work_draft",kind:"work",title:"Chat",workRoute:"chat",chatView:"draft",closable:false}} active/></WorkSurfaceRuntimeProvider>);
+    fireEvent.click(screen.getByRole("button",{name:"Start saved agent"}));
+    const request=JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!);
+    expect(request.resources).toHaveLength(1);
+    act(()=>useConnection.setState({api:{} as never}));
+    expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!)).toEqual(request);
+    act(()=>useConnection.setState({authGeneration:1}));
+    expect(screen.getByTestId("hosted-agent-draft").textContent).toBe("null");
+  });
+  it("does not navigate the current runtime from retained old Agent or New chat callbacks", () => {
+    render(<WorkSurfaceRuntimeProvider active={false}><HostedDraftReceipt /><HostedWorkSidebar
+      tab={{ id: "work", kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false }} active />
+    </WorkSurfaceRuntimeProvider>);
+    const oldStart = draftCallbacks.starts.at(-1)!;
+    const oldNewChat = draftCallbacks.newChats.at(-1)!;
+    act(() => useConnection.setState({ authGeneration: 1, runtimeSlot: "preview" }));
+    act(() => useTabs.getState().openTab({ kind: "work", title: "Current chat", workRoute: "chat", chatId: "chat_current", chatView: "conversation", closable: false }));
+    const tabs = useTabs.getState().tabs;
+    act(() => oldStart("Late result"));
+    expect(useTabs.getState().tabs).toBe(tabs);
+    act(() => oldNewChat());
+    expect(useTabs.getState().tabs).toBe(tabs);
+    expect(screen.getByTestId("hosted-agent-draft").textContent).toBe("null");
+  });
+  it("opens a recipe bot's bound conversation instead of an Agent draft", () => {
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false });
+    const tab = useTabs.getState().tabs[0]!;
+    render(<WorkSurfaceRuntimeProvider active={false}><HostedWorkSidebar tab={tab} active /><HostedDraftReceipt /></WorkSurfaceRuntimeProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Open recipe bot" }));
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      workRoute: "chat", chatId: "chat_bound_bot", chatView: "conversation",
+    });
+    expect(screen.getByTestId("hosted-agent-draft").textContent).toBe("null");
+    fireEvent.click(screen.getByRole("button", { name: "Start saved agent" }));
+    expect(useTabs.getState().tabs[0]).toMatchObject({ chatView: "draft", chatId: undefined });
+    expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!)).toMatchObject({
+      resources: [{ kind: "agent", id: "bot_review", label: "Review agent", revision: "3" }],
+    });
+  });
+
   it("synchronizes a rail rename into the active center-title projection", () => {
     useTabs.getState().openTab({
       kind: "work",

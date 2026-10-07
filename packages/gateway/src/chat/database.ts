@@ -1,3 +1,7 @@
+import { bootstrapCompanyDriveSharingIndexes } from "./drive-sharing-guard.js";
+import { bootstrapChatDriveProjects } from "./drive-project-database.js";
+import { bootstrapChatImports, type ChatImportDatabase } from "./import-database.js";
+export type { ChatImportJobsTable, ChatImportMessagesTable } from "./import-database.js";
 import { bootstrapChatMetadata } from "./metadata-schema.js";
 import { bootstrapVoiceHistory } from "./voice-history-schema.js";
 import { bootstrapChatAttribution } from "./attribution-repair.js";
@@ -70,6 +74,20 @@ export interface ChatMessagesTable {
   parts: JsonValue;
   byte_count: number;
   search_text: string;
+  created_at: Timestamp;
+}
+
+/** Encrypted assistant-prose values are never projected into normal Chat rows. */
+export interface ChatCredentialsTable {
+  id: string;
+  chat_id: string;
+  message_id: string;
+  run_id: string;
+  owner_id: string;
+  safe_offset: number;
+  placeholder_length: number;
+  envelope: JsonValue;
+  revealed: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: Timestamp;
 }
 
@@ -274,7 +292,7 @@ export interface ChatVoiceDeliveriesTable {
   updated_at: Timestamp;
 }
 
-export interface ChatDatabase {
+export interface ChatDatabase extends ChatImportDatabase {
   chat_shares: {
     id: string;
     chat_id: string;
@@ -287,6 +305,7 @@ export interface ChatDatabase {
   chat_members: ChatMembersTable;
   chat_user_state: ChatUserStateTable;
   chat_messages: ChatMessagesTable;
+  chat_credentials: ChatCredentialsTable;
   chat_attachments: ChatAttachmentsTable;
   chat_turns: ChatTurnsTable;
   chat_runs: ChatRunsTable;
@@ -429,6 +448,22 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       UNIQUE (turn_id, attempt)
     )
   `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_credentials (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+      owner_id TEXT NOT NULL,
+      safe_offset INTEGER NOT NULL CHECK (safe_offset >= 0 AND safe_offset <= 131072),
+      placeholder_length INTEGER NOT NULL CHECK (placeholder_length BETWEEN 1 AND 64),
+      envelope JSONB NOT NULL,
+      revealed BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (message_id, safe_offset)
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_chat_credentials_chat_message ON chat_credentials(chat_id, message_id)`.execute(db);
   await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS context_snapshot JSONB`.execute(db);
   await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS request_hash TEXT`.execute(db);
   await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS run_policy JSONB`.execute(db);
@@ -698,6 +733,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       PRIMARY KEY (owner_type, owner_id, source_kind, source_id)
     )
   `.execute(db);
+  await bootstrapChatImports(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_migrations (
       owner_type TEXT NOT NULL CHECK (owner_type IN ('personal', 'organization')),
@@ -797,6 +833,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_search ON chat_messages USING GIN (to_tsvector('simple', search_text)) WHERE state = 'committed'`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_outbox_owner_cursor ON chat_outbox(owner_type, owner_id, cursor)`.execute(db);
   await bootstrapChatReadState(db);
+  await bootstrapChatDriveProjects(db);
+  await bootstrapCompanyDriveSharingIndexes(db);
 }
 
 // Existing history starts read once on upgrade; subsequent bootstraps preserve user choices.

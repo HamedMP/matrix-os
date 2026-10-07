@@ -45,6 +45,56 @@ function readChangeDetectionCheckoutRun(root: string): string | undefined {
   );
 }
 
+function readCiResultsRun(root: string): string | undefined {
+  const workflow = parse(
+    readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'),
+  ) as {
+    jobs?: {
+      'ci-results'?: {
+        steps?: Array<{
+          name?: string;
+          run?: string;
+        }>;
+      };
+    };
+  };
+
+  return workflow.jobs?.['ci-results']?.steps?.find(
+    (step) => step.name === 'Summarize required CI jobs',
+  )?.run;
+}
+
+function runCiResults(ciResultsRun: string, triggerRequested: boolean): number | null {
+  const tempDir = mkdtempSync(join(tmpdir(), 'matrix-ci-results-'));
+  const summary = join(tempDir, 'summary');
+
+  try {
+    return spawnSync('bash', ['-c', ciResultsRun], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        AGENT_SDK_COMPATIBILITY_RESULT: 'success',
+        CHANGES_RESULT: 'success',
+        CI_TRIGGER_REQUESTED: String(triggerRequested),
+        DOCS_CONTRACT_RESULT: 'success',
+        E2E_RESULT: 'success',
+        FUNDED_POSTGRES_RESULT: 'success',
+        GITHUB_STEP_SUMMARY: summary,
+        OS_VIEW_PARITY_RESULT: 'success',
+        PATTERNS_RESULT: 'success',
+        REACT_DOCTOR_RESULT: 'success',
+        SHELL_PRODUCTION_BUILD_RESULT: 'success',
+        SHOULD_RUN: 'false',
+        SYNC_CLIENT_RESULT: 'success',
+        TYPECHECK_RESULT: 'success',
+        UNIT_RESULT: 'success',
+      },
+    }).status;
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 function runChangeDetectionCheckout(
   checkoutRun: string,
   failuresBeforeSuccess: number,
@@ -127,6 +177,7 @@ function runPullRequestChangeDetection(
   root: string,
   workflowPath: string,
   hasReadyForCi: boolean,
+  options: { action?: string; labelName?: string } = {},
 ): {
   output: string;
   status: number | null;
@@ -182,9 +233,9 @@ exit 64
         GITHUB_REF: 'refs/pull/1/merge',
         GITHUB_SHA: '0123456789012345678901234567890123456789',
         GITHUB_TOKEN: 'test-token',
-        PR_ACTION: 'synchronize',
+        PR_ACTION: options.action ?? 'synchronize',
         PR_HAS_READY_FOR_CI: String(hasReadyForCi),
-        PR_LABEL_NAME: '',
+        PR_LABEL_NAME: options.labelName ?? '',
       },
     });
 
@@ -238,10 +289,35 @@ describe('CI workflows', () => {
     const unlabeled = runPullRequestChangeDetection(process.cwd(), path, false);
     expect(unlabeled.status, unlabeled.stderr).toBe(0);
     expect(unlabeled.output).toContain('should_run=false');
+    if (path.endsWith('ci.yml')) {
+      expect(unlabeled.output).toContain('trigger_requested=false');
+    }
 
     const labeled = runPullRequestChangeDetection(process.cwd(), path, true);
     expect(labeled.status, labeled.stderr).toBe(0);
     expect(labeled.output).toContain('should_run=true');
+    if (path.endsWith('ci.yml')) {
+      expect(labeled.output).toContain('trigger_requested=true');
+    }
+  });
+
+  it('keeps unrelated label events admitted after ready-for-ci is applied', () => {
+    const path = '.github/workflows/ci.yml';
+    const unadmitted = runPullRequestChangeDetection(process.cwd(), path, false, {
+      action: 'labeled',
+      labelName: 'documentation',
+    });
+    expect(unadmitted.status, unadmitted.stderr).toBe(0);
+    expect(unadmitted.output).toContain('trigger_requested=false');
+    expect(unadmitted.output).toContain('should_run=false');
+
+    const admitted = runPullRequestChangeDetection(process.cwd(), path, true, {
+      action: 'labeled',
+      labelName: 'documentation',
+    });
+    expect(admitted.status, admitted.stderr).toBe(0);
+    expect(admitted.output).toContain('trigger_requested=true');
+    expect(admitted.output).toContain('should_run=true');
   });
 
   it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
@@ -252,6 +328,9 @@ describe('CI workflows', () => {
     expect(workflow).toContain('run-name: CI coverage-v1');
     expect(workflow).toContain('queue: max');
     expect(workflow).not.toContain('cancel-in-progress:');
+    expect(workflow).toContain(
+      "github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared'",
+    );
     expect(superseder).toContain('actions: write');
     expect(superseder).toContain('paths-ignore:');
     expect(superseder).toContain("- 'docs/**'");
@@ -273,7 +352,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, docs-contract, os-view-parity, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -287,7 +366,12 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+
+    const ciResultsRun = readCiResultsRun(root);
+    expect(ciResultsRun).toBeDefined();
+    expect(runCiResults(ciResultsRun ?? '', false)).not.toBe(0);
+    expect(runCiResults(ciResultsRun ?? '', true)).toBe(0);
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
@@ -1056,5 +1140,113 @@ describe('CI workflows', () => {
     expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-fleet');
     expect(targetedJob).toContain('::add-mask::$TARGET_HANDLE');
     expect(targetedJob).not.toContain('printf \'%s\\n\' "$FLEET_RESPONSE"');
+  });
+
+  it('publishes mobile OTA updates to preview and reaches production only by a gated promote', () => {
+    const root = process.cwd();
+    const source = readFileSync(join(root, '.github/workflows/mobile-ota-update.yml'), 'utf8');
+    type Job = {
+      if?: string;
+      needs?: string | string[];
+      environment?: string;
+      concurrency?: { 'cancel-in-progress'?: boolean | string };
+      steps?: Array<{ run?: string; uses?: string; with?: Record<string, unknown> }>;
+    };
+    const workflow = parse(source) as {
+      on?: {
+        push?: { branches?: string[]; paths?: string[] };
+        pull_request?: { paths?: string[] };
+      };
+      permissions?: Record<string, string>;
+      env?: Record<string, string>;
+      jobs?: Record<string, Job>;
+    };
+    const jobs = workflow.jobs ?? {};
+    const runs = (job: Job | undefined) => (job?.steps ?? []).map((step) => step.run ?? '').join('\n');
+
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    expect(workflow.on?.push?.branches).toEqual(['main']);
+
+    // The PR job proves tests and bundling without any credential in reach.
+    expect(jobs.test?.environment).toBeUndefined();
+    expect(JSON.stringify(jobs.test)).not.toContain('secrets.');
+
+    // Native code must not change within one app version, because an update is
+    // delivered to every build of that version. The guard runs in the job every
+    // publish depends on, needs full history to find where the version began,
+    // and also runs for lockfile-only pull requests, which can change native
+    // code without touching the app. A lockfile-only push must not publish.
+    const guardStep = jobs.test?.steps?.findIndex((step) =>
+      step.run?.includes('node scripts/ci/mobile-ota-native-guard.mjs'),
+    );
+    expect(guardStep).toBeGreaterThan(-1);
+    const testCheckout = jobs.test?.steps?.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(testCheckout?.with?.['fetch-depth']).toBe(0);
+    expect(workflow.on?.pull_request?.paths).toContain('pnpm-lock.yaml');
+    expect(workflow.on?.push?.paths).not.toContain('pnpm-lock.yaml');
+
+    // A push can only ever publish to preview, bundled with the production EAS
+    // environment so the promoted bundle is identical to what was tested.
+    const publish = jobs['publish-preview'];
+    expect(publish?.needs).toBe('test');
+    expect(publish?.environment).toBe('mobile-ota-preview');
+    expect(publish?.if).toContain("github.ref == 'refs/heads/main'");
+    expect(publish?.concurrency?.['cancel-in-progress']).toBe(false);
+    expect(runs(publish)).toContain('--channel preview');
+    expect(runs(publish)).toContain('--environment production');
+    expect(source).not.toContain('--channel production');
+
+    // Preview only moves forward. Manual publishes share the push queue, and a
+    // run whose commit is older than what preview already carries (a re-run of
+    // an old job, say) is refused before anything is published.
+    expect(source).toContain(
+      "(github.event_name == 'push' || inputs.action == 'publish-preview') && 'preview-publish'",
+    );
+    const publishCheckout = publish?.steps?.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(publishCheckout?.with?.['fetch-depth']).toBe(0);
+    const publishScript = runs(publish);
+    const publishCommand = publishScript.indexOf('--channel preview');
+    const orderCheck = publishScript.indexOf('git merge-base --is-ancestor "$GITHUB_SHA" "$LAST_COMMIT"');
+    expect(orderCheck).toBeGreaterThan(-1);
+    expect(orderCheck).toBeLessThan(publishCommand);
+
+    // An update bundled without the Clerk key renders only the "missing
+    // configuration" screen, so the key must be readable before publishing.
+    const configCheck = publishScript.indexOf('EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY');
+    expect(configCheck).toBeGreaterThan(-1);
+    expect(configCheck).toBeLessThan(publishCommand);
+
+    // Jobs that hold EXPO_TOKEN must not run action code a tag can repoint.
+    const actionRefs = Object.values(jobs).flatMap((job) =>
+      (job.steps ?? []).flatMap((step) => (step.uses ? [step.uses] : [])),
+    );
+    expect(actionRefs.length).toBeGreaterThan(0);
+    for (const ref of actionRefs) {
+      expect(ref).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+    }
+
+    // Production moves only through the manual, reviewer-gated promote job.
+    const production = jobs.production;
+    expect(production?.environment).toBe('mobile-ota-production');
+    expect(production?.if).toContain("github.event_name == 'workflow_dispatch'");
+    expect(production?.if).toContain("github.ref == 'refs/heads/main'");
+    expect(production?.if).not.toContain("'push'");
+    expect(production?.concurrency?.['cancel-in-progress']).toBe(false);
+    expect(runs(production)).toContain('--destination-channel production');
+    expect(source.split('--destination-channel production')).toHaveLength(2);
+
+    // The EAS CLI is an exact pin fetched through pnpm, and no expression is
+    // interpolated into a shell script.
+    expect(workflow.env?.EAS_CLI_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(source).not.toContain('eas-cli@latest');
+    expect(source).not.toMatch(/\bnpx\b|\bnpm (install|i|exec)\b/);
+    for (const job of Object.values(jobs)) {
+      expect(runs(job)).not.toContain('${{');
+    }
+
+    const workflowReadme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');
+    const releaseDocs = readFileSync(join(root, 'docs/dev/releases.md'), 'utf8');
+    expect(workflowReadme).toContain('`mobile-ota-update.yml`');
+    expect(releaseDocs).toContain('.github/workflows/mobile-ota-update.yml');
   });
 });

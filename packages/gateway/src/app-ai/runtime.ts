@@ -46,7 +46,7 @@ export function createRuntimeAppAiRoutes(options: {
       if (sources.selectedAccessSourceId === "matrix_included" && !MATRIX_INCLUDED_MODEL_IDS.some((model) => model === policy.model)) {
         throw new Error("Model is unavailable for selected access");
       }
-      const launch = await buildKernelCredentialLaunch(options.homePath, process.env, sources.selectedAccessSourceId, options.fundedCredentialProvider);
+      const launch = await buildKernelCredentialLaunch(options.homePath, process.env, sources.selectedAccessSourceId, options.fundedCredentialProvider, { requestClass: "interactive" });
       signal.throwIfAborted();
       if (!launch.env) throw new Error("App AI credentials unavailable");
       const current = await readPolicy(options.homePath);

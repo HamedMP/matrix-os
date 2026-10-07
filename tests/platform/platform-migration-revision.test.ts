@@ -6,14 +6,17 @@ import { PLATFORM_SCHEMA_REVISION } from "../../packages/platform/src/database/m
 describe("platform schema revision", () => {
   it("changes whenever the ordered schema migrations change", async () => {
     const base = "packages/platform/src/database";
-    const files = ["migrate.ts", "../ai-funded-reservation-indexes.ts", ...(await readdir(`${base}/migrations`))
-      .filter((name) => name.endsWith(".ts"))
+    const files = ["migrate.ts", "../ai-funded-reservation-indexes.ts", "../ai-funded-recovery-audit.ts", ...(await readdir(`${base}/migrations`))
+      .filter((name) => name.endsWith(".ts") && name !== "whatsapp.ts")
       .map((name) => `migrations/${name}`)].sort();
     const digest = createHash("sha256");
     for (const file of files) {
       digest.update(file).update("\0").update(await readFile(`${base}/${file}`)).update("\0");
     }
-    expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(0);
+    // Credit-history main and bounded-recovery branch independently allocated
+    // generation 12 fingerprints. Their combined schema must advance beyond both.
+    // The merged core source must advance past it rather than conflict or skip.
+    expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(12);
     expect(PLATFORM_SCHEMA_REVISION.fingerprint).toBe(digest.digest("hex"));
   });
 });

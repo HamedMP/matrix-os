@@ -3,7 +3,7 @@
 // Device auth approves instantly; one project with tasks; one fake zellij echo
 // session with sequence-numbered output; scripted kernel stream.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import { resolve } from "node:path";
 import { readBuildSource } from "../../../../scripts/release/build-source.mjs";
 import { terminalSnapshotFrame } from "./terminal-snapshot";
@@ -16,6 +16,7 @@ import {
   type ProjectAgentWorkspace,
   type RuntimeSummary,
   type SpeechCapabilitiesResponse,
+  type TaskAgentSummary,
 } from "@matrix-os/contracts";
 
 export interface StubGateway {
@@ -47,6 +48,12 @@ export interface StubGateway {
 }
 
 export interface StubGatewayOptions {
+  identity?: { userId: string; handle: string; displayName: string };
+  organizationManagement?: {
+    organizations: Array<Record<string, unknown>>;
+    members: Record<string, Array<Record<string, unknown>>>;
+    invitations: Record<string, Array<Record<string, unknown>>>;
+  };
   terminalSnapshotAnsi?: string;
   speechCapabilities?: SpeechCapabilitiesResponse;
   speechTranscript?: string;
@@ -142,7 +149,7 @@ const TASKS = [
     linkedSessionId: null,
     linkedWorktreeId: null,
     previewIds: [],
-    tags: [],
+    tags: [] as string[],
     updatedAt: new Date(0).toISOString(),
     revision: 1,
   },
@@ -181,7 +188,9 @@ function codingAgentTaskThread(
   };
 }
 
-export function codingAgentProjectWorkspace(tasks = TASKS): ProjectAgentWorkspace {
+export function codingAgentProjectWorkspace(
+  tasks: readonly (Pick<TaskAgentSummary, "id" | "revision"> & { status: unknown })[] = TASKS,
+): ProjectAgentWorkspace {
   const authTask = tasks.find((task) => task.id === "task_auth") ?? TASKS[0];
   const polishTask = tasks.find((task) => task.id === "task_polish") ?? TASKS[1];
   return ProjectAgentWorkspaceSchema.parse({
@@ -649,6 +658,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     kernelConnections: 0,
   };
   let currentToken = TOKEN;
+  const organizationManagement = options.organizationManagement ? structuredClone(options.organizationManagement) : null;
   const activeTerminalOutputs: Partial<Record<string, (data: string) => void>> = {};
   const terminalOutputSequences: Record<string, number> = {};
   let createdHermesConversation = false;
@@ -698,9 +708,9 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       json(res, 200, {
         accessToken: TOKEN,
         expiresAt: Date.now() + 3_600_000,
-        userId: "user-1",
-        handle: "neo",
-        displayName: "Thomas Anderson",
+        userId: options.identity?.userId ?? "user-1",
+        handle: options.identity?.handle ?? "neo",
+        displayName: options.identity?.displayName ?? "Thomas Anderson",
       });
       return;
     }
@@ -728,7 +738,8 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     }
 
     // Everything below requires the bearer header (verifies header injection).
-    if (req.headers.authorization !== `Bearer ${currentToken}`) {
+    const syntheticOrganizationRoute = organizationManagement && path.startsWith("/api/organizations");
+    if (req.headers.authorization !== `Bearer ${currentToken}` && !syntheticOrganizationRoute) {
       json(res, 401, { error: "unauthorized" });
       return;
     }
@@ -788,6 +799,81 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         hasMore: false,
         limit: 20,
       });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/organizations") {
+      json(res, 200, { complete: true, organizations: organizationManagement?.organizations ?? [] });
+      return;
+    }
+
+    const organizationRoute = /^\/api\/organizations\/(org_[A-Za-z0-9_-]+)$/.exec(path);
+    const membersRoute = /^\/api\/organizations\/(org_[A-Za-z0-9_-]+)\/members$/.exec(path);
+    const memberRoute = /^\/api\/organizations\/(org_[A-Za-z0-9_-]+)\/members\/(user_[A-Za-z0-9_-]+)$/.exec(path);
+    const invitationsRoute = /^\/api\/organizations\/(org_[A-Za-z0-9_-]+)\/invitations$/.exec(path);
+    const invitationRoute = /^\/api\/organizations\/(org_[A-Za-z0-9_-]+)\/invitations\/([A-Za-z0-9_:-]+)$/.exec(path);
+    const resendRoute = /^\/api\/organizations\/(org_[A-Za-z0-9_-]+)\/invitations\/([A-Za-z0-9_:-]+)\/resend$/.exec(path);
+    if (organizationManagement && req.method === "GET" && membersRoute) {
+      json(res, 200, { members: organizationManagement.members[membersRoute[1]!] ?? [] });
+      return;
+    }
+    if (organizationManagement && req.method === "GET" && invitationsRoute) {
+      json(res, 200, { invitations: organizationManagement.invitations[invitationsRoute[1]!] ?? [] });
+      return;
+    }
+    if (organizationManagement && req.method === "PATCH" && organizationRoute) {
+      const body = await readBody(req);
+      const organization = organizationManagement.organizations.find((candidate) => candidate.organizationId === organizationRoute[1]);
+      if (organization && typeof body.name === "string") organization.name = body.name;
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (organizationManagement && req.method === "PATCH" && path.endsWith("/logo")) {
+      for await (const _chunk of req) { /* bounded by the production route; fixture only drains the request */ }
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (organizationManagement && req.method === "POST" && invitationsRoute) {
+      const body = await readBody(req);
+      const invitations = organizationManagement.invitations[invitationsRoute[1]!] ??= [];
+      const addresses = Array.isArray(body.emailAddresses) ? body.emailAddresses : [];
+      for (const emailAddress of addresses) invitations.push({
+        invitationId: `orginv_fixture_${invitations.length + 1}`,
+        emailAddress,
+        role: body.role,
+        createdAt: NOW,
+        expiresAt: "2026-11-08T00:00:00.000Z",
+      });
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (organizationManagement && req.method === "POST" && resendRoute) {
+      await readBody(req);
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (organizationManagement && req.method === "DELETE" && invitationRoute) {
+      const invitations = organizationManagement.invitations[invitationRoute[1]!] ?? [];
+      organizationManagement.invitations[invitationRoute[1]!] = invitations.filter((invitation) => invitation.invitationId !== invitationRoute[2]);
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (organizationManagement && req.method === "PATCH" && memberRoute) {
+      const body = await readBody(req);
+      const target = (organizationManagement.members[memberRoute[1]!] ?? []).find((candidate) => candidate.actorId === memberRoute[2]);
+      if (target && (body.role === "org:admin" || body.role === "org:member")) target.role = body.role;
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (organizationManagement && req.method === "DELETE" && memberRoute) {
+      const members = organizationManagement.members[memberRoute[1]!] ?? [];
+      organizationManagement.members[memberRoute[1]!] = members.filter((candidate) => candidate.actorId !== memberRoute[2]);
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (organizationManagement && req.method === "DELETE" && organizationRoute) {
+      organizationManagement.organizations = organizationManagement.organizations.filter((candidate) => candidate.organizationId !== organizationRoute[1]);
+      json(res, 200, { ok: true });
       return;
     }
 

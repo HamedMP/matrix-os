@@ -1,10 +1,11 @@
+import { isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
 import type {
   CanonicalChatSummary,
   CanonicalProviderCatalog,
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderOptionDescriptor,
 } from "@matrix-os/contracts";
-import { orderCanonicalProviderInstancesForDefault } from "@matrix-os/ui";
+import { canonicalChatSubscriptionSelectionMatches, canonicalProviderChoiceCanBeDefault, orderCanonicalProviderInstancesForDefault } from "@matrix-os/ui";
 
 export interface CanonicalComposerSelection {
   instanceId: string;
@@ -14,13 +15,7 @@ export interface CanonicalComposerSelection {
   permissionMode: string;
 }
 
-export interface CanonicalSlashEntry {
-  id: string;
-  kind: "skill" | "command";
-  displayName: string;
-  description: string;
-  invocation: string;
-}
+export { listCanonicalSlashEntries, type CanonicalSlashEntry } from "@matrix-os/ui";
 
 export interface CanonicalComposerPreference {
   model?: string;
@@ -50,13 +45,14 @@ function optionsForInstance(
 function selectionForInstance(
   instance: CanonicalProviderInstanceDescriptor,
 ): CanonicalComposerSelection | null {
-  if (instance.availability !== "available") return null;
+  if (isLegacyMatrixSdkProvider(instance) || instance.availability !== "available") return null;
   const availableModel = instance.defaultSelection
     ? instance.models.find((model) => (
         model.id === instance.defaultSelection?.model && model.availability === "available"
       ))
     : instance.models.find((model) => model.availability === "available");
-  if (!availableModel) return null;
+  if (!availableModel || !instance.supports.rootChat
+    || !canonicalChatSubscriptionSelectionMatches(instance, optionsForInstance(instance, instance.defaultSelection?.options))) return null;
   return {
     instanceId: instance.id,
     model: availableModel.id,
@@ -71,7 +67,8 @@ export function canonicalComposerSelectionIsAvailable(
   selection: CanonicalComposerSelection | null,
 ): boolean {
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
-  return instance?.availability === "available"
+  return instance?.availability === "available" && !isLegacyMatrixSdkProvider(instance)
+    && canonicalChatSubscriptionSelectionMatches(instance, selection?.options)
     && instance.models.some((model) => model.id === selection?.model && model.availability === "available");
 }
 
@@ -84,7 +81,9 @@ export function createCanonicalComposerSelection(
     : undefined;
   const preferredSelection = preferred ? selectionForInstance(preferred) : null;
   if (preferredSelection) return preferredSelection;
+  if (preferredInstanceId && !canonicalProviderChoiceCanBeDefault({ instanceId: preferredInstanceId })) return null;
   for (const instance of orderCanonicalProviderInstancesForDefault(catalog.instances)) {
+    if (!canonicalProviderChoiceCanBeDefault({ instanceId: instance.id })) continue;
     const selection = selectionForInstance(instance);
     if (selection) return selection;
   }
@@ -141,16 +140,6 @@ export function applyCanonicalComposerPreference(
   return instance.supports.permissionModes.includes(preference.permissionMode)
     ? { ...next, permissionMode: preference.permissionMode }
     : next;
-}
-
-export function listCanonicalSlashEntries(
-  instance: CanonicalProviderInstanceDescriptor | undefined,
-): CanonicalSlashEntry[] {
-  if (!instance) return [];
-  return [
-    ...instance.skills.map((entry) => ({ ...entry, kind: "skill" as const })),
-    ...instance.commands.map((entry) => ({ ...entry, kind: "command" as const })),
-  ];
 }
 
 export function providerInstanceIsLocked(chat: CanonicalChatSummary | undefined): boolean {

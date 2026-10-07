@@ -6,6 +6,8 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./collaboration-direct-client": "./src/collaboration/direct-client.ts",
+    "./default-organization": "./src/collaboration/default-organization.ts",
     "./speech": "./src/speech/index.ts",
     "./voice-session": "./src/voice-session/index.ts",
     "./voice-session.css": "./src/voice-session/voice-session.css",
@@ -17,9 +19,11 @@
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",
+    "@noble/hashes": "2.3.0",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-popover": "^1.1.15",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "zod": "^4.3.6"

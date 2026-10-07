@@ -1,13 +1,17 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startProviderAuthGateway } from "./fixtures/provider-auth-gateway";
+import { createProviderWorkflowClient, ProviderWorkflowClientError } from "../../../packages/ui/src/agents-providers/provider-workflow-client";
+
+import { createEvidenceDirectory } from "./fixtures/evidence-directory";
 
 const root = resolve(__dirname, "../../..");
-const output = join(root, "output/playwright/om-255");
+let captures: ReturnType<typeof createEvidenceDirectory> | undefined;
+let output: string;
 const hasDesktopBuild = existsSync(join(root, "desktop/out/main/index.js"));
 if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
   throw new Error("Required Desktop E2E build is missing");
@@ -19,10 +23,37 @@ let app: ElectronApplication;
 let page: Page;
 let profile: string;
 
-suite("Desktop provider authentication Terminal", () => {
+it("models absent V2 routes as 404 and rejects malformed successful modern discovery", async () => {
+  const fixture = await startProviderAuthGateway({ inlineClaude: true });
+  try {
+    const root = "/api/ai/provider-settings/workflows";
+    for (const path of ["/v2/capabilities", "/v2/fixture_claude_1"]) {
+      expect((await fetch(`${fixture.url}${root}${path}`, { signal: AbortSignal.timeout(5000) })).status).toBe(404);
+    }
+    const paths: string[] = [];
+    const client = createProviderWorkflowClient(async input => {
+      paths.push(input.path);
+      const response = await fetch(`${fixture.url}${input.path}`, { signal: input.signal });
+      if (response.status === 404) throw new ProviderWorkflowClientError("unsupported");
+      if (!response.ok) throw new ProviderWorkflowClientError();
+      return response.json();
+    });
+    const capabilities = await client.capabilities(AbortSignal.timeout(5000));
+    expect(capabilities[0]).toMatchObject({ harness: "claude", loginMethods: ["browser"] });
+    expect(paths).toEqual([`${root}/v2/capabilities`, `${root}/capabilities?connectionVersion=2`]);
+    let malformedRequests = 0;
+    const malformed = createProviderWorkflowClient(async () => { malformedRequests++; return capabilities; });
+    await expect(malformed.capabilities(AbortSignal.timeout(5000))).rejects.toMatchObject({ reason: "unavailable" });
+    expect(malformedRequests).toBe(1);
+    expect(fixture.workflowEvents).toEqual([]);
+  } finally { await fixture.close(); }
+});
+
+suite("Electron Desktop provider authentication Settings", () => {
 beforeAll(async () => {
-  mkdirSync(output, { recursive: true });
-  gateway = await startProviderAuthGateway();
+  captures = createEvidenceDirectory(process.env.MATRIX_SETTINGS_EVIDENCE_DIR);
+    output = captures.path;
+  gateway = await startProviderAuthGateway({ inlineClaude: true });
   profile = mkdtempSync(join(tmpdir(), "matrix-om255-"));
   app = await _electron.launch({ executablePath,
     args: [join(root, "desktop/out/main/index.js"), "--remote-debugging-port=9353"],
@@ -37,18 +68,23 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await app?.close();
-  await gateway?.close();
-  if (profile) rmSync(profile, { recursive: true, force: true });
+  try { await app?.close(); } finally {
+    try { await gateway?.close(); } finally {
+      if (profile) rmSync(profile, { recursive: true, force: true });
+      captures?.cleanup();
+    }
+  }
 });
 
 async function settings() {
   await page.getByRole("button", { name: "Open account menu", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
+  const claude = page.getByRole("button", { name: /^Claude/ });
+  if (await claude.getAttribute("aria-expanded") !== "true") await claude.click();
 }
 
-it("reveals a closed Terminal for Connect and refreshes auth after logout", async () => {
+it("keeps browser login, cancellation, completion and selected-agent disconnect in Settings without opening Terminal", async () => {
   try {
     const identity = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
     expect(identity).toBe(join(root, "desktop/out/main"));
@@ -58,27 +94,47 @@ it("reveals a closed Terminal for Connect and refreshes auth after logout", asyn
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await terminal.waitFor({ state: "hidden" });
     await settings();
-    await page.getByRole("button", { name: "Log in Claude", exact: true }).click();
-    await terminal.waitFor();
-    await terminal.getByText("Connect Claude", { exact: true }).first().waitFor();
-    expect(gateway.commands).toHaveLength(1);
-    expect(gateway.commands[0]).toMatchObject({ name: "Connect Claude", command: ["sh", "-lc", "claude auth login"] });
-    await page.screenshot({ path: join(output, "connect-visible.png") });
-
-    gateway.setAuthenticated(true);
-    await terminal.getByRole("button", { name: "Close", exact: true }).click();
-    await settings();
-    const disconnect = page.getByRole("button", { name: "Log out Claude", exact: true });
-    await disconnect.waitFor();
-    expect(await page.getByRole("button", { name: "Log in Claude", exact: true }).count()).toBe(0);
-    await page.screenshot({ path: join(output, "authenticated-disconnect.png") });
-    await disconnect.click();
-    await page.getByRole("button", { name: "Log in Claude", exact: true }).waitFor();
+    const accountChoice = page.getByRole("button", { name: /Claude account.*Use your Claude plan/ });
+    await accountChoice.click();
+    await page.getByRole("heading", { name: "Finish signing in to Claude", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Open sign-in page", exact: true }).waitFor();
+    await page.getByLabel("Paste the sign-in code", { exact: true }).waitFor();
+    expect(gateway.workflowEvents).toEqual(["browser-login"]);
     await terminal.waitFor({ state: "hidden" });
-    expect(gateway.commands).toHaveLength(1);
-    await page.screenshot({ path: join(output, "logged-out.png") });
+    expect(gateway.commands).toHaveLength(0);
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await accountChoice.waitFor();
+    expect(gateway.workflowEvents).toEqual(["browser-login", "cancel"]);
+    await accountChoice.click();
+    await page.getByLabel("Paste the sign-in code", { exact: true }).fill("synthetic-fixture-code");
+    await page.getByRole("button", { name: "Finish connecting", exact: true }).click();
+    const disconnect = page.getByRole("button", { name: "Disconnect", exact: true });
+    await disconnect.waitFor();
+    const claudeRow = page.locator(".matrix-ap-rail-item").filter({ hasText: "Claude" }).first();
+    await page.getByRole("button", { name: /^Claude.*Connected/ }).waitFor();
+    expect(await claudeRow.getAttribute("aria-expanded")).toBe("true");
+    expect(await claudeRow.textContent()).toContain("Connected");
+    expect(gateway.workflowEvents).toEqual(["browser-login", "cancel", "browser-login", "code-completed", "agent-enabled"]);
+    const connected = await (await fetch(`${gateway.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(5000) })).json();
+    expect(connected.harnesses[0]).toMatchObject({ enabled: true, configuredEnabled: true, authState: "authenticated" });
+    await terminal.waitFor({ state: "hidden" });
+    expect(gateway.commands).toHaveLength(0);
+    await page.screenshot({ path: join(output, "settings-browser-connected.png") });
+    await disconnect.click();
+    await page.getByRole("dialog", { name: "Disconnect Claude?", exact: true }).getByRole("button", { name: "Disconnect", exact: true }).click();
+    await accountChoice.waitFor();
+    await page.getByRole("button", { name: /^Claude.*Not connected/ }).waitFor();
+    expect(await claudeRow.textContent()).toContain("Not connected");
+    expect(gateway.workflowEvents.at(-1)).toBe("agent-disabled");
+    // Fixture HTTP state independently proves Disconnect did not log out the account.
+    const retained = await (await fetch(`${gateway.url}/api/ai/provider-settings`, {signal: AbortSignal.timeout(5000)})).json();
+    expect(retained.accounts[0].authState).toBe("authenticated");
+    expect(retained.harnesses[0].enabled).toBe(false);
+    await terminal.waitFor({ state: "hidden" });
+    expect(gateway.commands).toHaveLength(0);
+    await page.screenshot({ path: join(output, "settings-browser-disconnected.png") });
   } catch (error) {
-    await page.screenshot({ path: join(output, "failure.png") });
+    await page.screenshot({ path: join(output, "provider-auth-terminal-failure.png") });
     throw error;
   }
 }, 60_000);

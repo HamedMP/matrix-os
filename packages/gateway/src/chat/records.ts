@@ -60,7 +60,13 @@ export type ChatOutboxEventType =
   | "run.failed"
   | "run.aborted"
   | "chat.deleted"
-  | "migration.completed";
+  | "migration.completed"
+  | "bot.created"
+  | "interaction.requested"
+  | "interaction.resolved"
+  | "bot.task.updated"
+  | "bot.authority.changed"
+  | "bot.memory.remembered";
 
 export interface ChatOutboxEvent {
   cursor: number;

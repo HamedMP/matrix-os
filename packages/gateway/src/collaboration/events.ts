@@ -26,6 +26,8 @@ export interface CollaborationEventSocket {
 interface Connection {
   connectionId: string;
   scopeId: string;
+  /** The project whose membership grants a project Chat; the scope itself otherwise. */
+  membershipScopeId: string;
   actorId: string;
   resourceId: string;
   resourceKind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
@@ -82,6 +84,7 @@ export class CollaborationEventRegistry {
     const connection: Connection = {
       connectionId: input.connectionId,
       scopeId: input.scopeId,
+      membershipScopeId: context.membershipScopeId,
       actorId: input.actorId,
       resourceId: context.resourceId,
       resourceKind: context.resourceKind,
@@ -162,7 +165,8 @@ export class CollaborationEventRegistry {
 
   notifyRevoked(scopeId: string, actorId: string): void {
     const targets = [...this.connections.values()].filter(
-      (connection) => connection.scopeId === scopeId && connection.actorId === actorId,
+      (connection) => (connection.scopeId === scopeId || connection.membershipScopeId === scopeId)
+        && connection.actorId === actorId,
     );
     for (const connection of targets) {
       this.sendBestEffort(connection, {

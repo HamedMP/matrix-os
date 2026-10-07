@@ -6,6 +6,8 @@ import "@matrix-os/ui/agents-providers.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
+import { createDesktopProviderWorkflowClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "./provider-workflow-transport";
+import { createDesktopChatgptPlanClient } from "./local-chatgpt-plan-client";
 import {
   createDesktopProviderSettingsTransport,
   desktopProviderIdentityKey,
@@ -68,11 +70,13 @@ function ConnectedAgentsProvidersAdapter({
   identityKey,
   platformHost,
   runtimeSlot,
+  observationRenewalActive,
 }: {
   api: ApiClient;
   identityKey: string;
   platformHost: string;
   runtimeSlot: string;
+  observationRenewalActive: boolean;
 }) {
   const runtimeApi = useMemo(() => api.forRuntime(runtimeSlot), [api, runtimeSlot]);
   const transport = useMemo(
@@ -82,7 +86,7 @@ function ConnectedAgentsProvidersAdapter({
   const onCatalogChanged = useCallback(() => {
     useConnection.getState().invalidateProviderCatalog(identityKey);
   }, [identityKey]);
-  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged });
+  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, observationRenewalActive });
   const [actionError, setActionError] = useState<string | null>(null);
   const checkoutLifetime = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -98,6 +102,13 @@ function ConnectedAgentsProvidersAdapter({
     () => desktopProviderIdentityKey(useConnection.getState()) === identityKey,
     [identityKey],
   );
+  const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
+  const authGeneration = useConnection((state) => state.authGeneration);
+  const localChatgptClient = useMemo(() => createDesktopChatgptPlanClient({ runtimeSlot, authGeneration }, isIdentityCurrent),
+    [runtimeSlot, authGeneration, isIdentityCurrent]);
+  const loadUsageHistory = useCallback((cursor: string | null, signal: AbortSignal) => loadDesktopAiCreditHistory({
+    api: runtimeApi, runtimeSlot, cursor, signal, isIdentityCurrent,
+  }), [runtimeApi, runtimeSlot, isIdentityCurrent]);
 
   const openTerminal = useCallback((terminalSessionId: string) => {
     setActionError(null);
@@ -182,12 +193,21 @@ function ConnectedAgentsProvidersAdapter({
       onSetupHarness={(harness) => openDesktopProviderAgentSetup(runtimeApi, harness, isIdentityCurrent)}
       onOpenTerminal={openTerminal}
       onOpenBrowser={openBrowser}
+      workflowClient={workflowClient}
+      localChatgptClient={localChatgptClient}
+      onOpenAuthorizationUrl={(url) => {
+        if (!isIdentityCurrent()) return;
+        void openDesktopProviderWorkflowAuthorization(url).then(opened => {
+          if (!opened && isIdentityCurrent()) setActionError(ACTION_ERROR);
+        });
+      }}
+      onLoadUsageHistory={loadUsageHistory}
       onAddCredit={addCredit}
     />
   );
 }
 
-export default function AgentsProvidersAdapter() {
+export default function AgentsProvidersAdapter({ observationRenewalActive = true }: { observationRenewalActive?: boolean } = {}) {
   const status = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
   const platformHost = useConnection((state) => state.platformHost);
@@ -213,6 +233,7 @@ export default function AgentsProvidersAdapter() {
       identityKey={identityKey}
       platformHost={platformHost}
       runtimeSlot={runtimeSlot}
+      observationRenewalActive={observationRenewalActive}
     />
   );
 }

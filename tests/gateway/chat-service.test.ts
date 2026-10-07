@@ -251,6 +251,7 @@ describe("canonical Chat service", () => {
     await service.list(owner, { limit: 25, cursor: first.nextCursor });
     expect(list).toHaveBeenLastCalledWith(owner, {
       limit: 25,
+      conversationKind: "chat",
       cursor: {
         activityAt: "2026-08-25T12:00:00.123456Z",
         chatId: "chat_service_test",
@@ -264,7 +265,7 @@ describe("canonical Chat service", () => {
 
     await service.list(owner, { limit: 50, scope: "global", projectId: null });
 
-    expect(list).toHaveBeenCalledWith(owner, { limit: 50, projectId: null });
+    expect(list).toHaveBeenCalledWith(owner, { limit: 50, projectId: null, conversationKind: "chat" });
   });
 
   it("searches the same owner-local index with a Project scope", async () => {
@@ -277,7 +278,7 @@ describe("canonical Chat service", () => {
       projectId: "project_1",
     });
 
-    expect(search).toHaveBeenCalledWith(owner, "release plan", 10, "project_1");
+    expect(search).toHaveBeenCalledWith(owner, "release plan", 10, "project_1", "chat");
     expect(result.items[0]?.projectId).toBe("project_1");
   });
 

@@ -1,10 +1,11 @@
 import { z } from "zod/v4";
+import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";
 import { canonicalBoundedText, canonicalSafeLabel, canonicalEncodedByteLength } from "#canonical-chat-primitives";
 import { ResolvedChatAgentRecipeSchema } from "#chat-agent-recipe";
 
 export const ChatAgentIdSchema = z.string().regex(/^bot_[a-z0-9]{8,64}$/);
-export function isChatAgentDriver(kind: string): kind is "hermes" | "codex" {
-  return kind === "hermes" || kind === "codex";
+export function isChatAgentDriver(kind: string): kind is "hermes" | "codex" | "matrix_bot" | "matrix_pi" {
+  return kind === "hermes" || kind === "codex" || kind === "matrix_bot" || kind === "matrix_pi";
 }
 export const ChatContextSnapshotSchema = z.object({
   chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,120}$/),
@@ -27,6 +28,7 @@ export const ChatRunContextSchema = z.object({
     recipe: ResolvedChatAgentRecipeSchema.optional(),
   }).strict().optional(),
   chats: z.array(ChatContextSnapshotSchema).max(3),
+  drives: z.array(OrganizationDriveContextReferenceSchema).min(1).max(3).optional(),
   history: ChatContextSnapshotSchema.optional(),
 }).strict().refine((value) => canonicalEncodedByteLength(value) <= 64 * 1024, {
   message: "Resolved Chat context exceeds its byte limit",

@@ -16,6 +16,8 @@ import {
   CreditCardIcon,
   DownloadIcon,
   CheckCircle2Icon,
+  UploadIcon,
+  UsersIcon,
 } from "@/lib/hugeicons";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
@@ -27,6 +29,7 @@ import { CronSection } from "./settings/sections/CronSection";
 import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
+import { ChatImportSection } from "./settings/sections/ChatImportSection";
 import { BillingSection } from "./settings/sections/BillingSection";
 import type { ComputerSetupSelection } from "./settings/sections/BillingPanel";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
@@ -44,15 +47,18 @@ import { DesignCaptionButtons } from "./window/DesignCaptionButtons";
 import { DefaultInstallsStep } from "./onboarding/DefaultInstallsStep";
 import type { DeveloperToolId } from "./onboarding/developer-tools";
 import type { TerminalLaunchAction } from "@/lib/terminal-launch";
+import OrganizationSection from "./settings/sections/OrganizationSection";
 
 
 const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
+  { id: "organization", label: "Organization", icon: UsersIcon },
   { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
   { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
-  { id: "integrations", label: "Services", icon: CableIcon },
+  { id: "integrations", label: "Connect Apps", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
+  { id: "chat-import", label: "Import chats", icon: UploadIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "billing", label: "Billing", icon: CreditCardIcon },
   { id: "cron", label: "Cron", icon: ClockIcon },
@@ -153,6 +159,7 @@ interface SettingsProps {
   };
   onOpenAgentTerminal?: (action: TerminalLaunchAction) => void;
   onOpenProviderTerminalSession?: (sessionId: string) => void;
+  onOpenImportedChat?: (chatId: string) => void;
 }
 
 export function Settings({
@@ -192,6 +199,7 @@ function SettingsFrame({
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
   onOpenProviderTerminalSession,
+  onOpenImportedChat,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
@@ -210,7 +218,7 @@ function SettingsFrame({
     : canonicalLockedSection;
   const standardFrameSections: SettingsSection[] = showBillingSection
     ? visibleSections
-    : visibleSections.filter((section) => section.id !== "billing");
+    : visibleSections.filter((section) => section.id !== "billing" && section.id !== "organization");
   const frameVisibleSections: SettingsSection[] = onboardingMode
     ? standardFrameSections.reduce<SettingsSection[]>((result, section) => {
         result.push(section);
@@ -404,6 +412,7 @@ function SettingsFrame({
 
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
+              {activeSection === "organization" && <OrganizationSection />}
               {activeSection === "agents-providers" && (
                 <AgentSection onOpenTerminal={onOpenProviderTerminalSession} />
               )}
@@ -411,6 +420,7 @@ function SettingsFrame({
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}
+              {activeSection === "chat-import" && <ChatImportSection onOpenChat={onOpenImportedChat} />}
               {activeSection === "cron" && <CronSection />}
               {activeSection === "security" && <SecuritySection />}
               {showBillingSection && activeSection === "billing" && (

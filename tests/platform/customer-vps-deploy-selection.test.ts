@@ -18,6 +18,20 @@ describe('customer VPS deploy selection', () => {
       .toEqual([customer]);
   });
 
+  it('deploys untargeted fleet versions only to customer machines', () => {
+    const privatePreview = { handle: 'pv-1907-3fa91c2e', provisioningClass: 'private-preview' as const };
+    expect(selectCustomerVpsDeployMachines([customer, preview, privatePreview], { channel: 'stable' }))
+      .toEqual([customer]);
+  });
+
+  it('never lets an operator deploy replace a Private Preview bundle', () => {
+    const privatePreview = { handle: 'pv-1907-3fa91c2e', provisioningClass: 'private-preview' as const };
+    expect(selectCustomerVpsDeployMachines([customer, preview, privatePreview], {
+      version: 'v2026.09.28-pr1907-1-1-abcdef0',
+      handle: 'pv-1907-3fa91c2e',
+    })).toEqual([]);
+  });
+
   it('allows an explicitly targeted preview deploy', () => {
     expect(selectCustomerVpsDeployMachines([customer, preview], {
       version: 'v2026.07.14-pr992-db1ca31',

@@ -19,7 +19,6 @@ export function useChatMentionPermission(
   if (confirmation && confirmation.key !== key) setConfirmation(null);
   const confirmed = confirmation?.key === key && confirmation.allowed;
   return {
-    allowed: !agentId || permissionMode === "full_access" || confirmed,
     confirmed,
     permissionMode: agentId && (permissionMode === "full_access" || confirmed) ? "full_access" : permissionMode,
     confirm: useCallback((allowed: boolean) => setConfirmation({ key, allowed }), [key]),
@@ -51,9 +50,9 @@ function ContextPreview({ client, reference, onClose }: {
   </Dialog>;
 }
 
-export function ChatMentionControls({ client, resources, permissionMode, confirmed, onConfirm }: {
+export function ChatMentionControls({ client, resources, permissionMode, confirmed, onConfirm, bot = false, requiresFullAccess = false }: {
   client?: ChatAgentClient; resources: CanonicalChatResourceReference[]; permissionMode: string;
-  confirmed: boolean; onConfirm(value: boolean): void;
+  confirmed: boolean; onConfirm(value: boolean): void; bot?: boolean; requiresFullAccess?: boolean;
 }) {
   const agent = resources.find((resource) => resource.kind === "agent");
   const chats = resources.filter((resource) => resource.kind === "chat");
@@ -63,9 +62,10 @@ export function ChatMentionControls({ client, resources, permissionMode, confirm
   return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 px-3 py-2 text-xs" style={chatAgentMutedStyle}>
     {agent ? <div className="grid min-w-0 gap-2">
       <span className="flex min-w-0 items-center gap-1"><strong className="min-w-0 truncate" title={agent.label}>{agent.label}</strong><span className="shrink-0">· this request only</span></span>
+      {requiresFullAccess && !confirmed ? <span>This Bot’s saved runtime requires Full access for this request.</span> : null}
       {permissionMode === "full_access" ? <span>Full access on this computer.</span> : <label className="flex items-start gap-2">
         <input type="checkbox" checked={confirmed} onChange={(event) => onConfirm(event.target.checked)} />
-        Allow Full access on this computer for this Agent request.
+        Allow Full access on this computer for this {bot ? "Bot" : "Agent"} request.
       </label>}
     </div> : null}
     {chats.length ? <div className="flex flex-wrap items-center gap-2"><span>Chat context:</span>{chats.map((chat) => (

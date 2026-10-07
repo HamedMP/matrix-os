@@ -33,6 +33,68 @@ export interface MembershipSnapshot {
   actorId: string;
   role: string;
   sourceUpdatedAt: Date;
+  /** Display-only: who the member is, so Share can show people instead of ids. Never authority. */
+  profile?: MemberProfile;
+}
+
+/**
+ * The profile fields an event reported (an absent field leaves the stored value alone), and when
+ * the source observed them, so an older report never replaces a newer one.
+ */
+export interface MemberProfile {
+  displayName?: string | null;
+  email?: string | null;
+  imageUrl?: string | null;
+  observedAt: Date;
+}
+
+const MAX_DISPLAY_NAME = 120;
+const MAX_EMAIL = 254;
+const MAX_IMAGE_URL = 2_048;
+const MemberEmailSchema = z.email().max(MAX_EMAIL);
+const CONTROL_CHARACTERS = /\p{Cc}/gu;
+
+function label(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.replace(CONTROL_CHARACTERS, " ").replace(/\s+/g, " ").trim();
+  return cleaned ? cleaned.slice(0, max) : null;
+}
+
+/**
+ * Clerk's `public_user_data` as a bounded display profile: first and last name, the identifier
+ * only when it is an email address (it may be a phone number or username), and an https image.
+ * Anything else is dropped rather than rejected, so a profile never blocks a membership change.
+ * Only the fields the payload carries are reported; none at all means no profile.
+ */
+export function projectMemberProfile(data: Readonly<Record<string, unknown>>, observedAt: Date): MemberProfile | undefined {
+  const profile: MemberProfile = { observedAt };
+  // A single name field is not enough to safely rebuild the combined name. Both keys may still
+  // carry null, which is an explicit report that one side is absent.
+  if ("first_name" in data && "last_name" in data) {
+    profile.displayName = label([label(data.first_name, MAX_DISPLAY_NAME), label(data.last_name, MAX_DISPLAY_NAME)]
+      .filter((part): part is string => part !== null).join(" "), MAX_DISPLAY_NAME);
+  }
+  if ("identifier" in data) {
+    const identifier = label(data.identifier, MAX_EMAIL + 1);
+    const email = MemberEmailSchema.safeParse(identifier);
+    profile.email = email.success ? email.data : null;
+  }
+  if ("image_url" in data || "profile_image_url" in data) {
+    profile.imageUrl = httpsImage(data.image_url) ?? httpsImage(data.profile_image_url);
+  }
+  return Object.keys(profile).length > 1 ? profile : undefined;
+}
+
+function httpsImage(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > MAX_IMAGE_URL) return null;
+  try {
+    const url = new URL(value);
+    // Normalization can lengthen the address (percent-encoding); the stored value is what is bounded.
+    return url.protocol === "https:" && !url.username && !url.password && url.href.length <= MAX_IMAGE_URL ? url.href : null;
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) console.warn("[organizations] profile image rejected", error instanceof Error ? error.name : "UnknownError");
+    return null;
+  }
 }
 
 export type ClerkOrganizationEventType =
@@ -130,6 +192,9 @@ export function parseClerkOrganizationWebhook(eventId: string, body: unknown): P
     const data = ClerkMembershipDataSchema.safeParse(envelope.data.data);
     if (!data.success) return { kind: "invalid" };
     const sourceUpdatedAt = data.data.updated_at !== undefined ? new Date(data.data.updated_at) : occurredAt;
+    const profileObservedAt = envelope.data.timestamp !== undefined
+      ? occurredAt
+      : data.data.updated_at !== undefined ? new Date(data.data.updated_at) : undefined;
     return {
       kind: "organization",
       event: {
@@ -142,6 +207,7 @@ export function parseClerkOrganizationWebhook(eventId: string, body: unknown): P
           actorId: data.data.public_user_data.user_id,
           role: normalizeClerkRole(data.data.role),
           sourceUpdatedAt,
+          ...(profileObservedAt ? { profile: projectMemberProfile(data.data.public_user_data, profileObservedAt) } : {}),
         },
       },
     };

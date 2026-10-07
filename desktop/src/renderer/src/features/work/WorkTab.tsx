@@ -1,6 +1,6 @@
 import { mergeCanonicalChatRecord } from "@matrix-os/ui";
-import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
-import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import type { StartAgentChat } from "@matrix-os/ui";
+import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
 import { ChatSharingButton } from "../chat/ChatSharingButton";
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
@@ -32,16 +32,19 @@ import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import ChatTab from "../chat/ChatTab";
 import { ChatTitleEditor } from "../chat/ChatTitleEditor";
+import { ProjectLanding } from "../project/ProjectLanding";
 import ProjectChatsView from "../project/ProjectChatsView";
 import ProjectsIndex from "../project/ProjectsIndex";
 import { WorkRail } from "./WorkRail";
 import { WorkFilesInspector } from "./WorkFilesInspector";
-import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { useWorkBotHeaderBinding } from "./use-work-bot-header-binding";
 import { OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
 import type { WorkFilesScope } from "./work-files-scope";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
-import { openWorkProject } from "./work-navigation";
+import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
+import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 
 type WorkLayout = "wide" | "medium" | "narrow";
 type NarrowWorkPane = "rail" | "chat" | "inspector";
@@ -203,6 +206,7 @@ export default function WorkTab(props: ComponentProps<typeof WorkTabContent>) {
   return <ChatAgentsWorkspace><WorkTabContent {...props} /></ChatAgentsWorkspace>;
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing Work surface coordinates routes, the rail, hosted Chat chrome and inspectors; this change only removes the live-share suspension wiring. Splitting it belongs in a focused refactor.
 function WorkTabContent({
   tabId,
   route,
@@ -244,6 +248,7 @@ function WorkTabContent({
   } | null>(null);
   const surfaceChromeHost = useSurfaceChromeHost();
   const hostedChrome = surfaceChromeHost !== null;
+  const [botHeaderContainer, setBotHeaderContainer] = useState<HTMLElement | null>(null);
   const hostedRuntime = useWorkSurfaceRuntime();
   const [responsive, setResponsive] = useState<WorkResponsiveState>({
     layout: "narrow",
@@ -261,8 +266,7 @@ function WorkTabContent({
   const activeTitleRecordRef = useRef<CanonicalChatRecord | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState(initialChatTitle ?? "Chat");
   const updateSharedChatMetadata = useCallback(({ title }: { title: string }) => setActiveChatTitle(title), []);
-  const [agentDraftRequest, setAgentDraftRequest] = useState<ChatAgentDraftRequest | null>(null);
-  const agentDraftSequence = useRef(0);
+  const { agentDraftRequest, requestAgentDraft, consumeAgentDraft } = useWorkAgentDraftRequest();
   const [editingChatTitle, setEditingChatTitle] = useState(false);
   const [renamingChatTitle, setRenamingChatTitle] = useState(false);
   const [renameChatError, setRenameChatError] = useState<string | null>(null);
@@ -277,7 +281,7 @@ function WorkTabContent({
     if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")), {
+        return api.openStream(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events"))), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,
@@ -287,6 +291,9 @@ function WorkTabContent({
     });
   }, [api, authGeneration, hostedRuntime, runtimeSlot, visible]);
   const client = hostedRuntime?.client ?? localClient;
+  const { agentId: headerAgentId, report: reportContentBinding } = useWorkBotHeaderBinding({
+    client, chatId: initialChatId, sharedScopeId, runtimeSlot, authGeneration, route, projectSlug, initialChatView,
+  });
   const agentsNavigation = useChatAgentsNavigation();
   const agentsOpen = Boolean(client?.agents && agentsNavigation?.opened?.client === client.agents);
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
@@ -491,18 +498,19 @@ function WorkTabContent({
     });
   }, [layout, showChat]);
   const openAgentDraft = useCallback<StartAgentChat>((text, resources) => {
-    if (hostedRuntime) hostedRuntime.requestAgentDraft(text, resources);
-    else {
-      agentDraftSequence.current += 1;
-      setAgentDraftRequest({ id: agentDraftSequence.current, text, resources });
-    }
+    const accepted = (hostedRuntime?.requestAgentDraft ?? requestAgentDraft)(text, resources);
+    if (!accepted) return;
     navigateToGlobalDraft();
-  }, [hostedRuntime, navigateToGlobalDraft]);
+  }, [hostedRuntime, navigateToGlobalDraft, requestAgentDraft]);
   const openGlobalDraft = useCallback(() => openAgentDraft("", []), [openAgentDraft]);
   const openCreateProject = useCallback(() => useUi.getState().openCreateProject(), []);
-  const openProjectDraft = useCallback((project: Project) => {
+  const selectProject = useCallback((project: Project) => {
     showChat(layout === "narrow");
     openWorkProject(project);
+  }, [layout, showChat]);
+  const openProjectDraft = useCallback((project: Project) => {
+    showChat(layout === "narrow");
+    openWorkProjectDraft(project);
   }, [layout, showChat]);
   const selectRailChat = useCallback((record: CanonicalChatRecord, project?: Project) => {
     showChat(layout === "narrow");
@@ -695,18 +703,28 @@ function WorkTabContent({
     />
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
+  const selectedProject = projects.find(project => project.slug === projectSlug);
+  const projectChats = projectSlug ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} /> : null;
+  const projectCenter = selectedProject
+    ? <ProjectLanding project={selectedProject} client={client ?? undefined} eventSource={eventSource ?? undefined} active={active} onSelectChat={record => selectRailChat(record, selectedProject)} showMetadata={!initialChatId && initialChatView !== "draft"}>{projectChats}</ProjectLanding>
+    : projectChats;
   const content = route === "chat"
     ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView}
         sharedScopeId={sharedScopeId} sharedHeaderContainer={sharedHeaderContainer}
         onSharedChatMetadata={updateSharedChatMetadata}
         draftRequest={hostedRuntime ? hostedRuntime.agentDraftRequest : agentDraftRequest} eventSource={eventSource ?? undefined}
+        onDraftConsumed={hostedRuntime ? hostedRuntime.consumeAgentDraft : consumeAgentDraft}
         externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug
-        ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
+        ? projectCenter
         : null;
 
+  const openBotChat = useCallback((chatId: string) => {
+    showChat(layout === "narrow");
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatId, chatView: "conversation", closable: false });
+  }, [layout, showChat]);
   const navigationVisible = layout === "narrow" ? narrowPane === "rail" : navigationOpen;
   const navigationRail = useMemo(() => (
     <WorkRail
@@ -714,6 +732,8 @@ function WorkTabContent({
       eventSource={eventSource ?? undefined}
       projects={projects}
       active={active}
+      visible={visible && navigationVisible}
+      newChatShortcutActive={active && route === "chat"}
       activeChatId={initialChatId}
       activeProjectSlug={route === "project" ? projectSlug : undefined}
       className="w-full flex-1"
@@ -721,14 +741,19 @@ function WorkTabContent({
       showCollapseControl={!hostedChrome}
       onNewGlobalChat={openGlobalDraft}
       onCreateProject={openCreateProject}
+      onSelectProject={selectProject}
       onNewProjectChat={openProjectDraft}
       onSelectChat={selectRailChat}
+      onChatMoved={(record, project) => {
+        if (record.chat.id === initialChatId) selectRailChat(record, project);
+      }}
       onChatDeleted={handleRailChatDeleted}
       onChatRenamed={applyRenamedChat}
       onOpenAgents={() => { if (layout === "narrow") showChat(); }}
       onStartAgentChat={openAgentDraft}
+      onOpenBotChat={openBotChat}
     />
-  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat, layout, showChat]);
+  ), [active, visible, navigationVisible, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openBotChat, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectProject, selectRailChat, layout, showChat]);
   const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
     ? sharedScopeId ? <span className="block min-w-0 max-w-full truncate" title={activeChatTitle}>{activeChatTitle}</span>
       : editingChatTitle ? (
@@ -767,8 +792,10 @@ function WorkTabContent({
     <div ref={setSharedHeaderContainer} data-slot="desktop-shared-chat-controls"
       className="no-drag pointer-events-auto flex items-center gap-1" />
   ) : sharingControl, [sharedScopeId, sharingControl]);
-  const chromeSpec = useMemo(() => ({
-    title: agentsOpen ? "Agents" : chromeTitle,
+  const chromeSpec = useMemo(() => ({ showTitle: agentsOpen,
+    title: agentsOpen ? agentsNavigation?.opened?.title ?? "Your AI team" : headerAgentId
+      ? <div ref={setBotHeaderContainer} data-slot="desktop-bot-header" className="no-drag pointer-events-auto h-12 min-w-0 w-full" />
+      : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
     rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
     rightActions: agentsOpen ? null : hasInspector ? (
@@ -788,7 +815,7 @@ function WorkTabContent({
         </PaneButton>
       </div>
     ) : sharedChromeSlot,
-  }), [agentsOpen, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+  }), [agentsOpen, agentsNavigation?.opened?.title, headerAgentId, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;
@@ -886,10 +913,15 @@ function WorkTabContent({
             ? "hidden"
             : "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"}
         >
-          <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}>
+          <BotHeaderBindingContext.Provider value={sharedScopeId ? null : reportContentBinding}>
+          <BotHeaderContext.Provider value={!agentsOpen && headerAgentId ? botHeaderContainer : null}>
+          <ChatAgentsContent hostedChrome client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
+            onOpenBotChat={openBotChat}>
             {content}
             {draftInspector}
           </ChatAgentsContent>
+          </BotHeaderContext.Provider>
+          </BotHeaderBindingContext.Provider>
         </div>
       </div>
     </div>

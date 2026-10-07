@@ -1,0 +1,33 @@
+/* The scroller reaches the rail edge; content padding belongs inside it. */
+.work-rail-scroll { scrollbar-color: transparent transparent; }
+.work-rail-scroll > * { flex-shrink: 0; }
+.work-rail-scroll::-webkit-scrollbar { width: 6px; }
+.work-rail-scroll::-webkit-scrollbar-thumb,
+.work-rail-scroll::-webkit-scrollbar-thumb:hover { background: transparent; border: 0; }
+.work-rail-scroll[data-scrolling="true"] { scrollbar-color: var(--scrollbar-thumb) transparent; }
+.work-rail-scroll[data-scrolling="true"]::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); }
+
+/* Chat uses the active theme's primary ink; hints retain semantic secondary ink. */
+.matrix-chat-work-rail {
+  --matrix-chat-rail-text: var(--text-primary);
+  --matrix-chat-rail-muted: var(--text-secondary);
+}
+/* Project folders share the ordinary Chat icon/label columns. Disclosure stays
+   inside the right edge, with separate hover actions rather than widening rows. */
+.work-rail-project { display: flex; align-items: center; position: relative; height: 32px; width: 100%; padding-right: 8px; }
+.work-rail-project-select { height: 32px; padding: 0 8px 0 10px; gap: 10px; min-width: 0; flex: 1; font-size: 14px; line-height: 18px; font-weight: 400; display: flex; align-items: center; }
+.work-rail-project-select > svg { flex: 0 0 15px; }
+.work-rail-project-select > span:first-of-type { min-width: 0; }
+.work-rail-project-disclosure { width: 24px; height: 24px; flex: 0 0 24px; padding: 0; display: grid; place-items: center; }
+.work-rail-project-actions { position: absolute; right: 34px; top: 2px; height: 28px; gap: 2px; display: flex; align-items: center; background: var(--bg-surface); }
+.work-rail-project-actions > button { width: 24px; height: 24px; flex: 0 0 24px; padding: 0; display: grid; place-items: center; }
+.matrix-chat-work-rail .work-rail-section-heading { width: 100%; }
+.matrix-chat-work-rail .work-rail-section-heading > button { width: 100%; display: flex; align-items: center; padding-right: 8px; }
+.work-rail-section-disclosure { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; }
+
+.matrix-chat-work-rail .text-sm { font-size: 14px; line-height: 18px; }
+@media (hover: hover) {
+  .work-rail-project-actions { pointer-events: none; }
+  .work-rail-project:hover .work-rail-project-actions,
+  .work-rail-project:focus-within .work-rail-project-actions { pointer-events: auto; }
+}

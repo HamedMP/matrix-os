@@ -1,3 +1,4 @@
+import { canonicalAgentFailure } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 const AssistantApiErrorSchema = z.object({
@@ -52,12 +53,7 @@ export function classifyClaudeUsageFailure(value: unknown) {
   if (quotaText === undefined && assistant.success && evidence.some((text) => /^Too many requests\b/i.test(text))) {
     return {
       category: "rate_limited" as const,
-      safeError: {
-        code: "service_unavailable" as const,
-        safeMessage: "Requests are temporarily rate limited. Wait a moment and try again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
+      safeError: canonicalAgentFailure("rate_limited")!,
     };
   }
   if (quotaText === undefined) return undefined;
@@ -67,8 +63,8 @@ export function classifyClaudeUsageFailure(value: unknown) {
     safeError: {
       code: "run_failed" as const,
       safeMessage: resetsAt
-        ? `Your usage limit has been reached. Try again after ${resetsAt}.`
-        : "Your usage limit has been reached. Try again after your allowance resets.",
+        ? `Usage limit reached. Resets ${resetsAt}.`
+        : "Usage limit reached. Wait for reset.",
       retryable: false,
     },
   };

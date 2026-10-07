@@ -8,6 +8,7 @@ import type { JevHermesCredentials } from "./jev-hermes-credentials.js";
 const active = new Set<string | symbol>();
 const MAX_PROFILES = 128;
 const BROKER = "mcp__matrix_jev_recipe__jev_inbox_preview";
+const LazySnapshot = z.object({ lazy: z.literal(true) });
 const Catalog = z.object({ lazy: z.boolean().optional(), tools: z.record(z.string().max(128), z.array(z.string().max(256)).max(64)) });
 
 /** Exclusive per-run profile; no owner auth/config/hooks, ambient env, auxiliary inference or shell tools. */
@@ -23,11 +24,11 @@ export async function createJevHermesProfile(credentials: JevHermesCredentials, 
     const hermesHome = join(homePath, "hermes");
     await mkdir(hermesHome, { mode: 0o700 });
     const config = { model: { default: credentials.model, provider: credentials.provider, base_url: credentials.baseUrl,
-      api_mode: credentials.apiMode, context_length: 128000 }, agent: { max_turns: 12 },
+      api_mode: credentials.apiMode, context_length: 128000 }, agent: { max_turns: 64 }, fallback_providers: [],
       auxiliary: { background_review: { enabled: false }, title_generation: { enabled: false } },
       memory: { memory_enabled: false, user_profile_enabled: false }, tools: { tool_search: false },
       mcp_servers: { matrix_jev_recipe: { command: "/opt/matrix/bin/matrix-integrations-mcp",
-        args: ["--require-scoped-capability", "--tool-surface=jev-inbox-preview"], enabled: true,
+        args: ["--require-scoped-capability", "--tool-surface=jev-inbox-preview"], enabled: true, timeout: 600,
         tools: { resources: false, prompts: false } } } };
     await writeFile(join(hermesHome, "config.yaml"), JSON.stringify(config), { flag: "wx", mode: 0o600 });
     const ownedHome = homePath;
@@ -35,7 +36,8 @@ export async function createJevHermesProfile(credentials: JevHermesCredentials, 
       PATH: "/opt/matrix/runtime/node/bin:/usr/bin:/bin", MATRIX_NODE_PREFIX: "/opt/matrix/runtime/node",
       MATRIX_AGENT_INTEGRATIONS_TOKEN: token, HERMES_TUI_TOOLSETS: "matrix_jev_recipe", HERMES_IGNORE_RULES: "1",
       HERMES_SINGLE_QUERY_SESSION: "1", HERMES_DISABLE_TELEMETRY: "1", HERMES_DISABLE_LAZY_INSTALLS: "1",
-      ...credentials.env }, async close(): Promise<void> {
+      ...credentials.env, MATRIX_JEV_PRIMARY_PROVIDER: credentials.provider, MATRIX_JEV_PRIMARY_MODEL: credentials.model,
+      MATRIX_JEV_PRIMARY_URL: credentials.baseUrl, MATRIX_JEV_PRIMARY_MODE: credentials.apiMode }, async close(): Promise<void> {
         try { await rm(ownedHome, { recursive: true, force: true }); }
         finally { active.delete(ownedHome); }
       } };
@@ -51,7 +53,7 @@ export async function createJevHermesProfile(credentials: JevHermesCredentials, 
 }
 
 /** Native catalog, not prompt guidance or allowedTools, is the pre-inference admission proof. */
-export function createJevHermesCatalogGate() {
+export function createJevHermesCatalogGate(expected?: { provider: string; model: string }) {
   let sessionId: string | undefined;
   let observed: HermesGatewayEvent | undefined;
   let settled = false;
@@ -59,12 +61,16 @@ export function createJevHermesCatalogGate() {
   let notify: (() => void) | undefined;
   const inspect = () => {
     if (!observed || observed.session_id !== sessionId || settled) return;
+    // Native cwd updates can precede construction and omit tool fields.
+    // They are pending evidence, never permission to submit a prompt.
+    if (LazySnapshot.safeParse(observed.payload).success) return;
     const parsed = Catalog.safeParse(observed.payload);
-    if (parsed.success && parsed.data.lazy === true) return;
     const groups = parsed.success ? Object.values(parsed.data.tools) : [];
     const names = groups.flat();
     settled = true;
-    if (!parsed.success || groups.length > 16 || names.length !== 1 || names[0] !== BROKER) {
+    const route = z.object({ provider: z.string(), model: z.string() }).safeParse(observed.payload);
+    if (!parsed.success || groups.length > 16 || names.length !== 1 || names[0] !== BROKER
+      || (expected && (!route.success || route.data.provider !== expected.provider || route.data.model !== expected.model))) {
       failure = new Error("Restricted native tool catalog unavailable");
     }
     notify?.();

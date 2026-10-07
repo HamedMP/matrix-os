@@ -1,3 +1,4 @@
+import { ChatProviderOnboarding } from "../chat/ChatProviderOnboarding";
 import { FolderOpen } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -191,7 +192,7 @@ export function ProjectChatDraft({
   );
   const projectCatalog = useMemo(
     () => canonicalClient
-      ? liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
+      ? liveCatalog.status === "fallback" ? unavailableCatalog : liveCatalog.catalog
       : filterCatalogForLegacyProject(liveCatalog.catalog, summary),
     [canonicalClient, liveCatalog.catalog, liveCatalog.status, summary, unavailableCatalog],
   );
@@ -304,7 +305,7 @@ export function ProjectChatDraft({
   }, [active, typeToStartEnabled, canCreate]);
 
   async function submit(submission: SharedChatComposerSubmission) {
-    if (canonicalBlocked || submitting || submitInFlightRef.current) return;
+    if (liveCatalog.status === "loading" || canonicalBlocked || submitting || submitInFlightRef.current) return;
     const selectedInstance = projectCatalog.instances.find((instance) => (
       instance.id === canonicalSelection?.instanceId
     ));
@@ -423,7 +424,7 @@ export function ProjectChatDraft({
       {...attachments.paneProps}
     >
       {presentation === "hero" ? (
-        <ProjectChatHero
+        <ChatProviderOnboarding><ProjectChatHero
           projectLabel={projectLabel}
           headline={heroHeadline}
           suggestionsVisible={canCreate && promptEmpty}
@@ -432,7 +433,7 @@ export function ProjectChatDraft({
             setDraft((current) => ({ ...current, prompt }));
             focusComposer();
           }}
-        />
+        /></ChatProviderOnboarding>
       ) : null}
       <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
         <div className={cn("@container/project-composer mx-auto w-full", presentation === "landing" ? "max-w-none" : CHAT_CONTENT_WIDTH_CLASS)} data-slot="draft-composer">
@@ -466,7 +467,7 @@ export function ProjectChatDraft({
                     || referenceTokens.length > 0
                   )}
                   catalog={projectCatalog}
-                  onProviderPickerOpen={liveCatalog.refresh}
+                  providerCatalogLoading={liveCatalog.status === "loading"}
                   selection={canonicalSelection}
                   onSelectionChange={(selection) => {
                     providerSelectionTouchedRef.current = true;

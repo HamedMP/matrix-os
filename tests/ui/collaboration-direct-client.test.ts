@@ -83,6 +83,27 @@ describe("collaboration direct client", () => {
     expect(JSON.parse(post.body)).toEqual({ text: "hi" });
   });
 
+  it("aborts an in-flight signed mutation when its caller cancels", async () => {
+    let entered!: () => void;
+    const reachedMutation = new Promise<void>((resolve) => { entered = resolve; });
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith(`/api/collaboration/scopes/${scopeId}/chat/messages`)) {
+        entered();
+        return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")), { once: true }));
+      }
+      return world.fetchImpl(input, init);
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
+    const abort = new AbortController();
+    const pending = direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/chat/messages`,
+      { text: "cancel" }, undefined, abort.signal);
+    await reachedMutation;
+    abort.abort();
+    await expect(pending).rejects.toThrow();
+  });
+
   it("routes each scope to its own home session and never to the selected computer", async () => {
     const direct = client();
     await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
@@ -245,6 +266,21 @@ describe("collaboration direct client", () => {
     const invitation = await api.get("/api/collaboration/invitations/20000000-0000-4000-8000-000000000001") as Json;
     expect(invitation.role).toBe("editor");
     expect(world.home.requests.at(-1)!.url).toBe(`${RELAY}/api/collaboration/invitations/20000000-0000-4000-8000-000000000001`);
+  });
+
+  it("hydrates a shared project with its name and Chats, and tolerates an owner home without an overview", async () => {
+    world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "project", authorityGeneration: 3, status: "accepted" }];
+    world.home.projectOverview = { projectId: "proj-1", scopeId, name: "Launch", status: "active", chats: [] };
+    const api = createCollaborationDirectApi({ platformBaseUrl: PLATFORM, fetchImpl: world.fetchImpl, webSocketFactory: world.webSocketFactory, clientOrigin: CLIENT_ORIGIN, now: world.now });
+    const shared = await api.get("/api/collaboration/shared") as { items: Json[] };
+    expect(shared.items[0]).toMatchObject({ scopeId, status: "accepted", resource: { project: { id: "proj-1" }, overview: { name: "Launch" } } });
+    expect(shared.items[0]).not.toHaveProperty("home");
+
+    delete world.home.projectOverview;
+    const older = await api.get("/api/collaboration/shared") as { items: Json[] };
+    expect(older.items[0]).toMatchObject({ scopeId, status: "accepted", resource: { project: { id: "proj-1" } } });
+    expect(older.items[0]!.resource).not.toHaveProperty("overview");
+    expect(older.items[0]).not.toHaveProperty("home");
   });
 
   it("marks a discovered item for sign-in, not ended access, when the platform no longer recognizes the actor", async () => {

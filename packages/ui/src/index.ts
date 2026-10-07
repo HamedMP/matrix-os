@@ -1,3 +1,5 @@
+export { createChatDriveProjectClient, type ChatDriveProjectClient } from "./organization-drive/chat-project-client.js";
+export { useChatDriveProjects } from "./organization-drive/use-chat-drive-projects.js";
 export { Button } from "./Button.js";
 export type { ButtonProps, ButtonVariant, ButtonSize } from "./Button.js";
 
@@ -6,6 +8,7 @@ export type { CardProps, CardHeaderProps, CardTitleProps, CardContentProps, Card
 
 export { Input } from "./Input.js";
 export type { InputProps } from "./Input.js";
+export { ChatImportPanel, type NativeChatImportAdapter } from "./chat-import/ChatImportPanel.js";
 
 export { Dialog } from "./Dialog.js";
 export type { DialogProps } from "./Dialog.js";
@@ -36,10 +39,14 @@ export {
 } from "./agents-providers/provider-settings-controller.js";
 
 export {
+  canonicalChatSubscriptionSelectionMatches,
+  canonicalProviderChoiceCanBeDefault,
   canonicalProviderAvailabilityLabel,
+  canonicalProviderUnavailableSelectionLabel,
   deriveCanonicalProviderChoices,
   orderCanonicalProviderInstancesForDefault,
 } from "./canonical-provider-choice.js";
+export { canonicalChatProviderCatalogPath, providerSettingsSnapshotPath, providerSettingsActionsPath } from "./provider-projection-paths.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 export {
   ChatEventFrameTooLarge,
@@ -96,7 +103,7 @@ export * from "./aoede/index.js";
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
 export { ChatContextMenu } from "./chat/ChatContextMenu.js";
 export { ChatSharingButton } from "./chat/ChatSharingButton.js";
-export { ChatAttachments, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
+export { ChatAttachments, AttachmentImage, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
 export { ChatCollaboratorsDialog, type CollaborationApi } from "./collaboration/ChatCollaboratorsDialog.js";
 export {
   CanonicalSharedChatPanel,
@@ -112,10 +119,16 @@ export {
 } from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
-export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
+export { LegacyLiveAccessButton } from "./collaboration/LegacyLiveAccessButton.js";
+export { LegacyResourceAccessButton } from "./collaboration/LegacyResourceAccessButton.js";
+export { LegacyTerminalAccessButton } from "./collaboration/LegacyTerminalAccessButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
-export { ResourceSharingButton } from "./collaboration/ResourceSharingButton.js";
+export {
+  PROJECT_SHARING_UNAVAILABLE_MESSAGE,
+  useProjectSharing,
+  type ProjectSharingController,
+} from "./collaboration/useProjectSharing.js";
 export { ReadinessSummary } from "./collaboration/ReadinessSummary.js";
 export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
 export {
@@ -126,13 +139,17 @@ export {
 export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
+export { createOrganizationManagementActions, type OrganizationManagementActions } from "./organization-management/actions.js";
 export { createCollaborationDirectClient, CollaborationDirectError, type CollaborationDirectClient, type CollaborationDirectClientOptions, type CollaborationDirectErrorCode, type DirectScopeState } from "./collaboration/direct-client.js";
 export { createCollaborationDirectApi, type CollaborationDirectApi } from "./collaboration/direct-api.js";
+export { resolveOrganizationDriveNavigation, createRefreshGuard, driveBasePath, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive/paging.js";
+export { ensureOrganizationContributorGrant, loadOrganizationDriveOptions, type OrganizationDriveOption, type OrganizationDrivePageCounts } from "./organization-drive/discovery.js";
 export {
   COLLABORATION_DISCOVERY_CHANGED_EVENT,
   notifyCollaborationDiscoveryChanged,
   subscribeCollaborationDiscoveryChanged,
 } from "./collaboration/discovery-events.js";
+export { isAcceptedProjectOwnedByRail } from "./collaboration/discovery-visibility.js";
 export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
@@ -142,10 +159,13 @@ export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from
 
 export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection, type ChatAgentDraftRequest, type StartAgentChat } from "./chat-agents/client.js";
 export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgentsEntry.js";
+export { ChatSidebarAddAction } from "./chat-agents/ChatSidebarAddAction.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
+export { BotRunMessageBody, BotUnassignedMessageBody } from "./chat-agents/bots/BotMessageBody.js";
+export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
-export { isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
+export { chatResourceKey, isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
 
 export { ChatContextReceipt } from "./chat-agents/ChatContextReceipt.js";
 export { createChatMentionRequestTracker } from "./chat-agents/request-tracker.js";
@@ -157,6 +177,8 @@ export { CanonicalChatInputForm, type CanonicalChatInputFormProps } from "./chat
 export { useFileDownload, type FileDownloadTransport, type FileDownloadController } from "./files/use-file-download.js";
 export { filePreviewContentUrl, filePreviewMetadataUrl } from "./files/file-preview-policy.js";
 export { FilePreviewContent, type FilePreviewContentProps } from "./files/FilePreviewContent.js";
+export { FilePreviewActions } from "./files/FilePreviewActions.js";
+export { copyFileImage, savePreviewBlob } from "./files/file-image-actions.js";
 
 export { resolveRecipeHandoff } from "./chat-agents/recipe-handoff.js";
 export { generatedChatTitle } from "./generated-chat-title";
@@ -171,6 +193,48 @@ export { createTerminalGridPresentation, measureTerminalViewport, measureTermina
 export { McpServerDiagnostics } from "./McpServerDiagnostics.js";
 
 export { createTerminalNativeHistory } from "./terminal/terminal-native-history.js";
+export { captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_TERMINAL_DROP_FILES, MAX_TERMINAL_DROP_FILE_BYTES } from "./terminal/terminal-file-drag.js";
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
 
 export { ConversationSubagentActivity } from "./chat/subagent-activity";
+export { ChatProviderConnections, ChatProviderOnboarding, deriveChatProviderConnectionState } from "./agents-providers/ChatProviderConnections.js";
+export { shouldOpenChatOnStartup } from "./chat-startup-policy.js";
+
+export { OrganizationDriveBrowser, type OrganizationDriveBrowserProps } from "./organization-drive/OrganizationDriveBrowser.js";
+export { OrganizationDrivesNavigation } from "./organization-drive/OrganizationDrivesNavigation.js";
+
+export { CompanyDriveContextPicker } from "./organization-drive/CompanyDriveContextPicker.js";
+
+export {companyDriveChatReference} from "./organization-drive/context-reference.js";
+export type {DriveChatContextSelection} from "./organization-drive/OrganizationDriveBrowser.js";
+
+export { BotBindingStatus } from "./chat-agents/bots/BotBindingStatus.js";
+export { useDirectBotBinding, useDirectBotChat } from "./chat-agents/bots/use-direct-bot-chat.js";
+export { ChatProviderLoadingIndicator } from "./chat-provider-loading-indicator.js";
+export { useBotConversationSummaries, type BotConversationSummary, type BotConversationSummaries } from './chat-agents/bots/use-bot-conversation-summaries.js';
+export { useBotMentionNavigation, BOT_ATTACHMENT_HANDOFF_REASON } from './chat-agents/bots/use-bot-mention-navigation.js';
+export { AgentAvatar } from './chat-agents/AgentAvatar.js';
+
+export { resolveCanonicalChatAttention, resolveCanonicalChatLifecycleGroup, type CanonicalChatAttentionState } from './chat/attention-state.js';
+
+export { useBotDraftRecovery } from './chat-agents/bots/use-bot-draft-recovery.js';
+export { BotDraftRecoveryPanel } from './chat-agents/bots/BotDraftRecoveryPanel.js';
+
+export { BotComposerControls } from "./chat-agents/bots/BotComposerControls.js";
+
+export { BotModelRecoveryProvider, BotModelFailureNotice, useBotModelRecovery } from "./chat-agents/bots/BotModelRecovery.js";
+
+export { DEFAULT_RAIL_ORDER, moveRailItem, orderRailItems, parseRailOrderPreference } from "./chat/rail-order.js";
+export type { RailOrderPreference, RailSortMode } from "./chat/rail-order.js";
+export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js";
+export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
+export type { ProviderWorkflowClient } from "./agents-providers/types.js";
+
+export { IntegrationMarketplace } from "./integrations/IntegrationMarketplace.js";
+export type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./agents-providers/local-chatgpt-plan-client.js";
+
+export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLabel } from "./chat-search-shortcut.js";
+
+export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry } from "./chat/canonical-slash-entries.js";
+export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
+export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";

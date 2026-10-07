@@ -48,6 +48,17 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("~/system/icons/<slug>.png");
   });
 
+  it("keeps product art direction separate from platform branding", () => {
+    const prompt = buildSystemPrompt(homePath);
+    expect(prompt).toContain("app-local semantic tokens");
+    expect(prompt).toContain("neo-brutalism");
+    expect(prompt).toContain("choose once");
+    expect(prompt).toContain("Platform chrome, auth and billing");
+    expect(prompt).not.toContain("Apps must inherit the shell theme");
+    expect(prompt).not.toContain("Palette defaults: Forest");
+    expect(prompt).not.toContain("Never use #000000");
+  });
+
   it("includes MATRIX_HOME with the provided path", () => {
     const prompt = buildSystemPrompt("/custom/matrixos");
     expect(prompt).toContain("MATRIX_HOME: /custom/matrixos");

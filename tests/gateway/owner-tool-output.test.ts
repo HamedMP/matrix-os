@@ -15,6 +15,19 @@ function content(): CanonicalChatContent {
   }] };
 }
 describe("owner-only output response projection", () => {
+  it("masks legacy assistant credentials on private owner reads without hiding paths", () => {
+    const value = content();
+    value.messages = [{ id: "msg_legacy", chatId: "chat_test", seq: 1, role: "assistant", state: "committed",
+      parts: [{ type: "text", text: "Open /home/matrix/home/apps/chart.png ACCESS_TO" },
+        { type: "text", text: "KEN=qa-fake-2058" }], createdAt: "2026-09-20T00:00:00.000Z" }];
+    value.record.chat.lastMessagePreview = "ACCESS_TOKEN=qa-fake-2058";
+    const before = JSON.stringify(value);
+    const projected = createOwnerToolOutputProjection(key, ["alice"])(owner, value);
+    expect(projected.messages?.[0]?.parts.map((part) => part.type === "text" ? part.text : "").join(""))
+      .toBe("Open /home/matrix/home/apps/chart.png [redacted credential]");
+    expect(projected.record.chat.lastMessagePreview).toBe("[redacted credential]");
+    expect(JSON.stringify(value)).toBe(before);
+  });
   it("decrypts for the runtime owner without mutating persisted events", () => {
     const stored = content(); const before = JSON.stringify(stored);
     const response = createOwnerToolOutputProjection(key, ["alice"])(owner, stored);
@@ -39,6 +52,38 @@ describe("owner-only output response projection", () => {
     const wrongKey = createOwnerToolOutputProjection(Buffer.alloc(32, 8), ["alice"]);
     expect(JSON.stringify(wrongKey(owner, content()))).not.toContain("OPAQUE_PRIVATE_RESULT");
   });
+  it("hides historical assistant paths after a private Chat becomes shared", () => {
+    const value = content();
+    value.record.chat.collaboration = { mode: "shared", membership: { role: "owner", memberCount: 2 } };
+    value.messages = [{ id: "msg_test", chatId: "chat_test", seq: 1, role: "assistant", state: "committed",
+      parts: [{ type: "text", text: "Open /home/ma" }, { type: "text", text: "trix/home/private/report.txt" }],
+      createdAt: "2026-09-20T00:00:00.000Z" }];
+    const before = JSON.stringify(value);
+    const projected = createOwnerToolOutputProjection(key, ["alice"])(owner, value);
+    expect(projected.messages?.[0]?.parts.map((part) => part.type === "text" ? part.text : "").join(""))
+      .toBe("Open [redacted path]");
+    expect(JSON.stringify(projected)).not.toContain("/home/matrix/home/private/report.txt");
+    expect(JSON.stringify(value)).toBe(before);
+  });
+  it("does not replay a partial private path through shared live content", () => {
+    const value = content();
+    value.record.chat.collaboration = { mode: "shared", membership: { role: "owner", memberCount: 2 } };
+    value.record.chat.lastMessagePreview = "Open /home/matrix/home/private/report.txt ACCESS_TOKEN=qa-fake-2058";
+    value.activities!.push({ id: "evt_plain_tool", runId: "run_test", chatId: "chat_test", sequence: 3,
+      occurredAt: "2026-09-20T00:00:00.000Z", type: "tool.output", toolCallId: "tool_plain",
+      text: "Wrote /home/matrix/home/private/report.txt ACCESS_TOKEN=qa-fake-2058", truncated: false });
+    value.activities!.push({ id: "evt_delta", runId: "run_test", chatId: "chat_test", sequence: 2,
+      occurredAt: "2026-09-20T00:00:00.000Z", type: "assistant.delta", delta: "Open /home/ma" });
+    value.messageDelta = { message: { id: "msg_delta", chatId: "chat_test", seq: 1, role: "assistant",
+      state: "committed", parts: [{ type: "text", text: "Open /home/ma" }],
+      createdAt: "2026-09-20T00:00:00.000Z" }, partIndex: 0, offset: 0 };
+    const projected = createOwnerToolOutputProjection(key, ["alice"])(owner, value);
+    expect(projected.record.chat.lastMessagePreview).toBe("Open [redacted path] [redacted credential]");
+    expect(projected.activities?.some((activity) => activity.type === "assistant.delta")).toBe(false);
+    expect(projected.activities?.find((activity) => activity.type === "tool.output" && activity.toolCallId === "tool_plain"))
+      .toMatchObject({ text: "Wrote [redacted path] [redacted credential]" });
+    expect(projected.messageDelta).toBeUndefined();
+  });
 });
 
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
@@ -57,7 +102,7 @@ it("decrypts only the authorized detail response, keeping repository state encry
   expect(JSON.stringify(stored)).not.toContain("OPAQUE_PRIVATE_RESULT");
 });
 
-it("decrypts owner stream live/replay only, without modifying outbox or telemetry", async () => {
+it("replays historical content as notifications while preserving private live owner output", async () => {
   const event: ChatOutboxEvent = { cursor: 1, chatId: "chat_test", revision: 1, eventType: "run.activity",
     createdAt: "2026-09-20T00:00:00.000Z", payload: { streamContent: content() } };
   let publish!: ChatOutboxSink;
@@ -76,12 +121,45 @@ it("decrypts owner stream live/replay only, without modifying outbox or telemetr
       await stream.open({ principal: { userId, source: "jwt" }, content: true,
         sink: { send(frame) { frames.push(frame); return true; }, close() {} } });
     }
-    expect(JSON.stringify(alice)).toContain("OPAQUE_PRIVATE_RESULT");
+    // The Chat may have become shared after this outbox event was captured.
+    // Replay must make the client refetch current visibility, never project
+    // protected output using the captured private Chat record.
+    expect(alice.some((frame) => frame.type === "chat.event" && frame.event.cursor === 1)).toBe(true);
+    expect(JSON.stringify(alice)).not.toContain("OPAQUE_PRIVATE_RESULT");
+    expect(JSON.stringify(alice)).not.toContain("streamContent");
     alice.length = 0;
     publish({ owner, event: { ...event, cursor: 2 } });
     expect(JSON.stringify(alice)).toContain("OPAQUE_PRIVATE_RESULT");
     expect(JSON.stringify(bob)).not.toContain("OPAQUE_PRIVATE_RESULT");
     expect(JSON.stringify(event)).not.toContain("OPAQUE_PRIVATE_RESULT");
     expect(JSON.stringify(telemetry)).not.toContain("OPAQUE_PRIVATE_RESULT");
+  } finally { stream.shutdown(); }
+});
+
+it("does not expose a private event buffered during replay after a Chat becomes shared", async () => {
+  const event: ChatOutboxEvent = { cursor: 2, chatId: "chat_test", revision: 1, eventType: "run.activity",
+    createdAt: "2026-09-20T00:00:00.000Z", payload: { streamContent: content() } };
+  let publish!: ChatOutboxSink;
+  let release!: () => void;
+  const replay = new Promise<void>((resolve) => { release = resolve; });
+  const stream = createCanonicalChatEventStream({
+    projectOwnerToolOutput: createOwnerToolOutputProjection(key, ["alice"]),
+    repository: {
+      registerOutboxSink(sink) { publish = sink; return { dispose() {} }; },
+      async replayOutboxWindow() { await replay; return { events: [], gap: false }; },
+    },
+  });
+  const frames: CanonicalChatTransportFrame[] = [];
+  try {
+    const opening = stream.open({ principal: { userId: "alice", source: "jwt" }, content: true,
+      sink: { send(frame) { frames.push(frame); return true; }, close() {} } });
+    publish({ owner, event });
+    release();
+    await opening;
+    expect(frames.map((frame) => frame.type)).toEqual([
+      "chat.stream.attached", "chat.event", "chat.replay.end",
+    ]);
+    expect(frames.some((frame) => frame.type === "chat.event" && frame.event.cursor === 2)).toBe(true);
+    expect(JSON.stringify(frames)).not.toContain("OPAQUE_PRIVATE_RESULT");
   } finally { stream.shutdown(); }
 });

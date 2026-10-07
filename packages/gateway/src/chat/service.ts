@@ -72,6 +72,7 @@ import {
   validateChatProviderSelection,
   type ChatProviderCatalogService,
 } from "./provider-catalog.js";
+import type { ProjectChatAssignmentCoordinator } from "../collaboration/project-chat-assignment.js";
 
 const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -153,6 +154,7 @@ export function createCanonicalChatService(
     collaborationGuard?: {
       assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
     };
+    projectAssignments?: ProjectChatAssignmentCoordinator;
   } = {},
 ): CanonicalChatRouteService {
   const assertPersonalExecutionAllowed = async (owner: ChatOwner, chatId: string): Promise<void> => {
@@ -171,13 +173,16 @@ export function createCanonicalChatService(
   return {
     async create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord> {
       const request = CanonicalCreateChatRequestSchema.parse(input);
-      const created = await repository.create(owner, {
+      const create = (target: Pick<ChatRepository, "create">) => target.create(owner, {
         id: CanonicalChatIdSchema.parse(`chat_${randomUUID().replaceAll("-", "")}`),
         clientRequestId: request.clientRequestId,
         title: request.title ?? "New chat",
         ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
         ...(request.currentSelection === undefined ? {} : { currentSelection: request.currentSelection }),
       });
+      const created = options.projectAssignments
+        ? await options.projectAssignments.run(owner, create)
+        : await create(repository);
       return CanonicalChatRecordSchema.parse(created);
     },
 
@@ -212,11 +217,14 @@ export function createCanonicalChatService(
           }), retryable ? 503 : 409);
         }
       }
-      return CanonicalChatRecordSchema.parse(await repository.update(
+      const update = (target: Pick<ChatRepository, "update">) => target.update(
         owner,
         CanonicalChatIdSchema.parse(chatId),
         request,
-      ));
+      );
+      return CanonicalChatRecordSchema.parse(options.projectAssignments
+        ? await options.projectAssignments.run(owner, update)
+        : await update(repository));
     },
 
     async updateSelection(
@@ -351,16 +359,16 @@ export function createCanonicalChatService(
         }),
       });
       if (!page) return null;
+      const projected = options.projectOwnerToolOutput?.(owner, page) ?? page;
       return CanonicalChatDetailResponseSchema.parse({
-        record: page.record,
-        messages: page.messages,
-        turns: page.turns,
-        runs: page.runs,
-        activities: options.projectOwnerToolOutput?.(owner, page).activities ?? page.activities,
-        // Absent stays absent: an empty projection never emits the wire field.
+        record: projected.record,
+        messages: projected.messages,
+        turns: projected.turns,
+        runs: projected.runs,
+        activities: projected.activities,
+        queuedTurns: projected.queuedTurns,
+        terminalSessionIds: projected.terminalSessionIds,
         ...(page.operations?.length ? { operations: page.operations } : {}),
-        queuedTurns: page.queuedTurns,
-        terminalSessionIds: page.terminalSessionIds,
         ...(page.nextBeforeSeq === undefined ? {} : {
           nextCursor: encodeCursor({
             version: 1,

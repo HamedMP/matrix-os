@@ -1,6 +1,7 @@
 "use client";
 
 import { LoaderCircleIcon, PlusIcon, SearchIcon, SquareTerminalIcon } from "@/lib/hugeicons";
+import { TerminalSharing } from "./TerminalSharing";
 
 export function DesktopTerminalEmptyState({
   ready,
@@ -82,7 +83,7 @@ export function DesktopTerminalEmptyState({
   );
 }
 
-export function DesktopTerminalSessionHeader({ title }: { title: string }) {
+export function DesktopTerminalSessionHeader({ title, terminalId = null }: { title: string; terminalId?: string | null }) {
   return (
     <header
       data-testid="terminal-desktop-session-header"
@@ -97,16 +98,19 @@ export function DesktopTerminalSessionHeader({ title }: { title: string }) {
         <h2 className="truncate text-sm font-medium">{title}</h2>
         <p className="mt-1 text-xs" style={{ color: "var(--terminal-chrome-muted)" }}>Connected to this Matrix OS runtime</p>
       </div>
-      <span
-        className="rounded-full border px-2.5 py-1 text-xs font-medium"
-        style={{
-          background: "var(--terminal-chrome-badge-bg)",
-          borderColor: "var(--terminal-chrome-badge-border)",
-          color: "var(--terminal-chrome-accent)",
-        }}
-      >
-        Active
-      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        {terminalId ? <TerminalSharing terminalId={terminalId} /> : null}
+        <span
+          className="rounded-full border px-2.5 py-1 text-xs font-medium"
+          style={{
+            background: "var(--terminal-chrome-badge-bg)",
+            borderColor: "var(--terminal-chrome-badge-border)",
+            color: "var(--terminal-chrome-accent)",
+          }}
+        >
+          Active
+        </span>
+      </div>
     </header>
   );
 }

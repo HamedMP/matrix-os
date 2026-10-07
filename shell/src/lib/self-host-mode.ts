@@ -11,3 +11,5 @@ export function isSelfHostedRuntime(): boolean {
   }
   return typeof process !== "undefined" && process.env.MATRIX_SELF_HOSTED === "1";
 }
+
+export const SELF_HOSTED_SHELL_USER_ID = "self-hosted-owner";

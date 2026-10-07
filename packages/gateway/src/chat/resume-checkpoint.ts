@@ -276,6 +276,8 @@ export async function loadChatResumeDecision(input: ChatResumeDecisionInput): Pr
     return rebuild(reason, retainedHistory);
   }
 
+  if (!input.adapter.resume) return rebuild("no_checkpoint", await rebuildContext());
+
   const unheardResponses = (input.deliveryContext?.unheardResponses ?? [])
     .slice(0, MAX_UNHEARD_HINTS);
   let previous: ChatAdapterStateSelection | null;

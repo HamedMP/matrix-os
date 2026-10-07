@@ -13,6 +13,11 @@ export interface AdmissionLease {
   release(): void;
 }
 
+/** One charged runtime attempt; only proved pre-dispatch capacity may return it. */
+export interface RuntimeAttempt {
+  refund(): void;
+}
+
 export class AdmissionController {
   private active = 0;
   private closed = false;
@@ -57,13 +62,26 @@ export class AdmissionController {
     };
   }
 
+  /**
+   * Why `acquireGlobal` just refused, read in the same tick. Only a full
+   * concurrency pool frees on its own soon; a spent per-minute window does not.
+   */
+  globalRefusalReason(): "busy" | "rate_limited" | "closed" {
+    if (this.closed) return "closed";
+    return this.active >= this.config.globalConcurrency ? "busy" : "rate_limited";
+  }
+
   admitRuntime(runtimeId: string): boolean {
-    if (this.closed) return false;
+    return this.beginRuntimeAttempt(runtimeId) !== null;
+  }
+
+  beginRuntimeAttempt(runtimeId: string): RuntimeAttempt | null {
+    if (this.closed) return null;
     const now = this.now();
     this.sweep(now, false);
     let state = this.runtimes.get(runtimeId);
     if (!state) {
-      if (this.runtimes.size >= this.config.maxRuntimeEntries) return false;
+      if (this.runtimes.size >= this.config.maxRuntimeEntries) return null;
       state = { active: 0, count: 0, windowStartedAt: now, lastTouchedAt: now };
       this.runtimes.set(runtimeId, state);
     }
@@ -72,9 +90,21 @@ export class AdmissionController {
       state.windowStartedAt = now;
     }
     state.lastTouchedAt = now;
-    if (state.count >= this.config.rateLimitPerMinute) return false;
+    if (state.count >= this.config.rateLimitPerMinute) return null;
     state.count += 1;
-    return true;
+    const entry = state;
+    const windowStartedAt = state.windowStartedAt;
+    let refunded = false;
+    return {
+      refund: () => {
+        if (refunded) return;
+        refunded = true;
+        // An old completion cannot return a count from a new window/entry.
+        if (this.closed || this.runtimes.get(runtimeId) !== entry
+          || entry.windowStartedAt !== windowStartedAt) return;
+        entry.count = Math.max(0, entry.count - 1);
+      },
+    };
   }
 
   acquireResources(runtimeId: string): AdmissionLease | null {

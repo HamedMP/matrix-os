@@ -50,23 +50,29 @@ describe("system prompt context", () => {
   });
 
   describe("app data summary", () => {
-    it("lists data directories and their keys", () => {
-      mkdirSync(join(home, "data", "todo"), { recursive: true });
-      writeFileSync(join(home, "data", "todo", "tasks.json"), "[]");
-      mkdirSync(join(home, "data", "notes"), { recursive: true });
-      writeFileSync(join(home, "data", "notes", "notes.json"), "[]");
-      writeFileSync(join(home, "data", "notes", "settings.json"), "{}");
+    it("does not infer a database inventory from legacy data directories or files", () => {
+      const legacyDirectory = "owner-legacy-inventory-sentinel";
+      const legacyKey = "legacy-record-key-sentinel";
+      const legacyValue = "legacy-record-value-sentinel";
+      mkdirSync(join(home, "data", legacyDirectory), { recursive: true });
+      writeFileSync(join(home, "data", legacyDirectory, `${legacyKey}.json`), JSON.stringify([legacyValue]));
 
       const prompt = buildSystemPrompt(home);
       expect(prompt).toContain("## App Data");
-      expect(prompt).toContain("todo");
-      expect(prompt).toContain("tasks");
-      expect(prompt).toContain("notes");
+      expect(prompt).toContain("App record contents have not been queried for this prompt");
+      expect(prompt).toContain("owner-scoped Postgres query API");
+      expect(prompt).toContain("files under ~/data are not a database inventory");
+      for (const sentinel of [legacyDirectory, legacyKey, legacyValue]) {
+        expect(prompt).not.toContain(sentinel);
+      }
     });
 
-    it("shows empty message when no data exists", () => {
+    it.each(["empty", "missing"])("does not claim Postgres is empty when the local data directory is %s", state => {
+      if (state === "missing") rmSync(join(home, "data"), { recursive: true });
       const prompt = buildSystemPrompt(home);
-      expect(prompt).toContain("No app data");
+      expect(prompt).toContain("App record contents have not been queried for this prompt");
+      expect(prompt).toContain("owner-scoped Postgres query API");
+      expect(prompt).not.toContain("No app data");
     });
   });
 

@@ -11,6 +11,8 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { terminalRuntimeErrorFromDetails } from "./errors.js";
+import { TerminalCommandStateRefSchema, TerminalCommandStateSchema, type TerminalCommandState } from "./terminal-command-state.js";
+import { TerminalEndedTabArchiveRequestSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
 import {
   MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
@@ -61,6 +63,15 @@ export class TerminalRuntimeSocketClient {
 
   async getSnapshot(ref: { workspaceId: string; tabId: string }): Promise<unknown> {
     return this.call("GetSnapshot", ref);
+  }
+
+  async getCommandState(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<TerminalCommandState> {
+    const input = TerminalCommandStateRefSchema.parse({ ...ref, expectedIncarnation });
+    return TerminalCommandStateSchema.parse(await this.call("GetCommandState", input));
+  }
+
+  async archiveEndedTab(ref: { workspaceId: string; tabId: string }, input: TerminalEndedTabArchiveInput): Promise<TerminalTab> {
+    return TerminalTabSchema.parse(await this.call("ArchiveEndedTab", TerminalEndedTabArchiveRequestSchema.parse({ ...ref, ...input })));
   }
 
   async renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
