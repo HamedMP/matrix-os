@@ -70,4 +70,34 @@ describe('launch journey walkthrough',()=>{
   expect(screen.getByRole('button',{name:'Start a focus session'})).toBeTruthy();
  });
 
+ it('does not reuse an Atlas import when entering the isolated Folio chat scenario',()=>{
+  render(createElement(Journey,{onClose:vi.fn()}));
+  fireEvent.click(screen.getByRole('button',{name:/3\. Find your apps/}));
+  fireEvent.click(screen.getByRole('button',{name:/^Atlas/}));
+  fireEvent.click(screen.getByRole('button',{name:'Install Atlas'}));
+  fireEvent.click(screen.getByRole('button',{name:'Open Atlas'}));
+  fireEvent.click(screen.getByRole('checkbox',{name:/^Personal Gmail/}));
+  fireEvent.click(screen.getByRole('button',{name:'Import trips'}));
+  fireEvent.click(screen.getByRole('button',{name:'Show completed scenario'}));
+  fireEvent.click(screen.getByRole('button',{name:/7\. Add data from chat/}));
+  fireEvent.click(screen.getByRole('button',{name:/5\. Choose data/}));
+  expect(screen.queryByText('12 receipts saved')).toBeNull();
+  expect((screen.getByLabelText('Date range') as HTMLSelectElement).value).toBe('Last 3 months');
+  expect((screen.getByRole('checkbox',{name:/^Personal Gmail/}) as HTMLInputElement).checked).toBe(false);
+  expect(screen.getByRole('button',{name:'Import receipts'}).hasAttribute('disabled')).toBe(true);
+ });
+ it('opens the app named by the custom preview and keeps daily-use copy consistent',()=>{
+  render(createElement(Journey,{onClose:vi.fn()}));
+  fireEvent.click(screen.getByRole('button',{name:/3\. Find your apps/}));
+  fireEvent.click(screen.getByRole('button',{name:/^Atlas/}));
+  fireEvent.click(screen.getByRole('button',{name:/8\. Use it everywhere/}));
+  expect(screen.getByText('How is Atlas working for you?')).toBeTruthy();
+  expect(screen.getByRole('checkbox',{name:/Trip reminders/})).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:/6\. Apps in chat/}));
+  fireEvent.click(screen.getByRole('button',{name:'Build something different'}));
+  fireEvent.click(screen.getByRole('button',{name:'Build this example'}));
+  fireEvent.click(screen.getByRole('button',{name:'Review app preview'}));
+  expect(screen.getByRole('button',{name:'Install Folio'})).toBeTruthy();
+ });
+
 });
