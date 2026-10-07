@@ -56,6 +56,21 @@ const startedSession: VoiceStep[] = [voiceFrames.listening()];
 
 export const AOEDE_SCENARIOS: readonly AoedeScenario[] = [
   {
+    id: "native-live",
+    label: "Native Live caption presentation",
+    summary: "Real shared native panel with deterministic frames. No microphone, live service, builder, or effects are exercised.",
+    bootstrap: { capability: fixtureCapability({ conversationMode: "native_live", turnModes: ["hands_free"], resume: "rebuild_only" }) },
+    detail: () => fixtureDetail({}),
+    media: { frames: [voiceFrames.listening(),
+      { type: "companion.caption", speaker: "user", turnId: "vturn_native", text: "Build a habit tracker, and let's keep talking.", final: true, interrupted: false },
+      { type: "companion.response.started", responseId: "vresp_native" },
+      { type: "companion.caption", speaker: "assistant", turnId: "vresp_native", text: "I've accepted the task in Chat. What would you like to track?", final: false, interrupted: false },
+      { type: "companion.task", chatId: "chat_live_task_fixture", runId: "run_native", state: "running", label: "Build a habit tracker" },
+    ] },
+    drive: ["open"],
+    ready: { selectors: ["[data-aoede-live]"] },
+  },
+  {
     id: "idle",
     label: "Idle (launcher only)",
     summary: "Fresh shell: launcher visible, panel closed, no bootstrap yet — proves Chat is not required.",
