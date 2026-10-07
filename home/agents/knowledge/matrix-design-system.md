@@ -138,7 +138,19 @@ border-radius: 22px;
 
 Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
 
-Generated launcher icons use the gateway/kernel icon style. The default comes from `system/desktop.json` when present, otherwise the Matrix OS style: light premium iOS/macOS skeuomorphic artwork, warm off-white or pale pastel background, forest/cream/ember/deep accents, one large tactile object, no text/logos/watermarks, no transparent or black dock backgrounds, no empty padding. The Matrix shell owns the final corner radius, so do not bake a visible frame into the artwork.
+Generated launcher icons use the gateway/kernel icon style. Preserve the owner's saved
+`system/desktop.json` `iconStyle` exactly when present; otherwise use the Matrix default:
+one large rounded sculptural subject in matte or satin ceramic and clay, subtle tactile grain,
+a distinct silhouette, and a restrained mist blue, blush, indigo, mint and cream palette.
+Center the prominent subject on a full opaque 1:1 pale near-white lavender background,
+with soft upper-left studio light, ambient occlusion and grounded contact shadows.
+Keep scale, perspective, lighting and materials consistent across the family. No text, letters,
+numbers, logos, watermarks, transparent backgrounds, dark dock backdrops, borders or baked-in
+rounded tiles/frames. The Matrix shell owns the final corner radius.
+
+Generate one individual icon per app. A grid or sprite sheet is a separate artwork only when
+explicitly requested; it is not the launcher icon file. Do not regenerate installed icons or
+replace the owner's saved style as part of a default-style update.
 
 Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 

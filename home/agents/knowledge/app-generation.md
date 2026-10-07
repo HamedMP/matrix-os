@@ -157,13 +157,19 @@ createRoot(document.getElementById("root")!).render(
 Every app manifest must set `"icon": "<slug>"`, and the matching file must exist at
 `~/system/icons/<slug>.png` or `~/system/icons/<slug>.svg`. Prefer PNGs for app logos.
 
-New app logos should match the shipped Matrix OS icon family: light premium iOS/macOS skeuomorphic
-app icon artwork, refined Apple-like product rendering, bright warm off-white or pale pastel
-background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows,
-and one large tactile 3D object or symbol that clearly represents the app. Keep the family aligned
-with Matrix OS forest, cream, ember, and deep accents. Do not include text,
-logos, watermarks, transparent backgrounds, black/dark dock backgrounds, empty padding, or a
-separate visible icon frame; the Matrix shell owns the final corner radius.
+Generated launcher icons use the gateway/kernel icon style. Preserve the owner's saved
+`system/desktop.json` `iconStyle` exactly when present; otherwise use the Matrix default:
+one large rounded sculptural subject in matte or satin ceramic and clay, subtle tactile grain,
+a distinct silhouette, and a restrained mist blue, blush, indigo, mint and cream palette.
+Center the prominent subject on a full opaque 1:1 pale near-white lavender background,
+with soft upper-left studio light, ambient occlusion and grounded contact shadows.
+Keep scale, perspective, lighting and materials consistent across the family. No text, letters,
+numbers, logos, watermarks, transparent backgrounds, dark dock backdrops, borders or baked-in
+rounded tiles/frames. The Matrix shell owns the final corner radius.
+
+Generate one individual icon per app. A grid or sprite sheet is a separate artwork only when
+explicitly requested; it is not the launcher icon file. Do not regenerate installed icons or
+replace the owner's saved style as part of a default-style update.
 
 ### Product styles and responsive layouts
 
