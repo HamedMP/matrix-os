@@ -19,6 +19,12 @@
 .ms-root .ms-frame { border-radius: 14px; box-shadow: none; border: 1px solid var(--app-border); }
 .app .score-card { border-radius: 10px; box-shadow: none; }
 .app .board { border-radius: 14px; }
+/* Board symbols use fixed game ink. Keep these small play surfaces independent
+   of the surrounding Matrix theme, including injected dark host palettes. */
+.sol-app .sol-card--black, .sol-app .sol-card--red { background: #ffffff; }
+.sol-app .sol-card--red { color: #b91c1c; }
+.ms-root .ms-cell.is-open:not(.is-exploded) { background: #fafaf5; color: #172033; }
+.bg-app .chk-count { fill: #1c1f1a; stroke: #f4f1e8; }
 @media (max-width: 680px) {
  .chess-app, .tetris-app, .snake-app, .bg-app, .ms-root, .app { padding-top: max(12px, env(safe-area-inset-top)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
  .sol-app .sol-bar { padding-top: max(12px, env(safe-area-inset-top)); }

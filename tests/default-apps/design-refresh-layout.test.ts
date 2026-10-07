@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 
 const stylesheet = (app: string) => readFileSync(new URL(`../../home/apps/${app}/src/design-refresh.css`, import.meta.url), "utf8");
 describe("compact app layout safeguards", () => {
+  it("keeps brief opacity feedback while removing movement for reduced motion", () => {
+    for (const file of ["app-foundation.css", "theme.css"]) {
+      const css = readFileSync(new URL(`../../home/apps/_shared/${file}`, import.meta.url), "utf8");
+      const reduced = css.split("@media (prefers-reduced-motion: reduce)")[1];
+      expect(reduced).toMatch(/animation:\s*none\s*!important/);
+      expect(reduced).toMatch(/transition:\s*opacity\s+120ms\s+ease-out\s*!important/);
+      expect(reduced).toMatch(/scroll-behavior:\s*auto\s*!important/);
+    }
+  });
   it("restores the weather location controls hidden by the older phone stylesheet", () => {
     expect(stylesheet("weather").split("@media (max-width: 760px)")[1]).toMatch(/\.sidebar\s*\{[^}]*display:\s*flex/);
   });
