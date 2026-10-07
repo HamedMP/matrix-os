@@ -64,7 +64,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     c.header("Cache-Control", "no-store"); return c.json({ url: url.toString() });
   });
 
-  app.get("/api/slack/oauth/callback", async (c) => {
+  app.get("/api/slack/oauth/callback", limit, async (c) => {
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const parsed = CallbackQuerySchema.safeParse(c.req.query()); if (!parsed.success) return fail(c, "Invalid request", 422);
     const hash = digest(parsed.data.state);
