@@ -1,7 +1,7 @@
 "use client";
 import { OrganizationSwitcher, SignIn, useAuth, useOrganization } from '@clerk/nextjs';
 import { palette } from '@matrix-os/brand';
-import { AddToSlack } from '@matrix-os/ui';
+import { AddToSlack } from '@matrix-os/ui/messaging';
 import { useEffect, useRef, useState } from 'react';
 import { SLACK_INSTALL_PATH } from '@matrix-os/contracts/slack-bridge';
 import { startSlackInstallation, type SlackInstallResult } from '@/lib/slack-install';
@@ -14,13 +14,14 @@ const messages: Record<Exclude<SlackInstallResult['status'],'ready'>,string>={
   unavailable:'Unable to start installation. Please try again in a moment.',
 };
 export function SlackInstallation() {
-  const {isLoaded,isSignedIn,getToken}=useAuth();
+  const {isLoaded,isSignedIn,userId,sessionId,getToken}=useAuth();
   const {isLoaded:organizationLoaded,organization}=useOrganization();
   const [busy,setBusy]=useState(false);
   const [result,setResult]=useState<SlackInstallResult | null>(null);
-  const currentOrganization=useRef(organization?.id);
+  const identity=[userId,sessionId,organization?.id,isSignedIn].join(':');
+  const currentIdentity=useRef(identity);
   const currentAttempt=useRef(0);
-  useEffect(()=>{currentOrganization.current=organization?.id;setResult(null);currentAttempt.current+=1;setBusy(false);},[organization?.id]);
+  useEffect(()=>{currentIdentity.current=identity;setResult(null);currentAttempt.current+=1;setBusy(false);},[identity]);
   useEffect(()=>()=>{currentAttempt.current+=1;},[]);
   const install=async()=>{
     if(busy || !organization) return;
@@ -28,7 +29,7 @@ export function SlackInstallation() {
     const attempt=++currentAttempt.current;
     setBusy(true);setResult(null);
     const next=await startSlackInstallation(selectedOrganization,window.location.origin,getToken);
-    if(attempt!==currentAttempt.current || currentOrganization.current!==selectedOrganization) return;
+    if(attempt!==currentAttempt.current || currentIdentity.current!==identity) return;
     setBusy(false);
     if(next.status==='ready') {window.location.assign(next.url);return;}
     setResult(next);
