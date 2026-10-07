@@ -34,7 +34,7 @@ describe("Electron Desktop gallery", () => {
     const gatewayFetch = createNativeAppGatewayFetch((request) => bridge.gatewayFetch(sender, request));
     const integrations = async () => ((await gatewayFetch<{ services: unknown[] }>("/api/bridge/service")).services);
     const loaded = await loadGallery({ gatewayFetch, integrations });
-    expect(loaded.apps).toHaveLength(31);
+    expect(loaded.apps).toHaveLength(32);
     expect(loaded.connections?.[0]?.account_label).toBe("personal");
     await expect(installGalleryApp({ gatewayFetch }, "folio")).resolves.toMatchObject({ status: "installed", slug: "folio" });
     expect(fetchFn).toHaveBeenLastCalledWith(`${origin}/api/app-gallery/folio/install`, expect.objectContaining({

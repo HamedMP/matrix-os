@@ -52,7 +52,7 @@ describe("app gallery", () => {
       gatewayFetch: vi.fn().mockResolvedValue({ version: 1, apps }),
       integrations: vi.fn().mockRejectedValue(new Error("private failure")),
     });
-    expect(result.apps).toHaveLength(31);
+    expect(result.apps).toHaveLength(32);
     expect(result.connections).toBeNull();
   });
   it("keeps exact account labels and detects multiple accounts", async () => {

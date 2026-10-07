@@ -46,7 +46,7 @@ describe("bundled gallery through client, authenticated route, and portable runt
   it.skipIf(process.platform !== "linux")("loads the complete shipped catalog through the actual client parser", async () => {
     const { bridge } = await fixture();
     const { apps, connections } = await loadGallery(bridge);
-    expect(apps).toHaveLength(31);
+    expect(apps).toHaveLength(32);
     expect(apps.every(app => !app.installed)).toBe(true);
     expect(connections).toEqual([]);
   });

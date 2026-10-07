@@ -8,7 +8,7 @@ import { getAction } from "../../packages/gateway/src/integrations/registry";
 const heroes = ["subscriptions", "workout-coach", "folio", "agenda", "atlas", "paycheck-runway", "meal-planner", "meeting-briefs", "job-search", "study-notes", "journal-memory", "people", "cashflow", "projects", "chess-coach"];
 describe("research-backed gallery workflows", () => {
   it("contains every top fifteen workflow and preserves the existing twenty-four stable slugs", () => {
-    expect(AppGalleryCatalogSchema.parse(catalog).apps).toHaveLength(31);
+    expect(AppGalleryCatalogSchema.parse(catalog).apps).toHaveLength(32);
     for (const id of heroes) expect(catalog.apps.find(app => app.id === id), id).toBeDefined();
     for (const id of ["focus", "follow-ups", "company-spend", "analytics", "hiring", "releases", "revenue"]) expect(catalog.apps.some(app => app.id === id)).toBe(true);
   });

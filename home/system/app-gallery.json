@@ -561,6 +561,58 @@
       ]
     },
     {
+      "id": "edition",
+      "name": "Edition",
+      "collection": "personal",
+      "category": "Reading",
+      "description": "The newsletters you love, in a quiet reading room. Keep a shared email archive and lighten your inbox with reviewed cleanup.",
+      "tagline": "Good things, kept together.",
+      "icon": "edition",
+      "accent": "violet",
+      "view": "library",
+      "entity": "edition",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "publication",
+          "label": "Publication",
+          "kind": "text"
+        },
+        {
+          "key": "date",
+          "label": "Received",
+          "kind": "date"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Use the shared retained email archive and existing Jev newsletter classification. Preserve source account attribution, place uncertain messages in Review, never change inbox or read labels during import, and require exact preview approval before inbox cleanup.",
+      "highlights": [
+        "Your publication library",
+        "Offline editions, saved on your device",
+        "Reviewed inbox cleanup with undo",
+        "Personal and work reading"
+      ]
+    },
+    {
       "id": "people",
       "name": "People",
       "collection": "personal",
