@@ -1,3 +1,4 @@
+import { createNativeLiveControl } from './native-live/control.js';
 import { z } from 'zod/v4';
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { createConfiguredAccountDeletionRuntime } from './account-deletion/wiring.js';
@@ -207,6 +208,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  internalNativeLiveRuntimeRoutes?: Hono<any>;
   whatsappRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
@@ -959,6 +961,7 @@ async function startPlatformServerWithCleanup(
   registerCustomMcpStartupCleanup(async () => { await whatsappRuntime?.shutdown(); });
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
+  const nativeLiveControl = createNativeLiveControl({ db, env: appEnv, platformSecret });
   const accountDeletion = await createConfiguredAccountDeletionRuntime({
     db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, customMcp: deletionCustomMcp,
   });
@@ -985,6 +988,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
+    internalNativeLiveRuntimeRoutes: nativeLiveControl.routes,
     whatsappRoutes: whatsappRuntime?.routes,
     fundedAiRepository,
     fundedModelProbes,
@@ -1040,6 +1044,7 @@ async function startPlatformServerWithCleanup(
         await customerVpsReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
+          nativeLiveControl.shutdown(),
           collaboration?.shutdown(),
           whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
@@ -1083,6 +1088,7 @@ async function startPlatformServerWithCleanup(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationDirect: collaboration?.direct,
+    nativeLiveControl,
   });
 }
 

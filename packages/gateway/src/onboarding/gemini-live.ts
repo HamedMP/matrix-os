@@ -89,6 +89,8 @@ export interface GeminiLiveProxyConfig {
   platformUrl: string;
   handle: string;
   token: string;
+  endpoint?: "native-live";
+  runtimeSlot?: string;
 }
 
 export type GeminiLiveConnection = string | { proxy: GeminiLiveProxyConfig };
@@ -226,8 +228,9 @@ export function buildGeminiLiveWebSocketTarget(connection: GeminiLiveConnection)
   const base = new URL(connection.proxy.platformUrl);
   base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
   const root = base.pathname.endsWith("/") ? base.pathname.slice(0, -1) : base.pathname;
-  base.pathname = `${root}/internal/containers/${encodeURIComponent(connection.proxy.handle)}${INTERNAL_GEMINI_LIVE_PROXY_PATH}`;
+  base.pathname = `${root}/internal/containers/${encodeURIComponent(connection.proxy.handle)}${connection.proxy.endpoint === "native-live" ? "/native-live" : INTERNAL_GEMINI_LIVE_PROXY_PATH}`;
   base.search = "";
+  if (connection.proxy.endpoint === "native-live") base.searchParams.set("runtimeSlot", connection.proxy.runtimeSlot ?? "");
   return {
     url: base.toString(),
     headers: { authorization: `Bearer ${connection.proxy.token}` },

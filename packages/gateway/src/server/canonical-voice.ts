@@ -1,4 +1,5 @@
 import { registerNativeCompanion } from "../live-companion/registration.js";
+import { createFundedNativeLiveAccess } from "../live-companion/funded-readiness.js";
 import { createCanonicalLivePort } from "../live-companion/task-broker.js";
 import type { GeminiLiveConnection } from "../onboarding/gemini-live.js";
 import { createHmac } from "node:crypto";
@@ -66,7 +67,8 @@ export function registerCanonicalVoice(options: {
     // client. A direct provider key is a non-production escape
     // hatch — never a second key authority on a production gateway.
     const voicePlatformSpeechClient = createVoiceSessionPlatformSpeechClient(process.env);
-    const native = registerNativeCompanion({ registry: voiceAdapters, connection: options.geminiLiveConnection, env: process.env });
+    const native = registerNativeCompanion({ registry: voiceAdapters, connection: options.geminiLiveConnection, env: process.env,
+      funded: process.env.NODE_ENV === "production" && process.env.MATRIX_AOEDE_NATIVE_LIVE === "1" ? createFundedNativeLiveAccess(process.env) : undefined });
     const voiceAdapterRegistration = native.requested ? { adapterId: native.available ? "gemini_live" : null, synthesisSource: undefined } : registerVoiceSessionMediaAdapters({
       registry: voiceAdapters,
       env: process.env,
@@ -94,13 +96,20 @@ export function registerCanonicalVoice(options: {
       registry: voiceAdapters,
       limits: native.requested ? { maxSessionSeconds: 1800, maxIdleSeconds: 60 } : { maxSessionSeconds: 3_600, maxIdleSeconds: 300 },
     });
-    const voiceCapabilities = managedVoiceReadiness
+    const selectedVoiceCapabilities = managedVoiceReadiness
       ? wrapCapabilityPortWithReadiness({
           port: voiceAdapterCapabilities,
           probe: managedVoiceReadiness,
           selectedAdapterId: () => voiceAdapterRegistration.adapterId,
         })
       : voiceAdapterCapabilities;
+    const unavailableVoiceCapabilities = createAdapterCapabilityPort({ registry: new VoiceMediaAdapterRegistry(), limits: { maxSessionSeconds: 1800, maxIdleSeconds: 60 } });
+    const voiceCapabilities = {
+      async capabilities(input: Parameters<typeof selectedVoiceCapabilities.capabilities>[0]) {
+        if ("allowed" in native && typeof native.allowed === "function" && !await native.allowed(input.principalId)) return unavailableVoiceCapabilities.capabilities(input);
+        return selectedVoiceCapabilities.capabilities(input);
+      },
+    };
     // Single-process authority: customer VPSes run exactly one gateway, so
     // this in-memory map is the complete replay state; replicas would need a
     // shared atomic consume store (see ticket-auth.ts). MATRIX_AUTH_TOKEN
