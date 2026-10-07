@@ -15,12 +15,23 @@ import { z } from "zod/v4";
 import type { CollaborationControlStream } from "./control-stream.js";
 import { logicalRuntimeIdFor } from "./runtime-identity.js";
 import type { AuthenticatedRuntime } from "./direct-routes.js";
+import { rejectWebSocketUpgrade } from "../websocket-upgrade-rejection.js";
 
 export const COLLABORATION_CONTROL_PATH = "/internal/collaboration/control";
 /** The one-use upgrade ticket, validated at the route boundary before the stream sees it. */
 const ControlUpgradeTicketSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
 const MAX_RAW_PATH_LENGTH = 1_024;
 const HEARTBEAT_INTERVAL_MS = 15_000;
+/**
+ * Lifetime of one control socket before the platform rotates it with 1012. Cloud Run stops
+ * routing new requests to an instance it scales in but keeps the instance, and its max-instance
+ * slot, until every open request ends. Rotating well before the 3600s request timeout bounds how
+ * long a draining instance holds its slot; the jitter spreads the fleet's reconnects.
+ */
+export const CONTROL_SOCKET_LIFETIME_MS = { minMs: 10 * 60_000, maxMs: 15 * 60_000 } as const;
+const CONTROL_SOCKET_ROTATION_CODE = 1012;
+/** Largest delay `setTimeout` honours; anything above fires immediately. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 export function isCollaborationControlUpgradePath(rawPath: string): boolean {
   if (rawPath.length > MAX_RAW_PATH_LENGTH || /[\r\n]/.test(rawPath)) return false;
@@ -36,10 +47,22 @@ export function createCollaborationControlUpgradeHandler(options: {
   stream: CollaborationControlStream;
   authenticateRuntime(input: { runtimeId: string; bearerToken: string }): Promise<AuthenticatedRuntime | null>;
   heartbeatIntervalMs?: number;
+  lifetime?: { minMs: number; maxMs: number };
+  random?: () => number;
 }): {
   handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean>;
   close(): void;
 } {
+  const lifetime = options.lifetime ?? CONTROL_SOCKET_LIFETIME_MS;
+  if (!(Number.isFinite(lifetime.minMs) && Number.isFinite(lifetime.maxMs) && lifetime.minMs > 0
+    && lifetime.maxMs >= lifetime.minMs && lifetime.maxMs <= MAX_TIMER_DELAY_MS)) {
+    throw new RangeError("Control socket lifetime must be positive with minMs <= maxMs <= the timer limit");
+  }
+  const random = options.random ?? Math.random;
+  const jitter = (): number => {
+    const value = random();
+    return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.5;
+  };
   const server = new WebSocketServer({ noServer: true, maxPayload: COLLABORATION_DIRECT_LIMITS.wsFrameBytes, perMessageDeflate: false });
   return {
     async handleUpgrade(req, socket, head) {
@@ -47,7 +70,7 @@ export function createCollaborationControlUpgradeHandler(options: {
       if (!isCollaborationControlUpgradePath(rawPath)) return false;
       const admitted = await admit(req, rawPath, options);
       if (!admitted) {
-        reject(socket, 401);
+        rejectWebSocketUpgrade(socket, 401);
         return true;
       }
       server.handleUpgrade(req, socket, head, (ws: WebSocket) => {
@@ -72,6 +95,10 @@ export function createCollaborationControlUpgradeHandler(options: {
           ws.ping();
         }, options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
         heartbeat.unref?.();
+        const rotation = setTimeout(() => {
+          ws.close(CONTROL_SOCKET_ROTATION_CODE, "Control stream rotation");
+        }, lifetime.minMs + Math.floor(jitter() * (lifetime.maxMs - lifetime.minMs)));
+        rotation.unref?.();
         ws.on("pong", () => {
           alive = true;
           connection.heartbeat();
@@ -88,6 +115,7 @@ export function createCollaborationControlUpgradeHandler(options: {
         });
         ws.on("close", () => {
           clearInterval(heartbeat);
+          clearTimeout(rotation);
           connection.close();
         });
         ws.on("error", (error: Error) => {
@@ -132,10 +160,6 @@ async function admit(
   return logical;
 }
 
-function reject(socket: Socket, status: number): void {
-  socket.write(`HTTP/1.1 ${status} ${status === 401 ? "Unauthorized" : "Service Unavailable"}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-  socket.destroy();
-}
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;

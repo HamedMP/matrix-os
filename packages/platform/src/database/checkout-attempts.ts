@@ -1,3 +1,4 @@
+import { withAccountDeletionAdmission } from '../account-deletion/admission.js';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type {
@@ -80,6 +81,9 @@ export async function claimCheckoutAttempt(
   record: BillingCheckoutClaimInput,
   transactionAlreadyOpen = false,
 ): Promise<{ attempt: BillingCheckoutAttemptRecord; claimed: boolean; selectionMatches: boolean }> {
+  if (!transactionAlreadyOpen) {
+    return withAccountDeletionAdmission(db, record.clerkUserId, (trx) => claimCheckoutAttempt(trx, record, true));
+  }
   await db.ready;
   const row: BillingCheckoutAttemptsTable = {
     id: record.id,
@@ -194,7 +198,7 @@ export async function claimCardTrialCheckoutAttempt(
   durationDays: number,
 ): Promise<{ attempt: BillingCheckoutAttemptRecord; claimed: boolean; selectionMatches: boolean }> {
   await db.ready;
-  return db.transaction(async (trx) => {
+  return withAccountDeletionAdmission(db, record.clerkUserId, async (trx) => {
     await trx.executor
       .insertInto('billing_trial_accounts')
       .values({

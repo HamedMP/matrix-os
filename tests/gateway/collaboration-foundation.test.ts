@@ -76,6 +76,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/api/collaboration/scopes/:scopeId/terminal/actions"],
   ["PATCH", "/api/collaboration/scopes/:scopeId/terminal"],
   ["GET", "/api/collaboration/scopes/:scopeId/project"],
+  ["GET", "/api/collaboration/scopes/:scopeId/project/overview"],
   ["GET", "/api/collaboration/scopes/:scopeId/project/inventory"],
   // S10 project readiness and Git brokerage register inside the project block.
   ["GET", "/api/collaboration/scopes/:scopeId/project/readiness"],

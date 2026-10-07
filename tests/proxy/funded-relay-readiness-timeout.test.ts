@@ -59,6 +59,28 @@ describe("funded generation readiness timeout budgets", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a minimal GLM readiness generation within budget instead of using provider max reasoning", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+      const request = JSON.parse(String(init!.body)) as { reasoning_effort?: string };
+      const signal = init!.signal!;
+      return await new Promise<Response>((resolve, reject) => {
+        // The real low-effort diagnostic completed within the probe budget;
+        // provider-default max reasoning can stall even a one-token ping.
+        const timer = request.reasoning_effort === "low"
+          ? setTimeout(() => resolve(reply(FUNDED_GLM_FLASH)), 6_290) : undefined;
+        signal.addEventListener("abort", () => {
+          if (timer !== undefined) clearTimeout(timer);
+          reject(signal.reason);
+        }, { once: true });
+      });
+    });
+    const pending = probeFundedModel(config(), FUNDED_GLM_FLASH, fetchFn);
+    await vi.advanceTimersByTimeAsync(8_000);
+    await expect(pending).resolves.toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it("aborts a stalled upstream at eight seconds and returns unavailable", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let signal!: AbortSignal;

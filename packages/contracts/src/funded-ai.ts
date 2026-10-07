@@ -247,6 +247,33 @@ export const FundedAiRuntimeFundingSummaryResponseSchema = z.object({
   }
 });
 
+/** General Chat funding only; speech-only allowances never establish Chat credit. */
+export const FundedAiChatAvailabilitySchema = z.object({
+  contractVersion: z.literal(1),
+  asOf: IsoTimestampSchema,
+  eligibleBalanceMicrousd: MicrousdSchema,
+  availableBalanceMicrousd: MicrousdSchema,
+}).strict().superRefine((value, ctx) => {
+  if (value.availableBalanceMicrousd > value.eligibleBalanceMicrousd) {
+    ctx.addIssue({ code: "custom", path: ["availableBalanceMicrousd"], message: "Available Chat credit cannot exceed eligible credit" });
+  }
+});
+
+/** Negotiated separately: the legacy v1 response remains strict and unchanged. */
+export const FundedAiRuntimeChatFundingSummaryResponseSchema = FundedAiRuntimeFundingSummaryResponseSchema.safeExtend({
+  chatAvailability: FundedAiChatAvailabilitySchema,
+}).superRefine((value, ctx) => {
+  if (value.chatAvailability.asOf !== value.funding.asOf) {
+    ctx.addIssue({ code: "custom", path: ["chatAvailability", "asOf"], message: "Chat and funding observations must match" });
+  }
+  if (value.chatAvailability.eligibleBalanceMicrousd > value.funding.creditBalanceMicrousd
+    || value.chatAvailability.availableBalanceMicrousd > value.funding.remainingBalanceMicrousd) {
+    ctx.addIssue({ code: "custom", path: ["chatAvailability"], message: "Chat availability must respect aggregate financial protection" });
+  }
+});
+export const FundedAiRuntimeFundingSummaryRequestSchema = z.object({ includeChatAvailability: z.literal(true).optional() }).strict();
+export type FundedAiChatAvailability = z.infer<typeof FundedAiChatAvailabilitySchema>;
+
 /** Separate from the v1 funding summary so older strict clients keep working. */
 export const FundedAiRouteReadinessRequestSchema = z.object({ modelId: z.literal(JEV_MODEL_ID).optional() }).strict();
 export const FundedAiRouteReadinessReceiptSchema = z.object({

@@ -226,6 +226,11 @@ export function getPaneSessionId(node: PaneNode, paneId: string): string | null 
   return getPaneSessionId(node.children[0], paneId) ?? getPaneSessionId(node.children[1], paneId);
 }
 
+/** The focused pane's session, falling back to the first pane after tab/layout changes. */
+export function getFocusedSessionId(node: PaneNode, focusedPaneId: string | null): string | null {
+  return getPaneSessionId(node, focusedPaneId && hasPaneId(node, focusedPaneId) ? focusedPaneId : getFirstPaneId(node));
+}
+
 export function getPaneCwd(node: PaneNode, paneId: string): string | null {
   if (node.type === "pane") {
     return node.id === paneId ? node.cwd : null;

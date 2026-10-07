@@ -11,7 +11,7 @@ const input = chatAgentInputClass;
 const muted = chatAgentMutedStyle;
 export type AgentDraft = { name: string; description: string; instructions: string; selection: CanonicalChatModelSelection | null; requestId: string; recipe?: ChatAgentRecipe | null };
 
-function AgentModelField({ id, selected, pending, models, change, onSetup, hermesOnly }: {
+export function AgentModelField({ id, selected, pending, models, change, onSetup, hermesOnly }: {
   id: string; selected: CanonicalChatModelSelection | null; pending: boolean;
   models: ReturnType<typeof deriveCanonicalProviderChoices>;
   change(value: Partial<AgentDraft>): void; onSetup?: () => void;
@@ -57,7 +57,7 @@ export function AgentEditor({ draft, editing, pending, models, catalog, catalogL
   const ids = useId();
   const recipeBot = editing !== "new" && Boolean(editing.recipeRef);
   const hermesOnly = draft.recipe?.skills.includes("matrix-jev-email-triage") === true;
-  const managedAgent = recipeBot || !hermesOnly;
+  const managedAgent = recipeBot || (editing === "new" && !hermesOnly);
   const eligibleModels = managedAgent ? matrixBotSelectableModelChoices(models, catalog) : models;
   const selectionChanged = editing === "new" || JSON.stringify(draft.selection) !== JSON.stringify(editing.selection);
   const modelAvailable = eligibleModels.some((choice) => choice.instanceId === draft.selection?.instanceId && choice.modelId === draft.selection?.model);

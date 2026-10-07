@@ -42,7 +42,10 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
       "cf-aig-collect-log-payload": "false",
       "content-type": "application/json",
     };
-    body = JSON.stringify({ model: FUNDED_GLM_FLASH, messages: [{ role: "user", content: "ping" }], max_tokens: 1, store: false });
+    // Match ordinary managed turns: omission selects provider max reasoning,
+    // which can exceed the health budget even for a one-token generation.
+    body = JSON.stringify({ model: FUNDED_GLM_FLASH, messages: [{ role: "user", content: "ping" }],
+      max_tokens: 1, store: false, reasoning_effort: "low" });
   } else if (modelId === FUNDED_SONNET) {
     url = `${config.gatewayBaseUrl}/v1/messages`;
     headers = {

@@ -10,11 +10,17 @@ export interface ChatPickerEntry {
   capabilityClass: CanonicalProviderCatalog["drivers"][number]["capabilityClass"];
 }
 
+/** Empty unavailable Bot-plan descriptors have no model or setup capability to inspect. */
+function isEmptyBotPlaceholder(instance: CanonicalProviderInstanceDescriptor): boolean {
+  return instance.driverKind === "matrix_bot" && instance.availability === "unavailable"
+    && instance.models.length === 0 && instance.setupActions.length === 0;
+}
+
 /** Presentation groups retain real server instance IDs; Matrix AI is an access source. */
 export function deriveChatPickerEntries(catalog: CanonicalProviderCatalog): ChatPickerEntry[] {
   const managed = catalog.instances.filter(instance => instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default");
   return [{ id: "matrix-ai", label: "Matrix AI", iconKind: "kernel", instances: managed, capabilityClass: "system_agent" },
-    ...catalog.drivers.flatMap(driver => catalog.instances.filter(instance => instance.driverKind === driver.kind && !isLegacyMatrixSdkProvider(instance)
+    ...catalog.drivers.flatMap(driver => catalog.instances.filter(instance => instance.driverKind === driver.kind && !isLegacyMatrixSdkProvider(instance) && !isEmptyBotPlaceholder(instance)
       && !managed.some(candidate => candidate.id === instance.id))
       .map(instance => ({ id: instance.id, label: instance.displayName, iconKind: instance.driverKind,
         instances: [instance], capabilityClass: driver.capabilityClass })))];

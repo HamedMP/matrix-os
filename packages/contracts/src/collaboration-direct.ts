@@ -397,6 +397,7 @@ function home(method: CollaborationDirectRoute["method"], path: string, extra: P
 export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = Object.freeze([
   platform("GET", "/api/organizations", "U"),
   platform("GET", "/api/organizations/:orgId/members", "U+O"),
+  platform("GET", "/api/organizations/:orgId/invitations", "U+O"),
   platform("GET", `${HOME}/shared`, "U+O", { response: "CollaborationResourceDirectoryEntrySchema[]" }),
   platform("GET", `${HOME}/inbox`, "U+O", { response: "CollaborationResourceDirectoryEntrySchema[]" }),
   platform("POST", `${HOME}/connections`, "U+O", { request: "CollaborationConnectionRequestSchema", response: "CollaborationSignedConnectionTicketSchema" }),

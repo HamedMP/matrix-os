@@ -10,6 +10,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { isFundedProxyApiKey } from "./auth.js";
 import { AdmissionController, type AdmissionLease } from "./funded-relay-admission.js";
+import { refundFundedCapacityAttempt } from "./funded-relay-capacity.js";
 import { COUNT_TOKENS_BODY_LIMIT_BYTES, type FundedRelayConfig } from "./funded-relay-config.js";
 import {
   cloudflareJevTarget,
@@ -167,7 +168,9 @@ function controlPlaneError(c: Context, error: unknown): Response {
   if (error instanceof FundedControlPlaneError) {
     if (error.status === 401) return errorResponse(c, 401, "authentication_error", "Unauthorized");
     if (error.status === 402 || error.status === 403) {
-      return errorResponse(c, 403, "permission_error", "Matrix-funded AI is unavailable");
+      const response = errorResponse(c, 403, "permission_error", "Matrix-funded AI is unavailable");
+      if (error.fundingReason) response.headers.set("x-matrix-funded-error", error.fundingReason);
+      return response;
     }
     if (error.status === 429) {
       const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
@@ -276,15 +279,18 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   async function releaseBeforeStart(
     reservationId: string,
     tokenId: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
-      await platform.release(
+      const released = await platform.release(
         { reservationId, tokenId, reason: "pre_upstream_failure" },
         AbortSignal.timeout(config.platformTimeoutMs),
       );
+      return released.reservationId === reservationId && released.tokenId === tokenId
+        && released.status === "released" && released.reason === "pre_upstream_failure";
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI pre-start release failed", { errorName });
+      return false;
     }
   }
 
@@ -362,7 +368,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       return controlPlaneError(c, error);
     }
     const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
-    if (!admission.admitRuntime(runtimeRef)) {
+    const runtimeAttempt = admission.beginRuntimeAttempt(runtimeRef);
+    if (!runtimeAttempt) {
       return rateLimited(c);
     }
     const requestId = requestIdFactory();
@@ -439,6 +446,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
+      refundFundedCapacityAttempt(runtimeAttempt, error);
       return controlPlaneError(c, error);
     }
     const reservation = authorization.reservation;
@@ -458,7 +466,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const acquiredLease = admission.acquireResources(runtimeRef);
     if (!acquiredLease) {
-      await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+      if (!await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId)) {
+        return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+      }
+      runtimeAttempt.refund();
       return capacityLimited(c);
     }
     let resourceReleased = false;
@@ -504,6 +515,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       redirect: "error",
       signal: generationSignal,
     };
+    let dispatched = false;
     try {
       const started = await platform.start(
         { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
@@ -513,6 +525,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         || started.requestId !== requestId || started.tokenId !== authorization.identity.tokenId) {
         throw new Error("Funded AI start response did not match its reservation");
       }
+      dispatched = true;
       const fetched = await fetchImpl(generationUrl, generationInit);
       const upstream = isOpenAi && fetched.ok
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
@@ -561,10 +574,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       return new Response(responseBody, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
     } catch (error) {
       clearTimeout(firstResponseTimer);
-      if (error instanceof FundedControlPlaneError) {
-        await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+      if (!dispatched && error instanceof FundedControlPlaneError) {
+        const released = await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
         resourceLease.release();
         state.resourceLease = null;
+        if (!released) return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+        refundFundedCapacityAttempt(runtimeAttempt, error);
         return controlPlaneError(c, error);
       }
       enqueueFinalization({ mode: "conservative" });

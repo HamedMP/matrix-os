@@ -9,8 +9,12 @@ import { ProviderSettingsStoreError } from './provider-settings-errors.js';
 
 /** Saver proves rejection preceded any native writer or profile mutation. */
 export class NativeProviderWriteNotStartedError extends ProviderWorkflowError { constructor() { super('unavailable'); } }
+/** Native writer drained and exact previous profile bytes/absence were restored. */
+export class NativeProviderWriteRestoredError extends ProviderWorkflowError { constructor() { super('unavailable'); } }
 export type NativeProviderProfile = 'codex' | 'claude';
-type Admission = { kind: 'write'; durable?: boolean } | { kind: 'login'; recoveryKey: string; matchesLegacyReceipt?: (key: string, payloadHash: string) => boolean };
+type Admission = { kind: 'write'; durable?: boolean } | { kind: 'login'; recoveryKey: string; matchesLegacyReceipt?: (key: string, payloadHash: string) => boolean;
+  /** Trusted coordinator proof: no create requested, or its exact writer drained. */
+  confirmDrained?: () => Promise<boolean> };
 export interface NativeProviderProfileGuard {
   acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void | Promise<void>>;
   run<T>(profile: NativeProviderProfile, admission: Admission, operation: () => Promise<T>): Promise<T>;
@@ -31,8 +35,8 @@ export function createNativeProviderProfileGuard(options: {
   if (!options.homePath || !options.registry?.get || !options.registry.observeAgentLiveness) throw new Error('Native profile admission dependencies required');
   const leases = createNativeProviderWriterLease(options.homePath);
   const slots = { codex: { queued: 0 }, claude: { queued: 0 } };
-  async function assertAvailable(profile: NativeProviderProfile, admission: Admission) {
-    await leases.assertAvailable(profile);
+  async function assertAvailable(profile: NativeProviderProfile, admission: Admission, checkLease = true) {
+    if (checkLease) await leases.assertAvailable(profile);
     const documents = await Promise.all(['login-receipts.json', 'login-recovery.json'].map(async name => {
       const document = await readBoundedJsonFileWithIdentity(join(options.homePath, 'system/ai-providers', name), 1024 * 1024);
       return document ? ReceiptDocument.parse(document.value).receipts : [];
@@ -77,8 +81,20 @@ export function createNativeProviderProfileGuard(options: {
     if (!slot || slot.queued > 0) throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
     slot.queued = 1;
     let releaseLease: (() => Promise<void>) | undefined;
-    try { await assertAvailable(profile, admission); if (admission.kind === "write" && admission.durable) releaseLease = await leases.acquire(profile); }
-    catch (error) { slot.queued = 0; throw error; }
+    try {
+      await assertAvailable(profile, admission);
+      if (admission.kind === "login" || admission.durable) {
+        releaseLease = await leases.acquire(profile);
+        // A prior admission can finish between the idle preflight and this
+        // exclusive create. Recheck live receipts/registry under our own lease.
+        await assertAvailable(profile, admission, false);
+      }
+    } catch (error) {
+      // The caller has not received admission, so no writer started here.
+      try { await releaseLease?.(); }
+      finally { slot.queued = 0; }
+      throw error;
+    }
     let released = false;
     return () => {
       if (released) return;
@@ -92,9 +108,14 @@ export function createNativeProviderProfileGuard(options: {
       const release = await acquire(profile, admission.kind === "write" ? { ...admission, durable: true } : admission);
       try { const result = await operation(); await release(); return result; }
       catch (error) {
-        // Direct writer failure is not evidence of drain. Preserve its durable
-        // admission; terminal-backed login still uses registry liveness.
-        if (admission.kind !== 'write' || error instanceof NativeProviderWriteNotStartedError) await release();
+        // A failed launch RPC may precede registry visibility. Keep the private
+        // handoff fence unless no writer started or exact rollback proved drain.
+        let drained = error instanceof NativeProviderWriteNotStartedError || error instanceof NativeProviderWriteRestoredError;
+        if (admission.kind === "login" && admission.confirmDrained) {
+          try { drained = await admission.confirmDrained(); }
+          catch (proofError) { console.warn('[provider-settings] Login drain proof unavailable:', proofError instanceof Error ? proofError.name : 'UnknownError'); }
+        }
+        if (drained) await release();
         throw error;
       }
     },

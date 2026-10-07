@@ -12,7 +12,6 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { openHelpInMatrixBrowser } from "../browser/help-navigation";
-import { DesktopOrganizationMenuItems } from "./DesktopOrganizationMenuItems";
 
 const MENU_ROW_CLASS = "flex h-9 cursor-default items-center gap-2 px-2 text-left text-[13px] outline-none data-[highlighted]:bg-[var(--bg-hover)]";
 
@@ -174,7 +173,6 @@ export default function AccountMenu({
               </span>
             </DropdownMenu.Label>
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
-            <DesktopOrganizationMenuItems itemClass={MENU_ROW_CLASS} />
             <MenuRow icon={<Settings size={14} />} label="Settings" trailing onSelect={() => openSettings("account")} />
             <MenuRow
               icon={<CircleHelp size={14} />}

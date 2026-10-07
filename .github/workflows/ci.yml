@@ -270,7 +270,8 @@ jobs:
     name: React Doctor
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    # Include observed 5m15s checkout, audit and cleanup/transfer variance.
+    timeout-minutes: 10
     # Non-blocking during rollout (matches typecheck baseline). Remove once the
     # React audit baseline is clean, then it gates merges. https://github.com/millionco/react-doctor
     continue-on-error: true
@@ -493,7 +494,13 @@ jobs:
         run: |
           set -euo pipefail
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          bun run test -- tests/platform/ai-funded-usage-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+          bun run test -- tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts --maxWorkers=1 --no-file-parallelism
+
+      - name: Account deletion PostgreSQL races
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          bun run test -- tests/platform/account-deletion-*-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
   docs-contract:
     name: Docs Contract Tests

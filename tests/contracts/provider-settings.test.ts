@@ -19,6 +19,29 @@ import {
 const now = "2026-08-30T10:00:00.000Z";
 const later = "2026-09-30T10:00:00.000Z";
 
+describe("source-aware Chat credit", () => {
+  function usage() {
+    const value = makeSnapshot().accessSources[0]!.usage;
+    if (value.kind !== "managed_credit") throw new Error("Managed fixture required");
+    return { ...value, chatAvailability: { contractVersion: 1, asOf: now,
+      eligibleBalanceMicrousd: 500_000, availableBalanceMicrousd: 250_000 } };
+  }
+  it("adds an independent projection without changing legacy arithmetic", () => {
+    expect(ProviderUsageSchema.parse(usage())).toMatchObject({ remainingMicrousd: 750_000,
+      chatAvailability: { availableBalanceMicrousd: 250_000 } });
+    expect(ProviderUsageSchema.safeParse(makeSnapshot().accessSources[0]!.usage).success).toBe(true);
+  });
+  it.each([
+    { asOf: later }, { eligibleBalanceMicrousd: 1_000_001 },
+    { availableBalanceMicrousd: 750_001, eligibleBalanceMicrousd: 800_000 },
+    { availableBalanceMicrousd: 500_001 }, { availableBalanceMicrousd: -1 },
+    { availableBalanceMicrousd: 0.5 }, { contractVersion: 2 },
+  ])("rejects inconsistent Chat funding: %j", patch => {
+    const value = usage(); Object.assign(value.chatAvailability, patch);
+    expect(ProviderUsageSchema.safeParse(value).success).toBe(false);
+  });
+});
+
 function readiness(state: "ready" | "stale" = "ready") {
   return {
     state,

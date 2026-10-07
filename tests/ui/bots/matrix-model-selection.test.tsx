@@ -138,7 +138,7 @@ it("offers an exact managed recipe model through the legacy catalog client witho
   render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()} onOpenBotChat={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: "Use Writing Bot" }));
   const option = await screen.findByRole("option", { name: "Claude Sonnet 5 · Matrix AI" });
-  expect(request).toHaveBeenCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true", "GET");
+  expect(request).toHaveBeenCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", "GET");
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: (option as HTMLOptionElement).value } });
   fireEvent.click(await screen.findByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(instantiate).toHaveBeenCalledWith(expect.objectContaining({
@@ -206,8 +206,8 @@ it("keeps a legacy custom Agent route visible and switches explicitly to Matrix 
   fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
   const picker = screen.getByRole("combobox", { name: "Model" });
   expect((picker as HTMLSelectElement).value).toBe(JSON.stringify([saved.selection.instanceId, saved.selection.model]));
-  expect(screen.getByRole("option", { name: /Saved route/ }).textContent).toContain("Hermes");
-  expect(screen.queryByRole("option", { name: /Codex/ })).toBeNull();
+  expect(screen.getByRole("option", { name: /Hermes/ }).textContent).toContain("Hermes");
+  expect(screen.getByRole("option", { name: /Codex/ })).toBeTruthy();
   expect(screen.queryByRole("option", { name: /Automatic/ })).toBeNull();
   fireEvent.change(picker, { target: { value: JSON.stringify(["matrix_pi_default", "sonnet"]) } });
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));

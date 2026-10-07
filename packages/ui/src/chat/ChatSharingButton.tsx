@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
-
-
 import { ChatShareDialog } from "./ChatShareDialog.js";
+import type { CollaborationApi } from "../collaboration/ChatCollaboratorsDialog.js";
+import { LegacyLiveAccessButton } from "../collaboration/LegacyLiveAccessButton.js";
 
 const PreviewSchema = z.object({
   title: z.string().max(240), revision: z.number().int().nonnegative(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
@@ -13,15 +13,21 @@ const CreatedSchema = z.object({ id: z.uuid(), token: z.string().regex(/^[a-f0-9
 
 /**
  * Publishes a frozen, read-only snapshot of one Chat. Live collaboration is offered
- * only through projects, so a single Chat never starts a live share from here.
+ * only through projects; an existing standalone share receives a management-only
+ * transition control and can never be created from this surface.
  */
-export function ChatSharingButton({ api, chatId, copyText, handle, runtimeSlot, platformHost }: {
+export function ChatSharingButton({ api, chatId, copyText, handle, runtimeSlot, platformHost, legacyCollaboration }: {
   api: { baseUrl: string; get(path: string): Promise<unknown>; post(path: string, body: unknown): Promise<unknown>; delete(path: string): Promise<unknown> };
   handle: string | null;
   runtimeSlot: string;
   platformHost: string;
   chatId: string;
   copyText: (value: string) => Promise<void>;
+  legacyCollaboration?: {
+    api: CollaborationApi;
+    runtimeId: string | null;
+    organizationId: string | null;
+  };
 }) {
   const [preview, setPreview] = useState<z.infer<typeof PreviewSchema> | null>(null);
   const [existing, setExisting] = useState<z.infer<typeof SharesSchema>["shares"]>([]);
@@ -48,6 +54,9 @@ export function ChatSharingButton({ api, chatId, copyText, handle, runtimeSlot, 
     {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">Sharing unavailable. Try again.</span> : null}
     <button type="button" disabled={pending} aria-expanded={preview !== null} onClick={() => preview ? close() : void openSnapshot()}
       className="rounded-lg px-3 py-1.5 hover:bg-[var(--bg-hover)] disabled:opacity-50">{pending ? "Loading share…" : "Share"}</button>
+    {legacyCollaboration ? <LegacyLiveAccessButton api={legacyCollaboration.api}
+      runtimeId={legacyCollaboration.runtimeId} organizationId={legacyCollaboration.organizationId}
+      kind="chat" resourceId={chatId} resourceLabel="Chat" /> : null}
     {preview ? <ChatShareDialog confirmationKey={`${preview.fingerprint}:${preview.revision}`} notice={notice} title={preview.title} messages={preview.messages} existing={existing} copyText={copyText}
       onClose={close} revoke={async (id) => { await api.delete(`${path}/${encodeURIComponent(id)}`); }}
       createLink={async () => {

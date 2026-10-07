@@ -92,16 +92,29 @@ Under the existing owner advisory transaction lock, the transition stores one
 immutable `execution_admission_release` audit record. It leaves financial status
 `in_flight`, actual cost null, every balance/monthly reserve/source allocation,
 and debit ledger unchanged. Exact replay returns the recorded result; conflicting
-replay rejects. At most ONE audited still-unknown obligation per owner is allowed,
-enforced by both transaction checks and a partial unique PostgreSQL index.
-Other live executions prevent recovery. Ordinary authorization/start cannot replay
-an audited request into another inference dispatch.
+replay rejects. At most TWO audited still-unknown obligations per owner are allowed.
+Their combined saved provider `maxCostMicrousd` ceilings, including the candidate,
+must not exceed 500,000 microusd; reserved balances are not liability ceilings.
+The owner-locked transition validates previous unresolved audit/authorization
+records and fails closed on corrupt, mismatched, excessive or missing evidence.
+A non-null `execution_recovery_slot` constrained to 0 or 1 defaults to 0. The
+partial unique `idx_ai_funded_unknown_admission_owner` index covers owner and slot
+for audited actual-null rows, retaining durable count enforcement. Exact settlement
+makes that slot reusable while preserving the old immutable audit. The sum bound
+is enforced under the owner advisory lock; it does not bound later live inference
+or establish actual testing spend. Other live executions prevent recovery.
+Ordinary authorization/start cannot replay an audited request into another dispatch.
 
 The durable `idx_ai_funded_usage_active_owner` index retains its name and excludes
 only audited execution releases. A transactional replacement preserves uniqueness
-through migration; older instances retain conservative admission checks and skip
+through migration after validating existing unresolved audits; malformed or
+inconsistent persisted proof aborts the whole upgrade. The composed core schema
+uses generation 13, advancing beyond generation 11 and the independently allocated
+generation 12 credit-history and bounded-recovery branches. Preserve both history
+indexes and existing recovery slots/audits during the additive upgrade. Older recovery-aware
+instances retain conservative admission checks and skip
 newer schema generations. Old code may block new execution beside an audited
-unknown obligation, so a runtime rollback can reduce availability. Older binaries
+unknown obligation, so a runtime rollback can reduce availability. Older pre-recovery binaries
 do not implement the audit-aware authorization/start replay fences: schema
 compatibility alone does not prove dispatch safety on rollback. Keep a recovered
 owner's funded control-plane routing on recovery-aware binaries until exact
@@ -112,7 +125,25 @@ settlement remains once-only and cannot remove a newer execution slot.
 
 Required evidence: rejected ordinary/Relay/runtime auth and oversized/malformed
 bodies; exact identity, expiry/lifetime, non-usage and terminal-evidence refusal;
-unchanged financial/source state; replay fencing; one-unknown cap; actual independent
+unchanged financial/source state; replay fencing; two-unknown count and aggregate ceiling; actual independent
 PostgreSQL pools with one live execution; and late settlement preserving the newer
 slot. No automatic timeout unlock, fake exact charge, grant, or paid upstream call
 belongs to this support API.
+
+## Capacity retry accounting
+
+An allowlisted funded priority refusal before any generation dispatch is a capacity
+wait, not another completed generation. The relay may return the per-runtime
+attempt count exactly once for that refusal. The refund belongs to the original
+entry/window and cannot decrement a later window after rollover or eviction.
+Ordinary rate refusals, invalid reasons, authentication failures and upstream
+refusals are not refundable. A dispatched or uncertain generation cannot become a
+safe retry by refunding quota. Global ingress rate and connection bounds remain
+charged independently, as do genuine generation limits. Request cancellation and
+shutdown still release resource leases without touching unknown financial usage.
+If authorization already reserved funds, a pre-start or local resource-capacity
+refusal is safe to retry only after a matching successful release receipt. Failed
+or mismatched release returns temporary unavailability and preserves the attempt
+charge; it cannot advertise the capacity retry header. The dispatch fence is set
+before calling the upstream transport, so later provider/control-plane failures
+cannot be misclassified as refundable admission waits.

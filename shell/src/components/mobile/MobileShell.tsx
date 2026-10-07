@@ -490,7 +490,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 background: "var(--background)",
               }}
             >
-              <MobileAppFrame openApp={o} chat={chat} />
+              <MobileAppFrame openApp={o} chat={chat} visible={visible} />
             </motion.div>
           );
         })}
@@ -597,8 +597,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
 function MobileAppFrame({
   openApp,
   chat,
+  visible,
 }: {
   openApp: OpenApp;
+  visible: boolean;
   chat: ReturnType<typeof useChatContext>;
 }) {
   const { app, id: openId } = openApp;
@@ -630,8 +632,11 @@ function MobileAppFrame({
     }
     return (
       <ChatApp
+        active={visible}
+        visible={visible}
         collaborationView={chat.collaborationView}
         onOpenSharedChat={chat.openSharedChat}
+        onOpenSharedProject={chat.openSharedProject}
         onOpenSharedHome={chat.openSharedHome}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}

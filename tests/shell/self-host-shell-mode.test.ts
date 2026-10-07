@@ -20,9 +20,10 @@ describe("self-host shell mode", () => {
     expect(layout).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
     expect(layout).toContain('data-matrix-self-hosted={selfHostedMode ? "1" : undefined}');
     expect(layout).toContain("if (selfHostedMode) {");
-    expect(layout).toContain("return renderDocument(false);");
+    expect(layout).toContain("return renderDocument(false, (");
+    expect(layout).toContain('<OrganizationStateProvider value={{ status: "none", organizationId: null }}>');
     expect(layout).toContain("<ClerkProvider>");
-    expect(layout).toContain("{renderDocument(true)}");
+    expect(layout).toContain("{renderDocument(true, content)}");
     expect(shellHome).toContain("if (isSelfHostedRuntime()) {");
     expect(shellHome).toContain("userId={SELF_HOSTED_SHELL_USER_ID}");
     expect(shellHome).toContain("function ClerkShellHome(");

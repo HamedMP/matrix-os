@@ -81,6 +81,11 @@ import {
   createProjectInventoryService,
   type ProjectInventoryResourceSource,
 } from "./project-inventory.js";
+import { publishMissingProjectChatRoutes } from "./project-chat-routes.js";
+import {
+  createProjectChatAssignmentCoordinator,
+  type ProjectChatAssignmentCoordinator,
+} from "./project-chat-assignment.js";
 import { createProjectSharingService, type ProjectSharingService } from "./project-sharing.js";
 import { createProjectTransitionCoordinator } from "./project-transition-coordinator.js";
 import { bootstrapOrganizationDriveDatabase, type OrganizationDriveDatabase } from "../organization-drive/database.js";
@@ -299,10 +304,16 @@ export async function createGatewayCollaboration(options: {
     void cleanupExpiredArtifacts(options.db, new Date()).catch((error: unknown) => {
       console.warn("[collaboration] artifact cleanup failed", error instanceof Error ? error.name : "UnknownError");
     });
+    // Lapsed grants are withdrawn from discovery here; access already ends at the expiry time.
+    void capabilities.expireGrants().catch((error: unknown) => {
+      console.warn("[collaboration] grant expiry sweep failed", error instanceof Error ? error.name : "UnknownError");
+    });
   }, ARTIFACT_CLEANUP_INTERVAL_MS);
   cleanupTimer?.unref?.();
   let registered = false;
   let closing = false;
+  /** The startup Chat-route backfill; shutdown waits for its in-flight batch. */
+  let projectChatBackfill: Promise<void> | undefined;
   let chatExecutionAdapter: CollaborationChatExecutionAdapter | undefined;
   let sharedAiRuntime: Awaited<ReturnType<typeof createSharedAiRuntime>> | undefined;
   let sharedAiOrchestrator: CanonicalChatOrchestrator | undefined;
@@ -312,6 +323,7 @@ export async function createGatewayCollaboration(options: {
   let terminalDispatcher: CollaborationTerminalDispatcher | undefined;
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
   let projectSharing: ProjectSharingService | undefined;
+  let projectChatAssignments: ProjectChatAssignmentCoordinator | undefined;
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
   let projectGit: ReturnType<typeof createProjectGitBroker> | undefined;
   let projectReadiness: ReturnType<typeof createProjectAccessReadiness> | undefined;
@@ -337,6 +349,7 @@ export async function createGatewayCollaboration(options: {
     ownerSource,
     get projectGit() { return projectGit; },
     get projectReadiness() { return projectReadiness; },
+    get projectChatAssignments() { return projectChatAssignments; },
     authority,
     organizationPrecondition,
     verifier,
@@ -575,6 +588,8 @@ export async function createGatewayCollaboration(options: {
     async enableSharedProject(input: {
       homePath: string;
       inventorySource: ProjectInventoryResourceSource;
+      /** The owner's own name for a project, shown to members of the shared project. */
+      projectName?(ownerId: string, projectId: string): Promise<string | null>;
     }): Promise<{ available: true }> {
       if (registered || closing || projectSharing) {
         throw new Error("Shared project must be initialized exactly once before route registration");
@@ -596,10 +611,19 @@ export async function createGatewayCollaboration(options: {
         inventory,
       });
       await projectTransitionCoordinator.recover();
+      projectChatAssignments = createProjectChatAssignmentCoordinator({
+        db: options.db,
+        chatRepository: options.chatRepository,
+        shouldContinue: () => !closing,
+        onScopeEnded: (scopeId) => { directSessions.revoke({ scopeId }); },
+      });
+      // Runs beside serving, never before it: a large backlog must not hold the home's start.
+      projectChatBackfill = backfillProjectChats(options.db, projectChatAssignments, () => !closing);
       projectSharing = createProjectSharingService({
         db: options.db,
         inventory,
         transitions: projectTransitions,
+        ...(input.projectName ? { projectName: input.projectName } : {}),
         onPrepared: (transition) => projectTransitionCoordinator!.schedule(transition.id),
         resolveDestination: async ({ scopeId, ownerId, projectId }) => {
           const scope = await options.db.selectFrom("collaboration_scopes")
@@ -764,6 +788,7 @@ export async function createGatewayCollaboration(options: {
       const drainingTransitions = projectTransitionCoordinator;
       projectTransitionCoordinator = undefined;
       projectSharing = undefined;
+      projectChatAssignments = undefined;
       participantResolver?.shutdown();
       verifier.shutdown();
       void ownerRuntimeSessions?.shutdown();
@@ -787,6 +812,8 @@ export async function createGatewayCollaboration(options: {
       // interrupted.
       controlLossWatchdog?.stop();
       controlLossWatchdog = undefined;
+      // The backfill stops at its next batch boundary; let that batch commit before the database goes.
+      await projectChatBackfill;
       await controlClient?.shutdown();
       await directSessions.shutdown();
       // Owner runtime sessions drain with the other session registries, before any resource
@@ -809,6 +836,7 @@ export async function createGatewayCollaboration(options: {
       await projectTransitionCoordinator?.shutdown();
       projectTransitionCoordinator = undefined;
       projectSharing = undefined;
+      projectChatAssignments = undefined;
       await outbox.shutdown();
       participantResolver?.shutdown();
       verifier.shutdown();
@@ -857,3 +885,21 @@ function createDefaultMembershipSource(config: GatewayCollaborationConfig): Orga
 }
 
 export type GatewayCollaborationRuntime = Awaited<ReturnType<typeof createGatewayCollaboration>>;
+
+/**
+ * Projects shared before their Chats had routes are published at start, so members can open
+ * those Chats without the owner sharing again. A failure is logged and retried at the next start;
+ * it never blocks the home from serving.
+ */
+async function backfillProjectChats(
+  db: Parameters<typeof publishMissingProjectChatRoutes>[0],
+  assignments: ProjectChatAssignmentCoordinator,
+  shouldContinue: () => boolean,
+): Promise<void> {
+  try {
+    await assignments.backfill();
+    await publishMissingProjectChatRoutes(db, { shouldContinue });
+  } catch (error: unknown) {
+    console.warn("[collaboration-project] Chat assignment backfill failed", error instanceof Error ? error.name : "UnknownError");
+  }
+}

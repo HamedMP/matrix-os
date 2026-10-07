@@ -42,12 +42,14 @@ describe("AppViewer bridged runtime loading", () => {
     });
   });
 
-  describe("standalone app sharing", () => {
+  describe("legacy standalone app access", () => {
     // AppViewer is not render-testable here, so the invariant is asserted on the source:
-    // projects are the only live-shareable resource, so an app window mounts no share control.
-    it("offers no standalone app share", async () => {
+    // projects are the only newly live-shareable resource; the app window can only
+    // mount the discovery-only manager for a share that already exists.
+    it("offers legacy management without a standalone share creator", async () => {
       const source = await readFile("shell/src/components/AppViewer.tsx", "utf8");
-      expect(source).not.toMatch(/Sharing\b|SharingButton|ResourceSharing/);
+      expect(source).toContain("FileResourceSharing");
+      expect(source).not.toMatch(/ResourceSharingButton|TerminalSharingButton|scopes\`,?\s*\{/);
     });
   });
 

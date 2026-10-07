@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import type { CanonicalChatRecord, CollaborationProjectOverview } from "@matrix-os/contracts";
 import { AgentAvatar, ChatSidebarAddAction, type BotConversationSummary } from "@matrix-os/ui";
 import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
+import { SharedWorkRailProjectList } from "./SharedWorkRailProjects";
 import { WorkRailSection } from "./WorkRailSection";
 
 export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
-export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives }: {
+export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives, sharedProjects, revealSharedProjectRequest }: {
   model: WorkRailModel;
   activeChatId?: string;
   sections: Record<WorkRailSectionKey, boolean>;
@@ -16,6 +17,8 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
   bots: BotConversationSummary[];
   onOpenBotChat?: (chatId: string) => void;
   organizationDrives: ReactNode;
+  sharedProjects: readonly CollaborationProjectOverview[];
+  revealSharedProjectRequest?: { scopeId: string; requestId: number };
 }) {
   return <>
 
@@ -31,12 +34,13 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
 
         <WorkRailSection
           label="Projects"
-          count={model.projects.length}
+          count={model.projects.length + sharedProjects.length}
           expanded={sections.projects}
           onToggle={() => onToggle("projects")}
 
         >
           {model.projects.map(renderProject)}
+          <SharedWorkRailProjectList projects={sharedProjects} revealRequest={revealSharedProjectRequest} />
           <ChatSidebarAddAction label="New project" ariaLabel="Create project" onClick={onCreateProject} />
           {organizationDrives}
         </WorkRailSection>

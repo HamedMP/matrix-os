@@ -57,6 +57,8 @@ export interface BotInferenceDependencies {
   fetchImpl?: typeof fetch;
   /** Canonical owner/run/workspace authority is rechecked after funded queue waits. */
   revalidateBinding?: (binding: PiRuntimeBinding) => Promise<boolean>;
+  /** Gateway-only diagnostic bound to the registry's exact run; not a worker claim. */
+  onFundedFailure?: (binding: PiRuntimeBinding, reason: "insufficient_credit" | "budget_exceeded" | undefined) => void;
 }
 
 /** Funding belongs to this gateway broker, never the isolated Pi worker or SDK. */
@@ -193,11 +195,16 @@ export async function forwardBotInference(
       : await send();
     if (response === "denied") return failure(request.requestId, "action_denied");
     if (!response.ok) {
+      const reason = response.headers.get("x-matrix-funded-error");
+      if (accessSourceId === "matrix_included" && stillAuthorized()) {
+        deps.onFundedFailure?.(binding, response.status === 403
+          && (reason === "insufficient_credit" || reason === "budget_exceeded") ? reason : undefined);
+      }
       await discard(response);
       return failure(request.requestId, "provider_unavailable");
     }
     const body = await readBoundedBody(response);
-    return ScopeRuntimeBrokerResponseSchema.parse({
+    const result = ScopeRuntimeBrokerResponseSchema.parse({
       version: 1,
       requestId: request.requestId,
       ok: true,
@@ -205,7 +212,10 @@ export async function forwardBotInference(
       headers: safeResponseHeaders(response, "inference"),
       body,
     });
+    if (accessSourceId === "matrix_included") deps.onFundedFailure?.(binding, undefined);
+    return result;
   } catch (error: unknown) {
+    if (accessSourceId === "matrix_included" && stillAuthorized()) deps.onFundedFailure?.(binding, undefined);
     if (error instanceof RangeError && error.message === "response_too_large") return failure(request.requestId, "response_too_large");
     console.warn("[bots] inference forward failed:", error instanceof Error ? error.name : "UnknownError");
     return failure(request.requestId, "provider_unavailable");

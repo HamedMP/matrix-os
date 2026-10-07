@@ -90,7 +90,7 @@ it('verifies ordinary Chats even when initial Agent metadata is unavailable', as
  const {result} = renderHook(() => useBotConversationSummaries(client, ['chat_regular', 'chat_old', 'chat_unknown']));
  await waitFor(() => expect(result.current.loading).toBe(false));
  expect(result.current.unresolvedChatIds).toEqual(['chat_unknown']);
- expect(result.current.conversations).toEqual([{chatId:'chat_old', agentId:'bot_one', name:'Your bot', pendingApprovalCount:1}]);
+ expect(result.current.conversations).toEqual([{chatId:'chat_old', agentId:'bot_one', name:'Your bot', pendingApprovalCount:0}]);
  expect(result.current.error).not.toContain('private');
 });
 
@@ -200,7 +200,7 @@ it('polls fresh attention every 15 seconds while coalescing surfaces and keeping
 });
 
 it('does not lose a focus refresh that arrives during a pending initial attention read', async () => {
- const client = fixture(); vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[]});
+ const client = fixture(); vi.mocked(client.bots!.directChat).mockResolvedValue(null);
  type Interactions = Awaited<ReturnType<NonNullable<ChatAgentClient['bots']>['interactions']>>;
  let finish!: (value:Interactions) => void;
  vi.mocked(client.bots!.interactions).mockImplementationOnce(() => new Promise(resolve => {finish = resolve}))

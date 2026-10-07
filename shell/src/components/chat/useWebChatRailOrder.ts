@@ -30,9 +30,12 @@ export function useWebChatRailOrder(items: readonly RenameableConversation[], cl
     if (!identity.current.mounted || identity.current.client !== client || identity.current.scopeKey !== scopeKey) return;
     setState({...current,mode,ids:current.ids.length ? current.ids : chats.map(item=>item.id).slice(0,1000)});
   };
-  const move = (_kind:"chat"|"project",source:string,target:string)=> {
-    if (!identity.current.mounted || identity.current.client !== client || identity.current.scopeKey !== scopeKey || current.mode !== "manual") return;
-    setState({...current,ids:moveRailItem(chats.map(item=>item.id),source,target)});
+  const move = (kind:"chat"|"project",source:string,target:string)=> {
+    if (!identity.current.mounted || identity.current.client !== client || identity.current.scopeKey !== scopeKey) return;
+    const ids=chats.map(item=>item.id).slice(0,1000);
+    if (kind !== "chat" || source === target || !ids.includes(source) || !ids.includes(target)) return;
+    // The first explicit reorder snapshots the visible automatic order.
+    setState({...current,mode:"manual",ids:moveRailItem(ids,source,target)});
   };
   return {chats,mode:current.mode,setMode,move,scopeKey:current.scopeKey};
 }

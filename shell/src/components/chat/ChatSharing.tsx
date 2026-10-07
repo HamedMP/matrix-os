@@ -5,6 +5,8 @@ import { ChatSharingButton } from "@matrix-os/ui";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
 import { collaborationRuntimeFromSystemInfo } from "@/lib/collaboration";
+import { useShellCollaborationApi } from "@/lib/collaboration-organization";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
 export function ChatSharing({ chatId }: { chatId: string }) {
   const platformHost = useBrowserOrigin();
@@ -13,22 +15,32 @@ export function ChatSharing({ chatId }: { chatId: string }) {
 }
 
 function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platformHost: string }) {
-  // The snapshot link is addressed by the owner's handle and runtime slot.
-  const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string }>({ handle: null, runtimeSlot: "primary" });
+  const { status: organizationStatus, organizationId } = useCollaborationOrganization();
+  const verifiedOrganizationId = organizationStatus === "member" ? organizationId : null;
+  const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string; runtimeId: string | null }>({
+    handle: null, runtimeSlot: "primary", runtimeId: null,
+  });
   const gatewayUrl = getGatewayUrl();
   const api = useMemo(() => createChatSharingApi(gatewayUrl), [gatewayUrl]);
+  const collaborationApi = useShellCollaborationApi(platformHost, organizationStatus !== "none") ?? undefined;
   useEffect(() => {
     let active = true;
     void api.get("/api/system/info").then((value) => {
-      const { handle, runtimeSlot } = collaborationRuntimeFromSystemInfo(value);
-      if (active) setRuntime({ handle, runtimeSlot });
+      const { handle, runtimeSlot, runtimeId } = collaborationRuntimeFromSystemInfo(value);
+      if (active) setRuntime({ handle, runtimeSlot, runtimeId });
     }).catch((failure: unknown) => {
       console.warn("[chat-share] runtime identity unavailable", failure instanceof Error ? failure.name : "UnknownError");
     });
     return () => { active = false; };
   }, [api]);
-  return <ChatSharingButton api={api} chatId={chatId} handle={runtime.handle} runtimeSlot={runtime.runtimeSlot}
-    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)} />;
+  return <ChatSharingButton key={verifiedOrganizationId ?? organizationStatus} api={api}
+    chatId={chatId} handle={runtime.handle} runtimeSlot={runtime.runtimeSlot}
+    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)}
+    legacyCollaboration={collaborationApi ? {
+      api: collaborationApi,
+      runtimeId: runtime.runtimeId,
+      organizationId: verifiedOrganizationId,
+    } : undefined} />;
 }
 
 function createChatSharingApi(baseUrl: string) {

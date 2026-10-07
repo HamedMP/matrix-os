@@ -6,6 +6,7 @@ import { PlatformOrganizationRepository } from "../../packages/platform/src/orga
 import { createOrganizationMembershipProjection } from "../../packages/platform/src/organizations/projection.js";
 import { createCollaborationControlAuthority } from "../../packages/platform/src/collaboration/control-authority.js";
 import { createPlatformOrganizationRoutes } from "../../packages/platform/src/organizations/routes.js";
+import type { OrganizationManagementUpstream } from "../../packages/platform/src/organizations/management.js";
 import { createTestPlatformDb, destroyTestPlatformDb, type TestPlatformDb } from "./platform-db-test-helper.js";
 
 const org = "org_2rout00000000000000000001";
@@ -53,6 +54,7 @@ describe("platform organization routes (T018)", () => {
   let authority: ReturnType<typeof createCollaborationControlAuthority>;
   let actor: string | null;
   let members: string[];
+  let managementUpstream: OrganizationManagementUpstream;
 
   beforeEach(async () => {
     fixture = await createTestPlatformDb();
@@ -63,15 +65,40 @@ describe("platform organization routes (T018)", () => {
     members = [admin, member];
     projection = createOrganizationMembershipProjection({
       repository, now: () => clock,
-      upstream: { listMembers: async () => ({
+      upstream: { listOrganizationsForActor: async (actorId) => members.includes(actorId) ? [org] : [], listMembers: async () => ({
         organization: { organizationId: org, name: "Route org", slug: "route-org", aiSubmission: "members", sourceUpdatedAt: new Date(1_000) },
         members: members.map((actorId) => ({ membershipId: `orgmem_${actorId}`, actorId, role: actorId === admin ? "org:admin" : "org:member", sourceUpdatedAt: new Date(1_000) })),
       }) },
     });
     authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [logicalRuntimeId], projection });
     actor = member;
+    managementUpstream = {
+      listPendingInvitations: vi.fn(async () => [{
+        invitationId: "orginv_pending",
+        emailAddress: "pending@example.com",
+        role: "org:member",
+        createdAt: new Date("2026-09-18T12:00:00.000Z"),
+        expiresAt: new Date("2026-10-18T12:00:00.000Z"),
+      }]),
+      renameOrganization: vi.fn(async () => undefined),
+      updateOrganizationLogo: vi.fn(async () => undefined),
+      createInvitations: vi.fn(async () => undefined),
+      resendInvitation: vi.fn(async () => undefined),
+      revokeInvitation: vi.fn(async () => undefined),
+      updateMemberRole: vi.fn(async () => undefined),
+      removeMember: vi.fn(async () => undefined),
+      deleteOrganization: vi.fn(async () => undefined),
+    };
     app = createPlatformOrganizationRoutes({
       repository, projection, controlAuthority: authority, webhookSigningSecret: signingSecret, now: () => clock,
+      managementDirectory: {
+        resolveMemberProfiles: async (actorIds) => new Map(actorIds.map((actorId) => [actorId, {
+          actorId,
+          displayName: actorId === admin ? "Alex Admin" : "Morgan Member",
+          emailAddress: actorId === admin ? "alex@example.com" : "morgan@example.com",
+        }])),
+      },
+      managementUpstream,
       resolveActor: async () => actor,
       authenticateRuntime: async (input) => {
         if (input.runtimeId === runtimeId && input.bearerToken === runtimeToken) return { runtimeId, ownerId: admin };
@@ -91,9 +118,9 @@ describe("platform organization routes (T018)", () => {
     await projection.reconcile(org);
     const response = await app.request("/api/organizations");
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ organizations: [{ organizationId: org, name: "Route org", slug: "route-org", role: "org:member", aiSubmission: "members", membershipEpoch: expect.any(Number) }] });
+    expect(await response.json()).toEqual({ complete: true, organizations: [{ organizationId: org, name: "Route org", slug: "route-org", role: "org:member", memberCount: 2, aiSubmission: "members", membershipEpoch: expect.any(Number) }] });
     actor = outsider;
-    expect(await (await app.request("/api/organizations")).json()).toEqual({ organizations: [] });
+    expect(await (await app.request("/api/organizations")).json()).toEqual({ complete: true, organizations: [] });
     actor = null;
     expect((await app.request("/api/organizations")).status).toBe(401);
   });
@@ -111,7 +138,7 @@ describe("platform organization routes (T018)", () => {
     try {
       const response = await app.request("/api/organizations");
       const current = await repository.getOrganization(org);
-      expect(await response.json()).toEqual({ organizations: [{ organizationId: org, name: "Updated org", slug: "updated-org", role: "org:admin", aiSubmission: "owner_only", membershipEpoch: current!.membershipEpoch }] });
+      expect(await response.json()).toEqual({ complete: true, organizations: [{ organizationId: org, name: "Updated org", slug: "updated-org", role: "org:admin", memberCount: 1, aiSubmission: "owner_only", membershipEpoch: current!.membershipEpoch }] });
     } finally { check.mockRestore(); }
   });
 
@@ -167,8 +194,9 @@ describe("platform organization routes (T018)", () => {
     await projection.reconcile(org);
     const first = await app.request(`/api/organizations/${org}/members?limit=1`);
     expect(first.status).toBe(200);
-    const page = await first.json() as { members: Array<{ actorId: string; role: string }>; nextCursor?: string };
+    const page = await first.json() as { members: Array<{ actorId: string; role: string; displayName: string; emailAddress?: string }>; nextCursor?: string };
     expect(page.members).toHaveLength(1);
+    expect(page.members[0]).toMatchObject({ displayName: "Alex Admin", emailAddress: "alex@example.com", role: "org:admin" });
     expect(page.nextCursor).toBeTypeOf("string");
     const second = await (await app.request(`/api/organizations/${org}/members?limit=1&cursor=${encodeURIComponent(page.nextCursor!)}`)).json() as { members: Array<{ actorId: string }>; nextCursor?: string };
     expect(second.members).toHaveLength(1);
@@ -177,6 +205,70 @@ describe("platform organization routes (T018)", () => {
     expect((await app.request(`/api/organizations/not%20an%20org/members`)).status).toBe(422);
     actor = outsider;
     expect((await app.request(`/api/organizations/${org}/members`)).status).toBe(404);
+  });
+
+  it("lists pending invitations only for current admins", async () => {
+    await projection.reconcile(org);
+    expect((await app.request(`/api/organizations/${org}/invitations`)).status).toBe(403);
+    actor = admin;
+    const response = await app.request(`/api/organizations/${org}/invitations`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ invitations: [{
+      invitationId: "orginv_pending",
+      emailAddress: "pending@example.com",
+      role: "org:member",
+      createdAt: "2026-09-18T12:00:00.000Z",
+      expiresAt: "2026-10-18T12:00:00.000Z",
+    }] });
+    actor = outsider;
+    expect((await app.request(`/api/organizations/${org}/invitations`)).status).toBe(404);
+  });
+
+  it("allows admins to rename, invite, update roles, and manage invitations", async () => {
+    await projection.reconcile(org);
+    actor = admin;
+    const json = { "content-type": "application/json" };
+    expect((await app.request(`/api/organizations/${org}`, { method: "PATCH", headers: json, body: JSON.stringify({ name: "New name" }) })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/invitations`, { method: "POST", headers: json, body: JSON.stringify({ emailAddresses: ["new@example.com"], role: "org:member" }) })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/members/${member}`, { method: "PATCH", headers: json, body: JSON.stringify({ role: "org:admin" }) })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/invitations/orginv_pending/resend`, { method: "POST" })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/invitations/orginv_pending`, { method: "DELETE" })).status).toBe(200);
+    expect(managementUpstream.renameOrganization).toHaveBeenCalledWith(org, "New name");
+    expect(managementUpstream.createInvitations).toHaveBeenCalledWith(org, ["new@example.com"], "org:member");
+    expect(managementUpstream.updateMemberRole).toHaveBeenCalledWith(org, member, "org:admin");
+    expect(managementUpstream.resendInvitation).toHaveBeenCalledWith(org, "orginv_pending");
+    expect(managementUpstream.revokeInvitation).toHaveBeenCalledWith(org, "orginv_pending");
+  });
+
+  it("supports logo upload, member removal, leaving, and organization deletion", async () => {
+    await projection.reconcile(org);
+    actor = admin;
+    const logo = new FormData();
+    logo.set("file", new Blob(["logo"], { type: "image/png" }), "logo.png");
+    expect((await app.request(`/api/organizations/${org}/logo`, { method: "PATCH", body: logo })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/members/${member}`, { method: "DELETE" })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}`, { method: "DELETE" })).status).toBe(200);
+    expect(managementUpstream.updateOrganizationLogo).toHaveBeenCalledWith(org, expect.any(Blob));
+    expect(managementUpstream.removeMember).toHaveBeenCalledWith(org, member);
+    expect(managementUpstream.deleteOrganization).toHaveBeenCalledWith(org);
+
+    actor = member;
+    expect((await app.request(`/api/organizations/${org}/members/${member}`, { method: "DELETE" })).status).toBe(200);
+    expect(managementUpstream.removeMember).toHaveBeenCalledWith(org, member);
+  });
+
+  it("enforces admin permissions, validates bodies, and protects the final admin", async () => {
+    await projection.reconcile(org);
+    const json = { "content-type": "application/json" };
+    expect((await app.request(`/api/organizations/${org}`, { method: "PATCH", headers: json, body: JSON.stringify({ name: "Nope" }) })).status).toBe(403);
+    actor = admin;
+    expect((await app.request(`/api/organizations/${org}/invitations`, { method: "POST", headers: json, body: JSON.stringify({ emailAddresses: ["bad"], role: "org:member" }) })).status).toBe(422);
+
+    members = [admin];
+    await projection.reconcile(org);
+    expect((await app.request(`/api/organizations/${org}/members/${admin}`, { method: "PATCH", headers: json, body: JSON.stringify({ role: "org:member" }) })).status).toBe(409);
+    expect((await app.request(`/api/organizations/${org}/members/${admin}`, { method: "DELETE" })).status).toBe(409);
+    expect(managementUpstream.updateMemberRole).not.toHaveBeenCalledWith(org, admin, "org:member");
   });
 
   it("verifies, deduplicates and applies Clerk organization webhooks with the correct status codes", async () => {

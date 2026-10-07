@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CanonicalChatResourceReference } from '@matrix-os/contracts';
 import type { ChatAgentClient } from '../client.js';
-import { isLegacyDailyBriefEntry, resolveDailyBriefChat } from './daily-brief-navigation.js';
 
 /** Resolves identity before a host can attach an Agent token. Never changes provider or sends. */
 export const BOT_ATTACHMENT_HANDOFF_REASON = "Remove or send the attached files before opening a bot. Your draft and files are preserved.";
@@ -22,30 +21,23 @@ export function useBotMentionNavigation(client: ChatAgentClient | undefined, sco
     sequence.current += 1;
     return () => { sequence.current += 1; };
   }, [client, scope]);
-  const select = (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void): boolean => {
-    if (resource.kind !== 'agent' || !client?.bots || !open) return false;
+  const select = (resource: CanonicalChatResourceReference, text: string, _insertLegacy: () => void): boolean => {
+    if (resource.kind !== 'agent') return false;
+    if (!client?.bots || !open) {
+      setState({ pending: false, notice: '', error: 'Could not open this bot’s Chat. Your draft is preserved. Try again.' });
+      return true;
+    }
+    if (identity.current.blockedReason) {
+      setState({ pending: false, notice: '', error: identity.current.blockedReason });
+      return true;
+    }
     if (state.pending) return true;
     const attempt = ++sequence.current;
     const current = () => sequence.current === attempt && identity.current.client === client && identity.current.scope === scope;
     setState({ pending: true, error: '', notice: '' });
-    void Promise.all([client.bots.directChat(resource.id), client.list()]).then(async ([boundChatId, library]) => {
+    void client.bots.ensureDirectChat(resource.id).then(async chatId => {
       if (!current()) return;
-      let chatId = boundChatId;
-      if (!chatId) {
-        const agent = library.agents.find(candidate => candidate.id === resource.id);
-        if (!agent || agent.recipeRef) throw new Error('Missing bot binding');
-        if (!isLegacyDailyBriefEntry(agent)) {
-          insertLegacy();
-          setState({ pending: false, error: '', notice: '' });
-          return;
-        }
-        if (identity.current.blockedReason) {
-          setState({ pending: false, notice: "", error: identity.current.blockedReason });
-          return;
-        }
-        chatId = await resolveDailyBriefChat(client, current);
-        if (!current() || !chatId) return;
-      }
+      if (!chatId) throw new Error('Missing bot binding');
       if (identity.current.blockedReason) {
         setState({ pending: false, notice: "", error: identity.current.blockedReason });
         return;

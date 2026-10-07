@@ -338,6 +338,26 @@ export const CollaborationProjectSchema = z.object({
   }).strict()).max(100_000),
 }).strict();
 
+/** Most Chats a shared project overview lists; larger projects show the most recently updated. */
+export const COLLABORATION_PROJECT_OVERVIEW_MAX_CHATS = 200;
+
+/**
+ * A shared project as its members see it: its name and the Chats they can open. Each Chat is its
+ * own inherited scope, so members open it through `scopeId` with access derived from the project.
+ */
+export const CollaborationProjectOverviewSchema = z.object({
+  projectId: CollaborationResourceIdSchema,
+  scopeId: CollaborationIdSchema,
+  name: boundedDisplayText(200, 1_024),
+  status: z.enum(["active", "archived"]),
+  chats: z.array(z.object({
+    scopeId: CollaborationIdSchema,
+    chatId: CollaborationResourceIdSchema,
+    title: boundedDisplayText(200, 1_024),
+    updatedAt: z.iso.datetime({ offset: true }),
+  }).strict()).max(COLLABORATION_PROJECT_OVERVIEW_MAX_CHATS),
+}).strict();
+
 const CollaborationExportMemberSchema = z.object({
   actorId: CollaborationActorIdSchema,
   role: CollaborationRoleSchema,
@@ -603,8 +623,10 @@ const CollaborationDirectoryBaseSchema = z.object({
  * S06 / T032: discovery is a platform metadata projection. `resource` is filled by
  * the client from the resource's home; when that home is unreachable or denies the
  * caller, or the platform no longer recognizes the caller (`unauthenticated`), the
- * client marks the item with `home` instead. Organization-wide shares that
- * this member has not opened yet appear as `organization_pending` (S04 activation).
+ * client marks the item with `home` instead. A pending grant this member has not
+ * opened yet appears as `organization_pending` (S04 activation): an organization-wide
+ * grant, or one addressed to this member alone. Both open the same way, by accepting
+ * `grantId` on the home, so every client handles them identically.
  */
 export const CollaborationDiscoveryHomeStateSchema = z.enum(["offline", "denied", "unauthenticated"]);
 
@@ -631,6 +653,8 @@ export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
       z.object({
         scope: CollaborationScopeSchema.refine((scope) => scope.kind === "project"),
         project: CollaborationProjectSchema,
+        /** The project's name and Chats, read by the client from the home; absent from an older home. */
+        overview: CollaborationProjectOverviewSchema.optional(),
       }).strict(),
     ]).optional(),
     home: CollaborationDiscoveryHomeStateSchema.optional(),
@@ -811,8 +835,22 @@ export const CollaborationDirectoryEventSchema = z.object({
     actorId: CollaborationActorIdSchema,
     status: z.enum(["invited", "accepted", "revoked"]),
     invitationId: CollaborationIdSchema.optional(),
+    /**
+     * Opaque owner-home pointer to a pending grant addressed to this one member, so the
+     * platform can list it and sign an accept-only ticket for it; never an authorization claim.
+     */
+    grantId: CollaborationIdSchema.optional(),
   }).strict()).max(8),
-}).strict();
+  /**
+   * A shared project's Chat: the platform routes it to the same home and admits its tickets from
+   * the parent project's membership, so it carries no recipients or audience of its own.
+   */
+  parentScopeId: CollaborationIdSchema.optional(),
+}).strict().refine((event) => !event.parentScopeId
+  || (event.kind === "chat" && event.recipients.length === 0 && !event.audience && !event.organizationGrantId
+    && event.organizationId !== undefined && event.parentScopeId !== event.scopeId), {
+  message: "A project Chat route carries only its parent project",
+});
 
 const CollaborationEventBaseSchema = z.object({
   version: z.literal(1),
@@ -883,6 +921,7 @@ export type CollaborationProjectConfirmRequest = z.infer<typeof CollaborationPro
 export type CollaborationProjectInventory = z.infer<typeof CollaborationProjectInventorySchema>;
 export type CollaborationProjectInventoryItem = z.infer<typeof CollaborationProjectInventoryItemSchema>;
 export type CollaborationProject = z.infer<typeof CollaborationProjectSchema>;
+export type CollaborationProjectOverview = z.infer<typeof CollaborationProjectOverviewSchema>;
 export type CollaborationProjectMembershipEffect = z.infer<typeof CollaborationProjectMembershipEffectSchema>;
 export type CollaborationProjectTransition = z.infer<typeof CollaborationProjectTransitionSchema>;
 export type CollaborationRole = z.infer<typeof CollaborationRoleSchema>;

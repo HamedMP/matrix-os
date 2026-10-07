@@ -1,3 +1,5 @@
+import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_CODING_DRIVERS as CODING_DRIVERS } from "./catalog-discovery-scope.js";
+import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
 import {
   CanonicalChatModelSelectionSchema,
@@ -37,11 +39,10 @@ import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
 import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
+import { fundedSelectionError } from "./funded-chat-error.js";
 
 const ADAPTER_VERSION = "1.0.0";
-const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
 type SystemDriverKind = typeof SYSTEM_DRIVERS[number];
-const CODING_DRIVERS = ["codex", "claude_code", "opencode", "pi"] as const;
 const MAX_EFFORTS = 4;
 const MAX_SKILLS = 64;
 const CODING_SETUP: Record<CodingDriverKind, {
@@ -87,7 +88,7 @@ export interface ChatProviderCatalogService {
 }
 
 export interface HarnessSettingsSnapshotReader {
-  getSnapshot(): Promise<ProviderSettingsSnapshot>;
+  getSnapshot(options?: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot>;
 }
 
 export class ProviderCatalogUnavailableError extends Error {
@@ -523,8 +524,9 @@ export function createChatProviderCatalogService(options: {
   // to discard its receipt, then take a second sequential funded observation.
   // Keep refresh mode local to this call; never cache owner/funding authority.
   async function readCatalog(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions,
-    refreshAiProvider = false): Promise<CanonicalProviderCatalog> {
-    const systemRuntimeReads = Promise.all(SYSTEM_DRIVERS.map(async (kind) => {
+    refreshAiProvider = false, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
+    const scope = chatCatalogDiscoveryScope(selection);
+    const systemRuntimeReads = Promise.all(scope.systems.map(async (kind) => {
       const source = options.systemRuntimeSources?.[kind];
       if (!source) return [kind, null] as const;
       try {
@@ -535,10 +537,10 @@ export function createChatProviderCatalogService(options: {
       }
     }));
     const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
-      options.codingProviders.listProviders(principal),
-      readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs),
-      options.aiProviderSource?.getSnapshot({ refresh: refreshAiProvider }) ?? Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot() ?? Promise.resolve(undefined),
+      scope.coding.length > 0 ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
+      scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
+      scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
+      options.harnessSettingsSource?.getSnapshot(selection ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
       systemRuntimeReads,
     ]);
     if (codingResult.status === "rejected") {
@@ -552,13 +554,16 @@ export function createChatProviderCatalogService(options: {
     }
     if (settingsResult.status === "rejected") {
       console.warn("[chat-providers] Harness settings unavailable");
-      if (settingsResult.reason instanceof ProviderSettingsStoreError
-        && settingsResult.reason.status === 503) {
+      if (selection || (settingsResult.reason instanceof ProviderSettingsStoreError
+        && settingsResult.reason.status === 503)) {
         throw new ProviderCatalogUnavailableError(true);
       }
     }
 
-    const coding = codingResult.status === "fulfilled" ? codingResult.value : [];
+    const coding = codingResult.status === "fulfilled" ? codingResult.value.filter(provider => {
+      const kind = codingDriverKind(provider);
+      return kind !== null && scope.coding.some(driver => driver === kind);
+    }) : [];
     const skills = projectSkills(options.skillsSource?.() ?? []);
     const seenCodingDrivers: CanonicalProviderDriverKind[] = [];
     const codingInstances: InstanceDraft[] = [];
@@ -590,7 +595,7 @@ export function createChatProviderCatalogService(options: {
         ? systemRuntimeResult.value.flatMap(([kind, value]) => value === null ? [] : [[kind, value]])
         : [],
     );
-    const systemInstances = SYSTEM_DRIVERS.map((kind) => {
+    const systemInstances = scope.systems.map((kind) => {
       const nativeSnapshot = systemRuntimeSnapshots.get(kind);
       const instanceSnapshot = nativeSnapshot ?? snapshot;
       return systemInstance({
@@ -609,7 +614,7 @@ export function createChatProviderCatalogService(options: {
         skills,
       });
     });
-    const completeCodingInstances = CODING_DRIVERS.map((kind) =>
+    const completeCodingInstances = scope.coding.map((kind) =>
       codingInstances.find((instance) => instance.driverKind === kind)
         ?? unavailableCodingInstance(kind, skills, codingResult.status === "fulfilled")
     );
@@ -621,7 +626,7 @@ export function createChatProviderCatalogService(options: {
       systemRepairAction,
       now: options.now?.() ?? new Date(),
       instances: [
-      ...managedPiChatInstances(aiSnapshot, (options.now?.() ?? new Date()).getTime()),
+      ...(!selection || scope.managedMatrix ? managedPiChatInstances(aiSnapshot, (options.now?.() ?? new Date()).getTime()) : []),
       ...systemInstances,
       ...completeCodingInstances,
       ],
@@ -648,7 +653,7 @@ export function createChatProviderCatalogService(options: {
       ...SYSTEM_DRIVERS,
       ...CODING_DRIVERS,
     ];
-    const drivers = driverKinds.map((kind) => ({
+    const drivers = driverKinds.filter(scope.acceptsDriver).map((kind) => ({
       kind,
       displayName: driverDisplayName(kind),
       adapterVersion: ADAPTER_VERSION,
@@ -660,7 +665,7 @@ export function createChatProviderCatalogService(options: {
     const parsed = CanonicalProviderCatalogSchema.safeParse({
       revision,
       drivers,
-      instances: instances.map((instance) => ({ ...instance, catalogRevision: revision })),
+      instances: instances.filter(instance => scope.acceptsInstance(instance.id)).map((instance) => ({ ...instance, catalogRevision: revision })),
     });
     if (!parsed.success) {
       const safeIssuePaths = parsed.error.issues.slice(0, 16).map((issue) => (
@@ -681,8 +686,8 @@ export function createChatProviderCatalogService(options: {
       }
       return readCatalog(principal, readOptions, true);
     },
-    getCatalog(principal, _selection, readOptions) {
-      return readCatalog(principal, readOptions);
+    getCatalog(principal, selection, readOptions) {
+      return readCatalog(principal, readOptions, false, selection);
     },
   };
   return service;
@@ -769,6 +774,13 @@ export function validateChatProviderSelection(input: {
     candidate.id === selection.data.instanceId
   );
   if (instance?.availability !== "available") {
+    const fundingError = fundedSelectionError(instance);
+    if (fundingError) {
+      if (!instance?.models.some(candidate => candidate.id === selection.data.model)) {
+        return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
+      }
+      return { ok: false, error: fundingError };
+    }
     return selectionError(
       "provider_unavailable",
       "The selected Provider is not available.",

@@ -1,3 +1,4 @@
+import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { CUSTOM_MCP_UNAVAILABLE } from '@matrix-os/contracts';
 import { Hono, type Context, type Next } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -120,6 +121,9 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
     }
     return next();
   });
+  const externalDeletionGuard = createAccountDeletionMutationGuard({ db: options.db,
+    resolveOwner: (c) => c.get('platformUserId') as string | undefined });
+  external.use('*', (c, next) => c.req.path === OAUTH_CALLBACK_PATH ? next() : externalDeletionGuard(c, next));
   mountBackend(external, options.customMcpRoutes);
   app.route('/api/mcp-servers', external);
 
@@ -165,6 +169,8 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
   const mountInternal = (backend?: Hono<any>) => {
     const internal = new Hono<{ Variables: McpVariables }>();
     internal.use('*', bodyLimit({ maxSize: BODY_LIMIT }), internalAuth);
+    internal.use('*', createAccountDeletionMutationGuard({ db: options.db,
+      resolveOwner: (c) => c.get('internalContainerClerkUserId') as string | undefined }));
     mountBackend(internal, backend);
     return internal;
   };

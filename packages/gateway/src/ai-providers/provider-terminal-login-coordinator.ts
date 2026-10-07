@@ -248,6 +248,14 @@ export function createProviderTerminalLoginCoordinator(options: {
     },
 
     async startLogin(input) {
+      let requestedSession: string | undefined;
+      let confirmedSession = false;
+      const createSession = async (request: Parameters<ProviderLoginRegistry["create"]>[0]) => {
+        requestedSession = request.name; // Set before RPC: a lost reply is not a no-start proof.
+        const session = await options.registry.create(request);
+        confirmedSession = session.name === request.name;
+        return session;
+      };
       const start = () => serialize(async () => {
         if (input.harness.id !== input.mutation.harnessInstanceId
           || input.mutation.method !== "terminal"
@@ -344,7 +352,7 @@ export function createProviderTerminalLoginCoordinator(options: {
               await options.registry.get(attempt.action.terminalSessionId);
             } catch (error) {
               if (!isMissingSession(error)) throw error;
-              await options.registry.create({
+              await createSession({
                 name: attempt.action.terminalSessionId,
                 cwd: "~",
                 cmd: command.command,
@@ -551,7 +559,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         const session = adoptedExpiredSession
           ? { name: sessionName }
-          : await options.registry.create({
+          : await createSession({
             name: sessionName,
             cwd: "~",
             cmd: command.command,
@@ -591,7 +599,14 @@ export function createProviderTerminalLoginCoordinator(options: {
         if (known.some(receipt => receipt.payloadHash !== payloadHash(input))) {
           throw new ProviderSettingsStoreError("idempotency_conflict", 409);
         }
-        return options.profileGuard.run(input.harness.harness, { kind: "login", recoveryKey: recoveryIdentityHash(input), matchesLegacyReceipt: (key, hash) => matchesLegacyLoginPayload(input, { key, payloadHash: hash }) }, start);
+        const profile = input.harness.harness;
+        return options.profileGuard.run(profile, { kind: "login", recoveryKey: recoveryIdentityHash(input),
+          matchesLegacyReceipt: (key, hash) => matchesLegacyLoginPayload(input, { key, payloadHash: hash }),
+          // Closing a tab is not a native-child drain acknowledgement.
+          // Missing/ambiguous command observations retain durable admission.
+          confirmDrained: async () => !requestedSession || confirmedSession
+            && await options.registry.observeAgentLiveness(requestedSession, profile) === "stopped",
+        }, start);
       }
       return start();
     },

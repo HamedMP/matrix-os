@@ -541,6 +541,18 @@ outbox record commit together.
   move fails safely before mutation. Any native session whose recorded root no
   longer matches is non-resumable; the same Instance starts from bounded
   canonical history instead.
+- Fresh ordinary Chat sessions receive the committed user/assistant text from
+  at most the latest 40 canonical messages, bounded to 12,000 UTF-8 bytes and
+  the admitted Turn's history boundary. Historical attachment references,
+  tools, and grants are never re-mounted by replaying this reference text.
+- Admission persists that history snapshot before dispatch. A queued Turn
+  refreshes its snapshot under the Chat row lock when claimed; Retry retains
+  the original admitted prefix and excludes the failed attempt's input/output.
+- A compatible native continuation omits redundant history replay. Returning
+  to an earlier root cannot resume a checkpoint predating completed work in a
+  different root; it starts fresh with the bounded canonical prefix instead.
+  Interrupted-checkpoint fallback remains available when no such completed
+  root transition intervenes.
 
 ## Project workspace and resource ownership
 

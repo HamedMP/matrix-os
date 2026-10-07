@@ -1,4 +1,4 @@
-import type { BotInteraction, ChatAgentListResponse } from '@matrix-os/contracts';
+import type { BotInteraction, BotTaskSummary, ChatAgentListResponse } from '@matrix-os/contracts';
 import type { ChatAgentClient } from '../client.js';
 
 const IDENTITY_TTL_MS = 5 * 60_000;
@@ -81,6 +81,7 @@ function createReads(client: ChatAgentClient) {
   const directChats = cache<string | null>(100, DISCOVERY_TTL_MS);
   const identities = cache<string | null>(1_000, IDENTITY_TTL_MS, true);
   const attention = cache<BotInteraction[]>(1_100, ATTENTION_TTL_MS);
+  const tasks = cache<BotTaskSummary[]>(100, ATTENTION_TTL_MS);
   return {
     library: (token?: string) => library('library', async () => {
       const value = await client.list();
@@ -88,6 +89,7 @@ function createReads(client: ChatAgentClient) {
     }, token),
     directChat: (agentId: string, token?: string) => directChats(agentId, () => client.bots!.directChat(agentId), token),
     directBot: (chatId: string, token?: string) => identities(chatId, () => client.bots!.directBot(chatId), token),
+    tasks: (chatId: string, token?: string) => tasks(chatId, () => client.bots!.tasks(chatId), token),
     interactions: (chatId: string, token?: string) => attention(chatId, () => client.bots!.interactions(chatId), token),
   };
 }

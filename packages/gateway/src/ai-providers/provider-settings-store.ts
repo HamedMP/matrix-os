@@ -25,6 +25,7 @@ import {
   readProviderSecrets,
   readProviderSettingsConfiguration,
   readSavedProviderSettingsConfiguration,
+  initialProviderSettingsConfiguration,
   writeProviderJsonAtomic,
   type ProviderSettingsConfiguration,
 } from "./provider-settings-persistence.js";
@@ -147,9 +148,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     try { return await operation(); } finally { release(); }
   }
 
-  async #canonical(refresh = false, suppressFundedProbes = false, ownerKeyPreflight?: ProviderSnapshotReadOptions["ownerKeyPreflight"], signal?: AbortSignal): Promise<AiProviderSnapshotV3> {
+  async #canonical(refresh = false, suppressFundedProbes = false, ownerKeyPreflight?: ProviderSnapshotReadOptions["ownerKeyPreflight"], signal?: AbortSignal, admissionScope?: ProviderSnapshotReadOptions["admissionScope"]): Promise<AiProviderSnapshotV3> {
     try {
-      const snapshot = AiProviderSnapshotV3Schema.parse(await this.#reader.getSnapshot({ refresh, ...(suppressFundedProbes ? { suppressFundedProbes: true } : {}), ...(ownerKeyPreflight ? { ownerKeyPreflight } : {}), ...(signal ? { signal } : {}) }));
+      const snapshot = AiProviderSnapshotV3Schema.parse(await this.#reader.getSnapshot({ refresh, ...(suppressFundedProbes ? { suppressFundedProbes: true } : {}), ...(ownerKeyPreflight ? { ownerKeyPreflight } : {}), ...(signal ? { signal } : {}), ...(admissionScope ? { admissionScope } : {}) }));
       const age = this.#now().getTime() - Date.parse(snapshot.refreshedAt);
       if (!Number.isFinite(age) || age < -60_000 || age > this.#maxProjectionAgeMs) {
         throw new Error("Stale canonical provider projection");
@@ -179,7 +180,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false,
     enrichment?: ProviderSettingsEnrichment, codexNativeAccountMetadata?: CodexNativeAccountMetadata | null, hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null) {
     try {
-      const { fundingSummary, fundedPolicy, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
+      const { fundingSummary, fundedPolicy, chatAvailability, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
         canonical, fundingSummary: this.#fundingSummary,
         genericModelCatalog: this.#genericModelCatalog, refresh,
         catalogFailureHarnesses: [...new Set(config.harnesses.flatMap((harness) =>
@@ -196,6 +197,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         dependencies: this.#dependencies,
         supportedActions: this.#supportedActions(config, canonical),
         fundingSummary,
+        chatAvailability,
         fundedPolicy,
         fundedPolicyAuthoritative: Boolean(this.#fundingSummary),
         genericModelCatalog,
@@ -244,7 +246,40 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     });
   }
 
+  async #managedMatrixSnapshot(options: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot> {
+    // Use the same write generation and cheap fences as ordinary Settings reads.
+    // Partial native inventory must never initialize or reconcile saved owner intent.
+    const generation = await this.#serialize(async () => this.#mutationGeneration);
+    const inventory = this.#canonical(options.refresh === true, options.suppressFundedProbes === true,
+      options.ownerKeyPreflight, options.signal, options.admissionScope);
+    const [canonical, enrichment] = await Promise.all([inventory, readProviderSettingsEnrichment({
+      canonical: inventory, fundingSummary: options.suppressFundedProbes === true ? undefined : this.#fundingSummary,
+      refresh: options.refresh === true, catalogFailureHarnesses: [],
+    })]);
+    const captured = await this.#serialize(async () => {
+      options.signal?.throwIfAborted();
+      if (generation !== this.#mutationGeneration) throw new ProviderSettingsStoreError("projection_unavailable", 503);
+      try {
+        const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
+        return { config: saved ?? initialProviderSettingsConfiguration(canonical, undefined, this.#now()), absent: saved === null };
+      } catch (error) {
+        console.warn("[provider-settings] Owner provider configuration unavailable:", error instanceof Error ? error.name : "UnknownError");
+        throw new ProviderSettingsStoreError("configuration_unavailable", 503);
+      }
+    });
+    const snapshot = await this.#project(canonical, captured.config, options.refresh === true, enrichment);
+    const accepted = await this.#serialize(async () => {
+      options.signal?.throwIfAborted();
+      const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
+      return generation === this.#mutationGeneration
+        && (captured.absent ? saved === null : saved?.revision === captured.config.revision);
+    });
+    if (!accepted) throw new ProviderSettingsStoreError("projection_unavailable", 503);
+    return snapshot;
+  }
+
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<ProviderSettingsSnapshot> {
+    if (options.admissionScope === "managed_matrix") return await this.#managedMatrixSnapshot(options);
     const refresh = options.refresh === true;
     await this.#serialize(() => this.#readRuntimeRecovery(refresh));
     // All inventory, funding, catalog and native probes run outside mutation

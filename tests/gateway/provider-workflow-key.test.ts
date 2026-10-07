@@ -27,6 +27,6 @@ it('isolates a failed native CLI saver and preserves the exact previous auth byt
     await writeFile(join(prefix, 'bin/codex'), '#!/bin/sh\ncat >/dev/null\nprintf "{}" > "$CODEX_HOME/auth.json"\nexit 1\n', { mode: 0o700 });
     await expect(createCodexKeySaver({ homePath: home, runtimePrefix: prefix })('sk-synthetic-fixture')).rejects.toThrow();
     expect(await readFile(join(home, '.codex/auth.json'), 'utf8')).toBe('{"old":"keep-exact"}\n');
-    expect((await readdir(home)).filter(name => name.startsWith('.codex-key-'))).toEqual([]);
+    expect((await readdir(join(home, '.codex'))).filter(name => name.startsWith('.matrix-key-'))).toEqual([]);
   } finally { await rm(home, { recursive: true, force: true }); }
 });

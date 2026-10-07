@@ -476,10 +476,12 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
             <ChatApp
                 collaborationView={chatState.collaborationView}
                 onOpenSharedChat={chatState.openSharedChat}
+                onOpenSharedProject={chatState.openSharedProject}
                 onOpenSharedHome={chatState.openSharedHome}
                 filterUnreadOnly={chatState.unreadOnly}
                 onUnreadFilterChange={chatState.setUnreadOnly}
                 active={isFocused && !win.minimized}
+                visible={!win.minimized}
                 readState={chatState.readState}
                 displayedThroughSeq={chatState.displayedThroughSeq}
                 onUpdateReadState={chatState.updateReadState}

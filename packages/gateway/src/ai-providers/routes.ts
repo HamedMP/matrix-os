@@ -6,6 +6,7 @@ const ProviderQuerySchema = z.object({
   includeNativeProfiles: z.enum(["true", "false"]).optional(),
   refresh: z.enum(["true", "false"]).optional(),
   includeFundingState: z.enum(["true", "false"]).optional(),
+  includeChatFunding: z.enum(["true", "false"]).optional(),
 }).strict();
 
 export function createAiProviderRoutes(options: {
@@ -25,8 +26,11 @@ export function createAiProviderRoutes(options: {
         refresh: query.data.refresh === "true",
       });
       const legacyReadiness = <T extends { safeReason: string | null }>(readiness: T): T =>
-        readiness.safeReason === "credit_reserved" ? { ...readiness, safeReason: "credit_required" } : readiness;
-      const snapshot = query.data.includeFundingState === "true" ? internalSnapshot : {
+        readiness.safeReason === "budget_exceeded" && query.data.includeChatFunding !== "true"
+          ? { ...readiness, safeReason: "policy" }
+          : readiness.safeReason === "credit_reserved" && query.data.includeFundingState !== "true"
+            ? { ...readiness, safeReason: "credit_required" } : readiness;
+      const snapshot = {
         ...internalSnapshot,
         accessSources: internalSnapshot.accessSources.map(legacyReadiness),
         accounts: internalSnapshot.accounts.map(legacyReadiness),

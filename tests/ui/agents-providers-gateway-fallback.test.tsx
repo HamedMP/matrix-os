@@ -2,13 +2,15 @@
 import React, { useState } from "react";
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderHarnessInstance, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
 
 const sonnet = "claude-sonnet-5";
 const glm = "@cf/zai-org/glm-5.3-flash";
 const now = "2026-10-02T07:28:30.187Z";
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now); });
+afterEach(() => { vi.useRealTimers(); });
 
 function partialSnapshot(): ProviderSettingsSnapshot {
   const harness: ProviderHarnessInstance = {
@@ -23,8 +25,13 @@ function partialSnapshot(): ProviderSettingsSnapshot {
     providerId: "anthropic", accountId: null, displayName: "Matrix AI",
     readiness: { state: "ready", checkedAt: now, staleAfter: "2026-10-02T07:28:57.304Z", action: "none", safeReason: null },
     eligibleModelIds: [sonnet],
-    usage: { kind: "unavailable", authority: "unavailable", state: "not_applicable",
-      scope: "access_source", reason: "provider_does_not_report", asOf: now },
+    usage: { kind: "managed_credit", authority: "matrix_ledger", state: "current", scope: "owner_entitlement", currency: "USD",
+      usedMicrousd: 0, remainingMicrousd: 1_000_000, limitMicrousd: 5_100_000,
+      periodStartedAt: "2026-10-01T00:00:00.000Z", resetsAt: null, asOf: now,
+      credit: { promotionalBalanceMicrousd: 1_000_000, addonBalanceMicrousd: 0, creditBalanceMicrousd: 1_000_000,
+        reservedMicrousd: 0, remainingBalanceMicrousd: 1_000_000 },
+      budget: { monthlyBudgetMicrousd: 5_100_000, settledThisMonthMicrousd: 0, reservedThisMonthMicrousd: 0, remainingBudgetMicrousd: 5_100_000 },
+      chatAvailability: { contractVersion: 1, asOf: now, eligibleBalanceMicrousd: 1_000_000, availableBalanceMicrousd: 1_000_000 } },
   };
   return {
     contractVersion: 1, revision: 0, refreshedAt: now,
@@ -76,7 +83,8 @@ function heldSnapshot(): ProviderSettingsSnapshot {
     credit: { promotionalBalanceMicrousd: 4_802_107, addonBalanceMicrousd: 0, creditBalanceMicrousd: 4_802_107,
       reservedMicrousd: 4_802_107, remainingBalanceMicrousd: 0 },
     budget: { monthlyBudgetMicrousd: 5_100_000, settledThisMonthMicrousd: 297_893,
-      reservedThisMonthMicrousd: 4_802_107, remainingBudgetMicrousd: 0 } };
+      reservedThisMonthMicrousd: 4_802_107, remainingBudgetMicrousd: 0 },
+    chatAvailability: { contractVersion: 1, asOf: now, eligibleBalanceMicrousd: 4_802_107, availableBalanceMicrousd: 0 } };
   return next;
 }
 

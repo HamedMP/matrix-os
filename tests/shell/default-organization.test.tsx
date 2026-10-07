@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { render, waitFor } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
@@ -36,12 +37,20 @@ vi.mock("@clerk/nextjs", () => ({
 }));
 
 import { DefaultOrganization } from "../../shell/src/components/DefaultOrganization";
+import { useCollaborationOrganization } from "../../shell/src/lib/collaboration-organization-state";
+import { writeOrganizationSelection } from "../../shell/src/lib/organization-selection";
 
 function member(id: string) {
   return { organization: { id, name: id } };
 }
 
+function OrganizationState() {
+  const state = useCollaborationOrganization();
+  return <span>{`${state.status}:${state.organizationId ?? "none"}`}</span>;
+}
+
 beforeEach(() => {
+  window.localStorage.clear();
   clerkState.organizationLoaded = true;
   clerkState.organization = null;
   clerkState.organizationsLoaded = true;
@@ -72,6 +81,38 @@ describe("DefaultOrganization", () => {
   });
 
   it("keeps an individual user individual: no organization, nothing activated", () => {
+    render(<DefaultOrganization><OrganizationState /></DefaultOrganization>);
+
+    expect(clerkState.setActive).not.toHaveBeenCalled();
+    expect(screen.getByText("none:none")).toBeVisible();
+  });
+
+  it("keeps organization-only controls present while memberships are loading", () => {
+    clerkState.organizationsLoaded = false;
+    render(<DefaultOrganization><OrganizationState /></DefaultOrganization>);
+
+    expect(screen.getByText("loading:none")).toBeVisible();
+  });
+
+  it("reports a membership-list failure instead of treating it as no organizations", () => {
+    clerkState.isError = true;
+    render(<DefaultOrganization><OrganizationState /></DefaultOrganization>);
+
+    expect(screen.getByText("unavailable:none")).toBeVisible();
+  });
+
+  it("reports the active organization without waiting for the membership listing", () => {
+    clerkState.organization = { id: "org_active" };
+    clerkState.organizationsLoaded = false;
+    render(<DefaultOrganization><OrganizationState /></DefaultOrganization>);
+
+    expect(screen.getByText("member:org_active")).toBeVisible();
+  });
+
+  it("preserves an explicit switch to the personal workspace", () => {
+    clerkState.memberships = [member("org_2Aolder")];
+    writeOrganizationSelection("user_a", "personal");
+
     render(<DefaultOrganization />);
 
     expect(clerkState.setActive).not.toHaveBeenCalled();
@@ -144,14 +185,15 @@ describe("DefaultOrganization", () => {
     await waitFor(() => expect(clerkState.setActive).toHaveBeenCalledTimes(2));
   });
 
-  it("tries a failed activation once instead of looping on every render", async () => {
+  it("reports a failed activation as unavailable and does not loop", async () => {
     clerkState.memberships = [member("org_2Aolder")];
     clerkState.setActive.mockRejectedValue(new Error("network"));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const { rerender } = render(<DefaultOrganization />);
+    const { rerender } = render(<DefaultOrganization><OrganizationState /></DefaultOrganization>);
     await waitFor(() => expect(clerkState.setActive).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("unavailable:none")).toBeVisible();
 
-    rerender(<DefaultOrganization />);
+    rerender(<DefaultOrganization><OrganizationState /></DefaultOrganization>);
     await Promise.resolve();
 
     expect(clerkState.setActive).toHaveBeenCalledTimes(1);

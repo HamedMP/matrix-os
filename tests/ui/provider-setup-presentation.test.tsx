@@ -46,7 +46,13 @@ function fundedSnapshot(): ProviderSettingsSnapshot {
     id: "matrix_included", kind: "matrix_gateway", fundingKind: "matrix_included",
     providerId: "anthropic", accountId: null, displayName: "Matrix AI", eligibleModelIds: ["sonnet"],
     readiness: { state: "ready", checkedAt: value.refreshedAt, staleAfter: null, action: "none", safeReason: null },
-    usage: { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "owner_entitlement", reason: "ledger_not_available", asOf: null },
+    usage: { kind: "managed_credit", authority: "matrix_ledger", state: "current", scope: "owner_entitlement",
+      currency: "USD", usedMicrousd: 0, remainingMicrousd: 1_000_000, limitMicrousd: 1_000_000,
+      periodStartedAt: value.refreshedAt, resetsAt: null, asOf: value.refreshedAt,
+      credit: { promotionalBalanceMicrousd: 1_000_000, addonBalanceMicrousd: 0, creditBalanceMicrousd: 1_000_000,
+        reservedMicrousd: 0, remainingBalanceMicrousd: 1_000_000 },
+      budget: { monthlyBudgetMicrousd: 1_000_000, settledThisMonthMicrousd: 0, reservedThisMonthMicrousd: 0, remainingBudgetMicrousd: 1_000_000 },
+      chatAvailability: { contractVersion: 1, asOf: value.refreshedAt, eligibleBalanceMicrousd: 1_000_000, availableBalanceMicrousd: 1_000_000 } },
   }];
   value.gatewayPolicy = { accessSourceId: "matrix_included", monthlyBudgetMicrousd: 1_000_000, allowedModelIds: ["sonnet"], topUpEnabled: false };
   Object.assign(value, { supportedActions: ["set_route"] });
@@ -63,7 +69,7 @@ describe("provider setup presentation", () => {
     const { onRefresh, onMutate } = setup(value, { onAddCredit });
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Setup needed")).toBeVisible();
-    expect(within(gateway).getByText("Credit unavailable")).toBeVisible();
+    expect(within(gateway).getByText("Chat credit unavailable")).toBeVisible();
     fireEvent.click(within(gateway).getByRole("button", { name: "Buy credit" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Purchase availability has not been confirmed for this computer.");
     expect(screen.queryByRole("button", { name: "Continue to checkout" })).not.toBeInTheDocument();
@@ -116,7 +122,7 @@ describe("provider setup presentation", () => {
   it("connects an eligible agent through an exact canonical Matrix AI route", () => {
     const { onMutate } = setup(fundedSnapshot());
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
-    expect(within(gateway).getByText("Credit unavailable")).toBeVisible();
+    expect(within(gateway).getAllByText("$1.00")[0]).toBeVisible();
     expect(within(gateway).getByText("Sonnet")).toBeVisible();
     expect(within(gateway).queryByRole("textbox", { name: "Monthly budget in USD" })).not.toBeInTheDocument();
     fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createGoldenHostTestCommands, goldenHostSystemCommand } from '../helpers/golden-host-test-commands.js';
 
 const execFileAsync = promisify(execFile);
 const sanitizePath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-sanitize';
@@ -16,6 +17,16 @@ const serviceDiagnosticsPath = 'distro/customer-vps/host-bin/matrix-golden-servi
 const bootstrapAttestationPath = 'distro/customer-vps/host-bin/matrix-write-bootstrap-attestation';
 
 describe('golden snapshot host scripts', () => {
+  const originalPath = process.env.PATH ?? '';
+  let commands: Awaited<ReturnType<typeof createGoldenHostTestCommands>>;
+  beforeAll(async () => {
+    commands = await createGoldenHostTestCommands(originalPath);
+    process.env.PATH = commands.path;
+  });
+  afterAll(async () => {
+    process.env.PATH = originalPath;
+    await commands?.cleanup();
+  });
   it('derives and atomically records coarse exact-snapshot bootstrap evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-bootstrap-attestation-'));
     await mkdir(join(root, 'opt/matrix/env'), { recursive: true });
@@ -273,27 +284,19 @@ describe('golden snapshot host scripts', () => {
     await writeFile(join(root, 'opt/matrix/golden-snapshot-system-ready'), 'matrix-host-prerequisites-v1\n');
     await writeFile(join(appDir, 'BUNDLE_VERSION'), 'v2026.08.20-test\n');
     await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'d'.repeat(64)}\n`);
-    await copyFile(prerequisitesPath, join(binDir, 'matrix-prepare-host-prerequisites'));
+    await commands.copyPrerequisiteFixture(prerequisitesPath, join(binDir, 'matrix-prepare-host-prerequisites'));
     await chmod(join(binDir, 'matrix-prepare-host-prerequisites'), 0o755);
     // Image certification has no Matrix account yet; NSS itself is still available.
     await writeFile(join(fakeBin, 'getent'), '#!/bin/sh\nexit 2\n');
     await chmod(join(fakeBin, 'getent'), 0o755);
-    for (const [command, target] of [
-      ['bash', '/bin/bash'],
-      ['chmod', '/usr/bin/chmod'],
-      ['install', '/usr/bin/install'],
-      ['mktemp', '/usr/bin/mktemp'],
-      ['mv', '/usr/bin/mv'],
-      ['rm', '/usr/bin/rm'],
-      ['tr', '/usr/bin/tr'],
-    ]) {
-      await symlink(target, join(fakeBin, command));
+    for (const command of ['bash', 'chmod', 'install', 'mktemp', 'mv', 'rm', 'tr']) {
+      await symlink(await goldenHostSystemCommand(command), join(fakeBin, command));
     }
     for (const command of [
       'add-apt-repository', 'apparmor_parser', 'aws', 'bwrap', 'cmatrix', 'curl', 'docker',
       'elixir', 'erl', 'file', 'git', 'nginx', 'openssl', 'psql', 'socat', 'sudo', 'unzip', 'zsh',
     ]) {
-      await symlink('/bin/true', join(fakeBin, command));
+      await symlink(commands.trueBinary, join(fakeBin, command));
     }
     await chmod(fastPathPath, 0o755);
 
@@ -753,11 +756,13 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
       'add-apt-repository', 'apparmor_parser', 'aws', 'bwrap', 'cmatrix', 'curl', 'docker',
       'elixir', 'erl', 'file', 'git', 'nginx', 'openssl', 'psql', 'socat', 'sudo', 'unzip', 'zsh',
     ]) {
-      await symlink('/bin/true', join(fakeBin, command));
+      await symlink(commands.trueBinary, join(fakeBin, command));
     }
-    await chmod(prerequisitesPath, 0o755);
+    const fixturePath = join(root, 'matrix-prepare-host-prerequisites');
+    await commands.copyPrerequisiteFixture(prerequisitesPath, fixturePath);
+    await chmod(fixturePath, 0o755);
 
-    await execFileAsync(prerequisitesPath, ['--certify-only'], {
+    await execFileAsync(fixturePath, ['--certify-only'], {
       env: {
         ...process.env,
         MATRIX_HOST_PREREQUISITES_ROOT: root,
