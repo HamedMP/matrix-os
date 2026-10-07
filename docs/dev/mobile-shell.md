@@ -517,6 +517,48 @@ Manual checks in the SDK 57 dev client:
 6. Check the phone layout in portrait and landscape, then verify the wrapped board at tablet width.
 7. Background and reopen the app, reconnect the gateway, and confirm stale references reconcile to the live project workspace.
 
+## Native Mobile App Preview Navigation
+
+Installed Apps open a remote web runtime in Native Mobile. The default preview
+allows navigation only within the current app's origin and `/apps/<slug>` path
+(including the selected `/vm/<handle>` prefix when present). The initial session
+URL may redirect to the same app without its query token; trailing slashes, app
+routes, and hashes continue to work. Sibling Apps, same-origin system pages,
+external web links, custom URL schemes, malformed URLs, and new-window requests
+are blocked. A generic notice lets the owner continue using the existing preview.
+
+`AppRuntimeFrame` deliberately routes all URL schemes through its own navigation
+callback. In react-native-webview 13.16.1, a narrow `originWhitelist` can otherwise
+open a rejected URL through `Linking` without consulting that callback. New-window
+requests use the separate `onOpenWindow` path; Native Mobile does not open them.
+The initial source is also validated because Android skips the callback for its
+first load. Only a host-supplied `canOpenExternalUrl` callback can authorize a
+normal navigation to a reviewed cross-origin HTTP(S) destination; the installed
+App preview does not supply one. Such authorization needs its own purpose,
+privacy, and storefront review and does not grant a payment entitlement.
+
+This change contains navigation requests surfaced by the WebView. It does not
+filter network subresources, sandbox generated code, supply an app data bridge,
+or establish complete redirect, consent, moderation, or payment compliance.
+WebView platform limitations and the actual signed build still need device
+verification under [ENG-89](https://linear.app/matrix-os/issue/ENG-89) and the
+App Gallery journey gate under [ENG-157](https://linear.app/matrix-os/issue/ENG-157).
+The website documentation PR for Apps and Matrix App Gallery must retain these
+Native Mobile limitations.
+
+Focused checks:
+
+```bash
+pnpm --dir apps/mobile exec jest --runInBand __tests__/app-runtime-navigation.test.ts __tests__/app-runtime-frame.test.tsx __tests__/app-preview-screen.test.tsx
+```
+
+On the release candidate, verify the session-token redirect, app save/reopen,
+SPA/hash navigation, reload, an external redirect, a same-origin system link,
+another App's link, and `target="_blank"`/`window.open`. Confirm no browser or
+native app opens implicitly, blocked-link copy contains no raw URL, and both
+Continue in app and reopening another App recover normally. Record iOS and
+Android results separately; unit tests do not replace that evidence.
+
 ## Full Mobile Readiness Gates
 
 Use these before handing the branch to a real-device tester:
