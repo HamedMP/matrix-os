@@ -8,6 +8,7 @@ import { readOwnerAnthropicKey, revokeOwnerAnthropicKey } from "../../packages/g
 import { storeApiKey } from "../../packages/gateway/src/onboarding/api-key.js";
 import { createNativeProviderWriterLease } from "../../packages/gateway/src/ai-providers/native-provider-writer-lease.js";
 import { CodexKeyRollbackFailedError } from "../../packages/gateway/src/ai-providers/codex-key-transaction.js";
+import * as boundedJson from "../../packages/gateway/src/bounded-json-file.js";
 import * as persistence from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 
 const ownedHomes: string[] = []; // bounded to this suite's fixture count and drained after each test
@@ -59,7 +60,7 @@ it("requires actual durable shared writer admission before publishing a connecti
     const store = storeFor(home);
     release = await createNativeProviderWriterLease(home).acquire("claude");
     await expect(store.commitConnection(firstRequest)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
-    expect(await store.read()).toMatchObject({ enabled: false, revision: 0 });
+    await expect(store.read()).rejects.toMatchObject({ code: "lifecycle_unavailable" });
     await release(); release = undefined;
     expect((await store.commitConnection(firstRequest)).state.enabled).toBe(true);
   } finally { await release?.(); await rm(home, { recursive: true, force: true }); }
@@ -172,7 +173,53 @@ it("retains writer fencing when a disconnect publisher reports failure after com
     await expect(store.disconnect({ expectedRevision: 1, expectedCredentialGeneration: connected.state.credentialGeneration,
       idempotencyKey: "disconnect-uncertain" })).rejects.toThrow();
     vi.restoreAllMocks();
-    expect(await store.read()).toMatchObject({ enabled: false, revision: 2 });
+    expect(JSON.parse(await readFile(sourcePath, "utf8")).state).toMatchObject({ enabled: false, revision: 2 });
+    await expect(store.read()).rejects.toMatchObject({ code: "lifecycle_unavailable" });
     await expect(storeFor(home).commitConnection(firstRequest)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
   } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+it("fences readable prior enabled state across restart when failed disconnect cannot prove non-publication", async () => {
+  const home = await mkdtemp(join(tmpdir(), "matrix-anthropic-disconnect-proof-"));
+  try {
+    const store = storeFor(home), connected = await store.commitConnection(firstRequest);
+    const sourcePath = join(home, "system/ai-providers/matrix-anthropic-source.json"), priorKey = await readOwnerAnthropicKey(home);
+    const write = persistence.writeProviderJsonAtomic, read = boundedJson.readBoundedJsonFileWithIdentity;
+    let proofUnavailable = false;
+    vi.spyOn(persistence, "writeProviderJsonAtomic").mockImplementation(async (path, value) => {
+      if (path === sourcePath) { proofUnavailable = true; throw new Error("synthetic publication failure"); }
+      return write(path, value);
+    });
+    vi.spyOn(boundedJson, "readBoundedJsonFileWithIdentity").mockImplementation(async (path, limit) => {
+      if (path === sourcePath && proofUnavailable) { proofUnavailable = false; throw new Error("synthetic transient proof failure"); }
+      return read(path, limit);
+    });
+    const disconnect = { expectedRevision: 1, expectedCredentialGeneration: connected.state.credentialGeneration, idempotencyKey: "uncertain-disconnect" };
+    await expect(store.disconnect(disconnect)).rejects.toThrow("publication uncertain");
+    vi.restoreAllMocks();
+    expect(JSON.parse(await readFile(sourcePath, "utf8")).state).toEqual(connected.state);
+    expect(await readOwnerAnthropicKey(home)).toEqual(priorKey);
+    for (const candidate of [store, storeFor(home)]) {
+      await expect(candidate.read()).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+      await expect(candidate.disconnect(disconnect)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+      await expect(candidate.replayConnection(firstRequest)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    }
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+it("rejects a source read if a writer is admitted after its metadata was captured", async () => {
+  const home = await mkdtemp(join(tmpdir(), "matrix-anthropic-source-read-race-"));
+  let release: (() => Promise<void>) | undefined;
+  try {
+    const store = storeFor(home); await store.commitConnection(firstRequest);
+    const path = join(home, "system/ai-providers/matrix-anthropic-source.json"), read = boundedJson.readBoundedJsonFileWithIdentity;
+    vi.spyOn(boundedJson, "readBoundedJsonFileWithIdentity").mockImplementation(async (target, limit) => {
+      const document = await read(target, limit);
+      if (target === path && !release) release = await createNativeProviderWriterLease(home).acquire("claude");
+      return document;
+    });
+    await expect(store.read()).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    vi.restoreAllMocks(); await release?.(); release = undefined;
+    expect(await store.read()).toMatchObject({ enabled: true, revision: 1 });
+  } finally { await release?.(); await rm(home, { recursive: true, force: true }); }
 });

@@ -6,7 +6,7 @@ import type { MatrixAnthropicAuthority } from "../bots/matrix-anthropic-api.js";
 import type { PiRuntimeBinding } from "../bots/runtime-registry.js";
 import { BotRouteError, type ResolvedBotRoute } from "../bots/route-resolver.js";
 import { readOwnerAnthropicKey } from "./owner-anthropic-key.js";
-import { type createMatrixAnthropicSourceStore } from "./matrix-anthropic-source.js";
+import { MatrixAnthropicPublicationUncertainError, type createMatrixAnthropicSourceStore } from "./matrix-anthropic-source.js";
 
 const ref = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const TokenLimit = z.number().int().positive().max(10_000_000);
@@ -56,6 +56,8 @@ export function createMatrixAnthropicConnectionService(options: {
   const writable = () => { if (options.readOnly || !options.supports.rootChat && !options.supports.recipeBots) throw new MatrixAnthropicConnectionError("unavailable"); };
   async function current() {
     const source = await options.sourceStore.read(), key = await readOwnerAnthropicKey(options.homePath);
+    // Key custody can change after the metadata read; recheck the same durable fence.
+    await options.sourceStore.assertAvailable();
     if (key.state === "invalid" || key.state === "unavailable") throw new MatrixAnthropicConnectionError("unavailable");
     return { source, key, generation: key.credentialGeneration ?? null };
   }
@@ -167,9 +169,18 @@ export function createMatrixAnthropicConnectionService(options: {
     }),
     disconnect: (owner, input) => enqueue(owner, async () => {
       const parsed = MatrixAnthropicDisconnectSchema.safeParse(input); if (!parsed.success) throw new MatrixAnthropicConnectionError("rejected");
-      const result = await options.sourceStore.disconnect(parsed.data);
-      if (!result.replayed) { catalog = null; notifyChanged(); }
-      return observe(owner);
+      try {
+        const result = await options.sourceStore.disconnect(parsed.data);
+        if (!result.replayed) { catalog = null; notifyChanged(); }
+        return observe(owner);
+      } catch (error) {
+        if (error instanceof MatrixAnthropicPublicationUncertainError) {
+          // Unknown publication is enough to withdraw qualification and cancel paid consumers.
+          // Conflicts, proven non-publication and old receipt replays preserve newer catalogs.
+          catalog = null; notifyChanged();
+        }
+        throw error;
+      }
     }),
     async resolve(selection, owner, requestClass): Promise<ResolvedBotRoute> {
       authorize(owner); const bound = matrixAnthropicSelectionBinding(selection.options);

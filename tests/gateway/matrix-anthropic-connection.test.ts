@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -8,6 +8,9 @@ import { createNativeProviderProfileGuard } from "../../packages/gateway/src/ai-
 import { readOwnerAnthropicKey, revokeOwnerAnthropicKey } from "../../packages/gateway/src/ai-providers/owner-anthropic-key.js";
 import { storeApiKey } from "../../packages/gateway/src/onboarding/api-key.js";
 import type { PiRuntimeBinding } from "../../packages/gateway/src/bots/runtime-registry.js";
+import * as persistence from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
+import * as boundedJson from "../../packages/gateway/src/bounded-json-file.js";
+import { createNativeProviderWriterLease } from "../../packages/gateway/src/ai-providers/native-provider-writer-lease.js";
 const homes: string[] = []; // capped by suite fixture count, drained after every test
 const request = { apiKey: "sk-ant-synthetic-only", expectedRevision: 0, expectedCredentialGeneration: null, idempotencyKey: "connect-1" };
 const model = { type: "model", id: "claude-synthetic-model", display_name: "Synthetic Claude", max_input_tokens: 200000, max_tokens: 8192, capabilities: { image_input: { supported: true } } };
@@ -21,7 +24,7 @@ async function fixture(fetcher = vi.fn<typeof fetch>(async () => page())) {
   const store = createMatrixAnthropicSourceStore({ homePath: home, profileGuard: guard }); let now = Date.now(); const changed = vi.fn();
   const service = createMatrixAnthropicConnectionService({ homePath: home, ownerId: "owner", sourceStore: store,
     supports: { rootChat: true, recipeBots: true }, onSourceChanged: changed, fetch: fetcher, now: () => now, ttlMs: 60000 });
-  return { home, store, service, fetcher, changed, advance: () => { now += 60001; } };
+  return { home, guard, store, service, fetcher, changed, advance: () => { now += 60001; } };
 }
 const selection = (status: Awaited<ReturnType<Awaited<ReturnType<typeof fixture>>["service"]["observe"]>>, instanceId = "matrix_pi_anthropic_api") => ({ instanceId, model: model.id,
   options: [{ id: "connectionRevision", value: String(status.revision) }, { id: "credentialGeneration", value: status.credentialGeneration! }] });
@@ -169,4 +172,106 @@ it.each([200, 503])("bounds shutdown when HTTP %s discovery body cancellation do
   expect(await connection).toBeInstanceOf(Error); await stopped;
   expect(cancelled).toHaveBeenCalled(); expect(stream.locked).toBe(false);
   expect(await store.read()).toMatchObject({ revision: 0, enabled: false });
+});
+
+it("withdraws uncertain Disconnect readiness, cancels consumers, and blocks all paid admission after transient proof failure", async () => {
+  const { service, home, store, changed, fetcher } = await fixture();
+  const status = await service.connect("owner", request), resolved = await service.resolve(selection(status), "owner", "interactive");
+  const binding = { ownerId: "owner", kind: "managed_chat", requestClass: "interactive", ...resolved } as PiRuntimeBinding;
+  const key = await readOwnerAnthropicKey(home), path = join(home, "system/ai-providers/matrix-anthropic-source.json");
+  const read = boundedJson.readBoundedJsonFileWithIdentity, write = persistence.writeProviderJsonAtomic;
+  let proofUnavailable = false;
+  vi.spyOn(persistence, "writeProviderJsonAtomic").mockImplementation(async (target, value) => {
+    if (target === path) { proofUnavailable = true; throw new Error("synthetic publication failure"); }
+    return write(target, value);
+  });
+  vi.spyOn(boundedJson, "readBoundedJsonFileWithIdentity").mockImplementation(async (target, limit) => {
+    if (target === path && proofUnavailable) { proofUnavailable = false; throw new Error("synthetic transient proof failure"); }
+    return read(target, limit);
+  });
+  await expect(service.disconnect("owner", { expectedRevision: 1, expectedCredentialGeneration: status.credentialGeneration, idempotencyKey: "uncertain-disable" })).rejects.toThrow();
+  vi.restoreAllMocks();
+  expect(changed).toHaveBeenCalledTimes(2);
+  expect(await service.observe("owner")).toMatchObject({ state: "unavailable", models: [] });
+  expect(await service.revalidate(binding, new AbortController().signal)).toBe(false);
+  await expect(service.credential(binding, new AbortController().signal)).rejects.toThrow();
+  await expect(service.resolve(selection(status), "owner", "interactive")).rejects.toThrow();
+  await expect(service.connect("owner", request)).rejects.toThrow();
+  await expect(service.refresh("owner", { expectedRevision: 1, expectedCredentialGeneration: status.credentialGeneration, idempotencyKey: "uncertain-refresh" })).rejects.toThrow();
+  const restarted = createMatrixAnthropicConnectionService({ homePath: home, ownerId: "owner", sourceStore: store, supports: { rootChat: true, recipeBots: true }, fetch: fetcher });
+  expect(await restarted.observe("owner")).toMatchObject({ state: "unavailable", models: [] });
+  expect(fetcher).toHaveBeenCalledTimes(1); expect(await readOwnerAnthropicKey(home)).toEqual(key);
+  await restarted.shutdown(); await service.shutdown();
+});
+it("resumes qualification only after a known writer releases its exact admission", async () => {
+  const { service, home } = await fixture(), status = await service.connect("owner", request);
+  const lease = await createNativeProviderWriterLease(home).acquire("claude");
+  try {
+    expect(await service.observe("owner")).toMatchObject({ state: "unavailable", models: [] });
+    await expect(service.resolve(selection(status), "owner", "interactive")).rejects.toThrow();
+  } finally { await lease(); }
+  expect(await service.observe("owner")).toEqual(status);
+  await service.shutdown();
+});
+it("keeps prior qualification when failed Disconnect proves no publication and permits safe retry", async () => {
+  const { service, home, changed } = await fixture(), status = await service.connect("owner", request);
+  const path = join(home, "system/ai-providers/matrix-anthropic-source.json"), write = persistence.writeProviderJsonAtomic;
+  vi.spyOn(persistence, "writeProviderJsonAtomic").mockImplementation(async (target, value) => {
+    if (target === path) throw new Error("synthetic pre-publication failure");
+    return write(target, value);
+  });
+  const disconnect = { expectedRevision: 1, expectedCredentialGeneration: status.credentialGeneration, idempotencyKey: "proven-disable" };
+  await expect(service.disconnect("owner", disconnect)).rejects.toMatchObject({ code: "unavailable" });
+  vi.restoreAllMocks();
+  expect(await service.observe("owner")).toEqual(status); expect(changed).toHaveBeenCalledTimes(1);
+  expect(await service.disconnect("owner", disconnect)).toMatchObject({ state: "disconnected", revision: 2 });
+  expect(changed).toHaveBeenCalledTimes(2); await service.shutdown();
+});
+
+it("rejects observation when a writer is admitted between source and canonical key reads", async () => {
+  const { service, home } = await fixture(), status = await service.connect("owner", request);
+  const path = join(home, "system/ai-providers/anthropic-key.json"), read = boundedJson.readBoundedJsonFileWithIdentity;
+  let release: (() => Promise<void>) | undefined;
+  try {
+    vi.spyOn(boundedJson, "readBoundedJsonFileWithIdentity").mockImplementation(async (target, limit) => {
+      const document = await read(target, limit);
+      if (target === path && !release) release = await createNativeProviderWriterLease(home).acquire("claude");
+      return document;
+    });
+    expect(await service.observe("owner")).toMatchObject({ state: "unavailable", models: [] });
+  } finally { vi.restoreAllMocks(); await release?.(); }
+  expect(await service.observe("owner")).toEqual(status); await service.shutdown();
+});
+
+it("cancels consumers when new Disconnect published successfully but durable lease release fails", async () => {
+  const { service, home, guard, changed } = await fixture(), status = await service.connect("owner", request);
+  const writers = join(dirname(home), ".matrix-private", basename(home), "native-writers"), run = guard.run.bind(guard);
+  vi.spyOn(guard, "run").mockImplementation((profile, admission, operation) => run(profile, admission, async () => {
+    const result = await operation(); await chmod(writers, 0o500); return result;
+  }));
+  try {
+    const failure = await service.disconnect("owner", { expectedRevision: 1, expectedCredentialGeneration: status.credentialGeneration, idempotencyKey: "release-failed-disable" }).catch(error => error);
+    expect(JSON.parse(await readFile(join(home, "system/ai-providers/matrix-anthropic-source.json"), "utf8")).state).toMatchObject({ enabled: false, revision: 2 });
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect(failure).toMatchObject({ name: "MatrixAnthropicPublicationUncertainError" });
+    expect(await service.observe("owner")).toMatchObject({ state: "unavailable", models: [] });
+    await chmod(writers, 0o700);
+    expect(await service.observe("owner")).toMatchObject({ state: "unavailable", models: [] });
+    expect(JSON.parse(await readFile(join(writers, "claude.json"), "utf8")).profile).toBe("claude");
+  } finally { await chmod(writers, 0o700); await service.shutdown(); }
+});
+it("does not classify replayed old Disconnect release failure as new publication or cancel newer catalog", async () => {
+  const { service, home, guard, changed } = await fixture(), first = await service.connect("owner", request);
+  const disconnect = { expectedRevision: 1, expectedCredentialGeneration: first.credentialGeneration, idempotencyKey: "old-disable-release" };
+  const disabled = await service.disconnect("owner", disconnect);
+  const newer = await service.connect("owner", { ...request, expectedRevision: disabled.revision, expectedCredentialGeneration: disabled.credentialGeneration, idempotencyKey: "newer-connect-release" });
+  const writers = join(dirname(home), ".matrix-private", basename(home), "native-writers"), run = guard.run.bind(guard);
+  vi.spyOn(guard, "run").mockImplementation((profile, admission, operation) => run(profile, admission, async () => {
+    const result = await operation(); await chmod(writers, 0o500); return result;
+  }));
+  try {
+    await expect(service.disconnect("owner", disconnect)).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+    expect(JSON.parse(await readFile(join(home, "system/ai-providers/matrix-anthropic-source.json"), "utf8")).state).toMatchObject({ enabled: true, revision: newer.revision });
+    expect(changed).toHaveBeenCalledTimes(3);
+  } finally { await chmod(writers, 0o700); await service.shutdown(); }
 });

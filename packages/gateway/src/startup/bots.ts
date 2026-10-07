@@ -153,8 +153,8 @@ export async function startBots(options: {
   const lifetime = new AbortController();
   // Native key writes may leave the run signal live. Consumers call this again
   // after asynchronous preparation, immediately before the actual effect.
-  const revalidateRecipeSource = async (binding: PiRuntimeBinding, signal?: AbortSignal) => {
-    if (isManagedPiBinding(binding) || !binding.anthropicApi) return;
+  const revalidateAnthropicSource = async (binding: PiRuntimeBinding, signal?: AbortSignal) => {
+    if (!binding.anthropicApi) return;
     const currentSignal = AbortSignal.any([...(signal ? [signal] : []), lifetime.signal]);
     if (currentSignal.aborted || !options.matrixAnthropic || !await options.matrixAnthropic.revalidate(binding, currentSignal)
       || currentSignal.aborted) throw new BotBrokerActionError("stale_generation");
@@ -198,7 +198,7 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const integrationClient = options.integrations ? createBotIntegrationClient(options.integrations) : undefined;
   const integrationTools = integrationClient
-    ? createBotIntegrationTools({ client: integrationClient, transact, recipes, agents: options.agents, assertSource: revalidateRecipeSource })
+    ? createBotIntegrationTools({ client: integrationClient, transact, recipes, agents: options.agents, assertSource: revalidateAnthropicSource })
     : undefined;
   const connections = integrationClient && integrationTools
     ? createBotConnections({ client: integrationClient, transact, tools: integrationTools })
@@ -350,17 +350,17 @@ export async function startBots(options: {
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
     homePath: options.homePath, managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
-    assertSource: revalidateRecipeSource,
+    assertSource: revalidateAnthropicSource,
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
   });
   const qualifiedTools: BotToolDispatcher = {
     effectClass: request => tools.effectClass(request),
     async prepare(binding, request, signal) {
-      await revalidateRecipeSource(binding, signal);
+      await revalidateAnthropicSource(binding, signal);
       await tools.prepare?.(binding, request, signal);
     },
     async dispatch(binding, request, signal) {
-      await revalidateRecipeSource(binding, signal);
+      await revalidateAnthropicSource(binding, signal);
       return tools.dispatch(binding, request, signal);
     },
   };

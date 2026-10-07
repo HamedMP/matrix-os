@@ -20,8 +20,10 @@ import { CanonicalChatProviderRegistry } from "../../../packages/gateway/src/cha
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runtime-host/index.js";
+import * as persistence from "../../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
+import * as boundedJson from "../../../packages/gateway/src/bounded-json-file.js";
 const cleanup: Array<() => Promise<unknown>> = [];
-afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanup.splice(0).reverse()) await close(); });
 async function fixture() {
  const { db, destroy } = await createBotStateDatabase(); cleanup.push(destroy);
  const home = await mkdtemp(join(tmpdir(), "matrix-api-chat-")); cleanup.push(async () => { await rm(home, { force: true, recursive: true }); await rm(join(dirname(home), ".matrix-private", basename(home)), { force: true, recursive: true }); });
@@ -74,5 +76,29 @@ it("refuses persisted selection changes and canonical native key replacement bef
  expect((await f.forward()).ok).toBe(false); expect(f.inference).not.toHaveBeenCalled(); expect(f.fallback).not.toHaveBeenCalled();
  const before = f.createRuntime.mock.calls.length;
  await expect(f.admission.admit({ ownerId: OWNER, chatId: f.binding.chatId, runId: f.binding.runId, resolved: f.binding })).rejects.toThrow(); expect(f.createRuntime).toHaveBeenCalledTimes(before);
+ f.finish();
+});
+
+it("blocks later paid frames, new runtimes and existing tool authority after uncertain Disconnect despite readable prior state", async () => {
+ const f = await fixture(), path = join(f.home, "system/ai-providers/matrix-anthropic-source.json");
+ expect((await f.forward()).ok).toBe(true);
+ const write = persistence.writeProviderJsonAtomic, read = boundedJson.readBoundedJsonFileWithIdentity;
+ let proofUnavailable = false;
+ vi.spyOn(persistence, "writeProviderJsonAtomic").mockImplementation(async (target, value) => {
+  if (target === path) { proofUnavailable = true; throw new Error("synthetic publication failure"); }
+  return write(target, value);
+ });
+ vi.spyOn(boundedJson, "readBoundedJsonFileWithIdentity").mockImplementation(async (target, limit) => {
+  if (target === path && proofUnavailable) { proofUnavailable = false; throw new Error("synthetic transient proof failure"); }
+  return read(target, limit);
+ });
+ await expect(f.service.disconnect(OWNER, { expectedRevision: f.connected.revision, expectedCredentialGeneration: f.connected.credentialGeneration, idempotencyKey: "uncertain-disable-api" })).rejects.toThrow();
+ vi.restoreAllMocks();
+ expect(f.registry.inferenceSignal(f.binding)?.aborted).toBe(true);
+ expect((await f.forward()).ok).toBe(false); expect(f.inference).toHaveBeenCalledTimes(1);
+ await expect(f.admission.toolAuthority(f.binding)).rejects.toThrow();
+ const before = f.createRuntime.mock.calls.length;
+ await expect(f.admission.admit({ ownerId: OWNER, chatId: f.binding.chatId, runId: f.binding.runId, resolved: f.binding })).rejects.toThrow();
+ expect(f.createRuntime).toHaveBeenCalledTimes(before); expect(f.fallback).not.toHaveBeenCalled(); expect(f.providers.getSnapshot).not.toHaveBeenCalled();
  f.finish();
 });

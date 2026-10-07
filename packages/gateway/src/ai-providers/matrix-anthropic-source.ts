@@ -7,6 +7,7 @@ import { MatrixAnthropicConnectSchema, MatrixAnthropicDisconnectSchema, MatrixAn
 import { readBoundedJsonFileWithIdentity } from "../bounded-json-file.js";
 import { assertOwnerAnthropicKeyParents, createOwnerAnthropicKeySaver, readOwnerAnthropicKey } from "./owner-anthropic-key.js";
 import { NativeProviderWriteNotStartedError, type NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
+import { createNativeProviderWriterLease } from "./native-provider-writer-lease.js";
 import { writeProviderJsonAtomic } from "./provider-settings-persistence.js";
 
 const MAX_RECEIPTS = 64;
@@ -21,6 +22,10 @@ export interface MatrixAnthropicSourceMutationResult { state: MatrixAnthropicSou
 export class MatrixAnthropicSourceError extends NativeProviderWriteNotStartedError {
   override readonly code: "conflict" | "rejected" | "unavailable";
   constructor(code: "conflict" | "rejected" | "unavailable") { super(); this.code = code; this.message = code; }
+}
+/** Publication may have begun; unlike a classified rejection this must retain the durable fence. */
+export class MatrixAnthropicPublicationUncertainError extends Error {
+  constructor(cause?: unknown) { super("Matrix source publication uncertain", { cause }); this.name = "MatrixAnthropicPublicationUncertainError"; }
 }
 const missing = (error: unknown) => error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT";
 const initial = (): SourceDocument => ({ state: { version: 1, revision: 0, enabled: false, credentialGeneration: null }, receipts: [] });
@@ -62,13 +67,16 @@ function fingerprint(kind: "connect" | "disconnect", request: MatrixAnthropicCon
 export function createMatrixAnthropicSourceStore(options: { homePath: string; profileGuard: NativeProviderProfileGuard }) {
   if (!options.homePath || !options.profileGuard?.run) throw new Error("Matrix source admission dependencies required");
   const saver = createOwnerAnthropicKeySaver(options);
+  const writers = createNativeProviderWriterLease(options.homePath);
+  const assertAvailable = () => writers.assertAvailable("claude");
   const mutate = async (kind: "connect" | "disconnect", input: MatrixAnthropicConnect | MatrixAnthropicDisconnect): Promise<MatrixAnthropicSourceMutationResult> => {
     const parsed = kind === "connect" ? MatrixAnthropicConnectSchema.safeParse(input) : MatrixAnthropicDisconnectSchema.safeParse(input);
     if (!parsed.success) throw new MatrixAnthropicSourceError("rejected");
     const request = parsed.data;
     // Private bounded retry metadata only; never a public credential identity or status field.
     const payloadHash = fingerprint(kind, request);
-    return options.profileGuard.run("claude", { kind: "write" }, async () => {
+    let disconnectPublished = false;
+    const mutation = options.profileGuard.run("claude", { kind: "write" }, async () => {
       const document = await readDocument(options.homePath);
       const receipt = document.receipts.find(candidate => candidate.key === request.idempotencyKey);
       if (receipt) {
@@ -89,7 +97,7 @@ export function createMatrixAnthropicSourceStore(options: { homePath: string; pr
         if (!("apiKey" in request) || typeof request.apiKey !== "string") throw new MatrixAnthropicSourceError("rejected");
         await saver.connect(request.apiKey, async generation => { state = await publish(generation); });
       } else {
-        try { state = await publish(document.state.credentialGeneration); }
+        try { state = await publish(document.state.credentialGeneration); disconnectPublished = true; }
         catch (error) {
           // The atomic writer ends at rename. Independently prove prior metadata survived
           // before classifying failure as no publication; read failure or changed bytes retain fencing.
@@ -97,16 +105,23 @@ export function createMatrixAnthropicSourceStore(options: { homePath: string; pr
           try { current = await readDocument(options.homePath); }
           catch (proofError) {
             console.warn("[matrix-connection] Source rollback proof unavailable:", proofError instanceof Error ? proofError.name : "UnknownError");
-            throw new Error("Matrix source publication uncertain", { cause: error });
+            throw new MatrixAnthropicPublicationUncertainError(error);
           }
-          if (JSON.stringify(current) !== JSON.stringify(document)) throw new Error("Matrix source publication uncertain");
+          if (JSON.stringify(current) !== JSON.stringify(document)) throw new MatrixAnthropicPublicationUncertainError();
           console.warn("[matrix-connection] Source publication not started:", error instanceof Error ? error.name : "UnknownError");
           throw new MatrixAnthropicSourceError("unavailable");
         }
       }
-      if (!state) throw new Error("Matrix source publication uncertain");
+      if (!state) throw new MatrixAnthropicPublicationUncertainError();
       return { state, appliedRevision: state.revision, replayed: false };
     });
+    try { return await mutation; }
+    catch (error) {
+      // A successful new publication may still fail while releasing its durable lease.
+      // Consumers must withdraw even then; preflight/replay failures did not publish.
+      if (disconnectPublished && !(error instanceof MatrixAnthropicPublicationUncertainError)) throw new MatrixAnthropicPublicationUncertainError(error);
+      throw error;
+    }
   };
   return {
     async replayConnection(input: MatrixAnthropicConnect): Promise<MatrixAnthropicSourceMutationResult | null> {
@@ -120,7 +135,15 @@ export function createMatrixAnthropicSourceStore(options: { homePath: string; pr
         return { state: document.state, appliedRevision: receipt.appliedRevision, replayed: true };
       });
     },
-    async read(): Promise<MatrixAnthropicSourceState> { return (await readDocument(options.homePath)).state; },
+    assertAvailable,
+    async read(): Promise<MatrixAnthropicSourceState> {
+      // Prior enabled metadata/key bytes are not authority while a writer is unresolved.
+      // Check again after reading so a writer admitted during the read also fences it.
+      await assertAvailable();
+      const document = await readDocument(options.homePath);
+      await assertAvailable();
+      return document.state;
+    },
     commitConnection: (request: MatrixAnthropicConnect) => mutate("connect", request),
     disconnect: (request: MatrixAnthropicDisconnect) => mutate("disconnect", request),
   };

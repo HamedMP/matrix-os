@@ -9,7 +9,8 @@ import { createBotStateDatabase, OWNER, insertChat } from "./bot-state-support.j
 import { startBots } from "../../../packages/gateway/src/startup/bots.js";
 import * as broker from "../../../packages/gateway/src/bots/broker-actions.js";
 import * as integrationTools from "../../../packages/gateway/src/bots/integration-tools.js";
-import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
+import type { BotRuntimeBinding, ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
+import * as dispatcher from "../../../packages/gateway/src/bots/tool-dispatcher.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.js";
@@ -55,6 +56,7 @@ async function fixture(realIntegrations = false) {
     return Response.json({ data: { fixture: true } });
   });
   const captured = vi.spyOn(broker, "createBotBrokerActions");
+  const dispatcherFactory = vi.spyOn(dispatcher, "createBotToolDispatcher");
   const services = await startBots({ homePath: home, repository, agents, matrixAnthropic: service,
     executionRoots: { resolve: vi.fn() }, providers: { getSnapshot: vi.fn() },
     integrations: transport,
@@ -78,6 +80,7 @@ async function fixture(realIntegrations = false) {
       effects: ["read", "write"], audience: "direct", grantedByActorId: OWNER, now });
   }
   return { home, root: root.primaryWorkspaceRoot, call, service, binding, transport, db, services,
+    dispatcherOptions: dispatcherFactory.mock.calls[0]![0],
     holdInventory(wait: Promise<void>) { inventoryWait = wait; }, tools: captured.mock.calls[0]![0].tools };
 }
 const artifact: BotToolRequest = { toolCallId: "call_artifact", capability: "artifact.write", args: { relPath: "result.txt", content: "source fenced", mimeType: "text/plain" } };
@@ -168,4 +171,49 @@ it("allows a current source through real recipe grants and Integration transport
   const request: BotToolRequest = { toolCallId: "call_current_real", capability: "integration.call", args: { service: "gmail", action: "list_threads", connectionId: "conn_fixture", params: {} } };
   await expect(f.tools.dispatch(f.binding, request, new AbortController().signal)).resolves.toMatchObject({ result: { ok: true } });
   expect(f.transport).toHaveBeenCalledWith(OWNER, expect.objectContaining({ method: "POST", path: "/read-call" }));
+});
+
+function ordinaryBinding(binding: BotRuntimeBinding): ManagedPiRuntimeBinding {
+  const { botId, taskId, ...source } = binding;
+  void botId;
+  void taskId;
+  return { ...source, kind: "managed_chat", workspace: { kind: "chat_workspace" } };
+}
+it.each(["removal", "replacement"])("blocks ordinary Anthropic Chat publication after key %s during the final workspace read", async mutation => {
+  const f = await fixture(), signal = new AbortController().signal, binding = ordinaryBinding(f.binding);
+  let release!: () => void, entered!: () => void, reads = 0;
+  const hold = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  const managedWorkspace = vi.fn(async (captured: ManagedPiRuntimeBinding) => {
+    expect(await f.service.revalidate(captured, signal)).toBe(true);
+    if (++reads === 2) { entered(); await hold; }
+    return f.root;
+  });
+  // Retain the actual source callback registered by startBots. Only the
+  // asynchronous workspace read is held, after its own source check succeeded.
+  const tools = dispatcher.createBotToolDispatcher({ ...f.dispatcherOptions, managedWorkspace });
+  const pending = tools.dispatch(binding, artifact, signal);
+  await started;
+  try {
+    if (mutation === "removal") await revokeOwnerAnthropicKey(f.home); else await storeApiKey(f.home, "sk-ant-replacement-synthetic");
+  } finally { release(); }
+  await expect(pending).rejects.toMatchObject({ code: "stale_generation" });
+  expect(signal.aborted).toBe(false); expect(managedWorkspace).toHaveBeenCalledTimes(2);
+  await expect(readFile(join(f.root, "result.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readdir(join(f.home, dispatcher.MANAGED_SAVE_STAGING))).toEqual([]);
+});
+it.each(["anthropic", "funded", "chatgpt"])("preserves ordinary %s Chat artifact publication with the actual registered source callback", async source => {
+  const f = await fixture(), binding = ordinaryBinding(f.binding);
+  if (source !== "anthropic") {
+    delete binding.anthropicApi;
+    binding.accessSourceId = source === "funded" ? "matrix_included" : "matrix_chatgpt_plan";
+    if (source === "chatgpt") {
+      binding.route = { ...binding.route, api: "openai-responses", modelId: "gpt-account-model" };
+      binding.subscription = { accountId: "fixture-account", peerId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d2", computerId: "fixture-computer", grantRevision: 1 };
+    }
+    await revokeOwnerAnthropicKey(f.home);
+  }
+  const tools = dispatcher.createBotToolDispatcher({ ...f.dispatcherOptions, managedWorkspace: async () => f.root });
+  await expect(tools.dispatch(binding, artifact, new AbortController().signal)).resolves.toMatchObject({ result: { ok: true } });
+  expect(await readFile(join(f.root, "result.txt"), "utf8")).toBe("source fenced");
+  expect(await readdir(join(f.home, dispatcher.MANAGED_SAVE_STAGING))).toEqual([]);
 });
