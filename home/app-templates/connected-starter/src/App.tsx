@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import Edition from "./edition/Edition";
 import { Editor, EvidenceDrawer, ImportDialog } from "./Dialogs";
 import { exportRecords, filterRecords } from "./model";
 import { useRecords } from "./useRecords";
@@ -6,6 +7,9 @@ import Sidebar from "./Sidebar";
 import WorkspaceContent from "./WorkspaceContent";
 import type { Definition, OwnerRecord } from "./types";
 export default function App({ app }: { app: Definition }) {
+  return app.id === "edition" ? <Edition /> : <RecordApp app={app} />;
+}
+function RecordApp({ app }: { app: Definition }) {
   const { records, error, loading, limited, reload, save, archive } =
     useRecords();
   const canUseRecords = !!window.MatrixOS?.db,
@@ -58,7 +62,12 @@ export default function App({ app }: { app: Definition }) {
     }
   }
   return (
-    <div className="workbench" data-accent={app.accent} data-app={app.id} data-view={app.view}>
+    <div
+      className="workbench"
+      data-accent={app.accent}
+      data-app={app.id}
+      data-view={app.view}
+    >
       <Sidebar
         app={app}
         count={canUseRecords ? records.length : null}
@@ -104,7 +113,13 @@ export default function App({ app }: { app: Definition }) {
           app={app}
           records={records}
           visible={visible}
-          creationScope={scope === "all" ? (app.collection === "business" ? "work" : "personal") : scope}
+          creationScope={
+            scope === "all"
+              ? app.collection === "business"
+                ? "work"
+                : "personal"
+              : scope
+          }
           error={error}
           exportError={exportError}
           loading={loading}
