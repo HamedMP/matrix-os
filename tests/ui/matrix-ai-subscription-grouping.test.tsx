@@ -8,6 +8,7 @@ import { deriveCanonicalProviderChoices } from "../../packages/ui/src/canonical-
 import { chatPickerEntryForSelection, deriveChatPickerEntries } from "../../packages/ui/src/chat-picker-entries.js";
 import { CompactChatProviderChoices } from "../../packages/ui/src/compact-chat-provider-choices.js";
 import { ordinaryPlanCatalog, planBinding, planId } from "./ordinary-chatgpt-plan-fixture.js";
+import { ordinaryApiCatalog } from "./ordinary-anthropic-api-fixture.js";
 
 afterEach(cleanup);
 const fundedId = "matrix_pi_default";
@@ -29,6 +30,31 @@ function show(catalog = groupedCatalog(), selectedId = fundedId, lockedInstanceI
 }
 const personalRow = () => screen.getByRole("option", { name: "Owner GPT via Matrix AI · ChatGPT subscription" });
 const fundedRow = () => screen.getByRole("option", { name: "Funded Claude via Matrix AI" });
+
+it("offers one Settings navigation beside reserved credit, unavailable API and independently usable GPT", () => {
+  const catalog = groupedCatalog(), funded = catalog.instances.find(instance => instance.id === fundedId)!;
+  funded.availability = "unavailable"; funded.connectionState = "credit_reserved";
+  funded.setupActions = [{ id: "matrix_ai_settings", kind: "open_settings", label: "Agents & providers" }];
+  const api = ordinaryApiCatalog().instances[1]!;
+  api.availability = "unavailable";
+  api.setupActions = [{ id: "anthropic_api_settings", kind: "open_settings", label: "Agents & providers" }];
+  catalog.instances.push(api);
+  const { select, setup } = show(catalog, planId);
+  expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
+  expect(fundedRow()).toBeDisabled();
+  expect(within(fundedRow()).getByText(/Matrix AI credit reserved/)).toBeVisible();
+  const apiRow = screen.getByRole("option", { name: "Owner Claude via Matrix AI · Anthropic API" });
+  expect(apiRow).toBeDisabled(); expect(within(apiRow).getByText(/Anthropic API · Unavailable/)).toBeVisible();
+  expect(screen.queryByText("Your credit is reserved while usage is confirmed.")).toBeNull();
+  expect(screen.queryByText(/^Matrix AI credit ·/)).toBeNull();
+  expect(screen.queryByText(/^Anthropic API · Unavailable$/)).toBeNull();
+  expect(personalRow()).toBeEnabled();
+  fireEvent.click(personalRow());
+  expect(select).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instanceId: planId, selectedOptions: planBinding }));
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+  expect(setup).toHaveBeenCalledExactlyOnceWith(funded, funded.setupActions[0]);
+  expect(screen.getByRole("searchbox")).not.toHaveFocus(); expect(screen.queryByRole("status")).toBeNull();
+});
 
 it("groups both exact Matrix sources under the rabbit while keeping native Coding categories independent", () => {
   const catalog = groupedCatalog(), entries = deriveChatPickerEntries(catalog);
@@ -83,7 +109,7 @@ it("keeps a selected disconnected subscription's recovery separate from availabl
   const { select, setup } = show(catalog, planId, planId);
   expect(personalRow()).toHaveAttribute("aria-selected", "true"); expect(personalRow()).toBeDisabled(); expect(fundedRow()).toBeDisabled();
   fireEvent.click(personalRow()); expect(select).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Reconnect ChatGPT subscription" }));
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
   expect(setup).toHaveBeenCalledExactlyOnceWith(plan, plan.setupActions[0]);
 });
 it.each([fundedId, planId])("keeps unselected unavailable source %s recoverable beside an available selected source", unavailableId => {
@@ -95,12 +121,12 @@ it.each([fundedId, planId])("keeps unselected unavailable source %s recoverable 
   const { select, setup } = show(catalog, selectedId, selectedId);
   const selectedRow = selectedId === planId ? personalRow() : fundedRow();
   expect(selectedRow).toHaveAttribute("aria-selected", "true"); expect(selectedRow).toBeEnabled();
-  expect(screen.getByText(unavailableId === fundedId ? /^Matrix AI credit ·/ : /^ChatGPT subscription ·/)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Recover source" }));
+  expect(unavailableId === fundedId ? fundedRow() : personalRow()).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
   expect(setup).toHaveBeenCalledExactlyOnceWith(source, source.setupActions[0]);
   expect(select).not.toHaveBeenCalled(); expect(selectedRow).toHaveAttribute("aria-selected", "true");
 });
-it.each([fundedId, planId])("keeps both unavailable sources recoverable with selected %s first and exact independent targets", selectedId => {
+it.each([fundedId, planId])("keeps both unavailable rows and one Settings target for selected %s", selectedId => {
   const catalog = groupedCatalog(), plan = catalog.instances.find(instance => instance.id === planId)!;
   const funded = catalog.instances.find(instance => instance.id === fundedId)!;
   plan.availability = "auth_required"; funded.availability = "unavailable"; funded.connectionState = "credit_required";
@@ -108,16 +134,15 @@ it.each([fundedId, planId])("keeps both unavailable sources recoverable with sel
   funded.setupActions = [{ id: "recover_funded", kind: "open_settings", label: "Recover Matrix credit" }];
   const { select, setup } = show(catalog, selectedId, selectedId);
   expect(personalRow()).toBeDisabled(); expect(fundedRow()).toBeDisabled();
-  expect(screen.getByText(/^ChatGPT subscription ·/)).toBeVisible(); expect(screen.getByText(/^Matrix AI credit ·/)).toBeVisible();
-  const buttons = screen.getAllByRole("button", { name: /^Recover/ });
-  expect(buttons.map(button => button.textContent)).toEqual(selectedId === planId
-    ? ["Recover ChatGPT", "Recover Matrix credit"] : ["Recover Matrix credit", "Recover ChatGPT"]);
-  fireEvent.click(screen.getByRole("button", { name: "Recover ChatGPT" }));
-  fireEvent.click(screen.getByRole("button", { name: "Recover Matrix credit" }));
-  expect(setup.mock.calls).toEqual([[plan, plan.setupActions[0]], [funded, funded.setupActions[0]]]);
+  expect(within(personalRow()).getByText(/ChatGPT subscription/)).toBeVisible();
+  expect(within(fundedRow()).getByText(/Matrix AI credit required/)).toBeVisible();
+  expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+  const target = selectedId === planId ? plan : funded;
+  expect(setup).toHaveBeenCalledExactlyOnceWith(target, target.setupActions[0]);
   expect(select).not.toHaveBeenCalled();
 });
-it("keeps reserved-credit recovery visible during loading and restores independent subscription recovery without changing selection", () => {
+it("keeps one Settings navigation during loading and search without changing selected source", () => {
   const catalog = groupedCatalog(), plan = catalog.instances.find(instance => instance.id === planId)!;
   const funded = catalog.instances.find(instance => instance.id === fundedId)!;
   plan.availability = "auth_required"; funded.availability = "unavailable"; funded.connectionState = "credit_reserved";
@@ -127,15 +152,16 @@ it("keeps reserved-credit recovery visible during loading and restores independe
   const props = { catalog, choices: deriveCanonicalProviderChoices(catalog), selected: { instanceId: planId, modelId: "gpt-owner" },
     lockedInstanceId: planId, onSelect: select, onSetupAction: setup };
   const view = render(<CompactChatProviderChoices {...props} loading />);
-  expect(screen.queryByRole("button", { name: "Recover ChatGPT" })).toBeNull();
-  expect(screen.getByText("Your credit is reserved while usage is confirmed.")).toBeVisible();
+  expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
+  expect(within(fundedRow()).getByText(/Matrix AI credit reserved/)).toBeVisible();
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no matching model" } });
   expect(screen.queryByRole("option")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Recover Matrix credit" }));
-  expect(setup).toHaveBeenLastCalledWith(funded, funded.setupActions[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+  expect(setup).toHaveBeenCalledExactlyOnceWith(plan, plan.setupActions[0]);
   view.rerender(<CompactChatProviderChoices {...props} loading={false} />);
   expect(screen.queryByRole("option")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Recover ChatGPT" }));
+  expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
   expect(setup).toHaveBeenLastCalledWith(plan, plan.setupActions[0]);
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
   expect(personalRow()).toHaveAttribute("aria-selected", "true"); expect(personalRow()).toBeDisabled(); expect(fundedRow()).toBeDisabled();

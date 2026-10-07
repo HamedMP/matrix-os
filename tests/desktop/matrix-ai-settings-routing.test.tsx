@@ -11,6 +11,8 @@ import { useProviderSetup } from "../../desktop/src/renderer/src/features/chat/u
 import { executeCatalogProviderSetupAction } from "../../desktop/src/renderer/src/features/coding-agents/provider-setup-terminal";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { ordinaryPlanCatalog, planBinding, planId } from "../ui/ordinary-chatgpt-plan-fixture";
+import { ordinaryApiCatalog } from "../ui/ordinary-anthropic-api-fixture";
 
 function heldCatalog(driverKind: "matrix_pi" | "kernel") {
   const catalog = createCanonicalProviderCatalogFixture();
@@ -54,6 +56,36 @@ it.each(["matrix_pi"] as const)("opens Agents & providers from the held %s picke
   expect(change).not.toHaveBeenCalled();
   expect(refresh).not.toHaveBeenCalled();
   expect(error).not.toHaveBeenCalled();
+});
+
+it("navigates once to canonical Settings with both unavailable Matrix payment sources and usable GPT", async () => {
+  const catalog = ordinaryPlanCatalog();
+  catalog.instances.push(heldCatalog("matrix_pi").instances[0]!);
+  const api = ordinaryApiCatalog().instances[1]!;
+  api.availability = "unavailable";
+  api.setupActions = [{ id: "matrix_anthropic_api_settings", kind: "open_settings", label: "Agents & providers" }];
+  catalog.instances.push(api);
+  const refresh = vi.fn(), change = vi.fn();
+  const requestSettings = vi.spyOn(useUi.getState(), "requestSettingsSection");
+  function Picker() {
+    const setup = useProviderSetup([], refresh, null);
+    return <ProviderModelPicker catalog={catalog} instanceLocked={false} onChange={change} onSetupAction={setup}
+      selection={{ instanceId: planId, model: "gpt-owner", options: planBinding, interactionMode: "default", permissionMode: "supervised" }} />;
+  }
+  render(<Picker />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+  expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
+  expect(screen.getByRole("option", { name: /Owner GPT/ })).toBeEnabled();
+  expect(screen.getByRole("option", { name: /Claude Sonnet 5/ })).toBeDisabled();
+  expect(screen.getByRole("option", { name: /Owner Claude/ })).toBeDisabled();
+  expect(screen.getByRole("searchbox")).not.toHaveFocus();
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+  await waitFor(() => expect(useUi.getState().requestedSettingsSection).toBe("agents-providers"));
+  expect(requestSettings).toHaveBeenCalledExactlyOnceWith("agents-providers");
+  expect(useTabs.getState().tabs.filter(tab => tab.kind === "settings")).toHaveLength(1);
+  expect(useTabs.getState().tabs.some(tab => tab.kind === "terminals")).toBe(false);
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  expect(change).not.toHaveBeenCalled(); expect(refresh).not.toHaveBeenCalled();
 });
 
 it.each([

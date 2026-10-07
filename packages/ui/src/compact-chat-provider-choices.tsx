@@ -110,6 +110,11 @@ function TwoPaneChatProviderChoices({
     ?? entries.find(entry => entry.id === chatPickerEntryForSelection(entries, selected?.instanceId));
   const activeInstance = chatPickerEntryInstance(activeEntry);
   const recoveryInstances = chatPickerEntryRecoveryInstances(activeEntry, selected?.instanceId);
+  const matrixSettingsInstance = activeEntry?.id === "matrix-ai"
+    ? recoveryInstances.find(instance => instance.setupActions.some(action => action.kind === "open_settings"))
+      ?? activeEntry.instances.find(instance => instance.setupActions.some(action => action.kind === "open_settings"))
+    : undefined;
+  const matrixSettingsAction = matrixSettingsInstance?.setupActions.find(action => action.kind === "open_settings");
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const activeRows = deriveChatPickerModelRows(catalog, choices).filter((choice) => activeEntry?.instances.some(instance => instance.id === choice.instanceId)
     && (normalizedQuery.length === 0
@@ -209,7 +214,11 @@ function TwoPaneChatProviderChoices({
           {activeEntry?.id === "matrix-ai" ? "Matrix AI is unavailable on this computer." : "No ready connections. Open Agents & providers settings to connect."}
         </p> : null}
       </div>
-      {recoveryInstances.filter(instance => !loading || canonicalProviderFundingState(instance) === "credit_reserved").map(recoveryInstance => <div key={recoveryInstance.id} className="matrix-chat-provider-setup" data-has-models={activeRows.length > 0 || undefined}>
+      {activeEntry?.id === "matrix-ai" ? onSetupAction && matrixSettingsInstance && matrixSettingsAction
+        ? <div className="matrix-chat-provider-setup" data-has-models={activeRows.length > 0 || undefined}>
+          <button type="button" onClick={() => onSetupAction(matrixSettingsInstance, matrixSettingsAction)}>Agents &amp; providers</button>
+        </div> : null
+        : recoveryInstances.filter(instance => !loading || canonicalProviderFundingState(instance) === "credit_reserved").map(recoveryInstance => <div key={recoveryInstance.id} className="matrix-chat-provider-setup" data-has-models={activeRows.length > 0 || undefined}>
         <p>{activeEntry && activeEntry.instances.length > 1 ? `${recoveryInstance.id === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription" : recoveryInstance.id === "matrix_pi_default" ? "Matrix AI credit" : recoveryInstance.connectionLabel ?? recoveryInstance.displayName} · ` : null}{canonicalProviderAvailabilityLabel(recoveryInstance)}</p>
         {canonicalProviderFundingState(recoveryInstance) === "credit_reserved"
           ? <p>Your credit is reserved while usage is confirmed.</p> : null}

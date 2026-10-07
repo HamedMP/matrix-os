@@ -179,7 +179,7 @@ it("preserves held credit identity and reason during loading while keeping Stop 
   expect(trigger).toHaveAttribute("data-model", instance.models[0]!.id);
   expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
   fireEvent.click(trigger);
-  expect(screen.getByText("Your credit is reserved while usage is confirmed.")).toBeVisible();
+  expect(within(screen.getByRole("option")).getByText(/Matrix AI credit reserved/)).toBeVisible();
   expect(screen.getByRole("option")).toBeDisabled();
   fireEvent.click(screen.getByRole("option"));
   expect(change).not.toHaveBeenCalled();
