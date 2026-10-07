@@ -7,7 +7,9 @@ import type { ProjectSummary } from "../lib/requests";
 jest.mock("@expo/ui", () => {
   const { Text, View } = jest.requireActual("react-native") as typeof import("react-native");
   const Picker = (props: { children?: ReactNode }) => <View {...props}>{props.children}</View>;
-  Picker.Item = ({ label }: { label: string }) => <Text>{label}</Text>;
+  Picker.Item = function PickerItem({ label }: { label: string }) {
+    return <Text>{label}</Text>;
+  };
   return { Host: ({ children }: { children: ReactNode }) => children, Picker };
 });
 

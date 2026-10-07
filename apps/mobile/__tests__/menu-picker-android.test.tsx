@@ -19,12 +19,16 @@ jest.mock("@expo/ui/jetpack-compose", () => {
     return <View testID="dropdown-menu">{props.children}</View>;
   }
   DropdownMenu.Trigger = ({ children }: { children: ReactNode }) => children;
-  DropdownMenu.Items = ({ children }: { children: ReactNode }) => <View testID="dropdown-items">{children}</View>;
+  DropdownMenu.Items = function Items({ children }: { children: ReactNode }) {
+    return <View testID="dropdown-items">{children}</View>;
+  };
   function DropdownMenuItem({ onClick, children }: { onClick?: () => void; children: ReactNode }) {
     return <Pressable accessibilityRole="menuitem" onPress={onClick}>{children}</Pressable>;
   }
   DropdownMenuItem.Text = ({ children }: { children: ReactNode }) => children;
-  DropdownMenuItem.TrailingIcon = ({ children }: { children: ReactNode }) => <View testID="selected-mark">{children}</View>;
+  DropdownMenuItem.TrailingIcon = function TrailingIcon({ children }: { children: ReactNode }) {
+    return <View testID="selected-mark">{children}</View>;
+  };
   return {
     DropdownMenu,
     DropdownMenuItem,
