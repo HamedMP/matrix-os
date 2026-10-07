@@ -194,18 +194,32 @@ describe('WhatsApp account linking and delivery', () => {
     await service.tick();
     expect(sends).toHaveLength(1);
   });
-  it('crosses signed webhook, durable linking proof, canonical agent and reply; deduplicates redelivery', async () => {
+  it.each(['allowlist', 'eea_selfserve'] as const)('crosses signed webhook, durable linking proof, canonical agent and reply in %s; deduplicates redelivery', async (admissionMode) => {
+    if (admissionMode === 'eea_selfserve') {
+      const production = { ...config, admissionMode, allowedSenders: ['46709999999'] };
+      service = createWhatsAppService({ config: production, repository: repo, agent, now: () => now,
+        react: async (to, messageId, emoji) => { reactions.push({ to, messageId, emoji }); },
+        send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; },
+      });
+      routes = createWhatsAppRoutes({ config: production, repository: repo, service,
+        authenticate: async (token) => token === 'owner-token' ? owner : null,
+        publishableKey: 'pk_test_example', now: () => now,
+      });
+    }
     expect((await webhook('wamid.hello', 'Hey Matrix')).status).toBe(200);
     await service.tick();
     expect(sends[0]?.to).toBe(sender);
     const link = sends[0]!.text.match(/https:\/\/\S+/)![0];
     const token = new URL(link).searchParams.get('token')!;
     expect(agent.start).not.toHaveBeenCalled();
+    expect((await call('/api/whatsapp/claim', { token }, 'bad')).status).toBe(401);
     const claim = await call('/api/whatsapp/claim', { token });
     expect(claim.status).toBe(200);
     expect(await claim.json()).toEqual({ maskedSender: '••••4567' });
     await service.tick();
     const code = sends[1]!.text.match(/\b\d{6}\b/)![0];
+    expect((await call('/api/whatsapp/confirm', { token, code: code === '000000' ? '111111' : '000000', consentVersion: 'whatsapp-general-agent-v1' })).status).toBe(403);
+    expect(agent.start).not.toHaveBeenCalled();
     expect((await call('/api/whatsapp/confirm', { token, code, consentVersion: 'whatsapp-general-agent-v1' })).status).toBe(200);
     await service.tick();
     expect(sends[2]).toEqual({ to: sender, text: expect.stringContaining('connected to WhatsApp') });

@@ -34,7 +34,7 @@ export function createWhatsAppService(deps: {
   const { config, repository: repo, agent } = deps;
   const now = deps.now ?? Date.now;
   // Only internally admitted durable jobs reach send. A signed event may pair an
-  // allowlisted phone with its BSUID; retain that identity when the phone disappears.
+  // admitted phone with its BSUID; retain that identity when the phone disappears.
   const send = deps.send ?? ((sender, text) => sendWhatsAppText({ ...config, allowedSenders: [...config.allowedSenders, sender] }, sender, text));
   const react = deps.react ?? (async (sender, messageId, emoji) => {
     await sendWhatsAppReaction({ ...config, allowedSenders: [...config.allowedSenders, sender] }, sender, messageId, emoji);
@@ -52,7 +52,7 @@ export function createWhatsAppService(deps: {
       const admitted = canAdmitWhatsAppMessage(config, message, now()) || (message.sender.includes('.') && connection !== null
         && isWhatsAppSenderEligible(message.sender) && isWhatsAppReplyWindowOpen(message.timestamp, now()));
       if (!admitted) continue;
-      // Only signed, explicitly allowlisted phone/account pairs may route replies.
+      // Only signed phone/account pairs admitted by the configured policy may route replies.
       const phone = message.phone && isWhatsAppSenderAllowed(config, message.phone) ? message.phone : undefined;
       const expiresAt = Math.min(now() + 86_400_000, message.timestamp * 1000 + 86_400_000);
       if (message.text?.trim().toUpperCase() === 'STOP' || message.text?.trim().toLowerCase() === '/disconnect') {
