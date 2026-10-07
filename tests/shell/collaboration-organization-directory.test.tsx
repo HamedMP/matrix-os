@@ -34,7 +34,15 @@ const ownerScope = {
 };
 
 function organizationRoutes() {
-  const record = (id: string) => ({ actorId: id, role: id === actorId ? "org:admin" : "org:member", sourceUpdatedAt: new Date("2026-09-20T12:00:00.000Z") });
+  // Clerk profiles as the platform projects them: a full name and email, an email only, or nothing.
+  const profiles: Record<string, { displayName: string | null; email: string | null }> = {
+    user_member_00: { displayName: "Ada Lovelace", email: "ada@example.com" },
+    user_member_01: { displayName: null, email: "lin@example.com" },
+  };
+  const record = (id: string) => ({
+    actorId: id, role: id === actorId ? "org:admin" : "org:member", sourceUpdatedAt: new Date("2026-09-20T12:00:00.000Z"),
+    displayName: profiles[id]?.displayName ?? null, email: profiles[id]?.email ?? null, imageUrl: null,
+  });
   const repository = {
     listOrganizationsForActor: async (id: string) => memberIds.includes(id) ? [{
       organization: { organizationId, name: "Direct org", slug: null, aiSubmission: "members", membershipEpoch: 4 },
@@ -97,7 +105,11 @@ describe("organization directory reads through the direct API", () => {
     await waitFor(() => expect(screen.queryByText("Loading organization members…")).not.toBeInTheDocument());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     const audience = screen.getByRole("combobox", { name: "Share with" });
-    expect(within(audience).getByRole("option", { name: "user_member_00" })).toBeInTheDocument();
+    // People are shown by name and email, then email alone, then a short id; never a raw id when a name exists.
+    expect(within(audience).getByRole("option", { name: "Ada Lovelace · ada@example.com" })).toBeInTheDocument();
+    expect(within(audience).getByRole("option", { name: "lin@example.com" })).toBeInTheDocument();
+    expect(within(audience).getByRole("option", { name: "user_member_02" })).toBeInTheDocument();
+    expect(within(audience).queryByRole("option", { name: "user_member_00" })).not.toBeInTheDocument();
     expect(within(audience).queryByRole("option", { name: actorId })).not.toBeInTheDocument();
     expect(within(audience).queryByRole("option", { name: "user_member_53" })).not.toBeInTheDocument();
 
@@ -107,8 +119,8 @@ describe("organization directory reads through the direct API", () => {
     expect(within(audience).getAllByRole("option")).toHaveLength(others.length + 1);
 
     expect(organizationRequests.map((request) => new URL(request.url).pathname + new URL(request.url).search)).toEqual([
-      `/api/organizations/${organizationId}/members`,
-      expect.stringMatching(new RegExp(`^/api/organizations/${organizationId}/members\\?cursor=[A-Za-z0-9_-]+$`)),
+      `/api/organizations/${organizationId}/members?include=profile`,
+      expect.stringMatching(new RegExp(`^/api/organizations/${organizationId}/members\\?include=profile&cursor=[A-Za-z0-9_-]+$`)),
     ]);
     expect(organizationRequests.every((request) => request.credentials === "same-origin")).toBe(true);
   });
