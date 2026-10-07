@@ -79,3 +79,25 @@ it('accepts a verified owner JWT and rejects one bound to another Computer', asy
   expect((await f.app.request(`${root}/challenge`, foreign)).status).toBe(401);
   expect(f.challenge).toHaveBeenCalledTimes(1);
 });
+
+it('admits escaping-heavy near-limit SSE replies and rejects encoded/decoded oversize', async () => {
+  const { ChatGptPlanPeerReplySchema } = await import('@matrix-os/contracts');
+  const { assertChatGptPlanCompleted } = await import('../../../packages/gateway/src/bots/chatgpt-plan-wire.js');
+  const reply = vi.fn((_owner: string, input: unknown) => {
+    const parsed = ChatGptPlanPeerReplySchema.parse(input);
+    if (parsed.ok) assertChatGptPlanCompleted(parsed.body, 'fixture-model');
+    return { version: 1, ok: true };
+  });
+  const app = new Hono();
+  app.use('*', async (c, next) => { markVerifiedRuntimeBearer(c); await next(); });
+  app.route('/', createChatGptPlanPeerRoutes({ getPrincipal: () => ({ userId: 'owner', source: 'jwt' }) as never, peers: { reply } as never }));
+  const terminal = 'data: {"type":"response.completed","response":{"status":"completed","model":"fixture-model"}}\n\n';
+  const body = `: ${'\u0001'.repeat(1024 * 1024 - terminal.length - 5)}\n\n${terminal}`;
+  const envelope = { version: 1, sessionId: '00000000-0000-4000-8000-000000000001', id: '00000000-0000-4000-8000-000000000002', ok: true, status: 200, headers: { 'content-type': 'text/event-stream' }, body };
+  expect(Buffer.byteLength(body)).toBeLessThanOrEqual(1024 * 1024);
+  expect(Buffer.byteLength(JSON.stringify(envelope))).toBeGreaterThan(1100000);
+  expect((await app.request(`${root}/reply`, post(envelope))).status).toBe(200);
+  expect(reply).toHaveBeenCalledTimes(1);
+  expect((await app.request(`${root}/reply`, post({ ...envelope, body: 'é'.repeat(600000) }))).status).toBe(400);
+  expect((await app.request(`${root}/reply`, post({ ...envelope, body: '\u0001'.repeat(1024 * 1024 + 1000) }))).status).toBe(413);
+});

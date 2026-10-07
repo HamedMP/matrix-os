@@ -1,4 +1,4 @@
-import { ChatGptPlanWireSchema } from '@matrix-os/contracts';
+import { CHATGPT_PLAN_RESPONSE_BYTE_LIMIT, ChatGptPlanWireSchema } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 import { PlanFailure, logPlanFailure, safePlanResponseDiagnostic, type PlanResponseDiagnostic } from './diagnostics';
 import { PLAN_RESOURCE } from './oauth';
@@ -133,7 +133,7 @@ export async function requestPlanResponse(input: {
     }
     // Official streaming Responses parsing is based on SSE frames, not MIME.
     // A labelled JSON/HTML body cannot pass the same event/completion checks.
-    const read = await readResponseBody(response, input.signal, 1024 * 1024, 120000);
+    const read = await readResponseBody(response, input.signal, CHATGPT_PLAN_RESPONSE_BYTE_LIMIT, 120000);
     const fail = (category: string): never => { throw new PlanFailure('responses', category, response.status, responseDiagnostic(response, read)); };
     if (read.outcome !== 'complete') fail(read.outcome === 'oversize' ? 'response_too_large' : read.outcome === 'failed' ? 'invalid_stream' : read.outcome);
     input.validate();

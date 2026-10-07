@@ -12,6 +12,7 @@ type Props = {
   capabilities: readonly ProviderWorkflowUICapability[];
   client?: ProviderWorkflowClient;
   localChatgptClient?: LocalChatgptPlanClient;
+  localChatgptRefreshRevision?: number;
   operationIds: Readonly<Record<string, string>>;
   workflowStatus: Readonly<Record<string, string>>;
   forbidden: boolean;
@@ -21,12 +22,12 @@ type Props = {
 };
 
 /** Display-only shortcuts into the single native workflow; never initiate auth here. */
-export function YourSubscriptions({snapshot, capabilities, client, localChatgptClient, operationIds, workflowStatus, forbidden, disabled, onOpen, onRefresh}: Props) {
+export function YourSubscriptions({snapshot, capabilities, client, localChatgptClient, localChatgptRefreshRevision, operationIds, workflowStatus, forbidden, disabled, onOpen, onRefresh}: Props) {
   return <section className="matrix-ap-subscriptions" aria-label="Your subscriptions">
     <h3>Your subscriptions</h3>
     <p className="matrix-ap-help">Connect your accounts on this Computer. Subscription usage is separate from Matrix AI credit.</p>
     <div className="matrix-ap-subscription-list">
-      <LocalChatgptSubscription client={localChatgptClient} disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/>
+      <LocalChatgptSubscription client={localChatgptClient} refreshRevision={localChatgptRefreshRevision} disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/>
       {(["codex", "claude"] as const).flatMap(kind => {
         // Native Codex key/account shortcuts remain a separate route. Never
         // substitute that account for an explicit local subscription connection.

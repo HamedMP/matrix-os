@@ -1,3 +1,4 @@
+import { NativeProviderWriteNotStartedError } from "./native-provider-profile-guard.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve } from "node:path";
@@ -61,8 +62,8 @@ export function createHermesSettingsConnection(options: {
     try { return await probing; } finally { probing = undefined; }
   };
   const save = async (input: ProviderWorkflowKey) => {
-    if (closed || busy || !(await supported())) throw new ProviderWorkflowError("unavailable");
-    if (closed || busy) throw new ProviderWorkflowError("unavailable");
+    if (closed || busy || !(await supported())) throw new NativeProviderWriteNotStartedError();
+    if (closed || busy) throw new NativeProviderWriteNotStartedError();
     busy = true;
     await new Promise<void>((accept, reject) => {
       let child: ReturnType<typeof spawnIsolatedProviderProcess>;

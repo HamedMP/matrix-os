@@ -1,3 +1,4 @@
+import { CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT } from '@matrix-os/contracts';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
@@ -18,10 +19,14 @@ export function createChatGptPlanPeerRoutes(options: {
     c.header('Cache-Control', 'private, no-store');
     await next();
   });
-  routes.use(`${root}/*`, bodyLimit({
-    maxSize: 1100000,
+  routes.use(`${root}/reply`, bodyLimit({
+    maxSize: CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT,
     onError: c => c.json({ code: 'invalid_request', message: 'The request is too large.' }, 413),
   }));
+  routes.use(`${root}/*`, async (c, next) => {
+    if (c.req.path === `${root}/reply`) return next();
+    return bodyLimit({ maxSize: 1100000, onError: c => c.json({ code: 'invalid_request', message: 'The request is too large.' }, 413) })(c, next);
+  });
   routes.onError((error: unknown, c) => {
     if (isRequestPrincipalError(error)) {
       const mapped = mapRequestPrincipalError(error);

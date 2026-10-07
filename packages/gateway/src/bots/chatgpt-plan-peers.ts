@@ -1,5 +1,5 @@
 import { createHash, createPublicKey, randomBytes, randomUUID, timingSafeEqual, verify } from 'node:crypto';
-import { ChatGptPlanPeerConnectSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerSessionSchema, chatGptPlanPeerProof, type ChatGptPlanPeerRequest, type ChatGptPlanPeerSnapshot, type BotProviderConnection, type CanonicalChatModelSelection } from '@matrix-os/contracts';
+import { CHATGPT_PLAN_PEER_MAX_SEQUENCE, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerConnectSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerSessionSchema, chatGptPlanPeerProof, type ChatGptPlanPeerRequest, type ChatGptPlanPeerSnapshot, type BotProviderConnection, type CanonicalChatModelSelection } from '@matrix-os/contracts';
 import type { BotExecutor } from './repositories/shared.js';
 import type { PiRuntimeBinding } from './runtime-registry.js';
 import { BotRouteError } from './route-resolver.js';
@@ -23,6 +23,7 @@ type Pending = {
 };
 type Peer = {
     sessionId: string;
+    sequence: number;
     snapshot: ChatGptPlanPeerSnapshot;
     lastTouched: number;
     requests: ChatGptPlanPeerRequest[];
@@ -126,7 +127,7 @@ export function createChatGptPlanPeers(deps: {
             if (closed || attempt.epoch !== challengeEpoch)
                 throw new ChatGptPlanPeerError('unavailable');
             drop();
-            peer = { sessionId: randomUUID(), snapshot, lastTouched: now(), requests: [], pending: new Map(), polling: false };
+            peer = { sessionId: randomUUID(), sequence: 0, snapshot, lastTouched: now(), requests: [], pending: new Map(), polling: false };
             return { version: 1 as const, sessionId: peer.sessionId };
         },
         async poll(owner: string, input: unknown) {
@@ -214,9 +215,11 @@ export function createChatGptPlanPeers(deps: {
             if (!await service.revalidate(binding, signal))
                 throw new ChatGptPlanPeerError('unavailable');
             const p = current()!;
-            if (p.pending.size >= 4 || p.requests.length >= 32)
+            if (p.pending.size >= 4 || p.requests.length >= 32 || p.sequence >= CHATGPT_PLAN_PEER_MAX_SEQUENCE)
                 throw new ChatGptPlanPeerError('unavailable');
-            const id = randomUUID();
+            const sequence = ++p.sequence;
+            const id = chatGptPlanPeerRequestId(p.sessionId, sequence);
+            const expiresAt = new Date(now() + CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS).toISOString();
             return new Promise<InferenceReply>((resolve, reject) => {
                 const abort = () => {
                     const pending = p.pending.get(id);
@@ -231,14 +234,14 @@ export function createChatGptPlanPeers(deps: {
                     p.wake?.();
                     reject(new ChatGptPlanPeerError('unavailable'));
                 };
-                const timeout = setTimeout(abort, 120000);
+                const timeout = setTimeout(abort, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS);
                 p.pending.set(id, { resolve, reject, signal, abort, timer: timeout });
                 signal.addEventListener('abort', abort, { once: true });
                 if (signal.aborted) {
                     abort();
                     return;
                 }
-                p.requests.push({ version: 1, action: 'infer', id, accountId: binding.subscription!.accountId, grantRevision: binding.subscription!.grantRevision,
+                p.requests.push({ version: 1, action: 'infer', id, sequence, expiresAt, accountId: binding.subscription!.accountId, grantRevision: binding.subscription!.grantRevision,
                     computerId: deps.computerId, requestClass: binding.requestClass, runId: binding.runId, model: binding.route.modelId, body });
                 p.wake?.();
             });

@@ -1,3 +1,4 @@
+import { NativeProviderWriteNotStartedError } from "./native-provider-profile-guard.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, realpath, readFile } from "node:fs/promises";
@@ -84,9 +85,15 @@ export function createPiSettingsConnection(options: {
   let cached: { expiresAt: number; supported: boolean } | undefined;
   let probing: Promise<{ login: boolean; apiKey: boolean }> | undefined;
   async function run(mode: "probe" | "oauth" | "key", publish: (record: z.infer<typeof recordSchema>) => void, key?: string, registerCleanup?: (cancel: () => Promise<void>) => void, provider: "openai" | "anthropic" | "openrouter" = "openai") {
-    if (shutdown || children.size >= 2) throw new ProviderWorkflowError("unavailable");
-    const config = await options.discover();
-    if (shutdown || children.size >= 2) throw new ProviderWorkflowError("unavailable");
+    if (shutdown || children.size >= 2) throw new NativeProviderWriteNotStartedError();
+    let config: PiAuthDiscovery;
+    try { config = await options.discover(); }
+    catch (error) {
+      console.warn("[provider-workflow] Pi discovery unavailable:", error instanceof Error ? error.name : "UnknownError");
+      // Discovery inspects package metadata/version only; the key worker has not launched.
+      throw new NativeProviderWriteNotStartedError();
+    }
+    if (shutdown || children.size >= 2) throw new NativeProviderWriteNotStartedError();
     const launch = options.spawn ?? ((command, args, opts) => spawnIsolatedProviderProcess(command, args, { ...opts, stdio: ["pipe", "pipe", "pipe"] }));
     const cleanup: { close?: () => Promise<void> } = {};
     registerCleanup?.(async () => { if (!cleanup.close) throw new ProviderWorkflowError("unavailable"); await cleanup.close(); });

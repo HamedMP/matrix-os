@@ -54,6 +54,7 @@ export function AgentsProvidersView({
   onLoadUsageHistory,
 }: AgentsProvidersViewProps) {
   const root = useRef<HTMLDivElement>(null);
+  const [localChatgptRefreshRevision, setLocalChatgptRefreshRevision] = useState(0);
   const [subscriptionTarget, setSubscriptionTarget] = useState<string | null>(null);
   const [historyLoader, setHistoryLoader] = useState<AgentsProvidersViewProps["onLoadUsageHistory"]>(undefined);
   const [workflowCapabilities, setWorkflowCapabilities] = useState<ProviderWorkflowUICapability[]>([]);
@@ -134,7 +135,7 @@ export function AgentsProvidersView({
       selectedId, disabled: busy || readOnly, supports, onMutate});
   const enablement = useHarnessEnablement({ snapshot, refresh: onRefreshForConnection, mutate: onMutate, scope: workflowClient });
   const visibleError = error ?? enablement.error;
-  const refreshSettings = () => { enablement.clearError(); onRefresh(); };
+  const refreshSettings = () => { enablement.clearError(); setLocalChatgptRefreshRevision(value => value + 1); onRefresh(); };
   const mutationsDisabled = busy || readOnly || gatewayPending || enablement.pending;
   const errorPresentation = settingsErrorPresentation(gatewayError ? null : visibleError);
 
@@ -187,7 +188,7 @@ export function AgentsProvidersView({
           onChooseAgent={(id) => { setExpandedRowId(id); setExpandedRowKind(snapshot.harnesses.find(item => item.id === id)?.harness ?? null); onSelectHarness(id); }}
           onUseGateway={useGateway}
           subscriptions={<YourSubscriptions snapshot={snapshot} capabilities={workflowCapabilities} client={workflowClient}
-            localChatgptClient={localChatgptClient}
+            localChatgptClient={localChatgptClient} localChatgptRefreshRevision={localChatgptRefreshRevision}
             operationIds={operationIds} workflowStatus={workflowStatus} forbidden={workflowPermission === "forbidden"}
             disabled={busy || gatewayPending || enablement.pending} onRefresh={refreshSettings}
             onOpen={(id, kind) => { setExpandedRowId(id); setExpandedRowKind(kind); setSubscriptionTarget(id); if (snapshot.harnesses.some(item => item.id === id)) onSelectHarness(id); }} />}

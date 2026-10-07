@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { exportJWK, SignJWT } from 'jose';
 import { describe, expect, it, vi } from 'vitest';
-import { chatGptPlanPeerProof, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
+import { chatGptPlanPeerRequestId, chatGptPlanPeerProof, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
 import { createNativeChatgptPlanService } from '../../desktop/src/main/chatgpt-plan/service';
 import { createPlanVault } from '../../desktop/src/main/chatgpt-plan/vault';
 const session={runtimeSlot:'primary',authGeneration:1};
@@ -68,7 +68,8 @@ async function fixture(runtimeSlot='primary') {
  return {service,vault,authState,snapshots,replies,providerBodies,fetchFn,finish,signedIn,queue:(items:ChatGptPlanPeerRequest[])=>{queued.push(...items);},changeModel:(model:string)=>{visibleModel=model;},holdCatalog:()=>{catalogGate=new Promise(resolve=>{releaseCatalog=()=>{catalogGate=null;resolve();};});return ()=>releaseCatalog();},holdRefresh:()=>{refreshGate=new Promise(resolve=>{releaseRefresh=()=>{refreshGate=null;resolve();};});return ()=>releaseRefresh();},lateFailure:()=>{lateFailure=true;},rejectNonce:()=>{rejectNonce=true;},expireSoon:()=>{expiresIn=1;},holdJwks:()=>{jwksHeld=false;jwksGate=new Promise(resolve=>{releaseJwks=()=>{jwksGate=null;resolve();};});return ()=>releaseJwks();},rejectCatalog:()=>{rejectCatalog=true;},get browserOpens(){return browserOpens;},get jwksHeld(){return jwksHeld;},get refreshes(){return refreshes;},get polls(){return polls;},get revoked(){return revoked;},cleanup:async()=>{await service.dispose();await rm(dir,{recursive:true,force:true});}};
 }
 function request(id:string,accountId:string,grantRevision:number):ChatGptPlanPeerRequest {
- return {version:1,action:'infer',id,accountId,grantRevision,computerId:'computer',runId:'run_fixture',requestClass:'interactive',model:'fixture-visible',body:JSON.stringify({model:'fixture-visible',input:[{role:'user',content:'fixture only'}],store:false,stream:true})};
+ const sequence=Number.parseInt(id.slice(-12),16);
+ return {version:1,action:'infer',id:chatGptPlanPeerRequestId('00000000-0000-4000-8000-000000000001',sequence),sequence,expiresAt:new Date(Date.now()+120000).toISOString(),accountId,grantRevision,computerId:'computer',runId:'run_fixture',requestClass:'interactive',model:'fixture-visible',body:JSON.stringify({model:'fixture-visible',input:[{role:'user',content:'fixture only'}],store:false,stream:true})};
 }
 describe('native subscription authorization to signed peer transport (explicit mocked issuer)',()=>{
  it('pins nonprimary native bridge traffic to the selected Computer runtime',async()=>{

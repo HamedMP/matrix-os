@@ -1,5 +1,5 @@
 import { sign } from 'node:crypto';
-import { ChatGptPlanPeerChallengeSchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerPollSchema, chatGptPlanPeerProof, type ChatGptPlanPeerSnapshot, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
+import { CHATGPT_PLAN_PEER_CLOCK_SKEW_MS, CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerChallengeSchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerPollSchema, chatGptPlanPeerProof, type ChatGptPlanPeerSnapshot, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
 import { logPlanFailure, PlanFailure } from './diagnostics';
 import { boundedText } from './oauth';
 export interface PlanPeerBinding {
@@ -29,7 +29,6 @@ export function createPlanNativePeer(deps: PeerDependencies) {
     } | null = null;
     let task: Promise<void> | null = null;
     const calls = new Map<string, AbortController>(); // <=4 calls, drained on every disconnect.
-    const seen = new Set<string>(); // <=64 IDs; disconnect rather than evict/replay.
     async function post(binding: PlanPeerBinding, path: string, body: unknown, signal: AbortSignal, limit = 2 * 1024 * 1024) {
         if (!deps.current(binding))
             throw new Error('peer changed');
@@ -38,11 +37,14 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             url.searchParams.set('runtime', binding.runtimeSlot);
         if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname)))
             throw new Error('unsafe gateway');
+        const encoded = JSON.stringify(body);
+        if (path === 'reply' && Buffer.byteLength(encoded) > CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT)
+            throw new Error('peer reply too large');
         const response = await deps.fetchFn(url.toString(), {
             method: 'POST', redirect: 'error', headers: {
                 authorization: `Bearer ${binding.bearer}`, 'content-type': 'application/json'
             },
-            body: JSON.stringify(body), signal: AbortSignal.any([signal, AbortSignal.timeout(path === 'poll' ? 15000 : 10000)]),
+            body: encoded, signal: AbortSignal.any([signal, AbortSignal.timeout(path === 'poll' ? 15000 : 10000)]),
         });
         if (path === 'reply' && response.status === 409) {
             await response.body?.cancel();
@@ -64,7 +66,6 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         for (const controller of calls.values())
             controller.abort();
         calls.clear();
-        seen.clear();
         deps.connected(false);
         if (previous?.sessionId && deps.current(previous.binding)) {
             try {
@@ -99,6 +100,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         if (connection !== value)
             throw new Error('peer changed');
         deps.connected(true);
+        let lastSequence = 0; // Session-scoped high-water mark, never evicted.
         const pending = new Set<Promise<void>>(); // <=4 calls; drain on transport close.
         task = (async () => {
             try {
@@ -109,15 +111,24 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                             calls.get(request.id)?.abort();
                             continue;
                         }
-                        if (seen.has(request.id) || seen.size >= 64 || calls.size >= 4)
-                            throw new Error('peer capacity or replay');
-                        seen.add(request.id);
+                        const remaining = Date.parse(request.expiresAt) - Date.now();
+                        const fresh = request.sequence > lastSequence
+                            && request.id === chatGptPlanPeerRequestId(session.sessionId, request.sequence);
+                        // A replay must not send a failure reply for an original still-active ID.
+                        if (!fresh) continue;
+                        lastSequence = request.sequence;
+                        if (remaining <= 0 || remaining > CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS + CHATGPT_PLAN_PEER_CLOCK_SKEW_MS || calls.size >= 4) {
+                            // Refuse this request without terminating unrelated admitted work.
+                            await post(binding, 'reply', { ...session, id: request.id, ok: false, error: 'unavailable' }, controller.signal);
+                            continue;
+                        }
                         const call = new AbortController();
                         calls.set(request.id, call);
                         const operation = (async () => {
-                            const signal = AbortSignal.any([call.signal, controller.signal, AbortSignal.timeout(120000)]);
+                            const signal = AbortSignal.any([call.signal, controller.signal, AbortSignal.timeout(Math.ceil(Math.min(remaining, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS)))]);
                             try {
                                 const body = await deps.infer(request, signal);
+                                signal.throwIfAborted();
                                 const reply = ChatGptPlanPeerReplySchema.parse({
                                     ...session, id: request.id, ok: true, status: 200, headers: { 'content-type': 'text/event-stream' }, body
                                 });

@@ -144,3 +144,85 @@ it("offers a model check only when a connected catalog is missing", async () => 
   expect(screen.queryByRole("button", { name: "Check subscription models" })).toBeNull();
   expect(native.connect).not.toHaveBeenCalled(); expect(native.setGrant).not.toHaveBeenCalled();
 });
+
+it("retries an initially unavailable native status from the existing subscription check", async () => {
+  const native = client();
+  vi.mocked(native.status).mockRejectedValueOnce(new Error("native IPC unavailable"));
+  const refresh = vi.fn();
+  const { AgentsProvidersView } = await import("../../packages/ui/src/agents-providers/AgentsProvidersView.js");
+  const props = { snapshot: { access: { mode: "writable" }, harnesses: [], accounts: [], accessSources: [], modelProviders: [], gatewayPolicy: null, refreshedAt: "2026-10-06T00:00:00Z" } as never,
+    selectedHarnessId: null, localChatgptClient: native, onSelectHarness: vi.fn(), onRefresh: refresh,
+    onMutate: vi.fn(), onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit: vi.fn() };
+  render(<AgentsProvidersView {...props}/>);
+  await screen.findByRole("alert");
+  expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Check subscription connections" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
+  expect(native.status).toHaveBeenCalledTimes(2); expect(refresh).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(native.connect).not.toHaveBeenCalled(); expect(native.setGrant).not.toHaveBeenCalled();
+});
+
+it("fences previous refresh receipts and errors on retry and client replacement", async () => {
+  const native = client(), next = client();
+  let oldReject!: (error: Error) => void;
+  vi.mocked(native.status).mockImplementationOnce(() => new Promise((_resolve, reject) => { oldReject = reject; }));
+  const props = { disabled: false, readOnly: false, onChanged: vi.fn() };
+  const view = render(<LocalChatgptSubscription {...props} client={native} refreshRevision={0}/>);
+  view.rerender(<LocalChatgptSubscription {...props} client={native} refreshRevision={1}/>);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
+  expect(vi.mocked(native.status).mock.calls[0][0].aborted).toBe(true);
+  await act(async () => oldReject(new Error("late native error")));
+  expect(screen.queryByRole("alert")).toBeNull();
+  let oldResolve!: (value: LocalChatgptPlanStatus) => void;
+  vi.mocked(native.status).mockImplementationOnce(() => new Promise(resolve => { oldResolve = resolve; }));
+  view.rerender(<LocalChatgptSubscription {...props} client={native} refreshRevision={2}/>);
+  view.rerender(<LocalChatgptSubscription {...props} client={next} refreshRevision={2}/>);
+  await act(async () => oldResolve(connected));
+  expect(screen.queryByText("Owner account")).toBeNull();
+  expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled();
+  expect(next.connect).not.toHaveBeenCalled(); expect(next.setGrant).not.toHaveBeenCalled();
+});
+
+it("does not let a status retry resurrect an account after disconnect", async () => {
+  const native = client(connected); let settle!: (value: LocalChatgptPlanStatus) => void;
+  const props = { client: native, disabled: false, readOnly: false, onChanged: vi.fn() };
+  const view = render(<LocalChatgptSubscription {...props} refreshRevision={0}/>);
+  await screen.findByText("Owner account");
+  vi.mocked(native.status).mockImplementationOnce(() => new Promise(resolve => { settle = resolve; }));
+  view.rerender(<LocalChatgptSubscription {...props} refreshRevision={1}/>);
+  fireEvent.click(screen.getByRole("button", { name: "Disconnect ChatGPT" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
+  await act(async () => settle(connected));
+  expect(screen.queryByText("Owner account")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("keeps refresh read-only and preserves a deliberately disabled Bot grant", async () => {
+  const native = client({ ...connected, grant: { revision: 3, enabled: false, background: false } });
+  const props = { client: native, disabled: false, readOnly: true, onChanged: vi.fn() };
+  const view = render(<LocalChatgptSubscription {...props} refreshRevision={0}/>);
+  await screen.findByText("Owner account");
+  view.rerender(<LocalChatgptSubscription {...props} refreshRevision={1}/>);
+  await waitFor(() => expect(native.status).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("Available for interactive Bots on this Computer.")).toBeNull();
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(native.connect).not.toHaveBeenCalled(); expect(native.setGrant).not.toHaveBeenCalled();
+});
+
+it("keeps an explicit connection in progress when Settings is refreshed", async () => {
+  const native = client(); let settle!: (value: LocalChatgptPlanStatus) => void;
+  vi.mocked(native.connect).mockImplementationOnce(() => new Promise(resolve => { settle = resolve; }));
+  const changed = vi.fn();
+  const props = { client: native, disabled: false, readOnly: false, onChanged: changed };
+  const view = render(<LocalChatgptSubscription {...props} refreshRevision={0}/>);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Continue with ChatGPT" }));
+  view.rerender(<LocalChatgptSubscription {...props} refreshRevision={1}/>);
+  expect(native.status).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(native.connect).mock.calls[0][1].aborted).toBe(false);
+  await act(async () => settle(connected));
+  expect(screen.getByText("Available for interactive Bots on this Computer.")).toBeVisible();
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(native.setGrant).not.toHaveBeenCalled();
+});

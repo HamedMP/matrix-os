@@ -4,8 +4,8 @@ import type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./local-cha
 const ACTION_ERROR = "ChatGPT connection could not be updated. Check again.";
 
 /** This source is independent of the selected Computer's native Codex/API-key accounts. */
-export function LocalChatgptSubscription({ client, disabled, readOnly, onChanged }: {
-  client?: LocalChatgptPlanClient; disabled: boolean; readOnly: boolean; onChanged(): void;
+export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRevision = 0, onChanged }: {
+  client?: LocalChatgptPlanClient; disabled: boolean; readOnly: boolean; refreshRevision?: number; onChanged(): void;
 }) {
   const [receipt, setReceipt] = useState<{ client: LocalChatgptPlanClient; status: LocalChatgptPlanStatus } | null>(null);
   const [error, setError] = useState<{ client: LocalChatgptPlanClient; text: string } | null>(null);
@@ -21,20 +21,29 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, onChanged
     if (!client) return;
     const lifetime = new AbortController();
     const current = { client, lifetime, revision: 0, pending: false }; scope.current = current;
+    return () => { lifetime.abort(); if (scope.current === current) scope.current = null; };
+  }, [client]);
+
+  // The existing Settings check retries local IPC too. Keep status reads separate
+  // from the client lifetime so refreshing cannot cancel or supersede a mutation.
+  useEffect(() => {
+    const current = scope.current;
+    if (!client || !current || current.client !== client || current.pending) return;
+    const controller = new AbortController();
+    const revision = ++current.revision;
     const read = async () => {
-      const revision = current.revision;
       try {
-        const value = await client.status(lifetime.signal);
-        if (lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
+        const value = await client.status(AbortSignal.any([controller.signal, current.lifetime.signal]));
+        if (controller.signal.aborted || current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
         setReceipt({ client, status: value }); setError(null);
       } catch (caught) {
         console.warn("[chatgpt-plan] Status unavailable:", caught instanceof Error ? caught.name : typeof caught);
-        if (!lifetime.signal.aborted && scope.current === current) setError({ client, text: ACTION_ERROR });
+        if (!controller.signal.aborted && !current.lifetime.signal.aborted && scope.current === current && current.revision === revision) setError({ client, text: ACTION_ERROR });
       }
     };
     void read();
-    return () => { lifetime.abort(); if (scope.current === current) scope.current = null; };
-  }, [client]);
+    return () => controller.abort();
+  }, [client, refreshRevision]);
 
   // Connect may return an in-progress receipt. Poll only during that transition
   // or while its authenticated device is registering; ordinary popup opens do
@@ -57,12 +66,12 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, onChanged
         } else changed.current();
       } catch (caught) {
         console.warn("[chatgpt-plan] Connection check unavailable:", caught instanceof Error ? caught.name : typeof caught);
-        if (!stopped && scope.current === current && !current.lifetime.signal.aborted) setError({ client, text: ACTION_ERROR });
+        if (!stopped && scope.current === current && !current.lifetime.signal.aborted && current.revision === revision) setError({ client, text: ACTION_ERROR });
       }
     };
     timer = setTimeout(() => void read(), 1500);
     return () => { stopped = true; clearTimeout(timer); };
-  }, [client, awaitingDevice, busy]);
+  }, [client, awaitingDevice, busy, refreshRevision]);
 
   async function act(action: (signal: AbortSignal) => Promise<LocalChatgptPlanStatus>, kind: "connect" | "action" | "cancel" = "action") {
     const current = scope.current;

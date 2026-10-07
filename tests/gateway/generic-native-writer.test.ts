@@ -64,3 +64,15 @@ it("rejects unknown and official profile identifiers without invoking a writer",
  for(const profile of ["codex","claude","../escape"]) await expect(writer.run(profile as never,execute)).rejects.toThrow();
  expect(execute).not.toHaveBeenCalled();
 });
+
+it.each(["hermes","openclaw"] as const)("releases %s after native capability preflight proves no credential writer started",async profile=>{
+ const {home,writer}=await fixture();const enableConnected=vi.fn();
+ const connection=profile==="hermes"
+  ?(await import("../../packages/gateway/src/ai-providers/hermes-settings-auth.js")).createHermesSettingsConnection({homePath:home,enableConnected,fetchFn:async()=>new Response(null,{status:200})})
+  :(await import("../../packages/gateway/src/ai-providers/openclaw-settings-auth.js")).createOpenClawSettingsConnection({command:join(home,"missing-openclaw"),cwd:home,env:{},enableConnected,fetchFn:async()=>new Response(null,{status:200})});
+ try{
+  await expect(guardGenericNativeKeys(writer,profile,connection).verifyKey({harnessInstanceId:profile,providerId:"openai",apiKey:"synthetic"})).rejects.toThrow();
+  expect(enableConnected).not.toHaveBeenCalled();
+  await expect(createGenericNativeWriter(home).run(profile,async()=>"safe retry")).resolves.toBe("safe retry");
+ }finally{await connection.close();}
+});

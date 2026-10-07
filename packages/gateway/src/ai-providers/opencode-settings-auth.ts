@@ -1,3 +1,4 @@
+import { NativeProviderWriteNotStartedError } from "./native-provider-profile-guard.js";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import type { ProviderSettingsStoreWriter } from "./provider-settings-store.js";
@@ -5,7 +6,7 @@ import { z } from "zod/v4";
 import type { OpenCodeProcess, OpenCodeSpawnFn } from "../coding-agents/opencode-provider.js";
 import { spawnIsolatedProviderProcess } from "../coding-agents/provider-process-isolation.js";
 import { ProviderWorkflowError, type ProviderWorkflowAdapter } from "./provider-workflows.js";
-import { createProviderKeyVerifier } from "./provider-workflow-key.js";
+import { createProviderKeyVerifier, ProviderKeyPreflightError } from "./provider-workflow-key.js";
 
 const methodsSchema = z.record(z.string().max(100), z.array(z.object({
   type: z.enum(["oauth", "api"]), label: z.string().max(200), prompts: z.array(z.unknown()).max(20).optional(),
@@ -23,7 +24,7 @@ export interface OpenCodeAuthSession {
 export async function openOpenCodeAuthSession(options: {
   command: string; cwd: string; env: Record<string, string>; spawn?: OpenCodeSpawnFn; fetch?: typeof fetch;
 }): Promise<OpenCodeAuthSession> {
-  if (!isAbsolute(options.command) || !isAbsolute(options.cwd) || (options.env.HOME && resolve(options.env.HOME) !== resolve(options.cwd))) throw new ProviderWorkflowError("unavailable");
+  if (!isAbsolute(options.command) || !isAbsolute(options.cwd) || (options.env.HOME && resolve(options.env.HOME) !== resolve(options.cwd))) throw new NativeProviderWriteNotStartedError();
   // Never inherit operator provider keys, config redirects, or credentials.
   const environment: Record<string, string> = { HOME: options.cwd, MATRIX_HOME: options.cwd };
   for (const key of ["PATH", "MATRIX_NODE_PREFIX", "LANG", "LC_ALL"]) if (options.env[key]) environment[key] = options.env[key]!;
@@ -82,7 +83,8 @@ export async function openOpenCodeAuthSession(options: {
   } catch (error) {
     await close();
     console.warn("[provider-workflow] OpenCode auth startup unavailable:", error instanceof Error ? error.name : "UnknownError");
-    throw new ProviderWorkflowError("unavailable");
+    // The startup phase contains no credential API calls; confirmed close proves no writer remains.
+    throw new NativeProviderWriteNotStartedError();
   }
   return {
     close,
@@ -112,11 +114,11 @@ export function createOpenCodeSettingsConnection(options: {
   let activeSessions = 0; let shutdown = false;
   const sessions = new Set<OpenCodeAuthSession>(); // Maximum two; remove on confirmed cleanup.
   const openSession = async () => {
-    if (shutdown || activeSessions >= 2) throw new ProviderWorkflowError("unavailable");
+    if (shutdown || activeSessions >= 2) throw new NativeProviderWriteNotStartedError();
     activeSessions += 1;
     let session: OpenCodeAuthSession;
     try { session = await options.session(); } catch (error) { activeSessions -= 1; throw error; }
-    if (shutdown) { await session.close(); activeSessions -= 1; throw new ProviderWorkflowError("unavailable"); }
+    if (shutdown) { await session.close(); activeSessions -= 1; throw new NativeProviderWriteNotStartedError(); }
     let closed = false; let closing: Promise<void> | undefined;
     const tracked: OpenCodeAuthSession = { request: session.request.bind(session), async close() {
       if (closed) return;
@@ -204,15 +206,24 @@ export function createOpenCodeSettingsConnection(options: {
       } catch (error) { await cancel(); throw error; }
     },
     async verifyKey(input: Parameters<NonNullable<ProviderWorkflowAdapter["verifyKey"]>>[0]) {
-      if (input.providerId !== "openai" && !options.enableProviderConnected) throw new ProviderWorkflowError("rejected");
+      if (input.providerId !== "openai" && !options.enableProviderConnected) throw new ProviderKeyPreflightError("rejected");
       const session = await openSession();
+      let writeRequested = false;
       try {
         if (!(await discover(session)).keys.includes(input.providerId)) throw new ProviderWorkflowError("unavailable");
         await createProviderKeyVerifier({ providerId: input.providerId, fetchFn: options.fetch,
-          save: async key => { if (await session.request(`/auth/${input.providerId}`, "PUT", { type: "api", key }) !== true) throw new ProviderWorkflowError("unavailable"); },
+          save: async key => { writeRequested = true; if (await session.request(`/auth/${input.providerId}`, "PUT", { type: "api", key }) !== true) throw new ProviderWorkflowError("unavailable"); },
         })(input);
         if (options.enableProviderConnected) await options.enableProviderConnected(input.harnessInstanceId, input.providerId, `opencode-key-${randomUUID()}`);
         else await options.enableConnected(input.harnessInstanceId, `opencode-key-${randomUUID()}`);
+      } catch (error) {
+        if (!writeRequested) {
+          await session.close();
+          if (error instanceof ProviderKeyPreflightError) throw error;
+          console.warn("[provider-workflow] OpenCode read-only discovery unavailable:", error instanceof Error ? error.name : "UnknownError");
+          throw new NativeProviderWriteNotStartedError();
+        }
+        throw error;
       } finally { await session.close(); }
     },
   };

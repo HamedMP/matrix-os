@@ -1,3 +1,4 @@
+import { NativeProviderWriteNotStartedError } from "./native-provider-profile-guard.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -50,8 +51,8 @@ export function createOpenClawSettingsConnection(options: {
     return probe;
   };
   const save = async (key: string, provider = "openai") => {
-    if (!(await capabilities()).apiKey) throw new ProviderWorkflowError("unavailable");
-    if (busy || closed) throw new ProviderWorkflowError("unavailable");
+    if (!(await capabilities()).apiKey) throw new NativeProviderWriteNotStartedError();
+    if (busy || closed) throw new NativeProviderWriteNotStartedError();
     busy = true;
     await new Promise<void>((accept, reject) => {
       const child = spawn(options.command, ["models", "auth", "paste-api-key", "--provider", provider, "--profile-id", `${provider}:manual`], {
@@ -74,7 +75,7 @@ export function createOpenClawSettingsConnection(options: {
     });
   };
   const verify = async (input: import("@matrix-os/contracts").ProviderWorkflowKey) => {
-    if (input.providerId !== "openai" && !options.enableProviderConnected) throw new ProviderWorkflowError("unavailable");
+    if (input.providerId !== "openai" && !options.enableProviderConnected) throw new NativeProviderWriteNotStartedError();
     await createProviderKeyVerifier({ providerId: input.providerId, save: key => save(key, input.providerId), fetchFn: options.fetchFn })(input);
   };
   return {
@@ -90,7 +91,7 @@ export function createOpenClawSettingsConnection(options: {
       } finally { if (timer) clearTimeout(timer); }
     },
     verifyKey: async (input: Parameters<typeof verify>[0]) => {
-      if (!(await capabilities()).apiKey) throw new ProviderWorkflowError("unavailable");
+      if (!(await capabilities()).apiKey) throw new NativeProviderWriteNotStartedError();
       await verify(input);
       if (closed) throw new ProviderWorkflowError("unavailable");
       if (options.enableProviderConnected) await options.enableProviderConnected(input.harnessInstanceId, input.providerId, `openclaw-key-${randomUUID()}`);

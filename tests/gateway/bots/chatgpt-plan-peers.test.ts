@@ -1,12 +1,16 @@
 import { generateKeyPairSync, createHash, sign } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
-import { chatGptPlanPeerProof } from '@matrix-os/contracts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chatGptPlanPeerRequestId, chatGptPlanPeerProof } from '@matrix-os/contracts';
 import { createChatGptPlanPeers } from '../../../packages/gateway/src/bots/chatgpt-plan-peers.js';
 import { createBotStateDatabase } from './bot-state-support.js';
 const keys = generateKeyPairSync('ed25519');
 const der = keys.publicKey.export({ type: 'spki', format: 'der' });
 const snapshot = { deviceId: createHash('sha256').update(der).digest('hex'), accountId: 'account_own', grantRevision: 3, enabled: true, background: false,
     models: [{ id: 'gpt-server', displayName: 'Server model', input: ['text' as const], contextWindow: 128000, maxOutputTokens: 8192 }] };
+import { Hono } from 'hono';
+import { createChatGptPlanPeerRoutes } from '../../../packages/gateway/src/bots/chatgpt-plan-peer-routes.js';
+import { markVerifiedRuntimeBearer } from '../../../packages/gateway/src/request-principal.js';
+import { requestPlanResponse } from '../../../desktop/src/main/chatgpt-plan/responses';
 describe('authenticated owner-local ChatGPT peer', () => {
     const cleanups: Array<() => Promise<void>> = [];
     afterEach(async () => { for (const f of cleanups.splice(0))
@@ -94,4 +98,46 @@ describe('authenticated owner-local ChatGPT peer', () => {
         await expect(peer.connect('owner', { version: 1, challenge: challenge.challenge, publicKey: pub.toString('base64url'), snapshot: replacement, signature: sign(null, Buffer.from(chatGptPlanPeerProof({ ...challenge, snapshot: replacement })), other.privateKey).toString('base64url') })).rejects.toThrow('conflict');
         expect((await peer.observe('owner')).availability).toBe('available');
     });
+    it('issues increasing session-bound IDs beyond 64 requests without replacing admitted peer authority', async () => {
+        const { peer, input } = await fixture();
+        const session = await peer.connect('owner', input);
+        const selected = await peer.resolve({ instanceId: 'matrix_chatgpt_plan', model: 'gpt-server', options: [{ id: 'accountId', value: 'account_own' }, { id: 'grantRevision', value: '3' }] }, 'owner', 'interactive');
+        const binding = { ownerId: 'owner', runId: 'run_test', requestClass: 'interactive', ...selected } as never;
+        const stop = new AbortController();
+        const held = peer.infer(binding, '{}', stop.signal);
+        const rejection = expect(held).rejects.toThrow('unavailable');
+        const heldRequest = (await peer.poll('owner', session)).requests[0]!;
+        for (let sequence = 2; sequence <= 70; sequence++) {
+            const pending = peer.infer(binding, '{}', new AbortController().signal);
+            const request = (await peer.poll('owner', session)).requests[0]!;
+            expect(request).toMatchObject({ sequence, id: chatGptPlanPeerRequestId(session.sessionId, sequence), expiresAt: new Date(1120000).toISOString() });
+            peer.reply('owner', { ...session, id: request.id, ok: false, error: 'unavailable' });
+            await expect(pending).rejects.toThrow('unavailable');
+            expect(await peer.revalidate(binding, new AbortController().signal)).toBe(true);
+        }
+        expect(heldRequest).toMatchObject({ sequence: 1 });
+        stop.abort(); await rejection;
+    });
+    it('transports a native-validated near-limit escaped UTF-8 response through the real reply route', async () => {
+        const { peer, input } = await fixture();
+        const session = await peer.connect('owner', input);
+        const selected = await peer.resolve({ instanceId: 'matrix_chatgpt_plan', model: 'gpt-server', options: [{ id: 'accountId', value: 'account_own' }, { id: 'grantRevision', value: '3' }] }, 'owner', 'interactive');
+        const wire = JSON.stringify({ model: 'gpt-server', input: [{ role: 'user', content: 'fixture' }], store: false, stream: true });
+        const inference = peer.infer({ ownerId: 'owner', runId: 'run_test', requestClass: 'interactive', ...selected } as never, wire, new AbortController().signal);
+        const request = (await peer.poll('owner', session)).requests[0]!;
+        const terminal = 'data: {"type":"response.completed","response":{"status":"completed","model":"gpt-server"}}\n\n';
+        const pattern = '😀"\\\u0001';
+        const prefix = `: ${pattern.repeat(Math.floor((1024 * 1024 - terminal.length - 5) / Buffer.byteLength(pattern)))}`;
+        const raw = `${prefix}\n\n${terminal}`;
+        const body = await requestPlanResponse({ fetchFn: vi.fn(async () => new Response(raw)) as typeof fetch, body: wire, model: 'gpt-server', signal: new AbortController().signal, accessToken: async () => 'fixture-token', validate: () => {} });
+        expect(Buffer.byteLength(body)).toBeLessThanOrEqual(1024 * 1024);
+        const envelope = { ...session, id: request.id, ok: true, status: 200, headers: { 'content-type': 'text/event-stream' }, body };
+        expect(Buffer.byteLength(JSON.stringify(envelope))).toBeGreaterThan(1100000);
+        const app = new Hono();
+        app.use('*', async (c, next) => { markVerifiedRuntimeBearer(c); await next(); });
+        app.route('/', createChatGptPlanPeerRoutes({ peers: peer, getPrincipal: () => ({ userId: 'owner', source: 'jwt' }) }));
+        expect((await app.request('/api/chatgpt-plan/device/reply', { method: 'POST', headers: { authorization: 'Bearer fixture', 'content-type': 'application/json' }, body: JSON.stringify(envelope) })).status).toBe(200);
+        expect(await inference).toMatchObject({ body });
+    });
+
 });

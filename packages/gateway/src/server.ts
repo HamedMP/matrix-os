@@ -338,6 +338,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const terminalLiveOwnership = createTerminalLiveOwnership();
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
+  const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
   const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
@@ -1328,7 +1329,7 @@ export async function createGateway(config: GatewayConfig) {
 
   registerVoiceWebSocketRoutes({
     app, upgradeWebSocket, homePath, geminiLiveConnection, readinessService,
-    captureGatewayProductEvent,
+    captureGatewayProductEvent, nativeProviderProfileGuard,
   });
 
   registerFileRoutes(app, {
@@ -1441,7 +1442,6 @@ export async function createGateway(config: GatewayConfig) {
     }) } : {}),
   });
   collaborationProviderSnapshots.attach(aiProviderService);
-  const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
     profileGuard: nativeProviderProfileGuard,
     homePath,
@@ -1715,6 +1715,7 @@ export async function createGateway(config: GatewayConfig) {
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({
     homePath,
+    nativeProviderProfileGuard,
     channelManager,
     agentRuntimeSource: agentRuntimeServices.source,
     agentRuntimeController: agentRuntimeServices.controller,

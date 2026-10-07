@@ -149,3 +149,32 @@ it.each(["anthropic", "openrouter"] as const)("qualifies and persists %s only wh
   expect(enableProviderConnected).toHaveBeenCalledWith("opencode", providerId, expect.any(String));
   await connection.close();
 });
+
+it("releases a proven read-only discovery failure after session drain but fences an uncertain PUT",async()=>{
+ const {mkdir,mkdtemp,rm}=await import("node:fs/promises"),{join}=await import("node:path"),{tmpdir}=await import("node:os");
+ const {createGenericNativeWriter,guardGenericNativeKeys}=await import("../../packages/gateway/src/ai-providers/generic-native-writer.js");
+ const root=await mkdtemp(join(tmpdir(),"opencode-discovery-")),home=join(root,"home");await mkdir(home);
+ const failed=mockSession({"/global/health":{healthy:false,version:"1.18.34"}}),next=mockSession();
+ const sessions=vi.fn().mockResolvedValueOnce(failed).mockResolvedValueOnce(next);
+ const create=()=>guardGenericNativeKeys(createGenericNativeWriter(home),"opencode",createOpenCodeSettingsConnection({session:sessions,enableConnected:vi.fn(),fetch:async()=>new Response(null,{status:200})}));
+ const first=create(),second=create(); const input={harnessInstanceId:"opencode",providerId:"openai" as const,apiKey:"synthetic"};
+ try{
+  await expect(first.verifyKey(input)).rejects.toThrow();expect(failed.close).toHaveBeenCalled();expect(failed.request.mock.calls.some(call=>call[0].startsWith("/auth/"))).toBe(false);
+  await expect(second.verifyKey(input)).resolves.toBeUndefined();
+  next.request.mockImplementation(async(path)=>{if(path.startsWith("/auth/"))throw new Error("unknown write outcome");return path==="/global/health"?{healthy:true,version:"1.18.34"}:methods;});
+  sessions.mockResolvedValue(next);
+  await expect(second.verifyKey(input)).rejects.toThrow();
+  await expect(createGenericNativeWriter(home).run("opencode",async()=>"unsafe")).rejects.toThrow();
+ }finally{await first.close();await second.close();await rm(root,{recursive:true,force:true});}
+});
+
+it("keeps OpenCode read-only failure fenced when native session cleanup cannot prove drain",async()=>{
+ const {mkdir,mkdtemp,rm}=await import("node:fs/promises"),{join}=await import("node:path"),{tmpdir}=await import("node:os");
+ const {createGenericNativeWriter,guardGenericNativeKeys}=await import("../../packages/gateway/src/ai-providers/generic-native-writer.js");
+ const root=await mkdtemp(join(tmpdir(),"opencode-no-drain-")),home=join(root,"home");await mkdir(home);
+ const session=mockSession({"/global/health":{healthy:false}});session.close.mockRejectedValue(new Error("unknown native liveness"));
+ const connection=guardGenericNativeKeys(createGenericNativeWriter(home),"opencode",createOpenCodeSettingsConnection({session:async()=>session,enableConnected:vi.fn()}));
+ try{await expect(connection.verifyKey({harnessInstanceId:"opencode",providerId:"openai",apiKey:"synthetic"})).rejects.toThrow();
+  await expect(createGenericNativeWriter(home).run("opencode",async()=>"unsafe")).rejects.toThrow();
+ }finally{await expect(connection.close()).rejects.toMatchObject({code:"unavailable"});await rm(root,{recursive:true,force:true});}
+});

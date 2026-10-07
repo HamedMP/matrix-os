@@ -162,3 +162,17 @@ it.each(["anthropic", "openrouter"] as const)("saves %s using the native provide
   expect(JSON.stringify(n.spawn.mock.calls)).not.toContain("test-secret");
   await connection.close();
 });
+
+it("releases durable Pi admission after read-only discovery fails and retries after gateway recreation",async()=>{
+ const {mkdir,mkdtemp,rm}=await import("node:fs/promises"),{join}=await import("node:path"),{tmpdir}=await import("node:os");
+ const root=await mkdtemp(join(tmpdir(),"pi-discovery-retry-")),home=join(root,"home"); await mkdir(home);
+ const n=native(), discovery=vi.fn().mockRejectedValueOnce(new Error("version probe failed")).mockResolvedValue(config), enableConnected=vi.fn(async()=>{});
+ const make=()=>guardGenericNativeKeys(createGenericNativeWriter(home),"pi",createPiSettingsConnection({discover:discovery,spawn:n.spawn,enableConnected,fetch:async()=>new Response(null,{status:200})}));
+ const failed=make(),next=make();
+ try {
+  await expect(failed.verifyKey({harnessInstanceId:"pi",providerId:"anthropic",apiKey:"synthetic"})).rejects.toThrow();
+  expect(n.spawn).not.toHaveBeenCalled(); expect(enableConnected).not.toHaveBeenCalled();
+  await expect(next.verifyKey({harnessInstanceId:"pi",providerId:"anthropic",apiKey:"synthetic"})).resolves.toBeUndefined();
+  expect(n.spawn).toHaveBeenCalledOnce(); expect(enableConnected).toHaveBeenCalledOnce();
+ }finally{await failed.close();await next.close();await rm(root,{recursive:true,force:true});}
+});

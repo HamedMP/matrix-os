@@ -218,3 +218,16 @@ it.each(["anthropic", "openai"])("checks source-absent legacy Claude account pro
  }
  expect(client.startConnection).not.toHaveBeenCalled();
 });
+
+it("offers Claude connection for the migrated kernel identity with qualified subscription options", async () => {
+ const {props,client}=setup({harnessInstanceId:"harness_kernel",harness:"claude",displayName:"Claude Code",loginMethods:["browser","terminal"],apiKeyProviders:["anthropic"],connectionOptions:[
+  {id:"anthropic_browser",providerId:"anthropic",authKind:"subscription",method:"browser",billingKind:"subscription",executionKind:"native",availability:"available"},
+  {id:"anthropic_terminal",providerId:"anthropic",authKind:"subscription",method:"terminal",billingKind:"subscription",executionKind:"native",availability:"available"},
+ ]});
+ Object.assign(props.snapshot.harnesses[0]!,{id:"harness_kernel",harness:"claude",displayName:"Claude Code",enabled:false,configuredEnabled:false,route:{kind:"fixed",providerId:"anthropic",modelId:"native"}});
+ render(<AgentsProvidersView {...props}/>);
+ const subscriptions=screen.getByRole("region",{name:"Your subscriptions"});
+ expect(await within(subscriptions).findByRole("button",{name:"Connect Claude"})).toBeEnabled();
+ expect(within(subscriptions).queryByText(/Claude Code connection is unavailable/)).toBeNull();
+ expect(client.startConnection).not.toHaveBeenCalled(); expect(props.onMutate).not.toHaveBeenCalled();
+});

@@ -64,3 +64,15 @@ it("rejects a subscription descriptor with an unrelated harness driver", () => {
   const value = catalog(); value.instances[1]!.driverKind = "matrix_pi";
   expect(matrixBotSelectableModelChoices(deriveCanonicalProviderChoices(value), value).some(choice => choice.instanceId === selection.instanceId)).toBe(false);
 });
+
+it("selects a current subscription model with its exact account and grant binding", () => {
+  const value = catalog(), change = vi.fn();
+  const first = value.instances[1]!.models[0]!;
+  value.instances[1]!.models.push({ ...first, id: "gpt-owner-second", displayName: "Second owner GPT" });
+  render(<MatrixBotModelField selection={selection} catalog={value} models={deriveCanonicalProviderChoices(value)} pending={false} allowAutomatic={false} onChange={change}/>);
+  const models = screen.getByRole("combobox", { name: "Model" });
+  const option = within(models).getByRole("option", { name: "Second owner GPT · ChatGPT subscription" }) as HTMLOptionElement;
+  expect(option.disabled).toBe(false);
+  fireEvent.change(models, { target: { value: option.value } });
+  expect(change).toHaveBeenCalledWith({ instanceId: "matrix_chatgpt_plan", model: "gpt-owner-second", options: binding });
+});
