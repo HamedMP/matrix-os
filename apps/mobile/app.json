@@ -2,7 +2,7 @@
   "expo": {
     "name": "Matrix OS",
     "slug": "matrix-os-mobile",
-    "version": "0.2.4",
+    "version": "0.2.5",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
@@ -17,6 +17,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.matrixos.mobile",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Scan Matrix OS codes",
         "NSMicrophoneUsageDescription": "Voice input for chat messages",
@@ -58,6 +59,7 @@
       "expo-router",
       "expo-secure-store",
       "expo-local-authentication",
+      "expo-apple-authentication",
       [
         "expo-camera",
         {

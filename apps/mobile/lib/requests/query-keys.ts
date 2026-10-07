@@ -84,4 +84,10 @@ export const mobileQueryKeys = {
     userId,
     runtimeSlot,
   ] as const,
+  accountDeletion: (userId: string) => [
+    "mobile",
+    "settings",
+    "account-deletion",
+    userId,
+  ] as const,
 };

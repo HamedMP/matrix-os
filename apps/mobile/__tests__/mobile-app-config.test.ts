@@ -17,7 +17,11 @@ type MobileAppConfig = {
     };
     ios?: {
       supportsTablet?: boolean;
+      usesAppleSignIn?: boolean;
+      bundleIdentifier?: string;
+      appleTeamId?: string;
     };
+    plugins?: (string | [string, unknown])[];
     extra?: {
       eas?: {
         projectId?: string;
@@ -110,6 +114,25 @@ describe("mobile Android release configuration", () => {
 
   it("defaults Android submissions to the internal Play track", () => {
     expect(easConfig.submit?.production?.android?.track).toBe("internal");
+  });
+});
+
+describe("mobile Sign in with Apple configuration", () => {
+  const pluginNames = (appConfig.expo?.plugins ?? []).map((plugin) =>
+    typeof plugin === "string" ? plugin : plugin[0],
+  );
+
+  it("requests the Sign in with Apple capability for the registered app", () => {
+    // EAS reads this flag to sync the capability onto the App ID; the Clerk
+    // native application is registered against this exact team and bundle.
+    expect(appConfig.expo?.ios?.usesAppleSignIn).toBe(true);
+    expect(appConfig.expo?.ios?.bundleIdentifier).toBe("com.matrixos.mobile");
+    expect(appConfig.expo?.ios?.appleTeamId).toBe("PX4JL74Y2K");
+  });
+
+  it("ships the native module and the plugin that writes its entitlement", () => {
+    expect(packageConfig.dependencies?.["expo-apple-authentication"]).toBe("~57.0.2");
+    expect(pluginNames).toContain("expo-apple-authentication");
   });
 });
 
