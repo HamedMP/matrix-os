@@ -55,6 +55,12 @@ export const CanonicalChatOutboxEventTypeSchema = z.enum([
   "run.aborted",
   "chat.deleted",
   "migration.completed",
+  "bot.created",
+  "interaction.requested",
+  "interaction.resolved",
+  "bot.task.updated",
+  "bot.authority.changed",
+  "bot.memory.remembered",
 ]);
 
 export const CanonicalChatStreamEventSchema = z.object({
@@ -143,12 +149,14 @@ function validMentionCounts(parts: z.infer<typeof CanonicalChatUserInputPartSche
   const references = parts.flatMap((part) => part.type === "resource_reference" ? [part.resource] : []);
   const agents = references.filter((reference) => reference.kind === "agent");
   const chats = references.filter((reference) => reference.kind === "chat");
-  return agents.length <= 1 && chats.length <= 3
+  const drives = references.filter((reference) => reference.kind === "organization_drive");
+  return agents.length <= 1 && chats.length <= 3 && drives.length <= 3
+    && new Set(drives.map((entry) => JSON.stringify(entry.drive))).size === drives.length
     && new Set(chats.map((chat) => chat.id)).size === chats.length;
 }
 
 const MentionAwareInputPartsSchema = z.array(CanonicalChatUserInputPartSchema).min(1).max(64)
-  .refine(validMentionCounts, { message: "Use one Agent and up to three distinct Chats" });
+  .refine(validMentionCounts, { message: "Use one Agent and up to three distinct Chats and drive references" });
 
 export const CanonicalCreateChatTurnRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
@@ -185,8 +193,8 @@ export const CanonicalSteerChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   expectedTurnId: CanonicalChatTurnSchema.shape.id,
   parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64).refine((parts) => !parts.some(
-    (part) => part.type === "resource_reference" && ["agent", "chat"].includes(part.resource.kind),
-  ), { message: "Queue Agent and Chat references as a new turn" }),
+    (part) => part.type === "resource_reference" && ["agent", "chat", "organization_drive"].includes(part.resource.kind),
+  ), { message: "Queue Agent, Chat and company drive references as a new turn" }),
 }).strict();
 
 export const CanonicalChatRunSteeringResponseSchema = z.object({

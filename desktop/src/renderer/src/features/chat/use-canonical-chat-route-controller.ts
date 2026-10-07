@@ -15,6 +15,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 import type {
   CanonicalChatClient,
   CanonicalChatEventConsumer,
+  CanonicalChatInvalidation,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { createCanonicalChatRefresh, applyCanonicalChatContent } from "@matrix-os/ui";
@@ -64,6 +65,7 @@ export function useCanonicalChatRouteController({
   initialChatId = null,
   autoSelectFirst = true,
   eventSource,
+  onInvalidation,
 }: {
   client: CanonicalChatClient;
   projectId: string | null;
@@ -71,6 +73,7 @@ export function useCanonicalChatRouteController({
   initialChatId?: string | null;
   autoSelectFirst?: boolean;
   eventSource?: CanonicalChatEventConsumer;
+  onInvalidation?: (event: CanonicalChatInvalidation) => void;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -79,6 +82,8 @@ export function useCanonicalChatRouteController({
   const [error, setError] = useState<string | null>(null);
   const activeChatIdRef = useRef<string | null>(initialChatId);
   const detailRef = useRef<CanonicalChatDetailResponse | null>(null);
+  const onInvalidationRef = useRef(onInvalidation);
+  onInvalidationRef.current = onInvalidation;
   const streamedMessagesRef = useRef<{ chatId: string | null; ids: string[] }>({
     chatId: initialChatId,
     ids: [],
@@ -216,6 +221,9 @@ export function useCanonicalChatRouteController({
       listRefreshInFlight = false;
     };
     const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === activeChatIdRef.current) {
+        onInvalidationRef.current?.(event);
+      }
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setItems((current) => current.map((item) => item.chat.id === record.chat.id
@@ -382,7 +390,9 @@ export function useCanonicalChatRouteController({
   const moveProject = useCallback(async (targetProjectId: string | null) => {
     if (!detail) return null;
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const selectedChatId = detail.record.chat.id;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
+      && activeChatIdRef.current === selectedChatId);
     try {
       const record = await client.updateProject(detail.record.chat.id, {
         baseRevision: detail.record.chat.revision,
@@ -401,8 +411,8 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] project move failed:", diagnosticErrorKind(error));
       if (!isCurrentScope()) return null;
-      setError("The Chat could not be moved. Refresh and try again.");
       await loadDetail(detail.record.chat.id);
+      if (isCurrentScope()) setError("The Chat could not be moved. Refresh and try again.");
       return null;
     }
   }, [client, detail, loadDetail, updateDetail]);

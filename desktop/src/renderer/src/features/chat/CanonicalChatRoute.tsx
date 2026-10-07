@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
-import type { ApiClient } from "../../lib/api";
+import type { ApiClient, JsonRequestOptions } from "../../lib/api";
 import {
   createCanonicalChatClient,
   type CanonicalChatEventSource,
@@ -25,6 +25,7 @@ export function CanonicalChatRoute({
   sharedHeaderContainer,
   onSharedChatMetadata,
   draftRequest,
+  onDraftConsumed,
   projectLabel,
   active,
   live = active,
@@ -44,6 +45,7 @@ export function CanonicalChatRoute({
   sharedHeaderContainer?: HTMLElement | null;
   onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
+  onDraftConsumed?: (id: number) => void;
   projectLabel?: string;
   active: boolean;
   live?: boolean;
@@ -68,17 +70,17 @@ export function CanonicalChatRoute({
       return latestApi.current;
     };
     return createCanonicalChatClient({
-      get<T>(path: string) {
-        return currentApi().get<T>(path);
+      get<T>(path: string, options?: JsonRequestOptions) {
+        return options ? currentApi().get<T>(path, options) : currentApi().get<T>(path);
       },
-      post<T>(path: string, body: unknown) {
-        return currentApi().post<T>(path, body);
+      post<T>(path: string, body: unknown, options?: JsonRequestOptions) {
+        return options ? currentApi().post<T>(path, body, options) : currentApi().post<T>(path, body);
       },
-      patch<T>(path: string, body: unknown) {
-        return currentApi().patch<T>(path, body);
+      patch<T>(path: string, body: unknown, options?: JsonRequestOptions) {
+        return options ? currentApi().patch<T>(path, body, options) : currentApi().patch<T>(path, body);
       },
-      delete<T>(path: string, body?: unknown) {
-        return currentApi().delete<T>(path, body);
+      delete<T>(path: string, body?: unknown, options?: JsonRequestOptions) {
+        return options ? currentApi().delete<T>(path, body, options) : currentApi().delete<T>(path, body);
       },
     });
   }, [clientIdentity]);
@@ -162,6 +164,7 @@ export function CanonicalChatRoute({
       sharedHeaderContainer={sharedHeaderContainer}
       onSharedChatMetadata={onSharedChatMetadata}
       draftRequest={draftRequest}
+      onDraftConsumed={onDraftConsumed}
       projectLabel={projectLabel}
       active={active}
       live={live}

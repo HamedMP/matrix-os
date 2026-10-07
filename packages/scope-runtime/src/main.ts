@@ -2,19 +2,23 @@ import { describeScopeRuntimeFailure } from "./failure.js";
 import { createScopeRuntimeServer } from "./server.js";
 import { createScopeRuntimeController } from "./supervisor.js";
 import { createSystemdScopeRuntimeLauncher, nextExecutionGeneration } from "./systemd-launcher.js";
-import { sandboxRootsForHome } from "./sandbox.js";
+import { botSandboxRootsForHome, managedPiSandboxRootsForHome, sandboxRootsForHome } from "./sandbox.js";
 
 const RUNTIME_DIRECTORY = "/run/matrix-scope-runtime";
 const STATE_DIRECTORY = "/var/lib/matrix-scope-runtime";
 
 async function main(): Promise<void> {
+  const home = process.env.MATRIX_HOME ?? "/home/matrix/home";
   const launcher = createSystemdScopeRuntimeLauncher({
     stateRoot: STATE_DIRECTORY,
     sdkDirectory: "/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk",
     nativeDirectory: "/opt/matrix/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64",
     workerFile: "/opt/matrix/app/packages/scope-runtime/dist/worker.js",
     brokerSocket: `${RUNTIME_DIRECTORY}/broker.sock`,
-    sandboxRoots: sandboxRootsForHome(process.env.MATRIX_HOME ?? "/home/matrix/home"),
+    sandboxRoots: sandboxRootsForHome(home),
+    botRuntimeDirectory: "/opt/matrix/app/packages/bot-runtime/dist",
+    botSandboxRoots: botSandboxRootsForHome(home),
+    managedPiSandboxRoots: managedPiSandboxRootsForHome(home),
   });
   const executionGeneration = await nextExecutionGeneration(`${STATE_DIRECTORY}/generation`);
   const controller = await createScopeRuntimeController({ launcher, executionGeneration });

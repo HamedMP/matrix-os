@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import {
   CanonicalProviderCatalogSchema,
   FUNDED_AI_READINESS_TIMEOUTS,
+  isChatgptPlanChatRoute,
+  MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
   type CanonicalProviderInstanceDescriptor,
@@ -15,6 +17,10 @@ import {
   HarnessIcon,
   deriveCanonicalProviderChoices,
   type CanonicalProviderChoice,
+  canonicalChatProviderCatalogPath,
+  canonicalProviderUnavailableSelectionLabel,
+  canonicalChatSubscriptionSelectionMatches,
+  canonicalProviderChoiceCanBeDefault,
 } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
@@ -106,6 +112,8 @@ export function useChatProviderState(
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
+  const refreshRef = useRef<() => void>(() => undefined);
+  const requestRefresh = useCallback(() => refreshRef.current(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,16 +123,19 @@ export function useChatProviderState(
     const refresh = async (force = false) => {
       forcePending = forcePending || force;
       if (refreshing) {
-        pending = true;
+        // Focus/visibility belong to the read already in progress. Only an
+        // explicit post-change refresh must queue a newer observation.
+        pending = pending || force;
         return;
       }
       refreshing = true;
+      if (!cancelled) setLoading(true);
       do {
         pending = false;
         const forceRefresh = forcePending;
         forcePending = false;
         try {
-          const response = await fetch(`${getGatewayUrl()}${forceRefresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true" : "/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true"}`, {
+          const response = await fetch(`${getGatewayUrl()}${canonicalChatProviderCatalogPath(forceRefresh)}`, {
             signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
           });
           if (!response.ok) throw new Error("ProviderCatalogUnavailable");
@@ -137,28 +148,31 @@ export function useChatProviderState(
           console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
           if (!cancelled) setUnavailable(true);
         }
-        if (!cancelled) setLoading(false);
       } while (!cancelled && pending);
       refreshing = false;
+      if (!cancelled) setLoading(false);
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refresh();
     };
     const onFocus = () => { void refresh(); };
     const onSettingsChange = () => { void refresh(true); };
+    refreshRef.current = () => { void refresh(true); };
     void refresh();
     window.addEventListener("focus", onFocus);
     window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
+      refreshRef.current = () => undefined;
       window.removeEventListener("focus", onFocus);
       window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
-  const choices = catalog ? deriveCanonicalProviderChoices(catalog) : [];
+  const choices = catalog ? deriveCanonicalProviderChoices(catalog).filter(choice => catalog.instances.some(instance => instance.id === choice.instanceId && instance.supports.rootChat)
+    && (!unavailable || !isChatgptPlanChatRoute(choice))) : [];
   const bindingKey = currentSelection
     ? `${currentSelection.instanceId}:${currentSelection.model}:${JSON.stringify(currentSelection.options ?? [])}`
     : "";
@@ -167,20 +181,27 @@ export function useChatProviderState(
       ? boundDraft.selection
       : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [] }
     : savedChoice;
+  const personalIntent = effectiveSaved.key.startsWith(`${MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID}:`)
+    ? { instanceId: MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, modelId: effectiveSaved.key.slice(MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID.length + 1) } : null;
+  const rememberedChoice = choices.find(choice => (!boundInstanceId || choice.instanceId === boundInstanceId) && choiceKey(choice) === effectiveSaved.key);
   const chatChoice = choices.find((choice) => (!boundInstanceId || choice.instanceId === boundInstanceId)
     && choiceKey(choice) === effectiveSaved.key)
     ?? choices.find((choice) => choice.instanceId === currentSelection?.instanceId
       && choice.modelId === currentSelection.model);
-  const selectedBase = currentSelection
+  const selectedBase = personalIntent
+    ? rememberedChoice ?? null
+    : currentSelection
     ? chatChoice ?? null
     : choices.find((choice) => choiceKey(choice) === effectiveSaved.key)
     ?? choices.find((choice) => {
+      if (!canonicalProviderChoiceCanBeDefault(choice)) return false;
       const instance = catalog?.instances.find((candidate) => candidate.id === choice.instanceId);
       return instance?.defaultSelection?.model === choice.modelId;
     })
-    ?? choices[0]
+    ?? choices.find(canonicalProviderChoiceCanBeDefault)
     ?? null;
-  const selected = selectedBase
+  const selectedInstance = catalog?.instances.find(instance => instance.id === selectedBase?.instanceId);
+  const selected = selectedBase && canonicalChatSubscriptionSelectionMatches(selectedInstance, effectiveSaved.options)
     ? applySavedSelection(selectedBase, effectiveSaved)
     : null;
 
@@ -199,12 +220,15 @@ export function useChatProviderState(
 
   const select = (choice: CanonicalProviderChoice) => {
     if (boundInstanceId && choice.instanceId !== boundInstanceId) return;
+    if (isChatgptPlanChatRoute(choice) && !choices.some(current => current.instanceId === choice.instanceId
+      && current.modelId === choice.modelId
+      && canonicalChatSubscriptionSelectionMatches(catalog?.instances.find(instance => instance.id === choice.instanceId), choice.selectedOptions))) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
     save({
       key: choiceKey(choice),
       interactionMode: preserveControls ? selected.interactionMode : choice.interactionMode,
       permissionMode: preserveControls ? selected.permissionMode : choice.permissionMode,
-      options: preserveControls ? selected.selectedOptions : choice.selectedOptions,
+      options: preserveControls && !isChatgptPlanChatRoute(choice) ? selected.selectedOptions : choice.selectedOptions,
     });
   };
 
@@ -237,7 +261,13 @@ export function useChatProviderState(
     });
   };
 
-  const activeInstance = catalog?.instances.find((instance) => instance.id === selected?.instanceId) ?? null;
+  const displaySelection = selected ? { instanceId: selected.instanceId, modelId: selected.modelId }
+    : personalIntent ?? (currentSelection ? { instanceId: currentSelection.instanceId, modelId: currentSelection.model } : null);
+  const activeInstance = catalog?.instances.find((instance) => instance.id === displaySelection?.instanceId) ?? null;
+  const displayModelLabel = selected?.modelLabel
+    ?? activeInstance?.models.find(model => model.id === displaySelection?.modelId)?.displayName
+    ?? currentSelection?.model;
+  const selectionStatus = displaySelection && !selected ? canonicalProviderUnavailableSelectionLabel(activeInstance, displaySelection.modelId) : null;
   return {
     catalog,
     choices,
@@ -247,8 +277,12 @@ export function useChatProviderState(
     selectPermissionMode,
     selectOption,
     loading,
+    refresh: requestRefresh,
     unavailable,
     activeInstance,
+    displaySelection,
+    displayModelLabel,
+    selectionStatus,
   };
 }
 
@@ -260,6 +294,7 @@ export function ChatProviderSetupPanel({
   catalog,
   choices,
   selected,
+  displaySelection,
   onSelect,
   onInteractionModeChange,
   onPermissionModeChange,
@@ -270,10 +305,12 @@ export function ChatProviderSetupPanel({
   channels,
   onToggleChannel,
   onDismiss,
+  loading = false,
 }: {
   catalog: CanonicalProviderCatalog | null;
   choices: CanonicalProviderChoice[];
   selected: CanonicalProviderChoice | null;
+  displaySelection?: Pick<CanonicalProviderChoice, "instanceId" | "modelId"> | null;
   onSelect: (choice: CanonicalProviderChoice) => void;
   onInteractionModeChange: (mode: string) => void;
   onPermissionModeChange: (mode: string) => void;
@@ -287,8 +324,10 @@ export function ChatProviderSetupPanel({
   channels: Set<string>;
   onToggleChannel: (channel: string) => void;
   onDismiss: () => void;
+  loading?: boolean;
 }) {
   const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => { panelRef.current?.focus(); }, []);
   useEffect(() => {
     const dismiss = (event: PointerEvent) => {
       const target = event.target;
@@ -299,18 +338,18 @@ export function ChatProviderSetupPanel({
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [onDismiss]);
   return (
-    <section ref={panelRef} role="dialog" aria-label="Choose model and connection"
+    <section ref={panelRef} tabIndex={-1} role="dialog" aria-label="Choose model and connection"
       onKeyDown={(event) => { if (event.key === "Escape") {
         event.stopPropagation();
         panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
         onDismiss();
       } }}
-      className="absolute right-3 top-14 z-30 w-[380px] max-w-[calc(100%-24px)] overflow-y-auto rounded-xl border border-border bg-background p-3 shadow-xl"
+      className="absolute right-3 top-14 z-30 w-[352px] max-w-[calc(100%-24px)] overflow-y-auto rounded-xl border border-border bg-background shadow-xl"
       style={{ maxHeight: "min(520px, calc(100% - 72px))" }}>
       <div className="grid min-w-0 gap-3">
         <div>
-          <CompactChatProviderChoices catalog={catalog ?? undefined} choices={choices} selected={selected} lockedInstanceId={lockedInstanceId}
-            renderDriverIcon={(kind) => kind === "kernel" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
+          <CompactChatProviderChoices loading={loading} catalog={catalog ?? undefined} choices={choices} selected={displaySelection ?? selected} lockedInstanceId={lockedInstanceId}
+            renderDriverIcon={(kind) => kind === "kernel" || kind === "matrix_bot" || kind === "matrix_pi" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
               dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("matrix-chat-rabbit-mark") }} /> : (
               <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">
                 <HarnessIcon harness={kind === "claude_code" ? "claude" : kind} />
@@ -322,11 +361,11 @@ export function ChatProviderSetupPanel({
               panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
               onDismiss();
             }} />
-          {!catalog && choices.length === 0 ? <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
+          {!loading && !catalog && choices.length === 0 ? <p className="m-3 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
             Connect a harness in Settings to start chatting.
           </p> : null}
           {selected ? (
-            <details className="mt-2 border-t border-border pt-2">
+            <details className="mt-2 border-t border-border px-3 pb-3 pt-2">
               <summary className="cursor-pointer py-2 text-sm font-medium">Execution options</summary>
               <div className="grid gap-2 sm:grid-cols-2">
               <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
@@ -378,7 +417,7 @@ export function ChatProviderSetupPanel({
             </details>
           ) : null}
         </div>
-        {showChannels ? <div>
+        {showChannels ? <div className="px-3 pb-3">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Channels</p>
           <div className="grid grid-cols-2 gap-1.5">
             {CHANNEL_OPTIONS.map((option) => {

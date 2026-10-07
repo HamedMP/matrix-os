@@ -52,4 +52,16 @@ describe('unconfigured managed integrations', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([{ id: 'existing' }]);
   });
+
+  it('keeps only GET discovery public when deletion admission is enabled', async () => {
+    const routes = new Hono().get('/available', c => c.json([{ id: 'catalog' }]))
+      .post('/available', c => c.json({ created: true }));
+    const server = createApp({ db, env: { ACCOUNT_DELETION_SECRET: 's'.repeat(32) },
+      orchestrator: stubOrchestrator(), platformSecret: 'platform-secret', integrationRoutes: routes });
+    const response = await server.request('/api/integrations/available', { headers: { host: 'app.matrix-os.com' } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([{ id: 'catalog' }]);
+    expect((await server.request('/api/integrations/available', { method: 'POST', headers: { host: 'app.matrix-os.com' } })).status).toBe(401);
+    expect((await server.request('/api/integrations/available/nested', { headers: { host: 'app.matrix-os.com' } })).status).toBe(401);
+  });
 });

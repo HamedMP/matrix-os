@@ -42,6 +42,7 @@ function requestId(): string {
 
 function conversationMeta(record: CanonicalChatRecord) {
   return {
+    canonicalRecord: record,
     readState: record.readState,
     id: record.chat.id,
     conversationKind: record.chat.conversationKind,
@@ -55,10 +56,11 @@ function conversationMeta(record: CanonicalChatRecord) {
 
 function collaborationViewFromPathname(pathname: string): ChatCollaborationView | null {
   if (pathname === "/shared" || pathname === "/shared/") return { kind: "home" };
-  const match = /^\/shared\/chat\/([^/]+)\/?$/.exec(pathname);
+  const match = /^\/shared\/(chat|project)\/([^/]+)\/?$/.exec(pathname);
   if (!match) return null;
-  const scopeId = CollaborationIdSchema.safeParse(match[1]);
-  return scopeId.success ? { kind: "chat", scopeId: scopeId.data } : null;
+  const scopeId = CollaborationIdSchema.safeParse(match[2]);
+  if (!scopeId.success) return null;
+  return match[1] === "project" ? { kind: "project", scopeId: scopeId.data } : { kind: "chat", scopeId: scopeId.data };
 }
 
 function pushShellChatPath(pathname: string): void {
@@ -98,6 +100,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   const [eventConnectionState, setEventConnectionState] = useState<CanonicalChatEventConnectionState>(
     eventSource.connectionState(),
   );
+  const [botEventRevision, setBotEventRevision] = useState(0);
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
   const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
@@ -240,6 +243,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     ));
     let listTimer: number | undefined;
     const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === activeChatId
+        && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
+        setBotEventRevision((revision) => revision + 1);
+      }
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setRecords((current) => current.map((item) => item.chat.id === record.chat.id
@@ -481,6 +488,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   }, []);
 
   const switchConversation = useCallback((chatId: string) => {
+    activeChatIdRef.current = chatId;
+    detailRef.current = null;
     detailRequestGeneration.current += 1;
     setActiveChatId(chatId);
     setDetail(null);
@@ -501,6 +510,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     pushShellChatPath(`/shared/chat/${encodeURIComponent(scopeId)}`);
   }, []);
 
+  const openSharedProject = useCallback((scopeId: string) => {
+    autoRestoreChatRef.current = false;
+    activeChatIdRef.current = undefined;
+    detailRef.current = null;
+    detailRequestGeneration.current += 1;
+    setActiveChatId(undefined);
+    setDetail(null);
+    setSafeError(null);
+    setSelectedCollaborationView({ kind: "project", scopeId });
+    pushShellChatPath(`/shared/project/${encodeURIComponent(scopeId)}`);
+  }, []);
+
   const openSharedHome = useCallback(() => {
     autoRestoreChatRef.current = false;
     activeChatIdRef.current = undefined;
@@ -515,12 +536,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
 
   const abortCurrent = useCallback(() => {
     const current = detailRef.current;
-    if (!current?.record.activeRun) return;
-    void client.cancelRun(current.record.chat.id, current.record.activeRun.runId, requestId())
-      .then(() => loadDetail(current.record.chat.id))
+    if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current) return;
+    const chatId = current.record.chat.id;
+    void client.cancelRun(chatId, current.record.activeRun.runId, requestId())
+      .then(() => { if (activeChatIdRef.current === chatId) return loadDetail(chatId); })
       .catch((error: unknown) => {
         console.warn("[canonical-chat] Shell cancellation failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError("The run could not be stopped. Try again.");
+        if (activeChatIdRef.current === chatId) setSafeError("The run could not be stopped. Try again.");
       });
   }, [client, loadDetail]);
 
@@ -651,6 +673,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   return {
     collaborationView,
     openSharedChat,
+    openSharedProject,
     openSharedHome,
     unreadOnly, setUnreadOnly,
     readState: detail?.record.chat.id === activeChatId ? detail?.record.readState : undefined,
@@ -659,10 +682,12 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     messages,
     sessionId: activeChatId,
     busy: submitting || detailLoading || Boolean(detail?.record.activeRun),
+    activeRunId: detail && detail.record.chat.id === activeChatId ? detail.record.activeRun?.runId : undefined,
     currentTool: null,
     connected,
     queue: [],
     agentClient: client.agents,
+    botEventRevision,
     queuedTurns: detail?.queuedTurns ?? [],
     cancelQueuedTurn,
     providerSelection: activeRecord?.chat.currentSelection,

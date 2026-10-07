@@ -13,7 +13,11 @@ function setup() {
       addonBalanceMicrousd: 0, creditBalanceMicrousd: 5_000_000,
       remainingBalanceMicrousd: 5_000_000, remainingBudgetMicrousd: 10_000_000 },
   };
-  const getFundingSummary = vi.fn(async () => state);
+  const getFundingSummary = vi.fn(async () => ({ ...state, chatAvailability: {
+    contractVersion: 1 as const, asOf: state.funding.asOf,
+    eligibleBalanceMicrousd: state.funding.creditBalanceMicrousd,
+    availableBalanceMicrousd: state.funding.remainingBalanceMicrousd,
+  } }));
   const getRouteReadiness = vi.fn(async () => ({ contractVersion: 1 as const,
     globalRevision: state.policy.globalRevision, runtimeRevision: state.policy.runtimeRevision,
     checkedAt: now.toISOString(), staleAfter: "2026-09-05T12:00:30.000Z",
@@ -26,6 +30,54 @@ function setup() {
 }
 
 describe("funded AI readiness", () => {
+  it("does not infer Chat credit from speech-only or legacy aggregate funds", async () => {
+    const f = setup();
+    for (const chatAvailability of [undefined, { contractVersion: 1, asOf: now.toISOString(), eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 }]) {
+      const reader = createFundedAiReadinessReader({ summary: { getFundingSummary: async () => ({ ...f.state, ...(chatAvailability ? { chatAvailability } : {}) }) }, routes: { getRouteReadiness: f.getRouteReadiness }, now: () => now });
+      const result = await reader.read();
+      expect(result.readiness.state).toBe("unavailable");
+      expect(result.readiness.safeReason).toBe(chatAvailability ? "credit_required" : "provider_unavailable");
+    }
+  });
+
+  it("distinguishes eligible credit holds from exhausted credit and exhausted budget", async () => {
+    const f = setup();
+    f.state.funding.reservedMicrousd = 100;
+    f.state.funding.remainingBalanceMicrousd -= 100;
+    const projection = { contractVersion: 1 as const, asOf: now.toISOString(), eligibleBalanceMicrousd: 100, availableBalanceMicrousd: 0 };
+    const reader = createFundedAiReadinessReader({ summary: { getFundingSummary: async () => ({ ...f.state, chatAvailability: projection }) }, routes: { getRouteReadiness: f.getRouteReadiness }, now: () => now });
+    expect((await reader.read()).readiness.safeReason).toBe("credit_reserved");
+    projection.eligibleBalanceMicrousd = 0;
+    expect((await reader.read()).readiness.safeReason).toBe("credit_required");
+    projection.eligibleBalanceMicrousd = 100;
+    f.state.funding.settledThisMonthMicrousd = 10_000_000;
+    f.state.funding.remainingBudgetMicrousd = 0;
+    expect((await reader.read()).readiness.safeReason).toBe("budget_exceeded");
+    projection.eligibleBalanceMicrousd = 0;
+    expect((await reader.read()).readiness.safeReason).toBe("budget_exceeded");
+  });
+
+  it("keeps aggregate shortfall protection separate from the general-source ceiling", async () => {
+    const f = setup();
+    f.state.funding.reservedMicrousd = 4_999_800;
+    f.state.funding.remainingBalanceMicrousd = 0;
+    const funding = { ...f.state.funding, fundingShortfallMicrousd: 200 };
+    const reader = createFundedAiReadinessReader({ summary: { getFundingSummary: async () => ({ ...f.state, funding, chatAvailability: {
+      contractVersion: 1 as const, asOf: now.toISOString(), eligibleBalanceMicrousd: 100, availableBalanceMicrousd: 0,
+    } }) }, routes: { getRouteReadiness: f.getRouteReadiness }, now: () => now });
+    expect((await reader.read()).readiness.safeReason).toBe("credit_reserved");
+  });
+
+  it.each(["missing_time", "future", "stale", "invalid_amount"])("fails closed for %s Chat projection", async kind => {
+    const f = setup(); const raw = await f.getFundingSummary();
+    if (kind === "missing_time") raw.chatAvailability.asOf = "2026-09-05T11:59:59.000Z";
+    if (kind === "future") { raw.funding.asOf = raw.policy.checkedAt = raw.chatAvailability.asOf = "2026-09-05T12:02:00.000Z"; }
+    if (kind === "stale") { raw.funding.asOf = raw.policy.checkedAt = raw.chatAvailability.asOf = "2026-09-05T11:54:00.000Z"; }
+    if (kind === "invalid_amount") raw.chatAvailability.availableBalanceMicrousd += 1;
+    const reader = createFundedAiReadinessReader({ summary: { getFundingSummary: async () => raw }, routes: { getRouteReadiness: f.getRouteReadiness }, now: () => now });
+    expect((await reader.read()).readiness.state).toBe("unavailable");
+  });
+
   it("cancels an explicit recipe readiness observer without returning a late ready decision", async () => {
     const f = setup(); const pending = Promise.withResolvers<Awaited<ReturnType<typeof f.getRouteReadiness>>>();
     let observed: AbortSignal | undefined;
@@ -51,7 +103,9 @@ describe("funded AI readiness", () => {
 
   it("shares only in-flight observations and checks revoked policy again after settlement", async () => {
     const { reader, state, getRouteReadiness, getFundingSummary } = setup();
-    const summary = Promise.withResolvers<typeof state>();
+    const snapshot = await getFundingSummary();
+    getFundingSummary.mockClear();
+    const summary = Promise.withResolvers<typeof snapshot>();
     getFundingSummary.mockImplementationOnce(() => summary.promise);
     const first = reader.read();
     const second = reader.read();
@@ -59,7 +113,7 @@ describe("funded AI readiness", () => {
       expect(getFundingSummary).toHaveBeenCalledTimes(1);
       expect(getRouteReadiness).toHaveBeenCalledTimes(1);
     } finally {
-      summary.resolve(structuredClone(state));
+      summary.resolve(structuredClone(snapshot));
       const results = await Promise.all([first, second]);
       expect(results.map((result) => result.readiness.state)).toEqual(["ready", "ready"]);
       results[0]!.allowedModelIds.length = 0;
@@ -74,7 +128,9 @@ describe("funded AI readiness", () => {
 
   it("releases failed shared observations so the next read can recover", async () => {
     const { reader, state, getRouteReadiness, getFundingSummary } = setup();
-    const summary = Promise.withResolvers<typeof state>();
+    const snapshot = await getFundingSummary();
+    getFundingSummary.mockClear();
+    const summary = Promise.withResolvers<typeof snapshot>();
     getFundingSummary.mockImplementationOnce(() => summary.promise);
     const first = reader.read();
     const second = reader.read();
@@ -110,7 +166,9 @@ describe("funded AI readiness", () => {
     vi.useFakeTimers();
     try {
       const { reader, state, getFundingSummary } = setup();
-      const summary = Promise.withResolvers<typeof state>();
+      const snapshot = await getFundingSummary();
+    getFundingSummary.mockClear();
+    const summary = Promise.withResolvers<typeof snapshot>();
       getFundingSummary.mockImplementationOnce(() => summary.promise);
       const first = reader.read();
       const second = reader.read();
@@ -153,23 +211,23 @@ describe("funded AI readiness", () => {
     if (reason === "stale_ledger") state.funding.asOf = "2026-09-05T11:54:00.000Z";
     expect((await reader.read()).readiness.state).toBe("unavailable");
   });
-  it("distinguishes a healthy zero-credit route from a broken relay", async () => {
+  it("keeps zero-credit funding separate from route observations and purchase capability", async () => {
     const { reader, state, getRouteReadiness } = setup();
     state.funding.promotionalBalanceMicrousd = 0;
     state.funding.creditBalanceMicrousd = 0;
     state.funding.remainingBalanceMicrousd = 0;
     expect(await reader.read()).toMatchObject({
       readiness: { state: "unavailable", safeReason: "credit_required" },
-      allowedModelIds: ["claude-sonnet-5"],
+      allowedModelIds: [], discoverableModelIds: ["claude-sonnet-5"],
     });
     state.funding.topUpEnabled = false;
-    expect((await reader.read()).readiness.safeReason).toBe("provider_unavailable");
+    expect((await reader.read()).readiness.safeReason).toBe("credit_required");
     state.funding.topUpEnabled = true;
     getRouteReadiness.mockResolvedValue({ contractVersion: 1, globalRevision: 1, runtimeRevision: 1,
       checkedAt: now.toISOString(), staleAfter: "2026-09-05T12:00:30.000Z", readyModelIds: [] });
     expect(await reader.read()).toMatchObject({
-      readiness: { state: "unavailable", safeReason: "provider_unavailable" },
-      allowedModelIds: [],
+      readiness: { state: "unavailable", safeReason: "credit_required" },
+      allowedModelIds: [], discoverableModelIds: ["claude-sonnet-5"],
     });
   });
   it("keeps GLM and Sonnet independent when only one model has a current receipt", async () => {

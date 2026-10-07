@@ -1,5 +1,6 @@
-import { CollaborationIdSchema, OrganizationDrivePathSchema, OrganizationDriveUploadRequestSchema } from "@matrix-os/contracts";
+import { COLLABORATION_DIRECT_LIMITS, OrganizationDriveContextSearchResponseSchema, OrganizationDriveContextSearchSchema, OrganizationDriveTextContextSchema, CollaborationIdSchema, OrganizationDrivePathSchema, OrganizationDriveUploadRequestSchema } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "../collaboration/authority.js";
 import { authorize, exactQuery, handle, readJson, type CollaborationRouteOptions } from "../collaboration/route-support.js";
@@ -28,6 +29,14 @@ async function driveContext(options: RouteOptions, c: Context, bytes: Uint8Array
   const context = await authorize(options, c, bytes, action, scopeId);
   identity(context);
   return context;
+}
+
+async function revalidateRead(options: RouteOptions, context: AuthorizedCollaborationContext): Promise<void> {
+  const fresh = await options.authority.authorize({scopeId: context.scopeId, actorId: context.actorId, action: "read"});
+  if (fresh.authEpoch !== context.authEpoch || fresh.authorityGeneration !== context.authorityGeneration
+    || fresh.organizationId !== context.organizationId || fresh.authorityRuntimeId !== context.authorityRuntimeId) {
+    throw new CollaborationAuthorizationError("forbidden", "Drive access changed");
+  }
 }
 
 async function driveHandle(c: Context, operation: () => Promise<Response>): Promise<Response> {
@@ -66,6 +75,28 @@ export function registerOrganizationDriveRoutes(routes: Hono, options: RouteOpti
       ...(await service.usage(identity(context))), ...(await service.list({ ...identity(context), ...query })) });
   }));
 
+  routes.post(`${base}/context/search`, bodyLimit({maxSize: COLLABORATION_DIRECT_LIMITS.httpJsonBytes,
+    onError: c => c.json({error: "Request too large"}, 413)}), async (c, next) => {await c.req.arrayBuffer(); await next();}, async (c) => driveHandle(c, async () => {
+    c.header("Cache-Control", "private, no-store");
+    const {value, bytes} = await readJson(c);
+    z.object({}).strict().parse(exactQuery(c, []));
+    const query = OrganizationDriveContextSearchSchema.parse(value);
+    const context = await driveContext(options, c, bytes, "read");
+    const result = await required(options).list({...identity(context), ...query});
+    await revalidateRead(options, context);
+    return c.json(OrganizationDriveContextSearchResponseSchema.parse({organizationId: context.organizationId, scopeId: context.scopeId, ...result}));
+  }));
+  routes.get(`${base}/files/:fileId/context`, async (c) => driveHandle(c, async () => {
+    c.header("Cache-Control", "private, no-store");
+    const fileId = IdSchema.parse(c.req.param("fileId"));
+    const query = z.object({version: z.coerce.number().int().positive().max(2_147_483_647).optional()}).strict().parse(exactQuery(c, ["version"]));
+    const context = await driveContext(options, c, new Uint8Array(), "read");
+    const result = await required(options).readContext({...identity(context), fileId, ...query, revalidate: async () => {
+      await revalidateRead(options, context);
+    }});
+    return c.json(OrganizationDriveTextContextSchema.parse(result));
+  }));
+
   routes.post(`${base}/uploads`, async (c) => driveHandle(c, async () => {
     const { value, bytes } = await readJson(c);
     const request = OrganizationDriveUploadRequestSchema.parse(value);
@@ -96,6 +127,13 @@ export function registerOrganizationDriveRoutes(routes: Hono, options: RouteOpti
     const context = await driveContext(options, c, new Uint8Array(), "read");
     await required(options).abort({ ...identity(context), actorId: context.actorId, uploadId });
     return c.body(null, 204);
+  }));
+
+  routes.post(`${base}/files/lookup`, async (c) => driveHandle(c, async () => {
+    const { value, bytes } = await readJson(c);
+    const request = z.object({ path: OrganizationDrivePathSchema }).strict().parse(value);
+    const context = await driveContext(options, c, bytes, "read");
+    return c.json({ baseVersion: await required(options).versionForPath({ ...identity(context), path: request.path }) });
   }));
 
   routes.get(`${base}/files/:fileId`, async (c) => driveHandle(c, async () => {

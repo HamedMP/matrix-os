@@ -14,17 +14,16 @@ import type { MatrixProvisioner } from './matrix-provisioning.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
-import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
+import { CustomerHandleSchema, HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 import { DeveloperToolsSchema } from './developer-tools.js';
 import {
-  HANDLE_PATTERN,
   ensureProvisionedPlatformUser,
   isPostgresUniqueViolation,
   requireValidHandle,
 } from './platform-route-utils.js';
 
 const ProvisionBodySchema = z.object({
-  handle: z.string().regex(HANDLE_PATTERN),
+  handle: CustomerHandleSchema,
   clerkUserId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100).optional(),
   email: z.string().email().max(320).optional(),
@@ -34,7 +33,7 @@ const ProvisionBodySchema = z.object({
 });
 
 const ClerkUserSyncBodySchema = z.object({
-  handle: z.string().regex(HANDLE_PATTERN),
+  handle: CustomerHandleSchema,
   clerkUserId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100).optional(),
   email: z.string().email().max(320).optional(),
@@ -83,7 +82,7 @@ export function createLegacyContainerRoutes(opts: {
       if (!data || typeof data !== 'object' || data.handle === undefined || data.clerkUserId === undefined) {
         return c.json({ error: 'handle and clerkUserId required' }, 400);
       }
-      if (typeof data.handle !== 'string' || !HANDLE_PATTERN.test(data.handle)) {
+      if (!CustomerHandleSchema.safeParse(data.handle).success) {
         return c.json({ error: 'Invalid handle' }, 400);
       }
       return c.json({ error: 'Validation error' }, 400);

@@ -1,5 +1,6 @@
 import React from "react";
-import { fireEvent, render } from "@testing-library/react-native";
+import { fireEvent, render, within } from "@testing-library/react-native";
+import { Platform, ScrollView, StyleSheet } from "react-native";
 import { JourneyGate } from "../components/JourneyGate";
 import type { JourneyFetchResult, MobileJourneyState } from "../lib/journey";
 
@@ -18,15 +19,6 @@ describe("JourneyGate", () => {
     expect(getByTestId("journey-loading")).toBeTruthy();
   });
 
-  it("plan_required opens plans via the URL callback", () => {
-    const onOpenUrl = jest.fn();
-    const { getByTestId } = render(
-      <JourneyGate result={ok({ phase: "plan_required", nextAction: { kind: "open_plans", url: "https://app.matrix-os.com/?plans=1" } })} onRetry={noop} onOpenUrl={onOpenUrl} />,
-    );
-    fireEvent.press(getByTestId("journey-open-plans"));
-    expect(onOpenUrl).toHaveBeenCalledWith("https://app.matrix-os.com/?plans=1");
-  });
-
   it("account_required prompts re-sign-in with an actionable button", () => {
     const onSignOut = jest.fn();
     const { getByText, queryByTestId, getByTestId } = render(
@@ -36,16 +28,6 @@ describe("JourneyGate", () => {
     expect(queryByTestId("journey-loading")).toBeNull();
     fireEvent.press(getByTestId("journey-sign-in"));
     expect(onSignOut).toHaveBeenCalled();
-  });
-
-  it("plan_required always offers a Check again CTA, even without a URL", () => {
-    const onRefresh = jest.fn();
-    const { getByTestId, queryByTestId } = render(
-      <JourneyGate result={ok({ phase: "plan_required", nextAction: { kind: "open_plans" } })} onRetry={noop} onOpenUrl={noop} onRefresh={onRefresh} />,
-    );
-    expect(queryByTestId("journey-open-plans")).toBeNull();
-    fireEvent.press(getByTestId("journey-refresh"));
-    expect(onRefresh).toHaveBeenCalled();
   });
 
   it("shows a calm settling state within the window", () => {
@@ -110,5 +92,110 @@ describe("JourneyGate", () => {
     expect(getByText("Please sign in again")).toBeTruthy();
     fireEvent.press(getByTestId("journey-sign-in"));
     expect(onSignOut).toHaveBeenCalled();
+  });
+
+  describe("plan_required in native store builds", () => {
+    // Server copy and URL as sent by packages/platform/src/journey.ts.
+    const PLANS_URL = "https://app.matrix-os.com/?plans=1";
+    const SERVER_DETAIL = "Choose a plan to create your Matrix computer.";
+    const planRequired = () => ok({ phase: "plan_required", detail: SERVER_DETAIL, nextAction: { kind: "open_plans", url: PLANS_URL } });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it.each(["ios", "android"] as const)("keeps every action in scrollable content for short screens and large text on %s", (os) => {
+      jest.replaceProperty(Platform, "OS", os);
+      const result = render(<JourneyGate result={planRequired()} onRetry={noop} onOpenUrl={noop} />);
+      const scrollView = result.UNSAFE_getByType(ScrollView);
+      expect(StyleSheet.flatten(scrollView.props.contentContainerStyle).flexGrow).toBe(1);
+      for (const action of ["journey-refresh", "journey-sign-out", "journey-support"]) {
+        expect(within(scrollView).getByTestId(action)).toBeTruthy();
+      }
+    });
+
+    it.each(["ios", "android"] as const)("shows neutral copy with no purchase call to action on %s", (os) => {
+      jest.replaceProperty(Platform, "OS", os);
+      const onOpenUrl = jest.fn();
+      const { getByText, queryByText, queryByTestId, getByTestId } = render(
+        <JourneyGate result={planRequired()} onRetry={noop} onOpenUrl={onOpenUrl} />,
+      );
+
+      expect(getByText("No active plan")).toBeTruthy();
+      expect(getByText("This account doesn’t have an active Matrix computer plan. If you expected access, check again or sign in with another account.")).toBeTruthy();
+      expect(queryByText(SERVER_DETAIL)).toBeNull();
+      expect(queryByText("Choose your plan")).toBeNull();
+      expect(queryByText("View plans")).toBeNull();
+      expect(queryByTestId("journey-open-plans")).toBeNull();
+      expect(queryByText(/pricing|choose|website|browser|subscribe|upgrade|buy|purchase|matrix-os\.com/i)).toBeNull();
+
+      fireEvent.press(getByTestId("journey-refresh"));
+      fireEvent.press(getByTestId("journey-sign-out"));
+      expect(onOpenUrl).not.toHaveBeenCalled();
+    });
+
+    it("keeps Check again so the user can re-check their account", () => {
+      jest.replaceProperty(Platform, "OS", "ios");
+      const onRefresh = jest.fn();
+      const { getByTestId } = render(
+        <JourneyGate result={planRequired()} onRetry={noop} onOpenUrl={noop} onRefresh={onRefresh} />,
+      );
+      fireEvent.press(getByTestId("journey-refresh"));
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["ios", "android"] as const)("offers support without sending the user to checkout on %s", (os) => {
+      jest.replaceProperty(Platform, "OS", os);
+      const onOpenUrl = jest.fn();
+      const { getByTestId } = render(
+        <JourneyGate result={planRequired()} onRetry={noop} onOpenUrl={onOpenUrl} />,
+      );
+      fireEvent.press(getByTestId("journey-support"));
+      expect(onOpenUrl).toHaveBeenCalledTimes(1);
+      expect(onOpenUrl).toHaveBeenCalledWith("mailto:support@matrix-os.com");
+    });
+
+    it("offers Sign out so the user can switch accounts", () => {
+      jest.replaceProperty(Platform, "OS", "ios");
+      const onSignOut = jest.fn();
+      const { getByTestId, getByText } = render(
+        <JourneyGate result={planRequired()} onRetry={noop} onOpenUrl={noop} onSignOut={onSignOut} />,
+      );
+      expect(getByText("Sign out")).toBeTruthy();
+      fireEvent.press(getByTestId("journey-sign-out"));
+      expect(onSignOut).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("plan_required in the web build", () => {
+    beforeEach(() => {
+      jest.replaceProperty(Platform, "OS", "web");
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it("shows the server detail and opens plans via the URL callback", () => {
+      const onOpenUrl = jest.fn();
+      const { getByTestId, getByText, queryByTestId } = render(
+        <JourneyGate result={ok({ phase: "plan_required", detail: "Choose a plan to create your Matrix computer.", nextAction: { kind: "open_plans", url: "https://app.matrix-os.com/?plans=1" } })} onRetry={noop} onOpenUrl={onOpenUrl} />,
+      );
+      expect(getByText("Choose your plan")).toBeTruthy();
+      expect(getByText("Choose a plan to create your Matrix computer.")).toBeTruthy();
+      expect(queryByTestId("journey-sign-out")).toBeNull();
+      fireEvent.press(getByTestId("journey-open-plans"));
+      expect(onOpenUrl).toHaveBeenCalledWith("https://app.matrix-os.com/?plans=1");
+    });
+
+    it("always offers a Check again CTA, even without a URL", () => {
+      const onRefresh = jest.fn();
+      const { getByTestId, queryByTestId } = render(
+        <JourneyGate result={ok({ phase: "plan_required", nextAction: { kind: "open_plans" } })} onRetry={noop} onOpenUrl={noop} onRefresh={onRefresh} />,
+      );
+      expect(queryByTestId("journey-open-plans")).toBeNull();
+      fireEvent.press(getByTestId("journey-refresh"));
+      expect(onRefresh).toHaveBeenCalled();
+    });
   });
 });

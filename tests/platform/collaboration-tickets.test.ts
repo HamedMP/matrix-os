@@ -603,6 +603,75 @@ describe("S05 platform tickets, endpoints and control", () => {
   });
 
   describe("control stream (T026)", () => {
+    async function openControlSocket(lifetime: { minMs: number; maxMs: number }, random: () => number) {
+      await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
+      const stream = new CollaborationControlStream({
+        controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
+        tickets: endpoints, onAttach: (id) => endpoints.heartbeat(id), now: () => clock,
+      });
+      const handler = createCollaborationControlUpgradeHandler({
+        stream,
+        authenticateRuntime: async () => ({ runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }),
+        lifetime,
+        random,
+      });
+      const server = createServer();
+      server.on("upgrade", (request, socket, head) => { void handler.handleUpgrade(request, socket, head); });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Test server has no port");
+      const ticket = await stream.issueUpgradeTicket(logicalRuntimeId);
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/internal/collaboration/control?ticket=${ticket}`, {
+        headers: { "x-matrix-runtime-id": runtimeId, authorization: `Bearer ${"a".repeat(32)}` },
+      });
+      await once(socket, "open");
+      const cleanup = async () => {
+        socket.terminate();
+        await stream.shutdown();
+        handler.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      };
+      return { socket, cleanup };
+    }
+
+    // An open control socket keeps its Cloud Run instance busy. Cloud Run stops routing to an
+    // instance it is scaling in but keeps it, and its max-instance slot, until the socket ends,
+    // so the platform rotates the socket itself well before the request timeout.
+    it("rotates an attached control socket with 1012 within its jittered lifetime", async () => {
+      const { socket, cleanup } = await openControlSocket({ minMs: 100, maxMs: 300 }, () => 0.5);
+      try {
+        const openedAt = Date.now();
+        const [code, reason] = await once(socket, "close") as [number, Buffer];
+        expect(code).toBe(1012);
+        expect(reason.toString("utf8")).toBe("Control stream rotation");
+        // random 0.5 puts the rotation at 200ms after the upgrade; allow for a loaded event loop.
+        expect(Date.now() - openedAt).toBeGreaterThanOrEqual(100);
+      } finally {
+        await cleanup();
+      }
+    });
+
+    it("keeps a control socket open until its lifetime elapses", async () => {
+      const { socket, cleanup } = await openControlSocket({ minMs: 60_000, maxMs: 60_000 }, () => 0);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(socket.readyState).toBe(WebSocket.OPEN);
+      } finally {
+        await cleanup();
+      }
+    });
+
+    it("rejects an inverted or non-positive control socket lifetime", () => {
+      const stream = new CollaborationControlStream({
+        controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
+        tickets: endpoints, onAttach: (id) => endpoints.heartbeat(id), now: () => clock,
+      });
+      const authenticateRuntime = async () => null;
+      expect(() => createCollaborationControlUpgradeHandler({ stream, authenticateRuntime, lifetime: { minMs: 0, maxMs: 10 } })).toThrow(RangeError);
+      expect(() => createCollaborationControlUpgradeHandler({ stream, authenticateRuntime, lifetime: { minMs: 20, maxMs: 10 } })).toThrow(RangeError);
+      expect(() => createCollaborationControlUpgradeHandler({ stream, authenticateRuntime, lifetime: { minMs: 10, maxMs: 2 ** 31 } })).toThrow(RangeError);
+    });
+
     it("keeps a pong-responsive idle home ticket-ready beyond the liveness window", async () => {
       await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
       const stream = new CollaborationControlStream({

@@ -8,6 +8,9 @@ import {
   type PlatformDB,
 } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
+import { createJevLabelCallRoutes, authorizeInternalJevLabels } from "../../packages/gateway/src/integrations/jev-label-call.js";
+import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
+import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 
 function bearerFor(handle: string, secret: string): string {
@@ -70,6 +73,37 @@ describe("platform/internal-integration-routes", () => {
       internalIntegrationRoutes: internalRoutes,
     });
   }
+
+  it("requires signed machine delegation before the Gmail label seam can dispatch", async () => {
+    const labels = vi.fn(async () => ({ labels: [] }));
+    const lookup = vi.fn(async () => [{ id: "conn_1", user_id: "owner_1", service: "gmail", status: "active",
+      account_label: "My Gmail", account_email: "me@example.test", pipedream_account_id: "apn_1" }]);
+    const internalRoutes = createJevLabelCallRoutes({
+      db: { listConnectedServices: lookup, getUserById: async () => ({ pipedream_external_id: "owner_1" }) } as unknown as PlatformDb,
+      pipedream: { boundedGmailGet: async () => ({ emailAddress: "me@example.test" }), boundedGmailLabels: labels } as unknown as PipedreamConnectClient,
+      resolveUserId: async c => c.get("internalContainerClerkUserId") === "user_alice" ? "owner_1" : null,
+      authorizeInternal: authorizeInternalJevLabels,
+    });
+    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: "platform-secret-123",
+      internalIntegrationRoutes: internalRoutes });
+    const body = JSON.stringify({ binding: { service: "gmail", accountLabel: "My Gmail", connectionId: "conn_1",
+      expectedEmail: "me@example.test", labelingEnabled: true }, operation: { kind: "labels" } });
+    for (const [headers, expected] of [
+      [{ authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}` }, 403],
+      [{ ...delegatedHeaders("alice", "user_alice"), "x-platform-verified": "forged" }, 401],
+      [delegatedHeaders("alice", "user_stranger"), 403],
+    ] as const) {
+      const response = await app.request("/internal/containers/alice/integrations/jev-label-call", {
+        method: "POST", headers: { "content-type": "application/json", ...headers }, body });
+      expect(response.status).toBe(expected);
+      expect(lookup).not.toHaveBeenCalled();
+      expect(labels).not.toHaveBeenCalled();
+    }
+    const response = await app.request("/internal/containers/alice/integrations/jev-label-call", {
+      method: "POST", headers: { "content-type": "application/json", ...delegatedHeaders("alice", "user_alice") }, body });
+    expect(response.status).toBe(200);
+    expect(labels).toHaveBeenCalledTimes(1);
+  });
 
   it("rejects requests without the per-container bearer token", async () => {
     const app = createTestApp();

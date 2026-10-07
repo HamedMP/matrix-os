@@ -98,7 +98,7 @@ export function createChatAgentRecipeResolver(options: {
         const skills = recipe.skills.map((id) => {
           const skill = installed.find((entry) => entry.id === id);
           if (!skill) throw new ChatAgentRecipeResolverError("recipe_unavailable");
-          return { id, name: skill.name, instructions: skill.instructions, sha256: skill.sha256 };
+          return { id, name: skill.name, instructions: skill.instructions, sha256: skill.sha256, sourceFile: skill.sourceFile };
         });
         return ResolvedChatAgentRecipeSchema.parse({ skills, integrations: recipe.integrations, output: recipe.output,
           ...(recipe.jevInboxTriage ? { jevInboxTriage: recipe.jevInboxTriage } : {}) });

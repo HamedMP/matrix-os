@@ -33,6 +33,7 @@ export interface TerminalPasteAssetInput {
   contentType?: string;
   filename?: string;
   now?: Date;
+  kind?: "image" | "file";
 }
 
 export interface TerminalPasteAssetResult {
@@ -100,16 +101,18 @@ export function createTerminalPasteAssetCleanupLifecycle(options: {
 }
 
 export async function saveTerminalPasteAsset(input: TerminalPasteAssetInput): Promise<TerminalPasteAssetResult> {
-  if (input.bytes.byteLength < 1 || input.bytes.byteLength > TERMINAL_PASTE_ASSET_BODY_LIMIT) {
+  if ((input.bytes.byteLength < 1 && input.kind !== "file") || input.bytes.byteLength > TERMINAL_PASTE_ASSET_BODY_LIMIT) {
     throw shellError("payload_too_large", "Request too large", 413);
   }
   validateClientFilename(input.filename);
   const declaredMime = normalizeContentType(input.contentType);
-  if (declaredMime && !SUPPORTED_MIME_TYPES.has(declaredMime)) {
+  if (input.kind !== "file" && declaredMime && !SUPPORTED_MIME_TYPES.has(declaredMime)) {
     throw shellError("unsupported_media_type", "Invalid request", 400);
   }
-  const kind = detectPasteAssetKind(input.bytes);
-  if (!kind || (declaredMime && declaredMime !== kind.mimeType)) {
+  const kind = input.kind === "file"
+    ? droppedFileKind(input.filename, declaredMime)
+    : detectPasteAssetKind(input.bytes);
+  if (!kind || (input.kind !== "file" && declaredMime && declaredMime !== kind.mimeType)) {
     throw shellError("unsupported_media_type", "Invalid request", 400);
   }
 
@@ -254,6 +257,15 @@ function isUnsafeDirectory(error: unknown): boolean {
 function normalizeContentType(contentType: string | undefined): string | undefined {
   const normalized = contentType?.split(";", 1)[0]?.trim().toLowerCase();
   return normalized || undefined;
+}
+
+function droppedFileKind(filename: string | undefined, mimeType: string | undefined): { mimeType: string; extension: string } {
+  const safeMime = mimeType ?? "application/octet-stream";
+  if (safeMime.length > 120 || !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(safeMime)) {
+    throw shellError("unsupported_media_type", "Invalid request", 400);
+  }
+  const extension = filename?.match(/\.([a-z0-9]{1,16})$/i)?.[1]?.toLowerCase();
+  return { mimeType: safeMime, extension: extension ? `.${extension}` : "" };
 }
 
 function validateClientFilename(filename: string | undefined): void {

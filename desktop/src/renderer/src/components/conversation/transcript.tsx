@@ -1,10 +1,10 @@
-import { ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
+import { ConversationNotice } from "./notice";
+import { BotRunMessageBody, BotUnassignedMessageBody, ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   ChevronRight,
-  CircleAlert,
 } from "@renderer/lib/hugeicons";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -14,10 +14,10 @@ import { ConversationActivityGroup } from "./activity";
 import { RequestApprovalOutcome, RequestStatusIcon } from "./request-outcome";
 import { Bubble, BubbleContent } from "./bubble";
 import { Marker, MarkerContent } from "./marker";
+import { conversationTurnVisibility } from "./turn-visibility";
 import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
 import type {
   ConversationMessagePresentation,
-  ConversationNoticePresentation,
   ConversationPresentationCallbacks,
   ConversationRequestPresentation,
   ConversationTurnPresentation,
@@ -144,13 +144,14 @@ function ResponseMessage({
             <ChatAttachments
               attachments={attachments}
               align="start"
-              open={callbacks.openAttachment}
+              open={callbacks.openAttachment} openImportedAsset={callbacks.openImportedAsset}
               loadImage={callbacks.loadImage}
             />
           ) : null}
           <Bubble variant="ghost">
             <BubbleContent className="w-full max-w-full overflow-visible">
-              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{visibleMarkdown}</MessageResponse>
+              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink} loadFileImage={callbacks.loadFileImage} resolveApp={callbacks.resolveApp} openApp={callbacks.openApp}
+                renderCredentialMarker={callbacks.renderCredentialMarker ? (offset, marker, number) => callbacks.renderCredentialMarker?.(message, offset, marker, number) : undefined}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
           {showMetadata ? (
@@ -167,83 +168,6 @@ function ResponseMessage({
   );
 }
 
-function Notice({
-  notice,
-  callbacks,
-}: {
-  notice: ConversationNoticePresentation;
-  callbacks: ConversationPresentationCallbacks;
-}) {
-  const failed = notice.tone === "failed";
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [actionFailed, setActionFailed] = useState(false);
-  const availableActions = (notice.actions ?? []).filter((action) => (
-    callbacks.performAction && (!callbacks.canPerformAction || callbacks.canPerformAction(action))
-  ));
-  const perform = async (action: typeof availableActions[number]) => {
-    if (!callbacks.performAction || pendingAction) return;
-    setPendingAction(action.kind);
-    setActionFailed(false);
-    try {
-      await callbacks.performAction(action, undefined);
-    } catch (error) {
-      console.warn("[conversation] action failed:", error instanceof Error ? error.name : "UnknownError");
-      setActionFailed(true);
-    } finally {
-      setPendingAction(null);
-    }
-  };
-  return (
-    <ConversationItem messageId={`notice:${notice.id}`}>
-      <Message>
-        <MessageContent>
-          <div
-              role="status"
-              aria-label={notice.label}
-              className={`w-fit min-w-[20rem] max-w-full rounded-xl border px-3 py-2.5 text-sm sm:max-w-[42rem] ${failed ? "flex items-start gap-2.5" : ""}`}
-              style={{
-                borderColor: failed ? "var(--danger)" : "var(--border-default)",
-                color: "var(--text-primary)",
-              }}
-            >
-              {failed ? (
-                <CircleAlert
-                  size={16}
-                  aria-hidden
-                  className="mt-0.5 shrink-0"
-                  style={{ color: "var(--danger)" }}
-                />
-              ) : null}
-              <div className="min-w-0">
-                <p className="font-medium leading-5">{notice.label}</p>
-                <div className="mt-0.5 leading-5" style={{ color: "var(--text-secondary)" }}>
-                  <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{notice.markdown}</MessageResponse>
-                </div>
-                {availableActions.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {availableActions.map((action) => (
-                      <button
-                        key={`${action.kind}:${action.label}`}
-                        type="button"
-                        aria-label={`${action.label} ${notice.label}`}
-                        disabled={pendingAction !== null}
-                        className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50"
-                        style={{ borderColor: "var(--border-default)" }}
-                        onClick={() => void perform(action)}
-                      >
-                        {action.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                {actionFailed ? <p role="alert" className="mt-1 text-xs">The action failed. Try again.</p> : null}
-              </div>
-          </div>
-        </MessageContent>
-      </Message>
-    </ConversationItem>
-  );
-}
 
 function Request({
   request,
@@ -377,7 +301,7 @@ function PresentationItem({
       </ConversationItem>
     );
   }
-  if (item.kind === "notice") return <Notice notice={item} callbacks={callbacks} />;
+  if (item.kind === "notice") return <ConversationNotice notice={item} callbacks={callbacks} />;
   if (item.kind === "request") return <Request request={item} callbacks={callbacks} />;
   return (
     <ResponseMessage
@@ -394,31 +318,42 @@ function ConversationTurn({
   turn,
   callbacks,
   initialFinalIds,
+  visibility,
+  onToggle,
 }: {
   turn: ConversationTurnPresentation;
   callbacks: ConversationPresentationCallbacks;
   initialFinalIds: ReadonlySet<string>;
+  visibility: ReturnType<typeof conversationTurnVisibility>;
+  onToggle: () => void;
 }) {
-  const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
-  const scopedCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile
-    ? { ...callbacks, openFile: (path) => callbacks.openFile!(path, turn.executionRoot) }
+  const rootKind = turn.executionRoot?.kind;
+  const rootProjectId = turn.executionRoot && turn.executionRoot.kind !== "bot_workspace" ? turn.executionRoot.projectId : undefined;
+  const rootBotId = turn.executionRoot?.kind === "bot_workspace" ? turn.executionRoot.botId : undefined;
+  const rootWorktreeId = turn.executionRoot?.kind === "worktree" ? turn.executionRoot.worktreeId : undefined;
+  const appRoot = useMemo(() => rootKind === "bot_workspace" && rootBotId
+    ? { kind: rootKind, botId: rootBotId }
+    : rootKind && rootKind !== "bot_workspace" && rootProjectId
+      ? rootKind === "worktree" ? { kind: rootKind, projectId: rootProjectId, worktreeId: rootWorktreeId! } : { kind: rootKind, projectId: rootProjectId }
+      : undefined, [rootKind, rootProjectId, rootWorktreeId, rootBotId]);
+  const resolveRunApp = useCallback((path: string) => callbacks.resolveApp?.(path, appRoot) ?? null, [callbacks.resolveApp, appRoot]);
+  const openRunApp = useCallback((path: string) => callbacks.openApp?.(path, appRoot) ?? false, [callbacks.openApp, appRoot]);
+  const fileCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile
+    ? { ...callbacks, openFile: (path) => callbacks.openFile!(path, turn.executionRoot), ...(callbacks.loadFileImage ? { loadFileImage: (path: string) => callbacks.loadFileImage!(path, turn.executionRoot) } : {}) }
     : callbacks;
-  const showWork = turn.active || expanded;
+  const scopedCallbacks: ConversationPresentationCallbacks = {
+    ...fileCallbacks,
+    ...(callbacks.resolveApp ? { resolveApp: resolveRunApp } : {}),
+    ...(callbacks.openApp ? { openApp: openRunApp } : {}),
+  };
+  const { showWork, visibleWork, visibleTimeline, pendingRequestIds } = visibility;
   const hasWork = turn.work.length > 0;
-  const terminalPartial = !turn.active
-    && turn.final?.kind === "notice"
-    && (turn.final.tone === "failed" || turn.final.tone === "stopped")
-    ? [...turn.work].reverse().find((item) => item.kind === "message")
-    : undefined;
-  const visibleWork = showWork ? turn.work : terminalPartial ? [terminalPartial] : [];
   const timeline = turn.timeline;
-  const visibleTimeline = timeline?.filter((entry) => (
-    entry.kind === "user-followup" || showWork || (terminalPartial !== undefined && entry.item.id === terminalPartial.id)
-  ));
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} /> : null}
       <ChatContextReceipt context={turn.runContext} />
+      <div data-agent-message-body={turn.id} className="min-w-0">
       {hasWork || turn.final || turn.active ? (
         <TurnReceipt
           startedAt={turn.startedAt}
@@ -426,7 +361,7 @@ function ConversationTurn({
           active={turn.active}
           expanded={showWork}
           canToggle={!turn.active && hasWork}
-          onToggle={() => setExpanded((value) => !value)}
+          onToggle={onToggle}
         />
       ) : null}
       {timeline ? (
@@ -459,6 +394,8 @@ function ConversationTurn({
           }
         />
       ) : null}
+      <BotRunMessageBody runIds={turn.runIds ?? []} requestIds={pendingRequestIds}/>
+      </div>
     </>
   );
 }
@@ -473,17 +410,33 @@ export function ConversationTranscript({
   const [initialFinalIds] = useState(() => new Set(
     turns.flatMap((turn) => turn.final ? [turn.final.id] : []),
   ));
+  const [turnExpansion, setTurnExpansion] = useState<Record<string, boolean>>(() => Object.fromEntries(
+    turns.map(turn => [turn.id, turn.expandedByDefault ?? false]),
+  ));
+  const visibleTurns = turns.map(turn => {
+    const expanded = (Object.hasOwn(turnExpansion, turn.id) ? turnExpansion[turn.id] : turn.expandedByDefault) ?? false;
+    return { turn, visibility: conversationTurnVisibility(turn, expanded) };
+  });
+  const toggleTurn = (turnId: string) => setTurnExpansion(current => Object.fromEntries(turns.map(turn => {
+    const expanded = (Object.hasOwn(current, turn.id) ? current[turn.id] : turn.expandedByDefault) ?? false;
+    // Evict removed turns on interaction so expansion state stays bounded by this transcript.
+    return [turn.id, turn.id === turnId ? !expanded : expanded];
+  })));
   return (
     <Conversation>
       <ConversationContent className="justify-start pt-8 sm:pt-12">
-        {turns.map((turn) => (
+        {visibleTurns.map(({ turn, visibility }) => (
           <ConversationTurn
             key={turn.id}
             turn={turn}
             callbacks={callbacks}
             initialFinalIds={initialFinalIds}
+            visibility={visibility}
+            onToggle={() => toggleTurn(turn.id)}
           />
         ))}
+        <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
+          requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
       </ConversationContent>
     </Conversation>
   );

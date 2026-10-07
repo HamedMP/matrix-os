@@ -47,7 +47,7 @@ export function UserMessage({
           <ChatAttachments attachments={(message.content ?? []).flatMap<ChatMessageAttachment>((segment) => segment.kind === "image"
             ? [{ ...segment, kind: "image" as const }]
             : segment.kind === "reference" && segment.referenceKind === "file" ? [{ ...segment, kind: "file" as const }] : [])}
-            open={callbacks.openAttachment} loadImage={callbacks.loadImage} />
+            open={callbacks.openAttachment} openImportedAsset={callbacks.openImportedAsset} loadImage={callbacks.loadImage} />
           {hasBubbleContent ? <Bubble variant="secondary" align="end" className="max-w-[min(85%,48rem)]">
             <BubbleContent data-chat-message="user" className="max-w-full [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[14px] leading-relaxed"
               style={{ background: "color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface))", borderColor: "color-mix(in srgb, var(--text-primary) 6%, transparent)" }} data-selectable>

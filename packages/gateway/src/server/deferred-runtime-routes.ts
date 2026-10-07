@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
-import { registerCustomMcpGatewayRoutes } from "../integrations/custom-mcp/gateway-routes.js";
+import { registerCustomMcpGatewayRoutes, type CustomMcpGatewayRegistration } from "../integrations/custom-mcp/gateway-routes.js";
 import { resolveCustomMcpRuntimeRouting } from "../integrations/custom-mcp/preview-routing.js";
 import { httpRequestDuration, httpRequestsTotal, metricsRegistry, normalizePath } from "../metrics.js";
 import { registerAppRuntimeRoutes } from "./app-runtime-routes.js";
@@ -24,7 +24,12 @@ export interface DeferredRuntimeRouteOptions {
   ownerTelemetryDistinctId: string;
 }
 
-export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptions): ReturnType<typeof registerAppRuntimeRoutes> {
+export interface DeferredRuntimeRoutes {
+  processManager: ReturnType<typeof registerAppRuntimeRoutes>;
+  customMcp: CustomMcpGatewayRegistration;
+}
+
+export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptions): DeferredRuntimeRoutes {
   const { app, homePath, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest, posthogErrorTracker, ownerTelemetryDistinctId } = options;
@@ -73,7 +78,7 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
     clerkUserId: process.env.MATRIX_CLERK_USER_ID ?? process.env.MATRIX_USER_ID,
     projectionToken: process.env.UPGRADE_TOKEN,
   });
-  registerCustomMcpGatewayRoutes(app, {
+  const customMcp = registerCustomMcpGatewayRoutes(app, {
     homePath,
     clerkUserId: customMcpRouting.clerkUserId,
     projectionToken: customMcpRouting.projectionToken,
@@ -130,5 +135,5 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
     });
   });
 
-  return processManager;
+  return { processManager, customMcp };
 }

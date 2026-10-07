@@ -1,3 +1,4 @@
+import type { NativeObservationReadScope } from "./hermes-observation-renewal.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import type {
   AiProviderSnapshotV3,
@@ -15,6 +16,8 @@ import type { ProviderSettingsDependencyReader } from "./provider-settings-proje
 
 export interface CanonicalProviderSnapshotReader {
   getSnapshot(options?: ProviderSnapshotReadOptions): Promise<AiProviderSnapshotV3>;
+  /** Reobserve only stale native evidence after optional Settings enrichment. */
+  renewNativeObservations?(snapshot: AiProviderSnapshotV3, scope: NativeObservationReadScope): Promise<AiProviderSnapshotV3>;
 }
 
 export interface ProviderAccountDependencyCoordinator extends ProviderSettingsDependencyReader {

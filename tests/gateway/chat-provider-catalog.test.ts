@@ -789,6 +789,11 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings", displayName: "Codex" });
     expect(catalog.instances.find((instance) => instance.id === "claude_code_default"))
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings", displayName: "Claude" });
+    for (const selection of [{ instanceId: "codex_default", model: "gpt-5.4" }, { instanceId: "claude_code_default", model: "opus" }]) {
+      const scoped = await service.getCatalog(principal, selection);
+      expect(scoped.instances).toEqual([expect.objectContaining({ availability: "unavailable", unavailabilityReason: "disabled_in_settings" })]);
+      expect(validateChatProviderSelection({ catalog: scoped, selection }).ok).toBe(false);
+    }
   });
 
   it("keeps a Codex route admitted for a user attempt while qualifying its local-only status", async () => {
@@ -1230,13 +1235,12 @@ describe("canonical Chat Provider catalog", () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([]), agentRuntimeSource: runtimeSource(),
       aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
-      executableDriverKinds: ["kernel"],
+      executableDriverKinds: ["matrix_pi"],
     });
     const catalog = await service.getCatalog(principal);
-    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included"))
+    expect(catalog.instances.find((instance) => instance.id === "matrix_pi_default"))
       .toMatchObject({ displayName: "Matrix AI", availability: "available" });
-    expect(catalog.drivers.find((driver) => driver.kind === "kernel"))
-      .toMatchObject({ displayName: "Claude SDK", capabilityClass: "system_agent" });
+    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
   });
 
   it("retains unavailable Matrix AI without exposing models or acquiring credentials", async () => {
@@ -1261,8 +1265,9 @@ describe("canonical Chat Provider catalog", () => {
 
       const catalog = await service.getCatalog(principal);
 
-      expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included"))
-        .toMatchObject({ availability: "unavailable", connectionState: "unavailable", models: [] });
+      expect(catalog.instances.find((instance) => instance.id === "matrix_pi_default"))
+        .toMatchObject({ availability: "unavailable", models: [] });
+      expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
       expect(JSON.stringify(catalog)).not.toContain("platform-secret");
     } finally {
       aiProviderSource.close();
@@ -2081,16 +2086,44 @@ describe("canonical Chat Provider catalog", () => {
     expect(JSON.stringify(catalog)).not.toContain("secret coding inventory failure");
   });
 
-  it("names an unenumerated legacy model after its harness", async () => {
+  it("never fabricates a sendable model for an unenumerated legacy Codex default", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({ defaultModel: "GPT 5 default" })]),
       agentRuntimeSource: runtimeSource(),
     });
 
-    const catalog = await service.getCatalog(principal);
+    const codex = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "codex_default")!;
 
-    expect(catalog.instances.find((instance) => instance.id === "codex_default")?.models)
-      .toMatchObject([{ id: "provider-default", displayName: "Codex default" }]);
+    // An unparseable legacy default is exactly as unusable as no default at
+    // all: Matrix cannot resolve it to a real model id, so it must never be
+    // turned into a synthetic "provider-default" id that Codex itself would
+    // reject at send time. See "never exposes a fake sendable Codex model
+    // when catalog discovery fails" below for the failed-fetch counterpart.
+    expect(codex.models).toEqual([]);
+    expect(codex.defaultSelection).toBeUndefined();
+    expect(codex.models.some((model) => model.id === "provider-default")).toBe(false);
+  });
+
+  it("never exposes a fake sendable Codex model when catalog discovery fails", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),
+      agentRuntimeSource: runtimeSource(),
+      codingModelCatalogSource: vi.fn(async (provider) => {
+        if (provider.id !== "codex") return null;
+        throw new Error("Codex model catalog unavailable");
+      }),
+    });
+
+    const codex = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "codex_default")!;
+
+    // This is the exact shape of the confirmed bug: catalog discovery fails,
+    // Matrix must not fall back to a synthetic model id that gets threaded
+    // through to the real Codex app-server and rejected at send time.
+    expect(codex.models).toEqual([]);
+    expect(codex.models.some((model) => model.id === "provider-default")).toBe(false);
+    expect(codex.defaultSelection).toBeUndefined();
   });
 
   it("advertises file attachments forwarded by native Pi and OpenCode adapters", async () => {

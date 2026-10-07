@@ -11,18 +11,26 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
   homePath: string;
   recipeSkillsRoot?: string;
   enabled?: () => boolean;
+  drives?: ConstructorParameters<typeof ChatAgentContext>[0]["drives"];
+  assertChatReferenceAllowed?: ConstructorParameters<typeof ChatAgentContext>[0]["assertChatReferenceAllowed"];
   admitJevWorkflow?: ConstructorParameters<typeof ChatAgentContext>[0]["admitJevWorkflow"];
+  /** Created by the caller when bots need the store before the runtime exists. */
+  agents?: ChatAgentStore;
+  botChats?: ConstructorParameters<typeof ChatAgentContext>[0]["botChats"];
 }) {
   const recipes = createChatAgentRecipeResolver({
     skillsRoot: await discoverChatAgentRecipeSkillsRoot({ skillsRoot: options.recipeSkillsRoot }),
     homePath: options.homePath,
     services: listServices().map(({ id, name }) => ({ id, name })),
   });
-  const agents = new ChatAgentStore({ homePath: options.homePath, db: options.repository.kysely });
-  await agents.bootstrap();
+  const agents = options.agents ?? new ChatAgentStore({ homePath: options.homePath, db: options.repository.kysely });
+  if (!options.agents) await agents.bootstrap();
   const context = new ChatAgentContext({
     repository: options.repository, agents, recipes, enabled: options.enabled ?? (() => true),
     admitJevWorkflow: options.admitJevWorkflow,
+    drives: options.drives,
+    assertChatReferenceAllowed: options.assertChatReferenceAllowed,
+    ...(options.botChats ? { botChats: options.botChats } : {}),
   });
   return { agents, recipes, context, orchestrator: new CanonicalChatOrchestrator({ ...options, agentContext: context }) };
 }

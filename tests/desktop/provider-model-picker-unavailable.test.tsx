@@ -2,6 +2,7 @@
 import React from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom/vitest";
 import { ProviderModelPicker } from "@desktop/renderer/src/features/chat/ProviderModelPicker";
 import { providerCatalog } from "./canonical-chat-workspace-test-utils";
 afterEach(cleanup);
@@ -15,6 +16,8 @@ it.each(["model_missing", "model_disabled", "instance_disabled", "instance_missi
   const button = screen.getByRole("button", { name: "Choose model and provider" });
   expect(button.textContent).toContain("Unavailable");
   expect(button.title).toContain("Unavailable");
+  expect(button).toHaveAccessibleDescription(button.title);
+  expect(button.querySelector('[data-slot="provider-model-unavailable-indicator"]')).not.toBeNull();
   expect(screen.getByText("Unavailable").className).toContain("shrink-0");
   expect(button.getAttribute("data-model")).toBe("gpt-5.6-sol");
   expect(button.getAttribute("data-provider-instance")).toBe(instance.id);
@@ -23,5 +26,9 @@ it("does not label an available selection or no selection unavailable", () => {
   const view = render(<ProviderModelPicker catalog={providerCatalog} selection={null} instanceLocked={false} onChange={vi.fn()} />);
   expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent).toContain("Choose model");
   view.rerender(<ProviderModelPicker catalog={providerCatalog} selection={{ instanceId: "codex_fixture", model: "gpt-5.6-sol", options: [], interactionMode: "default", permissionMode: "supervised" }} instanceLocked onChange={vi.fn()} />);
-  expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent).not.toContain("Unavailable");
+  const available = screen.getByRole("button", { name: "Choose model and provider" });
+  expect(available.textContent).not.toContain("Unavailable");
+  expect(available.querySelector('[data-slot="provider-model-unavailable-indicator"]')).toBeNull();
+  expect(available.title).toBe("GPT-5.6-Sol · Codex fixture");
+  expect(available).toHaveAccessibleDescription(available.title);
 });

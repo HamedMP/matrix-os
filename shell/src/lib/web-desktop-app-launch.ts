@@ -85,7 +85,7 @@ export function buildWebDesktopIconApps(
     { name: "Editor", path: "__editor__" },
     { name: "VS Code", path: "__vscode__", iconUrl: "/vscode.png" },
     { name: "Settings", path: "__settings__" },
-    { name: "Plugins", path: "__plugins__" },
+    { name: "Connect Apps", path: "__plugins__" },
     namedDesktopApp(findCanonicalApp(apps, browserPaths), { name: "Browser", path: "__browser__" }),
     namedDesktopApp(findCanonicalApp(apps, notesPaths), { name: "Notes", path: "apps/notes/index.html" }),
     namedDesktopApp(findCanonicalApp(apps, whiteboardPaths), { name: "Whiteboard", path: "apps/whiteboard/index.html" }),

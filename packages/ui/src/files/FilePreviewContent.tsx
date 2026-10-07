@@ -13,6 +13,8 @@ export interface FilePreviewContentProps {
   loadBlob?: (url: string, maxBytes: number) => Promise<Blob>;
   loadText?: (url: string, maxBytes: number) => Promise<string>;
   retry?: () => void;
+  /** A caller that supplies a bounded prefix rather than the complete text. */
+  textPreviewBytes?: number;
 }
 
 function parseDelimited(source: string, separator: "," | "\t"): string[][] {
@@ -56,23 +58,24 @@ function Failure({ retry }: { retry?: () => void }) {
   </div>;
 }
 
-function TextualPreview({ descriptor, contentUrl, loadText, retry }: FilePreviewContentProps) {
+function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBytes }: FilePreviewContentProps) {
+  const limit = textPreviewBytes === undefined ? MAX_TEXT_BYTES : Math.max(1, Math.min(MAX_TEXT_BYTES, textPreviewBytes));
   const [state, setState] = useState<{ status: "loading" } | { status: "ready"; text: string } | { status: "failed" }>({ status: "loading" });
   useEffect(() => {
     let active = true;
     setState({ status: "loading" });
-    if (!loadText || descriptor.sizeBytes > MAX_TEXT_BYTES) {
+    if (!loadText || (textPreviewBytes === undefined && descriptor.sizeBytes > limit)) {
       setState({ status: "failed" });
       return () => { active = false; };
     }
-    void loadText(contentUrl, MAX_TEXT_BYTES).then((text) => {
+    void loadText(contentUrl, limit).then((text) => {
       if (active) setState({ status: "ready", text });
     }).catch((error: unknown) => {
       console.warn("[file-preview] text load failed", error instanceof Error ? error.name : "UnknownError");
       if (active) setState({ status: "failed" });
     });
     return () => { active = false; };
-  }, [contentUrl, descriptor.sizeBytes, loadText]);
+  }, [contentUrl, descriptor.sizeBytes, loadText, limit, textPreviewBytes]);
   if (state.status === "loading") return <Loading />;
   if (state.status === "failed") return <Failure retry={retry} />;
   if (descriptor.kind === "table") {
@@ -88,7 +91,10 @@ function TextualPreview({ descriptor, contentUrl, loadText, retry }: FilePreview
       className="h-full min-h-96 w-full border-0 bg-white"
     />;
   }
-  return <pre className="min-h-0 overflow-auto whitespace-pre-wrap break-words p-4 text-xs" data-selectable><code>{state.text}</code></pre>;
+  return <div className="min-h-0 w-full overflow-auto">
+    <pre className="whitespace-pre-wrap break-words p-4 text-xs" data-selectable><code>{state.text}</code></pre>
+    {descriptor.sizeBytes > limit ? <p role="status" className="px-4 pb-4 text-xs">Preview truncated.</p> : null}
+  </div>;
 }
 
 function TablePreview({ name, rows }: { name: string; rows: string[][] }) {

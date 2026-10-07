@@ -21,3 +21,11 @@ Public documentation is a separate deliverable if a subsequent installer promoti
 ## Exact patch qualification: 0.157.1
 
 The next scheduled check downloaded exact 0.157.1 and stopped at the same intentional unknown-version guard. Qualify only that exact patch in both records, retain all previous records and the installed/runtime-selected 0.156.1 pin, and keep 0.157.2 unknown/fail-closed. The generated full schema and tagged exec source are byte-identical to 0.157.0; no nested definition or required method digest changes. [Patch evidence](evidence/patch-01571.md) records provenance, bidirectional structural comparison, an independently runnable no-paid native fixture, and its observed failure limitation. Current-head Linux/macOS generation, review, and full CI remain separate gates. No public behavior or installer change requires a site documentation update for this qualification.
+
+## Exact qualification: 0.159.0
+
+[ENG-53](https://linear.app/matrix-os/issue/ENG-53/fixcodex-qualify-provider-contracts-for-01590) qualifies published 0.159.0 after the shared workflow rejects it as unverified. Preserve every previous record, installer/runtime pins and all approval/auth/sandbox boundaries. Review the complete 0.158.0-to-0.159.0 schema and qualify the one changed required notification with adapter regression coverage. Exact-head Greptile, full Linux CI and both native target verifiers remain landing gates. [Evidence](evidence/qualification-01590.md).
+
+## Exact patch qualification: 0.159.2
+
+[ENG-54](https://linear.app/matrix-os/issue/ENG-54/fixcodex-qualify-provider-contracts-for-01592) qualifies the published 0.159.2 patch after the shared workflow rejects it at the intentional unknown-version guard. Its tagged exec source is byte-identical to the previously qualified source, and both published target schemas are byte-identical to the previously qualified 0.159.0 schema. Preserve all prior records, the 0.156.1 installer pin and fail-closed rejection of unreviewed versions. Exact-head Greptile, full CI and both native target verifiers remain landing gates. [Evidence](evidence/qualification-01592.md).

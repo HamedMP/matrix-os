@@ -105,26 +105,19 @@ export function PromptInput({
           />
         </div>
       )}
-      <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
+      <div data-slot="prompt-input-toolbar" className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           {controls}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           {trailingControls}
           {busy && onAbort && !(submitWhileBusy && submissionReady) ? (
-            <button
-              type="button"
-              aria-label="Stop"
-              onClick={onAbort}
-              className="flex h-8 w-8 items-center justify-center rounded-full"
-              style={{ background: "var(--danger-muted)", color: "var(--danger)" }}
-            >
-              <CircleStop size={16} />
-            </button>
+            <PromptStopButton onAbort={onAbort}/>
           ) : (
             <button
               type="button"
               aria-label="Send"
+              data-slot="prompt-input-send"
               disabled={!submitEnabled}
               onClick={onSubmit}
               className="flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-40"
@@ -142,4 +135,13 @@ export function PromptInput({
       ) : null}
     </div>
   );
+}
+
+/** Shared Stop presentation, including identity-recovery states without a composer. */
+export function PromptStopButton({ onAbort }: { onAbort():void }) {
+  return <button type="button" aria-label="Stop" onClick={onAbort}
+    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+    style={{ background: "var(--danger-muted)", color: "var(--danger)" }}>
+    <CircleStop size={16}/>
+  </button>;
 }

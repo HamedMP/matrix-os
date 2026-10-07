@@ -9,6 +9,7 @@ import {
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
+  CanonicalChatMessageIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
   CanonicalChatApprovalSubmissionResponseSchema,
@@ -103,6 +104,29 @@ const CanonicalChatDetailInputSchema = z.object({
   cursor: CanonicalChatApiCursorSchema.optional(),
 }).strict();
 
+const CredentialOccurrenceIdSchema = z.string().regex(/^cred_[a-f0-9]{32}$/);
+const ChatCredentialOccurrenceSchema = z.object({
+  id: CredentialOccurrenceIdSchema,
+  messageId: CanonicalChatMessageIdSchema,
+  offset: z.number().int().nonnegative().max(1_000_000),
+  length: z.number().int().min(1).max(64),
+  revealed: z.boolean(),
+}).strict();
+const ChatCredentialOccurrencesResponseSchema = z.object({
+  occurrences: z.array(ChatCredentialOccurrenceSchema).max(1_024),
+}).strict();
+const RevealedChatCredentialResponseSchema = z.object({
+  id: CredentialOccurrenceIdSchema,
+  value: z.string().min(1).max(2_048).refine((value) => new TextEncoder().encode(value).byteLength <= 2_048),
+  revealed: z.literal(true),
+}).strict();
+const HiddenChatCredentialResponseSchema = z.object({
+  id: CredentialOccurrenceIdSchema,
+  revealed: z.literal(false),
+}).strict();
+
+export type ChatCredentialOccurrence = z.infer<typeof ChatCredentialOccurrenceSchema>;
+
 export interface CanonicalChatClient {
   agents?: ChatAgentClient;
   list(input?: z.input<typeof CanonicalChatListInputSchema>): Promise<CanonicalChatListResponse>;
@@ -125,6 +149,10 @@ export interface CanonicalChatClient {
     chatId: string,
     input?: z.input<typeof CanonicalChatDetailInputSchema>,
   ): Promise<CanonicalChatDetailResponse>;
+  getCredentialOccurrences(chatId: string, messageIds: readonly string[]): Promise<ChatCredentialOccurrence[]>;
+  revealCredential(chatId: string, occurrenceId: string): Promise<string>;
+  getRevealedCredential(chatId: string, occurrenceId: string): Promise<string>;
+  hideCredential(chatId: string, occurrenceId: string): Promise<void>;
   admitTurn(
     chatId: string,
     input: CanonicalCreateChatTurnRequest,
@@ -199,7 +227,9 @@ export function createCanonicalChatClient(
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
     agents: createChatAgentClient((path, method, body) => method === "GET" ? transport.get(path)
-      : method === "POST" ? transport.post(path, body) : transport.patch(path, body)),
+      : method === "POST" ? transport.post(path, body)
+        : method === "DELETE" ? transport.delete(path)
+          : transport.patch(path, body)),
     async list(input = {}) {
       const parsed = CanonicalChatListInputSchema.parse(input);
       const response = await api.get(withQuery("/api/chats", {
@@ -303,6 +333,52 @@ export function createCanonicalChatClient(
       return CanonicalChatDetailResponseSchema.parse(response);
     },
 
+    async getCredentialOccurrences(chatId, messageIds) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const ids = z.array(CanonicalChatMessageIdSchema).min(1).max(64).parse(messageIds);
+      const result = ChatCredentialOccurrencesResponseSchema.parse(await transport.get(
+        withQuery(`/api/chats/${encodeURIComponent(id)}/credentials`, { messageIds: ids.join(",") }),
+        { maxBytes: 256 * 1_024 },
+      ));
+      const allowed = new Set(ids);
+      if (result.occurrences.some((occurrence) => !allowed.has(occurrence.messageId))) {
+        throw new Error("InvalidCredentialMetadata");
+      }
+      return result.occurrences;
+    },
+
+    async revealCredential(chatId, occurrenceId) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const occurrence = CredentialOccurrenceIdSchema.parse(occurrenceId);
+      const result = RevealedChatCredentialResponseSchema.parse(await transport.post(
+        `/api/chats/${encodeURIComponent(id)}/credentials/${encodeURIComponent(occurrence)}/reveal`, {},
+        { maxBytes: 16 * 1_024 },
+      ));
+      if (result.id !== occurrence) throw new Error("InvalidCredentialResponse");
+      return result.value;
+    },
+
+    async getRevealedCredential(chatId, occurrenceId) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const occurrence = CredentialOccurrenceIdSchema.parse(occurrenceId);
+      const result = RevealedChatCredentialResponseSchema.parse(await transport.get(
+        `/api/chats/${encodeURIComponent(id)}/credentials/${encodeURIComponent(occurrence)}/value`,
+        { maxBytes: 16 * 1_024 },
+      ));
+      if (result.id !== occurrence) throw new Error("InvalidCredentialResponse");
+      return result.value;
+    },
+
+    async hideCredential(chatId, occurrenceId) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const occurrence = CredentialOccurrenceIdSchema.parse(occurrenceId);
+      const result = HiddenChatCredentialResponseSchema.parse(await transport.post(
+        `/api/chats/${encodeURIComponent(id)}/credentials/${encodeURIComponent(occurrence)}/hide`, {},
+        { maxBytes: 16 * 1_024 },
+      ));
+      if (result.id !== occurrence) throw new Error("InvalidCredentialResponse");
+    },
+
     async admitTurn(chatId, input, analytics) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const request = CanonicalCreateChatTurnRequestSchema.parse(input);
@@ -320,6 +396,8 @@ export function createCanonicalChatClient(
         const response = CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
           chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`),
           request,
+          // Fresh funded observation has a 14s server deadline; allow bounded transport margin.
+          { timeoutMs: 30_000 },
         ));
         if (analytics) {
           trackEvent({

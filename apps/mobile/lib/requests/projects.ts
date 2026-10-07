@@ -22,6 +22,9 @@ const ProjectSummarySchema = z.object({
 
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 
+/** The shape `fetchProjects` resolves to, for re-validating a list read back from disk. */
+export const ProjectSummaryListSchema = z.array(ProjectSummarySchema).max(PROJECT_LIST_LIMIT);
+
 const ProjectListResponseSchema = z.object({
   projects: z.array(z.unknown()).max(PROJECT_LIST_LIMIT).transform((items) => {
     const projects: ProjectSummary[] = [];

@@ -161,6 +161,25 @@ describe("provider settings routes", () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 
+  it("negotiates offered inventory independently of historical model metadata", async () => {
+    const offered = [{ id: "anthropic/claude-opus-5", providerId: "anthropic", accessSourceId: "source_matrix", displayName: "Claude Opus 5", enabled: true }];
+    const modernSnapshot = { ...snapshot, matrixModelInventory: offered };
+    const { app, mutate } = createApp({ getSnapshot: async () => modernSnapshot,
+      mutate: async () => ({ kind: "snapshot", snapshot: modernSnapshot }) });
+    for (const query of ["", "?includeModelCapabilities=true", "?includeCapabilities=true"]) {
+      expect(await (await app.request(`/api/ai/provider-settings${query}`)).json()).not.toHaveProperty("matrixModelInventory");
+    }
+    const modern = await (await app.request("/api/ai/provider-settings?includeMatrixModelInventory=true")).json();
+    expect(modern.matrixModelInventory).toEqual(offered);
+    expect(ProviderSettingsSnapshotSchema.safeParse(modern).success).toBe(true);
+    const request = { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "set_harness_enabled", harnessInstanceId: "harness_pi", enabled: true, expectedRevision: 0, idempotencyKey: "inventory" }) };
+    expect((await (await app.request("/api/ai/provider-settings/actions?includeMatrixModelInventory=true", request)).json()).snapshot.matrixModelInventory).toEqual(offered);
+    mutate.mockClear();
+    expect((await app.request("/api/ai/provider-settings/actions?includeMatrixModelInventory=maybe", request)).status).toBe(400);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
   it("authenticates reads and returns the secret-free snapshot", async () => {
     const { app, getPrincipal, getSnapshot } = createApp();
     const response = await app.request("/api/ai/provider-settings");
@@ -344,5 +363,70 @@ describe("provider settings routes", () => {
     expect(await failedResponse.json()).toEqual({
       error: { code: "provider_settings_unavailable", message: "Provider settings are unavailable." },
     });
+  });
+});
+
+
+describe("provider Settings reserved-credit negotiation", () => {
+  it.each([false, true])("negotiates Chat funding on every snapshot response: %s", async include => {
+    const funded = structuredClone(snapshot);
+    const usage = funded.accessSources[0]!.usage;
+    if (usage.kind !== "managed_credit") throw new Error("Managed fixture required");
+    Object.assign(usage, { chatAvailability: { contractVersion: 1, asOf: usage.asOf,
+      eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 } });
+    const f = createApp({ getSnapshot: async () => funded, mutate: async () => ({ snapshot: funded, kind: "snapshot" }) });
+    for (const [path, method, body] of [
+      ["/api/ai/provider-settings", "GET", undefined],
+      ["/api/ai/provider-settings/actions", "POST", { type: "set_gateway_budget", expectedRevision: 0,
+        idempotencyKey: "chat_budget", monthlyBudgetMicrousd: 10_000_000 }],
+      ["/api/ai/provider-settings/accounts/account1", "DELETE", { expectedRevision: 0, idempotencyKey: "chat_delete",
+        dependencyGuard: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 }, confirmation: "remove_account" }],
+    ] as const) {
+      const response = await f.app.request(`${path}${include ? "?includeChatFunding=true" : ""}`, { method,
+        ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) });
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect("chatAvailability" in (result.snapshot ?? result).accessSources[0].usage).toBe(include);
+      expect("chatAvailability" in usage).toBe(true);
+      expect((await f.app.request(`${path}?includeChatFunding=invalid`, { method })).status).toBe(400);
+    }
+  });
+  it.each([false, true])("negotiates the monthly budget reason without leaking a new enum to legacy clients: %s", async include => {
+    const funded = structuredClone(snapshot);
+    Object.assign(funded.accessSources[0]!.readiness, { state: "unavailable", action: "contact_owner", safeReason: "budget_exceeded" });
+    const f = createApp({ getSnapshot: async () => funded });
+    const response = await f.app.request(`/api/ai/provider-settings${include ? "?includeChatFunding=true" : ""}`);
+    expect((await response.json()).accessSources[0].readiness.safeReason).toBe(include ? "budget_exceeded" : "policy");
+  });
+  it.each([false, true])("negotiates enum additions on GET, POST and DELETE: %s", async include => {
+    const held = structuredClone(snapshot);
+    Object.assign(held.accessSources[0]!.readiness, { state: "unavailable", action: "retry", safeReason: "credit_reserved" });
+    const f = createApp({ getSnapshot: async () => held, mutate: async () => ({ snapshot: held, kind: "snapshot" }) });
+    const query = `?includeCapabilities=true${include ? "&includeFundingState=true" : ""}`;
+    const mutations = [
+      { path: "/api/ai/provider-settings", method: "GET", body: undefined },
+      { path: "/api/ai/provider-settings/actions", method: "POST", body: {
+        type: "set_gateway_budget", expectedRevision: 0, idempotencyKey: "reserved_state", monthlyBudgetMicrousd: 10_000_000 } },
+      { path: "/api/ai/provider-settings/accounts/account1", method: "DELETE", body: {
+        expectedRevision: 0, idempotencyKey: "reserved_delete", dependencyGuard: {
+          activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 }, confirmation: "remove_account" } },
+    ];
+    for (const mutation of mutations) {
+      const response = await f.app.request(mutation.path + query, { method: mutation.method,
+        ...(mutation.body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(mutation.body) } : {}) });
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect((body.snapshot ?? body).accessSources[0].readiness.safeReason).toBe(include ? "credit_reserved" : "credit_required");
+      expect(held.accessSources[0]!.readiness.safeReason).toBe("credit_reserved");
+    }
+  });
+  it("rejects invalid funding capability", async () => {
+    const f = createApp();
+    for (const [path, method] of [["/api/ai/provider-settings", "GET"], ["/api/ai/provider-settings/actions", "POST"],
+      ["/api/ai/provider-settings/accounts/account1", "DELETE"]]) {
+      expect((await f.app.request(`${path}?includeFundingState=yes`, { method })).status).toBe(400);
+    }
+    expect(f.getSnapshot).not.toHaveBeenCalled();
+    expect(f.mutate).not.toHaveBeenCalled();
   });
 });

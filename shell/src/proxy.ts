@@ -12,6 +12,7 @@ import {
   resolveCompletedSignupRedirect,
 } from "./lib/proxy-routes";
 import { getConfiguredAppOrigin, getPublicOrigin } from "./lib/public-origin";
+import { withClerkPublicOrigin } from "./lib/clerk-proxy-origin";
 import {
   canPlatformUserAccessShell,
   isPlatformBearerValid,
@@ -207,7 +208,7 @@ export function proxy(
   // admin bearer token is never injected onto an unauthenticated request. The
   // platform-verified fast-path above covers the pre-authenticated
   // backend-to-backend case.
-  return withClerk(request, event);
+  return withClerkPublicOrigin(request, () => withClerk(request, event));
 }
 
 export const config = {

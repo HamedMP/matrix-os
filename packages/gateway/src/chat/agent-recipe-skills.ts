@@ -20,7 +20,7 @@ const bundledNames: Record<string, string> = {
 class InvalidSkillError extends Error {}
 type Source = SkillSource & { bundled: boolean };
 type Skill = {
-  id: string; name: string; description: string; instructions: string; sha256: string;
+  id: string; name: string; description: string; instructions: string; sha256: string; sourceFile: string;
 };
 
 function missing(error: unknown): boolean {
@@ -62,7 +62,7 @@ async function entriesFor(source: Source): Promise<string[]> {
   return entries.sort();
 }
 
-async function readCandidate(path: string, roots: readonly Source[], installedOnly: boolean): Promise<string> {
+async function readCandidate(path: string, roots: readonly Source[], installedOnly: boolean): Promise<{ content: string; sourceFile: string }> {
   const parent = await realpath(dirname(path));
   const filePath = join(parent, basename(path));
   if (!roots.some((root) => within(root.dir, filePath))) throw new InvalidSkillError("Skill link leaves approved roots");
@@ -79,13 +79,13 @@ async function readCandidate(path: string, roots: readonly Source[], installedOn
     const buffer = Buffer.alloc(MAX_SKILL_FILE_BYTES + 1);
     const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
     if (!installedOnly && bytesRead > MAX_SKILL_FILE_BYTES) throw new InvalidSkillError("Skill is too large");
-    return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytesRead), { stream: installedOnly });
+    return { content: new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytesRead), { stream: installedOnly }), sourceFile: filePath };
   } finally {
     await file.close();
   }
 }
 
-function parseSkill(content: string, source: Source, installedOnly: boolean): Skill {
+function parseSkill(content: string, sourceFile: string, source: Source, installedOnly: boolean): Skill {
   const { frontmatter, body } = parseFrontmatter(content);
   if (typeof frontmatter.name !== "string" || typeof frontmatter.description !== "string"
     || (source.bundled && frontmatter.author !== "Matrix OS")) throw new InvalidSkillError("Invalid skill metadata");
@@ -100,8 +100,10 @@ function parseSkill(content: string, source: Source, installedOnly: boolean): Sk
   });
   const instructions = body.trim();
   const sha256 = createHash("sha256").update(instructions).digest("hex");
-  if (!installedOnly) ResolvedChatAgentRecipeSchema.shape.skills.element.parse({ id, name: metadata.name, instructions, sha256 });
-  return { ...metadata, instructions, sha256 };
+  // Validate location independently even during identity-only retry checks.
+  ResolvedChatAgentRecipeSchema.shape.skills.element.shape.sourceFile.parse(sourceFile);
+  if (!installedOnly) ResolvedChatAgentRecipeSchema.shape.skills.element.parse({ id, name: metadata.name, instructions, sha256, sourceFile });
+  return { ...metadata, instructions, sha256, sourceFile };
 }
 
 /** Fresh, bounded, owner-scoped discovery. No process-global cache or client paths. */
@@ -115,7 +117,8 @@ export async function discoverRecipeSkills(options: { skillsRoot: string; homePa
       const path = source.kind === "flat-scan" ? join(source.dir, entry) : join(source.dir, entry, "SKILL.md");
       let skill: Skill;
       try {
-        skill = parseSkill(await readCandidate(path, sources, installedOnly), source, installedOnly);
+        const candidate = await readCandidate(path, sources, installedOnly);
+        skill = parseSkill(candidate.content, candidate.sourceFile, source, installedOnly);
       } catch (error: unknown) {
         if (!missing(error)) console.warn("[chat-agents] Skipped unavailable skill:", source.label, entry,
           error instanceof Error ? error.name : "UnknownError");

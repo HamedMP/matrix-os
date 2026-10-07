@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The root-owned service is the sole Docker caller in the customer restore path.
+# Its container name, image, bind address, and volume are fixed host policy.
+if [ "$(id -u)" -ne 0 ]; then
+  echo 'matrix-postgres-start: root is required' >&2
+  exit 1
+fi
+if [ ! -f /opt/matrix/env/postgres.env ] || [ -L /opt/matrix/env/postgres.env ]; then
+  echo 'matrix-postgres-start: PostgreSQL environment is unavailable' >&2
+  exit 1
+fi
+
+if /usr/bin/docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
+  :
+elif /usr/bin/docker ps -a --format '{{.Names}}' | grep -qx matrix-postgres; then
+  /usr/bin/docker start matrix-postgres >/dev/null
+else
+  /usr/bin/docker volume create matrix-postgres >/dev/null
+  /usr/bin/docker run -d \
+    --name matrix-postgres \
+    --restart unless-stopped \
+    --env-file /opt/matrix/env/postgres.env \
+    -v matrix-postgres:/var/lib/postgresql/data \
+    -p 127.0.0.1:5432:5432 \
+    postgres:16 >/dev/null
+fi
+
+for _ in $(seq 1 60); do
+  if /usr/bin/pg_isready --host=127.0.0.1 --port=5432 >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 2
+done
+echo 'matrix-postgres-start: PostgreSQL did not become ready' >&2
+exit 1

@@ -5,6 +5,7 @@ import { ChatContextMenu } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 export interface RenameableConversation {
+  canonicalRecord?: import("@matrix-os/contracts").CanonicalChatRecord;
   readState?: import("@matrix-os/contracts").CanonicalChatReadState;
   id: string;
   conversationKind?: "chat" | "voice";

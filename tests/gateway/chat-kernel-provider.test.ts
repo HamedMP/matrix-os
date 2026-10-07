@@ -10,7 +10,7 @@ function runInput(overrides: Record<string, unknown> = {}) {
     runId: "run_1",
     prompt: "Hello Matrix",
     parts: [{ type: "text" as const, text: "Hello Matrix" }],
-    selection: { instanceId: "kernel_matrix_included", model: "claude-sonnet-5" },
+    selection: { instanceId: "kernel_owner_anthropic_key", model: "claude-sonnet-5" },
     interactionMode: "default",
     permissionMode: "full_access",
     signal: new AbortController().signal,
@@ -54,7 +54,7 @@ describe("kernel canonical Chat adapter", () => {
         suppressAiGeneration: true,
       },
       expect.any(AbortController),
-      { model: "claude-sonnet-5", accessSourceId: "matrix_included" },
+      { model: "claude-sonnet-5", accessSourceId: "owner_anthropic_key" },
     );
     expect(events).toEqual([
       { type: "state.updated", state: { sessionId: "session_1" } },

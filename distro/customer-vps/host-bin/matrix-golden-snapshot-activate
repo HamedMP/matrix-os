@@ -278,13 +278,21 @@ if [ -f "$terminal_activation_marker" ] && [ ! -L "$terminal_activation_marker" 
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${matrix_uid}/bus" systemctl --user daemon-reload
 fi
 
-for unit in matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service; do
+for unit in matrix-postgres.service matrix-restore.service matrix-terminal-runtime.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service; do
   install -o root -g root -m 0644 "/opt/matrix/systemd/$unit" "/etc/systemd/system/$unit"
 done
+install -d -o root -g root -m 0755 /usr/local/libexec
+install -o root -g root -m 0755 /opt/matrix/bin/matrix-postgres-start /usr/local/libexec/matrix-postgres-start
 
 # The production restore gate requires owner-scoped object-store credentials.
 # Golden validation has no owner, so it creates a fresh local database and uses
 # this narrow drop-in only for the synthetic restore gate.
+install -d -o root -g root -m 0755 /etc/systemd/system/matrix-postgres.service.d
+cat >/etc/systemd/system/matrix-postgres.service.d/golden.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/true
+EOF
 install -d -o root -g root -m 0755 /etc/systemd/system/matrix-restore.service.d
 cat >/etc/systemd/system/matrix-restore.service.d/golden.conf <<'EOF'
 [Service]

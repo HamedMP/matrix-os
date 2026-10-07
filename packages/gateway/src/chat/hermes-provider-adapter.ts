@@ -1,3 +1,5 @@
+import { ChatAgentContextError } from "./agent-context.js";
+import { mapChatAgentContextError } from "./orchestration-errors.js";
 import { createHermesSubagentActivity } from "./hermes-subagent-activity.js";
 import { restrictedHermesPythonArguments } from "./jev-hermes-python.js";
 import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
@@ -35,10 +37,14 @@ import {
   HermesApprovalRequestSchema,
 } from "./hermes-approval-control.js";
 import {
+  hasAssistantCredentialBoundaryCandidate,
   safePublishedText,
   safeToolPreview,
   sanitizeAssistantText,
+  projectAssistantTextWithCaptures,
+  type CapturedAssistantText,
 } from "./safe-activity-projection.js";
+import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 
 const SafeSessionIdSchema = z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/);
 const HermesChatStateSchema = z.object({ sessionId: SafeSessionIdSchema }).strict();
@@ -129,15 +135,6 @@ function selection(value: string): { provider: string; model: string } {
 function isRawProviderFailureText(text: string): boolean {
   return /^\s*(?:(?:provider\s+)?error:\s*)?(?:HTTP(?:\/\d(?:\.\d)?)?\s+[45]\d{2}\b|\{\s*"(?:detail|error)"\s*:)/i
     .test(text);
-}
-
-function outputChunks(text: string): string[] {
-  const chunks: string[] = [];
-  for (let index = 0; index < text.length; index += 4_000) {
-    const chunk = text.slice(index, index + 4_000);
-    if (chunk) chunks.push(chunk);
-  }
-  return chunks;
 }
 
 function remainingHermesInterimText(streamed: string, interim: string): string | undefined {
@@ -297,10 +294,11 @@ export function createHermesChatProviderAdapter(options: {
   requestTimeoutMs?: number;
   jev?: {
     resolveCredentials(ownerId: string, selection: unknown, signal: AbortSignal): Promise<JevHermesCredentials>;
-    verifyRuntime(root: string, signal: AbortSignal): Promise<void>;
+    verifyRuntime(root: string, signal: AbortSignal, apiMode: JevHermesCredentials["apiMode"]): Promise<void>;
     preflight(ownerId: string, scope: HermesJevScope, signal: AbortSignal): Promise<void>;
     clearRun(ownerId: string, runId: string): void;
     summary(ownerId: string, scope: HermesJevScope): string | null;
+    activitySummary?(ownerId: string, scope: HermesJevScope): string | null;
   };
 }): CanonicalChatProviderAdapter<HermesChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -323,7 +321,7 @@ export function createHermesChatProviderAdapter(options: {
     if (input.interactionMode !== "default") throw new Error("Unsupported Hermes interaction mode");
     const selected = selection(input.selection.model);
     const jevScope = jevScopeForRun(input.owner.ownerId, input.runId, input.context);
-    const catalogGate = jevScope ? createJevHermesCatalogGate() : undefined;
+    const catalogGate = jevScope ? createJevHermesCatalogGate(selected) : undefined;
     const selectedRouteGate = !jevScope && selected.provider === "openai-codex"
       ? createHermesSelectedRouteGate(selected) : undefined;
     if (jevScope && !options.jev) throw new Error("Restricted Inbox setup required");
@@ -340,6 +338,9 @@ export function createHermesChatProviderAdapter(options: {
     let emittedDeltaEvents = 0;
     let pendingVisibleText = "";
     let pendingStreamBoundaryText = "";
+    let deferredPathStream = false;
+    let deferredCredentialProbe = false;
+    let publishedRawPrefixLength = 0;
     let deltaFlushTimer: NodeJS.Timeout | undefined;
     let separatorPending = false;
     let completionSettled = false;
@@ -349,6 +350,17 @@ export function createHermesChatProviderAdapter(options: {
     const unsafeToolFragments = new Set<string>();
     const toolActivities = new Map<string, { activity: Pick<HermesActivity, "kind" | "label" | "preview" | "previewKind" | "detail">; privateContext: boolean; name: string }>();
     const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label" | "summary">>();
+    const pathProjection = {
+      homePath: options.homePath,
+      executionRoot: input.executionRoot,
+      showPrivatePaths: !input.sharedScopeId,
+    };
+    const credentialEmitter = createAssistantCredentialEmitter({
+      ownerType: input.owner.type,
+      ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
+      key: options.toolOutputKey, sharedScopeId: input.sharedScopeId,
+    });
+    let pendingVisibleCaptures: CapturedAssistantText["captures"] = [];
     const projectSubagent = createHermesSubagentActivity(input.runId);
     let releaseInputRun: (() => void) | undefined;
     let releaseApprovalRun: (() => void) | undefined;
@@ -384,9 +396,11 @@ export function createHermesChatProviderAdapter(options: {
         deltaFlushTimer = undefined;
       }
       const text = pendingVisibleText;
+      const captures = pendingVisibleCaptures;
       pendingVisibleText = "";
-      for (const delta of outputChunks(text)) {
-        queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
+      pendingVisibleCaptures = [];
+      for (const delta of credentialEmitter.emit({ text, captures })) {
+        queue.push(delta);
         emittedDeltaEvents += 1;
       }
     };
@@ -400,13 +414,17 @@ export function createHermesChatProviderAdapter(options: {
       deltaFlushTimer.unref?.();
     };
 
-    const emitVisibleText = (text: string) => {
+    const emitVisibleText = (value: string | CapturedAssistantText) => {
+      const { text, captures } = typeof value === "string" ? { text: value, captures: [] } : value;
       if (!text) return;
       const separator = separatorPending && emittedOutputBytes > 0 ? "\n\n" : "";
       const addedBytes = Buffer.byteLength(separator + text, "utf8");
       if (emittedOutputBytes + addedBytes > MAX_OUTPUT_BYTES) {
         throw new HermesRunFailure("run", "Hermes output exceeded limit");
       }
+      pendingVisibleCaptures.push(...captures.slice(0, Math.max(0, 16 - pendingVisibleCaptures.length)).map((capture) => ({
+        ...capture, offset: pendingVisibleText.length + separator.length + capture.offset,
+      })));
       pendingVisibleText += separator + text;
       emittedOutputBytes += addedBytes;
       separatorPending = false;
@@ -421,17 +439,20 @@ export function createHermesChatProviderAdapter(options: {
     };
 
     const emitStreamText = (text: string) => {
-      const projected = pendingStreamBoundaryText + sanitizeAssistantText(text, {
-        homePath: options.homePath,
-        executionRoot: input.executionRoot,
-      });
+      const projectedCapture = projectAssistantTextWithCaptures(text, pathProjection);
+      const projected = pendingStreamBoundaryText + projectedCapture.text;
       if (emittedOutputBytes + Buffer.byteLength(projected, "utf8") > MAX_OUTPUT_BYTES) {
         throw new HermesRunFailure("run", "Hermes output exceeded limit");
       }
       const trailingWhitespace = projected.match(/\s+$/)?.[0] ?? "";
       const boundary = trailingWhitespace;
       pendingStreamBoundaryText = boundary;
-      emitVisibleText(projected.slice(0, projected.length - boundary.length));
+      emitVisibleText({
+        text: projected.slice(0, projected.length - boundary.length),
+        captures: projectedCapture.captures.map((capture) => ({
+          ...capture, offset: capture.offset + projected.length - projectedCapture.text.length,
+        })),
+      });
     };
 
     const flushStreamBoundary = () => {
@@ -448,8 +469,34 @@ export function createHermesChatProviderAdapter(options: {
         const parsed = HermesDeltaSchema.parse(event.payload);
         const text = currentSegment ? parsed.text : parsed.text.replace(/^\n\n/, "");
         if (!text) return;
+        if (Buffer.byteLength(currentSegment + text, "utf8") > MAX_OUTPUT_BYTES) {
+          throw new HermesRunFailure("run", "Hermes output exceeded limit");
+        }
         if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
-        if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure) {
+        // A slash path or partial credential key can become sensitive in a
+        // later delta. Seal the remaining segment before publishing it.
+        const pathCandidate = /(^|[\s"'`(=:<>|;&])\//u.test(currentSegment.slice(-1) + text);
+        const credentialCandidate = hasAssistantCredentialBoundaryCandidate(currentSegment + text);
+        if (!deferredPathStream && (pathCandidate || credentialCandidate)) {
+          deferredPathStream = true;
+          deferredCredentialProbe = !pathCandidate;
+          publishedRawPrefixLength = currentSegment.length - pendingStreamBoundaryText.length;
+        }
+        let releasedCredentialProbe = false;
+        if (deferredCredentialProbe) {
+          if (pathCandidate) {
+            deferredCredentialProbe = false;
+          } else if (!credentialCandidate) {
+            deferredPathStream = false;
+            deferredCredentialProbe = false;
+            releasedCredentialProbe = true;
+            const unpublished = (currentSegment + text).slice(publishedRawPrefixLength);
+            pendingStreamBoundaryText = "";
+            if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure) emitStreamText(unpublished);
+          }
+        }
+        if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure
+          && !deferredPathStream && !releasedCredentialProbe) {
           emitStreamText(text);
         }
         currentSegment += text;
@@ -459,25 +506,21 @@ export function createHermesChatProviderAdapter(options: {
           if (remainingHermesInterimText(currentSegment, interim.text) === undefined) {
             throw new Error("Hermes interim response did not match streamed output");
           }
-          const publishedSegment = pendingStreamBoundaryText
+          const publishedSegment = deferredPathStream
+            ? currentSegment.slice(0, publishedRawPrefixLength)
+            : pendingStreamBoundaryText
             ? currentSegment.slice(0, -pendingStreamBoundaryText.length)
             : currentSegment;
           pendingStreamBoundaryText = "";
           const remainingText = remainingHermesInterimText(publishedSegment, interim.text);
           if (remainingText === undefined) throw new Error("Hermes interim response did not match published output");
           if (remainingText && !currentSegmentSuppressed && !deferAssistantAfterToolFailure) {
-            emitVisibleText(sanitizeAssistantText(remainingText, {
-              homePath: options.homePath,
-              executionRoot: input.executionRoot,
-            }));
+            emitVisibleText(projectAssistantTextWithCaptures(remainingText, pathProjection));
           }
         } else if (!deferAssistantAfterToolFailure) {
           flushStreamBoundary();
           if (currentSegment) separatorPending = true;
-          emitVisibleText(sanitizeAssistantText(interim.text, {
-            homePath: options.homePath,
-            executionRoot: input.executionRoot,
-          }));
+          emitVisibleText(projectAssistantTextWithCaptures(interim.text, pathProjection));
         } else {
           pendingStreamBoundaryText = "";
         }
@@ -485,12 +528,15 @@ export function createHermesChatProviderAdapter(options: {
           emitVisibleText(sanitizeAssistantText(redactFailedToolOutput(
             interim.text.slice(deferredSegmentPrefixLength),
             unsafeToolFragments,
-          ), { homePath: options.homePath, executionRoot: input.executionRoot }));
+          ), pathProjection));
         }
         flushVisibleText(true);
         lastSealedSegment = interim.text;
         currentSegment = "";
         pendingStreamBoundaryText = "";
+        deferredPathStream = false;
+        deferredCredentialProbe = false;
+        publishedRawPrefixLength = 0;
         currentSegmentSuppressed = false;
         deferAssistantAfterToolFailure = false;
         deferredSegmentPrefixLength = 0;
@@ -510,8 +556,7 @@ export function createHermesChatProviderAdapter(options: {
         const publishesRawProcessNotification = ["process", "loop", "lifecycle"].includes(normalizedKind)
           && !safeModelStatus;
         const summary = publishesRawProcessNotification ? undefined : safePublishedText(parsed.data.text, {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
+          ...pathProjection,
           maxChars: 1_000,
         });
         const candidate = { ...activity, ...(summary ? { summary } : {}) };
@@ -526,8 +571,7 @@ export function createHermesChatProviderAdapter(options: {
       } else if (event.type === "reasoning.available") {
         const parsed = HermesReasoningAvailableSchema.parse(event.payload);
         const summary = parsed.verbose ? undefined : safePublishedText(parsed.text, {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
+          ...pathProjection,
           maxChars: 1_000,
         });
         emitAgentActivity({
@@ -545,10 +589,7 @@ export function createHermesChatProviderAdapter(options: {
         const toolName = hermesToolName(parsed.data.name);
         const activity = {
           ...hermesToolActivity(toolName),
-          ...safeToolPreview(toolName, parsed.data.args, {
-            homePath: options.homePath,
-            executionRoot: input.executionRoot,
-          }),
+          ...safeToolPreview(toolName, parsed.data.args, pathProjection),
         };
         setBounded(toolActivities, activityId, { activity, name: toolName, privateContext: hermesToolHasPrivateContext(parsed.data.args) }, MAX_ACTIVE_TOOL_ACTIVITIES);
         emitAgentActivity({
@@ -573,20 +614,24 @@ export function createHermesChatProviderAdapter(options: {
           }
           collectUnsafeToolFragments(parsed.data.result, unsafeToolFragments);
         }
+        if (jevScope) {
+          const validTool = (stored?.name ?? hermesToolName(parsed.data.name)) === "mcp__matrix_jev_recipe__jev_inbox_preview";
+          const active = resolveHermesIntegrationCapability(integrationCapability.token, "POST", "/api/jev/inbox/preview") === input.owner.ownerId;
+          const summary = validTool && active && !failed ? options.jev!.summary(input.owner.ownerId, jevScope) : null;
+          emitAgentActivity({activityId,...activity,status:failed?"failed":"completed",
+            summary: summary ? options.jev!.activitySummary?.(input.owner.ownerId,jevScope) ?? hermesActivitySummary(activity.kind,failed) : hermesActivitySummary(activity.kind,failed)});
+          queue.push({ type: "tool.output", toolCallId: activityId,
+            text: summary ?? (jevScope.account.labelingEnabled === true
+              ? "Inbox result is unavailable. Labeling may be unconfirmed; check Gmail before retrying."
+              : "Inbox review has no verified proposal. No mailbox changes have been made."), truncated: false });
+          return;
+        }
         emitAgentActivity({
           activityId,
           ...activity,
           status: failed ? "failed" : "completed",
           summary: hermesActivitySummary(activity.kind, failed),
         });
-        if (jevScope) {
-          const validTool = (stored?.name ?? hermesToolName(parsed.data.name)) === "mcp__matrix_jev_recipe__jev_inbox_preview";
-          const active = resolveHermesIntegrationCapability(integrationCapability.token, "POST", "/api/jev/inbox/preview") === input.owner.ownerId;
-          const summary = validTool && active && !failed ? options.jev!.summary(input.owner.ownerId, jevScope) : null;
-          queue.push({ type: "tool.output", toolCallId: activityId,
-            text: summary ?? "Inbox review has no verified proposal. No mailbox changes have been made.", truncated: false });
-          return;
-        }
         const output = hermesToolOutput(stored?.name ?? hermesToolName(parsed.data.name), parsed.data.result,
           (stored?.privateContext ?? true) || hermesToolHasPrivateContext(parsed.data.args),
           options.toolOutputKey ? { key: options.toolOutputKey, toolCallId: activityId } : undefined);
@@ -626,8 +671,8 @@ export function createHermesChatProviderAdapter(options: {
 
     const hermesRoot = join(options.homePath, ".hermes", "hermes-agent");
     const existingPythonPath = process.env.PYTHONPATH?.trim();
-    if (jevScope) await options.jev!.verifyRuntime(hermesRoot, input.signal);
     const credentials = jevScope ? await options.jev!.resolveCredentials(input.owner.ownerId, input.selection, input.signal) : undefined;
+    if (credentials) await options.jev!.verifyRuntime(hermesRoot, input.signal, credentials.apiMode);
     const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId, jevScope);
     let restrictedProfile: Awaited<ReturnType<typeof createJevHermesProfile>> | undefined;
     try { if (credentials) restrictedProfile = await createJevHermesProfile(credentials, integrationCapability.token); }
@@ -814,17 +859,16 @@ export function createHermesChatProviderAdapter(options: {
           if (!final.text.startsWith(currentSegment)) {
             throw new HermesRunFailure("run", "Hermes final response did not match streamed output");
           }
-          const publishedSegmentLength = pendingStreamBoundaryText
+          const publishedSegmentLength = deferredPathStream
+            ? publishedRawPrefixLength
+            : pendingStreamBoundaryText
             ? currentSegment.length - pendingStreamBoundaryText.length
             : currentSegment.length;
           pendingStreamBoundaryText = "";
           const finalTail = deferAssistantAfterToolFailure
             ? redactFailedToolOutput(final.text.slice(deferredSegmentPrefixLength), unsafeToolFragments)
             : final.text.slice(publishedSegmentLength);
-          emitVisibleText(sanitizeAssistantText(finalTail, {
-            homePath: options.homePath,
-            executionRoot: input.executionRoot,
-          }));
+          emitVisibleText(projectAssistantTextWithCaptures(finalTail, pathProjection));
         }
         flushVisibleText(true);
         if (final.status === "error") throw new HermesRunFailure("run", "Hermes Run failed");
@@ -846,9 +890,12 @@ export function createHermesChatProviderAdapter(options: {
           "[chat/hermes] Provider Run failed:",
           error instanceof HermesGatewayProtocolError
             ? `${error.name}:${error.reason}${error.eventType ? `:${error.eventType}` : ""}`
+            : error instanceof ChatAgentContextError ? `${error.name}:${error.code}`
             : error instanceof Error ? error.name : "UnknownError",
         );
-        const safeFailure = error instanceof HermesGatewayProtocolError && error.reason === "frame_too_large"
+        const safeFailure = error instanceof ChatAgentContextError
+          ? mapChatAgentContextError(error).safeError
+          : error instanceof HermesGatewayProtocolError && error.reason === "frame_too_large"
           ? {
               code: "run_failed" as const,
               safeMessage: "The agent returned a response that was too large to process.",
@@ -869,9 +916,9 @@ export function createHermesChatProviderAdapter(options: {
           outcome: input.signal.aborted ? "aborted" : "failed",
           ...(input.signal.aborted ? {} : {
             error: {
-              ...safeFailure,
               retryable: true,
               recoveryActions: ["retry"],
+              ...safeFailure,
             },
           }),
         };

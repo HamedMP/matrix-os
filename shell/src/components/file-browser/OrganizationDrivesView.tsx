@@ -1,108 +1,52 @@
 "use client";
+import {COMPANY_DRIVE_MOBILE_CHAT_EVENT,useCompanyDriveChatDraft} from "@/stores/company-drive-chat-draft";
+import {useWindowManager} from "@/hooks/useWindowManager";
 
 import {
-  CollaborationGrantSchema,
-  CollaborationScopeSchema,
   OrganizationDriveDownloadSchema,
   OrganizationDriveSnapshotSchema,
   OrganizationDriveUploadReservationSchema,
   type OrganizationDriveFile,
 } from "@matrix-os/contracts";
-import type { CollaborationDirectApi } from "@matrix-os/ui";
+import { companyDriveChatReference, resolveOrganizationDriveNavigation, OrganizationDriveBrowser, createRefreshGuard, driveBasePath as base, ensureOrganizationContributorGrant, loadOrganizationDriveOptions, type OrganizationDriveOption, type OrganizationDrivePageCounts } from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
-import { createShellCollaborationApi } from "@/lib/collaboration";
-import { createRefreshGuard, driveBasePath as base, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive-paging";
-
-const OrganizationsSchema = z.object({ organizations: z.array(z.object({
-  organizationId: z.string(), name: z.string(),
-}).passthrough()).max(100) }).passthrough();
-const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
-
-type DriveOption = { scopeId: string; organizationId: string; name: string;
-  state: "ready" | "enable" | "pending"; canManage?: boolean; grantId?: string;
-  snapshot?: z.infer<typeof OrganizationDriveSnapshotSchema>; pages?: number };
-type PageCounts = Record<string, number>;
-
-async function inspectScope(api: CollaborationDirectApi, scopeId: string, organizationId: string, name: string,
-  pages: number): Promise<DriveOption | null> {
-  const scope = CollaborationScopeSchema.parse(await api.direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`));
-  if (scope.kind !== "folder" || scope.organizationId !== organizationId) return null;
-  try {
-    const loaded = await loadDriveSnapshotPages((path) => api.direct.request(scopeId, "GET", path), scopeId, pages);
-    return { scopeId, organizationId, name, state: "ready", canManage: scope.role === "owner", ...loaded };
-  } catch (error: unknown) {
-    // An existing folder share can be selected as the drive by its owner.
-    if (scope.role === "owner") return { scopeId, organizationId, name, state: "enable", canManage: true };
-    console.warn("[organization-drive] scope inspection unavailable", error instanceof Error ? error.name : "UnknownError");
-    return null;
-  }
-}
-
-async function loadOptions(api: CollaborationDirectApi, pageCounts: PageCounts): Promise<DriveOption[]> {
-  const get = (path: string) => api.get(path);
-  const [inbox, shared, organizations] = await Promise.all([
-    loadDiscoveryItems(get, "inbox"), loadDiscoveryItems(get, "shared"), api.get("/api/organizations"),
-  ]);
-  const names = new Map(OrganizationsSchema.parse(organizations).organizations.map((org) => [org.organizationId, org.name]));
-  const items = [...inbox, ...shared];
-  const seen = new Set<string>();
-  const options: DriveOption[] = [];
-  const accepted: Array<{ scopeId: string; organizationId: string; name: string }> = [];
-  for (const item of items) {
-    if (item.kind !== "folder" || seen.has(item.scopeId) || !item.organizationId) continue;
-    seen.add(item.scopeId);
-    const name = names.get(item.organizationId) ?? "Organization";
-    if (item.status === "organization_pending") {
-      options.push({ scopeId: item.scopeId, organizationId: item.organizationId, name,
-        state: "pending", grantId: item.grantId });
-      continue;
-    }
-    if (item.status !== "accepted") continue;
-    accepted.push({ scopeId: item.scopeId, organizationId: item.organizationId, name });
-  }
-  for (let offset = 0; offset < accepted.length; offset += 4) {
-    const batch = await Promise.all(accepted.slice(offset, offset + 4).map(async (item) => {
-      try { return await inspectScope(api, item.scopeId, item.organizationId, item.name, pageCounts[item.scopeId] ?? 1); }
-      catch (error: unknown) {
-        console.warn("[organization-drive] share unavailable", error instanceof Error ? error.name : "UnknownError");
-        return null;
-      }
-    }));
-    for (const option of batch) if (option) options.push(option);
-  }
-  return options;
-}
+import { useShellCollaborationApi } from "@/lib/collaboration-organization";
 
 function safeError(error: unknown): string {
   if (error instanceof Error && error.message === "FileTooLarge") return "Files must be 100 MiB or smaller.";
   return "Organization drive is unavailable. Try again.";
 }
 
-export function OrganizationDrivesView() {
+export function OrganizationDrivesView({ requestedScopeId, requestedIntentId, draftIdentity, mobile=false }: { requestedScopeId?: string; requestedIntentId?: string; draftIdentity?:string; mobile?:boolean }) {
   const origin = useBrowserOrigin();
-  const api = useMemo(() => origin ? createShellCollaborationApi(origin) : null, [origin]);
-  const [options, setOptions] = useState<DriveOption[]>([]);
+  const api = useShellCollaborationApi(origin, Boolean(origin));
+  const [options, setOptions] = useState<OrganizationDriveOption[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [folder, setFolder] = useState("");
+  const appliedRequest = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if ((requestedIntentId ?? requestedScopeId) !== appliedRequest.current && requestedScopeId && options.some(option => option.scopeId === requestedScopeId)) {
+      appliedRequest.current = requestedIntentId ?? requestedScopeId; setSelected(requestedScopeId); setFolder("");
+    }
+  }, [requestedScopeId, requestedIntentId, options]);
   const [error, setError] = useState<string | null>(null);
   // Pages loaded per drive, so refreshes keep files the member already paged in.
-  const pageCounts = useRef<PageCounts>({});
+  const pageCounts = useRef<OrganizationDrivePageCounts>({});
   const [refreshGuard] = useState(createRefreshGuard);
   const load = useCallback(async () => {
     if (!api) return;
     const token = refreshGuard.begin();
     try {
-      const next = await loadOptions(api, pageCounts.current);
+      const next = await loadOrganizationDriveOptions(api, pageCounts.current);
       if (!refreshGuard.isCurrent(token)) return;
       pageCounts.current = Object.fromEntries(next.filter((option) => option.pages)
         .map((option) => [option.scopeId, option.pages ?? 1]));
       setOptions(next);
-      setSelected((current) => current && next.some((option) => option.scopeId === current)
-        ? current : next[0]?.scopeId ?? null);
+      setSelected((current) => current ?? next[0]?.scopeId ?? null);
       setError(null);
     } catch (failure: unknown) {
       console.warn("[organization-drive] listing unavailable", failure instanceof Error ? failure.name : "UnknownError");
@@ -111,13 +55,16 @@ export function OrganizationDrivesView() {
   }, [api, refreshGuard]);
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- current organization shares and scope sessions are browser identity state.
   useEffect(() => { void load(); }, [load]);
+  const navigation = resolveOrganizationDriveNavigation(options.map(option => option.scopeId), selected,
+    requestedScopeId ? {scopeId: requestedScopeId, intentId: requestedIntentId} : undefined, appliedRequest.current);
+  const active = options.find(option => option.scopeId === navigation.scopeId);
   useEffect(() => {
-    if (!api || !selected) return;
-    const unsubscribe = api.subscribe?.(selected, () => load(), () => setError("Organization drive is unavailable. Try again."));
+    if (!api || !navigation.scopeId) return;
+    let live = true;
+    const unsubscribe = api.subscribe?.(navigation.scopeId, () => {if (live) return load();}, () => {if (live) setError("Organization drive is unavailable. Try again.");});
     const timer = setInterval(() => { void load(); }, 30_000);
-    return () => { unsubscribe?.(); clearInterval(timer); };
-  }, [api, selected, load]);
-  const active = options.find((option) => option.scopeId === selected);
+    return () => { live = false; unsubscribe?.(); clearInterval(timer); };
+  }, [api, navigation.scopeId, load]);
 
   const run = async (action: () => Promise<void>) => {
     if (busy) return;
@@ -129,55 +76,36 @@ export function OrganizationDrivesView() {
     } finally { setBusy(false); }
   };
 
-  const activate = (option: DriveOption) => run(async () => {
+  const activate = (option: OrganizationDriveOption) => run(async () => {
     if (!api || !option.grantId) return;
     await api.direct.request(option.scopeId, "POST",
       `/api/collaboration/scopes/${option.scopeId}/grants/${option.grantId}/accept`, {});
   });
 
-  const enable = (option: DriveOption) => run(async () => {
+  const enable = (option: OrganizationDriveOption) => run(async () => {
     if (!api) return;
     const path = base(option.scopeId);
     await api.direct.request(option.scopeId, "PUT", path, {});
-    await ensureContributorGrant(api, option.scopeId);
+    await ensureOrganizationContributorGrant(api, option.scopeId);
   });
 
-  const share = (option: DriveOption) => run(async () => {
+  const share = (option: OrganizationDriveOption) => run(async () => {
     if (!api) return;
-    await ensureContributorGrant(api, option.scopeId);
+    await ensureOrganizationContributorGrant(api, option.scopeId);
   });
 
-  async function ensureContributorGrant(api: CollaborationDirectApi, scopeId: string) {
-    const scope = CollaborationScopeSchema.parse(await api.direct.request(scopeId, "GET",
-      `/api/collaboration/scopes/${scopeId}`));
-    const grants = GrantsSchema.parse(await api.direct.request(scopeId, "GET",
-      `/api/collaboration/scopes/${scopeId}/grants`));
-    const activeGrant = grants.find((grant) => grant.audience.kind === "organization"
-      && grant.state !== "revoked" && grant.state !== "expired");
-    if (activeGrant?.preset === "viewer") {
-      await api.direct.request(scopeId, "PATCH", `/api/collaboration/scopes/${scopeId}/grants/${activeGrant.id}`, {
-        clientRequestId: crypto.randomUUID(), expectedRevision: scope.revision,
-        expectedGrantRevision: activeGrant.revision, preset: "contributor",
-      });
-    } else if (!activeGrant) {
-      await api.direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/grants`, {
-        clientRequestId: crypto.randomUUID(), expectedRevision: scope.revision,
-        audience: { kind: "organization" }, preset: "contributor",
-      });
-    }
-  }
-
-  const upload = (option: DriveOption, file: File) => run(async () => {
+  const upload = (option: OrganizationDriveOption, file: File) => run(async () => {
     if (!api) return;
     if (file.size > 100 * 1024 * 1024) throw new Error("FileTooLarge");
     const bytes = await file.arrayBuffer();
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
       .map((value) => value.toString(16).padStart(2, "0")).join("");
     const path = folder.trim() ? `${folder.trim().replace(/\/$/, "")}/${file.name}` : file.name;
-    const baseVersion = option.snapshot?.files.find((entry) => entry.path === path)?.version ?? 0;
+    const version = z.object({ baseVersion: z.number().int().nonnegative() }).strict().parse(
+      await api.direct.request(option.scopeId, "POST", `${base(option.scopeId)}/files/lookup`, { path }));
     const reservation = OrganizationDriveUploadReservationSchema.parse(await api.direct.request(option.scopeId,
       "POST", `${base(option.scopeId)}/uploads`, { path, size: file.size, sha256: digest,
-        requestId: crypto.randomUUID(), baseVersion }));
+        requestId: crypto.randomUUID(), baseVersion: version.baseVersion }));
     try {
       const response = await fetch(reservation.putUrl, { method: "PUT", body: bytes,
         redirect: "error", signal: AbortSignal.timeout(15 * 60_000) });
@@ -190,7 +118,7 @@ export function OrganizationDrivesView() {
     }
   });
 
-  const download = (option: DriveOption, file: OrganizationDriveFile) => run(async () => {
+  const download = (option: OrganizationDriveOption, file: OrganizationDriveFile) => run(async () => {
     if (!api) return;
     const result = OrganizationDriveDownloadSchema.parse(await api.direct.request(option.scopeId, "GET",
       `${base(option.scopeId)}/files/${file.id}`));
@@ -207,9 +135,9 @@ export function OrganizationDrivesView() {
     } finally { setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000); }
   });
 
-  const loadMore = async (option: DriveOption) => {
+  const loadMore = async (option: OrganizationDriveOption) => {
     const cursor = option.snapshot?.nextCursor;
-    if (!api || !cursor || busy) return;
+    if (!api || !cursor || busy || (option.pages ?? 1) >= 20) return;
     setBusy(true); setError(null);
     try {
       const page = OrganizationDriveSnapshotSchema.parse(await api.direct.request(option.scopeId, "GET",
@@ -233,53 +161,46 @@ export function OrganizationDrivesView() {
       <h2 className="text-base font-semibold">Organization drives</h2>
       <button type="button" onClick={() => void load()} disabled={busy} className="rounded border px-3 py-1.5">Refresh</button>
     </div>
+    {!loading && navigation.unavailable ? <p role="alert" className="mb-3 text-xs">This drive is unavailable. Choose another drive or refresh.</p> : null}
     {error && <p role="alert" className="mb-3 text-destructive">{error}</p>}
     {loading ? <p>Loading drives…</p> : options.length === 0
       ? <p className="text-muted-foreground">Share a folder with your organization to make a drive available here.</p>
       : <div className="flex min-h-0 flex-1 flex-col gap-4 sm:flex-row">
         <nav aria-label="Organization drives" className="w-full shrink-0 space-y-1 border-b pb-2 sm:w-48 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-3">
           {options.map((option) => <button type="button" key={option.scopeId}
-            aria-current={selected === option.scopeId ? "page" : undefined}
-            onClick={() => setSelected(option.scopeId)}
+            aria-current={navigation.scopeId === option.scopeId ? "page" : undefined}
+            disabled={busy} onClick={() => { appliedRequest.current = requestedIntentId ?? requestedScopeId; setSelected(option.scopeId); setFolder(""); }}
             className="w-full rounded px-2 py-2 text-left hover:bg-accent aria-[current=page]:bg-accent">
             {option.name}
           </button>)}
         </nav>
         {active && <div className="min-w-0 flex-1 overflow-auto">
-          <h3 className="mb-2 font-medium">{active.name}</h3>
+
           {active.state === "pending" && <button type="button" disabled={busy} onClick={() => void activate(active)}
             className="rounded border px-3 py-1.5">Open organization share</button>}
           {active.state === "enable" && <button type="button" disabled={busy} onClick={() => void enable(active)}
             className="rounded border px-3 py-1.5">Enable drive for organization</button>}
           {active.snapshot && <>
             {active.canManage && <button type="button" disabled={busy} onClick={() => void share(active)}
-              className="mb-3 rounded border px-3 py-1.5">Ensure organization can upload</button>}
-            <p className="mb-3 text-xs text-muted-foreground">
-              {(active.snapshot.usedBytes / 1_000_000_000).toFixed(2)} GB of {(active.snapshot.quotaBytes / 1_000_000_000_000).toFixed(1)} TB used
-            </p>
-            <label className="mb-3 block text-xs">Folder path (optional)
-              <input type="text" value={folder} onChange={(event) => setFolder(event.target.value)}
-                maxLength={700} placeholder="reports/2026" disabled={busy}
-                className="mt-1 block w-full max-w-xs rounded border bg-background px-2 py-1.5" />
-            </label>
-            <label className="mb-4 inline-flex cursor-pointer rounded border px-3 py-1.5">
-              {busy ? "Transferring…" : "Upload file"}
-              <input type="file" className="sr-only" disabled={busy} onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                if (file) void upload(active, file);
-              }} />
-            </label>
-            <ul className="divide-y">
-              {active.snapshot.files.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 py-2">
-                <span className="min-w-0 truncate">{file.path}</span>
-                <button type="button" disabled={busy} onClick={() => void download(active, file)}
-                  className="rounded border px-2 py-1">Download</button>
-              </li>)}
-            </ul>
-            {active.snapshot.nextCursor && <button type="button" disabled={busy}
-              onClick={() => void loadMore(active)} className="mt-3 rounded border px-3 py-1.5">Load more files</button>}
-            {active.snapshot.files.length === 0 && <p className="text-muted-foreground">No files yet.</p>}
+              className="mb-3 rounded border px-3 py-1.5">Allow organization uploads</button>}
+            <OrganizationDriveBrowser key={active.scopeId} name={active.name} files={active.snapshot.files}
+              usedBytes={active.snapshot.usedBytes} reservedBytes={active.snapshot.reservedBytes} quotaBytes={active.snapshot.quotaBytes}
+              busy={busy} canUpload={Boolean(active.canUpload)} folder={folder} onFolderChange={setFolder}
+              onChatContext={draftIdentity?selection=>{
+                const reference=companyDriveChatReference(active,selection.kind==="file"?{kind:"file",fileId:selection.file.id,version:selection.file.version,path:selection.file.path}:selection.kind==="folder"?selection:undefined);
+                useCompanyDriveChatDraft.getState().open(reference,draftIdentity);
+                if(mobile){window.dispatchEvent(new Event(COMPANY_DRIVE_MOBILE_CHAT_EVENT));return;}
+                const manager=useWindowManager.getState(),existing=manager.windows.find(window=>window.path==="__chat__");
+                if(existing){manager.restoreWindow(existing.id);manager.focusWindow(existing.id);}else manager.openWindow("Chat","__chat__",0);
+              }:undefined}
+              onDownload={file => void download(active, file)} hasMore={Boolean(active.snapshot.nextCursor)}
+              pageLimitReached={(active.pages ?? 1) >= 20} onLoadMore={() => void loadMore(active)}
+              uploadControl={<label className="inline-flex min-h-9 cursor-pointer items-center rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent">
+                {busy ? "Transferring…" : "Upload file"}
+                <input type="file" aria-label="Upload files" className="sr-only" disabled={busy} onChange={(event) => {
+                  const file = event.target.files?.[0]; event.target.value = ""; if (file) void upload(active, file);
+                }} />
+              </label>} />
           </>}
         </div>}
       </div>}

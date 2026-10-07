@@ -14,11 +14,13 @@ const { configure } = require("@testing-library/react-native");
 configure({ defaultIncludeHiddenElements: true });
 
 jest.mock("react-native-reanimated", () => {
-  const { View } = require("react-native");
+  const { Text, View } = require("react-native");
   const mockReact = require("react");
   const mockAnimated = {
     View: (props) =>
       mockReact.createElement(View, props, props.children),
+    Text: (props) =>
+      mockReact.createElement(Text, props, props.children),
   };
   return {
     __esModule: true,
@@ -29,7 +31,16 @@ jest.mock("react-native-reanimated", () => {
     FadeInDown: { duration: () => ({ springify: () => "FadeInDown" }) },
     ZoomIn: { springify: () => "ZoomIn" },
     FadeIn: { duration: () => "FadeIn" },
-    useSharedValue: (init) => ({ value: init }),
+    useSharedValue: (init) => {
+      const shared = {
+        value: init,
+        get: () => shared.value,
+        set: (next) => {
+          shared.value = next;
+        },
+      };
+      return shared;
+    },
     useAnimatedStyle: (fn) => fn(),
     withRepeat: (v) => v,
     withTiming: (v) => v,
@@ -51,6 +62,12 @@ jest.mock("expo-haptics", () => ({
 jest.mock("expo-clipboard", () => ({
   setStringAsync: jest.fn(() => Promise.resolve()),
   getStringAsync: jest.fn(() => Promise.resolve("")),
+}));
+
+// Request helpers need random bytes, while Expo's AES classes require a native
+// superclass unavailable in Jest. Use Node's cryptographic implementation here.
+jest.mock("expo-crypto", () => ({
+  getRandomValues: (values) => require("node:crypto").randomFillSync(values),
 }));
 
 class MatrixMockWebSocket {
@@ -145,6 +162,11 @@ jest.mock(
   "@react-native-async-storage/async-storage",
   () => require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
 );
+
+// The composer refreshes the Clerk session token ahead of a send. Screen tests
+// mock Clerk without one, so the refresh is a no-op for them; the hook's own
+// suite unmocks it.
+jest.mock("@/lib/use-session-token-warmup", () => ({ useSessionTokenWarmup: () => () => undefined }));
 
 // PostHog pulls in optional native modules (expo-file-system/application/device,
 // the session-replay plugin) at import time. Stub it globally so screen tests that
