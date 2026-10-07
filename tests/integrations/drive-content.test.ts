@@ -112,6 +112,36 @@ describe("Drive file content", () => {
     expect(readDriveFile).toHaveBeenCalledWith({ ...identity, mimeType: "text/markdown" });
     expect(proxyGet).not.toHaveBeenCalled(); expect(runAction).not.toHaveBeenCalled();
   });
+  it.each(["fetch", "body", "metadata-budget"])("enforces the shared deadline for a stalled %s", async (stage) => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+      const controller = new AbortController(); setTimeout(() => controller.abort(), ms); return controller.signal;
+    });
+    try {
+      const cancel = vi.fn();
+      const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([97])); }, cancel });
+      const fetcher = vi.fn((_url: string, _init: RequestInit): Promise<Response> => {
+        if (stage === "fetch") return new Promise(() => {});
+        if (stage === "metadata-budget" && fetcher.mock.calls.length === 1) {
+          return new Promise(resolve => setTimeout(() => resolve(metadata("text/plain")), 20_000));
+        }
+        return Promise.resolve(new Response(body, { headers: { "Content-Type": "text/plain" } }));
+      });
+      const read = createDriveContentReader({ projectId: "proj_test", environment: "production", getAccessToken: async () => "token", fetcher });
+      let settled = false;
+      const result = read(stage === "metadata-budget" ? identity : { ...identity, mimeType: "text/plain" })
+        .then(value => ({ value, error: null }), error => ({ value: null, error }));
+      void result.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      expect((await result).error).toBeInstanceOf(DriveContentError);
+      expect(fetcher).toHaveBeenCalledTimes(stage === "metadata-budget" ? 2 : 1);
+      for (const [, init] of fetcher.mock.calls) expect(init.signal?.aborted).toBe(true);
+      expect(cancel).toHaveBeenCalledTimes(stage === "fetch" ? 0 : 1);
+    } finally { timeout.mockRestore(); vi.useRealTimers(); }
+  });
   it("bounds a hung token lookup before issuing any provider call", async () => {
     vi.useFakeTimers();
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
