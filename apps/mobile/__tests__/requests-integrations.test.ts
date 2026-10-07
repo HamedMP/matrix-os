@@ -128,6 +128,25 @@ describe("integration requests", () => {
       }),
     );
   });
+  it("opens the exact trusted Matrix Gmail consent launcher", async () => {
+    const url = `https://app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}`;
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ url, service: "gmail" }) } as Response);
+    await expect(createIntegrationConnectUrl("clerk-token", "https://app.matrix-os.com/vm/solar-vale", "gmail")).resolves.toBe(url);
+  });
+  it.each([
+    `https://evil.example/auth/gmail?state=${'a'.repeat(43)}`,
+    `https://app.matrix-os.com.evil.example/auth/gmail?state=${'a'.repeat(43)}`,
+    `https://app.matrix-os.com/wrong?state=${'a'.repeat(43)}`,
+    `https://app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}&redirect=https://evil.example`,
+    `https://app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}&state=${'b'.repeat(43)}`,
+    `https://secret@app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}`,
+    `https://app.matrix-os.com:444/auth/gmail?state=${'a'.repeat(43)}`,
+    `http://app.matrix-os.com/auth/gmail?state=${'a'.repeat(43)}`,
+    "https://app.matrix-os.com/auth/gmail?state=bad",
+  ])("rejects an untrusted Matrix consent URL %s", async url => {
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ url, service: "gmail" }) } as Response);
+    await expect(createIntegrationConnectUrl("clerk-token", "https://app.matrix-os.com/vm/solar-vale", "gmail")).rejects.toThrow("Could not start connection");
+  });
 
   it("syncs Pipedream accounts after the app returns", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({

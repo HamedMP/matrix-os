@@ -277,6 +277,7 @@ export function createBotIntegrationTools(deps: {
         if (error.code === "denied") throw new BotBrokerActionError("denied");
         if (error.code === "missing") throw new BotBrokerActionError("not_granted");
         if (error.code === "invalid") throw new BotBrokerActionError("invalid_arguments");
+        if (error.code === "resync_required") return text("Gmail history expired. Run a bounded resync before continuing. Keep the prior checkpoint until the replacement finishes; this result does not confirm current mailbox data.");
         throw new BotBrokerActionError("unavailable");
       }
     },

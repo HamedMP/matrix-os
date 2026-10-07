@@ -1,0 +1,130 @@
+import { createHash } from 'node:crypto';
+import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
+import { Hono, type Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
+import { z } from 'zod/v4';
+import type { PlatformDb } from '../../platform-db.js';
+import type { IntegrationBroadcast } from '../routes.js';
+import { isNativeGmailAccount } from './request.js';
+
+export interface NativeGmailLifecycle {
+  start(input: { userId: string; externalUserId: string; label?: string; redirectUri?: string }): Promise<{ url: string }>;
+  authorization(state: string, owner: { userId: string }): Promise<{ url: string; browserProof: string }>;
+  complete(state: string, code: string, browserProof: string): Promise<{ connectionId: string; accountLabel: string; redirectUri?: string }>;
+  cancel(state: string, browserProof: string): Promise<void>;
+  refresh(input: { userId: string; connectionId: string }): Promise<void>;
+  revoke(input: { userId: string; connectionId: string }): Promise<boolean>;
+}
+const Connect = z.object({ service: z.string().min(1).max(100), label: z.string().trim().min(1).max(100).optional(),
+  redirectUri: z.literal('matrixos://integrations').optional() });
+const Callback = z.object({ state: z.string().min(1).max(2048).regex(/^[A-Za-z0-9_.-]+$/),
+  code: z.string().min(1).max(4096).regex(/^[^\s\x00-\x1f\x7f]+$/).optional(),
+  error: z.string().min(1).max(128).optional() }).refine(v => Boolean(v.code) !== Boolean(v.error));
+const Id = z.uuid();
+const success = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Gmail connected</title><h1>Gmail connected</h1><p>Return to Matrix to use your account. You can close this tab.</p></html>';
+
+/** Intercept native lifecycle only. Existing action selection, approvals and bot policy stay upstream. */
+export function createNativeGmailRoutes(options: {
+  db: Pick<PlatformDb, 'getUserById' | 'updatePipedreamExternalId' | 'getConnectedService'>;
+  oauth: NativeGmailLifecycle;
+  resolveUserId(c: Context): Promise<string | null>;
+  broadcast?: IntegrationBroadcast;
+}): Hono {
+  const app = new Hono();
+  const notify = (event: { type: 'integration:connected'; service: string; accountLabel: string } | { type: 'integration:disconnected'; service: string; id: string }) => {
+    try { if (event.type === 'integration:connected') options.broadcast?.(event); else options.broadcast?.(event); }
+    catch (error) { console.warn('[native-gmail] Connection notification failed:', error); }
+  };
+  app.post('/connect', bodyLimit({ maxSize: 4096 }), async (c, next) => {
+    const userId = await options.resolveUserId(c);
+    if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+    let body: unknown;
+    try { body = await c.req.json(); }
+    catch (error) { if (error instanceof Error && error.name === 'BodyLimitError') return c.json({ error: 'Request too large' }, 413); if (!(error instanceof SyntaxError)) console.warn('[native-gmail] Connect body unavailable'); return c.json({ error: 'Invalid request' }, 400); }
+    const parsed = Connect.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
+    if (parsed.data.service !== 'gmail') return next();
+    try {
+      const user = await options.db.getUserById(userId);
+      if (!user) return c.json({ error: 'Connection unavailable' }, 503);
+      const externalUserId = user.pipedream_external_id ?? userId;
+      if (!user.pipedream_external_id) await options.db.updatePipedreamExternalId(userId, externalUserId);
+      const { url } = await options.oauth.start({ userId, externalUserId,
+        ...(parsed.data.label ? { label: parsed.data.label } : {}),
+        ...(parsed.data.redirectUri ? { redirectUri: parsed.data.redirectUri } : {}) });
+      const authorization = new URL(url);
+      const state = authorization.searchParams.get('state');
+      const callback = authorization.searchParams.get('redirect_uri');
+      if (!state || !callback) throw new Error('Consent unavailable');
+      const launch = new URL('/auth/gmail', new URL(callback).origin);
+      launch.searchParams.set('state', state);
+      return c.json({ url: launch.href, service: 'gmail' });
+    } catch (error) { console.warn('[native-gmail] Connection start failed:', error); return c.json({ error: 'Connection unavailable' }, 502); }
+  });
+  app.get('/gmail/oauth/callback', async c => {
+    c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer');
+    c.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+    const params = new URL(c.req.url).searchParams;
+    if (['state', 'code', 'error'].some(key => params.getAll(key).length > 1)) return c.json({ error: 'Connection unavailable' }, 400);
+    const parsed = Callback.safeParse(Object.fromEntries(params));
+    if (!parsed.success) return c.json({ error: 'Connection unavailable' }, 400);
+    const hash = stateHash(parsed.data.state);
+    const cookie = getCookie(c, cookieName(hash));
+    if (!cookie || !/^[a-f0-9]{64}$/.test(cookie)) return c.json({ error: 'Connection unavailable. Start again from Matrix.' }, 403);
+    deleteCookie(c, cookieName(hash), { path: '/', secure: true });
+    try {
+      if (parsed.data.error) {
+        await options.oauth.cancel(parsed.data.state, cookie);
+        return c.json({ error: 'Gmail connection was not completed' }, 400);
+      }
+      const result = await options.oauth.complete(parsed.data.state, parsed.data.code!, cookie);
+      notify({ type: 'integration:connected', service: 'gmail', accountLabel: result.accountLabel });
+      if (result.redirectUri === 'matrixos://integrations') return c.redirect(result.redirectUri);
+      return c.html(success);
+    } catch (error) { console.warn('[native-gmail] OAuth callback failed:', error); return c.json({ error: 'Connection unavailable. Start again from Matrix.' }, 502); }
+  });
+  for (const method of ['delete', 'post'] as const) {
+    const path = method === 'delete' ? '/:id' : '/:id/refresh';
+    app[method](path, bodyLimit({ maxSize: 1024 }), async (c, next) => {
+      const userId = await options.resolveUserId(c);
+      if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+      const id = Id.safeParse(c.req.param('id')); if (!id.success) return c.json({ error: 'Invalid ID' }, 400);
+      const row = await options.db.getConnectedService(id.data);
+      if (!row || !isNativeGmailAccount(row.pipedream_account_id)) return next();
+      if (row.user_id !== userId) return c.json({ error: 'Forbidden' }, 403);
+      try {
+        if (method === 'delete') {
+          if (!await options.oauth.revoke({ userId, connectionId: id.data })) return c.json({ error: 'Not found' }, 404);
+          notify({ type: 'integration:disconnected', service: 'gmail', id: id.data });
+          return c.json({ ok: true });
+        }
+        await options.oauth.refresh({ userId, connectionId: id.data });
+        return c.json({ id: id.data, service: 'gmail', status: 'active' });
+      } catch (error) { console.warn('[native-gmail] Account lifecycle failed:', error); return c.json({ error: 'Connection unavailable' }, 502); }
+    });
+  }
+  return app;
+}
+
+function stateHash(state: string): string { return createHash('sha256').update(state).digest('hex'); }
+function cookieName(hash: string): string { return `__Host-matrix-gmail-${hash.slice(0, 32)}`; }
+
+/** Authenticated Matrix browser identity must match the immutable initiator before Google consent. */
+export function createNativeGmailLaunchRoutes(options: { oauth: NativeGmailLifecycle; resolveUserId(c: Context): Promise<string | null> }): Hono {
+  const app = new Hono();
+  app.get('/gmail', async c => {
+    c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer');
+    const userId = await options.resolveUserId(c);
+    if (!userId) return c.json({ error: 'Sign in to Matrix to connect Gmail' }, 401);
+    const params = new URL(c.req.url).searchParams;
+    const state = Callback.shape.state.safeParse(params.get('state'));
+    if (!state.success || params.getAll('state').length !== 1) return c.json({ error: 'Connection unavailable' }, 400);
+    try {
+      const { url, browserProof } = await options.oauth.authorization(state.data, { userId });
+      const hash = stateHash(state.data);
+      setCookie(c, cookieName(hash), browserProof, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 600 });
+      return c.redirect(url);
+    } catch (error) { console.warn('[native-gmail] Consent owner rejected:', error); return c.json({ error: 'Connection unavailable. Start again from Matrix.' }, 403); }
+  });
+  return app;
+}

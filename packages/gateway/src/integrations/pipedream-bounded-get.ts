@@ -6,13 +6,13 @@ const Identity = {
   accountId: z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/),
 };
 const Id = JevInboxGmailIdSchema;
-const Input = z.discriminatedUnion("kind", [
+export const BoundedGmailReadSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...Identity, kind: z.literal("profile") }),
   z.strictObject({ ...Identity, kind: z.literal("threads"), pageToken: z.string().min(1).max(4096).optional() }),
   z.strictObject({ ...Identity, kind: z.literal("thread-ids"), id: Id }),
   z.strictObject({ ...Identity, kind: z.literal("message"), id: Id }),
 ]);
-export type BoundedGmailRead = z.infer<typeof Input>;
+export type BoundedGmailRead = z.infer<typeof BoundedGmailReadSchema>;
 
 export class BoundedPipedreamReadError extends Error {
   constructor() { super("Integration read unavailable"); this.name = "BoundedPipedreamReadError"; }
@@ -53,7 +53,7 @@ export function createBoundedPipedreamGet(options: {
   const projectId = z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/).parse(options.projectId);
   const environment = z.enum(["development", "production"]).parse(options.environment);
   return async (rawInput, callerSignal) => {
-    const input = Input.parse(rawInput);
+    const input = BoundedGmailReadSchema.parse(rawInput);
     callerSignal?.throwIfAborted();
     const signal = callerSignal ? AbortSignal.any([callerSignal, AbortSignal.timeout(10_000)])
       : AbortSignal.timeout(10_000);

@@ -60,15 +60,18 @@ const RefreshConnectionResponseSchema = z.object({
 
 const DeleteConnectionResponseSchema = z.object({ ok: z.literal(true) });
 const ConnectIntegrationResponseSchema = z.object({
-  url: z.string().url().refine(isTrustedPipedreamConnectUrl),
+  url: z.string().max(4096).url().refine(isTrustedConnectUrl),
   service: z.string().regex(SERVICE_ID),
 });
 
-function isTrustedPipedreamConnectUrl(value: string): boolean {
+function isTrustedConnectUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:"
-      && (url.hostname === "pipedream.com" || url.hostname.endsWith(".pipedream.com"));
+    if (url.protocol !== "https:" || url.username || url.password || url.hash) return false;
+    if (url.hostname === "pipedream.com" || url.hostname.endsWith(".pipedream.com")) return true;
+    return url.origin === "https://app.matrix-os.com" && url.pathname === "/auth/gmail"
+      && [...url.searchParams.keys()].length === 1
+      && /^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get("state") ?? "");
   } catch {
     return false;
   }

@@ -1,3 +1,4 @@
+import { createConfiguredPlatformGmail, initializeOwnedIntegrationDb } from './native-gmail-startup.js';
 import { z } from 'zod/v4';
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { createConfiguredAccountDeletionRuntime } from './account-deletion/wiring.js';
@@ -163,6 +164,7 @@ interface GatewayIntegrationRoutesModule {
   createIntegrationRoutes(opts: {
     db: GatewayPlatformDb;
     pipedream: unknown;
+    nativeGmail?: unknown;
     webhookSecret: string;
     resolveUserId: (c: Context) => Promise<string | null>;
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
@@ -194,6 +196,7 @@ type CreatePlatformApp = (deps: {
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
   integrationRoutes?: Hono<any>;
+  gmailLaunchRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
@@ -254,6 +257,7 @@ async function importRuntimeModule<T>(specifier: string): Promise<T> {
 async function startPlatformServerWithCleanup(
   opts: StartPlatformServerOptions,
   registerCustomMcpStartupCleanup: (cleanup: () => Promise<void>) => void,
+  registerIntegrationStartupCleanup: (cleanup: () => Promise<void>) => void,
 ): Promise<void> {
   const {
     port,
@@ -444,14 +448,17 @@ async function startPlatformServerWithCleanup(
   }
 
   let deletionPipedream: AccountDeletionAdapterOptions['pipedream'];
+  let deletionNativeGmail: AccountDeletionAdapterOptions['nativeGmail'];
   let deletionCustomMcp: AccountDeletionAdapterOptions['customMcp'];
   let integrationRoutes: Hono | undefined;
+  let gmailLaunchRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
   let customMcpRoutes: Hono | undefined;
   let internalCustomMcpRoutes: Hono | undefined;
   let internalCustomMcpApprovalRoutes: Hono | undefined;
   let customMcpSweepInterval: NodeJS.Timeout | undefined;
   let customMcpShutdown: (() => Promise<void>) | undefined;
+  let integrationShutdown: (() => Promise<void>) | undefined;
   let managedMcpPresetBroker: ManagedMcpPresetBroker | undefined;
   const managedMcpPresetProxy = {
     listConnections: (userId: string) => managedMcpPresetBroker?.listConnections(userId) ?? Promise.resolve([]),
@@ -470,6 +477,7 @@ async function startPlatformServerWithCleanup(
     disconnect: (userId: string, connectionId: string) => managedMcpPresetBroker?.disconnect(userId, connectionId) ?? Promise.resolve(false),
   };
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
+  if (process.env.GMAIL_OAUTH_ENABLED === 'true' && !integrationConfig) throw new Error('Gmail integration runtime unavailable');
   if (integrationConfig) {
     const [
       { createIntegrationRoutes, authorizeInternalJevLabels },
@@ -481,15 +489,20 @@ async function startPlatformServerWithCleanup(
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
     ]);
 
-    const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
-    await trustedPlatformDb.migrate();
-    const pipedream = await createPipedreamClient({
+    const trustedPlatformDb = await initializeOwnedIntegrationDb({ create: () => createGatewayPlatformDb(integrationConfig.platformDatabaseUrl),
+      registerClose: close => { integrationShutdown = close; registerIntegrationStartupCleanup(close); } });
+    const legacyPipedream = await createPipedreamClient({
       clientId: integrationConfig.pipedreamClientId,
       clientSecret: integrationConfig.pipedreamClientSecret,
       projectId: integrationConfig.pipedreamProjectId,
       environment: integrationConfig.pipedreamEnvironment,
     });
-    deletionPipedream = pipedream;
+    const gmail = await createConfiguredPlatformGmail({ db, integrationDb: trustedPlatformDb, legacy: legacyPipedream, env: process.env,
+      resolveUserId: async c => resolveIntegrationUserId(c.get('platformUserId') as string | undefined, c.get('platformHandle') as string | undefined) });
+    gmailLaunchRoutes = gmail.launchRoutes;
+    const pipedream = gmail.client;
+    deletionPipedream = legacyPipedream;
+    deletionNativeGmail = gmail.oauth;
     const verifiedConnectedWebhook=process.env.ACCOUNT_DELETION_SECRET===undefined?undefined:
       createAccountDeletionIntegrationWebhookAdmission({db,pipedream,env:process.env});
     const webhookSecret = integrationConfig.pipedreamWebhookSecret;
@@ -519,6 +532,7 @@ async function startPlatformServerWithCleanup(
     integrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
       pipedream,
+      nativeGmail: gmail.oauth,
       webhookSecret,
       verifiedConnectedWebhook,
       resolveUserId: async (c) => {
@@ -531,6 +545,7 @@ async function startPlatformServerWithCleanup(
     internalIntegrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
       pipedream,
+      nativeGmail: gmail.oauth,
       webhookSecret,
       verifiedConnectedWebhook,
       authorizeJevLabelCall: authorizeInternalJevLabels,
@@ -950,7 +965,7 @@ async function startPlatformServerWithCleanup(
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
   const accountDeletion = await createConfiguredAccountDeletionRuntime({
-    db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, customMcp: deletionCustomMcp,
+    db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, nativeGmail: deletionNativeGmail, customMcp: deletionCustomMcp,
   });
   registerCustomMcpStartupCleanup(async () => {
     accountDeletion?.stop();
@@ -966,6 +981,7 @@ async function startPlatformServerWithCleanup(
     clerkAuth,
     matrixProvisioner,
     integrationRoutes,
+    gmailLaunchRoutes,
     internalIntegrationRoutes,
     customMcpRoutes,
     internalCustomMcpRoutes,
@@ -1037,6 +1053,7 @@ async function startPlatformServerWithCleanup(
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),
+          integrationShutdown?.(),
         ]);
         posthogProcessErrors.dispose();
         await app.shutdownPostHog();
@@ -1078,13 +1095,14 @@ async function startPlatformServerWithCleanup(
 
 export async function startPlatformServer(opts: StartPlatformServerOptions): Promise<void> {
   let customMcpStartupCleanup: (() => Promise<void>) | undefined;
+  let integrationStartupCleanup: (() => Promise<void>) | undefined;
   try {
     await startPlatformServerWithCleanup(opts, (cleanup) => {
       customMcpStartupCleanup = cleanup;
-    });
+    }, cleanup => { integrationStartupCleanup = cleanup; });
   } catch (startupError: unknown) {
     try {
-      await customMcpStartupCleanup?.();
+      try { await customMcpStartupCleanup?.(); } finally { await integrationStartupCleanup?.(); }
     } catch (cleanupError: unknown) {
       console.error(
         '[platform] Custom MCP startup cleanup failed:',

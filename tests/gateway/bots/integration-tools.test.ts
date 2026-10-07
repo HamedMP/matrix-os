@@ -107,6 +107,13 @@ describe("bot integration tools", () => {
     expect(result).toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("1 thread") }] });
     expect(call).toHaveBeenCalledWith(OWNER, { service: "gmail", action: "list_threads", label: "Work", params: {}, read: true }, undefined);
   });
+  it("reports expired Gmail history without pretending the mailbox is current", async () => {
+    await grant(WORK);
+    const call = vi.fn(async () => { throw new BotIntegrationError("resync_required"); });
+    const result = await setup(call).tools.call(binding, { ...read, action: "list_history", params: { startHistoryId: "9007199254740993" } });
+    expect(result).toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("bounded resync") }] });
+    expect(JSON.stringify(result)).toContain("Keep the prior checkpoint");
+  });
 
   it("refuses effects the recipe does not declare and unknown actions", async () => {
     await grant(WORK);

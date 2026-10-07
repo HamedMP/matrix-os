@@ -20,7 +20,7 @@ const MAX_CALL_BYTES = 256 * 1024;
 const MAX_CATALOG_BYTES = 1024 * 1024;
 const MAX_CONNECTIONS = 256;
 
-export type BotIntegrationErrorCode = "unavailable" | "ambiguous" | "missing" | "invalid" | "denied";
+export type BotIntegrationErrorCode = "unavailable" | "ambiguous" | "missing" | "invalid" | "denied" | "resync_required";
 
 /** effectUnknown is set only after a non-read service call enters transport. */
 export class BotIntegrationError extends Error {
@@ -100,6 +100,18 @@ function failureFor(status: number): BotIntegrationErrorCode {
 
 async function readJson(response: Response, maxBytes: number, signal: AbortSignal): Promise<unknown> {
   if (!response.ok) {
+    if (response.status === 409) {
+      try {
+        const body: unknown = JSON.parse(await boundedText(response, 4096, signal));
+        if (z.object({ code: z.literal("gmail_history_expired"), resync_required: z.literal(true) }).safeParse(body).success) {
+          throw new BotIntegrationError("resync_required");
+        }
+      } catch (error: unknown) {
+        if (error instanceof BotIntegrationError) throw error;
+        if (!(error instanceof SyntaxError)) throw new BotIntegrationError("unavailable");
+      }
+      throw new BotIntegrationError("ambiguous");
+    }
     await response.body?.cancel();
     throw new BotIntegrationError(failureFor(response.status));
   }

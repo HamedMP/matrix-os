@@ -12,6 +12,7 @@ const {
   mockProxyGet,
   mockRunAction,
   mockPipedreamConstructors,
+  mockRawAccessToken,
 } = vi.hoisted(() => ({
   mockTokensCreate: vi.fn(),
   mockAccountsDelete: vi.fn(),
@@ -19,6 +20,7 @@ const {
   mockProxyGet: vi.fn(),
   mockRunAction: vi.fn(),
   mockPipedreamConstructors: vi.fn(),
+  mockRawAccessToken: vi.fn().mockResolvedValue("access-token"),
 }));
 
 vi.mock("@pipedream/sdk", () => {
@@ -28,6 +30,7 @@ vi.mock("@pipedream/sdk", () => {
         mockPipedreamConstructors(options);
       }
 
+      get rawAccessToken() { return mockRawAccessToken(); }
       tokens = { create: mockTokensCreate };
       accounts = { delete: mockAccountsDelete };
       proxy = { get: mockProxyGet, post: mockProxyPost, put: mockProxyPost, patch: mockProxyPost, delete: mockProxyPost };
@@ -59,6 +62,68 @@ describe("Pipedream Connect SDK Wrapper", () => {
     const mock = method === "proxyGet" ? mockProxyGet : mockProxyPost;
     expect(mock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ maxRetries: 0, abortSignal: expect.any(AbortSignal) }));
   });
+  it.each(["proxyGet", "proxyPost", "proxyPut", "proxyPatch", "proxyDelete", "callAction"] as const)(
+    "never bills native Gmail accounts through legacy %s while direct Gmail is disabled", async (method) => {
+      const client = await createPipedreamClient(TEST_CONFIG);
+      await expect(client[method]({ externalUserId: "owner", accountId: "gmail_123e4567-e89b-12d3-a456-426614174000",
+        url: "https://gmail.googleapis.com/gmail/v1/users/me/messages", body: {} })).rejects.toThrow("Integration unavailable");
+      expect(mockProxyGet).not.toHaveBeenCalled();
+      expect(mockProxyPost).not.toHaveBeenCalled();
+      expect(mockRawAccessToken).not.toHaveBeenCalled();
+    });
+
+  it("never sends native account revocation to Pipedream", async () => {
+    const client = await createPipedreamClient(TEST_CONFIG);
+    await expect(client.revokeAccount("gmail_123e4567-e89b-12d3-a456-426614174000")).rejects.toThrow("Integration unavailable");
+    expect(mockAccountsDelete).not.toHaveBeenCalled();
+    expect(mockRawAccessToken).not.toHaveBeenCalled();
+  });
+
+  it.each(["boundedGmailGet", "boundedGmailLabels"] as const)("rejects native %s before token access or any request", async (method) => {
+    const client = await createPipedreamClient(TEST_CONFIG);
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      await expect(client[method]!({ externalUserId: "owner", accountId: "gmail_123e4567-e89b-12d3-a456-426614174000",
+        kind: method === "boundedGmailGet" ? "profile" : "labels" })).rejects.toThrow("Integration unavailable");
+      expect(mockRawAccessToken).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("keeps bounded Gmail reads available for valid legacy accounts", async () => {
+    const client = await createPipedreamClient(TEST_CONFIG);
+    const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ emailAddress: "legacy@example.test" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      expect(await client.boundedGmailGet!({ externalUserId: "owner", accountId: "apn_legacy", kind: "profile" }))
+        .toEqual({ emailAddress: "legacy@example.test" });
+      expect(mockRawAccessToken).toHaveBeenCalledOnce();
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(new URL(fetcher.mock.calls[0][0]).searchParams.get("account_id")).toBe("apn_legacy");
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("blocks malformed native markers before the paid fallback and account-shaped Drive seam", async () => {
+    const client = await createPipedreamClient(TEST_CONFIG);
+    await expect(client.proxyGet({ externalUserId: "owner", accountId: "gmail_bad-marker", url: "https://example.com/read" }))
+      .rejects.toThrow("Integration unavailable");
+    await expect(client.readDriveFile!({ externalUserId: "owner", accountId: "gmail_123e4567-e89b-12d3-a456-426614174000", fileId: "file_1" }))
+      .rejects.toThrow("Integration unavailable");
+    expect(mockProxyGet).not.toHaveBeenCalled();
+    expect(mockRawAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("does not send a native configured auth provision to a billable component action", async () => {
+    const client = await createPipedreamClient(TEST_CONFIG);
+    await expect(client.runAction({ externalUserId: "owner", componentKey: "gmail-read",
+      configuredProps: { gmail: { authProvisionId: "gmail_123e4567-e89b-12d3-a456-426614174000" } } })).rejects.toThrow("Integration unavailable");
+    await expect(client.runAction({ externalUserId: "owner", componentKey: "gmail-read",
+      configuredProps: { authProvisionId: "gmail_123e4567-e89b-12d3-a456-426614174000" } })).rejects.toThrow("Integration unavailable");
+    expect(mockRunAction).not.toHaveBeenCalled();
+    expect(mockRawAccessToken).not.toHaveBeenCalled();
+  });
+
   it("does not automatically repeat a component execution", async () => {
     mockRunAction.mockResolvedValue({ ret: {} });
     const client = await createPipedreamClient(TEST_CONFIG);
