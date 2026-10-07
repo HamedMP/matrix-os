@@ -60,10 +60,23 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe("useAccountDeletion", () => {
+  const cancelled = { ...none, status: "cancelled", billingStopped: true };
+  // What the server would answer right now; every request below moves it.
+  let serverStatus: unknown;
+
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     mockSession = { isSignedIn: true, userId: "user_a", token: "session-token" };
-    mockFetchStatus.mockResolvedValue(none);
+    serverStatus = none;
+    mockFetchStatus.mockImplementation(async () => serverStatus);
+    mockSchedule.mockImplementation(async () => {
+      serverStatus = scheduled;
+      return scheduled;
+    });
+    mockCancel.mockImplementation(async () => {
+      serverStatus = cancelled;
+      return cancelled;
+    });
   });
 
   it("loads the state for the signed-in account", async () => {
@@ -96,6 +109,7 @@ describe("useAccountDeletion", () => {
     expect(result.current.status).toEqual(none);
 
     await act(async () => {
+      serverStatus = scheduled;
       confirm(scheduled);
       await request;
     });
@@ -116,9 +130,7 @@ describe("useAccountDeletion", () => {
   });
 
   it("stores the state the server returns for a cancellation", async () => {
-    const cancelled = { ...none, status: "cancelled", billingStopped: true };
-    mockFetchStatus.mockResolvedValue(scheduled);
-    mockCancel.mockResolvedValue(cancelled);
+    serverStatus = scheduled;
     const { result } = renderHook(() => useAccountDeletion(), { wrapper });
     await waitFor(() => expect(result.current.status).toEqual(scheduled));
 
@@ -127,8 +139,46 @@ describe("useAccountDeletion", () => {
     });
 
     await waitFor(() => expect(result.current.status).toEqual(cancelled));
-    // The answer comes from the mutation itself, not from a second read.
-    expect(mockFetchStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a status read that was already in flight undo a confirmed request", async () => {
+    // Opening the screen starts a fresh read while the cached state already
+    // enables the button, so that read can answer after the request has.
+    let answerEarlierRead!: (value: unknown) => void;
+    mockFetchStatus
+      .mockResolvedValueOnce(none)
+      .mockReturnValueOnce(new Promise((resolve) => { answerEarlierRead = resolve; }));
+    const { result } = renderHook(() => useAccountDeletion(), { wrapper });
+    await waitFor(() => expect(result.current.status).toEqual(none));
+    act(() => { result.current.reload(); });
+    await waitFor(() => expect(mockFetchStatus).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      await result.current.schedule();
+    });
+    await act(async () => {
+      answerEarlierRead(none);
+    });
+
+    await waitFor(() => expect(mockFetchStatus).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(result.current.status).toEqual(scheduled));
+  });
+
+  it("reads the state again after a refused request, because the screen was out of date", async () => {
+    const processing = { ...scheduled, status: "processing" };
+    serverStatus = scheduled;
+    mockCancel.mockImplementation(async () => {
+      serverStatus = processing;
+      throw new Error("conflict");
+    });
+    const { result } = renderHook(() => useAccountDeletion(), { wrapper });
+    await waitFor(() => expect(result.current.status).toEqual(scheduled));
+
+    await act(async () => {
+      await expect(result.current.cancel()).rejects.toThrow("conflict");
+    });
+
+    await waitFor(() => expect(result.current.status).toEqual(processing));
   });
 
   it("does not call the server when the session has no token", async () => {
@@ -156,8 +206,14 @@ describe("useAccountExport", () => {
     nextCursor: null,
   };
 
+  const emptyPage = (nextCursor: string | null) => ({
+    files: [],
+    instructions: ["Download every page."],
+    nextCursor,
+  });
+
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     mockSession = { isSignedIn: true, userId: "user_a", token: "session-token" };
   });
 
@@ -187,6 +243,55 @@ describe("useAccountExport", () => {
     expect(mockFetchExportFiles).toHaveBeenLastCalledWith("session-token", "page-2");
     expect(result.current.files).toEqual([...firstPage.files, ...secondPage.files]);
     expect(result.current.hasMoreFiles).toBe(false);
+  });
+
+  // The server lists several storage locations in turn, so an empty page can
+  // come before one that has the backups.
+  it("follows empty pages until it reaches the files", async () => {
+    mockFetchExportFiles
+      .mockResolvedValueOnce(emptyPage("location-2"))
+      .mockResolvedValueOnce(emptyPage("location-3"))
+      .mockResolvedValueOnce(secondPage);
+    const { result } = renderHook(() => useAccountExport(), { wrapper });
+
+    await act(async () => {
+      await result.current.loadFiles();
+    });
+
+    expect(mockFetchExportFiles.mock.calls.map(([, cursor]) => cursor)).toEqual([
+      undefined,
+      "location-2",
+      "location-3",
+    ]);
+    expect(result.current.files).toEqual(secondPage.files);
+    expect(result.current.hasMoreFiles).toBe(false);
+  });
+
+  it("reports an empty list only once every page was empty", async () => {
+    mockFetchExportFiles
+      .mockResolvedValueOnce(emptyPage("location-2"))
+      .mockResolvedValueOnce(emptyPage(null));
+    const { result } = renderHook(() => useAccountExport(), { wrapper });
+
+    await act(async () => {
+      await result.current.loadFiles();
+    });
+
+    expect(result.current.files).toEqual([]);
+    expect(result.current.hasMoreFiles).toBe(false);
+  });
+
+  it("stops following empty pages after a few requests and keeps offering more", async () => {
+    mockFetchExportFiles.mockResolvedValue(emptyPage("another"));
+    const { result } = renderHook(() => useAccountExport(), { wrapper });
+
+    await act(async () => {
+      await result.current.loadFiles();
+    });
+
+    expect(mockFetchExportFiles).toHaveBeenCalledTimes(5);
+    expect(result.current.files).toEqual([]);
+    expect(result.current.hasMoreFiles).toBe(true);
   });
 
   it("replaces the list when it is requested again, because the old links expire", async () => {

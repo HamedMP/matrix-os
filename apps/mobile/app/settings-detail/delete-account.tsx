@@ -24,7 +24,6 @@ import { Icon, Spacer, type IconData } from "@/components/ui";
 import {
   APPLE_ACCESS_REMOVAL_URL,
   MATRIX_COMPUTERS_URL,
-  accountDeletionFailureReason,
   describeAccountDeletionFailure,
   formatDeletionDeadline,
   isDeletionClosed,
@@ -98,8 +97,6 @@ function DeletionDetails({ status, deletion }: { status: AccountDeletionStatus; 
       scrollRef.current?.scrollTo({ y: 0, animated: true });
     } catch (error: unknown) {
       setActionError(describeAccountDeletionFailure(error, action));
-      // A refusal means the state on screen is out of date.
-      if (accountDeletionFailureReason(error) === "conflict") deletion.reload();
     }
   }
 
@@ -358,9 +355,15 @@ function DataExport() {
         <>
           <Spacer size="lg" />
           {files.length === 0 ? (
-            <NativeText style={styles.sectionBody}>No backed-up files were found.</NativeText>
-          ) : (
+            // Later pages can hold backups even when the ones so far did not,
+            // so "none" is only said once there is nothing left to load.
+            <NativeText style={styles.sectionBody}>
+              {hasMoreFiles ? "No backed-up files found so far." : "No backed-up files were found."}
+            </NativeText>
+          ) : null}
+          {files.length > 0 || hasMoreFiles ? (
             <>
+              {files.length === 0 ? <Spacer size="sm" /> : null}
               <View style={styles.card}>
                 {files.map((file, index) => (
                   <FileRow
@@ -374,6 +377,7 @@ function DataExport() {
                 ))}
                 {hasMoreFiles ? (
                   <FileRow
+                    first={files.length === 0}
                     label="Load more files"
                     accessibilityLabel="Load more files"
                     emphasized
@@ -382,12 +386,16 @@ function DataExport() {
                   />
                 ) : null}
               </View>
+            </>
+          ) : null}
+          {files.length > 0 ? (
+            <>
               <Spacer size="sm" />
               <NativeText style={styles.sectionBody}>
                 Download links expire after 15 minutes. Get the list again for fresh ones.
               </NativeText>
             </>
-          )}
+          ) : null}
           {instructions.slice(0, MAX_EXPORT_INSTRUCTIONS).map((instruction) => (
             <View key={instruction}>
               <Spacer size="sm" />

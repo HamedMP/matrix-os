@@ -35,16 +35,12 @@ const CONFLICT: Partial<Record<AccountDeletionAction, string>> = {
  * reason, so nothing the server or the network layer said is ever displayed.
  */
 export function describeAccountDeletionFailure(error: unknown, action: AccountDeletionAction): string {
-  const reason = accountDeletionFailureReason(error);
+  const reason = error instanceof AccountDeletionRequestError ? error.reason : "unavailable";
   if (reason === "ownership_transfer_required") {
     return "Transfer ownership of your organizations and shared projects before deleting your account.";
   }
   if (reason === "conflict") return CONFLICT[action] ?? UNAVAILABLE[action];
   return UNAVAILABLE[action];
-}
-
-export function accountDeletionFailureReason(error: unknown) {
-  return error instanceof AccountDeletionRequestError ? error.reason : "unavailable";
 }
 
 /** True while the request can still be cancelled and data can still be downloaded. */

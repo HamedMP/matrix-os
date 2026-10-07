@@ -38,18 +38,29 @@ export function useAccountDeletion() {
     staleTime: 0,
     queryFn: async () => fetchAccountDeletionStatus(await requireToken()),
   });
-  // Both mutations answer with the new state; storing it means the screen
-  // changes only after the server has confirmed the request.
-  const remember = (next: AccountDeletionStatus) => {
-    queryClient.setQueryData(queryKey, next);
+  const confirmed = {
+    // A status read still in flight was sent before this request. Opening the
+    // screen starts one while the cached state already enables the buttons, so
+    // without this its older answer could replace the confirmed one.
+    onMutate: () => queryClient.cancelQueries({ queryKey }),
+    // Both requests answer with the new state; storing it means the screen
+    // changes only after the server has confirmed the request.
+    onSuccess: (next: AccountDeletionStatus) => {
+      queryClient.setQueryData(queryKey, next);
+    },
+    // Read again either way: a refusal means the state on screen was out of
+    // date. Not awaited, so the button is released as soon as the request is.
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey });
+    },
   };
   const schedule = useMutation({
     mutationFn: async () => scheduleAccountDeletion(await requireToken()),
-    onSuccess: remember,
+    ...confirmed,
   });
   const cancel = useMutation({
     mutationFn: async () => cancelAccountDeletion(await requireToken()),
-    onSuccess: remember,
+    ...confirmed,
   });
 
   return {
@@ -64,6 +75,11 @@ export function useAccountDeletion() {
     isCancelling: cancel.isPending,
   };
 }
+
+// The server lists several storage locations in turn, so a page can be empty
+// while a later one holds the backups. One tap follows the cursor past empty
+// pages, up to this many requests; beyond that the screen offers "Load more".
+const MAX_EXPORT_PAGE_REQUESTS = 5;
 
 /**
  * Export actions for the deletion screen. Download links are short-lived, so
@@ -80,7 +96,17 @@ export function useAccountExport() {
   }
 
   const files = useMutation({
-    mutationFn: async (cursor: string | undefined) => fetchAccountExportFiles(await requireToken(), cursor),
+    mutationFn: async (cursor: string | undefined) => {
+      let next = await fetchAccountExportFiles(await requireToken(), cursor);
+      for (
+        let requests = 1;
+        next.files.length === 0 && next.nextCursor && requests < MAX_EXPORT_PAGE_REQUESTS;
+        requests += 1
+      ) {
+        next = await fetchAccountExportFiles(await requireToken(), next.nextCursor);
+      }
+      return next;
+    },
     onSuccess: (next, cursor) => {
       setPage((current) => cursor && current
         ? { ...next, files: [...current.files, ...next.files] }

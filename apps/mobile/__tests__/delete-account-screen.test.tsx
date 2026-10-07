@@ -214,8 +214,6 @@ describe("native mobile delete account screen", () => {
       fireEvent.press(screen.getByLabelText("Cancel account deletion"));
 
       expect(await screen.findByText("Deletion has already started, so it can no longer be cancelled.")).toBeTruthy();
-      // The refusal means the state on screen is stale, so it is fetched again.
-      expect(mockReload).toHaveBeenCalledTimes(1);
     });
 
     it("explains that cancelling has to wait for billing to stop", async () => {
@@ -333,6 +331,21 @@ describe("native mobile delete account screen", () => {
       render(<DeleteAccountScreen />);
 
       expect(screen.getByText("No backed-up files were found.")).toBeTruthy();
+      expect(screen.queryByLabelText("Load more files")).toBeNull();
+    });
+
+    it("keeps offering further pages while the pages so far were empty", async () => {
+      // Backups can sit behind an empty page; saying there are none here would
+      // leave the user without a way to reach them before deleting.
+      mockUseAccountExport.mockReturnValue(exportState({ files: [], hasMoreFiles: true }));
+      render(<DeleteAccountScreen />);
+
+      expect(screen.queryByText("No backed-up files were found.")).toBeNull();
+      expect(screen.getByText("No backed-up files found so far.")).toBeTruthy();
+
+      fireEvent.press(screen.getByLabelText("Load more files"));
+
+      await waitFor(() => expect(mockLoadMoreFiles).toHaveBeenCalledTimes(1));
     });
 
     it("explains when the download window has closed", async () => {
