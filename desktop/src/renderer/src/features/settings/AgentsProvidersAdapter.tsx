@@ -1,3 +1,6 @@
+import { invalidateDesktopProviderCatalog } from "../chat/provider-catalog-invalidation";
+import type { ProviderSettingsMutationIntent } from "@matrix-os/ui";
+import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import {
   AgentsProvidersView,
   useProviderSettingsController,
@@ -83,8 +86,8 @@ function ConnectedAgentsProvidersAdapter({
     () => createDesktopProviderSettingsTransport(runtimeApi),
     [runtimeApi],
   );
-  const onCatalogChanged = useCallback(() => {
-    useConnection.getState().invalidateProviderCatalog(identityKey);
+  const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot) => {
+    invalidateDesktopProviderCatalog(identityKey, intent, snapshot);
   }, [identityKey]);
   const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, observationRenewalActive });
   const [actionError, setActionError] = useState<string | null>(null);
@@ -210,6 +213,7 @@ function ConnectedAgentsProvidersAdapter({
 export default function AgentsProvidersAdapter({ observationRenewalActive = true }: { observationRenewalActive?: boolean } = {}) {
   const status = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
+  const userId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -217,6 +221,7 @@ export default function AgentsProvidersAdapter({ observationRenewalActive = true
   const identityKey = desktopProviderIdentityKey({
     status,
     handle,
+    userId,
     platformHost,
     runtimeSlot,
     authGeneration,

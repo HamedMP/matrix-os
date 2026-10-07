@@ -45,6 +45,7 @@ const BotInferenceBodySchema = z.object({
 export interface BotInferenceDependencies {
   homePath: string;
   chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
+  matrixAnthropic?: import("./matrix-anthropic-api.js").MatrixAnthropicAuthority;
   lifetime: AbortSignal;
   /** Exact registry-owned run lifetime; combined with subsystem shutdown. */
   runSignal?: AbortSignal;
@@ -114,6 +115,8 @@ export async function forwardBotInference(
   if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return failure(request.requestId, "action_denied");
   if (lifecycle.aborted) return failure(request.requestId, "action_denied");
   const authorization = authorize(modelId);
+  if (binding.anthropicApi && (!deps.matrixAnthropic || binding.accessSourceId !== "owner_anthropic_key"
+    || !await deps.matrixAnthropic.revalidate(binding, lifecycle))) return failure(request.requestId, "action_denied");
   if (!authorization.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
     return failure(request.requestId, "action_denied");
   }
@@ -146,7 +149,7 @@ export async function forwardBotInference(
   const fetchImpl = deps.fetchImpl ?? fetch;
 
   try {
-    const launch = await resolveInferenceCredentials(
+    const launch = binding.anthropicApi ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, lifecycle) } } : await resolveInferenceCredentials(
       accessSourceId,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
       lifecycle,
@@ -169,6 +172,7 @@ export async function forwardBotInference(
     if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
     // Returns "denied" instead of sending when the run lost its authorization.
     const send = async (): Promise<Response | "denied"> => {
+      if (binding.anthropicApi && !await deps.matrixAnthropic!.revalidate(binding, lifecycle)) return "denied";
       if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return "denied";
       if (lifecycle.aborted) return "denied";
       if (!stillAuthorized()) return "denied";
@@ -206,6 +210,8 @@ export async function forwardBotInference(
       return failure(request.requestId, "provider_unavailable");
     }
     const body = await readBoundedBody(response);
+    if (binding.anthropicApi && (lifecycle.aborted || !await deps.matrixAnthropic!.revalidate(binding, lifecycle)
+      || deps.revalidateBinding && !await deps.revalidateBinding(binding) || !stillAuthorized())) return failure(request.requestId, "action_denied");
     const result = ScopeRuntimeBrokerResponseSchema.parse({
       version: 1,
       requestId: request.requestId,

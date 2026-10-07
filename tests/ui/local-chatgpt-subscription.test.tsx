@@ -14,7 +14,7 @@ function client(value = disconnected): LocalChatgptPlanClient {
 }
 it("shows only the personal ChatGPT card in Matrix AI without a Claude subscription or task consent entry", async () => {
   render(<YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [] } as never} capabilities={[]} client={undefined} localChatgptClient={client()} operationIds={{}} workflowStatus={{}} forbidden={false} disabled={false} onOpen={vi.fn()} onRefresh={vi.fn()}/>);
-  expect(await screen.findByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
   const subscriptions = screen.getByRole("region", { name: "Your subscriptions" });
   expect(within(subscriptions).getAllByRole("article")).toHaveLength(1);
   expect(within(subscriptions).getByRole("article", { name: "ChatGPT subscription" })).toBeVisible();
@@ -84,7 +84,7 @@ it("fences late receipt and consent on owner or Computer replacement", async () 
   const old = client(); vi.mocked(old.connect).mockImplementation(() => new Promise(resolve => { settle = resolve; }));
   const changed = vi.fn(); const props = { disabled: false, readOnly: false, onChanged: changed };
   const view = render(<LocalChatgptSubscription {...props} client={old}/>);
-  await waitFor(() => expect(old.status).toHaveBeenCalled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Continue with ChatGPT" }));
   view.rerender(<LocalChatgptSubscription {...props} client={client()}/>);
   await act(async () => settle(connected));
@@ -99,7 +99,8 @@ it("polls asynchronous local login until default interactive Bot connection is r
   const native = client(), changed = vi.fn();
   vi.mocked(native.connect).mockResolvedValue({ ...disconnected, state: "connecting" });
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={changed}/>);
-  await waitFor(() => expect(native.status).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
+  expect(native.status).toHaveBeenCalledTimes(1);
   vi.mocked(native.status).mockResolvedValueOnce({ ...connected, bridgeConnected: false }).mockResolvedValue(connected);
   vi.useFakeTimers();
   try {
@@ -115,15 +116,31 @@ it("polls asynchronous local login until default interactive Bot connection is r
   } finally { vi.useRealTimers(); }
 });
 it("lets cancellation fence a late native login receipt", async () => {
-  const native = client(); let settle!: (value: LocalChatgptPlanStatus) => void;
+  const native = client(), changed = vi.fn();
+  let settleStatus!: (value: LocalChatgptPlanStatus) => void;
+  let settle!: (value: LocalChatgptPlanStatus) => void;
+  vi.mocked(native.status).mockImplementationOnce(() => new Promise(resolve => { settleStatus = resolve; }));
   vi.mocked(native.connect).mockImplementation(() => new Promise(resolve => { settle = resolve; }));
-  render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
-  await waitFor(() => expect(native.status).toHaveBeenCalled());
+  render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={changed}/>);
+  expect(screen.getByText("Checking connection…")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeDisabled();
+  expect(native.connect).not.toHaveBeenCalled();
+  await act(async () => settleStatus(disconnected));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Continue with ChatGPT" }));
-  fireEvent.click(screen.getByRole("button", { name: "Cancel ChatGPT connection" }));
-  await waitFor(() => expect(native.cancel).toHaveBeenCalled());
+  const cancel = await screen.findByRole("button", { name: "Cancel ChatGPT connection" });
+  expect(cancel).toBeEnabled();
+  expect(native.connect).toHaveBeenCalledWith({ purpose: "personal_local" }, expect.any(AbortSignal));
+  fireEvent.click(cancel);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
+  expect(native.cancel).toHaveBeenCalledWith(expect.any(AbortSignal));
+  expect(changed).toHaveBeenCalledTimes(1);
   await act(async () => settle(connected));
   expect(screen.queryByText("Owner account")).toBeNull();
+  expect(screen.queryByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Cancel ChatGPT connection" })).toBeNull();
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(native.setGrant).not.toHaveBeenCalled();
 });
 it("does not claim Bot availability when a connected account loses its model catalog", async () => {
   render(<LocalChatgptSubscription client={client({ ...connected, models: [], grant: { revision: 2, enabled: true, background: false } })} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
