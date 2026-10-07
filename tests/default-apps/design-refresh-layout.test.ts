@@ -6,6 +6,9 @@ describe("compact app layout safeguards", () => {
   it("restores the weather location controls hidden by the older phone stylesheet", () => {
     expect(stylesheet("weather").split("@media (max-width: 760px)")[1]).toMatch(/\.sidebar\s*\{[^}]*display:\s*flex/);
   });
+  it("keeps saved weather cities in one horizontal row on phones", () => {
+    expect(stylesheet("weather").split("@media (max-width: 760px)")[1]).toMatch(/\.location-list\s*\{[^}]*flex-direction:\s*row/);
+  });
   it("keeps the whole notes library scrollable when controls fill a short phone window", () => {
     const phone = stylesheet("notes").split("@media (max-width: 820px)")[1];
     expect(phone).toMatch(/\.sidebar\s*\{[^}]*overflow-y:\s*auto/);
