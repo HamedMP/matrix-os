@@ -87,6 +87,27 @@ describe("voice conversations have separate durable history and titles", () => {
     await bootstrapVoiceHistory(repository.kysely);
     expect((await repository.get(owner, "chat_old_topic"))?.chat).toMatchObject({ conversationKind: "voice", title: "Plan my launch week", titleVersion: 1 });
   });
+  it("commits schema readiness before title backfill and resumes after a backfill failure", async () => {
+    await create("backfill_retry", "chat");
+    await createLiveHistory(repository, owner, "chat_backfill_retry").journal({ id: "topic", role: "user", text: "Plan the launch" });
+    await sql`INSERT INTO aoede_bootstrap_requests(owner_type, owner_id, runtime_scope, request_id, semantic_hash, created_chat_id)
+      VALUES ('personal', ${owner.ownerId}, 'runtime', 'backfill_retry', 'hash', 'chat_backfill_retry')`.execute(repository.kysely);
+    await sql`DELETE FROM chat_schema_migrations WHERE version = 3`.execute(repository.kysely);
+    await sql`ALTER TABLE chats DROP COLUMN conversation_kind CASCADE`.execute(repository.kysely);
+    const failedBackfill = repository.kysely.withPlugin({
+      transformQuery: ({ node }) => {
+        if (JSON.stringify(node).includes("LEFT(messages.search_text, 8000)")) throw new Error("Backfill interrupted");
+        return node;
+      },
+      transformResult: async ({ result }) => result,
+    });
+    await expect(bootstrapVoiceHistory(failedBackfill)).rejects.toThrow("Backfill interrupted");
+    // A backfill failure must not roll back the short schema transaction or
+    // keep its exclusive table lock alive across transcript scans.
+    expect((await sql`SELECT version FROM chat_schema_migrations WHERE version = 3`.execute(repository.kysely)).rows).toHaveLength(1);
+    await bootstrapVoiceHistory(repository.kysely);
+    expect((await repository.get(owner, "chat_backfill_retry"))?.chat).toMatchObject({ conversationKind: "voice", title: "Plan the launch" });
+  });
   it("names an interaction from its topic after the first exchange, skipping greetings", async () => {
     await create("topic");
     const history = createLiveHistory(repository, owner, "chat_topic");
