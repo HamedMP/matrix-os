@@ -89,6 +89,10 @@ vi.mock("../../shell/src/components/UserButton.js", () => ({
   UserButton: () => null,
 }));
 
+vi.mock("../../shell/src/components/organization/OrganizationSwitcher.js", () => ({
+  OrganizationSwitcher: () => null,
+}));
+
 vi.mock("../../shell/src/components/ConnectionIndicator.js", () => ({
   ConnectionIndicator: () => null,
 }));
@@ -313,7 +317,7 @@ describe("Aoede desktop/launcher icon", () => {
     vi.unstubAllGlobals();
   });
 
-  it("reveals the singleton from the desktop icon — no window, no media, one bootstrap", async () => {
+  it("reveals the singleton from the desktop icon without another window or microphone capture", async () => {
     stubMediaDevices(true);
     resetShell();
     const h = aoedeHarness();
@@ -327,9 +331,9 @@ describe("Aoede desktop/launcher icon", () => {
 
     await waitFor(() => expect(screen.getByTestId("aoede-host")).toBeTruthy());
     expect(h.bootstrap).toHaveBeenCalledTimes(1);
-    // Icon launch must never request microphone access or spawn a window.
+    // Main opens Chat on startup; the icon must add no window or microphone capture.
     expect(h.media.startVoice).not.toHaveBeenCalled();
-    expect(windowManagerStore.getState().windows).toHaveLength(0);
+    expect(windowManagerStore.getState().windows.map((windowRecord) => windowRecord.path)).toEqual(["__chat__"]);
   });
 
   it("converges launcher-tile, desktop-icon and palette invocations on the one instance", async () => {
@@ -356,7 +360,7 @@ describe("Aoede desktop/launcher icon", () => {
     expect(h.bootstrap).toHaveBeenCalledTimes(1);
     expect(h.voiceFactory).toHaveBeenCalledTimes(1);
     expect(document.querySelectorAll("[data-testid='aoede-host']")).toHaveLength(1);
-    expect(windowManagerStore.getState().windows).toHaveLength(0);
+    expect(windowManagerStore.getState().windows.map((windowRecord) => windowRecord.path)).toEqual(["__chat__"]);
     expect(h.media.startVoice).not.toHaveBeenCalled();
   });
 
@@ -377,6 +381,6 @@ describe("Aoede desktop/launcher icon", () => {
     expect(within(launcher).queryByRole("button", { name: "Aoede" })).toBeNull();
 
     expect(h.bootstrap).not.toHaveBeenCalled();
-    expect(windowManagerStore.getState().windows).toHaveLength(0);
+    expect(windowManagerStore.getState().windows.map((windowRecord) => windowRecord.path)).toEqual(["__chat__"]);
   });
 });

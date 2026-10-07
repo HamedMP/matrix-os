@@ -32,6 +32,8 @@ export interface SharedRunOwnerSourceDecision {
   /** The owner's selected access source when the kernel credential resolver knows it; null for non-Anthropic sources. */
   accessSourceId: KernelCredentialAccessSourceId | null;
   allowedModelIds: readonly string[];
+  /** Deterministic model selected by the owner policy for this run. */
+  modelId: string;
   effectiveSubmitMode: "members" | "owner_only";
 }
 
@@ -74,32 +76,43 @@ export class SharedRunOwnerSource {
   /**
    * Throws `SharedChatRunPreparationError("unavailable")` when the scope has
    * no execution policy or the owner's source cannot serve the run, and
-   * `SharedChatRunPreparationError("unauthorized")` when a member submits on
-   * an owner-only scope. There is no null path: a policy is mandatory.
+   * `SharedChatRunPreparationError("unauthorized")` when the persisted policy
+   * lacks the owner's provider-terms acknowledgement. There is no null path:
+   * a policy is mandatory.
    */
   async prepare(input: SharedRunOwnerSourceInput): Promise<SharedRunOwnerSourceDecision> {
+    const decision = await this.authority({ scopeId: input.scopeId, ownerId: input.ownerId });
+    if (input.requestingActorId !== input.ownerId && decision.effectiveSubmitMode !== "members") {
+      throw new SharedChatRunPreparationError("unauthorized");
+    }
+    if (DRIVER_BY_HARNESS[decision.harness] !== input.driverKind) {
+      throw new SharedChatRunPreparationError("unavailable");
+    }
+    return decision;
+  }
+
+  /** Resolve the exact owner-controlled source and model before queue admission. */
+  async authority(input: { scopeId: string; ownerId: string }): Promise<SharedRunOwnerSourceDecision> {
     const policy = await this.policies.resolve(input.scopeId);
     if (!policy) throw new SharedChatRunPreparationError("unavailable");
     if (policy.ownerId !== input.ownerId) {
-      throw new SharedChatRunPreparationError("unavailable");
-    }
-    if (input.requestingActorId !== policy.ownerId && policy.effectiveSubmitMode !== "members") {
-      throw new SharedChatRunPreparationError("unauthorized");
-    }
-    if (DRIVER_BY_HARNESS[policy.source.harness] !== input.driverKind) {
       throw new SharedChatRunPreparationError("unavailable");
     }
     const resolution = await this.eligibility.resolveSelection(policy.ownerId, policy.source);
     if (!resolution.ok || !resolution.available || resolution.source.harness !== policy.source.harness) {
       throw new SharedChatRunPreparationError("unavailable");
     }
+    const allowedModelIds = policy.allowedModelIds.filter((modelId) => resolution.modelIds.includes(modelId));
+    const modelId = allowedModelIds[0];
+    if (!modelId) throw new SharedChatRunPreparationError("unavailable");
     const parsed = KernelCredentialAccessSourceIdSchema.safeParse(policy.source.accessSourceId);
     return {
       policyRevision: policy.revision,
       harness: policy.source.harness,
       providerInstanceId: policy.source.providerInstanceId,
       accessSourceId: parsed.success ? parsed.data : null,
-      allowedModelIds: policy.allowedModelIds.filter((modelId) => resolution.modelIds.includes(modelId)),
+      allowedModelIds,
+      modelId,
       effectiveSubmitMode: policy.effectiveSubmitMode,
     };
   }
