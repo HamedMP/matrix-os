@@ -42,7 +42,8 @@ export function useCanonicalComposerSelection({
   boundInstanceId?: string;
 }) {
   const [selection, setSelection] = useState<CanonicalComposerSelection | null>(() => (
-    initializeImmediately && !chatId ? createCanonicalComposerSelection(catalog) : null
+    initializeImmediately && !chatId && useProviderPreferences.getState().hydrated
+      ? createCanonicalComposerSelection(catalog) : null
   ));
   const identityKey = useConnection(desktopProviderIdentityKey);
   const selectionIdentityKey = useRef(identityKey);
@@ -66,6 +67,10 @@ export function useCanonicalComposerSelection({
     }
     setSelection((current) => {
       if (!catalogReady) return null;
+      // A cold read may restore an explicit personal source. Do not expose a
+      // runnable replacement default before that intent is known. The user can
+      // still choose a current route while preferences are loading.
+      if (!chatId && !providerPreferencesHydrated && !composerSelectionTouched.current) return null;
       const currentInstance = catalog.instances.find((instance) => instance.id === current?.instanceId);
       const selectedChatInstance = currentSelection
         ? catalog.instances.find((instance) => instance.id === currentSelection.instanceId)
@@ -89,7 +94,10 @@ export function useCanonicalComposerSelection({
       if (!chatChanged && !scopeChanged && composerSelectionTouched.current && currentIsSupported) return current;
       if (!chatChanged && !scopeChanged && composerSelectionTouched.current && current
         && current.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID
-        && (!currentInstance || !canonicalChatSubscriptionSelectionMatches(currentInstance, current.options))) return current;
+        && (!boundInstanceId || current.instanceId === boundInstanceId)
+        && (!currentInstance || currentInstance.availability !== "available"
+          || !canonicalChatSubscriptionSelectionMatches(currentInstance, current.options)
+          || !currentInstance.models.some(model => model.id === current.model && model.availability === "available"))) return current;
       // Existing Chats retain their saved route even when it cannot run. Choosing
       // a global default here would silently change the harness/account.
       if (chatId && currentSelection && (!requiredInstance
@@ -104,6 +112,24 @@ export function useCanonicalComposerSelection({
           interactionMode: current?.interactionMode ?? "default",
           permissionMode: current?.permissionMode ?? "supervised",
         };
+      }
+      // A remembered personal model is explicit intent too. Restore its exact
+      // binding as unavailable instead of selecting a newly observed default.
+      if (!chatId && lastComposerInstanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID
+        && (!boundInstanceId || boundInstanceId === lastComposerInstanceId)) {
+        const remembered = useProviderPreferences.getState().composerSelections[lastComposerInstanceId];
+        if (!remembered?.model) return null;
+        if (!rememberedInstance || rememberedInstance.availability !== "available"
+          || !canonicalChatSubscriptionSelectionMatches(rememberedInstance, remembered.options)
+          || !rememberedInstance.models.some(model => model.id === remembered.model && model.availability === "available")) {
+          return {
+            instanceId: lastComposerInstanceId,
+            model: remembered.model,
+            options: remembered.options,
+            interactionMode: "default",
+            permissionMode: remembered.permissionMode,
+          };
+        }
       }
       const next = requiredInstance
         ? createCanonicalComposerSelection(catalog, requiredInstance.id)
