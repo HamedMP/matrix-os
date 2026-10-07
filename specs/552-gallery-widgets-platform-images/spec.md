@@ -101,3 +101,8 @@ The current deliverable is an interactive design preview, a widget implementatio
 Sequence: shared contracts/data registry and migrations; first five widgets on Web Canvas, Web Desktop and Electron Desktop; permissions/notifications/scheduler; qualified mobile bridge/cache; community extensions. Each phase requires focused tests, end-to-end owner isolation and actual rendered evidence. Gallery browser inspection is currently denied by tool policy and must not be bypassed; source checks do not count as screenshots.
 
 Public documentation is delivered in a separate private-site PR. Production activation of images requires configured platform funding, valid runtime credentials and a verified live image call. No merge, fleet rollout or provider-key change is part of design review.
+
+
+## Large-file extraction plan
+
+The existing IPC and platform/gateway composition files exceed the repository’s size guidance. Keep this release’s wiring minimal and carry out these scoped extractions before adding more image behavior: move the image tool definition/handler from `packages/kernel/src/ipc-server.ts` into a focused module with injected funded/BYOK dependencies; move image configuration/service/route/shutdown composition from `packages/platform/src/platform-startup.ts` into an image-runtime module; move client construction from the large gateway entrypoint into its feature initializer; move image activation assertions out of the large customer-VPS test file into a focused lifecycle suite. Preserve explicit funding selection, startup-time dependency resolution, generic errors, token rotation and existing full-chain tests. These are extraction steps, not permission to expand unrelated large files.
