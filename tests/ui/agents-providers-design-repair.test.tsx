@@ -64,8 +64,8 @@ it("keeps owner-only connections disabled without persistent prose and recovers 
   expect(screen.getByRole("heading", { name: "Agents & providers" })).toBeVisible();
   client.capabilities.mockResolvedValue([]);
   rerender(<AgentsProvidersView {...p} snapshot={{ ...p.snapshot, refreshedAt: "2026-10-02T00:00:00Z" }} workflowClient={client} />);
-  await waitFor(() => expect(screen.queryByText("Only this computer’s owner can manage connections.")).not.toBeInTheDocument());
-  expect(screen.getByText("Connection in Settings is unavailable on this computer. Refresh or update the computer to try again.")).toBeInTheDocument();
+  expect(await screen.findByText("Connection in Settings is unavailable on this computer. Refresh or update the computer to try again.")).toBeInTheDocument();
+  expect(screen.queryByText("Only this computer’s owner can manage connections.")).not.toBeInTheDocument();
 });
 it("renders the connected card from source observation without a disabled connect chooser", () => {
   const p = props();
