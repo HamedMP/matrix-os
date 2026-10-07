@@ -46,6 +46,16 @@ function makeSnapshot(overrides: Partial<AoedeSnapshot> = {}): AoedeSnapshot {
 }
 
 describe("Aoede settings", () => {
+  it("chooses a first harness without an existing selection", async () => {
+    const controller = makeController();
+    const snapshot = makeSnapshot();
+    Reflect.deleteProperty(snapshot.binding!, "selection");
+    render(<AoedeSettings controller={controller} snapshot={snapshot} />);
+    const harness = await screen.findByLabelText("Harness");
+    expect(harness).toHaveValue("");
+    fireEvent.change(harness, { target: { value: "codex_fixture" } });
+    await waitFor(() => expect(controller.setSelection).toHaveBeenCalledWith({ instanceId: "codex_fixture", model: "gpt-5.6-sol" }));
+  });
   it("serializes all media settings and recovers after a rejected change", async () => {
     const controller = makeController();
     let reject!: (error: Error) => void;
@@ -81,11 +91,11 @@ describe("Aoede settings", () => {
     fireEvent.click(screen.getByLabelText("Push to talk"));
     await waitFor(() => expect(controller.setTurnMode).toHaveBeenCalledWith("push_to_talk"));
   });
-  it("lists provider instances/models from the canonical catalog and updates the selection", async () => {
+  it("lists harness instances/models from the canonical catalog and updates the selection", async () => {
     const controller = makeController();
     render(<AoedeSettings controller={controller} snapshot={makeSnapshot()} />);
     const model = await screen.findByLabelText("Model");
-    expect(screen.getByLabelText("Provider")).toHaveValue("codex_fixture");
+    expect(screen.getByLabelText("Harness")).toHaveValue("codex_fixture");
     expect(model).toHaveValue("gpt-5.6-sol");
     expect(controller.listProviders).toHaveBeenCalledTimes(1);
     fireEvent.change(model, { target: { value: "gpt-5.7-sol" } });
@@ -104,10 +114,10 @@ describe("Aoede settings", () => {
     fireEvent.change(model, { target: { value: "gpt-5.6-sol" } });
     await waitFor(() => expect(controller.setSelection).toHaveBeenCalledWith({ instanceId: "codex_fixture", model: "gpt-5.6-sol" }));
   });
-  it("locks the provider instance while a run is bound to the chat", async () => {
+  it("locks the harness instance while a run is bound to the chat", async () => {
     render(<AoedeSettings controller={makeController()} snapshot={makeSnapshot({ boundProviderInstanceId: "codex_fixture" })} />);
     await screen.findByLabelText("Model");
-    expect(screen.getByLabelText("Provider")).toBeDisabled();
+    expect(screen.getByLabelText("Harness")).toBeDisabled();
     expect(screen.getByLabelText("Model")).toBeEnabled();
   });
   it("lists capture/playback devices and routes choices through the controller", async () => {
@@ -126,7 +136,7 @@ describe("Aoede settings", () => {
     vi.mocked(controller.listProviders).mockResolvedValue(null);
     vi.mocked(controller.listDevices).mockResolvedValue(null);
     render(<AoedeSettings controller={controller} snapshot={makeSnapshot()} />);
-    await screen.findByText("Provider list unavailable.");
+    await screen.findByText("Harness list unavailable.");
     expect(screen.getByText(/Device list unavailable/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Reload" }));
     await waitFor(() => expect(controller.listProviders).toHaveBeenCalledTimes(2));
