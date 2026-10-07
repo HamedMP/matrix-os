@@ -144,6 +144,7 @@ describe("funded relay Cloud Run service", () => {
           "cf-aig-authorization": `Bearer ${config.gatewayToken}`,
           "anthropic-version": "2023-06-01",
           "content-type": "application/json",
+          connection: "close",
         } }));
     } finally {
       await service.close();
