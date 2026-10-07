@@ -15,9 +15,13 @@ export function OrganizationDrivesNavigation({api, onOpen, active = true, chats 
   const [error, setError] = useState(false);
   const [groupExpanded, setGroupExpanded] = useState(true);
   const [expanded,setExpanded]=useState<string[]>([]);
+  // Disclosure belongs to the mounted client scope, including while navigation is paused.
+  useEffect(() => {
+    setExpanded([]); setGroupExpanded(true);
+  }, [api]);
   useEffect(() => {
     let current = true; let inFlight = false;
-    setSnapshot(null); setError(false); setExpanded([]); setGroupExpanded(true);
+    setSnapshot(null); setError(false);
     if (!api || !active) return;
     const load = async () => {
       if (inFlight) return;

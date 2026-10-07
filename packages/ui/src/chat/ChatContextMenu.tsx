@@ -18,8 +18,9 @@ function MenuActions({ items, zIndex, Menu = ContextMenu }: { items: ChatContext
   </Menu.Sub> : <Fragment key={item.label}>{item.danger ? <Menu.Separator className="my-1 h-px" style={{background:"var(--border-default, var(--border))"}}/> : null}<Menu.Item disabled={item.disabled} onSelect={item.onSelect} className={menuItemClass} style={item.danger ? {color:"var(--danger, var(--destructive))"} : undefined}>{item.label}</Menu.Item></Fragment>);
 }
 
-export function ChatContextMenu({ chatId, children, primaryAction, items = [], zIndex = 100, dropdownTrigger, onDropdownOpenChange }: {
+export function ChatContextMenu({ chatId, children, primaryAction, items = [], zIndex = 100, dropdownTrigger, onDropdownOpenChange, onContextMenuOpenChange }: {
   dropdownTrigger?: ReactElement; onDropdownOpenChange?: (open: boolean) => void;
+  onContextMenuOpenChange?: (open: boolean) => void;
   chatId?: string | null;
   children: ReactElement;
   zIndex?: number;
@@ -80,7 +81,7 @@ export function ChatContextMenu({ chatId, children, primaryAction, items = [], z
       </Menu.Portal>
   );
   return <>
-    <ContextMenu.Root onOpenChange={opened}>
+    <ContextMenu.Root onOpenChange={open => { opened(open); onContextMenuOpenChange?.(open); }}>
       <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
       {contents(ContextMenu)}
     </ContextMenu.Root>

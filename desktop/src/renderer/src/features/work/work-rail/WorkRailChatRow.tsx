@@ -60,6 +60,7 @@ export function WorkRailChatRow({
   moving?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const selectTimerRef = useRef<number | null>(null);
   const renameTimerRef = useRef<number | null>(null);
   useEffect(() => () => {
@@ -82,13 +83,13 @@ export function WorkRailChatRow({
     { label: "Delete", danger: true, onSelect: onDelete },
   ];
   return (
-    <ChatContextMenu chatId={record.chat.id} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", disabled: readPending, onSelect: onToggleRead } : undefined} items={menuItems}>
+    <ChatContextMenu chatId={record.chat.id} onContextMenuOpenChange={setContextMenuOpen} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", disabled: readPending, onSelect: onToggleRead } : undefined} items={menuItems}>
       <div
         data-chat-title-row
         data-placement={placement}
         data-current={active || undefined}
         data-two-line={agentState !== "idle" || undefined}
-        data-menu-open={menuOpen || undefined}
+        data-menu-open={menuOpen || contextMenuOpen || undefined}
         className="work-rail-chat group/chat relative flex min-w-0 items-center"
       >
         {renaming ? (

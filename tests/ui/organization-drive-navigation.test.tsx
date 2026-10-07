@@ -27,6 +27,53 @@ describe("organization drives in Chat navigation", () => {
   view.rerender(<OrganizationDrivesNavigation api={null} onOpen={vi.fn()}/>);
   await waitFor(() => expect(screen.queryByRole("button", {name: "Open Authority drive"})).toBeNull());
  });
+ it("preserves a collapsed Company drives group across same-client pause and reveal", async () => {
+  const client = api();
+  const props = {api: client as never, onOpen: vi.fn()};
+  const view = render(<OrganizationDrivesNavigation {...props}/>);
+  await screen.findByRole("button", {name: "Open Authority drive"});
+  fireEvent.click(screen.getByRole("button", {name: "Company drives"}));
+
+  view.rerender(<OrganizationDrivesNavigation {...props} active={false}/>);
+  expect(screen.queryByRole("navigation", {name: "Organization drive projects"})).toBeNull();
+  view.rerender(<OrganizationDrivesNavigation {...props} active/>);
+
+  const heading = await screen.findByRole("button", {name: "Company drives"});
+  expect(heading.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("button", {name: "Open Authority drive"})).toBeNull();
+  expect(screen.getByLabelText("1 hidden drive").textContent).toBe("1");
+ });
+ it("preserves expanded drive Chats across same-client pause and reveal", async () => {
+  const props = {api: api() as never, onOpen: vi.fn(), onSelectChat: vi.fn(),
+   chats: [{chatId: "chat_company", scopeId, title: "Private plan"}]};
+  const view = render(<OrganizationDrivesNavigation {...props}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "Expand Authority Chats"}));
+  expect(screen.getByRole("button", {name: "Private plan"})).toBeTruthy();
+
+  view.rerender(<OrganizationDrivesNavigation {...props} active={false}/>);
+  expect(screen.queryByRole("button", {name: "Private plan"})).toBeNull();
+  view.rerender(<OrganizationDrivesNavigation {...props} active/>);
+
+  const disclosure = await screen.findByRole("button", {name: "Collapse Authority Chats"});
+  expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+  fireEvent.click(screen.getByRole("button", {name: "Private plan"}));
+  expect(props.onSelectChat).toHaveBeenCalledWith("chat_company");
+ });
+ it.each(["replacement", "sign-out"])("resets disclosure when the client changes through %s while paused", async (change) => {
+  const client = api();
+  const props = {onOpen: vi.fn(), onSelectChat: vi.fn()};
+  const view = render(<OrganizationDrivesNavigation {...props} api={client as never}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "Expand Authority Chats"}));
+  fireEvent.click(screen.getByRole("button", {name: "Company drives"}));
+  view.rerender(<OrganizationDrivesNavigation {...props} api={client as never} active={false}/>);
+
+  const nextClient = change === "replacement" ? api() : client;
+  view.rerender(<OrganizationDrivesNavigation {...props} api={change === "sign-out" ? null : nextClient as never} active={false}/>);
+  view.rerender(<OrganizationDrivesNavigation {...props} api={nextClient as never} active/>);
+
+  expect((await screen.findByRole("button", {name: "Company drives"})).getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("button", {name: "Expand Authority Chats"}).getAttribute("aria-expanded")).toBe("false");
+ });
 });
 
 it('collapses populated Company drives without inventing project creation',async()=>{
