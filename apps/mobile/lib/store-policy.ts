@@ -4,10 +4,11 @@ import { Platform } from "react-native";
  * Store policy for purchase calls to action — the single place that decides
  * whether this build may link to, or encourage, paying outside the app.
  *
- * Native store builds (iOS App Store Guideline 3.1.1 / 3.1.3(f) companion-app
- * exception, Google Play payments policy) must not show plan, pricing, portal,
- * or checkout links. Only the web build keeps them. Unknown native platforms
- * fail closed.
+ * The current native build conservatively hides plan, pricing, portal, and
+ * checkout links. Only the web build keeps them; unknown platforms fail closed.
+ * This is our build policy, not proof of Apple's 3.1.3(f) companion exception
+ * or a universal rule for every storefront. Any native purchase route needs
+ * its own eligibility, entitlement, disclosure, and release verification.
  *
  * Screens ask this helper instead of checking `Platform.OS` themselves, so a
  * future storefront-aware exception (e.g. US App Store external purchase

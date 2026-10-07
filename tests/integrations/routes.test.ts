@@ -642,7 +642,7 @@ describe("Integration Routes", () => {
       expect(services[0].account_label).toBe("Personal Gmail");
     });
 
-    it("does not store Slack usernames in account_email", async () => {
+    it("does not spend a proxy call that cannot return a Slack email", async () => {
       pipedream.proxyGet = vi.fn().mockImplementation(async (opts: { url: string }) => {
         if (opts.url === "https://slack.com/api/auth.test") {
           return { user: "slack-display-name" };
@@ -669,6 +669,7 @@ describe("Integration Routes", () => {
       const services = await db.listConnectedServices(userId);
       expect(services).toHaveLength(1);
       expect(services[0].account_email).toBeNull();
+      expect(pipedream.proxyGet).not.toHaveBeenCalled();
     });
   });
 
