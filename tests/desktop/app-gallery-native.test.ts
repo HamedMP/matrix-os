@@ -34,7 +34,7 @@ describe("Electron Desktop gallery", () => {
     const gatewayFetch = createNativeAppGatewayFetch((request) => bridge.gatewayFetch(sender, request));
     const integrations = async () => ((await gatewayFetch<{ services: unknown[] }>("/api/bridge/service")).services);
     const loaded = await loadGallery({ gatewayFetch, integrations });
-    expect(loaded.apps).toHaveLength(24);
+    expect(loaded.apps).toHaveLength(31);
     expect(loaded.connections?.[0]?.account_label).toBe("personal");
     await expect(installGalleryApp({ gatewayFetch }, "folio")).resolves.toMatchObject({ status: "installed", slug: "folio" });
     expect(fetchFn).toHaveBeenLastCalledWith(`${origin}/api/app-gallery/folio/install`, expect.objectContaining({
@@ -86,9 +86,11 @@ describe("Electron Desktop gallery", () => {
   it("sends the exact selected-account read-only import through the existing kernel dispatcher", () => {
     const { bridge, generate } = fixture();
     bridge.register(72, "folio");
-    const prompt = importPrompt(catalog.apps[0] as Definition, { accounts: [{ service: "gmail", label: "personal" }], start: "2026-01-01", end: "2026-10-06", context: "" }, [{ service: "gmail", account_label: "personal", status: "active" }]);
+    const prompt = importPrompt(catalog.apps[0] as Definition, { accounts: [{ service: "gmail", label: "personal", connectionId: "connection-personal", expectedEmail: "personal@example.com" }], start: "2026-01-01", end: "2026-10-06", context: "" }, [{ id: "connection-personal", service: "gmail", account_label: "personal", account_email: "personal@example.com", status: "active" }]);
     expect(prompt).toContain('"account_label":"personal"');
     expect(prompt).toContain("read-only");
+    expect(prompt).toContain('"connectionId":"connection-personal"');
+    expect(prompt).toContain('"expectedEmail":"personal@example.com"');
     bridge.generate({ id: 72, url: `${origin}/apps/folio/` }, prompt);
     expect(generate).toHaveBeenCalledWith("folio", prompt);
   });
