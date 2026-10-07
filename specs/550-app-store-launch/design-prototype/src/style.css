@@ -133,3 +133,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @media(prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
 @media(max-width: 760px) { .store-search input, .example-account select { font-size: 16px; } .refined-prototype .prototype-toolbar { padding: 6px 18px; } .refined-prototype .prototype-toolbar > div:first-child { display: block; } .refined-prototype .prototype-toolbar > div:first-child span { margin-top: 4px; } }
 @media(max-width: 480px) { .flow-dialog.wide { width: 100vw; max-width: 100vw; max-height: 100dvh; border: 0; border-radius: 0; } .flow-dialog.wide .dialog-content { padding: 16px; } .flow-dialog.wide .detail-preview { padding: 8px; } .flow-dialog.wide .phone-shell { border: 0; width: 100%; border-radius: 10px; } }
+/* The review controls stay separate from the original Matrix gallery composition. */
+.refined-prototype .prototype-toolbar { background: var(--paper); border-bottom: 1px solid var(--border); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+textarea:focus-visible { outline: 2px solid var(--forest); outline-offset: 3px; }
