@@ -21,6 +21,7 @@ beforeAll(async () => {
 afterAll(async () => browser?.close());
 
 it("aligns pinned/unpinned project icons and labels and contains disclosure/action hit targets", async () => {
+  expect(css).toMatch(/\.work-rail-project:hover \.work-rail-project-actions \{ background: linear-gradient\(var\(--bg-hover\), var\(--bg-hover\)\), var\(--bg-surface\); \}/);
   const page = await browser.newPage({ viewport: {width:600,height:700} });
   const project = (pinned: boolean) => {
     const name = pinned ? "Pinned project with a long title" : "Ordinary project with a long title";

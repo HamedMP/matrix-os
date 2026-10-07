@@ -20,6 +20,7 @@
 .work-rail-project-select > span:first-of-type { min-width: 0; }
 .work-rail-project-disclosure { width: 24px; height: 24px; flex: 0 0 24px; padding: 0; display: grid; place-items: center; }
 .work-rail-project-actions { position: absolute; right: 34px; top: 2px; height: 28px; gap: 2px; display: flex; align-items: center; background: var(--bg-surface); }
+.work-rail-project:hover .work-rail-project-actions { background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg-surface); }
 .work-rail-project-actions > button { width: 24px; height: 24px; flex: 0 0 24px; padding: 0; display: grid; place-items: center; }
 .matrix-chat-work-rail .work-rail-section-heading { width: 100%; }
 .matrix-chat-work-rail .work-rail-section-heading > button { width: 100%; display: flex; align-items: center; padding-right: 8px; }
