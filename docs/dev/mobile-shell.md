@@ -207,7 +207,10 @@ activates the session, so the tap does not end in nothing:
 ### Sign in with Apple
 
 iOS only. The button is Apple's system button (`AppleAuthenticationButton`), a
-full-width row above the provider icons; Android does not render it.
+full-width row above the provider icons; Android does not render it. iOS draws
+its title at about 43% of the button's height and offers no font size, so the
+button is 38pt high to give a 16pt title, the size of the "Sign in" label.
+Changing the title size means changing the height.
 
 The flow is native, not a browser round trip: `expo-apple-authentication`
 presents Apple's sheet, and its identity token goes to Clerk as

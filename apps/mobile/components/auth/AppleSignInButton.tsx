@@ -7,6 +7,11 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 const APPLE_BLACK = "#000000";
 const APPLE_WHITE = "#FFFFFF";
 
+// The system button draws its title at about 43% of its own height and has no
+// font size of its own, so the height is what sets the text size. 38pt gives a
+// 16pt title, the size of the "Sign in" label above it.
+const APPLE_BUTTON_HEIGHT = 38;
+
 type AppleSignInButtonProps = {
   /** True while this button's own sign-in is running. */
   loading: boolean;
@@ -18,7 +23,8 @@ type AppleSignInButtonProps = {
 /**
  * Apple's own "Sign in with Apple" button. The system draws, localises and
  * labels it, which is what keeps it within Apple's rules for the button; only
- * its size, corner radius and light or dark style are ours to set.
+ * its size, corner radius and light or dark style are ours to set. The title
+ * follows the height, so the two cannot be chosen separately.
  */
 export function AppleSignInButton({ loading, disabled, onPress }: AppleSignInButtonProps) {
   const { theme } = useUnistyles();
@@ -55,7 +61,7 @@ export function AppleSignInButton({ loading, disabled, onPress }: AppleSignInBut
 
 const styles = StyleSheet.create((theme) => ({
   frame: {
-    height: 52,
+    height: APPLE_BUTTON_HEIGHT,
   },
   frameDisabled: {
     opacity: 0.5,

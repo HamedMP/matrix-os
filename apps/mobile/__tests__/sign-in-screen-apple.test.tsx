@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { Platform } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 
 const mockReplace = jest.fn();
 jest.mock("expo-router", () => ({
@@ -142,6 +142,15 @@ describe("SignInScreen Sign in with Apple", () => {
     const button = screen.getByTestId(APPLE_BUTTON);
     expect(button.props.buttonType).toBe(0);
     expect(button.props.buttonStyle).toBe(2);
+  });
+
+  it("sizes the system button so its title is as large as the Sign in label", () => {
+    // iOS draws the title at about 43% of the button's height and offers no
+    // font size, so a 16pt title means a 38pt-high button.
+    render(<SignInScreen />);
+
+    const frame = StyleSheet.flatten(screen.getByTestId("apple-sign-in").props.style);
+    expect(frame.height).toBe(38);
   });
 
   it("does not offer Apple on Android, where the native flow does not exist", () => {
