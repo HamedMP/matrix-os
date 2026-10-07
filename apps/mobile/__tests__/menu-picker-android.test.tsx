@@ -131,6 +131,35 @@ describe("MenuPicker on Android", () => {
     expect(lastMenuProps().expanded).toBe(false);
   });
 
+  it("closes an open menu when it is disabled and ignores a choice made from it", () => {
+    const onValueChange = jest.fn();
+    const { rerender } = render(
+      <MenuPicker options={options} selectedValue="low" onValueChange={onValueChange} testID="effort-picker" />,
+    );
+    fireEvent.press(screen.getByTestId("effort-picker"));
+    expect(lastMenuProps().expanded).toBe(true);
+
+    rerender(
+      <MenuPicker
+        options={options}
+        selectedValue="low"
+        onValueChange={onValueChange}
+        enabled={false}
+        testID="effort-picker"
+      />,
+    );
+    expect(lastMenuProps().expanded).toBe(false);
+
+    // The native menu can deliver a tap that was already under way.
+    fireEvent.press(screen.getAllByRole("menuitem")[1]!);
+    expect(onValueChange).not.toHaveBeenCalled();
+
+    rerender(
+      <MenuPicker options={options} selectedValue="low" onValueChange={onValueChange} testID="effort-picker" />,
+    );
+    expect(lastMenuProps().expanded).toBe(false);
+  });
+
   it("shows the placeholder when the selected value has no option", () => {
     const { rerender } = render(
       <MenuPicker options={options} selectedValue="missing" onValueChange={jest.fn()} testID="effort-picker" />,

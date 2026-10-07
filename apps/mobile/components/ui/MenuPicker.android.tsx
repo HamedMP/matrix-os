@@ -27,9 +27,15 @@ export function MenuPicker({
 }: MenuPickerProps) {
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = useState(false);
+  // A menu left open when the picker is disabled would still offer its items,
+  // and would reopen by itself once the picker is enabled again.
+  if (expanded && !enabled) setExpanded(false);
+  const menuOpen = expanded && enabled;
   const selectedLabel = options.find((option) => option.value === selectedValue)?.label ?? placeholder;
 
   function handleSelect(value: string) {
+    // The native menu can still deliver a tap that began before it closed.
+    if (!enabled) return;
     setExpanded(false);
     onValueChange(value);
   }
@@ -37,7 +43,7 @@ export function MenuPicker({
   return (
     <Host matchContents>
       <DropdownMenu
-        expanded={expanded}
+        expanded={menuOpen}
         onDismissRequest={() => setExpanded(false)}
         color={theme.v2.appColors.surface}
       >
@@ -47,7 +53,7 @@ export function MenuPicker({
               accessibilityRole="button"
               accessibilityLabel={accessibilityLabel}
               accessibilityValue={{ text: selectedLabel }}
-              accessibilityState={{ disabled: !enabled, expanded }}
+              accessibilityState={{ disabled: !enabled, expanded: menuOpen }}
               disabled={!enabled}
               onPress={() => setExpanded(true)}
               style={({ pressed }) => [styles.trigger, (pressed || !enabled) && styles.triggerDimmed]}
