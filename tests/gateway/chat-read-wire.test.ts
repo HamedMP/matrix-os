@@ -7,14 +7,14 @@ import { registerCanonicalChatEventHttpRoute } from "../../packages/gateway/src/
 
 const stamp = "2026-09-16T00:00:00.000Z";
 const record = { chat: { id: "chat_wire", ownerScope: { type: "personal", ownerId: "owner" }, title: "Wire",
-  lifecycle: "active", attention: "none", revision: 0, messageCount: 0, createdAt: stamp, updatedAt: stamp, titleVersion: 2, activityAt: stamp },
+  lifecycle: "active", attention: "none", revision: 0, messageCount: 0, createdAt: stamp, updatedAt: stamp, titleVersion: 2, activityAt: stamp, conversationKind: "voice" },
   readState: { unread: true, markedUnread: true, version: 1, readThroughSeq: 0, latestIncomingSeq: 0 } };
 // Freeze the released field set rather than inheriting new keys.
 const fields = CanonicalChatRecordSchema.shape;
-const legacy = z.object({ chat: fields.chat.omit({ titleVersion: true, activityAt: true }), projectId: fields.projectId, providerBinding: fields.providerBinding, activeRun: fields.activeRun, latestSuccessfulCompletion: fields.latestSuccessfulCompletion }).strict();
+const legacy = z.object({ chat: fields.chat.omit({ titleVersion: true, activityAt: true, conversationKind: true }), projectId: fields.projectId, providerBinding: fields.providerBinding, activeRun: fields.activeRun, latestSuccessfulCompletion: fields.latestSuccessfulCompletion }).strict();
 const detail = { record, messages: [], turns: [], runs: [], activities: [] };
 
-it.each([undefined, "0", "1"].flatMap(version => ["0", "1"].map(metadata => ({ version, metadata }))))("negotiates read state and metadata for HTTP ($version/$metadata)", async ({ version, metadata }) => {
+it.each([undefined, "0", "1"].flatMap(version => ["0", "1", "2"].map(metadata => ({ version, metadata }))))("negotiates read state and metadata for HTTP ($version/$metadata)", async ({ version, metadata }) => {
   const app = createCanonicalChatRoutes({ getPrincipal: () => ({ userId: "owner", source: "jwt" }),
     service: { list: async () => ({ items: [record] }), getDetail: async () => detail,
       create: async () => record, updateTitle: async () => record } as unknown as CanonicalChatRouteService });
@@ -31,13 +31,14 @@ it.each([undefined, "0", "1"].flatMap(version => ["0", "1"].map(metadata => ({ v
   for (const value of responses) {
     if (version === "1") expect(value.readState).toEqual(record.readState);
     else expect(value.readState).toBeUndefined();
-    expect(value.chat.titleVersion).toBe(metadata === "1" ? 2 : undefined);
+    expect(value.chat.titleVersion).toBe(metadata !== "0" ? 2 : undefined);
+    expect(value.chat.conversationKind).toBe(metadata === "2" ? "voice" : undefined);
     if (metadata === "0" && version !== "1") expect(legacy.safeParse(value).success).toBe(true);
   }
   expect(record.readState.markedUnread).toBe(true);
 });
 
-it.each([undefined, "0", "1"].flatMap(version => ["0", "1"].map(metadata => ({ version, metadata }))))("negotiates read state and metadata for SSE ($version/$metadata)", async ({ version, metadata }) => {
+it.each([undefined, "0", "1"].flatMap(version => ["0", "1", "2"].map(metadata => ({ version, metadata }))))("negotiates read state and metadata for SSE ($version/$metadata)", async ({ version, metadata }) => {
   const app = new Hono();
   registerCanonicalChatEventHttpRoute({ app, getPrincipal: () => ({ userId: "owner", source: "jwt" }),
     stream: { open: async ({ sink }) => {
@@ -52,7 +53,8 @@ it.each([undefined, "0", "1"].flatMap(version => ["0", "1"].map(metadata => ({ v
     const frame = JSON.parse(new TextDecoder().decode((await reader.read()).value).split("data: ")[1]!.trim());
     if (version === "1") expect(frame.content.record.readState).toEqual(record.readState);
     else expect(frame.content.record.readState).toBeUndefined();
-    expect(frame.content.record.chat.titleVersion).toBe(metadata === "1" ? 2 : undefined);
+    expect(frame.content.record.chat.titleVersion).toBe(metadata !== "0" ? 2 : undefined);
+    expect(frame.content.record.chat.conversationKind).toBe(metadata === "2" ? "voice" : undefined);
     if (metadata === "0" && version !== "1") expect(legacy.safeParse(frame.content.record).success).toBe(true);
   } finally { await reader.cancel(); }
 });

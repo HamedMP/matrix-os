@@ -7,12 +7,26 @@ function setup() {
   const delegate = vi.fn(async () => ({ outcome: "sent", runId: "run_real", revision: 2, canonicalTurnId: "cturn_real" }));
   const reply = vi.fn();
   const update = vi.fn();
-  const port = { journal, delegate, search: vi.fn(async () => []), restore: vi.fn(async () => []), status: vi.fn(async () => ({ state: "running" })) };
+  const finish = vi.fn(async () => undefined);
+  const port = { finish, journal, delegate, search: vi.fn(async () => []), restore: vi.fn(async () => []), status: vi.fn(async () => ({ state: "running" })) };
   const live = createLiveCompanion({ port, emit: f => frames.push(f), reply, restoreContext: update, id: p => `${p}_${frames.length}`, chatId: "chat_real" });
-  return { live, frames, journal, delegate, reply, update };
+  return { live, frames, journal, delegate, reply, update, finish };
 }
 
 describe("native live companion", () => {
+  it("finishes conversation metadata after committed transcript on close", async () => {
+    const s = setup(); await s.live.input("vturn_topic", "Research Lisbon travel", true);
+    await s.live.close(); await s.live.close();
+    expect(s.finish).toHaveBeenCalledOnce();
+    expect(s.journal.mock.invocationCallOrder[0]).toBeLessThan(s.finish.mock.invocationCallOrder[0]!);
+  });
+  it("still closes capture when optional title finalization fails", async () => {
+    const s = setup(); s.finish.mockRejectedValueOnce(new Error("title storage unavailable"));
+    await s.live.input("vturn_topic", "Research Lisbon", true);
+    await expect(s.live.close()).resolves.toBeUndefined();
+    await s.live.input("vturn_late", "More speech", true);
+    expect(s.journal).toHaveBeenCalledTimes(1);
+  });
   it("retains unfinished speech across provider completion and journals only the completed correction", async () => {
     const s = setup();
     await s.live.input("vturn_one", "Build a tracker");

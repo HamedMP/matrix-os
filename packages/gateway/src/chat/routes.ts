@@ -101,6 +101,7 @@ const CHAT_UPDATE_BODY_LIMIT = 4 * 1024;
 const CHAT_ACKNOWLEDGEMENT_BODY_LIMIT = 4 * 1024;
 
 const ChatListQuerySchema = z.object({
+  conversationKind: z.enum(["chat", "voice", "all"]).default("chat"),
   unread: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   lifecycle: z.enum(["active", "archived"]).optional(),
@@ -112,6 +113,7 @@ const ChatListQuerySchema = z.object({
 });
 
 const ChatSearchQuerySchema = z.object({
+  conversationKind: z.enum(["chat", "voice", "all"]).default("chat"),
   query: z.string().trim().min(1).max(200),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   projectId: CanonicalCreateChatRequestSchema.shape.projectId.optional(),
@@ -160,6 +162,7 @@ export interface CanonicalChatRouteService {
   ): Promise<CanonicalChatRecord>;
   delete(owner: ChatOwner, chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   list(owner: ChatOwner, input: {
+    conversationKind?: "chat" | "voice" | "all";
     unreadOnly?: boolean;
     limit: number;
     lifecycle?: "active" | "archived";
@@ -167,6 +170,7 @@ export interface CanonicalChatRouteService {
     cursor?: string;
   }): Promise<CanonicalChatListResponse>;
   search(owner: ChatOwner, input: {
+    conversationKind?: "chat" | "voice" | "all";
     query: string;
     limit: number;
     projectId?: string | null;
@@ -339,7 +343,7 @@ export function createCanonicalChatRoutes(options: {
     if (!fundingVersion.success || (context.req.queries("fundingVersion")?.length ?? 0) > 1) return validationError(context);
     await next();
     context.header("Vary", "X-Matrix-Chat-Metadata", { append: true });
-    if ((metadataVersion.data === "0" || fundingVersion.data === "0" || runVersion.data === "0") && context.res.headers.get("content-type")?.includes("application/json")) {
+    if ((metadataVersion.data !== "2" || fundingVersion.data === "0" || runVersion.data === "0") && context.res.headers.get("content-type")?.includes("application/json")) {
       const payload = projectChatRunResponse(projectChatFundingErrors(projectChatMetadata(await context.res.json(), metadataVersion.data), fundingVersion.data), runVersion.data);
       const headers = new Headers(context.res.headers);
       headers.delete("content-length");
@@ -386,6 +390,7 @@ export function createCanonicalChatRoutes(options: {
   routes.get("/api/chats", async (context) => {
     try {
       const parsed = ChatListQuerySchema.safeParse({
+        conversationKind: context.req.query("conversationKind"),
         unread: context.req.query("unread"),
         limit: context.req.query("limit"),
         lifecycle: context.req.query("lifecycle"),
@@ -399,6 +404,7 @@ export function createCanonicalChatRoutes(options: {
         {
           ...(parsed.data.unread === undefined ? {} : { unreadOnly: parsed.data.unread === "true" }),
           limit: parsed.data.limit,
+          conversationKind: parsed.data.conversationKind,
           ...(parsed.data.lifecycle === undefined ? {} : { lifecycle: parsed.data.lifecycle }),
           ...(parsed.data.scope === "global"
             ? { projectId: null }
@@ -415,6 +421,7 @@ export function createCanonicalChatRoutes(options: {
   routes.get("/api/chats/search", async (context) => {
     try {
       const parsed = ChatSearchQuerySchema.safeParse({
+        conversationKind: context.req.query("conversationKind"),
         query: context.req.query("query"),
         limit: context.req.query("limit"),
         projectId: context.req.query("projectId"),
@@ -425,6 +432,7 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(options.getPrincipal(context)),
         {
           query: parsed.data.query,
+          conversationKind: parsed.data.conversationKind,
           limit: parsed.data.limit,
           ...(parsed.data.scope === "global"
             ? { projectId: null }

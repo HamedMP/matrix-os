@@ -159,6 +159,18 @@ function acknowledge(
 }
 
 describe("canonical Chat routes", () => {
+  it("accepts explicit voice/all history scopes and rejects invalid scopes", async () => {
+    const service = routeService(); const app = appFor(service);
+    for (const conversationKind of ["voice", "all"] as const) {
+      expect((await app.request(`/api/chats?conversationKind=${conversationKind}`)).status).toBe(200);
+      expect(service.list).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ conversationKind }));
+      expect((await app.request(`/api/chats/search?query=launch&conversationKind=${conversationKind}`)).status).toBe(200);
+      expect(service.search).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ conversationKind }));
+    }
+    expect((await app.request("/api/chats?conversationKind=untrusted")).status).toBe(400);
+    expect((await app.request("/api/chats/search?query=launch&conversationKind=untrusted")).status).toBe(400);
+  });
+
   it("derives personal ownership and creates a Chat through the shared service", async () => {
     const create = vi.fn(async (_owner: ChatOwner, _input: CanonicalCreateChatRequest) => record);
     const service = routeService({ create });
@@ -602,7 +614,7 @@ describe("canonical Chat routes", () => {
     expect(await response.json()).toEqual(page);
     expect(list).toHaveBeenCalledWith(
       { type: "personal", ownerId: "owner_1" },
-      { limit: 25, lifecycle: "active", projectId: "project_1", cursor: "chatcur_prev" },
+      { conversationKind: "chat", limit: 25, lifecycle: "active", projectId: "project_1", cursor: "chatcur_prev" },
     );
   });
 
@@ -615,7 +627,7 @@ describe("canonical Chat routes", () => {
     expect(response.status).toBe(200);
     expect(list).toHaveBeenCalledWith(
       { type: "personal", ownerId: "owner_1" },
-      { limit: 50, projectId: null },
+      { conversationKind: "chat", limit: 50, projectId: null },
     );
   });
 
@@ -630,7 +642,7 @@ describe("canonical Chat routes", () => {
     expect(response.status).toBe(200);
     expect(search).toHaveBeenCalledWith(
       { type: "personal", ownerId: "owner_1" },
-      { query: "release plan", limit: 10, projectId: "project_1" },
+      { conversationKind: "chat", query: "release plan", limit: 10, projectId: "project_1" },
     );
   });
 

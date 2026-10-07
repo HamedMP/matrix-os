@@ -28,7 +28,7 @@ export type VoiceExecutionPolicy = NonNullable<CanonicalChatRunPolicy["execution
 /** Trusted canonical catalog/policy/readiness intersection, never a media-adapter authority. */
 export interface VoiceCanonicalDecision {
   capability: VoiceCapability;
-  selection: CanonicalChatModelSelection;
+  selection: CanonicalChatModelSelection | undefined;
   interactionMode: string;
   permissionMode: string;
   executionPolicy: VoiceExecutionPolicy;

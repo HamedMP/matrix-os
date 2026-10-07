@@ -142,7 +142,7 @@ export interface VoiceSessionRecord {
   turnMode: VoiceTurnMode;
   memoryMode: VoiceMemoryMode;
   executionPolicy?: VoiceExecutionPolicy;
-  selection: CanonicalChatModelSelection;
+  selection: CanonicalChatModelSelection | undefined;
   interactionMode: string;
   permissionMode: string;
   locale?: string;
@@ -189,7 +189,7 @@ export interface VoiceSessionRecord {
 }
 
 export interface VoiceSessionHost {
-  readonly liveHistory?: (input: { principalId: string; chatId: string; principalSource: import("../request-principal.js").PrincipalSource; selection: import("@matrix-os/contracts").CanonicalChatModelSelection }) => import("../live-companion/coordinator.js").LiveCompanionPort;
+  readonly liveHistory?: (input: { principalId: string; chatId: string; principalSource: import("../request-principal.js").PrincipalSource; selection: import("@matrix-os/contracts").CanonicalChatModelSelection | undefined }) => import("../live-companion/coordinator.js").LiveCompanionPort;
   readonly limits: VoiceSessionLimits;
   readonly clock: VoiceClock;
   readonly admission: VoiceAdmissionPort;

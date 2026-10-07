@@ -1,3 +1,4 @@
+import { nativeCompanionCanonicalDecision } from "../live-companion/canonical-decision.js";
 import { registerNativeCompanion } from "../live-companion/registration.js";
 import { createFundedNativeLiveAccess } from "../live-companion/funded-readiness.js";
 import { createCanonicalLivePort } from "../live-companion/task-broker.js";
@@ -69,6 +70,12 @@ export function registerCanonicalVoice(options: {
     const voicePlatformSpeechClient = createVoiceSessionPlatformSpeechClient(process.env);
     const native = registerNativeCompanion({ registry: voiceAdapters, connection: options.geminiLiveConnection, env: process.env,
       funded: process.env.NODE_ENV === "production" && process.env.MATRIX_AOEDE_NATIVE_LIVE === "1" ? createFundedNativeLiveAccess(process.env) : undefined });
+    const nativeConversationOnly = native.requested && native.available;
+    const resolveVoiceDecision = async (input: { selection: CanonicalChatModelSelection | undefined;
+      catalog?: CanonicalProviderCatalog; surface?: string }) => nativeConversationOnly
+      ? nativeCompanionCanonicalDecision(input)
+      : input.catalog ? canonicalVoiceDecision({ ...input, catalog: input.catalog,
+        qualifiedPolicy: await qualifiedCanonicalPolicyFor(input.selection, input.catalog) }) : undefined;
     const voiceAdapterRegistration = native.requested ? { adapterId: native.available ? "gemini_live" : null, synthesisSource: undefined } : registerVoiceSessionMediaAdapters({
       registry: voiceAdapters,
       env: process.env,
@@ -162,12 +169,11 @@ export function registerCanonicalVoice(options: {
       canonicalDecision: async ({ principal, chatId, surface }) => {
         const owner = { type: "personal" as const, ownerId: principal.userId };
         const selection = (await chatRepository!.get(owner, chatId))?.chat.currentSelection;
-        if (!selection) return undefined;
-        const catalog = await voiceReadinessCatalog.getCatalog(principal, selection.instanceId);
-        return canonicalVoiceDecision({
+        if (!nativeConversationOnly && !selection) return undefined;
+        const catalog = nativeConversationOnly ? undefined : await voiceReadinessCatalog.getCatalog(principal, selection?.instanceId);
+        return resolveVoiceDecision({
           selection,
           catalog,
-          qualifiedPolicy: await qualifiedCanonicalPolicyFor(selection, catalog),
           ...(surface !== undefined ? { surface } : {}),
         });
       },
@@ -201,6 +207,7 @@ export function registerCanonicalVoice(options: {
       try {
         aoedeBootstrapService = new AoedeBootstrapService({
           repository: aoedeBindings,
+          nativeConversationOnly,
           catalog: voiceReadinessCatalog,
           runtimeIdentity: { machineId: aoedeMachineId, runtimeSlot: aoedeRuntimeSlot },
           resolveProject: async (principal, projectId) => {
@@ -220,11 +227,10 @@ export function registerCanonicalVoice(options: {
               speechCapability ?? await voiceCapabilities.capabilities({
                 principalId: principal.userId, chatId: "aoede_bootstrap", surface,
               }),
-              canonicalVoiceDecision({
+              await resolveVoiceDecision({
                 selection,
                 catalog,
                 surface,
-                qualifiedPolicy: await qualifiedCanonicalPolicyFor(selection, catalog),
               }),
             ),
           }),

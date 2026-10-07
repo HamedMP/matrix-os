@@ -112,6 +112,20 @@ async function createViaHttp(app: Hono, overrides: Record<string, unknown> = {})
 describe("voice capabilities route", () => {
   beforeEach(() => resetFrameSeq());
 
+  it("creates native conversation without a task subscription and still fails closed on speech funding", async () => {
+    const rig = makeRig();
+    Object.assign(rig.adapter.capabilities, { conversationMode: "native_live" });
+    const decision = { ...DECISION, selection: undefined };
+    const { app } = makeRoutes({ rig, canonicalDecision: () => decision });
+    const created = await createViaHttp(app, { selection: undefined });
+    expect(created.res.status).toBe(201);
+    expect(created.body).toMatchObject({ outcome: "created" });
+    const blocked = makeRoutes({ canonicalDecision: () => decision,
+      capabilities: { capabilities: () => ({ ...CAPABILITY, status: "unavailable", reason: "provider_unavailable", transportModes: [], turnModes: [] }) } });
+    expect((await createViaHttp(blocked.app, { selection: undefined })).res.status).toBe(503);
+    expect((await createViaHttp(app, { selection: { instanceId: "client_invented", model: "fake" } })).res.status).toBe(409);
+  });
+
   it("overlaps cold canonical and speech probes for capabilities, create and reconnect", async () => {
     const { vi } = await import("vitest");
     vi.useFakeTimers();

@@ -55,7 +55,7 @@ export interface VoiceSessionDevice {
 
 export interface VoiceSessionRequestDefaults {
   turnMode: VoiceTurnMode;
-  selection: CanonicalChatModelSelection;
+  selection: CanonicalChatModelSelection | undefined;
   interactionMode: string;
   permissionMode: string;
   memoryMode?: "ordinary" | "session_only";
