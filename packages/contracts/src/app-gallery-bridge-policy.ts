@@ -12,6 +12,8 @@ export const APP_GALLERY_STARTER_IDENTITIES = [
   "reading-library", "people", "files", "notes", "habits", "focus",
   "cashflow", "revenue", "pipeline", "projects", "meeting-briefs", "support",
   "hiring", "company-spend", "releases", "knowledge", "campaigns", "analytics",
+  "workout-coach", "paycheck-runway", "meal-planner", "job-search",
+  "study-notes", "journal-memory", "chess-coach",
 ] as const;
 export function isAppGalleryIdentity(identity: string, routeSlug = identity): boolean {
   return identity === "app-gallery" && routeSlug === "app-gallery";

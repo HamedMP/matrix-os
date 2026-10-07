@@ -1,0 +1,84 @@
+/* The gallery's visual family, shared by the OS apps without changing their workflows. */
+:root:root:root {
+  --gallery-ink: #202338;
+  --gallery-porcelain: #ffffff;
+  --gallery-mist: #e9effb;
+  --gallery-blush: #f5e9ed;
+  --gallery-indigo: #5954bd;
+  --gallery-mint: #e4f0e9;
+  --app-bg: var(--matrix-bg, var(--gallery-mist));
+  --app-fg: var(--matrix-fg, var(--gallery-ink));
+  --app-card: var(--matrix-card, var(--gallery-porcelain));
+  --app-muted: var(--matrix-muted, #eff0f8);
+  --app-muted-fg: var(--matrix-muted-fg, #64687d);
+  --app-border: var(--matrix-border, #dedfeb);
+  --app-primary: var(--matrix-primary, var(--gallery-indigo));
+  --app-primary-fg: var(--matrix-primary-fg, #fff);
+  --app-accent: var(--matrix-accent, var(--gallery-indigo));
+  --app-radius: var(--matrix-radius, 26px);
+  --background: var(--app-bg);
+  --foreground: var(--app-fg);
+  --card: var(--app-card);
+  --card-soft: var(--app-muted);
+  --muted: var(--app-muted-fg);
+  --border: var(--app-border);
+  --accent: var(--app-accent);
+  --shadow: 0 3px 10px rgba(45, 41, 80, .05);
+  --shadow-lg: 0 14px 38px rgba(45, 41, 80, .08);
+}
+body { background: radial-gradient(ellipse at 100% 0%, var(--gallery-blush), transparent 68%), var(--app-bg); }
+.calc-app, .clock-app, .default-app, .expense-app, .todo-app, .task-app, .notes-app, .weather-app { background: transparent; }
+.calc-pad, .calc-history, .timer-card, .zone-row, .alarm-row, .focus-clock {
+  border-radius: var(--app-radius);
+  background: var(--app-card);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--app-border);
+}
+.calc-history { padding: 22px; }
+.zone-list, .alarm-list { gap: 12px; }
+.zone-row, .alarm-row { padding: 20px; }
+.brand-mark {
+  border-radius: 13px;
+  color: var(--app-primary-fg);
+  background: var(--app-accent);
+  border: 1px solid color-mix(in srgb, var(--app-accent) 80%, white);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, .35), 0 4px 8px rgba(64, 55, 140, .12);
+}
+.tabs, .focus-presets { border-radius: 999px; padding: 5px; background: color-mix(in srgb, var(--app-card) 70%, transparent); }
+.tab, .focus-presets button, .toggle, .chip { border-radius: 999px; }
+h1 { letter-spacing: -.045em; }
+@media (max-width: 720px) {
+  .calc-history { padding: 20px; }
+  .zone-row, .alarm-row { padding: 16px; }
+}
+@media (prefers-color-scheme: dark) {
+  :root:root:root {
+    --gallery-blush: #302538;
+    --app-bg: var(--matrix-bg, #1d2234);
+    --app-fg: var(--matrix-fg, #f2f1f8);
+    --app-card: var(--matrix-card, #292d43);
+    --app-muted: var(--matrix-muted, #33364e);
+    --app-muted-fg: var(--matrix-muted-fg, #bbbace);
+    --app-border: var(--matrix-border, #42455e);
+    --app-primary: var(--matrix-primary, #aaa6f0);
+    --app-primary-fg: var(--matrix-primary-fg, #202338);
+    --app-accent: var(--matrix-accent, #aaa6f0);
+  }
+}
+
+/* Keep the app's identity across host themes, with neutral readable content surfaces. */
+:root:root:root[data-app] {
+ --app-primary:var(--identity-accent); --app-primary-fg:var(--identity-on-accent);
+ --app-accent:var(--identity-accent); --accent:var(--identity-accent);
+ --app-text-accent:color-mix(in srgb,var(--app-fg) 85%,var(--identity-accent));
+ --app-bg:var(--matrix-bg,var(--identity-wash)); --background:var(--app-bg);
+ --gallery-blush:color-mix(in srgb,var(--app-bg) 82%,var(--identity-glow));
+}
+:root[data-app] body { background:radial-gradient(ellipse at 100% 0%,var(--gallery-blush),transparent 68%),var(--app-bg); }
+:root[data-app] .brand-mark { color:var(--identity-on-accent); }
+:root[data-app] .tab.active,:root[data-app] .focus-presets button.active,:root[data-app] .nav-item--active,:root[data-app] .key--op { color:var(--app-text-accent); }
+@media(prefers-color-scheme:dark) {
+ :root:root:root[data-app] { --app-bg:var(--matrix-bg,#1d2234); }
+}
+
+:root[data-app] .button--primary,:root[data-app] .primary-btn,:root[data-app] .exp-primary,:root[data-app] .focus-start,:root[data-app] .key--equals,:root[data-app] .primary-action { color:var(--identity-on-accent); }

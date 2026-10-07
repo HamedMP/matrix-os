@@ -10,6 +10,12 @@ describe("curated gallery release packaging", () => {
     expect(build).toBeGreaterThan(-1);
     expect(build).toBeLessThan(script.indexOf("generateTemplateManifest"));
   });
+  it("installs the portable starter's pinned dependencies before building its runtime", async () => {
+    const script = await readFile("scripts/build-app-gallery-template.mjs", "utf8");
+    const install = script.indexOf('await run("pnpm", ["install", "--frozen-lockfile"])');
+    expect(install).toBeGreaterThan(-1);
+    expect(install).toBeLessThan(script.indexOf('await run(process.execPath, [vite, "build"])'));
+  });
   it("resolves every curated icon to an actual shipped file", async () => {
     for (const icon of ["app-gallery", ...catalog.apps.map(app => app.icon)]) {
       const url = iconUrlForSlug(icon);

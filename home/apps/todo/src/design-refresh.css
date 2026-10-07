@@ -1,0 +1,23 @@
+@import "../../_shared/app-foundation.css";
+
+
+/* A task list, with the capture field close to the work. */
+:root { --app-bg: var(--matrix-bg, #fbfcfe); --app-fg: var(--matrix-fg, #1c2737); --app-muted: var(--matrix-muted, #edf1f7); --app-border: var(--matrix-border, #e0e5ed); --app-accent: var(--matrix-accent, #315bb4); --shadow-soft: none; }
+.todo-app, .content { height: 100dvh; }
+.todo-app { grid-template-columns: 210px minmax(0, 1fr); }
+.sidebar { background: var(--app-bg); padding: 24px 12px; gap: 24px; }
+.brand-mark { border-radius: 8px; box-shadow: none; }
+.nav-item { min-height: 44px; border-radius: 8px; }
+.nav-item--active { background: var(--app-muted); color: var(--app-accent); box-shadow: none; }
+.nav-heading { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.content { padding: 32px clamp(20px, 5vw, 72px); max-width: 1100px; }
+.content-head h1 { font-size: 38px; font-weight: 650; letter-spacing: -.055em; }
+.capture { border-radius: 10px; box-shadow: none; min-height: 54px; background: var(--app-muted); border: 1px solid transparent; }
+.capture-input { font-size: 16px; }
+.task-row { min-height: 76px; border-radius: 0; border-bottom: 1px solid var(--app-border); background: transparent; box-shadow: none; padding: 12px 0; }
+.task-title { font-size: 16px; line-height: 1.45; }
+.check, .flag, .row-delete, .inspector-close { min-width: 44px; min-height: 44px; }
+.row-delete, .flag { opacity: 1; }
+.inspector { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+.inspector input, .inspector select { font-size: 16px; min-height: 44px; }
+@media (max-width: 760px) { .todo-app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .sidebar { padding: max(10px, env(safe-area-inset-top)) 16px 8px; gap: 8px; max-height: 180px; border-right: 0; border-bottom: 1px solid var(--app-border); } .brand { padding: 0; } .nav-group { display: flex; flex-direction: row; overflow-x: auto; flex-shrink: 0; } .nav-item { flex-shrink: 0; } .nav-heading { display: none; } .content { height: auto; min-height: 0; padding: 24px 16px max(20px, env(safe-area-inset-bottom)); } .content-head h1 { font-size: 32px; } .task-row { gap: 4px; } .inspector { width: 100%; max-height: 80dvh; } }
