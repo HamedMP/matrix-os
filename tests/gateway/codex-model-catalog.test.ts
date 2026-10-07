@@ -63,9 +63,11 @@ describe("Codex model catalog projection", () => {
     vi.useFakeTimers();
     const children: Array<ReturnType<typeof makeChild>> = [];
     function makeChild() {
-      return Object.assign(new EventEmitter(), {
-        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(),
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+        kill: vi.fn(() => { queueMicrotask(() => child.emit("close", 0, null)); return true; }),
       });
+      return child;
     }
     const spawnProcess = vi.fn(() => {
       const child = makeChild(); children.push(child);
@@ -82,7 +84,7 @@ describe("Codex model catalog projection", () => {
       return child as never;
     });
     try {
-      const source = createCodexModelCatalogSource({ executable: "codex", cwd: "/home/owner", spawnProcess, cacheTtlMs: 1 });
+      const source = createCodexModelCatalogSource({ executable: "codex", cwd: "/home/owner", spawnProcess, cacheTtlMs: 1, maxAttempts: 1 });
       const slow = source({ id: "codex", kind: "codex", availability: "available" } as never)
         .then(value => ({ value }), error => ({ error }));
       await vi.advanceTimersByTimeAsync(8_000);
