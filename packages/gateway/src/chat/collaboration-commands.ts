@@ -488,7 +488,14 @@ async function authorizeCommand(
   }
   let role: "owner" | "editor";
   if (authority) {
-    role = await fenceSharedChatAuthority(trx, scope, authority, identity.actorId, "control_execution");
+    role = await fenceSharedChatAuthority(
+      trx,
+      scope,
+      authority,
+      identity.actorId,
+      "control_execution",
+      now,
+    );
   } else {
     if (scope.membership_mode !== "direct") throw new CollaborationChatCommandError("unavailable");
     const member = await trx.selectFrom("collaboration_members").selectAll()

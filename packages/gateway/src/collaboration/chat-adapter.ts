@@ -72,7 +72,7 @@ export class CollaborationChatAdapter {
     const payloadHash = createHash("sha256").update(JSON.stringify(request)).digest("hex");
     const result = await this.options.db.transaction().execute(async (trx) => {
       const scope = await lockScope(trx, context);
-      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "discuss");
+      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "discuss", nowDate);
       if (Number(scope.revision) !== Number(request.expectedRevision)) {
         throw new CollaborationRepositoryError("conflict", "Scope authority changed");
       }
@@ -192,7 +192,7 @@ export class CollaborationChatAdapter {
     }
     const rows = await this.options.db.transaction().execute(async (trx) => {
       const scope = await lockScope(trx, current);
-      await fenceSharedChatAuthority(trx, scope, current, current.actorId, "read");
+      await fenceSharedChatAuthority(trx, scope, current, current.actorId, "read", this.now());
       return trx.selectFrom("chat_messages")
         .selectAll()
         .where("chat_id", "=", current.resourceId)
@@ -239,7 +239,7 @@ export class CollaborationChatAdapter {
     }
     const { rows, latestSequence } = await this.options.db.transaction().execute(async (trx) => {
       const scope = await lockScope(trx, current);
-      await fenceSharedChatAuthority(trx, scope, current, current.actorId, "read");
+      await fenceSharedChatAuthority(trx, scope, current, current.actorId, "read", this.now());
       const [rows, latest] = await Promise.all([
         trx.selectFrom("chat_messages")
           .selectAll()
@@ -293,7 +293,7 @@ export class CollaborationChatAdapter {
     }
     const chat = await this.options.db.transaction().execute(async (trx) => {
       const scope = await lockScope(trx, current);
-      await fenceSharedChatAuthority(trx, scope, current, current.actorId, "read");
+      await fenceSharedChatAuthority(trx, scope, current, current.actorId, "read", this.now());
       const chat = await trx.selectFrom("chats")
         .select(["id", "title", "lifecycle", "revision", "message_count", "last_message_preview", "collaboration"])
         .where("id", "=", current.resourceId)
@@ -319,7 +319,7 @@ export class CollaborationChatAdapter {
   async getUserState(context: AuthorizedCollaborationContext) {
     return this.options.db.transaction().execute(async (trx) => {
       const scope = await lockScope(trx, context);
-      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "read");
+      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "read", this.now());
       const row = await trx.selectFrom("chat_user_state")
         .select(["read_through_seq", "pinned", "muted", "last_opened_at"])
         .where("chat_id", "=", context.resourceId)
@@ -337,7 +337,7 @@ export class CollaborationChatAdapter {
   async getDiscussionUserState(context: AuthorizedCollaborationContext) {
     return this.options.db.transaction().execute(async (trx) => {
       const scope = await lockScope(trx, context);
-      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "read");
+      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "read", this.now());
       const row = await trx.selectFrom("collaboration_discussion_user_state")
         .select(["read_through_seq", "last_opened_at"])
         .where("scope_id", "=", context.scopeId)
@@ -353,10 +353,11 @@ export class CollaborationChatAdapter {
   async updateDiscussionUserState(context: AuthorizedCollaborationContext, input: unknown) {
     const patch = CollaborationDiscussionUserStatePatchSchema.parse(input);
     const readThroughSeq = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(patch.readThroughSeq);
-    const now = this.now().toISOString();
+    const nowDate = this.now();
+    const now = nowDate.toISOString();
     return this.options.db.transaction().execute(async (trx) => {
       const scope = await lockScope(trx, context);
-      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "read");
+      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "read", nowDate);
       const chat = await trx.selectFrom("chats")
         .select("collaboration")
         .where("id", "=", context.resourceId)
@@ -404,10 +405,11 @@ export class CollaborationChatAdapter {
     const patch = CollaborationUserStatePatchSchema.parse(input);
     const readThroughSeq = patch.readThroughSeq === undefined ? undefined : z.coerce.number()
       .int().min(0).max(Number.MAX_SAFE_INTEGER).parse(patch.readThroughSeq);
-    const now = this.now().toISOString();
+    const nowDate = this.now();
+    const now = nowDate.toISOString();
     return this.options.db.transaction().execute(async (trx) => {
       const scope = await lockScope(trx, context);
-      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "read");
+      await fenceSharedChatAuthority(trx, scope, context, context.actorId, "read", nowDate);
       const chat = await trx.selectFrom("chats")
         .select(["message_count", "collaboration"])
         .where("id", "=", context.resourceId)
