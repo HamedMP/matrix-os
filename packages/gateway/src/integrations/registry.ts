@@ -295,7 +295,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
           method: "POST",
           url: "https://api.linear.app/graphql",
           mapBody: (p) => linearGraphqlBody(`
-            query MatrixLinearWorkflowStates($teamId: String!, $first: Int!) {
+            query MatrixLinearWorkflowStates($teamId: ID!, $first: Int!) {
               workflowStates(first: $first, filter: { team: { id: { eq: $teamId } } }) {
                 nodes { id name type color position team { id key name } }
               }
@@ -333,12 +333,12 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
             const variableDefs = ["$first: Int!", "$after: String"];
             const filters: string[] = [];
             if (teamId) {
-              variableDefs.push("$teamId: String!");
+              variableDefs.push("$teamId: ID!");
               filters.push("team: { id: { eq: $teamId } }");
               variables.teamId = teamId;
             }
             if (projectId) {
-              variableDefs.push("$projectId: String!");
+              variableDefs.push("$projectId: ID!");
               filters.push("project: { id: { eq: $projectId } }");
               variables.projectId = projectId;
             }
