@@ -6,6 +6,8 @@ import {
   CanonicalProviderCatalogSchema,
   FUNDED_AI_READINESS_TIMEOUTS,
   isChatgptPlanChatRoute,
+  isMatrixAnthropicChatRoute,
+  MATRIX_PI_ANTHROPIC_API_INSTANCE_ID,
   MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
@@ -172,7 +174,7 @@ export function useChatProviderState(
   }, []);
 
   const choices = catalog ? deriveCanonicalProviderChoices(catalog).filter(choice => catalog.instances.some(instance => instance.id === choice.instanceId && instance.supports.rootChat)
-    && (!unavailable || !isChatgptPlanChatRoute(choice))) : [];
+    && (!unavailable || !(isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)))) : [];
   const bindingKey = currentSelection
     ? `${currentSelection.instanceId}:${currentSelection.model}:${JSON.stringify(currentSelection.options ?? [])}`
     : "";
@@ -181,8 +183,10 @@ export function useChatProviderState(
       ? boundDraft.selection
       : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [] }
     : savedChoice;
-  const personalIntent = effectiveSaved.key.startsWith(`${MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID}:`)
-    ? { instanceId: MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, modelId: effectiveSaved.key.slice(MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID.length + 1) } : null;
+  const personalInstanceId = [MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID]
+    .find(instanceId => effectiveSaved.key.startsWith(`${instanceId}:`));
+  const personalIntent = personalInstanceId
+    ? { instanceId: personalInstanceId, modelId: effectiveSaved.key.slice(personalInstanceId.length + 1) } : null;
   const rememberedChoice = choices.find(choice => (!boundInstanceId || choice.instanceId === boundInstanceId) && choiceKey(choice) === effectiveSaved.key);
   const chatChoice = choices.find((choice) => (!boundInstanceId || choice.instanceId === boundInstanceId)
     && choiceKey(choice) === effectiveSaved.key)
@@ -220,7 +224,7 @@ export function useChatProviderState(
 
   const select = (choice: CanonicalProviderChoice) => {
     if (boundInstanceId && choice.instanceId !== boundInstanceId) return;
-    if (isChatgptPlanChatRoute(choice) && !choices.some(current => current.instanceId === choice.instanceId
+    if ((isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) && !choices.some(current => current.instanceId === choice.instanceId
       && current.modelId === choice.modelId
       && canonicalChatSubscriptionSelectionMatches(catalog?.instances.find(instance => instance.id === choice.instanceId), choice.selectedOptions))) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
@@ -228,7 +232,7 @@ export function useChatProviderState(
       key: choiceKey(choice),
       interactionMode: preserveControls ? selected.interactionMode : choice.interactionMode,
       permissionMode: preserveControls ? selected.permissionMode : choice.permissionMode,
-      options: preserveControls && !isChatgptPlanChatRoute(choice) ? selected.selectedOptions : choice.selectedOptions,
+      options: preserveControls && !(isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) ? selected.selectedOptions : choice.selectedOptions,
     });
   };
 

@@ -50,6 +50,7 @@ export function AgentsProvidersView({
   onSetupHarness,
   workflowClient,
   localChatgptClient,
+  matrixAnthropicClient,
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
 }: AgentsProvidersViewProps) {
@@ -189,6 +190,7 @@ export function AgentsProvidersView({
           onUseGateway={useGateway}
           subscriptions={<YourSubscriptions snapshot={snapshot} capabilities={workflowCapabilities} client={workflowClient}
             localChatgptClient={localChatgptClient} localChatgptRefreshRevision={localChatgptRefreshRevision}
+            matrixAnthropicClient={matrixAnthropicClient}
             operationIds={operationIds} workflowStatus={workflowStatus} forbidden={workflowPermission === "forbidden"}
             disabled={busy || gatewayPending || enablement.pending} onRefresh={refreshSettings}
             onOpen={(id, kind) => { setExpandedRowId(id); setExpandedRowKind(kind); setSubscriptionTarget(id); if (snapshot.harnesses.some(item => item.id === id)) onSelectHarness(id); }} />}

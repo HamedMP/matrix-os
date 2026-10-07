@@ -1,6 +1,6 @@
 import { ChatProviderLoadingIndicator } from "./chat-provider-loading-indicator.js";
 import React, { useId, useRef, useState, type ReactNode } from "react";
-import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
+import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -55,7 +55,7 @@ function FlatChatProviderChoices({ choices, selected, lockedInstanceId, onSelect
   const [query, setQuery] = useState("");
   const listId = useId();
   const list = useRef<HTMLDivElement>(null);
-  const visible = choices.filter(choice => choice.instanceId !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && !isLegacyMatrixSdkProvider({ id: choice.instanceId, driverKind: choice.driverKind })).filter((choice) => `${choice.modelLabel} ${choice.harnessLabel} ${choice.connectionLabel ?? ""} ${choice.modelId}`
+  const visible = choices.filter(choice => choice.instanceId !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && choice.instanceId !== MATRIX_PI_ANTHROPIC_API_INSTANCE_ID && !isLegacyMatrixSdkProvider({ id: choice.instanceId, driverKind: choice.driverKind })).filter((choice) => `${choice.modelLabel} ${choice.harnessLabel} ${choice.connectionLabel ?? ""} ${choice.modelId}`
     .toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const focusOption = (direction: number, current?: HTMLButtonElement) => {
     const options = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);

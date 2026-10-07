@@ -1,5 +1,5 @@
 import { AiCreditHistoryQuerySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryResponse } from "@matrix-os/contracts";
-import { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, ProviderWorkflowClientError, providerWorkflowTimeoutMs } from "@matrix-os/ui";
+import { createProviderWorkflowClient, createMatrixAnthropicConnectionClient, isProviderWorkflowAuthorizationUrl, ProviderWorkflowClientError, providerWorkflowTimeoutMs, type ProviderWorkflowRequest } from "@matrix-os/ui";
 import { AppError } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
@@ -7,8 +7,8 @@ import { invoke } from "../../lib/operator";
 const options = { maxBytes: 64 * 1024, timeoutMs: 15_000 };
 function unavailable(): Error { return new Error("Provider action is unavailable."); }
 
-export function createDesktopProviderWorkflowClient(api: ApiClient, isIdentityCurrent: () => boolean) {
-  return createProviderWorkflowClient(async input => {
+function scopedProviderRequest(api: ApiClient, isIdentityCurrent: () => boolean) {
+  return async (input: ProviderWorkflowRequest): Promise<unknown> => {
     if (!isIdentityCurrent() || input.signal.aborted) throw unavailable();
     const requestOptions = { ...options, timeoutMs: providerWorkflowTimeoutMs(input.method), signal: input.signal };
     let value: unknown;
@@ -25,7 +25,15 @@ export function createDesktopProviderWorkflowClient(api: ApiClient, isIdentityCu
     }
     if (!isIdentityCurrent() || input.signal.aborted) throw unavailable();
     return value;
-  });
+  };
+}
+
+export function createDesktopProviderWorkflowClient(api: ApiClient, isIdentityCurrent: () => boolean) {
+  return createProviderWorkflowClient(scopedProviderRequest(api, isIdentityCurrent));
+}
+
+export function createDesktopMatrixAnthropicClient(api: ApiClient, isIdentityCurrent: () => boolean) {
+  return createMatrixAnthropicConnectionClient(scopedProviderRequest(api, isIdentityCurrent));
 }
 
 export async function loadDesktopAiCreditHistory(input: {

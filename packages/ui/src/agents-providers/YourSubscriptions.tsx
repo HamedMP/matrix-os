@@ -6,12 +6,15 @@ import { managedConnectionCapability } from "./managed-connection-capability.js"
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability } from "./types.js";
 import { LocalChatgptSubscription } from "./LocalChatgptSubscription.js";
 import type { LocalChatgptPlanClient } from "./local-chatgpt-plan-client.js";
+import { MatrixAnthropicConnectionCard } from "./MatrixAnthropicConnectionCard.js";
+import type { MatrixAnthropicConnectionClient } from "./matrix-anthropic-connection-client.js";
 
 type Props = {
   snapshot: ProviderSettingsSnapshot;
   capabilities: readonly ProviderWorkflowUICapability[];
   client?: ProviderWorkflowClient;
   localChatgptClient?: LocalChatgptPlanClient;
+  matrixAnthropicClient?: MatrixAnthropicConnectionClient;
   localChatgptRefreshRevision?: number;
   operationIds: Readonly<Record<string, string>>;
   workflowStatus: Readonly<Record<string, string>>;
@@ -21,17 +24,21 @@ type Props = {
   onRefresh: () => void;
 };
 
-/** Personal ChatGPT connection plus supported Codex fallback; native Claude stays in its own card. */
-export function YourSubscriptions({snapshot, capabilities, client, localChatgptClient, localChatgptRefreshRevision, operationIds, workflowStatus, forbidden, disabled, onOpen, onRefresh}: Props) {
-  return <section className="matrix-ap-subscriptions" aria-label="Your subscriptions">
-    <h3>Your subscriptions</h3>
-    <p className="matrix-ap-help">Connect your accounts on this Computer. Subscription usage is separate from Matrix AI credit.</p>
+/** Personal Matrix connections retain their own payment and execution authority. */
+export function YourSubscriptions({snapshot, capabilities, client, localChatgptClient, matrixAnthropicClient, localChatgptRefreshRevision, operationIds, workflowStatus, forbidden, disabled, onOpen, onRefresh}: Props) {
+  const title = matrixAnthropicClient ? "Your connections" : "Your subscriptions";
+  return <section className="matrix-ap-subscriptions" aria-label={title}>
+    <h3>{title}</h3>
+    <p className="matrix-ap-help">{matrixAnthropicClient ? "Connect ChatGPT or add a Claude API key for chats and Matrix Bots."
+      : "Connect your accounts on this Computer. Subscription usage is separate from Matrix AI credit."}</p>
     <div className="matrix-ap-subscription-list">
       <LocalChatgptSubscription client={localChatgptClient} refreshRevision={localChatgptRefreshRevision} disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/>
+      {matrixAnthropicClient ? <MatrixAnthropicConnectionCard client={matrixAnthropicClient} initialStatus={snapshot.matrixAnthropicConnection ?? null} refreshRevision={localChatgptRefreshRevision}
+        disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/> : null}
       {(["codex"] as const).flatMap(kind => {
         // Native Codex key/account shortcuts remain a separate route. Never
         // substitute that account for an explicit local subscription connection.
-        if (localChatgptClient) return [];
+        if (localChatgptClient || matrixAnthropicClient) return [];
         const saved = snapshot.harnesses.filter(item => item.harness === kind);
         const inventory = saved.length ? [] : capabilities.filter(item => item.harness === kind);
         const targets = [...saved.map(harness => ({id: harness.id, harness, capability: capabilities.find(item => item.harnessInstanceId === harness.id)})),
@@ -81,6 +88,6 @@ export function YourSubscriptions({snapshot, capabilities, client, localChatgptC
         });
       })}
     </div>
-    {!forbidden && snapshot.access.mode !== "read_only" ? <button type="button" className="matrix-ap-link-button" disabled={disabled} onClick={onRefresh}>Check subscription connections</button> : null}
+    {!forbidden && snapshot.access.mode !== "read_only" ? <button type="button" className="matrix-ap-link-button" disabled={disabled} onClick={onRefresh}>{matrixAnthropicClient ? "Check connections" : "Check subscription connections"}</button> : null}
   </section>;
 }

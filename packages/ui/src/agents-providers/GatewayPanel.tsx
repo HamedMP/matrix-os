@@ -227,7 +227,7 @@ export function GatewayPanel({
             </span>
           </h2>
           <p className="matrix-ap-help">
-            Our models, no Claude or ChatGPT subscription needed.
+            Matrix Agent runs chats and tasks with models from Matrix AI Gateway or your connected accounts.
           </p>
         </div>
         <span

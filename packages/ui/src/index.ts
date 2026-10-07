@@ -228,6 +228,7 @@ export type { ProviderWorkflowClient } from "./agents-providers/types.js";
 
 export { IntegrationMarketplace } from "./integrations/IntegrationMarketplace.js";
 export type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./agents-providers/local-chatgpt-plan-client.js";
+export { createMatrixAnthropicConnectionClient, type MatrixAnthropicConnectionClient } from "./agents-providers/matrix-anthropic-connection-client.js";
 
 export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLabel } from "./chat-search-shortcut.js";
 
