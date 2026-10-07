@@ -8,6 +8,10 @@ import type { PipedreamConnectClient } from "./pipedream.js";
 import { GMAIL_SERVICE } from "./gmail.js";
 import { GOOGLE_SERVICES } from "./google.js";
 import { listValidation } from "./list-validation.js";
+import { GITHUB_DEPTH_ACTIONS } from "./github-depth.js";
+import { CATALOG_SERVICE_REGISTRY } from "./registry-catalog.js";
+import { MANAGED_SERVICE_REGISTRY } from "./registry-managed.js";
+import { BOKIO_SERVICE } from "./registry-bokio.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
 
@@ -88,6 +92,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
 
   ...GOOGLE_SERVICES,
   ...OAUTH_SERVICE_REGISTRY,
+  ...CATALOG_SERVICE_REGISTRY,
 
   github: {
     id: "github",
@@ -104,6 +109,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     // with an "Integration call failed" message -- not ideal UX, but safer
     // than smuggling arbitrary path segments into a real URL.
     actions: {
+      ...GITHUB_DEPTH_ACTIONS,
       // GitHub API: GET /user/repos. Defaults to sort=updated so the most
       // active repos surface first; matches what `gh repo list` does.
       list_repos: {
@@ -733,6 +739,8 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
   },
   ...X_SERVICE_REGISTRY,
   ...EXPANSION_SERVICE_REGISTRY,
+  ...MANAGED_SERVICE_REGISTRY,
+  bokio: BOKIO_SERVICE,
 });
 
 export function getService(id: string): ServiceDefinition | undefined {

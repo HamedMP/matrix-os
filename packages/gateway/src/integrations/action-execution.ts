@@ -3,6 +3,7 @@ import type { PipedreamConnectClient } from "./pipedream.js";
 import { validateActionParams } from "./parameter-validation.js";
 import { BoundedPipedreamReadError } from "./pipedream-bounded-get.js";
 import { DriveContentError } from "./drive-content.js";
+import { executeCatalogBoundAction } from "./catalog-bound-action.js";
 
 export class IntegrationActionNotImplementedError extends Error {
   readonly serviceId: string;
@@ -35,9 +36,17 @@ export async function executeIntegrationAction(opts: {
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");
   }
+  const boundCatalog = await executeCatalogBoundAction({ pipedream, externalUserId,
+    accountId: connection.pipedream_account_id, serviceId, actionId, params });
+  if (boundCatalog) return boundCatalog;
   if (serviceId === "google_drive" && actionId === "read_file") {
     if (!pipedream.readDriveFile) throw new DriveContentError();
     return { data: await pipedream.readDriveFile({ ...params, externalUserId, accountId: connection.pipedream_account_id }) };
+  }
+  if (serviceId === "gmail" && actionId === "get_attachment") {
+    if (!pipedream.boundedGmailGet) throw new BoundedPipedreamReadError();
+    return { data: await pipedream.boundedGmailGet({ externalUserId, accountId: connection.pipedream_account_id,
+      kind: "attachment", id: String(params?.messageId), attachmentId: String(params?.attachmentId) }) };
   }
   // New thread discovery/ID actions always use a raw capped response, including
   // ordinary callers; a generic SDK parse is not a byte limit.
@@ -45,7 +54,7 @@ export async function executeIntegrationAction(opts: {
     if (!pipedream.boundedGmailGet) throw new BoundedPipedreamReadError();
     const identity = { externalUserId, accountId: connection.pipedream_account_id };
     return { data: await pipedream.boundedGmailGet(actionId === "list_threads"
-      ? { ...identity, kind: "threads" }
+      ? { ...identity, kind: "threads", ...(params?.pageToken !== undefined ? { pageToken: String(params.pageToken) } : {}) }
       : { ...identity, kind: "thread-ids", id: String(params?.threadId) }) };
   }
 

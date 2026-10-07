@@ -10,6 +10,7 @@ export function isScopedReadCatalogRequest(c: Context): boolean {
 }
 
 interface CatalogPresetBroker {
+  listActionCapabilities?(userId: string, serviceId: string): Promise<Record<string, readonly string[]> | null>;
   listAvailableActions?(userId: string, serviceId: string): Promise<readonly string[] | null>;
   listAvailableActionParams?(userId: string, serviceId: string): Promise<Record<string, readonly string[]> | null>;
 }
@@ -25,34 +26,27 @@ export async function projectIntegrationCatalog(options: {
   logoUrl(service: ServiceDefinition): string;
 }): Promise<ServiceDefinition[]> {
   const { services, uid, capabilityIdentityFailed, authoritative, readOnly, presetBroker, logoUrl } = options;
-  const eligible = services.filter((service) => readOnly
-    ? service.connectorKind === "pipedream"
-    : service.connectorKind !== "mcp_preset" || presetBroker);
+  const managed = (service: ServiceDefinition) => service.connectorKind === "mcp_preset" || service.connectorKind === "managed_oauth";
+  const eligible = services.filter(service => !managed(service) || Boolean(presetBroker));
   return Promise.all(eligible.map(async (service) => {
     let actions = readOnly
       ? Object.fromEntries(Object.entries(service.actions).filter(([, action]) => action.risk === "read"))
       : service.actions;
-    if (capabilityIdentityFailed && service.connectorKind === "mcp_preset") {
+    if (capabilityIdentityFailed && managed(service)) {
       actions = {};
-    } else if (uid && service.connectorKind === "mcp_preset" && presetBroker?.listAvailableActions) {
+    } else if (uid && managed(service) && presetBroker?.listAvailableActions) {
       try {
-        const availableActions = await presetBroker.listAvailableActions(uid, service.id);
+        const capabilities = await presetBroker.listActionCapabilities?.(uid, service.id);
+        const availableActions = capabilities ? Object.keys(capabilities) : await presetBroker.listAvailableActions(uid, service.id);
         if (availableActions) {
           actions = Object.fromEntries(
             Object.entries(service.actions).filter(([actionId]) => availableActions.includes(actionId)),
           );
-          if (actions.list_notes && presetBroker.listAvailableActionParams) {
-            const supported = await presetBroker.listAvailableActionParams(uid, service.id);
-            const names = supported?.list_notes ?? [];
-            actions = {
-              ...actions,
-              list_notes: {
-                ...actions.list_notes,
-                params: Object.fromEntries(
-                  Object.entries(actions.list_notes.params).filter(([name]) => names.includes(name)),
-                ),
-              },
-            };
+          if (presetBroker.listAvailableActionParams) {
+            const supported = capabilities ?? await presetBroker.listAvailableActionParams(uid, service.id);
+            if (supported) actions = Object.fromEntries(Object.entries(actions).map(([id, action]) => [id, {
+              ...action, params: Object.hasOwn(supported, id) ? Object.fromEntries(Object.entries(action.params).filter(([name]) => supported[id]?.includes(name))) : action.params,
+            }]));
           }
         } else if (authoritative) {
           actions = {};

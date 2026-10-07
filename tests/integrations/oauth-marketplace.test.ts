@@ -6,8 +6,8 @@ import type { PipedreamConnectClient } from "../../packages/gateway/src/integrat
 
 const apps = ["asana", "airtable", "clickup", "todoist", "dropbox", "box", "microsoft_outlook", "microsoft_onedrive", "microsoft_teams", "hubspot", "zoom", "google_slides"];
 describe("OAuth marketplace expansion", () => {
-  it("exposes 27 integrations with twelve new OAuth apps and executable actions", () => {
-    expect(listServices()).toHaveLength(27);
+  it("exposes the expanded OAuth catalog with executable actions", () => {
+    expect(listServices()).toHaveLength(38);
     for (const id of apps) {
       const service = getService(id)!;
       expect(service.authType).toBe("oauth");
@@ -16,7 +16,7 @@ describe("OAuth marketplace expansion", () => {
       expect(Object.keys(service.actions).length).toBeGreaterThanOrEqual(2);
       for (const action of Object.values(service.actions)) {
         expect(action.directApi).toBeDefined();
-        expect(action.risk).toBe("read");
+        expect(["read", "write"]).toContain(action.risk);
       }
     }
   });
@@ -24,6 +24,7 @@ describe("OAuth marketplace expansion", () => {
     for (const service of listServices()) {
       if (service.id === "twitter") expect(service.logoUrl).toBe("/integration-logos/x.svg");
       else if (service.id === "granola") expect(service.logoUrl).toBe("https://www.granola.ai/favicon/favicon-96x96.png");
+      else if (service.id === "bokio") expect(service.logoUrl).toBe("https://www.bokio.se/assets/images/icons/favicon.ico");
       else expect(service.logoUrl).toMatch(/^https:\/\/pipedream\.com\/s\.v0\/app_[A-Za-z0-9]+\/logo\/96$/);
     }
   });

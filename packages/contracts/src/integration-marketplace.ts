@@ -23,7 +23,8 @@ export const INTEGRATION_PRESENTATION: Record<string, { description: string; aut
   discord: { description: "Read servers and channels, send messages", authType: "oauth" },
   notion: { description: "Search, update, and organize workspace", authType: "oauth" },
   figma: { description: "Read design files and comments", authType: "oauth" },
-  posthog: { description: "Explore projects and product analytics", authType: "keys" },
+  posthog: { description: "Existing API-key connection for product analytics", authType: "keys" },
+  posthog_oauth: { description: "Explore projects and product analytics", authType: "oauth" },
   jira: { description: "Read issues and project boards", authType: "oauth" },
   stripe: { description: "Read customers and payment activity", authType: "keys" },
   granola: { description: "Read meeting notes and transcripts", authType: "oauth" },
@@ -38,6 +39,15 @@ export const INTEGRATION_PRESENTATION: Record<string, { description: string; aut
   microsoft_teams: { description: "Read teams and channels", authType: "oauth" },
   hubspot: { description: "Read contacts, companies, and deals", authType: "oauth" },
   zoom: { description: "Read upcoming meetings and meeting details", authType: "oauth" },
+  google_contacts: { description: "Read contacts and people", authType: "oauth" },
+  microsoft_outlook_calendar: { description: "Read calendars and schedule events", authType: "oauth" },
+  quickbooks: { description: "Read accounting records and invoices", authType: "oauth" },
+  xero_accounting_api: { description: "Read organizations, invoices and payments", authType: "oauth" },
+  zendesk: { description: "Read support tickets and customers", authType: "oauth" },
+  intercom: { description: "Read contacts and support conversations", authType: "oauth" },
+  loops: { description: "Read email contacts, lists and templates", authType: "oauth" },
+  lemlist: { description: "Read outreach campaigns and performance", authType: "oauth" },
+  bokio: { description: "Read company accounts, invoices and receipts", authType: "oauth" },
 };
 
 export function integrationDescription(service: IntegrationCatalogItem): string {
@@ -47,6 +57,8 @@ export function integrationAuthType(service: IntegrationCatalogItem): Integratio
   return service.authType ?? INTEGRATION_PRESENTATION[service.id]?.authType;
 }
 export function integrationCategory(service: IntegrationCatalogItem): string {
+  if (service.id === "loops") return "Marketing";
+  if (["zendesk", "intercom"].includes(service.id)) return "Customer support";
   if (["google_drive", "dropbox", "box", "microsoft_onedrive"].includes(service.id)) return "Files";
   if (["gmail", "microsoft_outlook", "zoom"].includes(service.id)) return "Communication";
   if (["google_slides", "figma"].includes(service.id)) return "Design";
@@ -66,7 +78,7 @@ export function buildIntegrationSections<T extends IntegrationCatalogItem>(servi
     && (!options.connectedOnly || options.connectedIds?.includes(service.id))
     && (!query || `${service.name} ${integrationDescription(service)} ${integrationCategory(service)}`.toLocaleLowerCase().includes(query)),
   );
-  const titles = ["Productivity", "Communication", "Files", "Design", "Developer tools", "Sales", "Data", "Finance", "Social", "Other apps"];
+  const titles = ["Productivity", "Communication", "Files", "Design", "Developer tools", "Sales", "Customer support", "Marketing", "Data", "Finance", "Social", "Other apps"];
   return titles.map(title => ({ title, services: filtered.filter(service => integrationCategory(service) === title) }))
     .filter(section => section.services.length > 0);
 }
