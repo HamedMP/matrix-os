@@ -12,6 +12,7 @@ import { useWorkflowPolling } from "./use-workflow-polling.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability, ProviderWorkflowUIOperation } from "./types.js";
 
+const completionRefreshFailure = "Sign-in completed. Connection status is unavailable. Check again.";
 const active = (operation: ProviderWorkflow | null) =>
   operation?.state === "pending" || operation?.state === "running";
 /** Ephemeral foreground state is scoped to this exact harness and transport lifetime. */
@@ -117,7 +118,7 @@ export function useHarnessWorkflowController({
     } catch (error) {
       if (scope.current === controller && !controller.signal.aborted) {
         console.warn("[provider-settings] Connection refresh failed:", error instanceof Error ? error.name : "UnknownError");
-        setFailure("Sign-in completed. Connection status is unavailable. Check again.");
+        setFailure(completionRefreshFailure);
       }
     } finally {
       clearTimeout(timer);
@@ -309,19 +310,20 @@ export function useHarnessWorkflowController({
       }
     }, "start");
   useEffect(() => {
-    // A failed receipt can outlive a successfully completed native login. Only
-    // reconcile a newly confirmed connection; a failed replacement of an
-    // already connected account must remain visible.
+    // A failed receipt or completion refresh can outlive native sign-in. Only
+    // reconcile a newly confirmed connection; replacement errors on an
+    // already connected account and unrelated action errors remain visible.
     if (pending || active(operation)) return;
     if (connected && !previousConnection.current && operation?.kind === "login"
-      && (operation.state === "failed" || operation.state === "expired")) {
+      && (operation.state === "failed" || operation.state === "expired"
+        || (operation.state === "succeeded" && failure === completionRefreshFailure))) {
       setOperation(null);
       setFailure(null);
       setMethod(null);
       onOperationId?.(null);
     }
     previousConnection.current = connected;
-  }, [connected, pending, operation, onOperationId]);
+  }, [connected, pending, operation, failure, onOperationId]);
   useEffect(() => {
     onStateChange?.(
       disconnectOpen ? null : pending || reconciling || active(operation)

@@ -16,12 +16,12 @@ function deferred<T>() {
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 }
-function setup() {
+function setup(authState: "unauthenticated" | "authenticated" = "unauthenticated") {
   vi.useFakeTimers();
   const response = deferred<ProviderWorkflowUIOperation>();
   const operation: ProviderWorkflowUIOperation = { id: "browser-attempt", harnessInstanceId: "claude", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60_000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null, connectionOption: browser };
   const client: ProviderWorkflowClient = { capabilities: vi.fn(), start: vi.fn(), startConnection: vi.fn(() => response.promise), get: vi.fn().mockResolvedValue(operation), cancel: vi.fn().mockResolvedValue({ ...operation, state: "cancelled" }), submitKey: vi.fn(), submitConnectionKey: vi.fn(), submitCode: vi.fn(), logs: vi.fn() };
-  const props = { harness, capability, client, disabled: false, onRefresh: vi.fn(), onOpenTerminal: vi.fn(), onOpenAuthorizationUrl: vi.fn() };
+  const props = { harness: { ...harness, authState }, capability, client, disabled: false, onRefresh: vi.fn(), onOpenTerminal: vi.fn(), onOpenAuthorizationUrl: vi.fn() };
   const view = render(<HarnessWorkflowPanel {...props} />);
   return { response, operation, client, props, view };
 }
@@ -188,15 +188,57 @@ it.each(["timeout", "failure"] as const)("stops completion progress and offers a
   expect(screen.getByRole("button",{name:"Check connection"})).toBeEnabled();
   expect(client.startConnection).toHaveBeenCalledOnce();
 });
-it("ignores completion refresh settling after switching runtime", async () => {
+it.each(["runtime", "account"] as const)("ignores completion refresh settling after switching %s", async changedScope => {
   const { response, operation, client, props, view } = setup();
   const refresh = deferred<void>();props.onRefresh.mockImplementation(() => refresh.promise);
   fireEvent.click(screen.getByRole("button",{name:/Sign in in browser/}));
   await act(async () => response.resolve(operation));
   vi.mocked(client.get).mockResolvedValue({...operation,state:"succeeded"});
   await act(() => vi.advanceTimersByTimeAsync(2000));
-  view.rerender(<HarnessWorkflowPanel {...props} client={{...client}} />);
-  await act(async () => refresh.reject(new Error("old runtime")));
+  view.rerender(<HarnessWorkflowPanel {...props}
+    client={changedScope === "runtime" ? { ...client } : client}
+    harness={changedScope === "account" ? { ...props.harness, selectedAccountId: "another-account", authState: "authenticated" } : props.harness} />);
+  await act(async () => refresh.reject(new Error("old scope")));
   expect(screen.queryByRole("status",{name:"Updating connection"})).not.toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it.each(["failure", "timeout"] as const)("clears completion-refresh %s after a newly confirmed connected snapshot", async mode => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const { response, operation, client, props, view } = setup();
+  const refresh = deferred<void>(); props.onRefresh.mockImplementation(() => refresh.promise);
+  const onStateChange = vi.fn();
+  view.rerender(<HarnessWorkflowPanel {...props} onStateChange={onStateChange} />);
+  fireEvent.click(screen.getByRole("button", { name: /Sign in in browser/ }));
+  await act(async () => response.resolve(operation));
+  vi.mocked(client.get).mockResolvedValue({ ...operation, state: "succeeded" });
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  if (mode === "timeout") await act(() => vi.advanceTimersByTimeAsync(30_000));
+  else await act(async () => refresh.reject(new Error("unavailable")));
+  expect(screen.getByRole("alert")).toHaveTextContent("Sign-in completed.");
+  expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect");
+
+  view.rerender(<HarnessWorkflowPanel {...props} harness={{ ...props.harness, authState: "authenticated" }} onStateChange={onStateChange} />);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Check connection" })).not.toBeInTheDocument();
+  expect(onStateChange).toHaveBeenLastCalledWith(null);
+  expect(client.startConnection).toHaveBeenCalledOnce();
+});
+it.each(["failure", "timeout"] as const)("retains replacement completion-refresh %s when the old connection was already confirmed", async mode => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const { response, operation, client, props, view } = setup("authenticated");
+  const refresh = deferred<void>(); props.onRefresh.mockImplementation(() => refresh.promise);
+  const onStateChange = vi.fn();
+  view.rerender(<HarnessWorkflowPanel {...props} onStateChange={onStateChange} />);
+  fireEvent.click(screen.getByRole("button", { name: "Change account" }));
+  fireEvent.click(screen.getByRole("button", { name: /Sign in in browser/ }));
+  await act(async () => response.resolve(operation));
+  vi.mocked(client.get).mockResolvedValue({ ...operation, state: "succeeded" });
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  if (mode === "timeout") await act(() => vi.advanceTimersByTimeAsync(30_000));
+  else await act(async () => refresh.reject(new Error("unavailable")));
+  view.rerender(<HarnessWorkflowPanel {...props} harness={{ ...props.harness }} onStateChange={onStateChange} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Sign-in completed.");
+  expect(screen.getByRole("button", { name: "Check connection" })).toBeEnabled();
+  expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect");
 });
