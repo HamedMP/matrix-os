@@ -221,6 +221,43 @@ describe("Figma-aligned project access dialog", () => {
     ));
   });
 
+  it("loads later organization-member pages before adding direct access", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/organizations/org_acme/members") return {
+          members: [
+            { actorId: "user_owner", displayName: "Owner", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          ],
+          nextCursor: "page_2",
+        };
+        if (path === "/api/organizations/org_acme/members?cursor=page_2") return {
+          members: [
+            { actorId: "user_later", displayName: "Later member", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          ],
+        };
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id,
+          revision: "7",
+          owner: { actorId: "user_owner", displayName: "Owner" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000630", preset: "viewer", revision: "3" },
+          people: [],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Load more members" }));
+    expect(await screen.findByRole("option", { name: "Later member" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Add person" })).toHaveValue("user_later");
+    expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+    expect(api.get).toHaveBeenCalledWith("/api/organizations/org_acme/members?cursor=page_2");
+  });
+
   it("retries a transient access load failure in place", async () => {
     let memberAttempts = 0;
     const api = {

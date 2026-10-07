@@ -15,7 +15,11 @@ import { DirectAuthError } from "./direct-auth.js";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import { evaluateCollaborationReadiness } from "./readiness-evaluator.js";
-import type { CollaborationCapabilityRepository, GrantRecord } from "./capability-repository.js";
+import {
+  MAX_LISTED_PARTICIPANTS,
+  type CollaborationCapabilityRepository,
+  type GrantRecord,
+} from "./capability-repository.js";
 import {
   authenticateOwnerProject, authorize, deleteConditions, digest, digestDeleteConditions, handle, notifyScope, readJson,
   requireScope, verifyHttp, type CollaborationRouteOptions,
@@ -101,7 +105,12 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
       });
     }
     const people: CollaborationProjectAccessPresentation["people"] = [];
-    const candidates = [...byActor.entries()].sort(([left], [right]) => left.localeCompare(right));
+    // Direct grants must remain manageable even when organization activations fill the bounded
+    // presentation. Grant count is capped separately, so prioritizing them cannot exceed this cap.
+    const candidates = [...byActor.entries()].sort(([leftActorId, left], [rightActorId, right]) => {
+      const directPriority = Number(Boolean(right.directGrant)) - Number(Boolean(left.directGrant));
+      return directPriority || leftActorId.localeCompare(rightActorId);
+    }).slice(0, MAX_LISTED_PARTICIPANTS);
     for (let offset = 0; offset < candidates.length; offset += ACCESS_PRESENTATION_CONCURRENCY) {
       const batch = await Promise.all(candidates.slice(offset, offset + ACCESS_PRESENTATION_CONCURRENCY)
         .map(async ([actorId, candidate]): Promise<CollaborationProjectAccessPresentation["people"][number] | null> => {

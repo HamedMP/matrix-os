@@ -212,6 +212,41 @@ describe("collaboration capability HTTP routes", () => {
     expect(activeMembershipChecks).toBe(0);
   });
 
+  it("bounds a full activation audience while retaining every manageable direct grant", async () => {
+    const now = new Date();
+    const organizationGrantId = randomUUID();
+    const directGrantId = randomUUID();
+    const directActorId = "user_capability_direct_beyond_activation_cap";
+    const activatedActorIds = Array.from({ length: 1_000 }, (_, index) => `user_capability_activation_${index}`);
+    await fixture.db.insertInto("collaboration_grants").values([{
+      id: organizationGrantId, scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "organization", audience_actor_id: null, preset: "viewer", state: "active",
+      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }, {
+      id: directGrantId, scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "member", audience_actor_id: directActorId, preset: "contributor", state: "pending",
+      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }]).execute();
+    await fixture.db.insertInto("collaboration_grant_activations").values(activatedActorIds.map((actorId) => ({
+      grant_id: organizationGrantId, actor_id: actorId, state: "active" as const, decided_at: now,
+      membership_evidence_epoch: 1,
+    }))).execute();
+
+    const path = `/api/collaboration/scopes/${scopeId}/project/access`;
+    const response = await signed({ actorId: ownerId, method: "GET", path });
+
+    expect(response.status).toBe(200);
+    const presentation = CollaborationProjectAccessPresentationSchema.parse(await response.json());
+    expect(presentation.people).toHaveLength(1_000);
+    expect(presentation.people).toContainEqual(expect.objectContaining({
+      actor: expect.objectContaining({ actorId: directActorId }),
+      status: "pending",
+      directGrant: expect.objectContaining({ grantId: directGrantId }),
+    }));
+  });
+
   it("rejects every new standalone live scope", async () => {
     const prefix = `/api/collaboration/runtimes/${runtimeId}`;
     for (const kind of ["chat", "terminal", "file", "folder", "app"] as const) {

@@ -14,6 +14,7 @@ import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
 const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
+const MAX_LOADED_ORGANIZATION_MEMBERS = 2_000;
 const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
 function editorLabel(preset: CollaborationPreset): "Editor" | "Viewer" {
@@ -52,6 +53,8 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
 }) {
   const [access, setAccess] = useState<CollaborationProjectAccessPresentation | null>(null);
   const [organizationMembers, setOrganizationMembers] = useState<Array<{ actorId: string; displayName: string }>>([]);
+  const [membersCursor, setMembersCursor] = useState<string | null>(null);
+  const [membersPending, setMembersPending] = useState(false);
   const [selectedActor, setSelectedActor] = useState("");
   const [selectedPreset, setSelectedPreset] = useState<CollaborationPreset>("viewer");
   const [loading, setLoading] = useState(true);
@@ -91,6 +94,7 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
         && !directlyGrantedActors.has(member.actorId));
       setOrganizationDisplayName(displayName);
       setOrganizationMembers(listed);
+      setMembersCursor(memberPage.nextCursor ?? null);
       setAccess(next);
       setSelectedActor((current) => selectable.some((member) => member.actorId === current)
         ? current : selectable[0]?.actorId ?? "");
@@ -111,6 +115,39 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
       if (alive.current) setLoading(false);
     }
   }, [load]);
+
+  const loadMoreMembers = async () => {
+    if (!scope.organizationId || !membersCursor || membersPending) return;
+    const requestedCursor = membersCursor;
+    setMembersPending(true);
+    try {
+      const page = OrganizationManagementMembersPageSchema.parse(await api.get(
+        `/api/organizations/${encodeURIComponent(scope.organizationId)}/members?cursor=${encodeURIComponent(requestedCursor)}`,
+      ));
+      if (page.nextCursor === requestedCursor) throw new Error("Organization member cursor did not advance");
+      if (alive.current) {
+        const byActor = new Map(organizationMembers.map((member) => [member.actorId, member]));
+        for (const { actorId, displayName } of page.members) byActor.set(actorId, { actorId, displayName });
+        const merged = [...byActor.values()].slice(0, MAX_LOADED_ORGANIZATION_MEMBERS);
+        const directlyGrantedActors = new Set(access?.people
+          .filter((person) => person.directGrant)
+          .map((person) => person.actor.actorId) ?? []);
+        const selectable = merged.filter((member) => member.actorId !== scope.ownerId
+          && !directlyGrantedActors.has(member.actorId));
+        setOrganizationMembers(merged);
+        setSelectedActor((current) => selectable.some((member) => member.actorId === current)
+          ? current : selectable[0]?.actorId ?? "");
+        setMembersCursor(merged.length >= MAX_LOADED_ORGANIZATION_MEMBERS
+          ? null : page.nextCursor ?? null);
+        setError(false);
+      }
+    } catch (failure: unknown) {
+      console.warn("[project-collaboration] member page load failed", failure instanceof Error ? failure.name : "UnknownError");
+      if (alive.current) setError(true);
+    } finally {
+      if (alive.current) setMembersPending(false);
+    }
+  };
 
   useEffect(() => {
     alive.current = true;
@@ -252,6 +289,10 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
         </label>
         <button type="button" className={`${buttonClass} self-end`} disabled={pending || !selectedActor} onClick={addMember}>Add</button>
       </div> : null}
+      {membersCursor && access.generalAccess?.preset !== "contributor" ? <button type="button" className={buttonClass}
+        disabled={pending || membersPending} onClick={() => { void loadMoreMembers(); }}>
+        {membersPending ? "Loading members…" : "Load more members"}
+      </button> : null}
       <div className="flex items-center gap-3 rounded-xl border px-3 py-3">
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium">Everyone in {organizationDisplayName ?? "your organization"}</span>
