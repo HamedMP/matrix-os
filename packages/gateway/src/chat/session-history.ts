@@ -35,6 +35,7 @@ export async function prepareChatSessionContext(input: {
   resumeState: unknown; context?: ChatRunContext; preserveHistory?: boolean;
 }): Promise<ChatRunContext | undefined> {
   const context = contextForChatSession(input.context, input.resumeState, input.preserveHistory);
+  if (input.preserveHistory && context?.history) return context;
   if (input.resumeState !== undefined || input.instanceId === MATRIX_BOT_INSTANCE_ID || input.throughSeq === 0) return context;
   // Retry preserves the original admitted history, not replies from its failed attempt.
   if (context?.history && context.history.throughSeq === input.throughSeq) return context;

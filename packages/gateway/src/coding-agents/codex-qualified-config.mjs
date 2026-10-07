@@ -1,11 +1,11 @@
-import { lstat, mkdir, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { freezeCodexCanonicalInventory } from "./codex-canonical-tools.mjs";
 
-export const CODEX_CONSTRAINED_VERSION = "0.156.1";
-export const CODEX_CONSTRAINED_SOURCE = "b412ff32c417f855c2b2d1581b77058eed87c84b";
-// Verified against rust-v0.156.1: features/src/lib.rs, config/src/config_toml.rs,
+export const CODEX_CONSTRAINED_VERSION = "0.161.0";
+export const CODEX_CONSTRAINED_SOURCE = "979011409de0a60b52f179721948e65531d26144";
+// Verified against rust-v0.161.0: features/src/lib.rs, config/src/config_toml.rs,
 // core/src/tools/spec_plan.rs, app-server-protocol/src/protocol/v2/thread.rs.
 // No generic nativeTools allowlist is exposed by this app-server contract.
 export const CODEX_CONSTRAINED_CONFIG = Object.freeze({
@@ -21,6 +21,7 @@ export const CODEX_CONSTRAINED_CONFIG = Object.freeze({
   "features.sleep_tool": false, "features.deferred_executor": false, "features.send_message_to_user_async": false,
   "features.request_permissions_tool": false, "features.worktrees": false,
   "tools.update_plan.enabled": false, web_search: "disabled",
+  "features.daemon_auto_start": false, "cloud.skills.enabled": false,
   "orchestrator.skills.enabled": false, "orchestrator.mcp.enabled": false,
   project_doc_max_bytes: 0, "shell_environment_policy.inherit": "none", allow_login_shell: false,
   cli_auth_credentials_store: "file",
@@ -58,10 +59,12 @@ export async function createCodexQualifiedConfig({ executionPolicy, inventory, e
       if (await info(path)) throw new Error("canonical_codex_config_unqualified");
     }
   }
-  const parent = resolve(parentDirectory);
+  let parent = resolve(parentDirectory);
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const parentInfo = await lstat(parent);
   if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink() || (process.getuid && parentInfo.uid !== process.getuid()) || (parentInfo.mode & 0o077) !== 0) throw new Error("canonical_codex_home_unqualified");
+  // Codex reports canonical source paths (not macOS /var or /tmp aliases).
+  parent = await realpath(parent);
   let root;
   async function sweep() {
     // Serialize recurring reclaim across runner processes. A crashed cleanup

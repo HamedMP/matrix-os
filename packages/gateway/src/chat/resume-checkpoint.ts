@@ -1,4 +1,4 @@
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import {
   CanonicalChatIdSchema,
   ChatContextSnapshotSchema,
@@ -143,6 +143,7 @@ async function loadHeardHistorySlice(
   chatId: string,
   afterSeq: number,
   throughSeq: number | undefined,
+  newest = false,
 ): Promise<{ snapshot: ChatContextSnapshot; truncated: boolean } | null> {
   const rows = await kysely.selectFrom("chat_messages as message")
     .innerJoin("chats as chat", "chat.id", "message.chat_id")
@@ -153,7 +154,8 @@ async function loadHeardHistorySlice(
       "message.id", "message.chat_id", "message.seq", "message.role", "message.purpose",
       "message.state", "message.turn_id", "message.run_id", "message.actor_id",
       "message.parts", "message.byte_count", "message.search_text", "message.created_at",
-      "delivery.state as delivery_state", "delivery.effective_text_end",
+      sql<number | null>`min(case when delivery.state <> 'complete'
+        then coalesce(delivery.effective_text_end, 0) else null end)`.as("heard_extent"),
     ])
     .where("message.chat_id", "=", chatId)
     .where("chat.owner_type", "=", owner.type)
@@ -161,38 +163,28 @@ async function loadHeardHistorySlice(
     .where("message.state", "=", "committed")
     .where("message.seq", ">", afterSeq)
     .$if(throughSeq !== undefined, (query) => query.where("message.seq", "<=", throughSeq!))
-    .orderBy("message.seq", "asc")
-    .orderBy("delivery.response_id", "asc")
-    .limit(RETAINED_HISTORY_ROWS * 4 + 1) // join fan-out bounded too
+    .groupBy([
+      "message.id", "message.chat_id", "message.seq", "message.role", "message.purpose",
+      "message.state", "message.turn_id", "message.run_id", "message.actor_id",
+      "message.parts", "message.byte_count", "message.search_text", "message.created_at",
+    ])
+    .orderBy("message.seq", newest ? "desc" : "asc")
+    .limit(RETAINED_HISTORY_ROWS + 1)
     .execute();
   if (rows.length === 0) return null;
   const titleRow = await kysely.selectFrom("chats").select("title")
     .where("id", "=", chatId).executeTakeFirst();
   if (!titleRow) return null;
 
-  // Group the joined rows back into one entry per message, carrying the
-  // heard extent imposed by its unresolved deliveries (if any).
-  const messages: { message: CanonicalChatMessage; heardExtent: number }[] = [];
-  const byId = new Map<string, number>();
-  let rowTruncated = false;
-  for (const row of rows) {
-    let slot = byId.get(row.id);
-    if (slot === undefined) {
-      if (messages.length >= RETAINED_HISTORY_ROWS) {
-        rowTruncated = true;
-        break;
-      }
-      slot = messages.length;
-      byId.set(row.id, slot);
-      messages.push({ message: toMessage(row), heardExtent: Number.POSITIVE_INFINITY });
-    }
-    // A delivery row other than `complete` bounds heard text to its
-    // acknowledged offset; multiple rows take the most conservative bound.
-    if (row.delivery_state !== null && row.delivery_state !== "complete") {
-      const extent = row.effective_text_end === null ? 0 : Number(row.effective_text_end);
-      messages[slot]!.heardExtent = Math.min(messages[slot]!.heardExtent, extent);
-    }
-  }
+  // Aggregate every delivery before limiting messages: a fan-out cannot hide
+  // the most restrictive acknowledgement or crowd recent messages out.
+  // Rebuilds select the newest window; checkpoint gaps still check the entire
+  // ascending prefix and decline resume if it exceeds the bounded window.
+  const rowTruncated = rows.length > RETAINED_HISTORY_ROWS;
+  const messages = rows.slice(0, RETAINED_HISTORY_ROWS)
+    .sort((left, right) => left.seq - right.seq)
+    .map(row => ({ message: toMessage(row),
+      heardExtent: row.heard_extent === null ? Number.POSITIVE_INFINITY : Number(row.heard_extent) }));
 
   const projected = messages.flatMap(({ message, heardExtent }) => {
     if (heardExtent === Number.POSITIVE_INFINITY) return [message];
@@ -250,7 +242,7 @@ export async function loadChatResumeDecision(input: ChatResumeDecisionInput): Pr
     if (!kysely) return undefined;
     try {
       const slice = await loadHeardHistorySlice(
-        kysely, input.owner, chatId, 0, input.historyBoundarySeq,
+        kysely, input.owner, chatId, 0, input.historyBoundarySeq, true,
       );
       return slice?.snapshot;
     } catch (error: unknown) {

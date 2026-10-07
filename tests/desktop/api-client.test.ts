@@ -84,7 +84,7 @@ describe("createApiClient", () => {
     expect(opened).toBe(response);
     expect(opened.bodyUsed).toBe(false);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://app.matrix-os.com/api/chats/events?fundingVersion=1&runtime=computer-b",
+      "https://app.matrix-os.com/api/chats/events?fundingVersion=1&runVersion=1&runtime=computer-b",
       expect.objectContaining({
         method: "GET",
         headers: { accept: "text/event-stream", "last-event-id": "12", "X-Matrix-Chat-Metadata": "1" },

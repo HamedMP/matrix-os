@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readlink, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readlink, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -9,15 +9,17 @@ it("uses verified keys, empty environments, clean home/cwd/env and a link-only s
   const owner = join(dir, "owner"); await mkdir(owner);
   await writeFile(join(owner, "auth.json"), "fake-auth-never-read", { mode: 0o600 });
   await writeFile(join(owner, "config.toml"), "[mcp_servers.escape]\ncommand = 'evil'\n");
-  const runtime = await createCodexQualifiedConfig({ executionPolicy: policy, inventory: [], expectedVersion: "0.156.1", authFile: join(owner, "auth.json"), parentDirectory: join(dir, "isolated"), inheritedEnv: { CODEX_HOME: owner, HOME: owner, NODE_OPTIONS: "--require evil", OPENAI_API_KEY: "secret", PATH: "/usr/bin", MCP_CONFIG: "evil" }, rejectSystemConfig: false });
+  const runtime = await createCodexQualifiedConfig({ executionPolicy: policy, inventory: [], expectedVersion: "0.161.0", authFile: join(owner, "auth.json"), parentDirectory: join(dir, "isolated"), inheritedEnv: { CODEX_HOME: owner, HOME: owner, NODE_OPTIONS: "--require evil", OPENAI_API_KEY: "secret", PATH: "/usr/bin", MCP_CONFIG: "evil" }, rejectSystemConfig: false });
   try {
+    expect(runtime.env.CODEX_HOME).toBe(await realpath(runtime.env.CODEX_HOME));
+    assertCodexCanonicalConfigLayers({ config: {}, layers: [{ name: { type: "user", file: await realpath(join(runtime.env.CODEX_HOME, "config.toml")) }, config: CODEX_CONSTRAINED_CONFIG }] }, runtime.env.CODEX_HOME);
     expect(runtime.threadParams).toMatchObject({ environments: [], dynamicTools: [], ephemeral: true, config: CODEX_CONSTRAINED_CONFIG });
     expect(runtime.threadParams).not.toHaveProperty("nativeTools");
     expect(runtime.env.CODEX_HOME).not.toBe(owner); expect(runtime.cwd).not.toBe(owner);
     expect(runtime.env).not.toHaveProperty("OPENAI_API_KEY"); expect(runtime.env).not.toHaveProperty("NODE_OPTIONS"); expect(runtime.env).not.toHaveProperty("MCP_CONFIG");
     expect(await readlink(join(runtime.env.CODEX_HOME, "auth.json"))).toBe(join(owner, "auth.json"));
     expect(await readdir(runtime.env.CODEX_HOME)).toEqual(["auth.json", "config.toml"]);
-    expect(CODEX_CONSTRAINED_CONFIG).toMatchObject({ "features.shell_tool": false, "features.multi_agent": false, "features.hooks": false, "features.plugins": false, "features.apps": false, "tools.update_plan.enabled": false, web_search: "disabled" });
+    expect(CODEX_CONSTRAINED_CONFIG).toMatchObject({ "features.shell_tool": false, "features.multi_agent": false, "features.hooks": false, "features.plugins": false, "features.apps": false, "features.daemon_auto_start": false, "cloud.skills.enabled": false, "tools.update_plan.enabled": false, web_search: "disabled" });
     expect(runtime.args).toContain("features.shell_tool=false");
   } finally { await runtime.close(); await rm(dir, { recursive: true, force: true }); }
 });
@@ -31,7 +33,7 @@ it("rejects inherited managed/project/MCP/plugin config before admitting a model
 });
 it("atomically caps concurrent isolated homes and rejects overflow", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mx-qualified-cap-"));
-  const options = { executionPolicy: policy, inventory: [], expectedVersion: "0.156.1", parentDirectory: join(dir, "homes"), rejectSystemConfig: false };
+  const options = { executionPolicy: policy, inventory: [], expectedVersion: "0.161.0", parentDirectory: join(dir, "homes"), rejectSystemConfig: false };
   const settled = await Promise.allSettled(Array.from({ length: 34 }, () => createCodexQualifiedConfig(options)));
   const successful = settled.filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled");
   try { expect(successful).toHaveLength(32); }
@@ -39,6 +41,6 @@ it("atomically caps concurrent isolated homes and rejects overflow", async () =>
 });
 it("rejects unpinned versions, delegation, and unconstrained native resume before creating homes", async () => {
   for (const overrides of [{ expectedVersion: "0.144.5" }, { providerThreadId: "old-native" }, { executionPolicy: { ...policy, delegation: true } }]) {
-    await expect(createCodexQualifiedConfig({ executionPolicy: policy, inventory: [], expectedVersion: "0.156.1", ...overrides })).rejects.toThrow();
+    await expect(createCodexQualifiedConfig({ executionPolicy: policy, inventory: [], expectedVersion: "0.161.0", ...overrides })).rejects.toThrow();
   }
 });
