@@ -7,7 +7,7 @@ import { z } from "zod/v4";
 const PreferenceIdSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,79}$/);
 
 export const ComposerOptionPreferenceSchema = z.strictObject({
-  id: PreferenceIdSchema,
+  id: z.union([PreferenceIdSchema, z.enum(["accountId", "grantRevision"])]),
   value: z.union([z.string().max(128), z.boolean()]),
 });
 

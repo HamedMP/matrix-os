@@ -46,6 +46,7 @@ import {
 } from './session-routing-websocket.js';
 import { resolveContainerEndpoint } from './container-endpoint.js';
 import { describeError } from './platform-route-utils.js';
+import { isRejectingWebSocketUpgrade, rejectWebSocketUpgrade, type WebSocketUpgradeRejectionStatus } from './websocket-upgrade-rejection.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { isCollaborationWebSocketCandidate, parseRelaySocketPath } from './collaboration/relay.js';
@@ -107,13 +108,21 @@ export function registerPlatformWebSocketUpgradeHandler(
   } = opts;
 
   server.on('upgrade', async (req: IncomingMessage, socket, head) => {
+    // Once the upstream has written its handshake response to the client, the client socket
+    // carries a WebSocket stream and must be closed bare; before that, every refusal is an HTTP status.
+    let upstreamResponded = false;
+    const refuse = (status: WebSocketUpgradeRejectionStatus): void => {
+      if (isRejectingWebSocketUpgrade(socket)) return;
+      if (upstreamResponded) socket.destroy();
+      else rejectWebSocketUpgrade(socket, status);
+    };
     // S05: control-stream upgrades authenticate the enrolled runtime themselves.
     if (collaborationDirect) {
       try {
         if (await collaborationDirect.handleUpgrade(req, socket as Socket, head)) return;
       } catch (err: unknown) {
         console.warn('[platform] collaboration control upgrade failed:', describeError(err));
-        socket.destroy();
+        refuse(503);
         return;
       }
     }
@@ -134,7 +143,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         pathClass: 'internal-gemini-live',
         errorKind: err instanceof Error ? err.name : typeof err,
       });
-      socket.destroy();
+      refuse(503);
       return;
     }
 
@@ -147,7 +156,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       path,
     );
     if (!isSessionRoutedHost(host)) {
-      socket.destroy();
+      refuse(404);
       return;
     }
     const isCodeDomain = isCodeDomainHost(host);
@@ -157,7 +166,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     // S05: direct sockets are relayed as bytes; the home verifies the ticket in the first frame.
     const isDirectSocket = isAppDomain && Boolean(collaborationDirect) && Boolean(parseRelaySocketPath(path));
     if (isCollaborationCandidate && !isDirectSocket) {
-      socket.destroy();
+      refuse(404);
       return;
     }
     const hostClass = classifySessionRoutedHost(host);
@@ -167,7 +176,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       : path;
     const pathClass = classifyWebSocketPath(webSocketProxyPath);
     if (isAppDomain && path.startsWith('/vm/') && !explicitVmRoute) {
-      socket.destroy();
+      refuse(404);
       return;
     }
     if (
@@ -175,7 +184,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       && isNativeAppStreamPath(explicitVmRoute.upstreamPath)
       && !hasExplicitVmNativeAppStreamCapability(req.method ?? '', explicitVmRoute)
     ) {
-      socket.destroy();
+      refuse(403);
       return;
     }
 
@@ -219,7 +228,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         hasCookie: Boolean(req.headers.cookie),
         errorKind: err instanceof Error ? err.name : typeof err,
       });
-      socket.destroy();
+      refuse(503);
       return;
     }
     if (!identity) {
@@ -231,7 +240,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         hasToken: Boolean(wsToken),
         hasCookie: Boolean(req.headers.cookie),
       });
-      socket.destroy();
+      refuse(401);
       return;
     }
 
@@ -241,7 +250,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     let runningMachine: UserMachineRecord | undefined;
     if (isDirectSocket) {
       if (!identity.userId) {
-        socket.destroy();
+        refuse(401);
         return;
       }
       let authorityMachine: UserMachineRecord | undefined;
@@ -254,18 +263,18 @@ export function registerPlatformWebSocketUpgradeHandler(
         console.warn(`[platform] collaboration direct socket preparation failed error=${describeError(err)}`);
         directUpgrade?.release();
         directUpgrade = undefined;
-        socket.destroy();
+        refuse(503);
         return;
       }
       if (!directUpgrade || !authorityMachine || authorityMachine.status !== 'running' || !authorityMachine.publicIPv4) {
         directUpgrade?.release();
-        socket.destroy();
+        refuse(404);
         return;
       }
       socket.once('close', directUpgrade.release);
       // Idle eviction: traffic in either direction keeps the reservation; a swept one destroys the socket.
       socket.on('data', directUpgrade.touch);
-      directUpgrade.onEvict(() => { socket.destroy(); });
+      directUpgrade.onEvict(() => { refuse(503); });
       runningMachine = authorityMachine;
       runtimeSlot = authorityMachine.runtimeSlot;
       webSocketProxyPath = directUpgrade.upstreamPath;
@@ -277,7 +286,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       );
       if (!explicitMachine || !canRouteMachineOnPreviewHost(host, explicitMachine)
         || (identity.userId && !canClerkUserAccessMachine(explicitMachine, identity.userId))) {
-        socket.destroy();
+        refuse(404);
         return;
       }
       runningMachine = explicitMachine;
@@ -300,17 +309,17 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
     if ((runningMachine && !canRouteMachineOnPreviewHost(host, runningMachine))
       || (requestedActiveMachine && !canRouteMachineOnPreviewHost(host, requestedActiveMachine))) {
-      socket.destroy();
+      refuse(404);
       return;
     }
     if (previewHandleFromHost(host) && !runningMachine) {
-      socket.destroy();
+      refuse(404);
       return;
     }
     const record = legacyContainerRoutingEnabled
       ? await getContainer(db, identity.handle)
       : undefined;
-    if (!runningMachine && !record) { socket.destroy(); return; }
+    if (!runningMachine && !record) { refuse(404); return; }
     const entitlement = runningMachine
       ? await getRuntimeEntitlementDecisionForUser(
         db,
@@ -380,7 +389,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       headers: string,
     ): void => {
       if (!isSafeWebSocketUpgradePath(webSocketProxyPath)) {
-        socket.destroy();
+        refuse(400);
         upstream.destroy();
         return;
       }
@@ -390,11 +399,12 @@ export function registerPlatformWebSocketUpgradeHandler(
       );
       if (head.length > 0) upstream.write(head);
 
+      upstream.once('data', () => { upstreamResponded = true; });
       if (directUpgrade) upstream.on('data', directUpgrade.touch);
       // The reverse direction: an upstream that closes or errors takes the client half
       // with it, so a teardown starting on either side releases the reservation exactly
       // once through the client socket's single `close`.
-      upstream.on('close', () => socket.destroy());
+      upstream.on('close', () => refuse(502));
       upstream.pipe(socket);
       socket.pipe(upstream);
     };
@@ -409,14 +419,14 @@ export function registerPlatformWebSocketUpgradeHandler(
           runtimeSlot,
           pathClass,
         });
-        socket.destroy();
+        refuse(403);
         return;
       }
       if (!runningMachine.publicIPv4) {
         console.warn(
           `[platform] websocket runtime proxy missing upstream address handle=${runningMachine.handle} pathClass=${pathClass}`,
         );
-        socket.destroy();
+        refuse(503);
         return;
       }
       const upstreamHostHeader = isCodeDomain ? host : 'app.matrix-os.com';
@@ -442,17 +452,17 @@ export function registerPlatformWebSocketUpgradeHandler(
           pathClass,
           errorKind: err instanceof Error ? err.name : typeof err,
         });
-        socket.destroy();
+        refuse(502);
       });
       return;
     }
 
-    if (!record) { socket.destroy(); return; }
+    if (!record) { refuse(404); return; }
     if (!entitlement.runtimeProxyAllowed) {
       console.warn(
         `[platform] websocket legacy container proxy denied by entitlement handle=${record.handle} pathClass=${pathClass}`,
       );
-      socket.destroy();
+      refuse(403);
       return;
     }
     const connectUpstream = async (attempt: number): Promise<void> => {
@@ -461,7 +471,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         console.warn(
           `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} pathClass=${pathClass}`,
         );
-        socket.destroy();
+        refuse(502);
         return;
       }
 
@@ -486,17 +496,17 @@ export function registerPlatformWebSocketUpgradeHandler(
         if (!connected && attempt === 0 && !socket.destroyed) {
           void connectUpstream(attempt + 1).catch((retryErr) => {
             console.error('[platform] websocket upstream retry fatal error:', describeError(retryErr));
-            socket.destroy();
+            refuse(502);
           });
           return;
         }
-        socket.destroy();
+        refuse(502);
       });
     };
 
     void connectUpstream(0).catch((err) => {
       console.error('[platform] websocket upstream fatal error:', describeError(err));
-      socket.destroy();
+      refuse(502);
     });
   });
 }

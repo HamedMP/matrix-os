@@ -9,14 +9,18 @@ import SignIn from "./features/signin/SignIn";
 import MissionControl from "./features/mission-control/MissionControl";
 import DesktopUpdateExperience from "./features/updates/DesktopUpdateExperience";
 import DesktopSupportWidget from "./features/support/DesktopSupportWidget";
+import { DesktopDefaultOrganization } from "./features/collaboration/DesktopDefaultOrganization";
 import { useAppearance } from "./stores/appearance";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
+import { wireNativeAppOpening } from "./lib/native-app-opening";
 
 export default function App() {
   const scope = useConnection((s) => JSON.stringify([s.platformHost, s.handle, s.runtimeSlot, s.authGeneration, s.status === "signed-out"]));
   const status = useConnection((s) => s.status);
   const refresh = useConnection((s) => s.refresh);
   const loadAppearance = useAppearance((s) => s.load);
+
+  useEffect(() => wireNativeAppOpening(), []);
 
   useEffect(() => {
     wireConnectionEvents();
@@ -35,7 +39,11 @@ export default function App() {
         ) : status === "signed-out" ? (
           <SignIn />
         ) : (
-          <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
+          <>
+            {/* Outside the runtime gate: organizations come from the platform, not the computer. */}
+            <DesktopDefaultOrganization />
+            <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
+          </>
         )}
       </div>
       <NativeChatBadge />

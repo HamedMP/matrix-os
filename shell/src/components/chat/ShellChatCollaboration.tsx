@@ -7,6 +7,7 @@ import { useMemo } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { createShellCollaborationApi } from "@/lib/collaboration";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
 const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 const COLLABORATION_LAYERS = { dialog: SHELL_Z_INDEX.appDialog, popover: SHELL_Z_INDEX.popover };
@@ -14,16 +15,20 @@ const COLLABORATION_LAYERS = { dialog: SHELL_Z_INDEX.appDialog, popover: SHELL_Z
 export function ShellChatCollaboration({
   view,
   onOpenChat,
+  onOpenProject,
   onSessionMetadata,
   headerContainer,
 }: {
   view: ChatCollaborationView;
   onOpenChat?: (scopeId: string) => void;
+  /** Opens a shared project in this Chats app; never a standalone page. */
+  onOpenProject?: (scopeId: string) => void;
   onSessionMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
 }) {
   const { isLoaded, userId } = useAuth();
   const browserOrigin = useBrowserOrigin();
+  const { status: organizationStatus } = useCollaborationOrganization();
   const router = useRouter();
   const api = useMemo(
     () => browserOrigin ? createShellCollaborationApi(browserOrigin) : null,
@@ -33,6 +38,11 @@ export function ShellChatCollaboration({
 
   if ((!isLoaded && !e2eBypass) || !browserOrigin) {
     return <p role="status" className="p-8">Loading shared Chat…</p>;
+  }
+  if (organizationStatus === "none") {
+    return <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">
+      Organization sharing is no longer available for this account.
+    </div>;
   }
   if (!actorId || !api) {
     return <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">
@@ -53,7 +63,9 @@ export function ShellChatCollaboration({
         onOpenChat?.(scopeId);
       }}
       openTerminal={(scopeId) => router.push(`/shared/terminal/${encodeURIComponent(scopeId)}`)}
-      openProject={(scopeId) => router.push(`/shared/project/${encodeURIComponent(scopeId)}`)}
+      openProject={(scopeId) => {
+        onOpenProject?.(scopeId);
+      }}
     />
   </div>;
 }

@@ -1,3 +1,4 @@
+import { prepareChatSessionContext } from "./session-history.js";
 import { type ChatAgentContext, chatContextRequestHash } from "./agent-context.js";
 import { chatRequestHash, truthfulCancellationGranularity } from "./argument-digest.js";
 import { randomUUID } from "node:crypto";
@@ -6,8 +7,9 @@ import {
   CanonicalCreateChatTurnRequestSchema, CanonicalChatMessageSchema, CanonicalChatTurnSchema,
   CanonicalChatRunSchema, CanonicalChatTurnAdmissionResponseSchema,
   ChatRunContextSchema,
-  type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
+  type ChatContextSnapshot, type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
   type CanonicalChatTurnAdmissionResponse,
+  canonicalExecutionRootProjectId,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
@@ -28,9 +30,10 @@ import {
   type ActiveVoiceSessionPolicy,
   type VoiceSessionPolicyLookup,
 } from "./voice-session-policy.js";
+import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 
 export interface TurnAdmissionOptions {
-  repository: Pick<ChatRepository, "get" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun" | "kysely">;
+  repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun" | "kysely">;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
@@ -51,7 +54,7 @@ export interface TurnAdmissionOptions {
   hasStoppingExecution(owner: ChatOwner, chatId: string, admissionKey?: string): boolean;
   startDispatch(owner: ChatOwner, message: CanonicalChatMessage, run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter, root?: ResolvedChatExecutionRoot, resumeState?: unknown,
-    promptOverride?: string, admissionKey?: string): void;
+    promptOverride?: string, admissionKey?: string, sharedScopeId?: string, onComplete?: () => Promise<void>, retainedHistory?: ChatContextSnapshot): void;
 }
 
 const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
@@ -115,7 +118,7 @@ export async function admitCanonicalTurn(
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
     const effective = { ...input, ...prepared, permissionMode: admissionPolicy.permissionMode };
-    const catalog = await deps.catalog.getCatalog(principal);
+    const catalog = await deps.catalog.getCatalog(principal, effective.selection);
     const requirements = requirementsFor({
       ...effective,
       parts: prepared ? input.parts.filter((part) =>
@@ -132,7 +135,10 @@ export async function admitCanonicalTurn(
       },
     });
     if (!validated.ok) {
-      throw new CanonicalChatOrchestrationError(validated.error, validated.error.code === "provider_instance_locked" ? 409 : 400);
+      const agentModeError = validated.error.code === "capability_mismatch"
+        ? unsupportedAgentPermissionMode(catalog, effective.selection, requirements, Boolean(prepared?.context?.agent))
+        : null;
+      throw new CanonicalChatOrchestrationError(agentModeError ?? validated.error, validated.error.code === "provider_instance_locked" ? 409 : 400);
     }
     const adapter = deps.adapters.get(validated.instance.driverKind);
     if (!adapter) {
@@ -147,9 +153,18 @@ export async function admitCanonicalTurn(
       console.warn("[chat] action policy qualification failed", error instanceof Error ? error.name : "UnknownError");
       throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "The selected Provider cannot enforce this execution policy."), 400);
     }
+    // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
+    // so no ordinary Chat can mount a bot's private files.
+    if (input.executionRoot?.kind === "bot_workspace") {
+      throw new CanonicalChatOrchestrationError(
+        safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
+        400,
+      );
+    }
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
-    if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
+    if (input.executionRoot && record.projectId
+      && canonicalExecutionRootProjectId(input.executionRoot) !== record.projectId) {
       throw new CanonicalChatOrchestrationError(
         safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
         400,
@@ -209,6 +224,14 @@ export async function admitCanonicalTurn(
       const { history: _history, ...context } = prepared.context;
       prepared.context = context;
     }
+    let sessionContext: CanonicalChatRun["context"];
+    try {
+      sessionContext = await prepareChatSessionContext({
+        repository: deps.repository, owner, chatId, throughSeq: record.chat.messageCount,
+        requestHash, instanceId: validated.instance.id, resumeState, context: prepared?.context,
+        preserveHistory: Boolean(resumeDecision?.retainedHistory),
+      });
+    } catch (error: unknown) { return mapRepositoryError(error); }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),
@@ -247,7 +270,7 @@ export async function admitCanonicalTurn(
       instanceId: validated.instance.id,
       selection: validated.selection,
       interactionMode: effective.interactionMode,
-      ...(prepared?.context ? { context: prepared.context } : {}),
+      ...(sessionContext ? { context: sessionContext } : {}),
       permissionMode: admissionPolicy.permissionMode,
       ...(admissionPolicy.runPolicy ? { runPolicy: admissionPolicy.runPolicy } : {}),
       ...(resolvedRoot ? {

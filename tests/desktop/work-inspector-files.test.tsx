@@ -13,10 +13,10 @@ import { useProjectWorkspaces } from "@desktop/renderer/src/stores/project-works
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
+import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 class NoopResizeObserver implements ResizeObserver {
-  constructor(_callback: ResizeObserverCallback) {}
   observe() {}
   unobserve() {}
   disconnect() {}
@@ -61,7 +61,10 @@ function detail(projectId?: string): CanonicalChatDetailResponse {
 }
 
 function apiFor(chatDetail: CanonicalChatDetailResponse): ApiClient {
+  const providerSettings = disconnectedSnapshot();
+  providerSettings.harnesses.find((harness) => harness.harness === "codex")!.authState = "authenticated";
   const get = vi.fn(async (path: string) => {
+    if (path.startsWith("/api/ai/provider-settings?")) return providerSettings;
     if (path === "/api/chat-providers" || path === "/api/chat-providers?refresh=true") {
       return providerCatalog;
     }
@@ -71,8 +74,9 @@ function apiFor(chatDetail: CanonicalChatDetailResponse): ApiClient {
     if (path.startsWith("/api/projects/matrix-os/tasks?")) return { tasks: [], nextCursor: null };
     throw new Error(`Unexpected Work composition request: ${path}`);
   });
-  return {
+  const api = {
     baseUrl: "https://matrix.test",
+    forRuntime: vi.fn(() => api),
     get,
     getText: vi.fn(),
     getBlob: vi.fn(),
@@ -84,6 +88,7 @@ function apiFor(chatDetail: CanonicalChatDetailResponse): ApiClient {
     delete: vi.fn(),
     putText: vi.fn(),
   } as ApiClient;
+  return api;
 }
 
 function connect(chatDetail: CanonicalChatDetailResponse) {
@@ -182,8 +187,11 @@ describe("Work Files inspector composition", () => {
 
     render(<WorkTab route="chat" active initialChatView={view} />);
 
-    if (view === "draft") await screen.findByRole("textbox", { name: "Start a chat" });
-    else await screen.findByText("Recents");
+    if (view === "draft") {
+      await screen.findByRole("textbox", { name: "Start a chat" });
+      expect(useConnection.getState().api!.forRuntime).toHaveBeenCalledWith("primary");
+    }
+    else await screen.findByRole("textbox", { name: "Start a chat" });
     expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
   });
 });

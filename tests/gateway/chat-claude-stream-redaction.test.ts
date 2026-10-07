@@ -1,8 +1,11 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
+import { ownerSdkAdapterFixture } from "./owner-sdk-home-test-support.js";
 import { createAssistantTextStreamProjector } from "../../packages/gateway/src/chat/safe-activity-projection.js";
 import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter.js";
+import { assistantMessageId, openAssistantCredential } from "../../packages/gateway/src/chat/assistant-credential-crypto.js";
+
+const createClaudeChatProviderAdapter = ownerSdkAdapterFixture();
 
 class FakeStream extends EventEmitter {}
 
@@ -46,6 +49,7 @@ const input = {
   interactionMode: "default",
   permissionMode: "auto_accept_edits",
   executionRoot: "/safe/project",
+  sharedScopeId: "scope_claude_fixture",
   signal: new AbortController().signal,
 };
 
@@ -78,14 +82,18 @@ function separateTextBlocks(parts: string[]): string[] {
 
 async function runLines(
   lines: string[],
-  options: { exitCode?: number; afterLines?: () => void; signal?: AbortSignal } = {},
+  options: { exitCode?: number; afterLines?: () => void; signal?: AbortSignal; privateChat?: boolean; credentialKey?: Buffer } = {},
 ): Promise<CanonicalProviderRunEvent[]> {
   const adapter = createClaudeChatProviderAdapter({
     homePath: "/home/matrix/home",
+    credentialKey: options.credentialKey,
     spawnFn: vi.fn(() => child(lines, options)),
   });
   const events: CanonicalProviderRunEvent[] = [];
-  for await (const event of adapter.start({ ...input, signal: options.signal ?? input.signal })) events.push(event);
+  for await (const event of adapter.start({ ...input,
+    ...(options.privateChat ? { sharedScopeId: undefined } : {}),
+    signal: options.signal ?? input.signal,
+  })) events.push(event);
   return events;
 }
 
@@ -110,6 +118,47 @@ function assembledAssistantMessages(events: CanonicalProviderRunEvent[]): Map<st
 }
 
 describe("Claude streamed assistant text redaction", () => {
+  it("seals one completed private split credential and leaves shared output metadata-free", async () => {
+    const key = Buffer.alloc(32, 9);
+    const lines = streamLines(["API_", "KEY=fixture-secret-value", " done"]);
+    const privateEvents = await runLines(lines, { privateChat: true, credentialKey: key });
+    const privateDeltas = privateEvents.filter((event) => event.type === "assistant.delta");
+    expect(privateDeltas.map((event) => event.delta).join("")).toBe("[redacted credential] done");
+    const sealed = privateDeltas.flatMap((event) => event.credentials ?? []);
+    expect(sealed).toHaveLength(1);
+    const messageId = assistantMessageId(input.runId, privateDeltas.find((event) => event.credentials?.length)?.messageId);
+    expect(openAssistantCredential(key, {
+      ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
+      messageId, occurrenceId: sealed[0]!.occurrenceId,
+    }, sealed[0]!.envelope)).toBe("fixture-secret-value");
+    expect(JSON.stringify(privateEvents)).not.toContain("fixture-secret-value");
+    const shared = await runLines(lines, { credentialKey: key });
+    expect(shared.filter((event) => event.type === "assistant.delta").flatMap((event) => event.credentials ?? [])).toEqual([]);
+  });
+  it("seals a credential in a result-only private Claude response", async () => {
+    const key = Buffer.alloc(32, 9);
+    const events = await runLines([
+      JSON.stringify({ type: "result", subtype: "success", result: "Bearer result-only-secret", session_id: "claude_result_only" }),
+    ], { privateChat: true, credentialKey: key });
+    const deltas = events.filter((event) => event.type === "assistant.delta");
+    expect(deltas.map((event) => event.delta).join("")).toBe("Bearer [redacted]");
+    expect(deltas.flatMap((event) => event.credentials ?? [])).toHaveLength(1);
+    expect(JSON.stringify(events)).not.toContain("result-only-secret");
+  });
+  it("shows full paths only in a private Chat", async () => {
+    const lines = streamLines(["Open /home/matrix/home/apps/chart/index.html now."]);
+    expect([...assembledAssistantMessages(await runLines(lines, { privateChat: true })).values()].join(""))
+      .toBe("Open /home/matrix/home/apps/chart/index.html now.");
+    expect([...assembledAssistantMessages(await runLines(lines)).values()].join(""))
+      .toBe("Open ~/apps/chart/index.html now.");
+  });
+  it("keeps a query credential hidden across private Chat text blocks", async () => {
+    const events = await runLines(separateTextBlocks(["Open /api/apps?to", "ken=fixture-private now."]),
+      { privateChat: true });
+    const text = [...assembledAssistantMessages(events).values()].join("");
+    expect(text).toBe("Open [redacted path] now.");
+    expect(text).not.toContain("fixture-private");
+  });
   it("preserves a public HTTPS documentation URL split at path boundaries", async () => {
     const deltas = await streamedAssistantDeltas([
       "Title: What is Azure Functions? URL: https://learn.microsoft.com/azure",

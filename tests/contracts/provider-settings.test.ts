@@ -19,6 +19,29 @@ import {
 const now = "2026-08-30T10:00:00.000Z";
 const later = "2026-09-30T10:00:00.000Z";
 
+describe("source-aware Chat credit", () => {
+  function usage() {
+    const value = makeSnapshot().accessSources[0]!.usage;
+    if (value.kind !== "managed_credit") throw new Error("Managed fixture required");
+    return { ...value, chatAvailability: { contractVersion: 1, asOf: now,
+      eligibleBalanceMicrousd: 500_000, availableBalanceMicrousd: 250_000 } };
+  }
+  it("adds an independent projection without changing legacy arithmetic", () => {
+    expect(ProviderUsageSchema.parse(usage())).toMatchObject({ remainingMicrousd: 750_000,
+      chatAvailability: { availableBalanceMicrousd: 250_000 } });
+    expect(ProviderUsageSchema.safeParse(makeSnapshot().accessSources[0]!.usage).success).toBe(true);
+  });
+  it.each([
+    { asOf: later }, { eligibleBalanceMicrousd: 1_000_001 },
+    { availableBalanceMicrousd: 750_001, eligibleBalanceMicrousd: 800_000 },
+    { availableBalanceMicrousd: 500_001 }, { availableBalanceMicrousd: -1 },
+    { availableBalanceMicrousd: 0.5 }, { contractVersion: 2 },
+  ])("rejects inconsistent Chat funding: %j", patch => {
+    const value = usage(); Object.assign(value.chatAvailability, patch);
+    expect(ProviderUsageSchema.safeParse(value).success).toBe(false);
+  });
+});
+
 function readiness(state: "ready" | "stale" = "ready") {
   return {
     state,
@@ -346,6 +369,25 @@ describe("provider settings contracts", () => {
       ...snapshot,
       configurationHarnessKinds: ["hermes"],
     }).success).toBe(false);
+  });
+
+  it("validates offered Matrix inventory references without requiring runnable readiness", () => {
+    const snapshot = makeSnapshot();
+    snapshot.accessSources[0]!.readiness = { ...readiness(), state: "unavailable", action: "retry", safeReason: "provider_unavailable" };
+    snapshot.accessSources[0]!.eligibleModelIds = [];
+    snapshot.gatewayPolicy!.allowedModelIds = [];
+    snapshot.harnesses[0]!.accessSourceId = "source_personal";
+    snapshot.harnesses[0]!.selectedAccountId = "account_personal";
+    const model = { ...snapshot.modelProviders[0]!.models[0]!, providerId: "anthropic" as const, accessSourceId: "source_matrix" };
+    expect(ProviderSettingsSnapshotSchema.safeParse({ ...snapshot, matrixModelInventory: [model] })).toEqual(expect.objectContaining({ success: true }));
+    for (const invalid of [
+      { ...model, accessSourceId: "missing_source" },
+      { ...model, accessSourceId: "source_personal" },
+      { ...model, providerId: "openai" },
+      { ...model, id: "missing_model" },
+    ]) {
+      expect(ProviderSettingsSnapshotSchema.safeParse({ ...snapshot, matrixModelInventory: [invalid] }).success).toBe(false);
+    }
   });
 
   it("keeps accounts owner-funded, opaque, reciprocal, and secret-free", () => {

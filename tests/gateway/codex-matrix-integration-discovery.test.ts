@@ -50,6 +50,11 @@ it.each([
     const start = (await runner.requests()).find((request) => request.method === method);
     // Ordinary Chat keeps its existing read-only integration fallback rather
     // than receiving the canonical voice contract.
+    expect(start?.developerInstructions).toContain("## Matrix OS orientation");
+    expect(start?.developerInstructions).toContain("window.MatrixOS.db");
+    expect(start?.developerInstructions).toContain("matrix-app-builder");
+    expect(start?.developerInstructions).toContain("Only use tools present in this run");
+    expect(start?.developerInstructions).not.toContain("mcp__matrix-os-ipc__manage_cron");
     expect(start?.developerInstructions).toContain("matrix-integrations inventory");
     expect(start?.developerInstructions).not.toContain("Default to one or two short sentences");
     expect(start?.developerInstructions).toContain("matrix-integrations describe");

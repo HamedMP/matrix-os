@@ -1,11 +1,15 @@
+export * from "#chat-drive-project";
 import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
 export * from "#terminal-scroll";
+export * from "#private-preview";
 export { APP_GENERATE_CHANNEL, AppGenerateContextSchema, AppGenerateEventSchema, createAppGenerateClient } from "#app-ai";
 export { APP_AI_TIMEOUT_MS, APP_AI_CHANNEL, AppAiInputSchema, AppAiRequestSchema, AppAiResultSchema, createAppAiClient } from "#app-ai";
 export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
+export * from "#chat-event-wire";
+export * from "#bots";
 export * from "#chat-artifacts";
 export * from "#file-preview";
 import { z } from "zod/v4";
@@ -31,7 +35,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.156.1";
+export const CODEX_VERIFIED_VERSION = "0.161.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 /** Keep Codex output in xterm's normal buffer so scrollback remains selectable. */
 export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";
@@ -66,8 +70,10 @@ export * from "#collaboration-peer";
 export * from "#collaboration-resources";
 export * from "#organization-billing";
 export * from "#organization-drive";
+export * from "#organization-management";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
+export * from "#jev-hermes-route";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
 export * from "#provider-settings";
@@ -1438,7 +1444,7 @@ export type {
   PatchOsViewStateRequest,
 } from "#os-view";
 
-export { resolveChatMessageLink } from "#chat-links";
+export { resolveChatMessageLink, resolveChatAppReference } from "#chat-links";
 export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, isPublicShareLink, type ShareSnapshot } from "#chat-sharing";
 export * from "#terminal-keyboard";
 
@@ -1448,3 +1454,10 @@ export * from "#custom-mcp-availability";
 
 export { normalizeTerminalSnapshot } from "#terminal-snapshot";
 export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type ChatSubagent } from "#chat-subagent";
+
+export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type ImportedChatAssetRef } from "#canonical-chat-import-parts";
+export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryEntry, type AiCreditHistoryResponse } from "#ai-credit-history";
+
+export * from "#provider-workflows";
+export * from '#chatgpt-plan-peer';
+export * from '#chatgpt-plan-wire';

@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { createPortal } from "react-dom";
-import { TerminalControls, createTerminalNativeHistory, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
+import { TerminalControls, captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_TERMINAL_DROP_FILES, createTerminalNativeHistory, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
 import {
   resolveTerminalClipboardKeyEvent,
   classifyTerminalPointerEvent,
@@ -40,6 +40,7 @@ import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
 import { installMouseTrackingSelection } from "./terminal-mouse-selection";
 import { decodeOsc52Clipboard } from "./terminal-osc52";
 import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
+import { NativeTerminalClipboardError, readNativeTerminalClipboardFiles } from "./terminal-native-clipboard";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
@@ -170,6 +171,8 @@ export default function TerminalView({
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
+  const fileSelectionRef = useRef<(files: File[]) => void>(() => undefined);
+  const selectFiles = useCallback((files: File[]) => fileSelectionRef.current(files), []);
   const copyOperationGenerationRef = useRef(0);
   const pasteOperationGenerationRef = useRef(0);
   const clipboardOperationSequenceRef = useRef(0);
@@ -628,19 +631,27 @@ export default function TerminalView({
 
     const uploadAndPaste = async (
       files: ReturnType<typeof terminalPasteFiles>,
+      kind: "image" | "file" = "image",
       operation = ++pasteOperationGenerationRef.current,
       initiatingAttachment = attachmentRef.current,
       feedbackSequence = ++clipboardOperationSequenceRef.current,
     ) => {
+      const failureMessage = kind === "file" ? "File upload failed. Try again." : "Image paste failed. Try again.";
+      if (files.length > MAX_TERMINAL_DROP_FILES) {
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          reportClipboardFailure(feedbackSequence, "Upload up to 8 files at a time.");
+        }
+        return;
+      }
       if (files.some(({ file }) => file.size > MAX_TERMINAL_PASTE_FILE_BYTES)) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          reportClipboardFailure(feedbackSequence, "Images are limited to 10 MB.");
+          reportClipboardFailure(feedbackSequence, kind === "file" ? "Files are limited to 10 MB." : "Images are limited to 10 MB.");
         }
         return;
       }
       if (!api || !initiatingAttachment) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          reportClipboardFailure(feedbackSequence, "Image paste is unavailable. Reconnect and try again.");
+          reportClipboardFailure(feedbackSequence, kind === "file" ? "File upload is unavailable. Reconnect and try again." : "Image paste is unavailable. Reconnect and try again.");
         }
         return;
       }
@@ -650,7 +661,7 @@ export default function TerminalView({
         const paths = await Promise.all(files.map(async ({ file, mimeType }) => {
           const response = await api.post<{ assets?: Array<{ terminalPath?: unknown }> }>(
             `/api/terminal/workspaces/${encodeURIComponent(terminalRef.workspaceId)}/tabs/${encodeURIComponent(terminalRef.tabId)}/paste-assets`,
-            { assets: [{
+            { ...(kind === "file" ? { kind } : {}), assets: [{
               name: safeTerminalUploadFilename(file.name),
               mimeType,
               dataBase64: await terminalPasteFileBase64(file),
@@ -673,11 +684,11 @@ export default function TerminalView({
         initiatingAttachment.write(payload);
         reportClipboardSuccess(feedbackSequence);
       } catch (err: unknown) {
-        console.warn("[terminal] image paste failed", {
+        console.warn(kind === "file" ? "[terminal] file upload failed" : "[terminal] image paste failed", {
           category: err instanceof DOMException ? err.name : "terminal-paste-error",
         });
         if (isCurrentOperation(operation, initiatingAttachment)) {
-          reportClipboardFailure(feedbackSequence, "Image paste failed. Try again.");
+          reportClipboardFailure(feedbackSequence, failureMessage);
         }
       }
     };
@@ -686,6 +697,20 @@ export default function TerminalView({
       const operation = ++pasteOperationGenerationRef.current;
       const feedbackSequence = ++clipboardOperationSequenceRef.current;
       const initiatingAttachment = attachmentRef.current;
+      try {
+        const copiedFiles = await readNativeTerminalClipboardFiles();
+        if (!isCurrentOperation(operation, initiatingAttachment)) return;
+        if (copiedFiles.length > 0) {
+          await uploadAndPaste(copiedFiles, "file", operation, initiatingAttachment, feedbackSequence);
+          return;
+        }
+      } catch (error: unknown) {
+        if (isCurrentOperation(operation, initiatingAttachment)) {
+          reportClipboardFailure(feedbackSequence, error instanceof NativeTerminalClipboardError
+            ? error.message : "Copied files are unavailable. Copy them again and try again.");
+        }
+        return;
+      }
       const clipboard = navigator.clipboard;
       if (!clipboard) {
         if (isCurrentOperation(operation, initiatingAttachment)) {
@@ -701,7 +726,7 @@ export default function TerminalView({
           const imageFiles = await readTerminalClipboardFiles(clipboardWithOptionalRead);
           if (imageFiles.length > 0) {
             if (!isCurrentOperation(operation, initiatingAttachment)) return;
-            await uploadAndPaste(imageFiles, operation, initiatingAttachment, feedbackSequence);
+            await uploadAndPaste(imageFiles, "image", operation, initiatingAttachment, feedbackSequence);
             return;
           }
         } catch (error: unknown) {
@@ -733,17 +758,32 @@ export default function TerminalView({
       }
     };
     pasteClipboardRef.current = pasteFromClipboard;
+    const uploadSelection = (files: File[]) => {
+      termRef.current?.focus();
+      void uploadAndPaste(files.map((file) => ({ file, mimeType: terminalDropMimeType(file) })), "file");
+    };
+    fileSelectionRef.current = uploadSelection;
 
     const onPaste = (event: ClipboardEvent) => {
       const files = captureFiles(event);
       if (files.length > 0) void uploadAndPaste(files);
     };
-    const onDrag = (event: DragEvent) => {
-      captureFiles(event);
-    };
+    const onDrag = captureTerminalFileDrag;
     const onDrop = (event: DragEvent) => {
-      const files = captureFiles(event);
-      if (files.length > 0) void uploadAndPaste(files);
+      const files = terminalDropFiles(event.dataTransfer);
+      if (files === null) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        pasteOperationGenerationRef.current += 1;
+        reportClipboardFailure(++clipboardOperationSequenceRef.current, "Drop individual files only. Some items could not be read.");
+        return;
+      }
+      if (files.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      void uploadAndPaste(files.map((file) => ({ file, mimeType: terminalDropMimeType(file) })), "file");
     };
 
     host.addEventListener("paste", onPaste, { capture: true });
@@ -752,6 +792,7 @@ export default function TerminalView({
     host.addEventListener("drop", onDrop, { capture: true });
     return () => {
       cancelled = true;
+      if (fileSelectionRef.current === uploadSelection) fileSelectionRef.current = () => undefined;
       copyOperationGenerationRef.current += 1;
       pasteOperationGenerationRef.current += 1;
       if (pasteClipboardRef.current === pasteFromClipboard) {
@@ -788,8 +829,10 @@ export default function TerminalView({
       data-terminal-surface
       style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}
     >
-      {controlsHost === undefined ? <TerminalControls layers={DESKTOP_Z_INDEX} controls={controls} theme={terminalTheme} /> : controlsHost ? createPortal(
-        <TerminalControls layers={DESKTOP_Z_INDEX} controls={controls} placement="header" theme={{ background: "var(--bg-surface)", foreground: "var(--text-primary)" }} />,
+      {controlsHost === undefined ? <TerminalControls layers={DESKTOP_Z_INDEX} controls={controls} theme={terminalTheme}
+        attachment={{ enabled: controls.enabled, onSelectFiles: selectFiles }} /> : controlsHost ? createPortal(
+        <TerminalControls layers={DESKTOP_Z_INDEX} controls={controls} placement="header" theme={{ background: "var(--bg-surface)", foreground: "var(--text-primary)" }}
+          attachment={{ enabled: controls.enabled, onSelectFiles: selectFiles }} />,
         controlsHost,
       ) : null}
       <div

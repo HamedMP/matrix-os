@@ -1,5 +1,7 @@
+import {hasCompanyDriveMaterial} from "../chat/drive-sharing-guard.js";
 import type { Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { toOutbox, type ChatOutboxEvent } from "../chat/records.js";
 
 const MAX_PROJECT_RESOURCE_SCOPES = 100_000;
 const MAX_DIRECT_SCOPE_MEMBERS = 8;
@@ -11,6 +13,31 @@ export class ProjectMembershipTransitionError extends Error {
     super("Project membership transition is unavailable");
     this.name = "ProjectMembershipTransitionError";
   }
+}
+
+/** Called only after a Chat acquires shared project authority in this transaction. */
+export async function revokeProjectSharedChatCredentials(
+  trx: CollaborationTransaction,
+  input: { chatId: string; ownerType: "personal" | "organization"; ownerId: string; now: Date },
+): Promise<ChatOutboxEvent | null> {
+  const chat = await trx.selectFrom("chats").select(["id", "owner_type", "owner_id", "revision"])
+    .where("id", "=", input.chatId).forUpdate().executeTakeFirst();
+  if (!chat) return null;
+  if (chat.owner_type !== input.ownerType || chat.owner_id !== input.ownerId) {
+    throw new ProjectMembershipTransitionError("conflict");
+  }
+  await trx.updateTable("chat_credentials").set({ revealed: false })
+    .where("chat_id", "=", chat.id).where("revealed", "=", true).execute();
+  const nextRevision = Number(chat.revision) + 1;
+  const updated = await trx.updateTable("chats").set({ revision: nextRevision, updated_at: input.now })
+    .where("id", "=", chat.id).where("revision", "=", Number(chat.revision))
+    .returning("id").executeTakeFirst();
+  if (!updated) throw new ProjectMembershipTransitionError("conflict");
+  const outbox = await trx.insertInto("chat_outbox").values({
+    owner_type: input.ownerType, owner_id: input.ownerId, chat_id: chat.id,
+    revision: nextRevision, event_type: "chat.updated", payload: {}, created_at: input.now,
+  }).returningAll().executeTakeFirstOrThrow();
+  return toOutbox(outbox);
 }
 
 /**
@@ -30,7 +57,8 @@ export async function reconcileProjectMembershipAtPublication(
     now: Date;
     createEventId: () => string;
   },
-): Promise<void> {
+): Promise<ChatOutboxEvent[]> {
+  const chatEvents: ChatOutboxEvent[] = [];
   const children = await trx.selectFrom("collaboration_resource_bindings as binding")
     .innerJoin("collaboration_scopes as child", "child.id", "binding.resource_scope_id")
     .select([
@@ -69,6 +97,16 @@ export async function reconcileProjectMembershipAtPublication(
       || child.lifecycle === "deleted"
       || (child.kind !== "chat" && child.kind !== "terminal")) {
       throw new ProjectMembershipTransitionError("conflict");
+    }
+
+    if (child.kind === "chat") {
+      // Admission takes this same Chat lock. Keep it until publication commits.
+      const chat = await trx.selectFrom("chats").select(["id", "owner_type", "owner_id"])
+        .where("id", "=", child.resource_id).forUpdate().executeTakeFirst();
+      if (chat && (chat.owner_type !== input.ownerType || chat.owner_id !== input.ownerId)) {
+        throw new ProjectMembershipTransitionError("conflict");
+      }
+      if (await hasCompanyDriveMaterial(trx, child.resource_id)) throw new ProjectMembershipTransitionError("conflict");
     }
 
     const members = await trx.selectFrom("collaboration_members")
@@ -111,6 +149,13 @@ export async function reconcileProjectMembershipAtPublication(
       .executeTakeFirst();
     if (!updated) throw new ProjectMembershipTransitionError("conflict");
 
+    if (child.kind === "chat") {
+      const event = await revokeProjectSharedChatCredentials(trx, {
+        chatId: child.resource_id, ownerType: input.ownerType, ownerId: input.ownerId, now: input.now,
+      });
+      if (event && input.ownerType === "personal") chatEvents.push(event);
+    }
+
     if (child.membership_mode === "direct") {
       const removed = await trx.deleteFrom("collaboration_members")
         .where("scope_id", "=", child.id)
@@ -150,4 +195,5 @@ export async function reconcileProjectMembershipAtPublication(
       }).execute();
     }
   }
+  return chatEvents;
 }

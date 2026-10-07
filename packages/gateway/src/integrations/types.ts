@@ -48,6 +48,8 @@ export interface ServiceDefinition {
   };
   icon: string;
   logoUrl: string;
+  description?: string;
+  authType?: "oauth" | "keys";
   actions: Record<string, ServiceAction>;
 }
 

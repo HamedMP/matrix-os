@@ -67,8 +67,8 @@ export class ChatDetailRepository {
     const turnRows = turnIds.length === 0 ? [] : await this.kysely.selectFrom("chat_turns").selectAll()
       .where("chat_id", "=", parsedChatId)
       .where("id", "in", turnIds)
-      .orderBy("created_at", "desc")
-      .limit(100)
+      .orderBy("base_message_seq", "desc")
+      .limit(limit)
       .execute();
     turnRows.reverse();
     const selectedRunIds = selectedMessageRows.flatMap((row) => row.run_id ? [row.run_id] : []);

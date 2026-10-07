@@ -105,10 +105,10 @@ describe("Hermes-owned native subscription catalog", () => {
       expect(applyConfiguration).toHaveBeenCalledTimes(1);
     } finally { producer.close(); await rm(homePath, { recursive: true, force: true }); }
   });
-  it("rejects non-Codex Hermes profiles at the V3 catalog boundary", () => {
+  it("rejects unqualified Hermes providers at the V3 catalog boundary", () => {
     expect(AiNativeHarnessCatalogSchema.safeParse({ profiles: [{
-      harness: "hermes", providerId: "anthropic", providerDisplayName: "Anthropic",
-      models: [{ id: "anthropic:claude", displayName: "Claude", enabled: true }], defaultModelId: "anthropic:claude",
+      harness: "hermes", providerId: "unqualified", providerDisplayName: "Unqualified",
+      models: [{ id: "unqualified:claude", displayName: "Claude", enabled: true }], defaultModelId: "unqualified:claude",
       localObservation: { state: "unknown", checkedAt: null, staleAfter: null },
     }], failures: [] }).success).toBe(false);
   });
@@ -262,4 +262,12 @@ describe("Hermes-owned native subscription catalog", () => {
     expect(result.instances.find((row) => row.driverKind === "hermes")).toMatchObject({ availability: "available",
       defaultSelection: { model: "openai-codex:gpt-5.6-sol" } });
   });
+});
+
+it.each(['openai-api','anthropic','openrouter'])('projects only fresh Hermes native API-key evidence for %s', provider => {
+  const snapshot = normalizeHermesRuntimeSnapshot({ observedAt: +now, status: { gateway_running: true }, options: {
+    provider, model: 'native-model', providers: [{ slug: provider, authenticated: true, auth_type: 'api_key', is_user_defined: false, models: ['native-model'] }],
+  } });
+  expect(projectHermesNativeCatalog(snapshot, now).profiles).toEqual([expect.objectContaining({ providerId: provider, models: [{ id: `${provider}:native-model`, displayName: 'native-model', enabled: true }] })]);
+  expect(projectHermesNativeCatalog(snapshot, new Date(+now + 5000)).profiles).toEqual([]);
 });

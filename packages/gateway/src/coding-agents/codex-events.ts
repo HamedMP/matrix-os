@@ -1,4 +1,5 @@
 import { codexToolOutput, coarseToolOutputText } from "./codex-tool-output.mjs";
+import { CODEX_FAILURE_REASONS, codexTerminalFailureReason, type CodexFailureReason } from "./codex-terminal-failure.mjs";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
@@ -197,6 +198,7 @@ export interface CodexEventParseResult {
   canonicalActionRequest?: CodingAgentCanonicalActionRequest;
   providerThreadId?: string;
   outcome?: "completed" | "failed" | "aborted";
+  failureReason?: CodexFailureReason;
   tokenUsage?: AiTokenUsage;
 }
 
@@ -499,7 +501,11 @@ export function parseCodexExecJsonLine(
     return { events: [], outcome: "completed", ...(tokenUsage ? { tokenUsage } : {}) };
   }
   if (codexEvent.type === "turn.aborted") return { events: [], outcome: "aborted" };
-  if (codexEvent.type === "turn.failed") return { events: [], outcome: "failed" };
+  if (codexEvent.type === "turn.failed") {
+    const parsedReason = z.enum(CODEX_FAILURE_REASONS).safeParse(codexEvent.failureReason);
+    const failureReason = parsedReason.success ? parsedReason.data : codexTerminalFailureReason(codexEvent.error);
+    return { events: [], outcome: "failed", ...(failureReason ? { failureReason } : {}) };
+  }
   if (codexEvent.type === "item.started") {
     return { events: startedItemEvents(context, codexEvent.item) };
   }

@@ -29,11 +29,13 @@ function safeEqual(left: string | undefined, right: string | undefined): boolean
 
 export function createCustomMcpProjectionRoutes(options: {
   homePath: string;
+  /** Shared with the startup pull so both serialize through one write queue. */
+  store?: CustomMcpProjectionStore;
   token: string;
   clerkUserId: string;
 }): Hono {
   const app = new Hono();
-  const store = new CustomMcpProjectionStore(options.homePath);
+  const store = options.store ?? new CustomMcpProjectionStore(options.homePath);
 
   function authorize(context: Context): Response | null {
     const authorization = context.req.header("authorization");

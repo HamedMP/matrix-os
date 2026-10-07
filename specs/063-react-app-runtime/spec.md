@@ -131,7 +131,7 @@ Rules:
 
 **Responsibilities:**
 - Maintain a bounded `Map<appSlug, ProcessRecord>` of running child processes (cap = 10, LRU eviction)
-- Allocate ports from a pool (range: 40000-49999)
+- Allocate ports from a pool (range: 20000-29999, below the Linux ephemeral range 32768-60999 so outbound sockets cannot hold an app port)
 - Spawn child processes via `child_process.spawn` with a restricted env whitelist
 - Health check by polling `http://127.0.0.1:{port}{healthCheck}` on startup (up to `startTimeout` seconds)
 - Track `lastUsedAt` per app, shut down idle apps after `idleShutdown` seconds
@@ -499,7 +499,7 @@ version | slug | principal | scope | expiresAt | HMAC
 - Hono `bodyLimit(10 * 1024 * 1024)` on proxied routes
 - Slug validated with `SAFE_SLUG` regex (`^[a-z0-9][a-z0-9-]{0,63}$`) before any filesystem path construction
 - Manifest path passed through `resolveWithinHome()` before read
-- Port allocation validates range; rejects ports outside 40000-49999
+- Port allocation validates range; rejects ports outside 20000-29999
 
 **Resource management:**
 - Process slot map capped at 10, LRU eviction
@@ -574,7 +574,7 @@ packages/gateway/src/app-runtime/
   manifest-schema.ts          # Zod schema for matrix.json runtime fields (rejects authored distributionStatus)
   manifest-loader.ts          # reads + validates matrix.json, caches by mtime
   process-manager.ts          # ProcessRecord lifecycle + port pool
-  port-pool.ts                # 40000-49999 allocation/release
+  port-pool.ts                # 20000-29999 allocation/release
   dispatcher.ts               # single Hono handler for /apps/{slug}/* across static/vite/node
   serve-static.ts             # thin wrapper over existing /files/* helpers, scoped per app dir
   app-session.ts              # HMAC signer/verifier, HKDF key derivation, buildSetCookie(Path=/apps/{slug}/)

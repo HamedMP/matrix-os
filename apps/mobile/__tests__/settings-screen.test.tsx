@@ -43,6 +43,12 @@ describe("drawer settings hub", () => {
     expect(mockPush).toHaveBeenCalledWith(route);
   });
 
+  it("says where the privacy policy lives so it is findable from the hub", () => {
+    render(<SettingsScreen />);
+
+    expect(screen.getByText("Docs, support, privacy, and terms")).toBeTruthy();
+  });
+
   it("confirms before signing out", async () => {
     const alert = jest.spyOn(Alert, "alert").mockImplementation(
       (_title, _message, buttons) => buttons?.find((button) => button.style === "destructive")?.onPress?.(),

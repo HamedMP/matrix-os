@@ -16,6 +16,7 @@ import {
   type CodingAgentTurnStore,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter.js";
+import { assistantMessageId, openAssistantCredential } from "../../packages/gateway/src/chat/assistant-credential-crypto.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_coding" };
 const occurredAt = "2026-08-26T00:00:00.000Z";
@@ -125,6 +126,36 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it.each([false, true])("projects split Codex paths and credentials for shared=%s", async (shared) => {
+    const fake = fakeStore([
+      event({ type: "assistant.text.delta", eventId: "evt_path_1", messageId: "msg_final", delta: "Open /home/ma" }),
+      event({ type: "assistant.text.delta", eventId: "evt_path_2", messageId: "msg_final", delta: "trix/home/apps/chart.png. ACCESS_TO" }),
+      event({ type: "assistant.text.delta", eventId: "evt_secret", messageId: "msg_final", delta: "KEN=qa-fake-2058" }),
+      event({ type: "thread.completed", eventId: "evt_done", outcome: "completed" }),
+    ]);
+    const credentialKey = Buffer.alloc(32, 11);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store, toolOutputKey: credentialKey });
+    const received: CanonicalProviderRunEvent[] = [];
+    for await (const item of adapter.start(input(shared ? { sharedScopeId: "scope_qa" } : {}))) received.push(item);
+    const answer = received.filter((item) => item.type === "assistant.delta").map((item) => item.delta).join("");
+    expect(answer).toBe(shared
+      ? "Open ~/apps/chart.png. [redacted credential]"
+      : "Open /home/matrix/home/apps/chart.png. [redacted credential]");
+    expect(JSON.stringify(received)).not.toContain("qa-fake-2058");
+    const sealedEvent = received.find((item) => item.type === "assistant.delta" && item.credentials?.length);
+    if (shared) expect(sealedEvent).toBeUndefined();
+    else {
+      expect(sealedEvent?.type).toBe("assistant.delta");
+      if (sealedEvent?.type === "assistant.delta") {
+        const sealed = sealedEvent.credentials![0]!;
+        expect(openAssistantCredential(credentialKey, {
+          ownerId: owner.ownerId, chatId: "chat_coding", runId: "run_coding",
+          messageId: assistantMessageId("run_coding", sealedEvent.messageId), occurrenceId: sealed.occurrenceId,
+        }, sealed.envelope)).toBe("qa-fake-2058");
+      }
+    }
+  });
+
   it("projects captured provider media as a canonical assistant attachment", async () => {
     const fake = fakeStore([
       event({
@@ -174,6 +205,21 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(fake.getThread).toHaveBeenLastCalledWith(expect.objectContaining({ userId: owner.ownerId }), "thread_native", "evt_page_one");
   });
 
+  it("masks credentials in recovered Codex text while preserving private paths", async () => {
+    const fake = fakeStore([
+      event({ type: "assistant.text.delta", eventId: "evt_recover_a", messageId: "msg_final", delta: "Open /home/matrix/home/apps/chart.png. ACCESS_TO" }),
+      event({ type: "assistant.text.delta", eventId: "evt_recover_b", messageId: "msg_final", delta: "KEN=qa-fake-2058" }),
+      event({ type: "thread.completed", eventId: "evt_recover_done", outcome: "completed" }),
+    ]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    const recovered = await adapter.recover!({ owner, runId: "run_coding",
+      state: adapter.parseState({ conversationId: "thread_native", runId: "run_coding", replayAfter: "evt_boundary" }),
+      signal: new AbortController().signal,
+    });
+    expect(recovered?.messages).toEqual([{ messageId: "msg_final",
+      text: "Open /home/matrix/home/apps/chart.png. [redacted credential]" }]);
+  });
+
   it("does not recover another turn's final from an old compatible state", async () => {
     const fake = fakeStore([
       event({ type: "turn.accepted", eventId: "evt_new_run", turnId: "turn_new", clientRequestId: "req_new", acceptedAt: occurredAt }),
@@ -202,7 +248,8 @@ describe("canonical coding Chat Provider adapter", () => {
       ]));
       await vi.advanceTimersByTimeAsync(60_000);
       expect(settled).toBe(true);
-      expect(received).toContainEqual({ type: "assistant.delta", messageId: "msg_final", delta: "Recovered final." });
+      expect(received.filter((item) => item.type === "assistant.delta" && item.messageId === "msg_final")
+        .map((item) => item.delta).join("")).toBe("Recovered final.");
       expect(received.filter((item) => item.type === "run.completed")).toHaveLength(1);
       expect(fake.createThread).toHaveBeenCalledTimes(1);
       expect(fake.acceptTurn).not.toHaveBeenCalled();
@@ -558,12 +605,12 @@ describe("canonical coding Chat Provider adapter", () => {
     const events = [];
     for await (const candidate of adapter.start(input())) events.push(candidate);
 
-    expect(events).toEqual([
-      { type: "state.updated", state: { conversationId: "thread_native", runId: "run_coding" } },
-      { type: "assistant.delta", messageId: "msg_commentary", delta: "I'll run the requested command." },
-      { type: "assistant.delta", messageId: "msg_final", delta: "# Verification\n\n- Complete" },
-      { type: "run.completed", outcome: "completed" },
-    ]);
+    expect(events[0]).toEqual({ type: "state.updated", state: { conversationId: "thread_native", runId: "run_coding" } });
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(events.filter((item) => item.type === "assistant.delta" && item.messageId === "msg_commentary")
+      .map((item) => item.delta).join("")).toBe("I'll run the requested command.");
+    expect(events.filter((item) => item.type === "assistant.delta" && item.messageId === "msg_final")
+      .map((item) => item.delta).join("")).toBe("# Verification\n\n- Complete");
   });
 
   it("resumes and cancels only the same persisted coding thread", async () => {

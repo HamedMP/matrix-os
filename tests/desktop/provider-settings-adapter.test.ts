@@ -13,6 +13,7 @@ import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { createApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { advanceRuntimeGeneration } from "../../desktop/src/renderer/src/stores/runtime-generation";
 
 const checkedAt = "2026-08-30T10:00:00.000Z";
 const providerWorkspaceId = "tws_11111111111111111111111111111111";
@@ -153,7 +154,7 @@ describe("desktop provider settings transport", () => {
     const abort = new AbortController();
 
     await expect(transport.getSnapshot(abort.signal)).resolves.toEqual(snapshot());
-    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true", {
+    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true", {
       maxBytes: 1024 * 1024,
       signal: abort.signal,
       timeoutMs: 15_000,
@@ -172,7 +173,7 @@ describe("desktop provider settings transport", () => {
     const transport = createDesktopProviderSettingsTransport(api({ post }));
     await expect(transport.mutate(mutation, new AbortController().signal))
       .resolves.toMatchObject({ kind: "snapshot", snapshot: { revision: 2 } });
-    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions?includeCapabilities=true", mutation, expect.objectContaining({
+    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true", mutation, expect.objectContaining({
       maxBytes: 1024 * 1024,
       signal: expect.any(AbortSignal),
     }));
@@ -347,6 +348,162 @@ describe("desktop provider connection actions", () => {
     await expect(openExistingProviderTerminalSession(client, providerTerminalRef)).resolves.toBe(false);
     expect(useTabs.getState().tabs).toEqual([]);
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues an existing login while an ordinary Terminal poll is still pending", async () => {
+    let resolveHandoff!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    let resolvePoll!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    const get = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { resolveHandoff = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolvePoll = resolve; }));
+    const client = api({ get });
+    const opening = openExistingProviderTerminalSession(client, providerTerminalRef);
+    const polling = useShellSessions.getState().load(client);
+    resolveHandoff(providerTerminalWorkspaces());
+
+    expect(await opening).toBe(true);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
+    expect(useShellSessions.getState().sessions).toEqual([expect.objectContaining({ name: providerTerminalRef, status: "active" })]);
+    expect(useShellSessions.getState().loading).toBe(true);
+    resolvePoll(providerTerminalWorkspaces());
+    expect(await polling).toEqual([expect.objectContaining({ name: providerTerminalRef, status: "active" })]);
+    expect(useShellSessions.getState().loading).toBe(false);
+  });
+
+  it("uses a newer completed active snapshot instead of an older handoff snapshot", async () => {
+    let resolveHandoff!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    const get = vi.fn().mockImplementationOnce(() => new Promise(resolve => { resolveHandoff = resolve; }))
+      .mockResolvedValueOnce(providerTerminalWorkspaces());
+    const client = api({ get });
+    const opening = openExistingProviderTerminalSession(client, providerTerminalRef);
+    await useShellSessions.getState().load(client);
+    resolveHandoff(providerTerminalWorkspaces("exited"));
+    expect(await opening).toBe(true);
+    expect(useShellSessions.getState().sessions[0]?.status).toBe("active");
+  });
+
+  it.each(["missing", "exited"] as const)("does not let a poll started before the handoff override its fresh %s result", async state => {
+    let resolvePoll!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    let resolveHandoff!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    const get = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { resolvePoll = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveHandoff = resolve; }));
+    const client = api({ get });
+    const polling = useShellSessions.getState().load(client);
+    const opening = openExistingProviderTerminalSession(client, providerTerminalRef);
+    resolvePoll(providerTerminalWorkspaces());
+    await polling;
+    resolveHandoff(state === "missing" ? { workspaces: [] } : providerTerminalWorkspaces("exited"));
+
+    expect(await opening).toBe(false);
+    expect(useTabs.getState().tabs).toEqual([]);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+    expect(useShellSessions.getState().loading).toBe(false);
+  });
+
+  it.each(["missing", "exited"] as const)("does not let an older simultaneous handoff override a newer %s result", async state => {
+    let resolveOlder!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    let resolveNewer!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    const get = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOlder = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveNewer = resolve; }));
+    const client = api({ get });
+    const older = openExistingProviderTerminalSession(client, providerTerminalRef);
+    const newer = openExistingProviderTerminalSession(client, providerTerminalRef);
+    resolveOlder(providerTerminalWorkspaces());
+    expect(await older).toBe(false);
+    expect(useShellSessions.getState().loading).toBe(true);
+    expect(useTabs.getState().tabs).toEqual([]);
+    resolveNewer(state === "missing" ? { workspaces: [] } : providerTerminalWorkspaces("exited"));
+    expect(await newer).toBe(false);
+    expect(useShellSessions.getState().loading).toBe(false);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
+  it("does not fall back to remembered sessions when the independent read fails", async () => {
+    await useShellSessions.getState().load(api({ get: vi.fn().mockResolvedValue(providerTerminalWorkspaces()) }));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(await openExistingProviderTerminalSession(api({ get: vi.fn().mockRejectedValue(new AppError("offline")) }), providerTerminalRef)).toBe(false);
+      expect(useTabs.getState().tabs).toEqual([]);
+      expect(useShellSessions.getState().loading).toBe(false);
+    } finally { warning.mockRestore(); }
+  });
+
+  it("clears its loading state on failure after invalidating an older pending poll", async () => {
+    let resolvePoll!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    const get = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { resolvePoll = resolve; }))
+      .mockRejectedValueOnce(new AppError("offline"));
+    const client = api({ get });
+    const polling = useShellSessions.getState().load(client);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(await openExistingProviderTerminalSession(client, providerTerminalRef)).toBe(false);
+      expect(useShellSessions.getState().loading).toBe(false);
+      resolvePoll(providerTerminalWorkspaces());
+      expect(await polling).toBeNull();
+      expect(useShellSessions.getState().loading).toBe(false);
+      expect(useTabs.getState().tabs).toEqual([]);
+    } finally { warning.mockRestore(); }
+  });
+
+  it("does not clear or invalidate a newer poll when its independent read fails", async () => {
+    let rejectHandoff!: (error: Error) => void;
+    let resolvePoll!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    const get = vi.fn()
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectHandoff = reject; }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolvePoll = resolve; }));
+    const client = api({ get });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const opening = openExistingProviderTerminalSession(client, providerTerminalRef);
+      const polling = useShellSessions.getState().load(client);
+      rejectHandoff(new AppError("offline"));
+      expect(await opening).toBe(false);
+      expect(useShellSessions.getState().loading).toBe(true);
+      resolvePoll(providerTerminalWorkspaces());
+      expect(await polling).toEqual([expect.objectContaining({ name: providerTerminalRef, status: "active" })]);
+      expect(useShellSessions.getState().loading).toBe(false);
+      expect(useTabs.getState().tabs).toEqual([]);
+    } finally { warning.mockRestore(); }
+  });
+
+  it.each(["missing", "exited", "deleted"] as const)("does not reopen a login after newer authoritative evidence says %s", async state => {
+    let resolveHandoff!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    const get = vi.fn().mockImplementationOnce(() => new Promise(resolve => { resolveHandoff = resolve; }))
+      .mockResolvedValueOnce(state === "missing" ? { workspaces: [] } : providerTerminalWorkspaces(state === "exited" ? "exited" : "running"));
+    const client = api({ get, delete: vi.fn().mockResolvedValue(undefined) });
+    const opening = openExistingProviderTerminalSession(client, providerTerminalRef);
+    await useShellSessions.getState().load(client);
+    if (state === "deleted") await useShellSessions.getState().deleteSession(client, providerTerminalRef);
+    resolveHandoff(providerTerminalWorkspaces());
+
+    expect(await opening).toBe(false);
+    expect(useTabs.getState().tabs).toEqual([]);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
+  it("rejects a late independent handoff read after the runtime generation changes", async () => {
+    let resolveHandoff!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    const get = vi.fn(() => new Promise(resolve => { resolveHandoff = resolve; }));
+    const opening = openExistingProviderTerminalSession(api({ get }), providerTerminalRef);
+    advanceRuntimeGeneration();
+    resolveHandoff(providerTerminalWorkspaces());
+    expect(await opening).toBe(false);
+    expect(useTabs.getState().tabs).toEqual([]);
+  });
+
+  it("rejects a late independent handoff read after its identity changes", async () => {
+    let current = true;
+    let resolveHandoff!: (value: ReturnType<typeof providerTerminalWorkspaces>) => void;
+    const opening = openExistingProviderTerminalSession(api({ get: vi.fn(() => new Promise(resolve => { resolveHandoff = resolve; })) }),
+      providerTerminalRef, () => current);
+    current = false;
+    resolveHandoff(providerTerminalWorkspaces());
+    expect(await opening).toBe(false);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+    expect(useShellSessions.getState().loading).toBe(false);
   });
 
   it("does not open a provider login tab after the desktop identity changes", async () => {

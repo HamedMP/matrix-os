@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { createBillingStatusHandler } from './billing-status-route.js';
 import { bodyLimit } from 'hono/body-limit';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import {
   MATRIX_HOSTED_BILLING_REGIONS,
@@ -63,18 +63,11 @@ import {
 } from './developer-tools.js';
 import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
 import {
-  AiCreditCheckoutRequestSchema,
-  findAiCreditPackage,
   loadAiCreditCheckoutConfig,
 } from './ai-credit-checkout.js';
-import {
-  AiCreditCheckoutStoreError,
-  finalizeAiCreditCheckoutClaim,
-  getClaimByRequestId,
-  prepareAiCreditCheckoutClaim,
-} from './ai-credit-checkout-store.js';
 import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
-import { isAiCreditCheckoutRouteHealthy } from './ai-credit-checkout-readiness.js';
+import { createAiCreditCheckoutHandler } from './billing/ai-credit-checkout-route.js';
+import { createAiCreditHistoryHandler } from './billing/ai-credit-history-route.js';
 import type { RedditConversionsClient } from './reddit-conversions.js';
 import {
   createRedditAttributionExpiry,
@@ -593,80 +586,22 @@ export function createBillingRoutes(options: {
     }
   });
 
-  app.post('/ai-credit/checkout', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), async (c) => {
-    const clerkUserId = await resolveRouteClerkUserId(c, 'ai-credit checkout');
-    if (!clerkUserId) return c.json({ error: 'Unauthorized' }, 401);
-    if (!options.fundedAiRepository) {
-      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-    }
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) return c.json({ error: 'Invalid request' }, 400);
-      throw err;
-    }
-    const parsed = AiCreditCheckoutRequestSchema.safeParse(body);
-    if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
-    try {
-      if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
-        throw new Error('stripe_timeout_exceeds_budget');
-      }
-      const machine = await getActiveUserMachineByClerkId(options.db, clerkUserId, parsed.data.runtimeSlot);
-      if (!machine || machine.status !== 'running' || machine.activationState !== 'authorized') {
-        return c.json({ error: 'Computer is unavailable', code: 'runtime_unavailable' }, 409);
-      }
-      const idempotencyKey = `matrix-ai-credit:${createHash('sha256')
-        .update(`${clerkUserId}\0${machine.machineId}\0${parsed.data.requestId}`)
-        .digest('hex')}`;
-      const persisted = await getClaimByRequestId(options.db, parsed.data.requestId);
-      if (persisted && (persisted.owner_id !== clerkUserId || persisted.machine_id !== machine.machineId
-        || persisted.runtime_slot !== machine.runtimeSlot || persisted.package_id !== parsed.data.packageId
-        || persisted.idempotency_key !== idempotencyKey)) {
-        throw new AiCreditCheckoutStoreError('conflict');
-      }
-      const selectedPackage = findAiCreditPackage(aiCreditCheckout, parsed.data.packageId);
-      if (!persisted && !selectedPackage) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-      if (!persisted && !await isAiCreditCheckoutRouteHealthy({
-        repository: options.fundedAiRepository,
-        identity: { ownerId: clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot },
-        modelProbes: options.fundedModelProbes,
-        now,
-      })) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-      const claim = persisted ?? await prepareAiCreditCheckoutClaim(options.db, {
-        idempotencyKey, requestId: parsed.data.requestId, ownerId: clerkUserId,
-        machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
-        packageId: selectedPackage!.id, priceId: selectedPackage!.priceId,
-        amountMicrousd: selectedPackage!.amountMicrousd, amountCents: selectedPackage!.amountCents,
-        currency: selectedPackage!.currency, automaticTax: aiCreditCheckout.enabled && aiCreditCheckout.automaticTax,
-      }, now());
-      if (claim.checkout_url) return c.json({ url: claim.checkout_url }, 200);
-      const session = await options.stripe.createAiCreditCheckoutSession({
-        idempotencyKey: claim.idempotency_key,
-        requestId: claim.request_id,
-        clerkUserId: claim.owner_id,
-        machineId: claim.machine_id,
-        runtimeSlot: claim.runtime_slot,
-        packageId: claim.package_id,
-        priceId: claim.stripe_price_id,
-        amountMicrousd: Number(claim.amount_microusd),
-        automaticTax: claim.automatic_tax,
-        successUrl: resolveBillingReturnUrl(env, 'success'),
-        cancelUrl: resolveBillingReturnUrl(env, 'canceled'),
-      });
-      const finalized = await finalizeAiCreditCheckoutClaim(
-        options.db, claim.request_id, session, now().toISOString(),
-      );
-      return c.json({ url: finalized.checkout_url }, 200);
-    } catch (err: unknown) {
-      if (err instanceof AiCreditCheckoutStoreError) {
-        if (err.code === 'rate_limited') return c.json({ error: 'Too many requests' }, 429);
-        if (err.code === 'conflict') return c.json({ error: 'Checkout already active' }, 409);
-      }
-      console.error('[billing] AI credit checkout failed:', err instanceof Error ? err.name : typeof err);
-      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-    }
-  });
+  app.get('/ai-credit/history', createAiCreditHistoryHandler({
+    db: options.db,
+    resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'ai-credit history'),
+  }));
+
+  app.post('/ai-credit/checkout', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), createAiCreditCheckoutHandler({
+    db: options.db,
+    stripe: options.stripe,
+    env,
+    checkout: aiCreditCheckout,
+    fundedAiRepository: options.fundedAiRepository,
+    fundedModelProbes: options.fundedModelProbes,
+    resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'ai-credit checkout'),
+    now,
+    unavailableResponse: BILLING_UNAVAILABLE_RESPONSE,
+  }));
 
   app.get('/checkout/status', async (c) => {
     const clerkUserId = await resolveRouteClerkUserId(c, 'checkout status');

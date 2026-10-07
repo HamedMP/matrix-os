@@ -122,6 +122,11 @@ describe("canonical Claude native Custom MCP approval handoff", () => {
     expect(events).toContain("approval.requested");
     expect(events).toContain("approval.resolved");
     expect(events).toContain("run.completed");
+    const launchArgs = spawnFn.mock.calls[0]![1];
+    const orientation = launchArgs[launchArgs.indexOf("--append-system-prompt") + 1]!;
+    expect(orientation).toContain("broker owns approval");
+    expect(orientation).not.toContain("discovery only");
+    expect(launchArgs[launchArgs.indexOf("--permission-mode") + 1]).toBe("default");
     expect(approvalClient.decide).toHaveBeenCalledWith("run_1", approvalId, "approve", {
       chatId: "chat_1", clientRequestId: "req_1", platformApprovalProof: "signed-platform-proof",
     });

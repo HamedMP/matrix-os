@@ -6,8 +6,16 @@ function normalizeRequestedSettingsSection(section: string): string {
   return section === "agent" || section === "providers" ? "agents-providers" : section;
 }
 
+export type PendingProjectChatMove = {chatId: string; baseRevision: number; authorityKey: string};
+
 interface UiState {
   createProjectOpen: boolean;
+  pendingProjectChatMove: PendingProjectChatMove | null;
+  projectChatMoveError: string | null;
+  projectChatMoveRefreshRequest: number;
+  requestProjectChatMoveRefresh: () => void;
+  openCreateProjectForChat: (request: PendingProjectChatMove) => void;
+  clearPendingProjectChatMove: (error?: string) => void;
   composerOpen: boolean;
   paletteOpen: boolean;
   quickOpenOpen: boolean;
@@ -37,6 +45,12 @@ interface UiState {
 
 export const useUi = create<UiState>()((set) => ({
   createProjectOpen: false,
+  pendingProjectChatMove: null,
+  projectChatMoveError: null,
+  projectChatMoveRefreshRequest: 0,
+  requestProjectChatMoveRefresh: () => set(state => ({projectChatMoveRefreshRequest:(state.projectChatMoveRefreshRequest + 1) % 1_000_000})),
+  openCreateProjectForChat: (request) => set({createProjectOpen:true,pendingProjectChatMove:request,projectChatMoveError:null}),
+  clearPendingProjectChatMove: (error) => set({pendingProjectChatMove:null,projectChatMoveError:error ?? null}),
   composerOpen: false,
   paletteOpen: false,
   quickOpenOpen: false,
@@ -45,8 +59,8 @@ export const useUi = create<UiState>()((set) => ({
   homeRefreshRequest: 0,
   desktopBackgroundRefreshRequest: 0,
   requestedSettingsSection: null,
-  setCreateProjectOpen: (open) => set({ createProjectOpen: open }),
-  openCreateProject: () => set({ createProjectOpen: true }),
+  setCreateProjectOpen: (open) => set({ createProjectOpen: open, ...(open ? {} : {pendingProjectChatMove:null}) }),
+  openCreateProject: () => set({ createProjectOpen: true, pendingProjectChatMove:null, projectChatMoveError:null }),
   setComposerOpen: (open) => set({ composerOpen: open }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setQuickOpenOpen: (open) => set({ quickOpenOpen: open }),

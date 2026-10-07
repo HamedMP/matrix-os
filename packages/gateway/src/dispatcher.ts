@@ -31,6 +31,7 @@ import {
   type KernelCredentialAccessSourceId,
 } from "./kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "./funded-ai-credential-manager.js";
+import type { FundedAiRequestClass } from "@matrix-os/contracts";
 import type { KernelEffort, KernelModel } from "./kernel-settings.js";
 import type { RequestApprovalFn } from "@matrix-os/kernel";
 
@@ -61,6 +62,8 @@ export interface DispatchContext {
 }
 
 export interface KernelDispatchOverrides {
+  /** Funded AI priority class; server-set only. Kernel dispatch is interactive unless a background job says so. */
+  fundedRequestClass?: FundedAiRequestClass;
   model?: KernelModel;
   effort?: KernelEffort;
   /** Explicit credential/funding source selected from the canonical provider snapshot. */
@@ -223,6 +226,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         process.env,
         entry.kernelOverrides?.accessSourceId,
         opts.fundedCredentialProvider,
+        { requestClass: entry.kernelOverrides?.fundedRequestClass ?? "interactive" },
       );
       const deadline = fundedAbortController(entry.abortController, credentialLaunch.fundedRunTimeoutMs);
       const config: KernelConfig = {
@@ -377,6 +381,8 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             process.env,
             undefined,
             opts.fundedCredentialProvider,
+            // Batch provisioning runs without a waiting person.
+            { requestClass: "background" },
           );
           const deadline = fundedAbortController(undefined, credentialLaunch.fundedRunTimeoutMs);
           const config: KernelConfig = {

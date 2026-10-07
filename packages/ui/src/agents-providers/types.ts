@@ -59,6 +59,10 @@ export interface AgentsProvidersViewProps {
   onRefresh: () => void;
   onRefreshForConnection?: () => Promise<ProviderSettingsSnapshot | null>;
   onMutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean> | void;
+  workflowClient?: ProviderWorkflowClient;
+  localChatgptClient?: import("./local-chatgpt-plan-client.js").LocalChatgptPlanClient;
+  onOpenAuthorizationUrl?: (url: string) => void;
+  onLoadUsageHistory?: (cursor: string | null, signal: AbortSignal) => Promise<import("@matrix-os/contracts").AiCreditHistoryResponse>;
   onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;
   onOpenTerminal: (terminalSessionId: string) => void;
   onOpenBrowser: (authorizationPath: string) => void;
@@ -67,4 +71,26 @@ export interface AgentsProvidersViewProps {
     packageId: "usd_5" | "usd_10" | "usd_25",
     requestId: string,
   ) => Promise<void> | void;
+}
+
+/** Optional V2 fields preserve the historical client capability contract. */
+export type ProviderWorkflowUICapability = import("@matrix-os/contracts").ProviderWorkflowCapability & {
+  connectionOptions?: import("@matrix-os/contracts").ProviderWorkflowConnectionOption[];
+};
+export type ProviderWorkflowUIOperation = import("@matrix-os/contracts").ProviderWorkflow & {
+  connectionOption?: import("@matrix-os/contracts").ProviderWorkflowConnectionOption | null;
+};
+
+/** Separate capability-negotiated transport; secrets never enter mutation receipts. */
+export interface ProviderWorkflowClient {
+  botConnections?: import("../chat-agents/bots/provider-connections-client.js").BotConnectionClient;
+  capabilities(signal: AbortSignal): Promise<ProviderWorkflowUICapability[]>;
+  start(request: import("@matrix-os/contracts").ProviderWorkflowStart, signal: AbortSignal): Promise<ProviderWorkflowUIOperation>;
+  startConnection?(request: import("@matrix-os/contracts").ProviderWorkflowStartV2, signal: AbortSignal): Promise<ProviderWorkflowUIOperation>;
+  submitConnectionKey?(request: import("@matrix-os/contracts").ProviderWorkflowKeyV2, signal: AbortSignal): Promise<{ verified: true }>;
+  get(id: string, signal: AbortSignal): Promise<ProviderWorkflowUIOperation>;
+  cancel(id: string, signal: AbortSignal): Promise<ProviderWorkflowUIOperation>;
+  submitCode?(id: string, code: string, signal: AbortSignal): Promise<{ accepted: true }>;
+  submitKey(request: import("@matrix-os/contracts").ProviderWorkflowKey, signal: AbortSignal): Promise<{ verified: true }>;
+  logs(harnessInstanceId: string, signal: AbortSignal): Promise<{ entries: { at: string; event: "started" | "running" | "succeeded" | "failed" | "cancelled" | "expired" }[] }>;
 }

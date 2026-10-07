@@ -1,5 +1,8 @@
 import { collectPipedreamPages } from "./pipedream-pagination.js";
 import { createBoundedPipedreamGet } from "./pipedream-bounded-get.js";
+import { createBoundedPipedreamLabels } from "./pipedream-bounded-labels.js";
+import { createDriveContentReader } from "./drive-content.js";
+import { createReadCoalescer, proxyReadKey } from "./read-coalescer.js";
 
 export interface PipedreamConfig {
   clientId: string;
@@ -20,8 +23,10 @@ export interface RunActionResult {
 }
 
 export interface PipedreamConnectClient {
+  readDriveFile?: ReturnType<typeof createDriveContentReader>;
   /** Available only to the bound recipe read path; ordinary integration calls stay unchanged. */
   boundedGmailGet?: ReturnType<typeof createBoundedPipedreamGet>;
+  boundedGmailLabels?: ReturnType<typeof createBoundedPipedreamLabels>;
   createConnectToken(
     externalUserId: string,
     redirects?: {
@@ -101,6 +106,8 @@ export interface PipedreamConnectClient {
 
 const API_TIMEOUT_SECONDS = 10;
 const ACTION_TIMEOUT_SECONDS = 30;
+// Billable executions must not be repeated invisibly, especially writes.
+const executionOptions = (seconds: number) => ({ timeoutInSeconds: seconds, maxRetries: 0, abortSignal: AbortSignal.timeout(seconds * 1000) });
 
 type PipedreamProjectEnvironment = "development" | "production";
 
@@ -129,8 +136,13 @@ export async function createPipedreamClient(
     projectId: config.projectId,
     projectEnvironment: normalizePipedreamProjectEnvironment(config.environment),
   });
+  const coalesceRead = createReadCoalescer();
 
   return {
+    readDriveFile: createDriveContentReader({ projectId: config.projectId,
+      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
+    boundedGmailLabels: createBoundedPipedreamLabels({ projectId: config.projectId,
+      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
     boundedGmailGet: createBoundedPipedreamGet({
       projectId: config.projectId,
       environment: normalizePipedreamProjectEnvironment(config.environment),
@@ -187,7 +199,7 @@ export async function createPipedreamClient(
           body: opts.body,
           headers: opts.headers,
         },
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        executionOptions(API_TIMEOUT_SECONDS),
       );
       return result;
     },
@@ -212,7 +224,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           configuredProps: opts.configuredProps,
         },
-        { timeoutInSeconds: ACTION_TIMEOUT_SECONDS },
+        executionOptions(ACTION_TIMEOUT_SECONDS),
       );
       const body = (response as any).body ?? response;
       return {
@@ -222,7 +234,7 @@ export async function createPipedreamClient(
     },
 
     async proxyGet(opts) {
-      const result = await (sdk.proxy as any).get(
+      return coalesceRead(proxyReadKey(opts), () => (sdk.proxy as any).get(
         {
           url: opts.url,
           externalUserId: opts.externalUserId,
@@ -230,9 +242,8 @@ export async function createPipedreamClient(
           params: opts.params,
           headers: opts.headers,
         },
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
-      );
-      return result;
+        executionOptions(API_TIMEOUT_SECONDS),
+      ));
     },
 
     async proxyPost(opts) {
@@ -244,7 +255,7 @@ export async function createPipedreamClient(
           body: opts.body ?? {},
           headers: opts.headers,
         },
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        executionOptions(API_TIMEOUT_SECONDS),
       );
       return result;
     },
@@ -258,7 +269,7 @@ export async function createPipedreamClient(
           body: opts.body ?? {},
           headers: opts.headers,
         },
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        executionOptions(API_TIMEOUT_SECONDS),
       );
       return result;
     },
@@ -272,7 +283,7 @@ export async function createPipedreamClient(
           body: opts.body ?? {},
           headers: opts.headers,
         },
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        executionOptions(API_TIMEOUT_SECONDS),
       );
       return result;
     },
@@ -291,7 +302,7 @@ export async function createPipedreamClient(
           params: opts.params,
           headers: opts.headers,
         },
-        { timeoutInSeconds: API_TIMEOUT_SECONDS },
+        executionOptions(API_TIMEOUT_SECONDS),
       );
       return result;
     },

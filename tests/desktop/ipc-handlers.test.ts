@@ -64,6 +64,9 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     saveFileContent: vi.fn(),
     downloadFile: vi.fn(async () => ({ status: "saved" })),
     cancelFileDownload: vi.fn(() => ({ ok: true })),
+    uploadOrganizationDrive: vi.fn(async () => ({ status: "cancelled" })),
+    downloadOrganizationDrive: vi.fn(async () => ({ status: "cancelled" })),
+    cancelOrganizationDriveTransfer: vi.fn(() => ({ ok: true })),
     prepareSourceCommit: vi.fn(),
     createSourcePullRequest: vi.fn(),
     fetchThreadSnapshot: vi.fn(),
@@ -178,11 +181,11 @@ describe("registerIpcHandlers", () => {
   it.each([
     {
       factor: 1.5,
-      expected: { x: 360, y: 57, width: 920, height: 764 },
+      expected: { x: 360, y: 57, width: 920, height: 764, cornerRadius: 18 },
     },
     {
       factor: 0.8,
-      expected: { x: 192, y: 30, width: 490, height: 407 },
+      expected: { x: 192, y: 30, width: 490, height: 407, cornerRadius: 10 },
     },
   ])("converts embed bounds at $factor zoom to native view coordinates", async ({
     factor,
@@ -197,7 +200,7 @@ describe("registerIpcHandlers", () => {
         "embed:set-bounds",
         {
           embedId: "embed-1",
-          bounds: { x: 240, y: 38, width: 613, height: 509 },
+          bounds: { x: 240, y: 38, width: 613, height: 509, cornerRadius: 12 },
         },
         { sender },
       ),

@@ -6,10 +6,11 @@ import {
   Cpu,
   Palette,
   Server,
-  Settings as SettingsIcon,
   Sparkles,
   SquareTerminal,
+  Upload,
   UserRound,
+  UsersIcon,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useState } from "react";
 import AccountSection from "./sections/AccountSection";
@@ -24,11 +25,14 @@ import McpServersSection from "../plugins/McpServersSection";
 import SkillsSection from "../plugins/SkillsSection";
 import CronSection from "./sections/CronSection";
 import SystemSection from "./sections/SystemSection";
+import ChatImportSection from "./sections/ChatImportSection";
 import { useUi } from "../../stores/ui";
+import OrganizationSection from "../organization/OrganizationSection";
 
 export type SettingsSectionId =
   | "account"
   | "appearance"
+  | "organization"
   | "billing"
   | "runtime"
   | "agents-providers"
@@ -36,6 +40,7 @@ export type SettingsSectionId =
   | "services"
   | "mcps"
   | "skills"
+  | "chat-import"
   | "cli"
   | "cron"
   | "system";
@@ -44,9 +49,11 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
-  { id: "services", label: "Services", icon: <Blocks size={15} />, group: "Integrations" },
+  { id: "organization", label: "Organization", icon: <UsersIcon size={15} />, group: "Organization" },
+  { id: "services", label: "Connect Apps", icon: <Blocks size={15} />, group: "Integrations" },
   { id: "mcps", label: "MCPs", icon: <Server size={15} />, group: "Integrations" },
   { id: "skills", label: "Skills", icon: <Sparkles size={15} />, group: "Integrations" },
+  { id: "chat-import", label: "Import chats", icon: <Upload size={15} />, group: "Integrations" },
   { id: "cli", label: "CLI", icon: <SquareTerminal size={15} />, group: "Integrations" },
   { id: "agents-providers", label: "Agents & providers", icon: <Bot size={15} />, group: "Machine" },
   { id: "identity-personality", label: "Identity & personality", icon: <Sparkles size={15} />, group: "Machine" },
@@ -83,13 +90,9 @@ export function SettingsSidebar({
       className="flex h-full w-full flex-col gap-0.5 overflow-y-auto p-2"
       style={{ background: "var(--bg-surface)" }}
     >
-      <h2 data-settings-sidebar-title className="flex items-center gap-2 px-2.5 py-2 text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
-        <SettingsIcon size={18} aria-hidden="true" />
-        Settings
-      </h2>
       {SECTION_GROUPS.map((group) => (
         <div key={group} className="mb-1 flex flex-col gap-0.5">
-          <span className="px-2.5 pt-2 pb-1 text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>
+          <span className="px-2.5 pt-2 pb-1 text-xs font-normal" style={{ color: "var(--text-tertiary)" }}>
             {group}
           </span>
           {SECTIONS_BY_GROUP[group]?.map((s) => {
@@ -116,9 +119,11 @@ export function SettingsSidebar({
 export default function SettingsView({
   section: controlledSection,
   onSectionChange,
+  visible = true,
 }: {
   section?: SettingsSectionId;
   onSectionChange?: (section: SettingsSectionId) => void;
+  visible?: boolean;
 } = {}) {
   const [localSection, setLocalSection] = useState<SettingsSectionId>("account");
   const requestedSection = useUi((s) => s.requestedSettingsSection);
@@ -141,16 +146,18 @@ export default function SettingsView({
         <SettingsSidebar section={section} onSectionChange={selectSection} />
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="w-full px-5 py-6">
+        <div className="w-full px-5 py-4">
           {section === "account" ? <AccountSection /> : null}
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
+          {section === "organization" ? <OrganizationSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
-          {section === "agents-providers" ? <AgentsProvidersAdapter /> : null}
+          {section === "agents-providers" ? <AgentsProvidersAdapter observationRenewalActive={visible} /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
           {section === "services" ? <IntegrationsSettingsSection /> : null}
           {section === "mcps" ? <McpServersSection /> : null}
           {section === "skills" ? <SkillsSection /> : null}
+          {section === "chat-import" ? <ChatImportSection /> : null}
           {section === "cli" ? <CliSection /> : null}
           {section === "cron" ? <CronSection /> : null}
           {section === "system" ? <SystemSection /> : null}

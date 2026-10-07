@@ -75,11 +75,30 @@ export function usageLines(usage: ProviderUsage): { primary: string; secondary: 
   };
 }
 
-export function gatewayCreditLines(source: ProviderAccessSource): { primary: string; secondary: string | null; stale: boolean } {
+export function gatewayChatAvailableMicrousd(source: ProviderAccessSource | null, now = Date.now()): number | null {
+  if (source?.usage.kind !== "managed_credit") return null;
+  const usage = source.usage;
+  const projection = usage.chatAvailability;
+  const age = now - Date.parse(usage.asOf);
+  if (!projection || projection.asOf !== usage.asOf || usage.state !== "current"
+    || !Number.isFinite(age) || age < 0 || age > 5 * 60_000) return null;
+  return Math.min(projection.availableBalanceMicrousd, usage.budget.remainingBudgetMicrousd);
+}
+
+export function gatewayCreditLines(source: ProviderAccessSource, now = Date.now()): { primary: string; secondary: string | null; stale: boolean } {
   if (source.usage.kind !== "managed_credit") {
-    return { primary: "Credit unavailable", secondary: source.usage.kind === "unavailable" ? titleCase(source.usage.reason) : null, stale: false };
+    return { primary: "Chat credit unavailable", secondary: null, stale: false };
   }
-  return usageLines(source.usage);
+  const age = now - Date.parse(source.usage.asOf);
+  const stale = source.usage.state === "stale" || !Number.isFinite(age) || age < 0 || age > 5 * 60_000;
+  const balance = gatewayChatAvailableMicrousd(source, now);
+  if (balance === null) {
+    return { primary: "Chat credit unavailable", secondary: null, stale };
+  }
+  const display = balance > 0 && balance < 10_000
+    ? new Intl.NumberFormat("en-US", { style: "currency", currency: source.usage.currency, minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(balance / 1_000_000)
+    : money(balance, source.usage.currency);
+  return { primary: display, secondary: null, stale: false };
 }
 
 export function selectedHarness(snapshot: ProviderSettingsSnapshot, id: string | null): ProviderHarnessInstance | null {

@@ -85,6 +85,7 @@ vi.mock("@/hooks/useFileWatcher", () => ({
 }));
 
 import { FileBrowser } from "../../shell/src/components/file-browser/FileBrowser.js";
+import { OrganizationStateProvider } from "../../shell/src/lib/collaboration-organization-state.js";
 
 describe("FileBrowser session replay privacy", () => {
   it("marks the file listing container with ph-no-capture so file names stay out of recordings", () => {
@@ -92,5 +93,14 @@ describe("FileBrowser session replay privacy", () => {
 
     const content = screen.getByTestId("file-browser-content");
     expect(content.closest(".ph-no-capture")).not.toBeNull();
+  });
+
+  it("hides Organization drives when a complete listing confirms no organizations", () => {
+    render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}>
+      <FileBrowser windowId="win-files" />
+    </OrganizationStateProvider>);
+
+    expect(screen.queryByRole("button", { name: "Organization drives" })).toBeNull();
+    expect(screen.getByRole("button", { name: "My files" })).toBeTruthy();
   });
 });

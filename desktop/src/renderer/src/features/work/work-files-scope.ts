@@ -1,4 +1,4 @@
-import { resolveChatMessageLink } from "@matrix-os/contracts";
+import { canonicalExecutionRootProjectId, resolveChatMessageLink } from "@matrix-os/contracts";
 import type { InspectorFileTarget } from "../panels/InspectorFilesPanel";
 import type { CanonicalChatDetailResponse, CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
 import type { Project } from "../../stores/board";
@@ -24,7 +24,7 @@ export function resolveWorkFilesScope(
   if (record.activeRun && !run) {
     return { kind: "unavailable", chatId: record.chat.id };
   }
-  if (run?.executionRoot && run.executionRoot.projectId !== record.projectId) {
+  if (run?.executionRoot && canonicalExecutionRootProjectId(run.executionRoot) !== record.projectId) {
     return { kind: "unavailable", chatId: record.chat.id };
   }
 
@@ -56,7 +56,7 @@ export function resolveChatInspectorTargetForRun(
   runRoot: CanonicalChatExecutionRootRef | undefined,
   chatProjectId: string | undefined,
 ): InspectorFileTarget | null {
-  if (runRoot && runRoot.projectId !== chatProjectId) return null;
+  if (runRoot && canonicalExecutionRootProjectId(runRoot) !== chatProjectId) return null;
   const selectedScope = runRoot && scope.kind === "project"
     ? {
         ...scope,

@@ -4,8 +4,12 @@
 // (FR-081). The bearer credential never appears in any schema; Hermes provider
 // credentials are accepted only by the bounded write-only setter request.
 import { z } from "zod/v4";
+import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
+import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
+import { NativeAppOpenEventSchema } from "./native-app-open";
 import {
   AppGenerateEventSchema,
+  OrganizationDriveUploadFolderSchema,
   BuildSourceSchema,
   FileDownloadRequestSchema,
   FileDownloadResultSchema,
@@ -57,6 +61,7 @@ import {
   DesktopUpdateVersionSchema,
 } from "./desktop-update";
 import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
+import { TerminalClipboardResultSchema } from "./terminal-clipboard";
 
 const Empty = z.object({}).strict();
 
@@ -98,6 +103,7 @@ const BoundsSchema = z
     y: z.number().int().min(-16_384).max(16_384),
     width: z.number().int().min(0).max(16_384),
     height: z.number().int().min(0).max(16_384),
+    cornerRadius: z.number().int().min(0).max(64).optional(),
   })
   .strict();
 
@@ -136,6 +142,9 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  ...CHATGPT_PLAN_INVOKE,
+  ...LOCAL_CHAT_IMPORT_INVOKE,
+  "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
   "auth:start-device-flow": {
     request: z.strictObject({ intent: z.enum(["sign-up", "sign-in"]).optional() }),
@@ -253,6 +262,30 @@ export const INVOKE_CHANNELS = {
   "runtime:download-file": {
     request: FileDownloadRequestSchema,
     response: FileDownloadResultSchema,
+  },
+  "runtime:organization-drive-upload": {
+    request: z.object({ scopeId: z.uuid(), organizationId: z.string().regex(/^org_[A-Za-z0-9_-]+$/),
+      folder: OrganizationDriveUploadFolderSchema, runtimeSlot: z.string().min(1).max(128),
+      authGeneration: z.number().int().nonnegative() }).strict(),
+    response: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("cancelled") }).strict(),
+      z.object({ status: z.literal("uploaded"), fileId: z.uuid() }).strict(),
+      z.object({ status: z.literal("error"), code: z.enum(["unavailable", "invalid_file", "conflict"]) }).strict(),
+    ]),
+  },
+  "runtime:organization-drive-download": {
+    request: z.object({ scopeId: z.uuid(), organizationId: z.string().regex(/^org_[A-Za-z0-9_-]+$/),
+      fileId: z.uuid(), runtimeSlot: z.string().min(1).max(128),
+      authGeneration: z.number().int().nonnegative() }).strict(),
+    response: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("cancelled") }).strict(),
+      z.object({ status: z.literal("downloaded") }).strict(),
+      z.object({ status: z.literal("error"), code: z.enum(["unavailable", "invalid_file", "conflict"]) }).strict(),
+    ]),
+  },
+  "runtime:organization-drive-cancel": {
+    request: Empty,
+    response: Ok,
   },
   "runtime:cancel-file-download": {
     request: z.object({ requestId: z.uuid() }).strict(),
@@ -471,7 +504,9 @@ export const INVOKE_CHANNELS = {
 } as const;
 
 export const EVENT_CHANNELS = {
+  ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
+  "app:open": NativeAppOpenEventSchema,
   "analytics:capture": DesktopAnalyticsDetailSchema,
   "analytics:flush-requested": Empty,
   "auth:changed": z

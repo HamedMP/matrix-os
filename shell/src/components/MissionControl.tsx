@@ -160,7 +160,7 @@ export function MissionControl({
         }}
       >
         <div className="flex items-center justify-between px-6 py-4">
-          <h2 className="text-lg font-semibold text-white">Launcher</h2>
+          <h2 className="text-lg font-semibold text-white">Apps</h2>
           <button
             type="button"
             onClick={onClose}
@@ -170,6 +170,10 @@ export function MissionControl({
             <XIcon className="size-4" />
           </button>
         </div>
+
+        <p className="px-6 pb-4 text-sm text-white/80">
+          Open an installed app, or choose Create app to start in Chat.
+        </p>
 
         {provision.active && (
           <div className="flex items-center gap-2 mx-6 mb-3 px-3 py-1.5 rounded-lg bg-muted/50 text-xs text-muted-foreground">

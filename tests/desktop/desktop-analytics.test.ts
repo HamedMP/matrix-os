@@ -98,6 +98,27 @@ describe("Desktop analytics allowlist", () => {
     }).success).toBe(false);
   });
 
+  it("dispatches a general Matrix Pi response event without accepting private content", () => {
+    const listener = vi.fn();
+    window.addEventListener(DESKTOP_ANALYTICS_EVENT, listener);
+    const detail = {
+      name: "desktop_chat_response_completed" as const,
+      chatScope: "global" as const,
+      harness: "matrix_pi" as const,
+      modelProvider: "cloudflare",
+      model: "glm-5.3-flash",
+      responseCharacterCount: 42,
+    };
+    try {
+      expect(trackDesktopEvent(detail)).toBe(true);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(listener.mock.calls[0]![0].detail).toEqual(detail);
+      expect(DesktopAnalyticsDetailSchema.safeParse({ ...detail, response: "private response" }).success).toBe(false);
+    } finally {
+      window.removeEventListener(DESKTOP_ANALYTICS_EVENT, listener);
+    }
+  });
+
   it.each(["message", "prompt", "command", "output", "name", "path", "url", "token", "error"])(
     "rejects the forbidden %s property",
     (property) => {
@@ -121,4 +142,9 @@ describe("Desktop analytics allowlist", () => {
 
     window.removeEventListener(DESKTOP_ANALYTICS_EVENT, listener);
   });
+});
+
+it("accepts the managed Pi Chat harness without admitting arbitrary telemetry fields", () => {
+  expect(DesktopAnalyticsDetailSchema.safeParse({ name: "desktop_chat_response_completed", chatScope: "global",
+    harness: "matrix_pi", modelProvider: "cloudflare", model: "cloudflare:@cf/zai-org/glm-5.3-flash", responseCharacterCount: 4 }).success).toBe(true);
 });

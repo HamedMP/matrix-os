@@ -21,6 +21,7 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { AiTokenUsageSchema } from "../ai-analytics.js";
+import { SealedAssistantCredentialSchema } from "./assistant-credential-crypto.js";
 
 const SafeProviderRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 
@@ -29,6 +30,8 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("assistant.delta"),
     messageId: SafeProviderRefSchema.optional(),
     delta: z.string().min(1).max(4_000),
+    /** Internal, encrypted sidecar only. Never forward through Chat detail/SSE. */
+    credentials: z.array(SealedAssistantCredentialSchema).max(16).optional(),
   }).strict(),
   z.object({
     type: z.literal("assistant.attachment"),
@@ -143,6 +146,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   actions?: import("./action-authority.js").CanonicalActionAuthority;
   onActionEvent?: (event: CanonicalProviderRunEvent) => Promise<void>;
   executionRoot?: string;
+  /** Persisted collaboration admission, never inferred from model text. */
+  sharedScopeId?: string;
   projectSlug?: string;
   worktreeId?: string;
   resumeState?: State;
@@ -202,6 +207,11 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     parts: CanonicalChatMessagePart[];
     state?: State;
   }): Promise<void>;
+  /** Deliver a deferred, validated answer into a still-active native phase.
+   * Released phase uses ChatSteerNotDeliveredError; other definite non-delivery
+   * uses ChatInputNotDeliveredError. Uncertain delivery must not replay.
+   */
+  submitDeferredInput?: CanonicalChatProviderAdapter<State>["steer"];
   submitInput?(input: CanonicalSubmitChatInputRequest & { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string; state?: State }): Promise<void | "queued">;
   /** Internal acknowledgement only: the user has NOT answered or authorized anything. */
   deferInput?(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string }): Promise<void>;

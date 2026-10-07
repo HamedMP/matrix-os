@@ -2,6 +2,7 @@
 
 import { useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { useIsClient } from "@/hooks/useIsClient";
+import { OrganizationMenuItems } from "@/components/OrganizationMenuItems";
 import { ADD_COMPUTER_ONBOARDING_PATH } from "@/lib/runtime-routes";
 import { cn } from "@/lib/utils";
 import {
@@ -26,6 +27,7 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { useState } from "react";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import {
   clearMatrixAppSession,
@@ -155,6 +157,7 @@ function MountedUserButton({
   const { user } = useUser();
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
+  const { status: organizationStatus } = useCollaborationOrganization();
 
   if (!isLoaded || !isSignedIn) {
     return <Placeholder variant={variant} />;
@@ -258,12 +261,19 @@ function MountedUserButton({
               <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
               Manage account
             </DropdownMenuPrimitive.Item>
-            {showSharedWithMe ? <DropdownMenuPrimitive.Item asChild>
+            <DropdownMenuPrimitive.Item asChild>
+              <a className={itemClass} href="https://app.matrix-os.com/account/delete" target="_blank" rel="noreferrer">
+                <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+                Account data and deletion
+              </a>
+            </DropdownMenuPrimitive.Item>
+            {showSharedWithMe && organizationStatus !== "none" ? <DropdownMenuPrimitive.Item asChild>
               <Link className={itemClass} href="/shared">
                 <UsersIcon className="size-4 text-muted-foreground" aria-hidden="true" />
                 Shared with me
               </Link>
             </DropdownMenuPrimitive.Item> : null}
+            <OrganizationMenuItems itemClass={itemClass} />
             <DropdownMenuPrimitive.Item asChild>
               <a
                 className={itemClass}

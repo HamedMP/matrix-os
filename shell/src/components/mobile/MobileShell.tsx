@@ -18,6 +18,7 @@
  *   apps they've installed.
  */
 
+import {useCompanyDriveChatLaunch} from "./useCompanyDriveChatLaunch";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -348,6 +349,8 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     enqueueExistingProviderTerminal(sessionId, id);
   }, []);
 
+  useCompanyDriveChatLaunch(()=>{const app=apps.find(item=>item.path==="__chat__");if(app)openApp(app);});
+
   const terminalInstanceCount = openStack.reduce((count, entry) => (
     entry.app.path.startsWith("__terminal__") ? count + 1 : count
   ), 0);
@@ -487,7 +490,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 background: "var(--background)",
               }}
             >
-              <MobileAppFrame openApp={o} chat={chat} />
+              <MobileAppFrame openApp={o} chat={chat} visible={visible} />
             </motion.div>
           );
         })}
@@ -578,6 +581,13 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
         defaultSection={settingsDefaultSection}
         onOpenAgentTerminal={openAgentSetupTerminal}
         onOpenProviderTerminalSession={openExistingProviderTerminal}
+        onOpenImportedChat={(chatId) => {
+          const chatApp = apps.find((app) => app.path === "__chat__");
+          if (!chatApp) return;
+          chat?.switchConversation(chatId);
+          setSettingsOpen(false);
+          openApp(chatApp);
+        }}
       />
     </div>
     </MotionConfig>
@@ -587,8 +597,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
 function MobileAppFrame({
   openApp,
   chat,
+  visible,
 }: {
   openApp: OpenApp;
+  visible: boolean;
   chat: ReturnType<typeof useChatContext>;
 }) {
   const { app, id: openId } = openApp;
@@ -620,8 +632,11 @@ function MobileAppFrame({
     }
     return (
       <ChatApp
+        active={visible}
+        visible={visible}
         collaborationView={chat.collaborationView}
         onOpenSharedChat={chat.openSharedChat}
+        onOpenSharedProject={chat.openSharedProject}
         onOpenSharedHome={chat.openSharedHome}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
@@ -632,6 +647,8 @@ function MobileAppFrame({
         messages={chat.messages}
         sessionId={chat.sessionId}
         busy={chat.busy}
+        activeRunId={chat.activeRunId}
+        onAbortCurrent={chat.abortCurrent}
         connected={chat.connected}
         conversations={chat.conversations}
         onNewChat={() => void chat.newChat()}
@@ -639,7 +656,7 @@ function MobileAppFrame({
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
+              agentClient={chat.agentClient} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
         onSubmitApproval={chat.submitApproval}
         onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}

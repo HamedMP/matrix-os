@@ -213,16 +213,20 @@ export function DesktopWindow({
               <ChatApp
                 collaborationView={chat.collaborationView}
                 onOpenSharedChat={chat.openSharedChat}
+                onOpenSharedProject={chat.openSharedProject}
                 onOpenSharedHome={chat.openSharedHome}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 active={focusedWindowId === win.id && !win.minimized}
+                visible={!win.minimized}
                 readState={chat.readState}
                 displayedThroughSeq={chat.displayedThroughSeq}
                 onUpdateReadState={chat.updateReadState}
                 messages={chat.messages}
                 sessionId={chat.sessionId}
                 busy={chat.busy}
+                activeRunId={chat.activeRunId}
+                onAbortCurrent={chat.abortCurrent}
                 connected={chat.connected}
                 conversations={chat.conversations}
                 onNewChat={chat.newChat}
@@ -230,7 +234,7 @@ export function DesktopWindow({
                 activeConversationTitle={chat.activeConversationTitle}
                 onRenameConversation={chat.renameConversation}
                 onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
+              agentClient={chat.agentClient} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
                 onSubmitApproval={chat.submitApproval}
                 onSubmitInput={chat.submitInput}
                 providerSelection={chat.providerSelection}

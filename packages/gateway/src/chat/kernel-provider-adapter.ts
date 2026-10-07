@@ -1,3 +1,4 @@
+import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
 import { isKernelResultFailureText } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { KernelEvent } from "@matrix-os/kernel";
@@ -53,6 +54,10 @@ export function createKernelChatProviderAdapter(options: {
     const input = parseCanonicalProviderRunInput(inputValue);
     if (input.interactionMode !== "default") throw new Error("Unsupported kernel interaction mode");
     if (input.permissionMode !== "full_access") throw new Error("Unsupported kernel permission mode");
+    if (isRetiredMatrixSdkInstance(input.selection.instanceId)) {
+      yield { type: "run.completed", outcome: "failed", error: matrixSdkRetirementError() };
+      return;
+    }
     const model = KernelModelSchema.parse(input.selection.model);
     const effort = selectedEffort(input);
     const accessSourceId = selectedAccessSource(input);
