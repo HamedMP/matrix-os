@@ -1,0 +1,126 @@
+.edition-reader {
+  scroll-margin-top: 130px;
+}
+.edition-reader-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 16px 35px;
+  border-bottom: 1px solid var(--edition-line);
+  font-size: 11px;
+}
+.edition-reader-toolbar > div {
+  display: flex;
+  gap: 5px;
+}
+.edition-reader-toolbar button {
+  border: 1px solid var(--edition-line);
+  font-size: 11px;
+  min-height: 40px;
+}
+.edition-reading {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 54px 50px 90px;
+}
+.edition-reading h1 {
+  font-family: Georgia, serif;
+  font-size: clamp(34px, 4vw, 54px);
+  font-weight: 400;
+  letter-spacing: -1.6px;
+  line-height: 1.1;
+  margin: 18px 0 22px;
+}
+.edition-byline {
+  font-size: 11px;
+  color: #9e8594;
+  margin-bottom: 22px;
+}
+.edition-source-details {
+  font-family: Inter, sans-serif;
+  font-size: 10px;
+  color: #9f8594;
+  border-bottom: 1px solid var(--edition-line);
+  padding-bottom: 22px;
+  margin-bottom: 38px;
+}
+.edition-source-details summary {
+  cursor: pointer;
+  min-height: 30px;
+}
+.edition-source-details p {
+  font-size: 10px;
+}
+.edition-article {
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.85;
+  color: #4b4147;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.edition-article > p {
+  margin: 0 0 1.6em;
+}
+.edition-reading footer {
+  border-top: 1px solid var(--edition-line);
+  padding-top: 24px;
+  margin-top: 35px;
+  font-family: Inter, sans-serif;
+  font-size: 11px;
+}
+.edition-reading footer button {
+  border: 1px solid var(--edition-line);
+  margin: 0 8px 10px 0;
+}
+.edition-reading footer small {
+  display: block;
+  color: #9f8694;
+  font-size: 10px;
+  max-width: 430px;
+}
+.edition-reading-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  color: #9f8694;
+  font-size: 11px;
+}
+.edition-reading-progress label {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  flex: 1;
+}
+.edition-reading-progress input {
+  accent-color: #785067;
+  min-height: 30px;
+  flex: 1;
+  padding: 0;
+  border: 0;
+}
+.edition-review-note {
+  background: #f0e6ec;
+  border: 1px solid #e2d0da;
+  padding: 18px;
+  border-radius: 10px;
+  font-family: Inter, sans-serif;
+  font-size: 11px;
+  margin-bottom: 35px;
+}
+.edition-review-note p {
+  color: #98798b;
+}
+.edition-review-note button {
+  background: #fff8fb;
+  margin-right: 5px;
+  font-size: 11px;
+}
+.edition-load-more {
+  display: block;
+  margin: 20px auto;
+}
+.edition-app ::selection {
+  background: #e4d0df;
+  color: #5f3e51;
+}
