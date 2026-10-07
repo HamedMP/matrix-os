@@ -2,7 +2,7 @@
   "expo": {
     "name": "Matrix OS",
     "slug": "matrix-os-mobile",
-    "version": "0.2.5",
+    "version": "0.2.6",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
