@@ -132,7 +132,7 @@ export const CanonicalProviderSupportSchema = z.object({
   approvals: z.boolean(),
   userInput: z.boolean(),
   worktrees: z.enum(["none", "optional", "required"]),
-  resources: z.array(CanonicalChatResourceKindSchema).max(6),
+  resources: z.array(CanonicalChatResourceKindSchema).max(7),
   interactionModes: z.array(canonicalReferenceId(80)).max(16),
   permissionModes: z.array(canonicalReferenceId(80)).max(16),
 }).strict().superRefine((supports, ctx) => {
@@ -168,7 +168,7 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
     "authentication_required",
     "multiple_profiles_unsupported",
   ]).optional(),
-  connectionState: z.enum(["ready", "credit_required", "unavailable"]).optional(),
+  connectionState: z.enum(["ready", "credit_required", "credit_reserved", "budget_exceeded", "unavailable"]).optional(),
   workspaceRequirement: z.enum(["none", "project_optional", "project_required"]),
   catalogRevision: canonicalReferenceId(160),
   models: z.array(CanonicalModelDescriptorSchema).max(64),

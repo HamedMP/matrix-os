@@ -1,10 +1,12 @@
 ---
+triggers: ["daily brief", "morning briefing", "email and calendar summary"]
 name: matrix-personal-daily-brief
 description: Prepare a read-only English daily brief from Matrix Gmail and Google Calendar integrations with source links and explicit data gaps.
 version: 1.0.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-integrations]
 metadata:
   agent:
     tags: [Matrix OS, daily brief, Gmail, Google Calendar, read only]

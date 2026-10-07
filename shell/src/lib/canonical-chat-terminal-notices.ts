@@ -50,6 +50,7 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
     messages.splice(nextIndex < 0 ? messages.length : nextIndex, 0, {
       id: notice.id, role: "system", requestId: notice.runId,
       content: notice.text, timestamp: notice.timestamp,
+      ...(notice.code ? { metadata: { canonicalFailureCode: notice.code } } : {}),
     });
   }
   return messages;

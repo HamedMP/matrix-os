@@ -82,6 +82,7 @@ describe("canonical Chat event stream", () => {
       upgradeWebSocket: ((create: unknown) => create) as never,
       canonicalChatEventStream: { open: vi.fn() } as never,
       chatRepository: null,
+      runtimeOwnerIds: [],
       gatewayCollaboration: null,
       collaborationFailClosedReason: null,
       canonicalChatOrchestrator: null,
@@ -114,9 +115,10 @@ describe("canonical Chat event stream", () => {
     replay.resolve({ events: [outbox(1), outbox(2)], gap: false, nextCursor: 2 });
     await opening;
     expect(sink.sent.map((frame) => frame.type)).toEqual([
-      "chat.stream.attached", "chat.event", "chat.event", "chat.replay.end", "chat.event",
+      "chat.stream.attached", "chat.event", "chat.event", "chat.event", "chat.replay.end",
     ]);
     expect(eventCursors(sink)).toEqual([1, 2, 3]);
+    expect(sink.sent).toContainEqual({ type: "chat.replay.end", nextCursor: 3 });
     expect(JSON.stringify(sink.sent)).not.toMatch(/private transcript|provider-secret|home\/private|payload/);
   });
 

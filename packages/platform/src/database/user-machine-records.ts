@@ -17,7 +17,7 @@ import { parseStringArray } from './json.js';
 
 /** Extracted verbatim from packages/platform/src/db.ts (S01 / T007): user machine and provider deletion row mappers. */
 
-export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview']);
+export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview', 'private-preview']);
 
 export type UserMachineProvisioningClass = z.infer<typeof UserMachineProvisioningClassSchema>;
 
@@ -37,8 +37,10 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
     runtimeTokenEpoch: row.runtime_token_epoch,
     provisioningClass: UserMachineProvisioningClassSchema.parse(row.provisioning_class),
     accessClerkUserIds: row.access_clerk_user_ids,
+    sourcePr: row.source_pr,
+    confirmedBundleVersion: row.confirmed_bundle_version,
     developerTools: parseDeveloperToolsJson(row.developer_tools),
-    hetznerServerId: row.hetzner_server_id,
+    hetznerServerId: parseNullableProviderActionId(row.hetzner_server_id as number | string | null),
     publicIPv4: row.public_ipv4,
     publicIPv6: row.public_ipv6,
     status: row.status,
@@ -51,7 +53,7 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
       row.recovery_create_action_id as number | string | null,
     ),
     recoveryEncryptedPayload: row.recovery_encrypted_payload,
-    recoveryOldServerId: row.recovery_old_server_id,
+    recoveryOldServerId: parseNullableProviderActionId(row.recovery_old_server_id as number | string | null),
     recoveryOldPublicIPv4: row.recovery_old_public_ipv4,
     serverType: row.server_type,
     location: row.location,
@@ -80,6 +82,8 @@ export function toUserMachineRow(record: NewUserMachine): Insertable<UserMachine
     runtime_token_epoch: record.runtimeTokenEpoch ?? 1,
     provisioning_class: record.provisioningClass ?? 'customer',
     access_clerk_user_ids: record.accessClerkUserIds ?? [],
+    source_pr: record.sourcePr ?? null,
+    confirmed_bundle_version: record.confirmedBundleVersion ?? null,
     developer_tools: serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
     hetzner_server_id: record.hetznerServerId ?? null,
     public_ipv4: record.publicIPv4 ?? null,
@@ -121,6 +125,8 @@ export function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable
   if (values.runtimeTokenEpoch !== undefined) update.runtime_token_epoch = values.runtimeTokenEpoch;
   if (values.provisioningClass !== undefined) update.provisioning_class = values.provisioningClass;
   if (values.accessClerkUserIds !== undefined) update.access_clerk_user_ids = values.accessClerkUserIds;
+  if (values.sourcePr !== undefined) update.source_pr = values.sourcePr;
+  if (values.confirmedBundleVersion !== undefined) update.confirmed_bundle_version = values.confirmedBundleVersion;
   if (values.developerTools !== undefined) update.developer_tools = serializeDeveloperTools(values.developerTools);
   if (values.hetznerServerId !== undefined) update.hetzner_server_id = values.hetznerServerId;
   if (values.publicIPv4 !== undefined) update.public_ipv4 = values.publicIPv4;
@@ -156,7 +162,7 @@ export function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable
 export function mapProviderDeletion(row: ProviderDeletionQueueTable): ProviderDeletionQueueRecord {
   return {
     id: row.id,
-    providerServerId: row.provider_server_id,
+    providerServerId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).parse(row.provider_server_id),
     reason: row.reason,
     machineId: row.machine_id,
     handle: row.handle,

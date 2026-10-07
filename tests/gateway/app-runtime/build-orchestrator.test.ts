@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, cp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,25 @@ beforeEach(async () => {
   );
   orch = new BuildOrchestrator({ concurrency: 2, storeDir: join(tmpDir, ".pnpm-store") });
 });
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw err;
+  }
+}
+
+// Polls on setImmediate so it keeps working while setTimeout is faked.
+async function waitForFile(path: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
+    await new Promise((r) => setImmediate(r));
+  }
+}
 
 afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
@@ -63,7 +82,7 @@ describe("BuildOrchestrator", () => {
     }
   }, 60_000);
 
-  it("enforces build timeout via AbortSignal", async () => {
+  it("enforces build timeout", async () => {
     const result = await orch.build("hello-vite", appDir, { timeoutMs: 100 });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -97,6 +116,60 @@ describe("BuildOrchestrator", () => {
       expect((result.error as BuildError).code).toBe("timeout");
     }
     expect(elapsed).toBeLessThan(1_000);
+  }, 10_000);
+
+  it("kills the whole build process tree before resolving a timeout", async () => {
+    // `sh -c` forks the background writer as a grandchild of the gateway.
+    // Signalling only the direct `sh` child would orphan it, leaving it to
+    // keep writing into the app directory after the build reported timeout.
+    await writeFile(join(appDir, "matrix.json"), JSON.stringify({
+      name: "Hello Vite",
+      slug: "hello-vite",
+      version: "1.0.0",
+      runtime: "vite",
+      runtimeVersion: "^1.0.0",
+      listingTrust: "first_party",
+      build: {
+        install: "sleep 30 & echo $! > grandchild.pid.tmp && mv grandchild.pid.tmp grandchild.pid; wait",
+        command: "node -e \"process.exit(0)\"",
+        output: "dist",
+        timeout: 120,
+        sourceGlobs: ["matrix.json"],
+      },
+    }));
+
+    // Fake only the orchestrator's timers so the timeout fires exactly when
+    // the test says, after the grandchild is known to be running.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let settled = false;
+      const buildPromise = orch
+        .build("hello-vite", appDir, { timeoutMs: 60_000 })
+        .finally(() => {
+          settled = true;
+        });
+
+      const pidPath = join(appDir, "grandchild.pid");
+      await waitForFile(pidPath);
+      const grandchildPid = Number(await readFile(pidPath, "utf8"));
+      expect(grandchildPid).toBeGreaterThan(0);
+      expect(isAlive(grandchildPid)).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      while (!settled) {
+        await vi.advanceTimersByTimeAsync(20);
+        await new Promise((r) => setImmediate(r));
+      }
+
+      const result = await buildPromise;
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect((result.error as BuildError).code).toBe("timeout");
+      }
+      expect(isAlive(grandchildPid)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   }, 10_000);
 
   it("serializes concurrent builds for same slug", async () => {

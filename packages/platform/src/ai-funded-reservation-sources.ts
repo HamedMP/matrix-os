@@ -64,22 +64,21 @@ async function activeAddonProtection(
   return exactInteger(protection.reserved_microusd ?? 0);
 }
 
-export async function reserveFundingSources(
+interface AllowedFundingSources {
+  promotional: boolean;
+  addon: boolean;
+  promotionalGrantNamespace?: "general" | "speech_monthly";
+}
+
+// Call under the admission transaction's owner/balance locks. Discovery and
+// allocation share namespace, expiry, and explicit active-hold protection.
+async function readFundingSources(
   executor: PlatformDB["executor"],
   identity: FundedAiRuntimeIdentity,
-  amountMicrousd: number,
   balance: FundedAiReservationBalance,
   checkedAt: string,
-  allowedSources: {
-    promotional: boolean;
-    addon: boolean;
-    promotionalGrantNamespace?: "general" | "speech_monthly";
-  } = { promotional: true, addon: true },
-): Promise<{
-  promotionalReservedMicrousd: number;
-  addonReservedMicrousd: number;
-  grantAllocations: Array<{ grantEntryId: string; amountMicrousd: number }>;
-}> {
+  allowedSources: AllowedFundingSources,
+) {
   const protection = allowedSources.promotional
     ? await activePromotionalProtection(executor, identity)
     : new Map<string, number>();
@@ -100,17 +99,58 @@ export async function reserveFundingSources(
   if (grants.length > MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
     throw new Error("Funded AI promotional grant limit invariant violated");
   }
+  const eligibleGrants = grants.flatMap((grant) => {
+    const total = exactInteger(grant.remaining_microusd);
+    const available = total - (protection.get(grant.grant_entry_id) ?? 0);
+    if (available < 0) throw new Error("Funded AI promotional allocation invariant violated");
+    return grant.expires_at !== null && grant.expires_at <= checkedAt
+      ? [] : [{ grantEntryId: grant.grant_entry_id, total, available }];
+  });
+  // Legacy NULL attribution remains unknown; aggregate admission limits still
+  // protect its financial hold without guessing which source backed it.
+  const addonTotal = exactInteger(balance.addon_balance_microusd);
+  const addonAvailable = addonTotal - await activeAddonProtection(executor, identity);
+  if (addonAvailable < 0) {
+    if (!allowedSources.promotional || !allowedSources.addon) throw new AiFundedPolicyError("insufficient_credit");
+    throw new Error("Funded AI add-on allocation invariant violated");
+  }
+  return { eligibleGrants, addonTotal: allowedSources.addon ? addonTotal : 0,
+    addonAvailable: allowedSources.addon ? addonAvailable : 0 };
+}
+
+export async function fundingSourceAvailability(
+  executor: PlatformDB["executor"],
+  identity: FundedAiRuntimeIdentity,
+  balance: FundedAiReservationBalance,
+  checkedAt: string,
+): Promise<{ ceilingMicrousd: number; availableMicrousd: number }> {
+  const sources = await readFundingSources(executor, identity, balance, checkedAt, { promotional: true, addon: true });
+  return {
+    ceilingMicrousd: exactInteger(sources.eligibleGrants.reduce((sum, grant) => sum + grant.total, sources.addonTotal)),
+    availableMicrousd: exactInteger(sources.eligibleGrants.reduce((sum, grant) => sum + grant.available, sources.addonAvailable)),
+  };
+}
+
+export async function reserveFundingSources(
+  executor: PlatformDB["executor"],
+  identity: FundedAiRuntimeIdentity,
+  amountMicrousd: number,
+  balance: FundedAiReservationBalance,
+  checkedAt: string,
+  allowedSources: AllowedFundingSources = { promotional: true, addon: true },
+): Promise<{
+  promotionalReservedMicrousd: number;
+  addonReservedMicrousd: number;
+  grantAllocations: Array<{ grantEntryId: string; amountMicrousd: number }>;
+}> {
+  const sources = await readFundingSources(executor, identity, balance, checkedAt, allowedSources);
   let remaining = amountMicrousd;
   const grantAllocations: Array<{ grantEntryId: string; amountMicrousd: number }> = [];
-  for (const grant of grants) {
+  for (const grant of sources.eligibleGrants) {
     if (remaining === 0) break;
-    const alreadyAllocated = protection.get(grant.grant_entry_id) ?? 0;
-    const unallocated = exactInteger(grant.remaining_microusd) - alreadyAllocated;
-    if (unallocated < 0) throw new Error("Funded AI promotional allocation invariant violated");
-    if (grant.expires_at !== null && grant.expires_at <= checkedAt) continue;
-    const allocation = Math.min(unallocated, remaining);
+    const allocation = Math.min(grant.available, remaining);
     if (allocation > 0) {
-      grantAllocations.push({ grantEntryId: grant.grant_entry_id, amountMicrousd: allocation });
+      grantAllocations.push({ grantEntryId: grant.grantEntryId, amountMicrousd: allocation });
       remaining -= allocation;
     }
   }
@@ -119,15 +159,8 @@ export async function reserveFundingSources(
   if (!allowedSources.addon && addonReservedMicrousd > 0) {
     throw new AiFundedPolicyError("insufficient_credit");
   }
-  // Only explicit add-on attribution is evidence that an active reservation
-  // consumed add-on credit. Legacy NULL attribution must not be guessed from
-  // the aggregate reserved balance because that can block unrelated funding.
-  const existingAddonReserved = await activeAddonProtection(executor, identity);
-  if (addonReservedMicrousd > exactInteger(balance.addon_balance_microusd) - existingAddonReserved) {
-    if (!allowedSources.promotional || !allowedSources.addon) {
-      throw new AiFundedPolicyError("insufficient_credit");
-    }
-    throw new Error("Funded AI add-on reservation allocation invariant violated");
+  if (addonReservedMicrousd > sources.addonAvailable) {
+    throw new AiFundedPolicyError("insufficient_credit");
   }
   return { promotionalReservedMicrousd, addonReservedMicrousd, grantAllocations };
 }

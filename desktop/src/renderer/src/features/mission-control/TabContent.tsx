@@ -112,7 +112,7 @@ export function TabPane({
         ? <TerminalView sessionName={tab.sessionName} active={active} visualScale={visualScale} />
         : null;
     case "settings":
-      return <SettingsView section={settingsSection} onSectionChange={onSettingsSectionChange} />;
+      return <SettingsView visible={visible} section={settingsSection} onSectionChange={onSettingsSectionChange} />;
     case "shared":
       return <DesktopChatCollaboration />;
     default:

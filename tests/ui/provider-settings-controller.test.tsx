@@ -297,6 +297,27 @@ describe("ProviderSettingsController", () => {
     expect(controller.getState().snapshot?.revision).toBe(2);
   });
 
+  it("keeps Hermes, its selected route and all rows after enable is rejected, then allows retry", async () => {
+    const response = deferred<ProviderSettingsMutationResponse>();
+    const initial = snapshot(1, ["harness_one", "harness_two"]);
+    initial.harnesses[0]!.enabled = false;
+    const gateway = transport({ getSnapshot: async () => initial, mutate: () => response.promise });
+    const controller = new ProviderSettingsController({ identityKey: "owner-a:preview", transport: gateway });
+    await controller.refresh({ refresh: false });
+    controller.selectHarness("harness_one");
+    const pending = controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: true });
+    await Promise.resolve();
+    expect(controller.getState()).toMatchObject({ snapshot: initial, selectedHarnessId: "harness_one", busy: true });
+    response.reject(new Error("private provider failure"));
+    expect(await pending).toBe(false);
+    expect(controller.getState()).toMatchObject({ snapshot: initial, selectedHarnessId: "harness_one", busy: false,
+      error: "Changes were not saved. Refresh and try again." });
+    const enabled = snapshot(2, ["harness_one", "harness_two"]);
+    gateway.mutate.mockResolvedValue({ kind: "snapshot", snapshot: enabled });
+    expect(await controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: true })).toBe(true);
+    expect(controller.getState()).toMatchObject({ snapshot: enabled, selectedHarnessId: "harness_one", busy: false, error: null });
+  });
+
   it("fails closed when the server does not advertise an action", async () => {
     const gateway = transport();
     const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway });
@@ -510,4 +531,43 @@ describe("useProviderSettingsController", () => {
     expect(result.current.snapshot?.revision).toBe(20);
     expect(result.current.identityKey).toBe("owner-b:primary");
   });
+});
+
+it("refreshes negotiated account details after a confirmed mutation without treating metadata failure as mutation failure", async () => {
+  const initial = snapshot(1);
+  const account = { id: "native", providerId: "openai", displayName: "Codex", authMethod: "terminal", authState: "authenticated", lastCheckedAt: checkedAt, accessSourceId: "source_matrix", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } };
+  initial.modelProviders.push({ id: "openai", displayName: "OpenAI", models: [] });
+  initial.accessSources.push({ ...initial.accessSources[0]!, id: "source_native", kind: "provider_account", fundingKind: "owner_account", providerId: "openai", accountId: "native", eligibleModelIds: [] });
+  account.accessSourceId = "source_native";
+  initial.accounts = [account] as never;
+  const changed = { ...initial, revision: 2, projectionOf: { ...initial.projectionOf, revision: 2 } };
+  const enriched = structuredClone(changed);
+  enriched.accounts[0]!.connectionDetails = { email: "owner@example.com", planName: "ChatGPT Plus" };
+  const getSnapshot = vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(enriched).mockRejectedValueOnce(new Error("metadata unavailable"));
+  const controller = new ProviderSettingsController({ identityKey: "owner", transport: { getSnapshot, mutate: vi.fn().mockResolvedValue({ kind: "snapshot", snapshot: changed }) } });
+  await controller.refresh();
+  expect(await controller.mutate({ type: "update_harness", harnessInstanceId: "harness_one", displayName: "Renamed" })).toBe(true);
+  expect(controller.getState().snapshot?.accounts[0]?.connectionDetails?.planName).toBe("ChatGPT Plus");
+  expect(getSnapshot).toHaveBeenLastCalledWith(expect.any(AbortSignal), { refresh: false });
+  expect(await controller.mutate({ type: "update_harness", harnessInstanceId: "harness_one", displayName: "Renamed again" })).toBe(true);
+  expect(controller.getState().error).toBeNull();
+  controller.dispose();
+});
+
+it("retains login handoff recovery feedback after accepting negotiated native identity", async () => {
+  const changed = snapshot(2);
+  changed.harnesses[0]!.authState = "authenticating";
+  changed.accounts = [{ id: "native", providerId: "openai", displayName: "Codex", authMethod: "terminal", authState: "authenticated", lastCheckedAt: checkedAt, accessSourceId: "source_native", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } }];
+  changed.modelProviders.push({ id: "openai", displayName: "OpenAI", models: [] });
+  changed.accessSources.push({ ...changed.accessSources[0]!, id: "source_native", kind: "provider_account", fundingKind: "owner_account", providerId: "openai", accountId: "native", eligibleModelIds: [] });
+  const enriched = structuredClone(changed);
+  enriched.accounts[0]!.connectionDetails = { email: "owner@example.com", planName: "ChatGPT Plus" };
+  const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot(1)).mockResolvedValueOnce(enriched);
+  const controller = new ProviderSettingsController({ identityKey: "owner", transport: { getSnapshot, mutate: vi.fn().mockResolvedValue({ kind: "login_attempt", snapshot: changed, attempt: { id: "attempt_one", harnessInstanceId: "harness_one", accountId: null, method: "terminal", state: "pending", action: { kind: "open_terminal", terminalSessionId: "matrix-login" }, expiresAt: "2026-08-30T10:10:00.000Z", safeFailure: null } }) } });
+  await controller.refresh();
+  expect(await controller.mutate({ type: "start_login", harnessInstanceId: "harness_one", accountId: null, method: "terminal" }, { onLoginAction: async () => { throw new Error("private handoff failure"); } })).toBe(true);
+  expect(controller.getState().snapshot?.accounts[0]?.connectionDetails?.email).toBe("owner@example.com");
+  expect(controller.getState().connectionAttempt?.id).toBe("attempt_one");
+  expect(controller.getState().error).toBe("Sign-in started. Use Continue to open it again.");
+  controller.dispose();
 });

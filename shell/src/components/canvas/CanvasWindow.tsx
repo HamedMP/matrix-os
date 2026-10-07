@@ -476,16 +476,20 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
             <ChatApp
                 collaborationView={chatState.collaborationView}
                 onOpenSharedChat={chatState.openSharedChat}
+                onOpenSharedProject={chatState.openSharedProject}
                 onOpenSharedHome={chatState.openSharedHome}
                 filterUnreadOnly={chatState.unreadOnly}
                 onUnreadFilterChange={chatState.setUnreadOnly}
                 active={isFocused && !win.minimized}
+                visible={!win.minimized}
                 readState={chatState.readState}
                 displayedThroughSeq={chatState.displayedThroughSeq}
                 onUpdateReadState={chatState.updateReadState}
               messages={chatState.messages}
               sessionId={chatState.sessionId}
               busy={chatState.busy}
+              activeRunId={chatState.activeRunId}
+              onAbortCurrent={chatState.abortCurrent}
               connected={chatState.connected}
               conversations={chatState.conversations}
               onNewChat={chatState.newChat}
@@ -493,7 +497,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               activeConversationTitle={chatState.activeConversationTitle}
               onRenameConversation={chatState.renameConversation}
               onSubmit={chatState.submitMessage}
-              agentClient={chatState.agentClient} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn}
+              agentClient={chatState.agentClient} botEventRevision={chatState.botEventRevision} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn}
               onSubmitApproval={chatState.submitApproval}
               onSubmitInput={chatState.submitInput}
               providerSelection={chatState.providerSelection}

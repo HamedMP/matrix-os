@@ -1,3 +1,4 @@
+import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
 import { createClaudeInputController } from "./claude-input-control.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
@@ -29,7 +30,10 @@ import {
   isCompleteAssistantCredentialKeyword,
   safeToolPreview,
   sanitizeAssistantText,
+  projectAssistantTextWithCaptures,
+  type CapturedAssistantText,
 } from "./safe-activity-projection.js";
+import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 
 const ClaudeChatStateSchema = z.object({
   sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/),
@@ -97,15 +101,6 @@ function permissionMode(value: string, interactionMode: string) {
   throw new Error("Unsupported Claude permission mode");
 }
 
-function outputChunks(text: string): string[] {
-  const chunks: string[] = [];
-  for (let index = 0; index < text.length; index += 4_000) {
-    const chunk = text.slice(index, index + 4_000);
-    if (chunk) chunks.push(chunk);
-  }
-  return chunks;
-}
-
 function claudeActivity(name: string) {
   const normalized = name.trim().toLowerCase();
   if (["bash", "shell", "terminal", "execute", "run_command"].includes(normalized)) {
@@ -127,103 +122,42 @@ function canonicalClaudeActivityEvent(
   activity: ClaudeActivity,
   status: "running" | "completed",
 ): CanonicalProviderRunEvent {
-  const projected = CanonicalProviderRunEventSchema.safeParse({
+  const fullProjection = CanonicalProviderRunEventSchema.safeParse({
     type: "agent.activity",
     ...activity,
     status,
   });
-  if (projected.success) return projected.data;
+  if (fullProjection.success) return fullProjection.data;
 
-  return CanonicalProviderRunEventSchema.parse({
+  let retained = CanonicalProviderRunEventSchema.parse({
     type: "agent.activity",
     activityId: activity.activityId,
     kind: activity.kind,
     label: activity.label,
     status,
   });
+  // Validate optional fields independently: an unavailable path detail must
+  // not erase a safe command preview. Preview and kind remain one atomic pair.
+  for (const fields of [
+    activity.preview === undefined ? undefined : { preview: activity.preview, previewKind: activity.previewKind },
+    activity.detail === undefined ? undefined : { detail: activity.detail },
+  ]) {
+    if (!fields) continue;
+    const candidate = CanonicalProviderRunEventSchema.safeParse({ ...retained, ...fields });
+    if (candidate.success) retained = candidate.data;
+  }
+  return retained;
 }
 
-function classifiedClaudeFailureEvidence(text: string) {
-  if (/\b(?:unsupported|invalid) model\b|\bmodel\b.{0,120}\b(?:does not exist|not found|not available|unavailable|unsupported)\b/i.test(text)) {
-    return {
-      category: "unsupported_model" as const,
-      safeError: {
-        code: "model_unavailable" as const,
-        safeMessage: "The selected Claude model is unavailable. Choose another model and try again.",
-        retryable: false,
-        recoveryActions: ["select_provider" as const],
-      },
-    };
-  }
-  if (/\b(?:authentication (?:failed|required)|unauthorized|not logged in|login required|invalid (?:api[ -]?key|x-api-key)|api[ -]?key.{0,80}(?:missing|required|invalid)|oauth.{0,80}(?:expired|required)|credentials?.{0,80}(?:missing|invalid|expired|required))\b|\bplease (?:run )?\/?login\b/i.test(text)) {
-    return {
-      category: "authentication" as const,
-      safeError: {
-        code: "authorization_failed" as const,
-        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
-        retryable: false,
-        recoveryActions: ["open_setup_terminal" as const],
-      },
-    };
-  }
-  if (/\b(?:permission denied|not permitted|operation not permitted|access denied|requires? permission)\b/i.test(text)) {
-    return {
-      category: "permission" as const,
-      safeError: {
-        code: "authorization_failed" as const,
-        safeMessage: "Claude was blocked by its current permissions. Review the permission mode and try again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  return undefined;
-}
-
-function classifiedClaudeCliFailure(error: unknown) {
-  if (!(error instanceof CanonicalCliError)) return undefined;
-  if (error.kind === "startup") {
-    return {
-      category: "startup" as const,
-      safeError: {
-        code: "provider_unavailable" as const,
-        safeMessage: "Claude is not available on this runtime. Open setup and install or reconnect Claude.",
-        retryable: false,
-        recoveryActions: ["open_setup_terminal" as const],
-      },
-    };
-  }
-  if (error.kind === "timeout") {
-    return {
-      category: "timeout" as const,
-      safeError: {
-        code: "service_unavailable" as const,
-        safeMessage: "Claude took too long to respond. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  if (error.kind === "invalid_output" || error.kind === "stdout_limit") {
-    return {
-      category: "invalid_protocol" as const,
-      safeError: {
-        code: "run_failed" as const,
-        safeMessage: "Claude returned an invalid response. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry" as const],
-      },
-    };
-  }
-  return undefined;
-}
 
 export function createClaudeChatProviderAdapter(options: {
   homePath: string;
+  credentialKey?: Buffer;
   spawnFn?: CanonicalCliSpawn;
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
-  resolveCredentialLaunch?: () => Promise<KernelCredentialLaunch>;
+  /** The run id doubles as the funded priority claim key for this turn. */
+  resolveCredentialLaunch?: (context: { runId: string }) => Promise<KernelCredentialLaunch>;
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
   customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
@@ -258,7 +192,9 @@ export function createClaudeChatProviderAdapter(options: {
       // Review is read-only even if its saved permission choice says full access.
       // Unknown future interaction modes receive discovery only.
       scope: mcpScope,
+      ...(input.context?.drives?.length ? {driveContext:true} : {}),
     }) ?? null;
+    if (input.context?.drives?.length && !capability) throw new Error("Company drive tools unavailable");
     const recipeGuidance = input.context?.agent?.recipe
       ? "Selected integration dependencies are unavailable through this route. "
         + (capability
@@ -291,6 +227,7 @@ export function createClaudeChatProviderAdapter(options: {
         claudeOutputFormat: "stream-json",
         claudeIncludePartialMessages: true,
         matrixCustomMcp: capability !== null,
+        matrixDriveContext: Boolean(input.context?.drives?.length),
         matrixCustomMcpScope: mcpScope,
       });
       if (resumeState) {
@@ -301,11 +238,13 @@ export function createClaudeChatProviderAdapter(options: {
       if (promptSeparator >= 0) launch.args.splice(promptSeparator);
       launch.args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio");
       credentialLaunch = options.resolveCredentialLaunch
-        ? await options.resolveCredentialLaunch()
+        ? await options.resolveCredentialLaunch({ runId: input.runId })
         : {
             env: await (
               options.resolveCredentialEnv
-              ?? (() => buildKernelCredentialLaunch(options.homePath).then((value) => value.env))
+              ?? (() => buildKernelCredentialLaunch(options.homePath, process.env, undefined, undefined, {
+                requestClass: "interactive",
+              }).then((value) => value.env))
             )(),
           };
       if (approvalClient) {
@@ -343,6 +282,7 @@ export function createClaudeChatProviderAdapter(options: {
     let stderrEvidenceBytes = 0;
     let streamedText = false;
     let resultText = "";
+    let bufferedResultEvents: CanonicalProviderRunEvent[] = [];
     let sawResult = false;
     let resultFailed = false;
     let usageFailure: ReturnType<typeof classifyClaudeUsageFailure>;
@@ -428,11 +368,19 @@ export function createClaudeChatProviderAdapter(options: {
       if (activeRuns.get(input.runId) === activeRun) activeRuns.delete(input.runId);
     };
     let pendingDelta = "";
+    let pendingCaptures: CapturedAssistantText["captures"] = [];
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
-    const textProjector = createAssistantTextStreamProjector({
+    const pathProjection = {
       homePath: options.homePath,
       executionRoot: input.executionRoot,
+      showPrivatePaths: !input.sharedScopeId,
+    };
+    const textProjector = createAssistantTextStreamProjector(pathProjection);
+    const credentialEmitter = createAssistantCredentialEmitter({
+      ownerType: input.owner.type,
+      ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
+      key: options.credentialKey, sharedScopeId: input.sharedScopeId,
     });
     let projectedMessageId: string | undefined;
     let boundaryProbe: {
@@ -450,21 +398,19 @@ export function createClaudeChatProviderAdapter(options: {
       deltaFlushScheduled = false;
       if (!pendingDelta) return;
       const text = pendingDelta;
+      const captures = pendingCaptures;
       const messageId = pendingDeltaMessageId;
       pendingDelta = "";
+      pendingCaptures = [];
       pendingDeltaMessageId = undefined;
-      for (const delta of outputChunks(text)) {
-        queue.push(CanonicalProviderRunEventSchema.parse({
-          type: "assistant.delta",
-          ...(messageId ? { messageId } : {}),
-          delta,
-        }));
-      }
+      for (const event of credentialEmitter.emit({ text, captures }, messageId)) queue.push(event);
     };
 
-    const enqueueDelta = (delta: string, messageId?: string) => {
+    const enqueueDelta = (delta: string, messageId?: string, captures: CapturedAssistantText["captures"] = []) => {
       if (pendingDelta && pendingDeltaMessageId !== messageId) flushPendingDelta();
       pendingDeltaMessageId = messageId;
+      pendingCaptures.push(...captures.slice(0, Math.max(0, 16 - pendingCaptures.length))
+        .map((capture) => ({ ...capture, offset: capture.offset + pendingDelta.length })));
       pendingDelta += delta;
       if (pendingDelta.length >= 4_000) {
         flushPendingDelta();
@@ -489,13 +435,11 @@ export function createClaudeChatProviderAdapter(options: {
         // marker. Release it only when the old context cannot make it a token.
         const ordinaryCompletedKeyword = textProjector.hasNonCredentialPathContext()
           && isCompleteAssistantCredentialKeyword(boundaryProbe.text);
-        const projected = textProjector.flushIndependentBoundary();
-        if (projected) enqueueDelta(projected, projectedMessageId);
+        const projected = textProjector.flushIndependentBoundaryCaptured();
+        if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
         if (ordinaryCompletedKeyword) {
           for (const segment of boundaryProbe.segments) {
-            const word = sanitizeAssistantText(segment.text, {
-              homePath: options.homePath, executionRoot: input.executionRoot,
-            });
+            const word = sanitizeAssistantText(segment.text, pathProjection);
             if (word) enqueueDelta(word, segment.messageId);
           }
         } else redactProbeSegments(boundaryProbe.segments);
@@ -503,8 +447,8 @@ export function createClaudeChatProviderAdapter(options: {
         projectedMessageId = undefined;
       }
       droppingBoundaryProbe = false;
-      const projected = textProjector.flush();
-      if (projected) enqueueDelta(projected, projectedMessageId);
+      const projected = textProjector.flushCaptured();
+      if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
       projectedMessageId = undefined;
     };
     const flushSafeProjectedText = (nextCharacter?: string) => {
@@ -519,8 +463,8 @@ export function createClaudeChatProviderAdapter(options: {
       droppingBoundaryProbe = false;
     };
     const flushIndependentProjectedText = () => {
-      const projected = textProjector.flushIndependentBoundary();
-      if (projected) enqueueDelta(projected, projectedMessageId);
+      const projected = textProjector.flushIndependentBoundaryCaptured();
+      if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
       projectedMessageId = undefined;
     };
     const projectResolvedDelta = (delta: string, messageId?: string) => {
@@ -532,21 +476,21 @@ export function createClaudeChatProviderAdapter(options: {
         // continuation to that block; the rest belongs to the new block.
         let offset = 0;
         for (const character of delta) {
-          const projected = textProjector.push(character);
-          if (projected) enqueueDelta(projected, projectedMessageId);
+          const projected = textProjector.pushCaptured(character);
+          if (projected.text) enqueueDelta(projected.text, projectedMessageId, projected.captures);
           offset += character.length;
           if (!textProjector.hasPending()) {
             projectedMessageId = messageId;
-            const remainder = textProjector.push(delta.slice(offset));
-            if (remainder) enqueueDelta(remainder, messageId);
+            const remainder = textProjector.pushCaptured(delta.slice(offset));
+            if (remainder.text) enqueueDelta(remainder.text, messageId, remainder.captures);
             return;
           }
         }
         return;
       }
       projectedMessageId = messageId;
-      const projected = textProjector.push(delta);
-      if (projected) enqueueDelta(projected, messageId);
+      const projected = textProjector.pushCaptured(delta);
+      if (projected.text) enqueueDelta(projected.text, messageId, projected.captures);
     };
     const projectDelta = (delta: string, messageId?: string) => {
       if (droppingBoundaryProbe) return;
@@ -661,10 +605,7 @@ export function createClaudeChatProviderAdapter(options: {
           const activity = {
             activityId: block.id,
             ...claudeActivity(block.name),
-            ...safeToolPreview(block.name, block.input, {
-              homePath: options.homePath,
-              executionRoot: input.executionRoot,
-            }),
+            ...safeToolPreview(block.name, block.input, pathProjection),
           };
           activityByIndex.set(line.event.index, activity);
           toolInputByIndex.set(line.event.index, "");
@@ -689,10 +630,7 @@ export function createClaudeChatProviderAdapter(options: {
               const parsedInput: unknown = JSON.parse(partialInput);
               completedActivity = {
                 ...activity,
-                ...safeToolPreview(toolName, parsedInput, {
-                  homePath: options.homePath,
-                  executionRoot: input.executionRoot,
-                }),
+                ...safeToolPreview(toolName, parsedInput, pathProjection),
               };
             } catch (error: unknown) {
               console.warn("[chat-claude] Ignoring malformed bounded tool input:", error instanceof Error ? error.name : "UnknownError");
@@ -709,20 +647,18 @@ export function createClaudeChatProviderAdapter(options: {
           : line.subtype === undefined
             ? undefined
             : "other";
-        resultText = sanitizeAssistantText(line.result ?? "", {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
-        });
+        const projectedResult = projectAssistantTextWithCaptures(line.result ?? "", pathProjection);
+        resultText = projectedResult.text;
         resultFailed = line.is_error === true || line.subtype === "error";
+        if (!resultFailed && !streamedText) bufferedResultEvents = credentialEmitter.emit(projectedResult);
         finishInput?.();
       }
     };
 
     const emitBufferedResult = () => {
       if (!resultFailed && !streamedText && resultText) {
-        for (const delta of outputChunks(resultText)) {
-          queue.push(CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", delta }));
-        }
+        for (const event of bufferedResultEvents) queue.push(event);
+        bufferedResultEvents = [];
       }
     };
 
@@ -784,12 +720,7 @@ export function createClaudeChatProviderAdapter(options: {
                   retryable: true,
                   recoveryActions: ["retry", "open_setup_terminal"],
                 }
-              : {
-                  code: "run_failed",
-                  safeMessage: "Claude returned an invalid response. Try the Run again.",
-                  retryable: true,
-                  recoveryActions: ["retry"],
-                }),
+              : classifiedClaudeCliFailure(new CanonicalCliError("invalid_output"))!.safeError),
           }
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();

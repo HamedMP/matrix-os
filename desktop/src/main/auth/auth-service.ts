@@ -336,7 +336,7 @@ export class AuthService {
     const request = RuntimeSelectionRequestSchema.parse({ slot });
     const endpoint = new URL("/api/auth/runtime-selection", this.deps.runtimeSelectionOrigin);
     const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
-    const response = await fetchFn(endpoint.toString(), {
+    const requestInit = (): RequestInit => ({
       method: "POST",
       headers: {
         authorization: `Bearer ${currentCredential.accessToken}`,
@@ -345,6 +345,17 @@ export class AuthService {
       body: JSON.stringify(request),
       signal: AbortSignal.timeout(RUNTIME_SELECTION_TIMEOUT_MS),
     });
+    let response: Response;
+    try {
+      response = await fetchFn(endpoint.toString(), requestInit());
+    } catch (err: unknown) {
+      // The dedicated API hostname can be unreachable on networks where the
+      // app hostname still works. Retry only transport failures: an HTTP
+      // rejection must never cause credential exchange on another origin.
+      if (this.deps.platformHost === this.deps.runtimeSelectionOrigin) throw err;
+      const appEndpoint = new URL("/api/auth/runtime-selection", this.deps.platformHost);
+      response = await fetchFn(appEndpoint.toString(), requestInit());
+    }
     if (!response.ok) throw new Error("runtime selection rejected");
     const contentLength = Number(response.headers.get("content-length"));
     if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
@@ -423,7 +434,7 @@ export class AuthService {
     const currentCredential = this.credential;
     if (!currentCredential) throw new Error("Runtime computers unavailable");
 
-    const endpoint = new URL("/api/auth/computers", this.deps.runtimeSelectionOrigin);
+    const endpoint = new URL("/api/auth/computers", this.deps.platformHost);
     const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
     try {
       const response = await fetchFn(endpoint.toString(), {

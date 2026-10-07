@@ -87,6 +87,16 @@ describe('start-platform-cloud-run.sh', () => {
     expect(dockerfile).toContain('/app/packages/contracts/src ./packages/contracts/src');
   });
 
+  it('installs the shared UI dependency graph before building the auth shell', () => {
+    const dockerfile = readFileSync(join(process.cwd(), 'Dockerfile.platform'), 'utf8');
+    const uiPackage = JSON.parse(readFileSync(join(process.cwd(), 'packages/ui/package.json'), 'utf8'));
+    expect(uiPackage.dependencies['@noble/hashes']).toBe('2.3.0');
+    const manifestCopy = dockerfile.indexOf('COPY packages/ui/package.json packages/ui/package.json');
+    expect(manifestCopy).toBeGreaterThanOrEqual(0);
+    expect(manifestCopy).toBeLessThan(dockerfile.indexOf('RUN pnpm install'));
+    expect(dockerfile).toContain('/app/packages/ui/package.json ./packages/ui/package.json');
+  });
+
   it('exits nonzero when the auth shell never becomes ready', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');

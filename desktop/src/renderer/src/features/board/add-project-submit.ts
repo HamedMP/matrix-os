@@ -23,6 +23,8 @@ export interface AddProjectSubmitContext {
   isCurrent: () => boolean;
   setError: (message: string) => void;
   close: () => void;
+  onCreatedProject?: (project: Project) => void;
+  onProjectReady?: (project: Project) => Promise<void | (() => void)>;
 }
 
 function projectPathMatches(localPath: string | undefined, selectedPath: string): boolean {
@@ -60,11 +62,19 @@ async function handleExistingFolderProject(
 
 // Shared success path for every mode: make the new project active and open
 // its project tab.
-async function finish(ctx: AddProjectSubmitContext, project: { slug: string; name: string }): Promise<void> {
+async function finish(
+  ctx: AddProjectSubmitContext,
+  project: Project,
+  options: { created?: boolean } = {},
+): Promise<void> {
   await ctx.selectProject(ctx.api, project.slug);
+  if (!ctx.isCurrent()) return;
+  const afterOpened = await ctx.onProjectReady?.(project);
   if (!ctx.isCurrent()) return;
   ctx.close();
   ctx.openTab({ kind: "project", projectSlug: project.slug, title: project.name || project.slug });
+  afterOpened?.();
+  if (options.created) ctx.onCreatedProject?.(project);
 }
 
 export async function openExistingProject(ctx: AddProjectSubmitContext, slug: string): Promise<void> {
@@ -90,7 +100,7 @@ export async function submitExistingFolder(
     ctx.setError("Couldn't connect that folder. Check that it exists on this computer.");
     return;
   }
-  await finish(ctx, project);
+  await finish(ctx, project, { created: true });
 }
 
 export async function submitClone(
@@ -119,7 +129,15 @@ export async function submitClone(
     ctx.setError("The project was created, but the project list could not be refreshed. Try again.");
     return;
   }
-  await finish(ctx, result.project);
+  const project = ctx.getProjects().find((candidate) => candidate.slug === result.project.slug) ?? {
+    ...result.project,
+    kind: "github" as const,
+  };
+  if (ctx.onCreatedProject && !project.id) {
+    ctx.setError("The project was created, but sharing could not be prepared. Refresh and share it from Chats.");
+    return;
+  }
+  await finish(ctx, project, { created: true });
 }
 
 export async function submitNewFolder(
@@ -137,7 +155,7 @@ export async function submitNewFolder(
       ctx.setError("Couldn't create the project. Check the name.");
       return;
     }
-    await finish(ctx, project);
+    await finish(ctx, project, { created: true });
     return;
   }
   // Custom parent: create the folder exclusively via the mkdir route, then
@@ -185,5 +203,5 @@ export async function submitNewFolder(
     ctx.setError("The folder was created but couldn't be connected. Add it with “Existing folder”.");
     return;
   }
-  await finish(ctx, project);
+  await finish(ctx, project, { created: true });
 }

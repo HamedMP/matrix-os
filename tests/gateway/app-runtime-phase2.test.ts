@@ -4,6 +4,7 @@ import type { PortPool } from "../../packages/gateway/src/app-runtime/port-pool.
 import { mkdtemp, cp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TEST_PORT_RANGES } from "./app-runtime/test-ports.js";
 
 describe("Phase 2 integration: node runtime", () => {
   let ProcessManagerCtor: typeof ProcessManager;
@@ -30,7 +31,7 @@ describe("Phase 2 integration: node runtime", () => {
       await mkdir(join(tmpHome, "data", fixture), { recursive: true });
     }
 
-    portPool = new PortPoolCtor({ min: 43000, max: 43100 });
+    portPool = new PortPoolCtor(TEST_PORT_RANGES.phase2);
     pm = new ProcessManagerCtor({
       homeDir: tmpHome,
       portPool,
@@ -123,7 +124,7 @@ describe("Phase 2 integration: node runtime", () => {
     await mk(join(tmpHome, "data", "short-idle-int"), { recursive: true });
 
     // Create a PM with a fast reaper
-    const idlePool = new PortPoolCtor({ min: 43200, max: 43210 });
+    const idlePool = new PortPoolCtor(TEST_PORT_RANGES.phase2Idle);
     const idlePm = new ProcessManagerCtor({
       homeDir: tmpHome,
       portPool: idlePool,

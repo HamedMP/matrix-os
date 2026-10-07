@@ -154,3 +154,48 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
   }
   return transcript;
 }
+
+/** A message the user just sent, shown in the transcript before the server confirms it. */
+export interface OptimisticUserMessage {
+  /** Transcript list key; distinct from any server message id. */
+  id: string;
+  /** The chat it was sent in, or null while the draft's chat has not been created yet. */
+  chatId: string | null;
+  text: string;
+  /** The `clientRequestId` its turn is admitted with; the server echoes it on the turn. */
+  turnRequestId: string;
+  createdAt: number;
+  /** The server's id for it, known once the admission response arrives. */
+  messageId?: string;
+}
+
+export function optimisticTranscriptMessage(optimistic: OptimisticUserMessage): TranscriptMessage {
+  return {
+    id: optimistic.id,
+    role: "user",
+    text: optimistic.text,
+    toolCalls: [],
+    activities: [],
+    isRunning: false,
+    createdAt: optimistic.createdAt,
+  };
+}
+
+/**
+ * True once `detail` holds the server's copy of an optimistic message, at
+ * which point the transcript shows that copy instead.
+ *
+ * The copy can arrive over the event stream before the admission response
+ * does, so it is recognised by the turn that carries this send's request id
+ * rather than by the response alone. It is never matched by its text: the
+ * same words from another client or participant are a different message.
+ */
+export function isOptimisticMessageDelivered(
+  detail: CanonicalChatDetailResponse | null,
+  optimistic: OptimisticUserMessage,
+): boolean {
+  if (!detail || detail.record.chat.id !== optimistic.chatId) return false;
+  const turn = detail.turns.find((candidate) => candidate.clientRequestId === optimistic.turnRequestId);
+  const messageId = turn?.inputMessageId ?? optimistic.messageId;
+  return messageId !== undefined && detail.messages.some((message) => message.id === messageId);
+}

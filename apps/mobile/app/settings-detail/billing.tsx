@@ -5,6 +5,7 @@ import ArrowUpRight01Icon from "@hugeicons/core-free-icons/ArrowUpRight01Icon";
 import { SettingsCardStack, SettingsPage, SettingsRow } from "@/components/settings/SettingsSurface";
 import { Icon } from "@/components/ui";
 import { useSettingsBilling } from "@/lib/queries/use-settings-billing";
+import { allowsExternalPurchaseLinks } from "@/lib/store-policy";
 
 const PRICING_URL = "https://matrix-os.com/pricing";
 const PLAN_NAMES: Record<string, string> = {
@@ -29,22 +30,25 @@ export default function BillingSettingsScreen() {
     <SettingsPage>
       <SettingsCardStack>
         <SettingsRow card title="Current plan" detail={planDetail} />
-        <SettingsRow
-          card
-          title="Change plan"
-          detail="Opens plan options in your browser"
-          accessibilityLabel="Change plan"
-          trailing={isOpeningPortal
-            ? <ActivityIndicator color={theme.v2.appColors.ink} />
-            : <Icon icon={ArrowUpRight01Icon} size={18} color={theme.v2.appColors.muted} />}
-          onPress={() => void openChangePlan()}
-        />
+        {/* Store builds stay read-only: no pricing page or billing portal link. */}
+        {allowsExternalPurchaseLinks() ? (
+          <SettingsRow
+            card
+            title="Change plan"
+            detail="Opens plan options in your browser"
+            accessibilityLabel="Change plan"
+            trailing={isOpeningPortal
+              ? <ActivityIndicator color={theme.v2.appColors.ink} />
+              : <Icon icon={ArrowUpRight01Icon} size={18} color={theme.v2.appColors.muted} />}
+            onPress={() => void openChangePlan()}
+          />
+        ) : null}
       </SettingsCardStack>
     </SettingsPage>
   );
 
   async function openChangePlan() {
-    if (isOpeningPortal) return;
+    if (isOpeningPortal || !allowsExternalPurchaseLinks()) return;
     if (entitlement?.portalAvailable !== true) {
       await Linking.openURL(PRICING_URL);
       return;

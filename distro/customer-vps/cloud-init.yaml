@@ -94,8 +94,8 @@ write_files:
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure
       RestartSec=5
-      MemoryHigh=1G
-      MemoryMax=1536M
+      MemoryHigh=40%
+      MemoryMax=50%
 
       [Install]
       WantedBy=multi-user.target
@@ -198,6 +198,7 @@ write_files:
       After=network-online.target
       Wants=network-online.target
       ConditionPathExists=/opt/matrix/bin/matrix-install-hermes
+      ConditionPathExists=!/var/lib/matrix-agent-runtime/disabled-hermes
 
       [Service]
       Type=oneshot
@@ -220,6 +221,7 @@ write_files:
       After=matrix-hermes.service network-online.target
       Wants=network-online.target
       ConditionPathExists=/opt/matrix/bin/matrix-hermes-dashboard
+      ConditionPathExists=!/var/lib/matrix-agent-runtime/disabled-hermes
 
       [Service]
       User=matrix
@@ -397,6 +399,8 @@ write_files:
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
+      {{updateManifestBaseUrlEnv}}
+      {{collaborationDisabledEnv}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}
@@ -434,19 +438,18 @@ write_files:
 runcmd:
   - |
     set -eu
-    # Recreate clone-specific host identity before Matrix starts.
+    # Reset clone identity.
     rm -f /var/lib/matrix/golden-snapshot-sanitized
     systemd-machine-id-setup
     ssh-keygen -A
-    # Sanitation disables container services so no reusable runtime state can
-    # be recreated before capture. Snapshot clones must explicitly restore them.
+    # Restart Docker disabled by snapshot sanitation.
     . /opt/matrix/env/host.env
     if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ]; then
       systemctl enable --now docker.service containerd.service
     fi
   - |
     set -eu
-    # Clear Hetzner's password expiry so sudo/PAM permits service installers.
+    # Clear password expiry for sudo/PAM.
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root || true
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix || true
   - |
@@ -457,9 +460,7 @@ runcmd:
       printf 'matrix-host-timing phase=%s elapsed_seconds=%s image_source=%s\n' \
         "$1" "$((phase_now - bootstrap_started_at))" "${MATRIX_IMAGE_SOURCE:-clean_image}"
     }
-    # Swap first so nothing later in provisioning (or after) can OOM the box.
-    # Fleet default 8GiB, shrunk to keep >=10GiB free on /; skipped below 2GiB.
-    # matrix-ensure-swap (host bundle) reconciles the same policy on updates.
+    # Swap updates use matrix-ensure-swap.
     (
       SWAP_GB=8
       free_gb=$(( $(df -k --output=avail / | tail -1) / 1024 / 1024 ))
@@ -515,9 +516,7 @@ runcmd:
     if [ -x /opt/matrix/bin/matrix-prepare-host-prerequisites ]; then
       timeout --kill-after=30 1800 /opt/matrix/bin/matrix-prepare-host-prerequisites
     else
-      # Transitional fallback for releases built before the extracted
-      # prerequisite script existed. Remove after stable no longer references
-      # such a bundle.
+      # Keep legacy fallback until stable bundles all include this helper.
       apt_get_update() {
         timeout --kill-after=30 300 apt-get update \
           -o Acquire::Retries=5 \
@@ -565,7 +564,7 @@ runcmd:
     printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
     chmod 0440 /etc/sudoers.d/matrix
     visudo -cf /etc/sudoers.d/matrix
-    # Quiesce inherited user processes before changing the clone home.
+    # Quiesce matrix before moving home.
     matrix_uid="$(id -u matrix)"
     timeout --kill-after=5 30 loginctl disable-linger matrix >/dev/null 2>&1 || true
     timeout --kill-after=5 30 loginctl terminate-user matrix >/dev/null 2>&1 || true
@@ -579,10 +578,9 @@ runcmd:
       exit 1
     fi
     usermod -d /home/matrix/home matrix
-    # Cloud-init does not reapply supplementary groups to an existing snapshot
-    # user. The restore gate must access the local Postgres container as matrix.
+    # Snapshot groups need Docker membership for restore.
     usermod -aG docker matrix
-    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/home/projects /home/matrix/projects /var/lib/matrix/db /var/lib/matrix/db/snapshots /var/lib/matrix/logs
+    install -d -o matrix -g matrix -m 0750 /home/matrix/home /home/matrix/home/projects /home/matrix/home/bots /home/matrix/home/agent-workspaces /home/matrix/home/worktrees /home/matrix/projects /var/lib/matrix/db /var/lib/matrix/db/snapshots /var/lib/matrix/logs
     ensure_owner_link() {
       local name="$1" mode="$2" legacy="/home/matrix/$1" target="/home/matrix/home/$1"
       install -d -o matrix -g matrix -m "$mode" "$target"
@@ -623,10 +621,7 @@ runcmd:
     ln -sfn /home/matrix/home /home/matrixos/home
     chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
-    # The builder performs this recursive normalization before writing the
-    # exact-bundle readiness proof. A certified immutable clone preserves that
-    # tree, so walking it again only delays first boot. Clean images, legacy
-    # snapshots, and mismatched snapshots retain the full repair path.
+    # Certified clones already have release modes.
     if [ "$exact_snapshot_fast_path" != true ]; then
       chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
       if [ -d /opt/matrix/terminal-runtime ]; then
@@ -668,6 +663,11 @@ runcmd:
     for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
+    if [ -f /opt/matrix/bin/matrix-support-access ] && [ ! -L /opt/matrix/bin/matrix-support-access ]; then
+      install -d -o root -g root -m 0755 /usr/local/libexec
+      install -o root -g root -m 0755 /opt/matrix/bin/matrix-support-access /usr/local/libexec/matrix-support-access
+      chmod 0644 /opt/matrix/bin/matrix-support-access
+    fi
     for optional_bin in matrix-register-vps matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
         chmod 0750 "/opt/matrix/bin/${optional_bin}"
@@ -688,19 +688,21 @@ runcmd:
     ln -sf /etc/nginx/sites-available/matrix /etc/nginx/sites-enabled/matrix
     nginx -t
 
-    if docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
+    # Legacy bundles need inline Postgres startup.
+    if [ -f /opt/matrix/bin/matrix-postgres-start ] && [ ! -L /opt/matrix/bin/matrix-postgres-start ] && [ -f /etc/systemd/system/matrix-postgres.service ]; then
+      chmod 0750 /opt/matrix/bin/matrix-postgres-start
+      install -d -o root -g root -m 0755 /usr/local/libexec
+      install -o root -g root -m 0755 /opt/matrix/bin/matrix-postgres-start /usr/local/libexec/matrix-postgres-start
+      systemctl daemon-reload
+      systemctl start matrix-postgres.service
+    elif docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
       :
     elif docker ps -a --format '{{.Names}}' | grep -qx matrix-postgres; then
       docker start matrix-postgres >/dev/null
     else
       docker volume create matrix-postgres >/dev/null
-      docker run -d \
-        --name matrix-postgres \
-        --restart unless-stopped \
-        --env-file /opt/matrix/env/postgres.env \
-        -v matrix-postgres:/var/lib/postgresql/data \
-        -p 127.0.0.1:5432:5432 \
-        postgres:16 >/dev/null
+      docker run -d --name matrix-postgres --restart unless-stopped --env-file /opt/matrix/env/postgres.env \
+        -v matrix-postgres:/var/lib/postgresql/data -p 127.0.0.1:5432:5432 postgres:16 >/dev/null
     fi
 
     systemctl daemon-reload
@@ -719,7 +721,9 @@ runcmd:
     systemctl start matrix-restore.service matrix-scope-runtime.service
     systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service
     if [ -f /etc/systemd/system/matrix-vps-registration.service ]; then
-      systemctl enable --now matrix-vps-registration.service
+      # Start installers while registration waits for tools.
+      systemctl enable matrix-vps-registration.service
+      systemctl start --no-block matrix-vps-registration.service
     fi
     log_bootstrap_phase core_services_started
     systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2

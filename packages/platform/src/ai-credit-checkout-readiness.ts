@@ -13,12 +13,18 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
   modelProbes?: FundedModelProbeService;
   now?: () => Date;
   deadlineMs?: number;
+  signal?: AbortSignal;
 }): Promise<boolean> {
   let expired = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const controller = new AbortController();
+  let cancel: ((value: false) => void) | undefined;
+  const onAbort = () => { expired = true; controller.abort(); cancel?.(false); };
   try {
-    if (!input.modelProbes || pendingFundingReads.size >= MAX_PENDING_FUNDING_READS) return false;
+    if (!input.modelProbes || input.signal?.aborted
+      || pendingFundingReads.size >= MAX_PENDING_FUNDING_READS) return false;
+    const cancelled = new Promise<false>(resolve => { cancel = resolve; });
+    input.signal?.addEventListener("abort", onAbort, { once: true });
     const deadlineMs = input.deadlineMs ?? FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs;
     const deadlineAtMs = Date.now() + deadlineMs;
     const read = () => {
@@ -41,30 +47,35 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
       const first = await fundingRead;
       const current = (input.now ?? (() => new Date()))().getTime();
       if (expired || !validFunding(first, current)) return false;
-      for (const model of FUNDED_PROBE_MODELS) {
-        if (!first.policy.allowedModelIds.includes(model) || expired) continue;
+      // This fixed generic catalog bounds concurrency to two. A slow failed
+      // model must not consume a healthy alternative's shared request window.
+      const eligible = FUNDED_PROBE_MODELS.filter(model => first.policy.allowedModelIds.includes(model));
+      return await Promise.any(eligible.map(async model => {
         const result = await input.modelProbes!.probe(model, { signal: controller.signal, deadlineAtMs });
         const afterProbe = (input.now ?? (() => new Date()))().getTime();
-        if (!result.ready || expired || Date.parse(result.checkedAt) > afterProbe
-          || Date.parse(result.staleAfter) <= afterProbe) continue;
-        // Policy or funding may change while the paid model probe is running.
-        // Re-read the owner/runtime without granting credit before checkout.
+        if (!result.ready || expired || !(Date.parse(result.checkedAt) <= afterProbe)
+          || !(Date.parse(result.staleAfter) > afterProbe)) throw new Error("Funded model unavailable");
+        // Each ready candidate must complete its own final validation. An
+        // early result expiring during its read cannot discard a fresh peer.
         const latest = await read();
         const latestNow = (input.now ?? (() => new Date()))().getTime();
-        if (!expired && validFunding(latest, latestNow)
-          && latest.policy.globalRevision === first.policy.globalRevision
-          && latest.policy.runtimeRevision === first.policy.runtimeRevision
-          && latest.policy.allowedModelIds.includes(model)) return true;
-        return false;
-      }
-      return false;
+        if (expired || !latest.policy.enabled
+          || latest.policy.globalRevision !== first.policy.globalRevision
+          || latest.policy.runtimeRevision !== first.policy.runtimeRevision) return false;
+        if (!validFunding(latest, latestNow) || !latest.policy.allowedModelIds.includes(model)
+          || !(Date.parse(result.checkedAt) <= latestNow) || !(Date.parse(result.staleAfter) > latestNow)) {
+          throw new Error("Funded model unavailable");
+        }
+        return true;
+      }));
     };
-    return await Promise.race([check(), deadline]);
+    return await Promise.race([check(), deadline, cancelled]);
   } catch (error) {
     console.warn("[billing] Matrix AI checkout readiness unavailable:", error instanceof Error ? error.name : typeof error);
     return false;
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
+    input.signal?.removeEventListener("abort", onAbort);
     controller.abort();
   }
 }

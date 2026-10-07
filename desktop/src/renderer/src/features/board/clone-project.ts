@@ -4,15 +4,13 @@
 // session-expiry callback and safe error-code parsing.
 import type { ApiClient } from "../../lib/api";
 import { AppError } from "../../lib/errors";
+import { parseProject, type Project } from "../../stores/board";
 
 // Gateway CLONE_TIMEOUT_MS is 5 minutes; the client waits slightly longer so
 // the server's own timeout error wins the race.
 export const CLONE_REQUEST_TIMEOUT_MS = 310_000;
 
-export interface ClonedProject {
-  slug: string;
-  name: string;
-}
+export type ClonedProject = Project;
 
 type CloneResult = { ok: true; project: ClonedProject } | { ok: false; message: string };
 
@@ -43,7 +41,7 @@ export async function cloneProject(options: {
   clientRequestId: string;
 }): Promise<CloneResult> {
   try {
-    const body = await options.api.post<{ project?: { slug?: unknown; name?: unknown } }>(
+    const body = await options.api.post<{ project?: unknown }>(
       "/api/projects/clone",
       {
         url: options.url,
@@ -55,13 +53,12 @@ export async function cloneProject(options: {
       },
       { timeoutMs: CLONE_REQUEST_TIMEOUT_MS },
     );
-    const slug = typeof body.project?.slug === "string" ? body.project.slug : null;
-    const name = typeof body.project?.name === "string" ? body.project.name : null;
-    if (!slug) {
+    const project = parseProject(body.project);
+    if (!project) {
       console.warn("[add-project] clone response missing project slug");
       return { ok: false, message: "Couldn't create the project. Try again." };
     }
-    return { ok: true, project: { slug, name: name ?? slug } };
+    return { ok: true, project: { ...project, kind: "github" } };
   } catch (err: unknown) {
     const kind = err instanceof AppError ? err.category : err instanceof Error ? err.name : "Unknown error";
     console.warn("[add-project] clone request failed:", kind);

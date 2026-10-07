@@ -71,7 +71,8 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "zod": "^4.4.3",
-    "zustand": "^5.0.13"
+    "zustand": "^5.0.13",
+    "jose": "^6.2.3"
   },
   "devDependencies": {
     "@expo-google-fonts/bricolage-grotesque": "^0.4.1",

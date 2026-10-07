@@ -30,12 +30,18 @@ function harness() {
   const getDetail = vi.fn(async () => snapshot("Before"));
   const list = vi.fn(async () => Response.json({ items: [record] }));
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return response;
+    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1")) return response;
     if (url.includes("/api/chats?")) return list();
     if (url.includes(`/api/chats/${record.chat.id}?`)) return getDetail();
     throw new Error("Unexpected request");
   }));
-  controller.enqueue(new TextEncoder().encode('data: {"type":"chat.stream.attached"}\n\n'));
+  controller.enqueue(new TextEncoder().encode([
+    'data: {"type":"chat.stream.attached"}',
+    "",
+    'data: {"type":"chat.replay.end","nextCursor":1}',
+    "",
+    "",
+  ].join("\n")));
   return {
     getDetail, list,
     emit(cursor: number, eventType = "run.message", chatId = record.chat.id) {

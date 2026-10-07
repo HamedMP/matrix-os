@@ -3,14 +3,14 @@ import { PanelLeftOpenIcon } from "@/lib/hugeicons";
 
 import { DEFAULT_SHELL_SESSION_NAME } from "./TerminalSidebarItems";
 import { useTerminalAppContext } from "./TerminalAppContext";
-import { getFirstPaneId, getPaneSessionId } from "./terminal-layout";
+import { getFocusedSessionId } from "./terminal-layout";
 import { TerminalSharing } from "./TerminalSharing";
 
 function isTerminalChromeControl(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("button,input,textarea,select,a,[role='button']"));
 }
 
-// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This pre-existing chrome composes desktop/mobile window controls and drag gating. Terminal sharing is isolated in TerminalSharingSlot; restructuring the established chrome is unrelated to this feature.
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This pre-existing chrome composes desktop/mobile window controls and drag gating. Restructuring the established chrome belongs in a focused refactor.
 export function TerminalWorkspaceChrome() {
   const ctx = useTerminalAppContext();
   const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
@@ -178,8 +178,7 @@ export function TerminalEmbeddedToolbar() {
 function getActiveTerminalId(ctx: ReturnType<typeof useTerminalAppContext>): string | null {
   const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
   if (!activeTab) return null;
-  const activePaneId = ctx.focusedPaneId ?? getFirstPaneId(activeTab.paneTree);
-  return activePaneId ? getPaneSessionId(activeTab.paneTree, activePaneId) : null;
+  return getFocusedSessionId(activeTab.paneTree, ctx.focusedPaneId);
 }
 
 function TerminalSharingSlot({ terminalId, emptyWidth }: { terminalId: string | null; emptyWidth: number }) {

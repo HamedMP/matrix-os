@@ -5,27 +5,43 @@ import { z } from "zod/v4";
 import { ProviderSettingsSnapshotSchema, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { readBoundedJsonFileWithIdentity } from "../bounded-json-file.js";
 import { boundedOperation } from "../bounded-operation.js";
-export type JevHermesCredentials = { provider: "anthropic"; model: string; apiMode: "anthropic_messages";
-  baseUrl: "https://api.anthropic.com"; env: { ANTHROPIC_API_KEY: string } };
+import { jevHermesRoute, type JevHermesProvider } from "@matrix-os/contracts";
+import type { AgentRuntimeSource } from "../agent-config/service.js";
+import { resolveJevHermesNativeCredential } from "./jev-hermes-native-credentials.js";
+export type JevHermesCredentials = { provider: JevHermesProvider; model: string;
+  apiMode: "anthropic_messages" | "codex_responses" | "chat_completions";
+  baseUrl: string; env: { ANTHROPIC_API_KEY: string } | { MATRIX_JEV_PRIMARY_KEY: string } };
 export class JevHermesSetupError extends Error {
-  constructor() { super("This Inbox workflow requires the selected Hermes owner API-key account to be ready"); }
+  constructor() { super("This Inbox workflow requires a supported configured Hermes account"); }
 }
 const Selection = z.strictObject({ instanceId: z.literal("hermes_default"),
-  model: z.string().min(1).max(200).regex(/^anthropic:[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/) });
+  model: z.string().min(1).max(200) });
 const Config = OwnerAnthropicKeyConfig;
 /** Server-only fixed credential source. Never loads the owner's Hermes profile or copies it to a child. */
 export function createJevHermesCredentialResolver(options: {
   homePath: string; ownerId: string | null;
   settings: { getSnapshot(options?: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot> };
   now?: () => number;
+  runtimeSource?: AgentRuntimeSource;
 }) {
   return async (ownerId: string, rawSelection: unknown, signal?: AbortSignal): Promise<JevHermesCredentials> => {
     if (!options.ownerId || ownerId !== options.ownerId) throw new JevHermesSetupError();
     signal?.throwIfAborted();
     const parsed = Selection.safeParse(rawSelection);
-    if (!parsed.success) throw new JevHermesSetupError();
-    const model = parsed.data.model.slice("anthropic:".length);
+    const route = parsed.success ? jevHermesRoute(parsed.data) : null;
+    if (!route) throw new JevHermesSetupError();
+    const model = route.model;
     return boundedOperation(async (deadline) => {
+      if (route.provider !== "anthropic") {
+        if (!options.runtimeSource) throw new JevHermesSetupError();
+        const settings = ProviderSettingsSnapshotSchema.parse(await options.settings.getSnapshot({
+          refresh: true, suppressFundedProbes: true, signal: deadline }));
+        const current = (options.now ?? Date.now)();
+        const refreshed = Date.parse(settings.refreshedAt);
+        if (!Number.isFinite(refreshed) || current - refreshed < 0 || current - refreshed > 60_000) throw new JevHermesSetupError();
+        return resolveJevHermesNativeCredential({ ...route, homePath: options.homePath,
+          runtimeSource: options.runtimeSource, settings, now: options.now ?? Date.now, signal: deadline });
+      }
       const before = await readBoundedJsonFileWithIdentity(join(options.homePath, "system/config.json"), 64 * 1024);
       const keyBefore = Config.safeParse(before?.value);
       if (!keyBefore.success) throw new JevHermesSetupError();

@@ -19,9 +19,9 @@ export default function SettingsDetailLayout() {
       onPress={() => router.dismiss()}
     />
   );
-  const backButton = () => (
+  const backButton = (accessibilityLabel: string) => (
     <IconButton
-      accessibilityLabel="Back to help"
+      accessibilityLabel={accessibilityLabel}
       icon={ArrowLeft01Icon}
       iconSize={22}
       iconColor={theme.v2.appColors.ink}
@@ -64,18 +64,26 @@ export default function SettingsDetailLayout() {
           }}
         />
       ))}
-      <Stack.Screen
-        name="support"
-        options={{
-          title: "Contact support",
-          headerLeft: backButton,
-          unstable_headerLeftItems: () => [{
-            type: "custom",
-            element: backButton(),
-            hidesSharedBackground: true,
-          }],
-        }}
-      />
+      {[
+        ["support", "Contact support", "Back to help"],
+        // Also opened straight from the journey gate, where there is no
+        // account screen behind it.
+        ["delete-account", "Delete account", "Back"],
+      ].map(([name, title, backLabel]) => (
+        <Stack.Screen
+          key={name}
+          name={name}
+          options={{
+            title,
+            headerLeft: () => backButton(backLabel),
+            unstable_headerLeftItems: () => [{
+              type: "custom",
+              element: backButton(backLabel),
+              hidesSharedBackground: true,
+            }],
+          }}
+        />
+      ))}
     </Stack>
   );
 }

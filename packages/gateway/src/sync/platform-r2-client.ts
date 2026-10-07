@@ -68,6 +68,25 @@ export function createPlatformR2Client(config: {
       return (await expectJson<{ url: string }>(res)).url;
     },
 
+    async listMultipartUploads(key: string): Promise<{ key: string; uploadId: string }[]> {
+      const res = await request("/multipart/list", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key }),
+      });
+      const data = await expectJson<{ uploads: { key: string; uploadId: string }[] }>(res);
+      if (!Array.isArray(data.uploads) || data.uploads.length > 10 || data.uploads.some(upload => upload.key !== key
+        || typeof upload.uploadId !== "string" || !upload.uploadId || upload.uploadId.length > 1024)) throw new Error("Storage recovery unavailable");
+      return data.uploads;
+    },
+
+    async headObject(key: string): Promise<{ exists: boolean }> {
+      const res = await request("/object/head", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key }),
+      });
+      const data = await expectJson<{ exists: boolean }>(res);
+      if (typeof data.exists !== "boolean") throw new Error("Storage recovery unavailable");
+      return { exists: data.exists };
+    },
+
     async createMultipartUpload(key: string): Promise<string> {
       const res = await request("/multipart/create", {
         method: "POST",
@@ -101,6 +120,14 @@ export function createPlatformR2Client(config: {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ key, uploadId, parts }),
       }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
+      if (res.status === 409) {
+        const result = await res.json() as { code?: unknown };
+        if (result.code === "receipt_mismatch") {
+          const error = new Error("Multipart receipts require repair"); error.name = "MultipartReceiptMismatchError";
+          throw error;
+        }
+        throw new Error("Multipart completion unavailable");
+      }
       const data = await expectJson<{ etag: string | null }>(res);
       return { etag: data.etag ?? undefined };
     },
