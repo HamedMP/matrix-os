@@ -198,7 +198,7 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const integrationClient = options.integrations ? createBotIntegrationClient(options.integrations) : undefined;
   const integrationTools = integrationClient
-    ? createBotIntegrationTools({ client: integrationClient, transact, recipes, agents: options.agents, assertSource: revalidateAnthropicSource })
+    ? createBotIntegrationTools({ client: integrationClient, homePath: options.homePath, transact, recipes, agents: options.agents, assertSource: revalidateAnthropicSource })
     : undefined;
   const connections = integrationClient && integrationTools
     ? createBotConnections({ client: integrationClient, transact, tools: integrationTools })

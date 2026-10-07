@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { BotToolRequestSchema } from "@matrix-os/contracts";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,6 +62,27 @@ describe("bot tool dispatcher", () => {
     await expect(readFile(join(home, "outside", "secret.md"), "utf8")).resolves.toBe("secret");
     await expect(tools.dispatch(binding, read("missing.md"), signal)).rejects.toEqual(new BotBrokerActionError("invalid_arguments"));
     await expect(tools.dispatch(binding, write("a.md", "x", { replace: { baseRevision: 1 } }), signal)).rejects.toEqual(new BotBrokerActionError("invalid_arguments"));
+  });
+
+  it("rejects changed, oversized, linked, and out-of-range binary chunks without lifting the text limit", async () => {
+    const tools = createBotToolDispatcher({ homePath: home });
+    const path = join(home, "bots", BOT_ID, "attachment.bin");
+    const bytes = Buffer.alloc(256 * 1024, 0x91);
+    await writeFile(path, bytes);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const chunkRead = (offset = 0, hash = sha256) => BotToolRequestSchema.parse({ toolCallId: "call_chunk", capability: "artifact.read",
+      args: { relPath: "attachment.bin", chunk: { offset, length: 32768, sha256: hash } } });
+    await expect(tools.dispatch(binding, read("attachment.bin"), signal)).rejects.toMatchObject({ code: "invalid_arguments" });
+    await expect(tools.dispatch(binding, chunkRead(bytes.length + 1), signal)).rejects.toMatchObject({ code: "invalid_arguments" });
+    await expect(tools.dispatch(binding, chunkRead(0, "0".repeat(64)), signal)).rejects.toMatchObject({ code: "stale_generation" });
+    await writeFile(path, Buffer.alloc(bytes.length, 0x92));
+    await expect(tools.dispatch(binding, chunkRead(), signal)).rejects.toMatchObject({ code: "stale_generation" });
+    await writeFile(path, Buffer.alloc(1024 * 1024 + 1));
+    await expect(tools.dispatch(binding, chunkRead(), signal)).rejects.toMatchObject({ code: "invalid_arguments" });
+    await rm(path);
+    await writeFile(join(home, "secret.bin"), bytes);
+    await symlink(join(home, "secret.bin"), path);
+    await expect(tools.dispatch(binding, chunkRead(), signal)).rejects.toMatchObject({ code: "invalid_arguments" });
   });
 
   it("keeps the previous file when a save fails, and clears stale save files without following links", async () => {
