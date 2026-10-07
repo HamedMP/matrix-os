@@ -1,6 +1,10 @@
 import { sql, type Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bootstrapPlatformOrganizationDatabase, type OrganizationPlatformDatabase } from "../../packages/platform/src/organizations/database.js";
+import {
+  bootstrapPlatformOrganizationDatabase,
+  ORGANIZATION_SCHEMA_REVISION,
+  type OrganizationPlatformDatabase,
+} from "../../packages/platform/src/organizations/database.js";
 import { PlatformOrganizationRepository } from "../../packages/platform/src/organizations/repository.js";
 import { createTestPlatformDb, destroyTestPlatformDb, type TestPlatformDb } from "./platform-db-test-helper.js";
 
@@ -38,6 +42,10 @@ describe("organization database bootstrap upgrades", () => {
     `.execute(db);
     await bootstrapPlatformOrganizationDatabase(db);
     await bootstrapPlatformOrganizationDatabase(db);
+    const revision = await sql<{ generation: number; fingerprint: string }>`
+      SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'organizations'
+    `.execute(db);
+    expect(revision.rows).toEqual([ORGANIZATION_SCHEMA_REVISION]);
     const columns = await sql<{ column_name: string }>`
       SELECT column_name FROM information_schema.columns WHERE table_name = 'organization_revocation_outbox'
     `.execute(db);
