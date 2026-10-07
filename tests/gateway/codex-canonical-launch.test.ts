@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { createCodexQualifiedConfig, CODEX_CONSTRAINED_VERSION } from "../../packages/gateway/src/coding-agents/codex-qualified-config.mjs";
 import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
 const canonicalExecution = { executionPolicy: { revision: "r1", actionMode: "safe_reads" as const, workspaceScope: "owner", tools: ["matrix_list_apps"], delegation: false }, inventory: [{ toolId: "matrix_list_apps", schemaRevision: "v1", description: "List apps", effect: "read" as const, inputSchema: { type: "object", properties: {}, additionalProperties: false } }], identity: { owner: { type: "personal" as const, ownerId: "u1" }, chatId: "chat_1", runId: "run_1" } };
 const launch = { agent: "codex" as const, cwd: "/tmp", prompt: "List apps", providerEventPath: "/tmp/events.jsonl", sandbox: { enabled: true, mode: "read-only" as const }, canonicalExecution };
@@ -15,4 +16,15 @@ it("cannot route a constrained grant through Codex exec, native resume or anothe
   expect(() => buildAgentLaunch({ ...launch, providerThreadId: "old-thread" })).toThrow();
   expect(() => buildAgentLaunch({ ...launch, agent: "claude" })).toThrow();
   expect(() => buildAgentLaunch({ ...launch, canonicalExecution: { ...canonicalExecution, executionPolicy: { ...canonicalExecution.executionPolicy, delegation: true } } })).toThrow();
+});
+
+it("hands the actual launcher version to a qualified isolated runtime", async () => {
+  const spec = buildAgentLaunch(launch);
+  const expectedVersion = spec.args[2];
+  expect(expectedVersion).toBe(CODEX_CONSTRAINED_VERSION);
+  const encoded = JSON.parse(Buffer.from(spec.args.at(-1)!, "base64").toString("utf8"));
+  const runtime = await createCodexQualifiedConfig({ ...encoded.canonical, expectedVersion,
+    rejectSystemConfig: false });
+  try { expect(runtime.threadParams.ephemeral).toBe(true); }
+  finally { await runtime.close(); }
 });
