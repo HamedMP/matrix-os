@@ -8,15 +8,21 @@ export interface NativeObservationReadScope { signal?: AbortSignal; deadline: nu
 /** Internal historical evidence for the renewal decision, never live admission. */
 export function projectHermesObservationForRenewal(snapshot: AgentRuntimeSettingsSnapshot, now: Date): Catalog {
   const current = projectHermesNativeCatalog(snapshot, now);
-  if (current.profiles.length) return current;
-  const native = snapshot.nativeProfileObservations?.filter(profile => profile.providerId === "openai-codex") ?? [];
-  const observation = snapshot.messaging.provider === "openai-codex"
-    ? snapshot.runtime.options.find(runtime => runtime.id === "hermes")?.nativeRouteObservation?.localObservation
-    : native.length === 1 ? native[0]?.localObservation : undefined;
-  const checked = Date.parse(observation?.checkedAt ?? "");
-  const expires = Date.parse(observation?.staleAfter ?? "");
-  return observation?.state === "present_unverified" && Number.isFinite(checked) && checked <= +now && expires <= +now
-    ? projectHermesNativeCatalog(snapshot, new Date(checked)) : current;
+  const profiles = [...current.profiles];
+  for (const id of ["openai-codex", "openai-api", "anthropic", "openrouter"]) {
+    if (profiles.some(profile => profile.providerId === id)) continue;
+    const native = snapshot.nativeProfileObservations?.filter(profile => profile.providerId === id) ?? [];
+    const observation = snapshot.messaging.provider === id
+      ? snapshot.runtime.options.find(runtime => runtime.id === "hermes")?.nativeRouteObservation?.localObservation
+      : native.length === 1 ? native[0]?.localObservation : undefined;
+    const checked = Date.parse(observation?.checkedAt ?? "");
+    const expires = Date.parse(observation?.staleAfter ?? "");
+    if (observation?.state !== "present_unverified" || !Number.isFinite(checked) || checked > +now || !(expires <= +now)) continue;
+    // Reuse the full native catalog checks at this route's original receipt time.
+    // Keep the expired timestamps: this evidence can only trigger a fresh read.
+    profiles.push(...projectHermesNativeCatalog(snapshot, new Date(checked)).profiles.filter(profile => profile.providerId === id));
+  }
+  return { ...current, profiles };
 }
 
 /** One fresh read of the same native source, only if other metadata consumed its TTL. */

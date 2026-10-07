@@ -158,14 +158,15 @@ describe("native observation renewal ordering", () => {
   });
 });
 
-it("renews positive options evidence consumed by slow status, but preserves a new negative", async () => {
+it.each(["openai-codex", "openai-api", "anthropic", "openrouter"])("renews positive %s options evidence consumed by slow status, but preserves a new negative", async provider => {
   for (const authenticated of [true, false]) {
     let clock = 0;
     const status = Promise.withResolvers<{ gateway_running: false }>();
     let statusReads = 0;
     const readJson = vi.fn(async (path: string) => {
       if (path === "/api/status") return ++statusReads === 1 ? status.promise : { gateway_running: false };
-      return { provider: "openai-codex", model: "gpt-5.6-sol", providers: [{ slug: "openai-codex", authenticated: statusReads === 1 ? true : authenticated, is_user_defined: false, models: ["gpt-5.6-sol"] }] };
+      return { provider, model: "native-model", providers: [{ slug: provider, authenticated: statusReads === 1 ? true : authenticated,
+        auth_type: provider === "openai-codex" ? "oauth" : "api_key", is_user_defined: false, models: ["native-model"] }] };
     });
     const source = createHermesRuntimeSource(readJson, { now: () => clock });
     const reader = createCanonicalNativeHarnessCatalogReader({ getCatalog: async () => ({ providers: [], accessSources: [], failures: [] }) },
@@ -174,7 +175,10 @@ it("renews positive options evidence consumed by slow status, but preserves a ne
     for (let i = 0; i < 30; i++) await Promise.resolve();
     clock = 6000; status.resolve({ gateway_running: false });
     const catalog = await request;
-    if (authenticated) expect(catalog.profiles[0]?.localObservation.checkedAt).toBe(new Date(6000).toISOString());
+    if (authenticated) expect(catalog.profiles).toEqual([expect.objectContaining({ providerId: provider,
+      models: [{ id: `${provider}:native-model`, displayName: "native-model", enabled: true }],
+      localObservation: { state: "present_unverified", checkedAt: new Date(6000).toISOString(), staleAfter: new Date(11000).toISOString() },
+    })]);
     else expect(catalog).toEqual({ profiles: [], failures: ["hermes"] });
     expect(readJson.mock.calls.filter(([path]) => path === "/api/model/options")).toHaveLength(2);
   }

@@ -6,6 +6,7 @@ import { BotChatPanel } from '../../../packages/ui/src/chat-agents/bots/BotChatP
 import { BotRunMessageBody, BotUnassignedMessageBody } from '../../../packages/ui/src/chat-agents/bots/BotMessageBody.js';
 import { BotTaskSummarySchema } from '@matrix-os/contracts';
 import { ConversationTranscript } from '../../../desktop/src/renderer/src/components/conversation/transcript.js';
+import type { ConversationTurnPresentation } from '../../../desktop/src/renderer/src/components/conversation/presentation.js';
 import { botTranscriptPlacement, BotTranscriptRunState, BotTranscriptFallback } from '../../../shell/src/components/BotTranscriptState.js';
 import { saved } from '../../desktop/chat-agents-fixture.js';
 
@@ -153,4 +154,67 @@ it("avoids a duplicate pending native request in the legacy transcript fallback"
   </BotChatPanel>);
   await screen.findByText("Waiting for your answer");
   expect(screen.queryByText("Which company?")).toBeNull();
+});
+
+it.each([
+  { expandedByDefault: true, timeline: false, active: false },
+  { expandedByDefault: false, timeline: false, active: false },
+  { expandedByDefault: true, timeline: true, active: false },
+  { expandedByDefault: false, timeline: true, active: false },
+  { expandedByDefault: false, timeline: false, active: true },
+  { expandedByDefault: false, timeline: true, active: true },
+])('keeps one actionable legacy question across toggles ($expandedByDefault, timeline=$timeline, active=$active)', async ({ expandedByDefault, timeline, active }) => {
+  const { runId: _, ...legacy } = task;
+  const request: ConversationTurnPresentation['work'][number] = {
+    kind: 'request', id: 'native_question', phase: 'commentary', requestKind: 'input',
+    requestId: interaction.interactionId, state: 'waiting', label: 'Target', timestamp: 4,
+    input: { id: 'native_question', requestId: interaction.interactionId, runId: task.runId, title: 'Native question',
+      pending: true, submitted: false, resolved: false, timestamp: 4, questions: interaction.payload.questions },
+  };
+  const turn: ConversationTurnPresentation = {
+    id: 'turn_legacy', runIds: [task.runId], startedAt: 3, endedAt: 1003, active,
+    expandedByDefault, work: [request], ...(timeline ? { timeline: [{ kind: 'work', item: request }] } : {}),
+  };
+  const approval = { ...interaction, interactionId: 'in_approval1', kind: 'approval', payload: { kind: 'approval', tool: 'gmail.send',
+    argsDigest: 'a'.repeat(64), audience: 'direct', preview: 'Send the brief', policyRevision: 1 } };
+  const client = clientFor([legacy as typeof task], [interaction, approval as typeof interaction]);
+  render(<BotChatPanel chatId={interaction.chatId} client={client as never}>
+    <ConversationTranscript turns={[turn]} callbacks={{ copyText: vi.fn(), submitInput: vi.fn(async () => true) }}/>
+  </BotChatPanel>);
+  await screen.findByText('Waiting for your answer');
+  const assertSingleQuestion = (expanded: boolean) => {
+    expect(screen.getAllByText('Which company?')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /^(Answer|Submit answer)$/ })).toHaveLength(1);
+    expect(screen.getByText('Which company?').closest('[data-agent-message-body]')?.getAttribute('data-agent-message-body'))
+      .toBe(expanded ? turn.id : 'unassigned');
+    expect(screen.getAllByRole('button', { name: 'Approve' })).toHaveLength(1);
+  };
+  if (active) {
+    assertSingleQuestion(true);
+    expect(screen.queryByRole('button', { name: /Worked for/ })).toBeNull();
+    return;
+  }
+  assertSingleQuestion(expandedByDefault);
+  fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }));
+  assertSingleQuestion(!expandedByDefault);
+  fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }));
+  assertSingleQuestion(expandedByDefault);
+});
+
+it.each([false, true])('deduplicates a visible final input only while unresolved (resolved=$resolved)', async resolved => {
+  const { runId: _, ...legacy } = task;
+  const turn: ConversationTurnPresentation = {
+    id: 'turn_final_input', runIds: [task.runId], startedAt: 3, endedAt: 1003, active: false, work: [],
+    final: { kind: 'request', id: 'native_final', phase: 'final', requestKind: 'input',
+      requestId: interaction.interactionId, state: resolved ? 'resolved' : 'waiting', label: 'Target', timestamp: 4,
+      input: { id: 'native_final', requestId: interaction.interactionId, runId: task.runId, title: 'Native question',
+        pending: !resolved, submitted: resolved, resolved, timestamp: 4, questions: interaction.payload.questions } },
+  };
+  render(<BotChatPanel chatId={interaction.chatId} client={clientFor([legacy as typeof task]) as never}>
+    <ConversationTranscript turns={[turn]} callbacks={{ copyText: vi.fn(), submitInput: vi.fn(async () => true) }}/>
+  </BotChatPanel>);
+  await screen.findByText('Waiting for your answer');
+  expect(screen.getAllByText('Which company?')).toHaveLength(1);
+  expect(screen.getByText('Which company?').closest('[data-agent-message-body]')?.getAttribute('data-agent-message-body'))
+    .toBe(resolved ? 'unassigned' : turn.id);
 });
