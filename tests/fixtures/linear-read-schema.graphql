@@ -1,0 +1,54 @@
+# Bounded projection of Linear's official SDK SDL, retrieved 2026-10-07.
+# https://raw.githubusercontent.com/linear/linear/master/packages/sdk/src/schema.graphql
+# Full source SHA-256: cc4263f66d6e79f188b1e6b08af5f0fe8dd32dd3c0cdae3c070606e8d1e5e0eb
+# Retains selected fields, used arguments and comparator scalar/nullability types.
+# Omits unrelated fields/arguments; this is not the complete provider schema.
+scalar DateTime
+enum PaginationOrderBy { createdAt updatedAt }
+type Query {
+  issues(first: Int, after: String, filter: IssueFilter, orderBy: PaginationOrderBy): IssueConnection!
+  workflowStates(first: Int, filter: WorkflowStateFilter): WorkflowStateConnection!
+}
+type IssueConnection { nodes: [Issue!]! pageInfo: PageInfo! }
+type WorkflowStateConnection { nodes: [WorkflowState!]! }
+type PageInfo { hasNextPage: Boolean! endCursor: String }
+type Issue {
+  id: ID!
+  identifier: String!
+  title: String!
+  description: String
+  url: String!
+  priority: Float!
+  updatedAt: DateTime!
+  assignee: User
+  state: WorkflowState!
+  team: Team!
+  labels: IssueLabelConnection!
+  project: Project
+}
+type User { id: ID! name: String! displayName: String! }
+type WorkflowState {
+  id: ID!
+  name: String!
+  type: String!
+  color: String!
+  position: Float!
+  team: Team!
+}
+type Team { id: ID! key: String! name: String! }
+type IssueLabelConnection { nodes: [IssueLabel!]! }
+type IssueLabel { id: ID! name: String! }
+type Project { id: ID! name: String! slugId: String! }
+input IssueFilter {
+  team: TeamFilter
+  project: NullableProjectFilter
+  state: WorkflowStateFilter
+  labels: IssueLabelCollectionFilter
+}
+input TeamFilter { id: IDComparator }
+input NullableProjectFilter { id: EntityIdentifierIDComparator }
+input WorkflowStateFilter { team: TeamFilter name: StringComparator }
+input IssueLabelCollectionFilter { name: StringComparator }
+input IDComparator { eq: ID }
+input EntityIdentifierIDComparator { eq: ID }
+input StringComparator { eq: String }
