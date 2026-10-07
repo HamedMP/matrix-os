@@ -203,7 +203,10 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   setOperation(next);
                   setFailure(null);
                   if (active(next)) restartPolling();
-                  if (next.state === "succeeded") void refreshAfterLogin();
+                  if (next.state === "succeeded") {
+                    if (next.kind === "login") void refreshAfterLogin();
+                    else onRefresh();
+                  }
                 }
               })
             }

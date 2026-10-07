@@ -242,3 +242,30 @@ it.each(["failure", "timeout"] as const)("retains replacement completion-refresh
   expect(screen.getByRole("button", { name: "Check connection" })).toBeEnabled();
   expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect");
 });
+
+
+it.each(["install", "uninstall", "login"] as const)("recovers a completed %s using the matching refresh path", async kind => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const { operation, client, props, view } = setup();
+  const receipt = { ...operation, kind };
+  const refresh = deferred<void>();
+  const onRefreshAfterLogin = vi.fn(() => refresh.promise);
+  vi.mocked(client.get).mockResolvedValueOnce(receipt).mockRejectedValueOnce(new Error("poll unavailable"));
+  view.rerender(<HarnessWorkflowPanel {...props} operationId={receipt.id} onRefreshAfterLogin={onRefreshAfterLogin} />);
+  await act(async () => {});
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(screen.getByRole("button", { name: "Check connection" })).toBeEnabled();
+  vi.mocked(client.get).mockResolvedValue({ ...receipt, state: "succeeded" });
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Check connection" })));
+  if (kind === "login") {
+    expect(onRefreshAfterLogin).toHaveBeenCalledOnce();
+    expect(props.onRefresh).not.toHaveBeenCalled();
+    expect(screen.getByRole("status", { name: "Updating connection" })).toHaveTextContent("Sign-in complete.");
+    await act(async () => refresh.resolve());
+  } else {
+    expect(props.onRefresh).toHaveBeenCalledOnce();
+    expect(onRefreshAfterLogin).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: "Updating connection" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sign-in complete/)).not.toBeInTheDocument();
+  }
+});
