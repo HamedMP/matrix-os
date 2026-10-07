@@ -12,6 +12,7 @@ import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog-projection.js";
 import { createIntegrationReadCallRoutes } from "./read-call.js";
+import { createMailCallRoutes } from "./mail-call.js";
 import { createJevLabelCallRoutes } from "./jev-label-call.js";
 export { authorizeInternalJevLabels } from "./jev-label-call.js";
 
@@ -164,6 +165,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const emit = broadcast ?? (() => {});
   const app = new Hono();
   app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId }));
+  app.route("/", createMailCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 
   // Pending labels from /connect that need to survive the OAuth round-trip.

@@ -31,9 +31,12 @@ export async function proxyIntegrationRequest(
     fetcher?: typeof fetch;
   },
 ): Promise<Response> {
+  // This worker-only route carries source mutation authority. A normal owner
+  // proxy request must never be upgraded to signed internal delegation for it.
   const routePrefix = options.routePrefix ?? "/api/integrations";
   let upstreamUrl: string;
   try {
+    if (decodeURIComponent(c.req.path).split("/").includes("mail-call")) return c.json({ error: "Forbidden" }, 403);
     upstreamUrl = buildIntegrationProxyUrl(c, options.targetBase, routePrefix);
   } catch (err: unknown) {
     console.warn("[integrations] rejected proxy path:", err instanceof Error ? err.message : String(err));

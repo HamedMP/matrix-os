@@ -1,5 +1,6 @@
 import { collectPipedreamPages } from "./pipedream-pagination.js";
 import { createBoundedPipedreamGet } from "./pipedream-bounded-get.js";
+import { createBoundedMailConnector } from "./mail-connector.js";
 import { createBoundedPipedreamLabels } from "./pipedream-bounded-labels.js";
 import { createDriveContentReader } from "./drive-content.js";
 import { createReadCoalescer, proxyReadKey } from "./read-coalescer.js";
@@ -26,6 +27,7 @@ export interface PipedreamConnectClient {
   readDriveFile?: ReturnType<typeof createDriveContentReader>;
   /** Available only to the bound recipe read path; ordinary integration calls stay unchanged. */
   boundedGmailGet?: ReturnType<typeof createBoundedPipedreamGet>;
+  boundedMail?: ReturnType<typeof createBoundedMailConnector>;
   boundedGmailLabels?: ReturnType<typeof createBoundedPipedreamLabels>;
   createConnectToken(
     externalUserId: string,
@@ -139,6 +141,8 @@ export async function createPipedreamClient(
   const coalesceRead = createReadCoalescer();
 
   return {
+    boundedMail: createBoundedMailConnector({ projectId: config.projectId,
+      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
     readDriveFile: createDriveContentReader({ projectId: config.projectId,
       environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
     boundedGmailLabels: createBoundedPipedreamLabels({ projectId: config.projectId,
