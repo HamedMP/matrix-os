@@ -508,7 +508,7 @@ export class CollaborationCapabilityRepository {
               await appendMutationRecords(trx, {
                 scope: current, actorId: scope.owner_id, action: "grant.expired",
                 recipients: recipients.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT),
-                discoveryState: state, now,
+                discoveryState: state, publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle), now,
               });
             }
           }

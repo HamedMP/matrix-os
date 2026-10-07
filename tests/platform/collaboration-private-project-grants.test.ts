@@ -175,6 +175,23 @@ describe("choosing access on a private project before sharing it", () => {
     ]);
   });
 
+  it("expires a pre-share member grant without publishing the private project", async () => {
+    const direct = client(ownerId);
+    const grants = `/api/collaboration/scopes/${privateScopeId}/grants`;
+    const created = CollaborationGrantSchema.parse(await direct.requestOwnerProject(runtimeId, organizationId, "POST", grants, {
+      clientRequestId: randomUUID(), expectedRevision: "1", audience: { kind: "member", actorId: memberId }, preset: "viewer",
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    }));
+    expect(await outboxRows()).toEqual([]);
+
+    const hourLater = () => new Date(now.getTime() + 3_600_000);
+    const later = new CollaborationCapabilityRepository(fixture.db, { now: hourLater, createId: randomUUID });
+    expect(await later.expireGrants()).toBe(1);
+    expect(await later.getGrant(created.id)).toMatchObject({ state: "expired" });
+    // Expiry changes only the private home state; the platform still must not learn the project.
+    expect(await outboxRows()).toEqual([]);
+  });
+
   it("never manages grants of a shared project with the owner setup key", async () => {
     const direct = client(ownerId);
     await expect(direct.requestOwnerProject(runtimeId, organizationId, "POST", `/api/collaboration/scopes/${sharedScopeId}/grants`, {
