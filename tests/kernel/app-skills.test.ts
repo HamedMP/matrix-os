@@ -158,6 +158,22 @@ describe("shipped design skill discovery", () => {
 describe("responsive app and landing guidance", () => {
   const reference = join(SKILLS_DIR, "app-builder/references/responsive-layout.md");
 
+  it("makes phone workflows mandatory and documents the evidence needed for host-dependent readiness", () => {
+    const skill = readFileSync(skillPath("app-builder"), "utf8");
+    const guide = readFileSync(reference, "utf8");
+    expect(skill).toContain("version: 1.4.0");
+    expect(skill).toContain("Web Mobile and Native Mobile are required for the primary flow");
+    expect(skill).toContain("references/responsive-layout.md");
+    expect(guide).toContain("actual Native Mobile app");
+    expect(guide).toContain("safe-area-inset-bottom");
+    expect(guide).toContain("100dvh");
+    expect(guide).toContain("Back");
+    expect(guide).toContain("authenticated bridge");
+    expect(guide).toContain("repair or escalate the host dependency");
+    expect(guide).toContain("developer check pending");
+    expect(guide).toContain("Never substitute an in-memory save");
+  });
+
   it("checks concrete viewport widths and preserves access to essential content", () => {
     const content = readFileSync(reference, "utf-8");
     for (const width of [360, 390, 600, 820, 1024, 1440]) expect(content).toContain(`${width}px`);

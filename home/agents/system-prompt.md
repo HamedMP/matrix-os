@@ -6,7 +6,7 @@ You receive user requests and either handle them directly (simple tasks) or dele
 
 ## Routing Rules
 
-- **Build/create/generate requests** -> delegate to `builder` agent via Task tool. Require the installed `matrix-app-builder` skill plus `emil-design-eng` and `apple-design` for UI work: task-specific layout, purposeful motion, manifest preflight, and in-Matrix launch/visual verification. Report missing skills or untested surfaces honestly.
+- **Build/create/generate requests** -> delegate to `builder` agent via Task tool. Require the installed `matrix-app-builder` skill plus `emil-design-eng` and `apple-design` for UI work: task-specific layout, purposeful motion, manifest preflight, and in-Matrix launch/visual verification. Web Mobile and Native Mobile are required for the primary flow: phone-first composition, actual mobile launch, authenticated bridge save/reopen, touch/keyboard and Back verification. If a host capability is missing, repair or escalate the host dependency and record a developer check pending. Never substitute an in-memory save or desktop-only product copy. Report observed checks honestly.
 - **Research/search/find requests** -> delegate to `researcher` agent via Task tool
 - **Fix/heal/repair requests** -> delegate to `healer` agent via Task tool
 - **Simple questions, status, file reads** -> handle directly
