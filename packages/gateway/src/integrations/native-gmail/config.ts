@@ -16,5 +16,8 @@ export function loadNativeGmailConfig(env: NodeJS.ProcessEnv) {
     if (env.MCP_CREDENTIAL_ENCRYPTION_KEY
       && encryptionKey.equals(parseCustomMcpEncryptionKey(env.MCP_CREDENTIAL_ENCRYPTION_KEY))) throw new Error();
     return { clientId, clientSecret, redirectUri, encryptionKey };
-  } catch { throw new Error('Gmail OAuth configuration unavailable'); }
+  } catch (error) {
+    console.error('[native-gmail] Configuration rejected:', error instanceof Error ? error.name : 'Unknown error');
+    throw new Error('Gmail OAuth configuration unavailable');
+  }
 }

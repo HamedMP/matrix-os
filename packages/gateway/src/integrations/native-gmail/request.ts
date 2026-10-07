@@ -48,7 +48,7 @@ export function gmailTarget(input: NativeGmailRequest, method: string): URL {
   return target;
 }
 function cancel(body: ReadableStream<Uint8Array> | ReadableStreamDefaultReader<Uint8Array> | null): void {
-  void body?.cancel().catch(() => console.warn('[native-gmail] Body cleanup failed'));
+  void body?.cancel().catch(error => console.warn('[native-gmail] Body cleanup failed:', error instanceof Error ? error.name : 'Unknown error'));
 }
 
 /** End-to-end deadline includes credential resolution, fetch, and streamed bytes. No implicit retries. */
@@ -56,7 +56,11 @@ export function createNativeGmailRequest(options: { oauth: GmailTokenSource; fet
   return async (input: NativeGmailRequest, method: string, maxBytes = 2 * 1024 * 1024, callerSignal?: AbortSignal): Promise<unknown> => {
     let target: URL;
     try { target = gmailTarget(input, method); }
-    catch { throw new NativeGmailRequestError(); }
+    catch (error) {
+      if (error instanceof NativeGmailRequestError) throw error;
+      console.warn('[native-gmail] Target rejected:', error instanceof Error ? error.name : 'Unknown error');
+      throw new NativeGmailRequestError();
+    }
     const attachment = target.pathname.includes('/attachments/');
     if (attachment) maxBytes = Math.min(maxBytes, 1400 * 1024);
     const body = input.body === undefined ? undefined : JSON.stringify(input.body);
