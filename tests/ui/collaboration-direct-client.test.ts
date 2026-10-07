@@ -83,6 +83,23 @@ describe("collaboration direct client", () => {
     expect(JSON.parse(post.body)).toEqual({ text: "hi" });
   });
 
+  it("sends execution policy updates as signed PUT requests to the scope home", async () => {
+    const api = createCollaborationDirectApi({
+      platformBaseUrl: PLATFORM,
+      fetchImpl: world.fetchImpl,
+      webSocketFactory: world.webSocketFactory,
+      clientOrigin: CLIENT_ORIGIN,
+      now: world.now,
+    });
+    const body = { expectedRevision: "0", submitMode: "follow_organization" };
+    await expect(api.put?.(`/api/collaboration/scopes/${scopeId}/execution-policy`, body))
+      .resolves.toEqual(body);
+    expect(world.home.requests.at(-1)).toMatchObject({
+      method: "PUT",
+      url: `${RELAY}/api/collaboration/scopes/${scopeId}/execution-policy`,
+    });
+  });
+
   it("aborts an in-flight signed mutation when its caller cancels", async () => {
     let entered!: () => void;
     const reachedMutation = new Promise<void>((resolve) => { entered = resolve; });

@@ -5,18 +5,19 @@
  * shared inside a project has no policy of its own and resolves to the
  * project's. The scope owner is the only actor who may set the policy; for a
  * standalone Chat that owner takes every role the spec gives the project
- * owner. The effective submit mode is organization metadata AND policy, both
- * fail-closed to owner-only, and it is re-read on every resolution rather
- * than frozen into the row. Migration 10 also creates the immutable run
- * binding table consumed by run-account-binding.ts.
+ * owner. A Contributor grant is the submit permission; the policy selects
+ * the owner's source and records provider-terms acknowledgement. Migration 10
+ * also creates the immutable run binding table consumed by run-account-binding.ts.
  */
 import { sql, type Kysely, type Transaction } from "kysely";
 import {
+  CollaborationExecutionPolicyOptionsSchema,
   CollaborationExecutionPolicyPutRequestSchema,
   CollaborationExecutionPolicySchema,
   resolveCollaborationEffectiveSubmitMode,
   type CollaborationEffectiveSubmitMode,
   type CollaborationExecutionPolicy,
+  type CollaborationExecutionPolicyOptions,
   type CollaborationExecutionPolicyPutRequest,
   type CollaborationExecutionScopeRef,
   type CollaborationOrganizationAiSubmission,
@@ -119,8 +120,9 @@ export interface OrganizationAiSubmissionSource {
 
 /**
  * The effective submit mode with the owner's provider-terms acknowledgement
- * as a hard precondition: without it a `follow_organization` policy stays
- * owner-only even when the organization enables member submission later.
+ * as a hard precondition. Organization metadata remains projected for wire
+ * compatibility but is not a second permission switch: Viewer/Contributor is
+ * the authorization boundary.
  */
 export function effectiveSubmitModeWithAcknowledgement(input: {
   organizationAiSubmission: CollaborationOrganizationAiSubmission;
@@ -131,7 +133,7 @@ export function effectiveSubmitModeWithAcknowledgement(input: {
   return derived === "members" && input.providerTermsAcknowledged ? "members" : "owner_only";
 }
 
-/** Fail-closed default until a projection is registered: every organization reads as `unknown`. */
+/** Compatibility projection used when organization metadata is unavailable. */
 export const unknownOrganizationAiSubmission: OrganizationAiSubmissionSource = {
   async resolve() { return "unknown"; },
 };
@@ -140,8 +142,8 @@ export const unknownOrganizationAiSubmission: OrganizationAiSubmissionSource = {
  * Adapts S03's `OrganizationMembershipClient.organizationAiSubmission` seam.
  * Gateway wiring installs it for the default membership client; the scope
  * owner's own membership is the actor used for the lookup because the policy
- * is the owner's. Any lookup failure reads as `unknown`, which resolves to
- * owner-only.
+ * is the owner's. Any lookup failure reads as `unknown`; that value is exposed
+ * for compatibility but does not override the participant's grant.
  */
 export function organizationAiSubmissionFromMembershipClient(
   client: { organizationAiSubmission(input: { organizationId: string; actorId: string }): Promise<CollaborationOrganizationAiSubmission> },
@@ -247,6 +249,20 @@ export class CollaborationExecutionPolicyRepository {
     return policy?.effectiveSubmitMode ?? "owner_only";
   }
 
+  async options(scopeId: string, actorId: string): Promise<CollaborationExecutionPolicyOptions> {
+    const resolution = await this.requireOwnedExecutionScope(this.db, scopeId, actorId);
+    const [policy, options, organizationAiSubmission] = await Promise.all([
+      this.resolve(scopeId),
+      this.eligibility.listSelections(resolution.scope.owner_id),
+      this.readOrganizationAiSubmission(resolution.scope.organization_id, resolution.scope.owner_id),
+    ]);
+    return CollaborationExecutionPolicyOptionsSchema.parse({
+      organizationAiSubmission,
+      policy,
+      options,
+    });
+  }
+
   async put(input: {
     scopeId: string;
     actorId: string;
@@ -335,7 +351,7 @@ export class CollaborationExecutionPolicyRepository {
     });
   }
 
-  /** Live organization metadata; null context or a failed lookup reads as `unknown` (owner-only). */
+  /** Live organization metadata; null context or a failed lookup reads as `unknown`. */
   async organizationAiSubmissionFor(organizationId: string | null, ownerId: string): Promise<CollaborationOrganizationAiSubmission> {
     return this.readOrganizationAiSubmission(organizationId, ownerId);
   }
@@ -385,20 +401,12 @@ export class CollaborationExecutionPolicyRepository {
     const effectiveSubmitMode = effectiveSubmitModeWithAcknowledgement({
       organizationAiSubmission: liveAiSubmission, submitMode: row.submit_mode, providerTermsAcknowledged,
     });
-    // The frozen contract derives `effectiveSubmitMode` from the organization value and
-    // requires the acknowledgement whenever it is `members`. An organization that enabled
-    // member submission after the owner chose `follow_organization` without acknowledging
-    // is therefore presented as not enabling it for this scope: the owner sees owner-only
-    // until they acknowledge, and admission below uses the same gate.
-    const aiSubmission = effectiveSubmitMode === "owner_only" && liveAiSubmission === "members" && !providerTermsAcknowledged
-      ? "owner_only"
-      : liveAiSubmission;
     return CollaborationExecutionPolicySchema.parse({
       scope: resolution.ref,
       ownerId: row.owner_id,
       source: { accessSourceId: row.access_source_id, providerInstanceId: row.provider_instance_id, harness: row.harness },
       submitMode: row.submit_mode,
-      organizationAiSubmission: aiSubmission,
+      organizationAiSubmission: liveAiSubmission,
       effectiveSubmitMode,
       providerTermsAcknowledgedAt: row.provider_terms_acknowledged_at === null ? null : toIso(row.provider_terms_acknowledged_at),
       allowedModelIds: parseJson<string[]>(row.allowed_model_ids),
