@@ -18,6 +18,13 @@ export async function bootstrapVoiceHistory<Database extends ChatDatabase>(db: K
       CHECK (conversation_kind IN ('chat', 'voice'))`.execute(trx);
     await sql`INSERT INTO chat_schema_migrations(version) VALUES (3)`.execute(trx);
   });
+  const index = await sql<{ valid: boolean }>`SELECT indisvalid AS valid FROM pg_index
+    WHERE indexrelid = to_regclass('idx_chats_owner_kind_activity')`.execute(db);
+  // An interrupted concurrent build leaves a named but unusable index. Rebuild
+  // outside the schema transaction so normal Chat writes remain available.
+  if (index.rows[0]?.valid === false) {
+    await sql`REINDEX INDEX CONCURRENTLY idx_chats_owner_kind_activity`.execute(db);
+  }
   await sql`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chats_owner_kind_activity
     ON chats(owner_type, owner_id, conversation_kind, lifecycle, activity_at DESC, id)`.execute(db);
   await backfillVoiceHistory(db);
