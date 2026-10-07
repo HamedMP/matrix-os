@@ -244,7 +244,8 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
               onConnect={id => void handleConnect(id)} renderService={service => (
                 <AvailableServiceCard service={service} connected={connections.some(c => c.service === service.id)}
                   connections={connections.filter(c => c.service === service.id)} connecting={connectingService === service.id}
-                  disabled={connectingService !== null || !available.some(s => s.id === service.id)}
+                  disabled={connectingService !== null}
+                  connectDisabled={connectingService !== null || !available.some(s => s.id === service.id)}
                   onConnect={() => void handleConnect(service.id)} onDisconnect={target => setConfirmId(target.id)} />
               )} />
           )}

@@ -367,6 +367,19 @@ describe("desktop integrations settings section", () => {
     expect(screen.queryByText("Personal")).toBeNull();
   });
 
+  it("allows disconnecting a connected account missing from the catalog", async () => {
+    const api = makeApi({ available: [] });
+    useConnection.setState({ api: api as never });
+    render(<IntegrationsSettingsSection />);
+    await waitFor(() => expect(screen.getByText("Work")).not.toBeNull());
+    expect(screen.getByTestId("integration-connect-gmail").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByTestId(`integration-disconnect-${CONN_ID}`).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByTestId(`integration-disconnect-${CONN_ID}`));
+    await waitFor(() => expect(screen.getByText(/Disconnect Work\?/)).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /^Disconnect$/ }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/api/integrations/${CONN_ID}`));
+  });
+
   it("disconnects an account after confirmation", async () => {
     const api = makeApi();
     useConnection.setState({ api: api as never });

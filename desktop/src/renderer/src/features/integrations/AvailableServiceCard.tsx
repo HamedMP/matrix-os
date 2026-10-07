@@ -13,6 +13,7 @@ export function AvailableServiceCard({
   connected,
   connecting,
   disabled,
+  connectDisabled = disabled,
   connection,
   connections = connection ? [connection] : [],
   onConnect,
@@ -22,6 +23,7 @@ export function AvailableServiceCard({
   connected: boolean;
   connecting: boolean;
   disabled: boolean;
+  connectDisabled?: boolean;
   connection?: ConnectedIntegration;
   connections?: ConnectedIntegration[];
   onConnect: () => void;
@@ -92,7 +94,7 @@ export function AvailableServiceCard({
             style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
             aria-label={`Add another ${service.name} account`}
             data-testid={`integration-connect-${service.id}`}
-            disabled={disabled}
+            disabled={connectDisabled}
             onClick={onConnect}
           >
             {connecting ? "Connecting…" : connected ? "Add account" : "Connect"}
@@ -106,7 +108,7 @@ export function AvailableServiceCard({
             style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
             aria-label={connecting ? `Connecting ${service.name}` : `Connect ${service.name}`}
             data-testid={`integration-connect-${service.id}`}
-            disabled={disabled}
+            disabled={connectDisabled}
             onClick={onConnect}
           >
             {connecting ? "Connecting…" : connected ? "Add account" : "Connect"}

@@ -32,17 +32,17 @@ async function readBody(response: Response, maxBytes: number, signal: AbortSigna
     cancel(response.body); throw new DriveContentError("file_too_large");
   }
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = []; let bytes = 0;
+  const buffer = new Uint8Array(maxBytes); let bytes = 0;
   try {
     while (true) {
       const next = await deadline(() => reader.read(), signal);
       if (next.done) break;
+      if (next.value.byteLength > maxBytes - bytes) throw new DriveContentError("file_too_large");
+      buffer.set(next.value, bytes);
       bytes += next.value.byteLength;
-      if (bytes > maxBytes || chunks.length >= 4096) throw new DriveContentError("file_too_large");
-      chunks.push(next.value);
     }
     signal.throwIfAborted();
-    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, bytes));
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytes));
   } catch (error: unknown) {
     cancel(reader);
     if (error instanceof DriveContentError) throw error;

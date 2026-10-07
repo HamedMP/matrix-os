@@ -66,6 +66,15 @@ describe("Drive file content", () => {
     await expect(read({ ...identity, mimeType: "text/plain" })).rejects.toMatchObject({ code: "file_too_large" });
     expect(cancel).toHaveBeenCalledOnce();
   });
+  it("accepts small files delivered in more than 4096 chunks", async () => {
+    let count = 0;
+    const body = new ReadableStream<Uint8Array>({ pull(controller) {
+      if (count++ < 6000) controller.enqueue(new Uint8Array([97]));
+      else controller.close();
+    } });
+    const { read } = setup([new Response(body, { headers: { "Content-Type": "text/plain" } })]);
+    expect(await read({ ...identity, mimeType: "text/plain" })).toMatchObject({ content: "a".repeat(6000), bytes: 6000 });
+  });
   it("rejects invalid UTF-8 and binary responses", async () => {
     const { read } = setup([new Response(new Uint8Array([255]), { headers: { "Content-Type": "text/plain" } }), text("hello\u0000world")]);
     await expect(read({ ...identity, mimeType: "text/plain" })).rejects.toBeInstanceOf(DriveContentError);
