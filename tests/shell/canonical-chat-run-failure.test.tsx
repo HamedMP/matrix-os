@@ -11,7 +11,7 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-const COPY = "The agent could not complete its reply. Try again or check Agents & providers.";
+const COPY = "The agent could not finish. Try again.";
 
 function failedDetail(): CanonicalChatDetailResponse {
   const { snapshot } = createCanonicalChatFixture("failed");
@@ -27,6 +27,23 @@ function failedDetail(): CanonicalChatDetailResponse {
 }
 
 describe("persisted Chat run failures across desktop surfaces", () => {
+  it.each([
+    ["authorization_failed", "Claude needs to be connected before it can run. Open setup and connect Claude.", "Sign-in required. Reconnect in Agents & providers on this computer."],
+    ["service_unavailable", "Claude took too long to respond. Try the Run again.", "The agent timed out. Check progress before trying again."],
+  ] as const)("keeps legacy %s guidance after Web refresh", async (code, oldCopy, copy) => {
+    const detail = failedDetail();
+    const activity = detail.activities[0]!;
+    if (activity.type !== "run.error") throw new Error("Missing fixture error");
+    activity.error = { code, safeMessage: oldCopy, retryable: true, recoveryActions: ["retry"] };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(
+      url.includes("/api/chats?") ? { items: [detail.record] } : detail,
+    )));
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages.filter(m => m.content === copy)).toHaveLength(1));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(result.current.messages.filter(m => m.content === copy)).toHaveLength(1));
+    expect(result.current.composerDraftRequest).toBeNull();
+  });
   it("Web shows the saved failure after load/refresh without restoring the already-sent draft", async () => {
     const detail = failedDetail();
     CanonicalChatDetailResponseSchema.parse(detail);

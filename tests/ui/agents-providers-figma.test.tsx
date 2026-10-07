@@ -399,11 +399,13 @@ it("recovers an owner-scoped active operation on a fresh Settings view and cance
           activeOperationId: operation.id,
         },
         { harnessInstanceId: "harness_codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: [], install: false, uninstall: false, logs: false },
+        { harnessInstanceId: "harness_claude", harness: "claude", displayName: "Claude Code", installState: "installed", loginMethods: ["browser"], apiKeyProviders: [], install: false, uninstall: false, logs: false },
       ]),
     start: vi.fn(),
     get: vi.fn().mockResolvedValue(operation),
     cancel: vi.fn().mockResolvedValue({ ...operation, state: "cancelled" }),
     submitKey: vi.fn(),
+    submitCode: vi.fn(),
     logs: vi.fn(),
   };
   const snapshot = {
@@ -436,7 +438,10 @@ it("recovers an owner-scoped active operation on a fresh Settings view and cance
   );
   await screen.findByRole("button", { name: /Hermes.*Installing/ });
   fireEvent.click(screen.getByRole("button", { name: /Codex.*Not connected/ }));
-  await screen.findByRole("button", { name: /ChatGPT account/ });
+  // A stale hosted Codex advertisement must not restore an excluded subscription entry.
+  expect(screen.queryByRole("button", { name: /ChatGPT account/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Claude Code.*Not connected/ }));
+  await screen.findByRole("button", { name: /Claude account/ });
   expect(screen.getByRole("button", { name: /Hermes.*Installing/ })).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(screen.getByRole("button", { name: /Hermes.*Installing/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
@@ -469,7 +474,7 @@ it("keeps missing-runtime purchase explanations out of the overview while showin
   const { GatewayPanel } = await import("../../packages/ui/src/agents-providers/GatewayPanel");
   render(<GatewayPanel source={null} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   expect(screen.queryByText(/Credit purchases are unavailable/)).not.toBeInTheDocument();
-  expect(screen.getByText("Credit unavailable")).toBeInTheDocument();
+  expect(screen.getByText("Chat credit unavailable")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Buy credit" })).toBeEnabled();
 });
 

@@ -1,7 +1,7 @@
 import { CollaborationDiscoveryItemSchema, type CollaborationProjectOverview } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { subscribeCollaborationDiscoveryChanged, type CollaborationDirectApi } from "@matrix-os/ui";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Folder, FolderOpen, MessageSquare, UsersIcon } from "@renderer/lib/hugeicons";
 import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../../lib/collaboration";
 import { useConnection } from "../../../stores/connection";
@@ -56,7 +56,7 @@ async function loadSharedProjects(api: CollaborationDirectApi): Promise<Collabor
  * (a sign-in change closes the previous one), and a change that arrives during a load is not lost:
  * it runs one more load when the current one settles.
  */
-function useSharedProjects(): CollaborationProjectOverview[] {
+export function useSharedProjects(): CollaborationProjectOverview[] {
   const actorId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -101,28 +101,66 @@ function useSharedProjects(): CollaborationProjectOverview[] {
   return projects;
 }
 
+export function partitionSharedProjects(
+  projects: readonly CollaborationProjectOverview[],
+  canonicalProjectIds: ReadonlySet<string>,
+): {
+  ownedSharedProjectIds: Set<string>;
+  receivedProjects: CollaborationProjectOverview[];
+} {
+  const ownedSharedProjectIds = new Set<string>();
+  const receivedProjects: CollaborationProjectOverview[] = [];
+  for (const project of projects) {
+    if (canonicalProjectIds.has(project.projectId)) ownedSharedProjectIds.add(project.projectId);
+    else receivedProjects.push(project);
+  }
+  return { ownedSharedProjectIds, receivedProjects };
+}
+
 /**
  * Shared projects in the Work rail, shown like the member's own projects with one shared mark.
  * Owner actions (pin, edit, share, delete, new Chat) are absent; Chats open as shared Chat tabs.
  */
-export function SharedWorkRailProjects() {
+export function SharedWorkRailProjects({ revealRequest }: {
+  revealRequest?: { scopeId: string; requestId: number };
+} = {}) {
   const projects = useSharedProjects();
+  return <SharedWorkRailProjectList projects={projects} revealRequest={revealRequest} />;
+}
+
+export function SharedWorkRailProjectList({ projects, revealRequest }: {
+  projects: readonly CollaborationProjectOverview[];
+  revealRequest?: { scopeId: string; requestId: number };
+}) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [dismissedRevealRequestId, setDismissedRevealRequestId] = useState<number>();
+  const scrolledRevealRequestId = useRef<number | undefined>(undefined);
   const activeSharedScope = useTabs((state) => state.tabs.find((tab) => tab.id === state.activeTabId)?.sharedScopeId);
   if (projects.length === 0) return null;
   return <>
     {projects.map((project) => {
-      const open = Boolean(expanded[project.scopeId]);
+      const revealOpen = revealRequest?.scopeId === project.scopeId
+        && dismissedRevealRequestId !== revealRequest.requestId;
+      const open = Boolean(expanded[project.scopeId]) || revealOpen;
       const active = project.chats.some((chat) => chat.scopeId === activeSharedScope);
       return <div key={project.scopeId}>
         <div className="group/project relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]">
           <button
+            ref={(node) => {
+              if (node && revealOpen && scrolledRevealRequestId.current !== revealRequest?.requestId) {
+                scrolledRevealRequestId.current = revealRequest?.requestId;
+                node.scrollIntoView?.({ block: "nearest" });
+              }
+            }}
             type="button"
             aria-label={project.name}
             aria-expanded={open}
             className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
             style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
-            onClick={() => setExpanded((current) => ({ ...current, [project.scopeId]: !open }))}
+            onClick={() => {
+              if (revealOpen) setDismissedRevealRequestId(revealRequest?.requestId);
+              setExpanded((current) => ({ ...current, [project.scopeId]: !open }));
+            }}
           >
             {open
               ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />

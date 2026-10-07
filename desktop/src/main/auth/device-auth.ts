@@ -7,6 +7,9 @@ export const DEVICE_CLIENT_ID = "matrix-os-desktop";
 export const DEVICE_REDIRECT_URI = "matrixos://auth?status=approved";
 
 const REQUEST_TIMEOUT_MS = 10_000;
+// Platform issuance may take 30s after consuming the approved code. Leave a
+// bounded 15s transport margin; never retry an ambiguous token response.
+const TOKEN_POLL_TIMEOUT_MS = 45_000;
 
 export interface DeviceCodeResponse {
   deviceCode: string;
@@ -42,13 +45,13 @@ export class DeviceFlowError extends Error {
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
-async function postJson(fetchFn: FetchFn, url: string, body: unknown): Promise<Response> {
+async function postJson(fetchFn: FetchFn, url: string, body: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
   try {
     return await fetchFn(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err: unknown) {
     throw new AppError(classifyTransportError(err), { cause: err });
@@ -104,12 +107,22 @@ export async function pollForToken(options: {
   let intervalMs = Math.max(1, options.intervalSeconds) * 1000;
 
   for (;;) {
-    const response = await postJson(options.fetchFn, `${options.baseUrl}/api/auth/device/token`, {
-      deviceCode: options.deviceCode,
-    });
+    const remainingMs = deadline - clock();
+    if (remainingMs <= 0) throw new DeviceFlowError("expired");
+    let response: Response;
+    try {
+      response = await postJson(options.fetchFn, `${options.baseUrl}/api/auth/device/token`, {
+        deviceCode: options.deviceCode,
+      }, Math.min(TOKEN_POLL_TIMEOUT_MS, remainingMs));
+    } catch (err: unknown) {
+      if (clock() >= deadline) throw new DeviceFlowError("expired");
+      throw err;
+    }
+    if (clock() >= deadline) throw new DeviceFlowError("expired");
 
     if (response.status === 200) {
       const data = await parseJson(response);
+      if (clock() >= deadline) throw new DeviceFlowError("expired");
       const { accessToken, expiresAt, userId, handle } = data;
       if (
         typeof accessToken !== "string" ||

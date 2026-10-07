@@ -13,6 +13,7 @@ const now = () => new Date().toISOString();
 const later = () => new Date(Date.now() + 600_000).toISOString();
 /** Contract-valid synthetic state. Never represents real provider authentication. */
 function snapshot(authenticated: boolean, codexEnabled = true, revision = authenticated ? 3 : 2): ProviderSettingsSnapshot {
+  const observedAt = now();
   const base = providerAuthSettingsSnapshot(true);
   const claude = base.harnesses[0]!;
   const account = base.accounts[0]!;
@@ -24,7 +25,7 @@ function snapshot(authenticated: boolean, codexEnabled = true, revision = authen
     accounts: [account, { ...account, id: "codex_account", providerId: "openai", displayName: "Fixture API account", authMethod: "api_key", authState: authenticated ? "authenticated" : "unauthenticated", accessSourceId: "owner_openai_profile" }],
     accessSources: [source, { ...source, id: "owner_openai_profile", providerId: "openai", accountId: "codex_account", displayName: "Fixture API account", fundingKind: "owner_api_key", readiness: { ...source.readiness, state: authenticated ? "ready" : "auth_required", action: authenticated ? "none" : "open_terminal", safeReason: authenticated ? null : "auth" }, eligibleModelIds: ["openai/gpt-5.6"] },
       { id: "matrix_funded", kind: "matrix_gateway", fundingKind: "matrix_included", providerId: "anthropic", accountId: null, displayName: "Matrix AI", readiness: { state: "ready", checkedAt: now(), staleAfter: later(), action: "none", safeReason: null }, eligibleModelIds: ["anthropic/claude-opus-5"],
-        usage: { kind: "managed_credit", authority: "matrix_ledger", state: "current", scope: "owner_entitlement", currency: "USD", usedMicrousd: 500_000, remainingMicrousd: 18_400_000, limitMicrousd: 20_000_000, periodStartedAt: now(), resetsAt: later(), asOf: now(), credit: { promotionalBalanceMicrousd: 0, addonBalanceMicrousd: 18_400_000, creditBalanceMicrousd: 18_400_000, reservedMicrousd: 0, remainingBalanceMicrousd: 18_400_000 }, budget: { monthlyBudgetMicrousd: 20_000_000, settledThisMonthMicrousd: 500_000, reservedThisMonthMicrousd: 0, remainingBudgetMicrousd: 19_500_000 } } },
+        usage: { kind: "managed_credit", authority: "matrix_ledger", state: "current", scope: "owner_entitlement", currency: "USD", usedMicrousd: 500_000, remainingMicrousd: 18_400_000, limitMicrousd: 20_000_000, periodStartedAt: now(), resetsAt: later(), asOf: observedAt, credit: { promotionalBalanceMicrousd: 0, addonBalanceMicrousd: 18_400_000, creditBalanceMicrousd: 18_400_000, reservedMicrousd: 0, remainingBalanceMicrousd: 18_400_000 }, budget: { monthlyBudgetMicrousd: 20_000_000, settledThisMonthMicrousd: 500_000, reservedThisMonthMicrousd: 0, remainingBudgetMicrousd: 19_500_000 }, chatAvailability: { contractVersion: 1, asOf: observedAt, eligibleBalanceMicrousd: 18_400_000, availableBalanceMicrousd: 18_400_000 } } },
     ],
     harnesses: [
       { ...claude, displayName: "Claude Code" },

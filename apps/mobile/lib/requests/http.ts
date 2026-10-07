@@ -2,7 +2,7 @@ interface ResponseSchema<T> {
   parse(value: unknown): T;
 }
 
-interface AuthenticatedJsonRequest<T, N = never> {
+interface AuthenticatedJsonRequest<T> {
   url: string;
   token: string;
   schema: ResponseSchema<T>;
@@ -11,8 +11,6 @@ interface AuthenticatedJsonRequest<T, N = never> {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
-  /** Resolves a 404 to this value instead of failing, for a resource that may legitimately not exist. */
-  notFound?: () => N;
 }
 
 interface AuthenticatedRequest {
@@ -23,6 +21,8 @@ interface AuthenticatedRequest {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  /** Non-2xx statuses that are an answer rather than a failure; `read` receives the response. */
+  expectedStatuses?: readonly number[];
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
@@ -40,7 +40,7 @@ export function buildGatewayRequestUrl(
   return url.toString();
 }
 
-export async function fetchAuthenticatedJson<T, N = never>({
+export async function fetchAuthenticatedJson<T>({
   url,
   token,
   schema,
@@ -49,12 +49,10 @@ export async function fetchAuthenticatedJson<T, N = never>({
   method,
   headers,
   body,
-  notFound,
-}: AuthenticatedJsonRequest<T, N>): Promise<T | N> {
-  return fetchAuthenticatedResponse<T | N>(
+}: AuthenticatedJsonRequest<T>): Promise<T> {
+  return fetchAuthenticatedResponse(
     { url, token, errorMessage, timeoutMs, method, headers, body },
     async (response) => schema.parse(await response.json()),
-    notFound,
   );
 }
 
@@ -67,9 +65,9 @@ export async function fetchAuthenticatedResponse<T>(
     method,
     headers,
     body,
+    expectedStatuses,
   }: AuthenticatedRequest,
   read: (response: Response) => Promise<T>,
-  notFound?: () => T,
 ): Promise<T> {
   if (!token.trim()) throw new Error(errorMessage);
 
@@ -81,8 +79,7 @@ export async function fetchAuthenticatedResponse<T>(
       body,
       signal: timeout.signal,
     });
-    if (response.status === 404 && notFound) return notFound();
-    if (!response.ok) {
+    if (!response.ok && !expectedStatuses?.includes(response.status)) {
       throw new Error("Request failed");
     }
     return await read(response);

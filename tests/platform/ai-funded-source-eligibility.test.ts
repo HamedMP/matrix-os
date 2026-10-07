@@ -49,6 +49,65 @@ describe("Chat reserves only eligible funding sources", () => {
     ledger: await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute(),
   });
 
+  it("projects only Chat eligible sources while leaving legacy summary arithmetic intact", async () => {
+    await speech();
+    const legacy = await repo.getRuntimeFundingSummary(identity);
+    expect(legacy).not.toHaveProperty("chatAvailability");
+    const onlySpeech = await repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true });
+    expect(onlySpeech.funding).toEqual(legacy.funding);
+    expect(onlySpeech.chatAvailability).toEqual({ contractVersion: 1, asOf: clock.toISOString(), eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 });
+    await grant("general_chat", 100);
+    await grant("addon_chat", 50, "addon_grant");
+    const hold = await authorize("chat_hold", 70, false);
+    const before = await finances();
+    expect((await repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true })).chatAvailability)
+      .toMatchObject({ eligibleBalanceMicrousd: 150, availableBalanceMicrousd: 80 });
+    // Legacy unattributed holds and shortfall must conservatively cap availability.
+    await db.executor.updateTable("ai_funded_runtime_balances").set({ reserved_microusd: 999_892 + 140 }).where("machine_id", "=", identity.machineId).execute();
+    expect((await repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true })).chatAvailability)
+      .toMatchObject({ eligibleBalanceMicrousd: 150, availableBalanceMicrousd: 10 });
+    expect((await finances()).reservations).toEqual(before.reservations);
+    expect((await finances()).allocations).toEqual(before.allocations);
+    expect(hold.reservation.reservedMicrousd).toBe(70);
+  });
+
+  it("caps eligible Chat funds by durable shortfall before classifying protected funds", async () => {
+    await grant("general_with_shortfall", 100);
+    await db.executor.updateTable("ai_funded_runtime_balances")
+      .set({ funding_shortfall_microusd: 80 }).where("machine_id", "=", identity.machineId).execute();
+    const before = await finances();
+    const summary = await repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true });
+    expect(summary.chatAvailability).toMatchObject({ eligibleBalanceMicrousd: 20, availableBalanceMicrousd: 20 });
+    expect(await finances()).toEqual(before);
+    await speech();
+    // Speech can cover aggregate shortfall, but cannot increase general credit.
+    expect((await repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true })).chatAvailability)
+      .toMatchObject({ eligibleBalanceMicrousd: 100, availableBalanceMicrousd: 100 });
+  });
+
+  it("does not count expired protected grants as Chat credit or release their holds", async () => {
+    await grant("expires_while_held", 100, "promotional_grant", "2026-10-03T05:01:00.000Z");
+    await speech();
+    await authorize("held_before_expiry", 70, false);
+    const reservations = (await finances()).reservations;
+    clock = new Date(clock.getTime() + 120_000);
+    const summary = await repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true });
+    expect(summary.chatAvailability).toMatchObject({ eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 });
+    expect(summary.funding.reservedMicrousd).toBe(70);
+    expect(summary.funding.creditBalanceMicrousd).toBe(999_892 + 70);
+    expect((await finances()).reservations).toEqual(reservations);
+  });
+
+  it("rolls monthly usage without resetting general funding or its outstanding holds", async () => {
+    await grant("ongoing_general", 100);
+    await grant("ongoing_addon", 50, "addon_grant");
+    await authorize("previous_month_hold", 70, false);
+    clock = new Date("2026-11-01T00:00:01.000Z");
+    const summary = await repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true });
+    expect(summary.chatAvailability).toMatchObject({ eligibleBalanceMicrousd: 150, availableBalanceMicrousd: 80 });
+    expect(summary.funding).toMatchObject({ periodStart: "2026-11-01T00:00:00.000Z", reservedMicrousd: 70, reservedThisMonthMicrousd: 0 });
+  });
+
   it("clamps usage to general sources while preserving audited unknown liability and exact replay", async () => {
     await grant("general_initial", 105_557);
     const known = await authorize("known", 5_557);
@@ -69,6 +128,8 @@ describe("Chat reserves only eligible funding sources", () => {
       localRunEndedAt: new Date(Date.parse(oldRow.started_at!) + 10_000).toISOString(),
       evidenceRef: "support:terminal-run-proof", reviewer: "operator:test", acceptUnknownUpstreamLiability: true,
     });
+    expect((await repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true })).chatAvailability)
+      .toMatchObject({ eligibleBalanceMicrousd: 100_000, availableBalanceMicrousd: 5_557 });
     await grant("general_later", 96_832);
     await speech();
     await repo.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
@@ -158,6 +219,8 @@ describe("Chat reserves only eligible funding sources", () => {
     clock = new Date(clock.getTime() + 120_000);
     await expect(authorize("expired_sources", 300)).rejects.toMatchObject({ code: "insufficient_credit" });
     expect(await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute()).toEqual([]);
+    expect((await repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true })).chatAvailability)
+      .toMatchObject({ eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 });
     expect((await speechGrant()).remaining_microusd).toBe(999_892);
   });
 });

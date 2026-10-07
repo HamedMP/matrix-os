@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { checkoutUnavailablePresentation } from "./checkout-unavailable-presentation.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
@@ -9,7 +9,7 @@ import type {
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
-import { gatewayCreditLines, money, shortDate, titleCase } from "./utils.js";
+import { gatewayChatAvailableMicrousd, gatewayCreditLines, money, shortDate, titleCase } from "./utils.js";
 
 const capabilityLabels = {
   tools: "Tools",
@@ -38,6 +38,16 @@ export function matrixGatewayEligibleModels(
 }
 
 export function isMatrixGatewaySourceReady(
+  source: ProviderAccessSource | null,
+  policy: ProviderGatewayPolicy | null,
+  provider: ProviderModelProvider | null,
+): boolean {
+  return isMatrixGatewayRouteVerified(source, policy, provider)
+    && (gatewayChatAvailableMicrousd(source) ?? 0) > 0;
+}
+
+/** Purchase verification remains independent of spendable Chat capacity. */
+function isMatrixGatewayRouteVerified(
   source: ProviderAccessSource | null,
   policy: ProviderGatewayPolicy | null,
   provider: ProviderModelProvider | null,
@@ -79,6 +89,7 @@ export function GatewayPanel({
   compatibleAgents = [],
   onChooseAgent,
   onUsageHistory,
+  subscriptions,
 }: {
   source: ProviderAccessSource | null;
   policy: ProviderGatewayPolicy | null;
@@ -104,6 +115,7 @@ export function GatewayPanel({
   compatibleAgents?: ReadonlyArray<{ id: string; displayName: string }>;
   onChooseAgent?: (id: string) => void;
   onUsageHistory?: () => void;
+  subscriptions?: ReactNode;
 }) {
   // Older runtimes retain their readiness-based inventory. New runtimes provide
   // an explicit policy inventory that does not imply a runnable route.
@@ -137,7 +149,7 @@ export function GatewayPanel({
   }, [budget]);
   const credit = source
     ? gatewayCreditLines(source)
-    : { primary: "Credit unavailable", secondary: null, stale: false };
+    : { primary: "Chat credit unavailable", secondary: null, stale: false };
   const usageAsOf = source?.usage.asOf ?? null;
   const ready = isMatrixGatewaySourceReady(source, policy, provider);
   const creditRequired = source?.readiness.safeReason === "credit_required";
@@ -154,7 +166,7 @@ export function GatewayPanel({
       canAddCredit &&
       source.usage.kind === "managed_credit" &&
       source.usage.state === "current" &&
-      (ready || creditRequired),
+      (isMatrixGatewayRouteVerified(source, policy, provider) || creditRequired),
   );
   const checkoutUnavailable = checkoutUnavailablePresentation(source, policy, canAddCredit);
   const creditDialog = useRef<HTMLElement | null>(null);
@@ -162,7 +174,8 @@ export function GatewayPanel({
   useDialogFocus(creditDialog, creditDialogOpen, closeCreditDialog);
   useGettingStartedBlocker(creditDialogOpen);
 
-  const status = !source || !policy ? "Setup needed" : ready ? "Ready" : creditReserved ? "Credit reserved" : creditRequired ? "Credit needed"
+  const budgetExceeded = source?.readiness.safeReason === "budget_exceeded";
+  const status = !source || !policy ? "Setup needed" : ready ? "Ready" : budgetExceeded ? "Monthly budget reached" : creditReserved ? "Credit reserved" : creditRequired ? "Credit needed"
     : source.readiness.state === "ready" ? "Unavailable" : titleCase(source.readiness.state);
 
   const saveBudget = () => {
@@ -227,14 +240,16 @@ export function GatewayPanel({
       </div>
 
       {creditReserved ? <p className="matrix-ap-help">Your credit is reserved while usage is confirmed.</p> : null}
+      {budgetExceeded ? <p className="matrix-ap-help">This computer has reached its Matrix AI monthly budget. Contact your workspace administrator or support.</p> : null}
       {source && policy && creditRequired ? (
         <p className="matrix-ap-help">{checkoutAvailable ? "Add credit to use Matrix AI." : "Matrix AI needs spendable credit."}</p>
       ) : null}
 
       <div className="matrix-ap-credit-row">
         <div>
-          <span>Credit balance</span>
+          <span>Chat credit available</span>
           <strong>{credit.primary}</strong>
+          {credit.secondary ? <span>{credit.secondary}</span> : null}
           {reservedCredit ? <span>{reservedCredit}</span> : null}
           {credit.stale ? (
             <span>Credit last confirmed {shortDate(usageAsOf)}</span>
@@ -291,9 +306,9 @@ export function GatewayPanel({
           ) : null}
         </div>
       ) : null}
-      <p className="matrix-ap-gateway-footer">
+      {subscriptions ?? <p className="matrix-ap-gateway-footer">
         Already have Claude or ChatGPT? Connect it on the agent instead.
-      </p>
+      </p>}
       {!policy || !source ? <details className="matrix-ap-advanced"><summary>Advanced Matrix AI settings</summary>
           {!ready ? (
             <button

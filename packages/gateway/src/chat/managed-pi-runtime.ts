@@ -2,13 +2,15 @@ import { BotRunSpecSchema, BotRunOutcomeSchema, type BotEvent, type BotRunSpec }
 import { z } from "zod/v4";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "../bots/broker-actions.js";
 import { mapBotEvent, MAX_BOT_ACTIVITY_EVENTS } from "../bots/chat-adapter.js";
-import { BotRouteError, resolveManagedPiRoute } from "../bots/route-resolver.js";
-import { BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type ManagedPiRuntimeBinding } from "../bots/runtime-registry.js";
+import { BotRouteError } from "../bots/route-resolver.js";
+import { BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type ManagedPiRuntimeBinding, type PiRuntimeBinding } from "../bots/runtime-registry.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { createCanonicalCliEventQueue } from "./cli-process.js";
 import { CanonicalProviderRunEventSchema, parseCanonicalProviderRunInput, type CanonicalChatProviderAdapter, type CanonicalProviderRunEvent, type CanonicalProviderRunInput } from "./provider-adapter.js";
 import type { ManagedPiAdmission } from "./managed-pi-admission.js";
+import { resolveManagedPiSelection } from "./managed-pi-route.js";
+import { fundedChatError, type FundedChatFailureReason } from "./funded-chat-error.js";
 
 const StateSchema = z.object({ runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/), executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/) }).strict();
 // Match the supervisor's typed runtime.bot errors; never log its reply or error text.
@@ -32,10 +34,12 @@ interface Active {
   ownerId: string; chatId: string; spec?: BotRunSpec; binding?: ManagedPiRuntimeBinding;
   queue: ReturnType<typeof createCanonicalCliEventQueue<Event>>;
   stopping: boolean; finished: boolean; grace?: ReturnType<typeof setTimeout>;
+  fundedFailure?: FundedChatFailureReason;
 }
 
 /** Two policies use one pinned worker/broker. Ordinary Chat has no recipe or bot grants. */
 export function createManagedPiRuntime(deps: {
+  chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
   ownerTools?: import("./managed-pi-owner-tools.js").ManagedPiOwnerTools;
   admission: ManagedPiAdmission; host: ScopeRuntimeHost; providers: AiProviderSnapshotReader; lifetime: AbortSignal;
   forgetRun(runId: string): void;
@@ -65,7 +69,7 @@ export function createManagedPiRuntime(deps: {
     signal.addEventListener("abort", onAbort, { once: true });
     let stage: "route" | "admission" | "tool_setup" | "run_spec" | "worker_dispatch" = "route";
     try {
-      const resolved = resolveManagedPiRoute(await deps.providers.getSnapshot(), input.selection);
+      const resolved = await resolveManagedPiSelection(input.selection, input.owner.ownerId, deps);
       if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
       stage = "admission";
       run.binding = await deps.admission.admit({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, resolved });
@@ -96,6 +100,10 @@ export function createManagedPiRuntime(deps: {
     } catch (error: unknown) {
       if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
       console.warn("[managed-pi] run failed", error instanceof ManagedPiWorkerFailure ? error.diagnostic : { stage, error: diagnosticErrorName(error) });
+      if (run.fundedFailure && error instanceof ManagedPiWorkerFailure && error.diagnostic.stage === "worker_outcome"
+        && error.diagnostic.status === "failed" && error.diagnostic.failureCode === "unavailable") {
+        return { type: "run.completed", outcome: "failed", error: fundedChatError(run.fundedFailure) };
+      }
       return { type: "run.completed", outcome: "failed", error: {
         code: error instanceof BotRouteError ? "model_unavailable" : "run_failed",
         safeMessage: error instanceof BotRouteError ? "The selected Matrix AI model is unavailable. Check Agents & providers." : "Matrix AI could not finish this request. Try again.",
@@ -161,5 +169,14 @@ export function createManagedPiRuntime(deps: {
     },
     async recover(input) { await deps.ownerTools?.closeRun(input.runId); await deps.admission.release(input.state.runtimeHandle); return { outcome: "failed", messages: [] }; },
   };
-  return { adapter, runs, events, async close() { await Promise.all([...active.keys()].map(stop)); } };
+  return { adapter, runs, events,
+    /** Only the registered gateway broker calls this; never derived from SDK text or worker events. */
+    recordFundedFailure(binding: PiRuntimeBinding, reason: FundedChatFailureReason | undefined) {
+      if (!isManagedPiBinding(binding)) return;
+      const run = active.get(binding.runId);
+      if (!run || run.finished || run.stopping || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
+        || run.binding?.runtimeHandle !== binding.runtimeHandle || run.binding.executionGeneration !== binding.executionGeneration) return;
+      run.fundedFailure = reason;
+    },
+    async close() { await Promise.all([...active.keys()].map(stop)); } };
 }

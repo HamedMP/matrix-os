@@ -18,6 +18,7 @@ const now = "2026-08-30T10:00:00.000Z";
 const later = "2026-09-30T10:00:00.000Z";
 
 function snapshot(): ProviderSettingsSnapshot {
+  const observation = new Date().toISOString();
   const value = {
     contractVersion: 1,
     atomicConnectSupported: true,
@@ -74,7 +75,8 @@ function snapshot(): ProviderSettingsSnapshot {
           limitMicrousd: 1_000_000,
           periodStartedAt: now,
           resetsAt: later,
-          asOf: now,
+          asOf: observation,
+          chatAvailability: { contractVersion: 1, asOf: observation, eligibleBalanceMicrousd: 1_000_000, availableBalanceMicrousd: 750_000 },
           credit: {
             promotionalBalanceMicrousd: 500_000,
             addonBalanceMicrousd: 500_000,
@@ -781,11 +783,14 @@ describe("AgentsProvidersView", () => {
     const current = snapshot();
     const usage = current.accessSources[0]!.usage;
     if (usage.kind !== "managed_credit") throw new Error("Expected managed credit fixture");
-    // Budget headroom is smaller than available credit; the card shows credit, not a budget cap.
+    // Ordinary Chat credit is bounded by the remaining monthly budget.
+    vi.useFakeTimers({toFake: ["Date"]}); vi.setSystemTime(now);
+    usage.asOf = now;
+    usage.chatAvailability = { contractVersion: 1, asOf: now, eligibleBalanceMicrousd: 1_000_000, availableBalanceMicrousd: 750_000 };
     usage.remainingMicrousd = 250_000;
     usage.budget.remainingBudgetMicrousd = 250_000;
     const { rerender } = setup({ snapshot: current });
-    expect(screen.getByText("$0.75")).toBeVisible();
+    expect(screen.getByText("$0.25")).toBeVisible();
     expect(screen.getByText("$0.20 used of $1.00")).not.toBeVisible();
 
     const stale = structuredClone(current);
@@ -803,7 +808,8 @@ describe("AgentsProvidersView", () => {
       asOf: null,
     };
     rerender(<AgentsProvidersView {...setupProps(unavailable)} />);
-    expect(screen.getByText("Credit unavailable")).toBeVisible();
+    expect(screen.getByText("Chat credit unavailable")).toBeVisible();
+    vi.useRealTimers();
     expect(screen.queryByText("$0.00 remaining")).toBeNull();
   });
 
@@ -844,7 +850,7 @@ describe("AgentsProvidersView", () => {
     expect(within(personal).getByRole("progressbar", { name: "Personal remaining allowance" })).toHaveAttribute("value", "7500");
     expect(within(work).getByText("$0.13 observed")).toBeVisible();
     fireEvent.click(within(personal).getByRole("button", { name: "Log out Personal" }));
-    expect(within(work).getByRole("button", { name: "Log in Work" })).toBeDisabled();
+    expect(within(work).queryByRole("button", { name: "Log in Work" })).toBeNull();
     await waitFor(() => expect(within(work).getByRole("button", { name: "Remove Work" })).toBeEnabled());
     fireEvent.click(within(work).getByRole("button", { name: "Remove Work" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
@@ -895,7 +901,7 @@ describe("AgentsProvidersView", () => {
     expect(choices).not.toContain("Work Anthropic key");
   });
 
-  it("opens only opaque terminal session ids and owner-gateway authorization paths", () => {
+  it("does not continue unsupported generic subscription login attempts", () => {
     const terminalAttempt: ProviderConnectionAttempt = {
       id: "attempt_terminal",
       harnessInstanceId: "harness_hermes",
@@ -909,7 +915,7 @@ describe("AgentsProvidersView", () => {
     const onOpenTerminal = vi.fn();
     const onOpenBrowser = vi.fn();
     const { rerender } = setup({ connectionAttempt: terminalAttempt, onOpenTerminal, onOpenBrowser });
-    expect(screen.getByRole("button", { name: "Continue in Terminal" })).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continue in Terminal" })).toBeNull();
     expect(onOpenTerminal).not.toHaveBeenCalled();
 
     const browserAttempt: ProviderConnectionAttempt = {
@@ -919,7 +925,7 @@ describe("AgentsProvidersView", () => {
       action: { kind: "open_browser", authorizationPath: "/api/ai/providers/login-attempts/attempt_browser/authorize" },
     };
     rerender(<AgentsProvidersView {...setupProps(snapshot(), { connectionAttempt: browserAttempt, onOpenTerminal, onOpenBrowser })} />);
-    expect(screen.getByRole("button", { name: "Continue in browser" })).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continue in browser" })).toBeNull();
     expect(onOpenBrowser).not.toHaveBeenCalled();
   });
 
@@ -1074,7 +1080,7 @@ describe("AgentsProvidersView", () => {
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
     expect(within(gateway).getByText("Managed by your workspace")).toBeVisible();
-    expect(within(gateway).getByText("$1.00")).toBeVisible();
+    expect(within(gateway).getByText("$0.75")).toBeVisible();
     expect(within(gateway).getByText("Claude Opus 5")).toBeVisible();
     expect(within(gateway).queryByText("Claude Sonnet 5")).not.toBeInTheDocument();
     expect(onMutate).not.toHaveBeenCalled();

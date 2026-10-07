@@ -198,7 +198,7 @@ export function createProjectInheritanceResolver(options: {
   const createBindingId = options.createBindingId ?? randomUUID;
   const createScopeId = options.createScopeId ?? randomUUID;
 
-  async function bindOwnedResource(raw: {
+  type BindingInput = {
     projectScopeId: string;
     ownerId: string;
     kind: ProjectResourceBinding["kind"];
@@ -209,7 +209,9 @@ export function createProjectInheritanceResolver(options: {
     readiness: "ready" | "blocked";
     blocker?: string;
     incarnation?: string;
-  }): Promise<ProjectResourceBinding> {
+  };
+
+  function parseBindingInput(raw: BindingInput) {
     const parsed = z.object({
       projectScopeId: ScopeIdSchema,
       ownerId: ActorIdSchema,
@@ -230,121 +232,132 @@ export function createProjectInheritanceResolver(options: {
       || (parsed.data.readiness === "blocked" && !parsed.data.blocker)) {
       throw new ProjectInheritanceError("invalid_resource");
     }
-    const input = parsed.data;
-    try {
-      let committedChatEvent: ChatOutboxEvent | null = null;
-      const binding = await options.db.transaction().execute(async (trx) => {
-        const project = await trx.selectFrom("collaboration_scopes").selectAll()
-          .where("id", "=", input.projectScopeId).forUpdate().executeTakeFirst();
-        if (!project || project.kind !== "project" || project.owner_id !== input.ownerId
-          || project.membership_mode !== "direct"
-          || (project.lifecycle !== "preparing" && project.lifecycle !== "shared")) {
-          throw new ProjectInheritanceError("not_found");
-        }
-        if (project.lifecycle === "shared"
-          && (project.authority_runtime_id !== input.authorityRuntimeId
-            || Number(project.authority_generation) !== input.authorityGeneration)) {
-          throw new ProjectInheritanceError("conflict");
-        }
-        if (input.kind === "chat") {
-          await trx.selectFrom("chats").select("id").where("id", "=", input.resourceId).forUpdate().executeTakeFirst();
-          if (await hasCompanyDriveMaterial(trx, input.resourceId)) throw new ProjectInheritanceError("resource_blocked");
-        }
-        const existing = await trx.selectFrom("collaboration_resource_bindings").selectAll()
-          .where("project_scope_id", "=", input.projectScopeId)
-          .where("resource_kind", "=", input.kind)
-          .where("resource_id", "=", input.resourceId)
-          .executeTakeFirst();
-        if (existing) {
-          if (sameBinding(existing, input)) {
-            // An idempotent bind can encounter a Chat published before reveal
-            // revocation was introduced. Heal only lingering revealed rows;
-            // ordinary replays remain a no-op for Chat revision and outbox.
-            if (project.lifecycle === "shared" && project.owner_type === "personal" && input.kind === "chat") {
-              const lingeringReveal = await trx.selectFrom("chat_credentials").select("id")
-                .where("chat_id", "=", input.resourceId).where("revealed", "=", true)
-                .limit(1).executeTakeFirst();
-              if (lingeringReveal) {
-                committedChatEvent = await revokeProjectSharedChatCredentials(trx, {
-                  chatId: input.resourceId, ownerType: project.owner_type,
-                  ownerId: input.ownerId, now: now(),
-                });
-              }
-            }
-            return rowToBinding(existing);
-          }
-          const canReconcileStaging = project.lifecycle === "preparing"
-            && existing.authority_runtime_id === input.authorityRuntimeId
-            && Number(existing.authority_generation) === input.authorityGeneration
-            && Number(existing.revision) <= input.revision
-            && (existing.incarnation ?? undefined) === input.incarnation;
-          if (!canReconcileStaging) throw new ProjectInheritanceError("conflict");
-          const updated = await trx.updateTable("collaboration_resource_bindings").set({
-            revision: input.revision,
-            readiness: input.readiness,
-            blocker: input.blocker ?? null,
-            updated_at: now(),
-          }).where("id", "=", existing.id)
-            .where("revision", "=", Number(existing.revision))
-            .returningAll().executeTakeFirst();
-          if (!updated || !sameBinding(updated, input)) throw new ProjectInheritanceError("conflict");
-          return rowToBinding(updated);
-        }
-        const resourceScopeId = input.kind === "chat" || input.kind === "terminal"
-          ? await inheritedResourceScope(trx, {
-              ...input,
-              ownerType: project.owner_type,
-              kind: input.kind,
-              lifecycle: project.lifecycle,
-              now: now(),
-              createScopeId,
-            })
-          : null;
-        const bindingId = BindingIdSchema.parse(createBindingId());
-        const createdAt = now();
-        await trx.insertInto("collaboration_resource_bindings").values({
-          id: bindingId,
-          project_scope_id: project.id,
-          resource_scope_id: resourceScopeId,
-          resource_kind: input.kind,
-          resource_id: input.resourceId,
-          authority_runtime_id: input.authorityRuntimeId,
-          authority_generation: input.authorityGeneration,
-          revision: input.revision,
-          readiness: input.readiness,
-          blocker: input.blocker ?? null,
-          incarnation: input.incarnation ?? null,
-          created_at: createdAt,
-          updated_at: createdAt,
-        }).onConflict((conflict) => conflict.doNothing()).execute();
-        const winner = await trx.selectFrom("collaboration_resource_bindings").selectAll()
-          .where("project_scope_id", "=", project.id)
-          .where("resource_kind", "=", input.kind)
-          .where("resource_id", "=", input.resourceId)
-          .executeTakeFirst();
-        if (!winner || !sameBinding(winner, input)
-          || (resourceScopeId !== null && winner.resource_scope_id !== resourceScopeId)) {
-          throw new ProjectInheritanceError("conflict");
-        }
+    return parsed.data;
+  }
+
+  /** Same-transaction variant used when the resource itself is being created or moved. */
+  async function bindOwnedResourceInTransaction(
+    trx: CollaborationTransaction,
+    raw: BindingInput,
+  ): Promise<{ binding: ProjectResourceBinding; chatEvent: ChatOutboxEvent | null }> {
+    const input = parseBindingInput(raw);
+    let chatEvent: ChatOutboxEvent | null = null;
+    const project = await trx.selectFrom("collaboration_scopes").selectAll()
+      .where("id", "=", input.projectScopeId).forUpdate().executeTakeFirst();
+    if (!project || project.kind !== "project" || project.owner_id !== input.ownerId
+      || project.membership_mode !== "direct"
+      || (project.lifecycle !== "preparing" && project.lifecycle !== "shared")) {
+      throw new ProjectInheritanceError("not_found");
+    }
+    if (project.lifecycle === "shared"
+      && (project.authority_runtime_id !== input.authorityRuntimeId
+        || Number(project.authority_generation) !== input.authorityGeneration)) {
+      throw new ProjectInheritanceError("conflict");
+    }
+    if (input.kind === "chat") {
+      await trx.selectFrom("chats").select("id").where("id", "=", input.resourceId).forUpdate().executeTakeFirst();
+      if (await hasCompanyDriveMaterial(trx, input.resourceId)) throw new ProjectInheritanceError("resource_blocked");
+    }
+    const existing = await trx.selectFrom("collaboration_resource_bindings").selectAll()
+      .where("project_scope_id", "=", input.projectScopeId)
+      .where("resource_kind", "=", input.kind)
+      .where("resource_id", "=", input.resourceId)
+      .executeTakeFirst();
+    if (existing) {
+      if (sameBinding(existing, input)) {
+        // An idempotent bind can encounter a Chat published before reveal
+        // revocation was introduced. Heal only lingering revealed rows;
+        // ordinary replays remain a no-op for Chat revision and outbox.
         if (project.lifecycle === "shared" && project.owner_type === "personal" && input.kind === "chat") {
-          committedChatEvent = await revokeProjectSharedChatCredentials(trx, {
-            chatId: input.resourceId, ownerType: project.owner_type,
-            ownerId: input.ownerId, now: createdAt,
-          });
+          const lingeringReveal = await trx.selectFrom("chat_credentials").select("id")
+            .where("chat_id", "=", input.resourceId).where("revealed", "=", true)
+            .limit(1).executeTakeFirst();
+          if (lingeringReveal) {
+            chatEvent = await revokeProjectSharedChatCredentials(trx, {
+              chatId: input.resourceId, ownerType: project.owner_type,
+              ownerId: input.ownerId, now: now(),
+            });
+          }
         }
-        // A Chat added to a project that is already shared is opened through its own route.
-        if (project.lifecycle === "shared" && input.kind === "chat") {
-          await publishProjectChatRoutes(trx, { projectScopeId: project.id, now: createdAt });
-        }
-        return rowToBinding(winner);
+        return { binding: rowToBinding(existing), chatEvent };
+      }
+      const canReconcileStaging = project.lifecycle === "preparing"
+        && existing.authority_runtime_id === input.authorityRuntimeId
+        && Number(existing.authority_generation) === input.authorityGeneration
+        && Number(existing.revision) <= input.revision
+        && (existing.incarnation ?? undefined) === input.incarnation;
+      if (!canReconcileStaging) throw new ProjectInheritanceError("conflict");
+      const updated = await trx.updateTable("collaboration_resource_bindings").set({
+        revision: input.revision,
+        readiness: input.readiness,
+        blocker: input.blocker ?? null,
+        updated_at: now(),
+      }).where("id", "=", existing.id)
+        .where("revision", "=", Number(existing.revision))
+        .returningAll().executeTakeFirst();
+      if (!updated || !sameBinding(updated, input)) throw new ProjectInheritanceError("conflict");
+      return { binding: rowToBinding(updated), chatEvent };
+    }
+    const resourceScopeId = input.kind === "chat" || input.kind === "terminal"
+      ? await inheritedResourceScope(trx, {
+          ...input,
+          ownerType: project.owner_type,
+          kind: input.kind,
+          lifecycle: project.lifecycle,
+          now: now(),
+          createScopeId,
+        })
+      : null;
+    const bindingId = BindingIdSchema.parse(createBindingId());
+    const createdAt = now();
+    await trx.insertInto("collaboration_resource_bindings").values({
+      id: bindingId,
+      project_scope_id: project.id,
+      resource_scope_id: resourceScopeId,
+      resource_kind: input.kind,
+      resource_id: input.resourceId,
+      authority_runtime_id: input.authorityRuntimeId,
+      authority_generation: input.authorityGeneration,
+      revision: input.revision,
+      readiness: input.readiness,
+      blocker: input.blocker ?? null,
+      incarnation: input.incarnation ?? null,
+      created_at: createdAt,
+      updated_at: createdAt,
+    }).onConflict((conflict) => conflict.doNothing()).execute();
+    const winner = await trx.selectFrom("collaboration_resource_bindings").selectAll()
+      .where("project_scope_id", "=", project.id)
+      .where("resource_kind", "=", input.kind)
+      .where("resource_id", "=", input.resourceId)
+      .executeTakeFirst();
+    if (!winner || !sameBinding(winner, input)
+      || (resourceScopeId !== null && winner.resource_scope_id !== resourceScopeId)) {
+      throw new ProjectInheritanceError("conflict");
+    }
+    if (project.lifecycle === "shared" && project.owner_type === "personal" && input.kind === "chat") {
+      chatEvent = await revokeProjectSharedChatCredentials(trx, {
+        chatId: input.resourceId, ownerType: project.owner_type,
+        ownerId: input.ownerId, now: createdAt,
       });
-      if (committedChatEvent) {
-        try { options.onChatShared?.(input.ownerId, committedChatEvent); }
+    }
+    // A Chat added to a project that is already shared is opened through its own route.
+    if (project.lifecycle === "shared" && input.kind === "chat") {
+      await publishProjectChatRoutes(trx, { projectScopeId: project.id, now: createdAt });
+    }
+    return { binding: rowToBinding(winner), chatEvent };
+  }
+
+  async function bindOwnedResource(raw: BindingInput): Promise<ProjectResourceBinding> {
+    const input = parseBindingInput(raw);
+    try {
+      const result = await options.db.transaction().execute((trx) => bindOwnedResourceInTransaction(trx, input));
+      if (result.chatEvent) {
+        try { options.onChatShared?.(input.ownerId, result.chatEvent); }
         catch (error: unknown) {
           console.warn("[collaboration-project] Chat invalidation delivery failed", error instanceof Error ? error.name : "UnknownError");
         }
       }
-      return binding;
+      return result.binding;
     } catch (error: unknown) {
       if (error instanceof ProjectInheritanceError) throw error;
       console.warn("[collaboration-project] inherited resource binding failed", error instanceof Error ? error.name : "UnknownError");
@@ -394,7 +407,7 @@ export function createProjectInheritanceResolver(options: {
     });
   }
 
-  return { bindOwnedResource, resolve, assertReadyForActivation };
+  return { bindOwnedResource, bindOwnedResourceInTransaction, resolve, assertReadyForActivation };
 }
 
 function safeRelativeFilePath(value: string): boolean {

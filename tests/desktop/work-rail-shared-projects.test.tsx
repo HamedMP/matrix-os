@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import type { CollaborationProjectOverview } from "@matrix-os/contracts";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SharedWorkRailProjects } from "../../desktop/src/renderer/src/features/work/work-rail/SharedWorkRailProjects";
+import {
+  partitionSharedProjects,
+  SharedWorkRailProjects,
+} from "../../desktop/src/renderer/src/features/work/work-rail/SharedWorkRailProjects";
 import { notifyCollaborationDiscoveryChanged } from "../../packages/ui/src/collaboration/discovery-events";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -87,6 +91,14 @@ describe("Electron Work rail shared projects", () => {
 
   afterEach(cleanup);
 
+  it("coalesces a project already present in the owner's canonical project list", () => {
+    const overview = (sharedProject() as { resource: { overview: CollaborationProjectOverview } }).resource.overview;
+    const partition = partitionSharedProjects([overview], new Set(["proj_542a8126"]));
+
+    expect(partition.ownedSharedProjectIds).toEqual(new Set(["proj_542a8126"]));
+    expect(partition.receivedProjects).toEqual([]);
+  });
+
   it("lists an accepted shared project like an own project, marked as shared, with no owner actions", async () => {
     render(<SharedWorkRailProjects />);
     const project = await screen.findByRole("button", { name: "collab testing 12PMOct3" });
@@ -107,6 +119,24 @@ describe("Electron Work rail shared projects", () => {
     expect(tab).toMatchObject({ kind: "work", workRoute: "chat", chatId: "chat_release", chatTitle: "Release plan", sharedScopeId: chatScope });
     expect(useTabs.getState().activeTabId).toBe(tab!.id);
     expect(screen.getByRole("button", { name: "Release plan" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("reveals a newly accepted project in the rail without opening a project surface", async () => {
+    const { rerender } = render(<SharedWorkRailProjects revealRequest={{ scopeId: projectScope, requestId: 1 }} />);
+
+    const project = await screen.findByRole("button", { name: "collab testing 12PMOct3" });
+    expect(project).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Release plan" })).toBeVisible();
+    expect(useTabs.getState().tabs).toEqual([]);
+
+    fireEvent.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "true");
+    rerender(<SharedWorkRailProjects revealRequest={{ scopeId: projectScope, requestId: 2 }} />);
+    expect(project).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "false");
   });
 
   it("lists only accepted projects with an overview, and refreshes when sharing changes", async () => {

@@ -26,16 +26,16 @@ import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useProjects } from "@/lib/queries/use-projects";
-import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
-import { canonicalChatRequestId } from "@/lib/requests";
 import {
   buildTranscript,
+  optimisticTranscriptMessage,
   transcriptWorkLabel,
   type TranscriptMessage,
 } from "@/lib/canonical-chat-transcript";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
 import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
 import { useStreamedTextReveal } from "@/lib/streamed-text-reveal";
+import { useChatComposer } from "@/lib/use-chat-composer";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectPicker } from "@/components/ProjectPicker";
 import { Icon, IconButton } from "@/components/ui";
@@ -80,7 +80,6 @@ export default function ChatScreen() {
   const chats = useCanonicalChats();
   const { catalog, isPending: catalogPending, isFetching: catalogFetching } = useChatProviderCatalog();
   const { projects } = useProjects();
-  const sendMessage = useSendChatMessage();
 
   const directBot = Boolean(botChat.snapshot);
   // The picker marks the catalog as being checked whenever it is fetched.
@@ -94,21 +93,33 @@ export default function ChatScreen() {
     ?? defaultCatalogSelection(catalog);
   const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
 
-  const messages = useMemo(() => buildTranscript(detail), [detail]);
-  const busy = sendMessage.isPending || (detail?.runs.some(
+  const { draft, setDraft, send, isSending, optimisticMessages } = useChatComposer({
+    scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
+    activeChatId,
+    detail,
+    selection,
+    turnModes,
+    projectId: selectedProjectId,
+    // The selection is not final until the provider catalog has loaded.
+    disabled: providerCatalogLoading,
+  });
+
+  const messages = useMemo(() => {
+    const transcript = buildTranscript(detail);
+    if (optimisticMessages.length === 0) return transcript;
+    // Newest-first, matching the inverted transcript FlatList.
+    return [...optimisticMessages.map(optimisticTranscriptMessage).reverse(), ...transcript];
+  }, [detail, optimisticMessages]);
+  const busy = isSending || (detail?.runs.some(
     (run) => !["completed", "failed", "aborted"].includes(run.status),
   ) ?? false);
 
-  const [draft, setDraft] = useState("");
   const [inputFocused, setInputFocused] = useState(false);
   // Tapping the model picker itself blurs the TextInput a beat before its
   // native menu opens — delay hiding on blur, and cancel the hide entirely
   // if that blur was caused by touching the picker.
   const hidePickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pickerTouchedRef = useRef(false);
-  // Idempotency keys for the in-flight/most recent send attempt, keyed by its
-  // exact drafted text -- see the comment in `send` below.
-  const pendingSendRef = useRef<{ text: string; chatRequestId: string; turnRequestId: string } | null>(null);
 
   const handleInputFocus = useCallback(() => {
     if (hidePickerTimer.current) {
@@ -142,55 +153,6 @@ export default function ChatScreen() {
   const isConnected = Boolean(isSignedIn);
   const hasDraftText = draft.trim().length > 0;
   const canSend = !providerCatalogLoading && hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
-
-  const send = useCallback(() => {
-    const trimmed = draft.trim();
-    if (providerCatalogLoading || !trimmed || !selection || !turnModes) return;
-    // Clear the draft only once the send actually succeeds -- a failed token
-    // fetch, computer resolution, chat creation, or turn admission leaves the
-    // typed text in place so the user can retry instead of losing it. The
-    // composer stays editable while the send is in flight, so only clear it
-    // if it still holds exactly what was sent -- otherwise the user has
-    // already started a new message and this would erase that instead.
-    //
-    // Reuse the same idempotency keys across retries of this exact drafted
-    // text -- if the first attempt's admission succeeded server-side but its
-    // response was lost, retrying with fresh IDs would create a second chat
-    // and run (and bill) the prompt again.
-    if (pendingSendRef.current?.text !== trimmed) {
-      pendingSendRef.current = {
-        text: trimmed,
-        chatRequestId: canonicalChatRequestId(),
-        turnRequestId: canonicalChatRequestId(),
-      };
-    }
-    const { chatRequestId, turnRequestId } = pendingSendRef.current;
-    sendMessage.mutate({
-      chatId: activeChatId,
-      baseRevision: detail?.record.chat.revision ?? 0,
-      text: trimmed,
-      selection,
-      interactionMode: turnModes.interactionMode,
-      permissionMode: turnModes.permissionMode,
-      projectId: selectedProjectId,
-      chatRequestId,
-      turnRequestId,
-    }, {
-      onSuccess: () => {
-        if (pendingSendRef.current?.text === trimmed) pendingSendRef.current = null;
-        setDraft((current) => (current === trimmed ? "" : current));
-      },
-    });
-  }, [
-    draft,
-    selection,
-    turnModes,
-    activeChatId,
-    detail?.record.chat.revision,
-    selectedProjectId,
-    sendMessage,
-    providerCatalogLoading,
-  ]);
 
   const insets = useSafeAreaInsets();
 

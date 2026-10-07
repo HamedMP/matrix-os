@@ -24,6 +24,7 @@ import { SessionAccessControl } from "./SessionAccessControl.js";
 import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
+import { isAcceptedProjectOwnedByRail } from "./discovery-visibility.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -49,6 +50,7 @@ export function ChatCollaboration({
   onChatMetadata,
   headerContainer,
   layers,
+  hideAcceptedProjects = false,
 }: {
   view: ChatCollaborationView;
   api: CollaborationApi;
@@ -62,10 +64,12 @@ export function ChatCollaboration({
   onChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
   layers?: CollaborationOverlayLayers;
+  /** A host with a dedicated project navigator can keep accepted projects out of this list. */
+  hideAcceptedProjects?: boolean;
 }) {
   if (view.kind === "home") {
     return <CollaborationHome api={api} openInvitation={openInvitation} openChat={openChat}
-      openTerminal={openTerminal} openProject={openProject} />;
+      openTerminal={openTerminal} openProject={openProject} hideAcceptedProjects={hideAcceptedProjects} />;
   }
   if (view.kind === "invitation") {
     return <InvitationView api={api} invitationId={view.invitationId} openChat={openChat}
@@ -80,12 +84,13 @@ export function ChatCollaboration({
     scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} layers={layers} />;
 }
 
-function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject }: {
+function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject, hideAcceptedProjects }: {
   api: CollaborationApi;
   openInvitation: (invitationId: string) => void;
   openChat: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal: (scopeId: string) => void;
   openProject: (scopeId: string) => void;
+  hideAcceptedProjects: boolean;
 }) {
   const [items, setItems] = useState<DiscoveryItem[]>([]);
   const [inboxCursor, setInboxCursor] = useState<string | null>(null);
@@ -98,6 +103,9 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   const [invitationError, setInvitationError] = useState(false);
   const [organizationPending, setOrganizationPending] = useState<string | null>(null);
   const [organizationError, setOrganizationError] = useState<string | null>(null);
+  const visibleItems = useMemo(() => hideAcceptedProjects
+    ? items.filter((item) => !isAcceptedProjectOwnedByRail(item))
+    : items, [hideAcceptedProjects, items]);
   useEffect(() => {
     let active = true;
     void Promise.all([api.get("/api/collaboration/inbox"), api.get("/api/collaboration/shared")])
@@ -203,23 +211,27 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
     <header>
       <p className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: "var(--text-tertiary)" }}>Collaboration</p>
       <h1 className="mt-1 text-2xl font-semibold">Shared with me</h1>
-      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Invitations, Chats, terminals, and projects shared with your Matrix account.</p>
+      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{hideAcceptedProjects
+        ? "Invitations, Chats, and terminals shared with your Matrix account. Accepted projects live in the Projects rail."
+        : "Invitations, Chats, terminals, and projects shared with your Matrix account."}</p>
     </header>
     {loading ? <p role="status" className="rounded-2xl border p-6 text-sm">Loading shared items…</p> : null}
     {error ? <div role="alert" className="rounded-2xl border p-6">
       <p className="font-medium">Shared items are unavailable</p>
       <p className="mt-1 text-sm">Refresh the page to try again.</p>
     </div> : null}
-    {!loading && !error && items.length === 0 ? <div className="rounded-2xl border p-10 text-center">
+    {!loading && !error && visibleItems.length === 0 ? <div className="rounded-2xl border p-10 text-center">
       <div aria-hidden className="text-3xl">◇</div>
       <h2 className="mt-3 text-lg font-medium">Nothing shared yet</h2>
-      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Invitations and accepted shared items will appear here.</p>
+      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{hideAcceptedProjects
+        ? "Invitations and accepted shared items will appear here. Accepted projects stay in the Projects rail."
+        : "Invitations and accepted shared items will appear here."}</p>
     </div> : null}
     <div className="grid gap-3">
-      {items.map((item) => item.status === "organization_pending"
+      {visibleItems.map((item) => item.status === "organization_pending"
         ? <article key={`org:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
-            <p className="font-medium">Shared with your organization</p>
+            <p className="font-medium">Shared with you</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · opens when you join</p>
             {organizationError === item.scopeId ? <p role="alert" className="mt-1 text-sm">Share could not be opened. Try again.</p> : null}
           </div>

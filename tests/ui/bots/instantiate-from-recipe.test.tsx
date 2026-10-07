@@ -91,12 +91,13 @@ it("resolves a bot's owner-bound chat with validated transport responses", async
   await expect(createBotClient(async () => ({ chatId: "invalid!" })).directChat("bot_0123456789abcdef"))
     .rejects.toThrow("Bots are temporarily unavailable.");
 });
-it('keeps the same creation request when opening the created Chat fails',async()=>{
+it('reopens the retained created Chat without creating another bot after an opening failure',async()=>{
  const create=vi.fn(async()=> 'chat_bot');const open=vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(undefined);
  render(<AgentRecipesPanel botRecipes={[recipe]} onInstantiateBot={create} onOpenBotChat={open}/>);
  fireEvent.click(screen.getByRole('button',{name:'Use Writing Bot'}));fireEvent.change(screen.getByRole('combobox',{name:'Bot model'}),{target:{value:''}});fireEvent.click(screen.getByRole('button',{name:'Create bot'}));
- await screen.findByRole('alert');fireEvent.click(screen.getByRole('button',{name:'Create bot'}));
- await waitFor(()=>expect(open).toHaveBeenCalledTimes(2));expect(create.mock.calls[0]?.[1]).toBe(create.mock.calls[1]?.[1]);
+ await screen.findByRole('alert');fireEvent.click(screen.getByRole('button',{name:'Retry task setup'}));
+ await waitFor(()=>expect(open).toHaveBeenCalledTimes(2));expect(create).toHaveBeenCalledTimes(1);
+ expect(open).toHaveBeenNthCalledWith(1,'chat_bot');expect(open).toHaveBeenNthCalledWith(2,'chat_bot');
 });
 it('does not navigate after a recipe panel has been left',async()=>{
  let finish!:(id:string)=>void;const create=vi.fn(()=>new Promise<string>(resolve=>{finish=resolve;}));const open=vi.fn();

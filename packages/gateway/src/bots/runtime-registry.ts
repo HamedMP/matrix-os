@@ -41,6 +41,7 @@ export interface BotRuntimeBinding {
   rootFingerprint: string;
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
+  subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   capabilities: readonly BotToolCapability[];
   /** Funded priority for this run: a person waiting in chat, or a routine. */
   requestClass: "interactive" | "background";
@@ -75,6 +76,7 @@ const BindingSchema = z.object({
   rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   route: BotModelRouteSchema,
   accessSourceId: BotCredentialAccessSourceIdSchema,
+  subscription: z.object({peerId: z.uuid(), accountId: ReferenceSchema, computerId: ReferenceSchema, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)}).strict().optional(),
   capabilities: z.array(BotToolCapabilitySchema).max(16),
   requestClass: z.enum(["interactive", "background"]),
 }).strict();
@@ -117,7 +119,8 @@ export class BotRuntimeRegistry {
   /** Expired bindings are swept before the capacity check, so stale runs never block admission. */
   bind(input: PiRuntimeBinding): void {
     const parsed = (isManagedPiBinding(input) ? ManagedBindingSchema : BindingSchema).safeParse(input);
-    if (!parsed.success) throw new BotRuntimeRegistryError("invalid_binding");
+    if (!parsed.success || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
+      || parsed.data.subscription && parsed.data.route.api !== "openai-responses") throw new BotRuntimeRegistryError("invalid_binding");
     this.sweep();
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
       throw new BotRuntimeRegistryError("capacity_exceeded");

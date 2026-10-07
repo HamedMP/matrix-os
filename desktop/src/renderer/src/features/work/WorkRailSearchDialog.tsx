@@ -1,9 +1,10 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import { isAcceptedProjectOwnedByRail } from "@matrix-os/ui";
 import { Folder, MessageSquare, Search, UsersIcon, X } from "@renderer/lib/hugeicons";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Dialog } from "../../design/primitives";
+import { useConnection } from "../../stores/connection";
 import type { Project } from "../../stores/board";
-import { useTabs } from "../../stores/tabs";
 import { sharedItemContext, sharedItemLabel, useWorkSharedDiscovery } from "./use-work-shared-discovery";
 import { buildWorkRailSearchResults } from "./work-rail-model";
 
@@ -15,6 +16,7 @@ export function WorkRailSearchDialog({
   onClose,
   onSelect,
   onSelectProject,
+  onOpenShared,
 }: {
   open: boolean;
   records: readonly CanonicalChatRecord[];
@@ -23,9 +25,12 @@ export function WorkRailSearchDialog({
   onClose: () => void;
   onSelect: (record: CanonicalChatRecord, project?: Project) => void;
   onSelectProject?: (project: Project) => void;
+  onOpenShared?: () => void;
 }) {
   const [filter, setFilter] = useState<"All" | "Chats" | "Projects" | "Shared">("All");
-  const shared = useWorkSharedDiscovery(open);
+  const organizationStatus = useConnection(state => state.organizationStatus);
+  const activeFilter = organizationStatus === "none" && filter === "Shared" ? "All" : filter;
+  const shared = useWorkSharedDiscovery(open && organizationStatus !== "none");
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const listboxId = useId();
@@ -33,16 +38,17 @@ export function WorkRailSearchDialog({
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const results = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    const chats = filter === "All" || filter === "Chats"
+    const chats = activeFilter === "All" || activeFilter === "Chats"
       ? buildWorkRailSearchResults(records, projects, query).map(result => ({ kind: "chat" as const, ...result, label: result.record.chat.title, key: `chat:${result.record.chat.id}` })) : [];
-    const projectResults = (filter === "All" || filter === "Projects") && onSelectProject
+    const projectResults = (activeFilter === "All" || activeFilter === "Projects") && onSelectProject
       ? projects.filter(project => !normalized || `${project.name}
 ${project.slug}`.toLocaleLowerCase().includes(normalized)).map(project => ({ kind: "project" as const, project, label: project.name, contextLabel: "Project", key: `project:${project.id ?? project.slug}` })) : [];
-    const sharedResults = filter === "All" || filter === "Shared"
-      ? shared.items.filter(item => !normalized || `${sharedItemLabel(item)}
+    const sharedResults = activeFilter === "All" || activeFilter === "Shared"
+      ? shared.items.filter(item => !isAcceptedProjectOwnedByRail(item))
+        .filter(item => !normalized || `${sharedItemLabel(item)}
 ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item => ({ kind: "shared" as const, item, label: sharedItemLabel(item), contextLabel: sharedItemContext(item), key: item.status === "invited" ? `invite:${item.invitationId}` : `shared:${item.scopeId}` })) : [];
     return [...chats, ...projectResults, ...sharedResults].slice(0, 50);
-  }, [filter, projects, query, records, shared.items, onSelectProject]);
+  }, [activeFilter, projects, query, records, shared.items, onSelectProject]);
   useEffect(() => {
     setSelectedIndex((current) => (
       results.length === 0 ? 0 : Math.min(current, results.length - 1)
@@ -64,7 +70,7 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
     if (!result) return;
     if (result.kind === "chat") onSelect(result.record, result.project);
     else if (result.kind === "project") onSelectProject?.(result.project);
-    else { useTabs.getState().openTab({ kind: "shared", title: "Shared with me" }); onClose(); }
+    else { onOpenShared?.(); onClose(); }
     setQuery("");
     setSelectedIndex(0);
   };
@@ -138,32 +144,32 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
           </button>
         </div>
         <div role="tablist" aria-label="Search scope" className="mt-3 flex gap-1.5 px-1">
-          {(["All", "Chats", "Projects", "Shared"] as const).map(scope => <button key={scope} type="button" role="tab" aria-selected={filter === scope} disabled={scope === "Shared" && !shared.available || scope === "Projects" && !onSelectProject}
+          {(["All", "Chats", "Projects", "Shared"] as const).filter(scope => organizationStatus !== "none" || scope !== "Shared").map(scope => <button key={scope} type="button" role="tab" aria-selected={activeFilter === scope} disabled={scope === "Shared" && !shared.available || scope === "Projects" && !onSelectProject}
             className="rounded-full px-3 py-1 text-xs outline-none hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--text-primary)] aria-selected:text-[var(--bg-surface)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
             onClick={() => { setFilter(scope); setSelectedIndex(0); }}>{scope}</button>)}
         </div>
         <div className="mt-2 max-h-[min(480px,60vh)] overflow-y-auto rounded-lg border" style={{ borderColor: "var(--border-subtle)" }}>
-          {filter !== "Shared" && status === "loading" && records.length === 0 ? (
+          {activeFilter !== "Shared" && status === "loading" && records.length === 0 ? (
             <p role="status" className="px-3 py-8 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>Loading chats…</p>
           ) : null}
-          {filter !== "Shared" && status === "error" && records.length === 0 ? (
+          {activeFilter !== "Shared" && status === "error" && records.length === 0 ? (
             <p role="alert" className="px-3 py-8 text-center text-sm" style={{ color: "var(--text-secondary)" }}>Chats could not be loaded.</p>
           ) : null}
-          {filter !== "Shared" && status === "error" && records.length > 0 ? (
+          {activeFilter !== "Shared" && status === "error" && records.length > 0 ? (
             <p role="status" className="border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}>
               Showing recently loaded chats. Refresh failed.
             </p>
           ) : null}
-          {filter === "All" && status !== "loading" && status !== "error" && records.length === 0 && results.length === 0 ? (
+          {activeFilter === "All" && status !== "loading" && status !== "error" && records.length === 0 && results.length === 0 ? (
             <p className="px-3 py-8 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
           ) : null}
-          {records.length > 0 && results.length === 0 && filter !== "Shared" ? (
+          {records.length > 0 && results.length === 0 && activeFilter !== "Shared" ? (
             <p className="px-3 py-8 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>No chats found.</p>
           ) : null}
-          {filter === "Shared" && shared.loading ? <p role="status" className="px-3 py-8 text-center text-sm">Loading shared items…</p> : null}
-          {filter === "Shared" && shared.error ? <p role="alert" className="px-3 py-8 text-center text-sm">{shared.error}</p> : null}
-          {filter === "Shared" && !shared.loading && !shared.error && results.length === 0 ? <p className="px-3 py-8 text-center text-sm">No shared items found.</p> : null}
-          {filter === "Projects" && results.length === 0 ? <p className="px-3 py-8 text-center text-sm">No projects found.</p> : null}
+          {activeFilter === "Shared" && shared.loading ? <p role="status" className="px-3 py-8 text-center text-sm">Loading shared items…</p> : null}
+          {activeFilter === "Shared" && shared.error ? <p role="alert" className="px-3 py-8 text-center text-sm">{shared.error}</p> : null}
+          {activeFilter === "Shared" && !shared.loading && !shared.error && results.length === 0 ? <p className="px-3 py-8 text-center text-sm">No shared items found.</p> : null}
+          {activeFilter === "Projects" && results.length === 0 ? <p className="px-3 py-8 text-center text-sm">No projects found.</p> : null}
           {results.length > 0 ? (
             <div id={listboxId} role="listbox" aria-label={query ? "Chat search results" : "Recent chats"}>
               {results.map((result, index) => (

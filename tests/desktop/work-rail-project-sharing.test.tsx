@@ -100,10 +100,10 @@ describe("Chats project sharing", () => {
     await waitFor(() => expect(screen.queryByTestId("project-sharing-dialogs")).toBeNull());
   });
 
-  it("explains the organization requirement in the project menu", () => {
+  it("keeps the project action visible but disabled while organization access is unresolved", () => {
     setup({ organizationId: null });
     openMenu();
-    const item = screen.getByRole("menuitem", { name: "Join an organization to share" });
+    const item = screen.getByRole("menuitem", { name: "Loading sharing…" });
     expect(item.getAttribute("aria-disabled")).toBe("true");
     fireEvent.click(item);
     expect(controller.start).not.toHaveBeenCalled();

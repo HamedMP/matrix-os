@@ -9,7 +9,7 @@ import {
   type InstantiateBotRequest, type InstantiateBotResponse,
   type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "./http";
 
 export interface NativeBotChatSnapshot {
   agentId: string;
@@ -26,18 +26,6 @@ const STATUS_ERROR = "Bot status could not be loaded. Try again.";
 const ACTION_ERROR = "Could not save your response. Try again.";
 const ACCESS_ERROR = "Could not change bot access. Try again.";
 const CREATE_ERROR = "Bot could not be created. Try again.";
-
-/**
- * The computer has no bot-status route: it runs a release from before bots, or
- * its gateway is still starting. Either way nothing is known about the chat,
- * which is different from a read that failed and from an answer that it has no bot.
- */
-export class BotStatusUnsupportedError extends Error {
-  constructor() {
-    super(STATUS_ERROR);
-    this.name = "BotStatusUnsupportedError";
-  }
-}
 
 function chatPath(chatId: string) {
   return `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
@@ -67,10 +55,13 @@ export function instantiateNativeBot(token: string, gatewayUrl: string,
 
 export async function fetchNativeBotChat(token: string, gatewayUrl: string, chatId: string): Promise<NativeBotChatSnapshot | null> {
   const chat = chatPath(chatId);
-  const direct = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/bot`),
-    token, schema: BotDirectChatResponseSchema, errorMessage: STATUS_ERROR, notFound: () => null });
-  if (direct === null) throw new BotStatusUnsupportedError();
-  if (!direct.agentId) return null;
+  // A computer whose gateway predates bots has no such route: its chats simply
+  // have no bot, which is not an error to show or a request to keep retrying.
+  const direct = await fetchAuthenticatedResponse(
+    { url: buildGatewayRequestUrl(gatewayUrl, `${chat}/bot`), token, errorMessage: STATUS_ERROR, expectedStatuses: [404] },
+    async (response) => response.status === 404 ? null : BotDirectChatResponseSchema.parse(await response.json()),
+  );
+  if (!direct?.agentId) return null;
   const agentId = direct.agentId;
   const [interactions, tasks, authority, library] = await Promise.allSettled([
     fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/interactions`),

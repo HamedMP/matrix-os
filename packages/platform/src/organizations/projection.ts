@@ -14,6 +14,7 @@ import type { EndedMembership, PlatformOrganizationRepository } from "./reposito
 import type { MembershipSnapshot, OrganizationSnapshot } from "./roles.js";
 
 export interface ClerkOrganizationUpstream {
+  listOrganizationsForActor?(actorId: string): Promise<string[]>;
   listMembers(organizationId: string): Promise<{ organization: OrganizationSnapshot; members: MembershipSnapshot[] }>;
 }
 
@@ -27,6 +28,7 @@ export interface MembershipAssertion {
 }
 
 export interface OrganizationMembershipProjection {
+  discoverOrganizationsForActor(actorId: string): Promise<{ complete: boolean }>;
   assert(input: { organizationId: string; actorId: string; requestStartedAt: Date }): Promise<MembershipAssertion>;
   isCurrentMember(input: { organizationId: string; actorId: string }): Promise<boolean>;
   touch(organizationId: string): void;
@@ -178,6 +180,27 @@ export function createOrganizationMembershipProjection(options: {
   };
 
   return {
+    async discoverOrganizationsForActor(actorId) {
+      if (closed || !options.upstream?.listOrganizationsForActor) return { complete: false };
+      let discovered: string[];
+      try {
+        discovered = await options.upstream.listOrganizationsForActor(actorId);
+      } catch (error: unknown) {
+        console.warn("[organizations] actor organization discovery failed", error instanceof Error ? error.name : "UnknownError");
+        return { complete: false };
+      }
+      const known = await options.repository.listOrganizationsForActorPage(actorId);
+      const organizationIds = [...new Set([
+        ...discovered,
+        ...known.organizations.map((entry) => entry.organization.organizationId),
+      ])];
+      let complete = known.complete;
+      for (let index = 0; index < organizationIds.length; index += MAX_REFRESH_CONCURRENCY) {
+        const results = await Promise.all(organizationIds.slice(index, index + MAX_REFRESH_CONCURRENCY).map((organizationId) => reconcile(organizationId)));
+        if (results.some((result) => !result.verified)) complete = false;
+      }
+      return { complete };
+    },
     async assert(input) {
       const current = now().getTime();
       const startedAt = Math.min(input.requestStartedAt.getTime(), current + CLOCK_SKEW_MS);

@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
+import { FundedAiChatAvailabilitySchema } from "#funded-ai";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -52,7 +53,7 @@ export const ProviderSourceReadinessSchema = z.object({
   checkedAt: IsoTimestampSchema.nullable(),
   staleAfter: IsoTimestampSchema.nullable(),
   action: z.enum(["none", "connect", "enter_api_key", "open_terminal", "retry", "contact_owner"]),
-  safeReason: z.enum(["auth", "timeout", "rate_limited", "provider_unavailable", "policy", "credit_required", "credit_reserved", "unknown"]).nullable(),
+  safeReason: z.enum(["auth", "timeout", "rate_limited", "provider_unavailable", "policy", "credit_required", "credit_reserved", "budget_exceeded", "unknown"]).nullable(),
 }).strict().superRefine((readiness, ctx) => {
   if (readiness.state === "ready" && readiness.action !== "none") {
     ctx.addIssue({ code: "custom", path: ["action"], message: "Ready sources cannot require an action" });
@@ -147,7 +148,14 @@ export const ProviderUsageSchema = z.discriminatedUnion("kind", [
     asOf: IsoTimestampSchema,
     credit: ProviderManagedCreditSchema,
     budget: ProviderManagedBudgetSchema,
+    /** Opt-in ordinary Chat projection; legacy aggregate credit remains unchanged. */
+    chatAvailability: FundedAiChatAvailabilitySchema.optional(),
   }).strict().superRefine((usage, ctx) => {
+    if (usage.chatAvailability && (usage.chatAvailability.asOf !== usage.asOf
+      || usage.chatAvailability.eligibleBalanceMicrousd > usage.credit.creditBalanceMicrousd
+      || usage.chatAvailability.availableBalanceMicrousd > usage.credit.remainingBalanceMicrousd)) {
+      ctx.addIssue({ code: "custom", path: ["chatAvailability"], message: "Chat funding must match the protected ledger observation" });
+    }
     if (usage.limitMicrousd !== usage.budget.monthlyBudgetMicrousd
       || usage.usedMicrousd !== usage.budget.settledThisMonthMicrousd
       || usage.remainingMicrousd !== Math.min(
@@ -220,8 +228,8 @@ export const ProviderAccessSourceSchema = z.object({
   }
   if (source.kind === "harness_profile"
     && (matrixFunded || source.accountId !== null
-      || (source.harness !== "pi" && source.harness !== "opencode" && source.harness !== "hermes")
-      || (source.harness === "hermes" && (source.providerId !== "openai-codex" || source.fundingKind !== "owner_account")))) {
+      || (source.harness !== "pi" && source.harness !== "opencode" && source.harness !== "hermes" && source.harness !== "openclaw")
+      || (source.harness === "hermes" && (!["openai-codex", "openai-api", "anthropic", "openrouter"].includes(source.providerId) || !["owner_account", "owner_api_key"].includes(source.fundingKind))))) {
     ctx.addIssue({ code: "custom", message: "Harness profiles require one exact harness and no Matrix funding or provider account" });
   }
   if (source.kind !== "harness_profile" && source.harness !== undefined) {
@@ -564,7 +572,7 @@ export const ProviderSettingsMutationSchema = z.discriminatedUnion("type", [
     route: ProviderConfigurableRouteSchema, accessSourceId: ReferenceIdSchema,
     accountId: ReferenceIdSchema.nullable(), enableHarness: z.boolean().optional() }).strict(),
   z.object({ type: z.literal("select_account"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accountId: ReferenceIdSchema }).strict(),
-  z.object({ type: z.literal("select_access_source"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accessSourceId: ReferenceIdSchema }).strict(),
+  z.object({ type: z.literal("select_access_source"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accessSourceId: ReferenceIdSchema, enableHarness: z.boolean().optional() }).strict(),
   z.object({ type: z.literal("start_login"), ...MutationBase, harnessInstanceId: ReferenceIdSchema,
     accountId: ReferenceIdSchema.nullable(), method: ProviderLoginMethodSchema }).strict(),
   z.object({ type: z.literal("logout_account"), ...MutationBase, accountId: ReferenceIdSchema }).strict(),
@@ -691,7 +699,8 @@ export function isNativeGenericHarnessCredentialRoute(
   > | null | undefined,
 ): boolean {
   return (harness.harness === "pi" || harness.harness === "opencode"
-      || (harness.harness === "hermes" && source?.providerId === "openai-codex"))
+      || (harness.harness === "hermes" && ["openai-codex", "openai-api", "anthropic", "openrouter"].includes(source?.providerId ?? ""))
+      || (harness.harness === "openclaw" && ["openai", "anthropic", "openrouter"].includes(source?.providerId ?? "")))
     && harness.route.kind === "configurable"
     && harness.accessSourceId !== null
     && source?.kind === "harness_profile"
@@ -720,7 +729,7 @@ export function isSupportedGenericHarnessCredentialRoute(
 ): boolean {
   if (harness.harness === "hermes" || harness.harness === "openclaw") {
     return source?.kind === "provider_account"
-      || (harness.harness === "hermes" && isNativeGenericHarnessCredentialRoute(harness, source));
+      || isNativeGenericHarnessCredentialRoute(harness, source);
   }
   if (harness.harness === "pi" || harness.harness === "opencode") {
     return isRunnableGenericHarnessCredentialRoute(harness, source);

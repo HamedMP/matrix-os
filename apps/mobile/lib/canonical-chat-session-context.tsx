@@ -12,11 +12,10 @@ import {
 import { useAuth } from "@clerk/clerk-expo";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { createCanonicalChatCacheSync } from "@/lib/canonical-chat-cache-sync";
+import { createCanonicalChatCacheSync, type CanonicalChatCacheSync } from "@/lib/canonical-chat-cache-sync";
 import { createCanonicalChatEventSource, type CanonicalChatInvalidation } from "@/lib/canonical-chat-events";
 import { mobileQueryKeys } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
-import { botStatusKnowledge } from "@/lib/queries/use-bot-chat";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 
 interface CanonicalChatSessionContextValue {
@@ -49,6 +48,11 @@ interface CanonicalChatSessionContextValue {
   setSelectedProjectId: (projectId: string | null) => void;
   /** Fires on any invalidation for the active chat or a full-refresh signal. */
   subscribe: (listener: (event: CanonicalChatInvalidation) => void) => () => void;
+  /**
+   * Whether the chat event stream is connected and delivering changes as they
+   * happen. While it is, queries rely on it instead of polling.
+   */
+  streamLive: boolean;
 }
 
 const CanonicalChatSessionContext = createContext<CanonicalChatSessionContextValue>({
@@ -61,6 +65,7 @@ const CanonicalChatSessionContext = createContext<CanonicalChatSessionContextVal
   selectedProjectId: null,
   setSelectedProjectId: () => {},
   subscribe: () => () => {},
+  streamLive: false,
 });
 
 export function useCanonicalChatSession(): CanonicalChatSessionContextValue {
@@ -71,10 +76,12 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [selectionOverride, setSelectionOverride] = useState<CanonicalChatModelSelection | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [streamLive, setStreamLive] = useState(false);
   const { getToken, userId } = useAuth();
   const { computer } = useCanonicalChats();
   const queryClient = useQueryClient();
   const eventSourceRef = useRef<ReturnType<typeof createCanonicalChatEventSource> | null>(null);
+  const cacheSyncRef = useRef<CanonicalChatCacheSync | null>(null);
   const computerKey = computer ? `${computer.handle}:${computer.runtimeSlot}` : null;
 
   useEffect(() => {
@@ -84,9 +91,11 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       getToken: async () => getToken(),
     });
     eventSourceRef.current = source;
+    source.subscribeLive(setStreamLive);
     source.connect();
     return () => {
       eventSourceRef.current = null;
+      // Also reports the stream as no longer live before dropping its listeners.
       source.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,31 +104,30 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   useEffect(() => {
     const source = eventSourceRef.current;
     if (!source) return;
-    const uid = userId ?? "signed-out";
-    const key = computerKey ?? "none";
     const sync = createCanonicalChatCacheSync({
       queryClient,
-      chatsKey: mobileQueryKeys.canonicalChats(uid, key),
-      activeChatId,
-      detailKey: mobileQueryKeys.canonicalChatDetail(uid, key, activeChatId ?? "none"),
+      chatsKey: mobileQueryKeys.canonicalChats(userId ?? "signed-out", computerKey ?? "none"),
     });
-    const botKey = activeChatId && computer
-      ? mobileQueryKeys.botChat(uid, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, activeChatId)
-      : null;
-    const unsubscribe = source.subscribe(event => {
-      sync.handle(event);
-      // A chat known to be ordinary, or on a computer without bot status, has
-      // no bot state its events could change. One whose status is held, or
-      // has not been read yet, is read again.
-      if (botKey && (event.type === "chat.full_refresh" || event.chatId === activeChatId)) {
-        const knowledge = botStatusKnowledge(queryClient.getQueryState(botKey));
-        if (knowledge === "bot" || knowledge === "unknown") void queryClient.invalidateQueries({ queryKey: botKey });
-      }
-    });
+    cacheSyncRef.current = sync;
+    const unsubscribe = source.subscribe(sync.handle);
     return () => {
       unsubscribe();
+      cacheSyncRef.current = null;
       sync.dispose();
     };
+  }, [computerKey, userId, queryClient]);
+
+  // Separate from the effect above so that opening another chat does not
+  // rebuild the sync, which would drop a chat-list refresh it still owes.
+  useEffect(() => {
+    const uid = userId ?? "signed-out";
+    cacheSyncRef.current?.setActiveChat(activeChatId ? {
+      chatId: activeChatId,
+      detailKey: mobileQueryKeys.canonicalChatDetail(uid, computerKey ?? "none", activeChatId),
+      botKey: computer
+        ? mobileQueryKeys.botChat(uid, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, activeChatId)
+        : null,
+    } : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChatId, computerKey, userId, queryClient]);
 
@@ -156,6 +164,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       selectedProjectId,
       setSelectedProjectId,
       subscribe,
+      streamLive,
     }),
     [
       activeChatId,
@@ -165,6 +174,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       selectionOverride,
       selectedProjectId,
       subscribe,
+      streamLive,
     ],
   );
 

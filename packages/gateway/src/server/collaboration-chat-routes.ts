@@ -98,6 +98,9 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
           ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
           ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
+          ...(gatewayCollaboration?.projectChatAssignments
+            ? { projectAssignments: gatewayCollaboration.projectChatAssignments }
+            : {}),
         })
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
@@ -112,6 +115,8 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
       memory: botServices.memory,
       grants: botServices.grants,
       authority: botServices.authority,
+      providerConnections: botServices.providerConnections,
+      chatgptPlanPeers: botServices.chatgptPlanPeers,
     } : {}),
     ...(botServices && chatRepository && canonicalChatOrchestrator ? {
       admitContinuation: createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }),

@@ -36,6 +36,8 @@ export function managedChatInstances(
       displayName: "Matrix AI",
       connectionLabel: "Matrix AI",
       connectionState: available ? "ready" as const : fresh
+        && (source.safeReason === "budget_exceeded" || instance.readiness.safeReason === "budget_exceeded")
+        ? "budget_exceeded" as const : fresh
         && (source.safeReason === "credit_reserved" || instance.readiness.safeReason === "credit_reserved")
         ? "credit_reserved" as const : fresh
           && (source.safeReason === "credit_required" || instance.readiness.safeReason === "credit_required")
@@ -67,6 +69,13 @@ export function managedChatInstances(
   });
 }
 
+/** Both managed Pi sources use the same Chat permission and workspace policy. */
+export const MANAGED_PI_CHAT_SUPPORTS: CanonicalProviderInstanceDescriptor["supports"] = {
+  rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: [], tools: [],
+  approvals: true, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
+  permissionModes: ["supervised", "full_access"],
+};
+
 /** The owned Pi worker has its own identity; old kernel checkpoints remain unchanged. */
 export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefined, now = Date.now()): Array<Omit<CanonicalProviderInstanceDescriptor, "catalogRevision">> {
   if (!snapshot) return [];
@@ -87,7 +96,8 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
   const unavailableModels = discoverable.filter(model => !eligible.some(ready => ready.id === model.id));
   const fundingSources = sources.filter(source => unavailableModels.some(model => source.eligibleModelIds.includes(model.id)
     && model.eligibleAccessSourceIds.includes(source.id)));
-  const fundingState = fundingSources.some(source => source.safeReason === "credit_reserved") ? "credit_reserved" as const
+  const fundingState = fundingSources.some(source => source.safeReason === "budget_exceeded") ? "budget_exceeded" as const
+    : fundingSources.some(source => source.safeReason === "credit_reserved") ? "credit_reserved" as const
     : fundingSources.some(source => source.safeReason === "credit_required") ? "credit_required" as const : "unavailable" as const;
   return [{
     id: MANAGED_PI_INSTANCE_ID, driverKind: "matrix_pi", displayName: "Matrix AI", connectionLabel: "Matrix AI",
@@ -99,9 +109,7 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
         capabilities: ["tools" as const], supportsVision: false, supportsToolUse: true }))],
     options: [], skills: [], commands: [],
     setupActions: available ? [] : [{ id: "matrix_ai_settings", kind: "open_settings" as const, label: "Agents & providers" }],
-    supports: { rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: [], tools: [],
-      approvals: true, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
-      permissionModes: ["supervised", "full_access"] },
+    supports: MANAGED_PI_CHAT_SUPPORTS,
     ...(available ? { defaultSelection: { instanceId: MANAGED_PI_INSTANCE_ID, model: eligible[0]!.id } } : {}),
   }];
 }

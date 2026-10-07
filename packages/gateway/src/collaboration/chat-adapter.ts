@@ -102,7 +102,7 @@ export class CollaborationChatAdapter {
         .where("owner_id", "=", context.ownerId)
         .forUpdate()
         .executeTakeFirst();
-      if (!chat || !bindingMatches(chat.collaboration, context.scopeId)) {
+      if (!chat || !await chatBindingMatches(trx, context, chat.collaboration)) {
         throw new CollaborationAuthorizationError("unavailable", "Shared Chat binding is unavailable");
       }
       const latest = await trx.selectFrom("chat_messages")
@@ -296,16 +296,17 @@ export class CollaborationChatAdapter {
       const scope = await lockScope(trx, current);
       await reauthorizeRead(trx, current, this.now());
       requireCurrentEpoch(scope, current, await membershipEpoch(trx, current));
-      return trx.selectFrom("chats")
+      const chat = await trx.selectFrom("chats")
         .select(["id", "title", "lifecycle", "revision", "message_count", "last_message_preview", "collaboration"])
         .where("id", "=", current.resourceId)
         .where("owner_type", "=", "personal")
         .where("owner_id", "=", current.ownerId)
         .executeTakeFirst();
+      if (!chat || !await chatBindingMatches(trx, current, chat.collaboration)) {
+        throw new CollaborationAuthorizationError("unavailable", "Shared Chat is unavailable");
+      }
+      return chat;
     });
-    if (!chat || !bindingMatches(chat.collaboration, current.scopeId)) {
-      throw new CollaborationAuthorizationError("unavailable", "Shared Chat is unavailable");
-    }
     return CollaborationChatSchema.parse({
       id: chat.id,
       scopeId: current.scopeId,
@@ -367,7 +368,7 @@ export class CollaborationChatAdapter {
         .where("owner_type", "=", "personal")
         .where("owner_id", "=", context.ownerId)
         .executeTakeFirst();
-      if (!chat || !bindingMatches(chat.collaboration, context.scopeId)) {
+      if (!chat || !await chatBindingMatches(trx, context, chat.collaboration)) {
         throw new CollaborationAuthorizationError("unavailable", "Shared Chat binding is unavailable");
       }
       if (readThroughSeq !== 0) {
@@ -419,7 +420,7 @@ export class CollaborationChatAdapter {
         .where("owner_type", "=", "personal")
         .where("owner_id", "=", context.ownerId)
         .executeTakeFirst();
-      if (!chat || !bindingMatches(chat.collaboration, context.scopeId)) {
+      if (!chat || !await chatBindingMatches(trx, context, chat.collaboration)) {
         throw new CollaborationAuthorizationError("unavailable", "Shared Chat binding is unavailable");
       }
       if (readThroughSeq !== undefined) {
@@ -640,6 +641,25 @@ function purposeForRole(role: SharedChatMessage["role"]): SharedChatMessage["pur
 function bindingMatches(value: unknown, scopeId: string): boolean {
   const parsed = parseJson<unknown>(value);
   return typeof parsed === "object" && parsed !== null && "scopeId" in parsed && parsed.scopeId === scopeId;
+}
+
+async function chatBindingMatches(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  context: AuthorizedCollaborationContext,
+  directBinding: unknown,
+): Promise<boolean> {
+  if (bindingMatches(directBinding, context.scopeId)) return true;
+  const inherited = await trx.selectFrom("collaboration_resource_bindings")
+    .select("id")
+    .where("project_scope_id", "=", context.membershipScopeId)
+    .where("resource_scope_id", "=", context.scopeId)
+    .where("resource_kind", "=", "chat")
+    .where("resource_id", "=", context.resourceId)
+    .where("authority_runtime_id", "=", context.authorityRuntimeId)
+    .where("authority_generation", "=", context.authorityGeneration)
+    .where("readiness", "=", "ready")
+    .executeTakeFirst();
+  return Boolean(inherited);
 }
 
 function parseJson<T>(value: unknown): T {

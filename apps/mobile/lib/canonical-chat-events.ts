@@ -23,6 +23,10 @@ export type CanonicalChatInvalidation =
 
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
+// A connection has to hold this long before the next drop reconnects at the
+// base delay again. Attaching alone is not proof it works: a stream that is
+// accepted and then cut straight away would otherwise be reopened every second.
+const STABLE_CONNECTION_MS = 10_000;
 // The gateway writes a heartbeat every 15s, so this much silence means the
 // connection is dead even if the socket never reported it.
 const INACTIVITY_TIMEOUT_MS = 45_000;
@@ -35,6 +39,12 @@ const MAX_LISTENERS = 50;
 
 export interface CanonicalChatEventSource {
   subscribe(listener: (event: CanonicalChatInvalidation) => void): () => void;
+  /**
+   * Reports `true` once the stream has caught up and is delivering changes as
+   * they happen, and `false` when that connection is lost. Consumers use it to
+   * fall back to polling only while the stream is down.
+   */
+  subscribeLive(listener: (live: boolean) => void): () => void;
   connect(): void;
   disconnect(): void;
 }
@@ -53,6 +63,9 @@ export function createCanonicalChatEventSource(options: {
   getToken: () => Promise<string | null>;
 }): CanonicalChatEventSource {
   const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
+  const liveListeners = new Set<(live: boolean) => void>();
+  let live = false;
+  let attachedAt: number | undefined;
   let streamUrl = "";
   let connection: AbortController | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -68,6 +81,21 @@ export function createCanonicalChatEventSource(options: {
       } catch (error: unknown) {
         console.warn(
           "[canonical-chat] event listener failed",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+      }
+    }
+  }
+
+  function setLive(next: boolean) {
+    if (live === next) return;
+    live = next;
+    for (const listener of liveListeners) {
+      try {
+        listener(next);
+      } catch (error: unknown) {
+        console.warn(
+          "[canonical-chat] stream state listener failed",
           error instanceof Error ? error.name : "UnknownError",
         );
       }
@@ -90,6 +118,9 @@ export function createCanonicalChatEventSource(options: {
     connection = null;
     clearTimeout(inactivityTimer);
     current.abort();
+    setLive(false);
+    if (attachedAt !== undefined && Date.now() - attachedAt >= STABLE_CONNECTION_MS) reconnectAttempts = 0;
+    attachedAt = undefined;
     scheduleReconnect();
   }
 
@@ -100,10 +131,11 @@ export function createCanonicalChatEventSource(options: {
 
   /**
    * One SSE record: an optional `id:` line plus a `data:` line holding a JSON
-   * frame. `replay.missedEvents` is set while the connection's opening replay
-   * may have skipped events, so the end of the replay can reconcile.
+   * frame. Every connection opens with a replay of past events, which ends
+   * with `chat.replay.end`. `replay.missedEvents` is set while that replay
+   * replayed or skipped events, so its end can reconcile once from REST.
    */
-  function handleRecord(record: string, replay: { missedEvents: boolean }) {
+  function handleRecord(record: string, replay: { complete: boolean; missedEvents: boolean }) {
     const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice("data:".length);
     if (!data) return; // Heartbeats are comment-only records.
 
@@ -125,7 +157,7 @@ export function createCanonicalChatEventSource(options: {
 
     const frame = parsed.data;
     if (frame.type === "chat.stream.attached") {
-      reconnectAttempts = 0;
+      attachedAt = Date.now();
     } else if (frame.type === "chat.replay.gap") {
       // The server has more past events than it replays, so it skipped them.
       // That can happen on a first connection too, not only after a resume.
@@ -134,8 +166,17 @@ export function createCanonicalChatEventSource(options: {
       if (frame.nextCursor !== undefined) lastCursor = frame.nextCursor;
       if (replay.missedEvents) emit({ type: "chat.full_refresh" });
       replay.missedEvents = false;
+      replay.complete = true;
+      setLive(true);
     } else if (frame.type === "chat.event" || frame.type === "chat.content") {
       lastCursor = Math.max(lastCursor ?? 0, frame.event.cursor);
+      if (!replay.complete && frame.type === "chat.event") {
+        // Replayed events only say that chats changed in the past. The replay
+        // can hold a hundred of them, so they become the one refresh at its
+        // end instead of a refetch each -- as desktop's event source does.
+        replay.missedEvents = true;
+        return;
+      }
       emit({
         type: "chat.changed",
         chatId: frame.event.chatId,
@@ -154,7 +195,7 @@ export function createCanonicalChatEventSource(options: {
     connection = current;
     // Changes committed while we were disconnected may not all be replayed in
     // order, so every resume reconciles once from REST when its replay ends.
-    const replay = { missedEvents: lastCursor !== undefined };
+    const replay = { complete: false, missedEvents: lastCursor !== undefined };
     // Also bounds the wait for response headers, not just gaps between events.
     watchForSilence(current);
     try {
@@ -209,9 +250,18 @@ export function createCanonicalChatEventSource(options: {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    subscribeLive(listener) {
+      if (liveListeners.size >= MAX_LISTENERS) {
+        const oldest = liveListeners.values().next().value;
+        if (oldest) liveListeners.delete(oldest);
+        console.warn("[canonical-chat] stream state listener cap reached, evicting oldest subscriber");
+      }
+      liveListeners.add(listener);
+      return () => liveListeners.delete(listener);
+    },
     connect() {
       try {
-        streamUrl = buildGatewayRequestUrl(options.gatewayUrl, "/api/chats/events");
+        streamUrl = buildGatewayRequestUrl(options.gatewayUrl, "/api/chats/events", { fundingVersion: "1" });
         assertSecureTokenTransport(streamUrl);
       } catch (error: unknown) {
         console.warn(
@@ -229,7 +279,9 @@ export function createCanonicalChatEventSource(options: {
       clearTimeout(inactivityTimer);
       connection?.abort();
       connection = null;
+      setLive(false);
       listeners.clear();
+      liveListeners.clear();
     },
   };
 }

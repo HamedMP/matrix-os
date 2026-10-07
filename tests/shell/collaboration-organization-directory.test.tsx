@@ -19,7 +19,10 @@ import {
 
 const harness = vi.hoisted(() => ({ createApi: null as null | ((baseUrl: string) => unknown) }));
 vi.mock("@/hooks/useBrowserOrigin", () => ({ useBrowserOrigin: () => "https://app.matrix-os.com" }));
-vi.mock("@/lib/collaboration", () => ({ createShellCollaborationApi: (baseUrl: string) => harness.createApi!(baseUrl) }));
+vi.mock("@/lib/collaboration", () => ({
+  createShellCollaborationApi: (baseUrl: string) => harness.createApi!(baseUrl),
+  releaseShellCollaborationApi: vi.fn(),
+}));
 
 import { OrganizationDrivesView } from "../../shell/src/components/file-browser/OrganizationDrivesView.js";
 
@@ -34,12 +37,23 @@ const ownerScope = {
 };
 
 function organizationRoutes() {
-  const record = (id: string) => ({ actorId: id, role: id === actorId ? "org:admin" : "org:member", sourceUpdatedAt: new Date("2026-09-20T12:00:00.000Z") });
+  // Clerk profiles as the platform projects them: a full name and email, an email only, or nothing.
+  const profiles: Record<string, { displayName: string | null; email: string | null }> = {
+    user_member_00: { displayName: "Ada Lovelace", email: "ada@example.com" },
+    user_member_01: { displayName: null, email: "lin@example.com" },
+  };
+  const record = (id: string) => ({
+    actorId: id, role: id === actorId ? "org:admin" : "org:member", sourceUpdatedAt: new Date("2026-09-20T12:00:00.000Z"),
+    displayName: profiles[id]?.displayName ?? null, email: profiles[id]?.email ?? null, imageUrl: null,
+  });
   const repository = {
     listOrganizationsForActor: async (id: string) => memberIds.includes(id) ? [{
-      organization: { organizationId, name: "Direct org", slug: null, aiSubmission: "members", membershipEpoch: 4 },
+      organization: { organizationId, name: "Direct org", slug: "direct-org", aiSubmission: "members", membershipEpoch: 4 },
       membership: record(id),
     }] : [],
+    listMemberCounts: async (organizationIds: string[]) => new Map(
+      organizationIds.map((id) => [id, id === organizationId ? memberIds.length : 0]),
+    ),
     listMembers: async (_organizationId: string, page: { limit: number; afterActorId?: string }) => {
       const remaining = memberIds.filter((id) => !page.afterActorId || id > page.afterActorId);
       const members = remaining.slice(0, page.limit).map(record);
@@ -48,7 +62,10 @@ function organizationRoutes() {
   };
   return createPlatformOrganizationRoutes({
     repository: repository as never,
-    projection: { isCurrentMember: async (input: { organizationId: string; actorId: string }) => input.organizationId === organizationId && memberIds.includes(input.actorId) } as never,
+    projection: {
+      discoverOrganizationsForActor: async () => ({ complete: true }),
+      isCurrentMember: async (input: { organizationId: string; actorId: string }) => input.organizationId === organizationId && memberIds.includes(input.actorId),
+    } as never,
     controlAuthority: {} as never,
     // The platform resolves the actor from the credential the client sent.
     resolveActor: async (c: Context) => c.req.header("authorization") === ACTOR_TOKEN ? actorId : null,
@@ -97,7 +114,11 @@ describe("organization directory reads through the direct API", () => {
     await waitFor(() => expect(screen.queryByText("Loading organization members…")).not.toBeInTheDocument());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     const audience = screen.getByRole("combobox", { name: "Share with" });
-    expect(within(audience).getByRole("option", { name: "user_member_00" })).toBeInTheDocument();
+    // People are shown by name and email, then email alone, then a short id; never a raw id when a name exists.
+    expect(within(audience).getByRole("option", { name: "Ada Lovelace · ada@example.com" })).toBeInTheDocument();
+    expect(within(audience).getByRole("option", { name: "lin@example.com" })).toBeInTheDocument();
+    expect(within(audience).getByRole("option", { name: "user_member_02" })).toBeInTheDocument();
+    expect(within(audience).queryByRole("option", { name: "user_member_00" })).not.toBeInTheDocument();
     expect(within(audience).queryByRole("option", { name: actorId })).not.toBeInTheDocument();
     expect(within(audience).queryByRole("option", { name: "user_member_53" })).not.toBeInTheDocument();
 

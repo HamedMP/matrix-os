@@ -13,7 +13,7 @@ jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn()
 
 const mockFetch = streamingFetch as unknown as jest.Mock;
 const GATEWAY_URL = "https://example.test/vm/alice?runtime=primary";
-const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary";
+const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary&fundingVersion=1";
 const createdAt = "2026-09-06T00:00:00.000Z";
 
 const chat = {
@@ -129,10 +129,45 @@ describe("createCanonicalChatEventSource", () => {
     const { source, events } = connectedSource();
     await settle();
 
-    stream.emit(sse({ type: "chat.event", event: { ...event, eventType: "chat.deleted" } }));
+    stream.emit(
+      sse({ type: "chat.stream.attached" })
+        + sse({ type: "chat.replay.end" })
+        + sse({ type: "chat.event", event: { ...event, eventType: "chat.deleted" } }),
+    );
     await settle();
 
     expect(events).toEqual([{ type: "chat.changed", chatId: chat.id, cursor: 7, eventType: "chat.deleted" }]);
+    source.disconnect();
+  });
+
+  it("collapses the events replayed on connect into one full refresh", async () => {
+    const stream = streamingResponse();
+    mockFetch.mockResolvedValue(stream.response);
+    const { source, events } = connectedSource();
+    await settle();
+
+    stream.emit(
+      sse({ type: "chat.stream.attached" })
+        + [5, 6, 7].map((cursor) => sse({ type: "chat.event", event: { ...event, cursor } })).join("")
+        + sse({ type: "chat.replay.end", nextCursor: 7 }),
+    );
+    await settle();
+
+    expect(events).toEqual([{ type: "chat.full_refresh" }]);
+    source.disconnect();
+  });
+
+  it("resumes after the newest replayed event", async () => {
+    const first = streamingResponse();
+    mockFetch.mockResolvedValueOnce(first.response).mockResolvedValueOnce(streamingResponse().response);
+    const { source } = connectedSource();
+    await settle();
+
+    first.emit(sse({ type: "chat.stream.attached" }) + sse({ type: "chat.event", event: { ...event, cursor: 12 } }));
+    first.close();
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    expect(mockFetch.mock.calls[1][1].headers["Last-Event-ID"]).toBe("12");
     source.disconnect();
   });
 
@@ -194,6 +229,74 @@ describe("createCanonicalChatEventSource", () => {
     await jest.advanceTimersByTimeAsync(47_000);
 
     expect(mockFetch).toHaveBeenCalledTimes(2);
+    source.disconnect();
+  });
+
+  it("backs off when the stream keeps dropping right after it attaches", async () => {
+    mockFetch.mockImplementation(async () => {
+      const stream = streamingResponse();
+      stream.emit(sse({ type: "chat.stream.attached" }) + sse({ type: "chat.replay.end" }));
+      stream.close();
+      return stream.response;
+    });
+    const { source } = connectedSource();
+    await settle();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    // Attaching is not proof the connection works: the wait keeps doubling.
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+
+    await jest.advanceTimersByTimeAsync(3_000);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
+    source.disconnect();
+  });
+
+  it("reconnects promptly again once a connection has held", async () => {
+    const streams = [streamingResponse(), streamingResponse(), streamingResponse()];
+    for (const stream of streams) mockFetch.mockResolvedValueOnce(stream.response);
+    const { source } = connectedSource();
+    await settle();
+
+    streams[0]!.close();
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    streams[1]!.emit(sse({ type: "chat.stream.attached" }) + sse({ type: "chat.replay.end" }));
+    await jest.advanceTimersByTimeAsync(20_000);
+    streams[1]!.close();
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    source.disconnect();
+  });
+
+  it("reports when the stream is caught up and when it is lost", async () => {
+    const stream = streamingResponse();
+    mockFetch.mockResolvedValue(stream.response);
+    const { source } = connectedSource();
+    const live: boolean[] = [];
+    source.subscribeLive((next) => live.push(next));
+    await settle();
+
+    stream.emit(sse({ type: "chat.stream.attached" }));
+    await settle();
+    expect(live).toEqual([]);
+
+    stream.emit(sse({ type: "chat.replay.end" }));
+    await settle();
+    expect(live).toEqual([true]);
+
+    stream.close();
+    await settle();
+    expect(live).toEqual([true, false]);
     source.disconnect();
   });
 

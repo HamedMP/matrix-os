@@ -1,5 +1,6 @@
 /** Owner-only exact resource identity resolution before a normal Share action. */
 import {
+  CollaborationOwnerCatalogLookupResponseSchema,
   CollaborationOwnerCatalogResolveRequestSchema,
   CollaborationOwnerCatalogResolveResponseSchema,
   CollaborationRuntimeIdSchema,
@@ -12,6 +13,27 @@ import {
 } from "./route-support.js";
 
 export function registerOwnerCatalogRoutes(routes: Hono, options: CollaborationRouteOptions): void {
+  routes.post("/api/collaboration/runtimes/:runtimeId/catalog/lookup", async (c) => handle(c, async () => {
+    const { value, bytes } = await readJson(c);
+    const input = CollaborationOwnerCatalogResolveRequestSchema.parse(value);
+    const proof = await ownerRuntimeIdentity(options, c, bytes,
+      CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), input.organizationId);
+    const resources = options.resources;
+    if (!resources?.driver.inspect || !resources.driver.resolveOwnerNamespace) {
+      throw new CollaborationAuthorizationError("unavailable", "Resource catalog is unavailable");
+    }
+    const resolved = await resources.driver.resolveOwnerNamespace({ ownerId: proof.ownerId, kind: input.kind, path: input.path });
+    const namespace = { ownerId: proof.ownerId, projectId: resolved.projectId };
+    const existing = await resources.catalog.getLiveByPath({ ...namespace, kind: input.kind, path: resolved.path });
+    if (!existing) return c.json(CollaborationOwnerCatalogLookupResponseSchema.parse({ entry: null }));
+    const { incarnation } = await resources.driver.inspect({ ...namespace, kind: input.kind, path: resolved.path });
+    const entry = existing.incarnation === incarnation ? {
+      id: existing.id, kind: existing.kind, path: input.path,
+      incarnation: existing.incarnation, revision: String(existing.revision),
+    } : null;
+    return c.json(CollaborationOwnerCatalogLookupResponseSchema.parse({ entry }));
+  }));
+
   routes.post("/api/collaboration/runtimes/:runtimeId/catalog/resolve", async (c) => handle(c, async () => {
     const { value, bytes } = await readJson(c);
     const input = CollaborationOwnerCatalogResolveRequestSchema.parse(value);

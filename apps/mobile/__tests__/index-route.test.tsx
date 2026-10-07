@@ -170,7 +170,9 @@ it("shows the onboarding phase when the computer is not ready and nothing is rem
   await flush();
 
   expect(mockReplace).not.toHaveBeenCalled();
-  expect(screen.getByText("Choose your plan")).toBeTruthy();
+  // The gate's own screen for that phase, whatever its wording.
+  expect(screen.getByTestId("journey-refresh")).toBeTruthy();
+  expect(screen.queryByTestId("journey-loading")).toBeNull();
   expect(await wasJourneyConnectable("user_a")).toBe(false);
 });
 

@@ -38,7 +38,7 @@ async function requestJson(input: {
       && value.error && typeof value.error === "object" && "code" in value.error
       ? value.error.code : null;
     throw new ProviderWorkflowClientError(response.status === 401 ? "unauthorized" : response.status === 403 ? "forbidden"
-      : response.status === 400 && code === "rejected" ? "rejected" : "unavailable");
+      : response.status === 404 ? "unsupported" : response.status === 400 && code === "rejected" ? "rejected" : "unavailable");
   }
   return value;
 }
