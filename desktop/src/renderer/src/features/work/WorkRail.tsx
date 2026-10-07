@@ -1,15 +1,17 @@
 import {
   mergeCanonicalChatRecord,
+  notifyCollaborationDiscoveryChanged,
   chatReadAction,
   mergeChatReadState,
   useBotConversationSummaries,
+  useChatSearchShortcut,
 } from "@matrix-os/ui";
 import type { StartAgentChat } from "@matrix-os/ui";
 import { ChatAgentsRailSection, useChatAgentsNavigation } from "@matrix-os/ui";
 import { useUi } from "../../stores/ui";
 import { useTabs } from "../../stores/tabs";
 import { type CanonicalChatRecord } from "@matrix-os/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatClient,
   CanonicalChatEventSource,
@@ -32,6 +34,7 @@ import { WorkRailChatRow } from "./work-rail/WorkRailChatRow";
 import { WorkRailHeader, WorkRailSearchControls } from "./work-rail/WorkRailHeader";
 import { WorkRailProjectGroup } from "./work-rail/WorkRailProjectGroup";
 import { SharedWithMeRailRow } from "./work-rail/SharedWithMeRailRow";
+import { partitionSharedProjects, useSharedProjects } from "./work-rail/SharedWorkRailProjects";
 export { SharedWithMeRailRow } from "./work-rail/SharedWithMeRailRow";
 import { WorkRailGroups, type WorkRailSectionKey } from "./work-rail/WorkRailGroups";
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
@@ -47,6 +50,9 @@ export function WorkRail({
   projectedChatTitles,
   projects,
   active,
+  searchShortcutActive = active,
+  newChatShortcutActive = false,
+  visible = active,
   activeChatId,
   activeProjectSlug,
   onNewGlobalChat: newGlobalChat,
@@ -69,6 +75,9 @@ export function WorkRail({
   projectedChatTitles?: CanonicalChatTitleProjection[];
   projects: Project[];
   active: boolean;
+  searchShortcutActive?: boolean;
+  newChatShortcutActive?: boolean;
+  visible?: boolean;
   activeChatId?: string;
   activeProjectSlug?: string;
   onNewGlobalChat: () => void;
@@ -120,6 +129,8 @@ export function WorkRail({
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const openSearch = useCallback(() => setSearchOpen(true), []);
+  useChatSearchShortcut(searchShortcutActive && Boolean(client), openSearch);
   const [sharedWithMeOpen, setSharedWithMeOpen] = useState(false);
   const [sharedProjectRevealRequest, setSharedProjectRevealRequest] = useState<{
     scopeId: string;
@@ -145,6 +156,14 @@ export function WorkRail({
   const projectGroups = useMemo(
     () => [...model.pinnedProjects, ...model.projects],
     [model],
+  );
+  const discoveredSharedProjects = useSharedProjects();
+  const sharedProjects = useMemo(
+    () => partitionSharedProjects(
+      discoveredSharedProjects,
+      new Set(projects.flatMap((project) => project.id ? [project.id] : [])),
+    ),
+    [discoveredSharedProjects, projects],
   );
   const projectSharing = useDesktopProjectSharingContext(active);
   const [shareProjectTarget, setShareProjectTarget] = useState<{
@@ -216,6 +235,10 @@ export function WorkRail({
     };
     const subscription = eventSource?.subscribe((event) => {
       if (event.type === "chat.changed" && event.eventType === "run.message") return;
+      if (event.type === "chat.changed"
+        && ["chat.created", "chat.updated", "chat.deleted"].includes(event.eventType)) {
+        notifyCollaborationDiscoveryChanged();
+      }
       void refresh();
     });
     void refresh();
@@ -366,6 +389,7 @@ export function WorkRail({
     return (
       <WorkRailOrderItem key={group.id} id={group.id} kind="project" group={group.project.pinned ? "pinned-projects" : "projects"}><WorkRailProjectGroup
         group={group}
+        shared={sharedProjects.ownedSharedProjectIds.has(group.id)}
         moveItems={moveItems}
         movingChatId={movingChatId}
         expanded={expanded}
@@ -419,22 +443,24 @@ export function WorkRail({
     onPin={() => updatePinned(record)} onDelete={() => { setDeleteChatError(null); setDeleteChatTarget(record); }} /></WorkRailOrderItem>;
 
   return (
-    <WorkRailOrderContext.Provider value={{manual:order.mode === "manual",move:order.move,scopeKey:order.scopeKey}}><nav
+    <WorkRailOrderContext.Provider value={{manual:true,move:order.move,scopeKey:order.scopeKey}}><nav
       aria-label="Chat navigation"
-      className={`flex min-h-0 shrink-0 flex-col gap-0.5 overflow-hidden border-r py-2 ${className}`}
+      className={`matrix-chat-work-rail flex min-h-0 shrink-0 flex-col gap-0.5 overflow-hidden border-r pb-2 pt-3 ${className}`}
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
     >
       <WorkRailHeader
+        shortcutAvailable={newChatShortcutActive}
         onNewChat={onNewGlobalChat}
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
       <WorkRailScrollArea>
-      <WorkRailSearchControls onSearch={() => setSearchOpen(true)} sortMode={order.mode} onSortChange={order.setMode} />
+      <WorkRailSearchControls onSearch={openSearch} />
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
-      <ChatAgentsRailSection activeChatId={activeChatId} client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
+      <ChatAgentsRailSection visible={visible} activeChatId={activeChatId} client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
+        sharedProjects={sharedProjects.receivedProjects}
         onOpenBotChat={onOpenBotChat ? (chatId) => { agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
         revealSharedProjectRequest={sharedProjectRevealRequest}
         organizationDrives={<OrganizationDrivesRail active={active} chats={ordinaryRecords} client={client?.agents} onNewChat={onStartAgentChat} onSelectChat={onSelectChat} activeChatId={activeChatId} />} />

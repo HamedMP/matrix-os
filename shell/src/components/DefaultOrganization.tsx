@@ -7,6 +7,7 @@ import {
   OrganizationStateProvider,
   type OrganizationMembershipState,
 } from "@/lib/collaboration-organization-state";
+import { readOrganizationSelection } from "@/lib/organization-selection";
 
 /**
  * Activates the member's oldest organization when they have none active.
@@ -31,7 +32,8 @@ export function DefaultOrganization({ children }: { children?: ReactNode }) {
   // render, and the next account in this tab must not inherit the previous one's attempt.
   const attempted = useRef<string | null>(null);
   const [failedActivation, setFailedActivation] = useState<string | null>(null);
-  const needsDefault = organizationLoaded && isLoaded && !organization && Boolean(userId);
+  const intentionallyPersonal = readOrganizationSelection(userId ?? null) === "personal";
+  const needsDefault = organizationLoaded && isLoaded && !organization && Boolean(userId) && !intentionallyPersonal;
   const hasNextPage = userMemberships?.hasNextPage ?? false;
   const isFetching = userMemberships?.isFetching ?? false;
   const fetchNext = userMemberships?.fetchNext;
@@ -49,6 +51,7 @@ export function DefaultOrganization({ children }: { children?: ReactNode }) {
     if (!userId || !organizationLoaded || !isLoaded || !complete) {
       return { status: "loading", organizationId: null };
     }
+    if (intentionallyPersonal) return { status: "none", organizationId: null };
     if ((memberships?.length ?? 0) === 0) return { status: "none", organizationId: null };
     if (failedActivation === activation) return { status: "unavailable", organizationId: null };
     // A membership exists, but Clerk has not finished making the oldest one active.

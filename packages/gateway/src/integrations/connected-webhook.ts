@@ -4,7 +4,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 import type { PlatformDb } from '../platform-db.js';
 import type { PipedreamConnectClient } from './pipedream.js';
-import { getService } from './registry.js';
+import { getServiceByPipedreamApp } from './registry.js';
 import type { IntegrationBroadcast } from './routes.js';
 
 export interface VerifiedConnectedWebhook {
@@ -40,19 +40,20 @@ export function registerConnectedIntegrationWebhook(app:Hono,options:{
     const parsed=bodySchema.safeParse(body);
     if(!parsed.success)return c.json({error:'Invalid webhook payload'},400);
     const {external_user_id,account_id,app:appName,label,email,scopes}=parsed.data;
-    if(getService(appName)?.connectorKind!=='pipedream')return c.json({error:'Unsupported app'},400);
+    const service = getServiceByPipedreamApp(appName);
+    if(!service)return c.json({error:'Unsupported app'},400);
     try {
       const user=await options.db.getUserByPipedreamExternalId(external_user_id);
       if(!user && !options.verifiedConnectedWebhook)return c.json({error:'Unknown user'},400);
       const persist=async()=>{
         if(!user)throw Error('Integration owner unavailable');
         const explicitLabel=options.consumePendingLabel(`${external_user_id}:${appName}`);
-        const resolvedLabel=explicitLabel??label??appName;
-        const resolvedEmail=email??await options.resolveAccountEmail(external_user_id,account_id,appName);
-        const row=await options.db.connectService({userId:user.id,service:appName,pipedreamAccountId:account_id,
+        const resolvedLabel=explicitLabel??label??service.id;
+        const resolvedEmail=email??await options.resolveAccountEmail(external_user_id,account_id,service.id);
+        const row=await options.db.connectService({userId:user.id,service:service.id,pipedreamAccountId:account_id,
           accountLabel:resolvedLabel,accountEmail:resolvedEmail,scopes:scopes??[]});
         await options.applyExplicitReconnectLabel(row,explicitLabel);
-        if(row.inserted)options.emit({type:'integration:connected',service:appName,accountLabel:resolvedLabel});
+        if(row.inserted)options.emit({type:'integration:connected',service:service.id,accountLabel:resolvedLabel});
       };
       if(options.verifiedConnectedWebhook)await options.verifiedConnectedWebhook({externalUserId:external_user_id,accountId:account_id,
         user:user?{id:user.id,clerkId:user.clerk_id}:null},persist);

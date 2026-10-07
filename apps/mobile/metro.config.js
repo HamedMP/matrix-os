@@ -1,4 +1,5 @@
 const { getDefaultConfig } = require("expo/metro-config");
+const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
@@ -14,11 +15,14 @@ function resolveFromMobileApp(moduleName) {
   return require.resolve(moduleName, { paths: [projectRoot] });
 }
 
+// Metro stats every watch folder and throws on a missing one. The pnpm global
+// store only exists on macOS dev machines; on Linux (CI, EAS workers) packages
+// live under the workspace root instead, so the folder is simply dropped there.
 config.watchFolders = Array.from(new Set([
   ...(config.watchFolders ?? []),
   workspaceRoot,
   pnpmLinksRoot,
-]));
+])).filter((folder) => fs.existsSync(folder));
 config.serializer = {
   ...config.serializer,
   polyfillModuleNames: [

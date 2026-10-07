@@ -1,11 +1,9 @@
-import { HostedChatShareSuspensionContext } from "./hosted-chat-share-suspension";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { projectContext } from "./canonical-project-context";
 import { useBotDraftNavigation } from "./use-bot-draft-navigation";
 import { CanonicalChatIdentityGate } from "./CanonicalChatIdentityGate";
 import { CanonicalNewChatContent } from "./CanonicalNewChatContent";
-import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 import { canonicalComposerSelectionIsAvailable } from "./canonical-composer-state";
 import {
@@ -14,7 +12,7 @@ import {
   CanonicalSharedChatPanel,
   BotChatPanel, BotModelRecoveryProvider,
   BotComposerControls,
-  useDirectBotBinding,
+  useDirectBotBinding, useBotExecution, botSubmissionParts,
   BotDraftRecoveryPanel,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
@@ -22,7 +20,7 @@ import {
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { createChatMentionRequestTracker } from "@matrix-os/ui";
 import { ChatMentionControls, useChatMentionPermission } from "@matrix-os/ui";
-import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { BotDetailsContext, BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { ChatSharingButton } from "./ChatSharingButton";
 import { ChatContextMenu } from "@matrix-os/ui";
 import { openChatWebLink } from "./chat-web-navigation";
@@ -88,6 +86,7 @@ import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing workspace coordinates the canonical Chat controller, composer, credential disclosure and shared routes; this change only removes live-share callbacks. Splitting it belongs in a focused refactor.
 export function CanonicalChatWorkspace({
   api,
   client,
@@ -158,8 +157,8 @@ export function CanonicalChatWorkspace({
   const fileNavigation = useChatFileNavigation();
   const chromeHost = useSurfaceChromeHost();
   const botHeaderContainer = useContext(BotHeaderContext);
+  const frameDetailsContainer = useContext(BotDetailsContext);
   const reportBotHeaderBinding = useContext(BotHeaderBindingContext);
-  const reportShareSuspension = useContext(HostedChatShareSuspensionContext);
   const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
   const fallbackCatalog = useMemo(
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
@@ -282,11 +281,15 @@ export function CanonicalChatWorkspace({
     if (explicitSharedRoute || !routedComposerChatId || !reportBotHeaderBinding) return;
     return reportBotHeaderBinding({ chatId: routedComposerChatId, client, status: botBinding.status, agentId: directBotId });
   }, [explicitSharedRoute, routedComposerChatId, client, reportBotHeaderBinding, botBinding.status, directBotId]);
-  const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error";
-  const selection = botIdentityUnknown ? null : directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : providerSelection;
-  const selectionAvailable = !botIdentityUnknown && Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));
-  const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, mentionResources,
+  const botExecution = useBotExecution(directBotId, client.agents, providerCatalog, botEventRevision);
+  const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
+  const botPresentation = botExecution.presentation;
+  const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
+  const botRouteAvailable = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : canonicalComposerSelectionIsAvailable(providerCatalog, selection));
+  const permissionResources = directBotId ? botExecution.consentResources : mentionResources;
+  const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, permissionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
+  const selectionAvailable = botRouteAvailable && (!botPresentation?.requiresFullAccess || mentionPermission.confirmed);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -519,7 +522,7 @@ export function CanonicalChatWorkspace({
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
       if (!parts) return;
       const input = {
-        parts,
+        parts: directBotId ? botSubmissionParts(parts, botExecution.consentResources) : parts,
         selection: {
           instanceId: selection.instanceId,
           model: selection.model,
@@ -529,13 +532,14 @@ export function CanonicalChatWorkspace({
         permissionMode: mentionPermission.permissionMode,
       };
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
-      const attempt = mentionResources.length ? mentionRequests.resolve(client, requestScope, input, "send") : undefined;
+      const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "send") : undefined;
       const clientRequestId = attempt?.clientRequestId;
       const acknowledgeAccepted = () => {
         if (!isCurrentRuntimeGeneration(runtimeGeneration)
           || composerOwner.current.client !== owner.client
           || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
         if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+        mentionPermission.confirm(false);
         updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
         for (const id of submittedAttachmentIds) attachments.remove(id);
       };
@@ -598,18 +602,19 @@ export function CanonicalChatWorkspace({
           ]
         : parts;
       const input = {
-        parts: updatedParts,
+        parts: directBotId ? botSubmissionParts(updatedParts, botExecution.consentResources) : updatedParts,
         selection: { instanceId: selection.instanceId, model: selection.model, ...(selection.options.length ? { options: selection.options } : {}) },
         interactionMode: selection.interactionMode, permissionMode: mentionPermission.permissionMode,
       };
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
-      const attempt = mentionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
+      const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
       const clientRequestId = attempt?.clientRequestId;
       const acknowledgeAccepted = () => {
         if (!isCurrentRuntimeGeneration(runtimeGeneration)
           || composerOwner.current.client !== owner.client
           || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
         if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+        mentionPermission.confirm(false);
         updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
         for (const id of submittedAttachmentIds) attachments.remove(id);
       };
@@ -724,7 +729,7 @@ export function CanonicalChatWorkspace({
         onReorder={(queuedTurnIds, movedQueuedTurnId) => void reorderQueuedTurns(queuedTurnIds, movedQueuedTurnId)}
         onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
       />
-      <CanonicalChatIdentityGate unknown={botIdentityUnknown} loading={botBinding.loading} retry={botBinding.retry} onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}><>
+      <CanonicalChatIdentityGate unknown={botIdentityUnknown} loading={botBinding.loading} retry={() => { botBinding.retry(); botExecution.retry(); }} onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}><>
       <input
         ref={fileInputRef}
         type="file"
@@ -755,7 +760,7 @@ export function CanonicalChatWorkspace({
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
-        automaticRouting={Boolean(directBotId)}
+        automaticRouting={botPresentation?.kind === "recipe"}
         botControls={directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={client.agents} catalog={providerCatalog} catalogLoading={providerCatalogLoading} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} zIndex={DESKTOP_Z_INDEX.popover} disabled={uploadingAttachments} refreshKey={botEventRevision} onChanged={() => setBotEventRevision(value => value + 1)}/> : undefined}
         providerCatalogLoading={!directBotId && providerCatalogLoading}
         selection={selection}
@@ -814,29 +819,15 @@ export function CanonicalChatWorkspace({
       {editingQueuedTurn ? <QueuedTurnEditContext turn={editingQueuedTurn} /> : null}
       {botMention.pending ? <p role="status" className="px-3 text-xs">Opening bot Chat…</p> : null}
       {botMention.error ? <p role="alert" className="px-3 text-xs">{botMention.error}</p> : null}
-      <ChatMentionControls client={client.agents} resources={mentionResources} permissionMode={selection?.permissionMode ?? "supervised"}
-        confirmed={mentionPermission.confirmed} onConfirm={mentionPermission.confirm} />
+      <ChatMentionControls client={client.agents} resources={permissionResources} permissionMode={selection?.permissionMode ?? "supervised"}
+        bot={Boolean(directBotId)} requiresFullAccess={botPresentation?.requiresFullAccess} confirmed={mentionPermission.confirmed} onConfirm={mentionPermission.confirm} />
       </></CanonicalChatIdentityGate>
     </>
   );
 
   const sharingChatId = controller.detail?.record.chat.id;
-  const suspendLiveShare = useCallback(() => {
-    if (sharingChatId) flushSync(() => setCredentialSuspendedChatId(sharingChatId));
-  }, [sharingChatId]);
-  const restoreFailedShare = useCallback(() => {
-    if (!sharingChatId) return;
-    void client.getDetail(sharingChatId, { limit: 1 }).then((fresh) => {
-      if (fresh.record.chat.collaboration || fresh.record.chat.lifecycle !== "active") return;
-      setCredentialSuspendedChatId(current => current === sharingChatId ? null : current);
-    }).catch(() => { /* Keep disclosure suspended until owner authority can be checked. */ });
-  }, [client, sharingChatId]);
-  useLayoutEffect(() => {
-    if (!reportShareSuspension || !sharingChatId || explicitSharedRoute || !active) return;
-    return reportShareSuspension({ client, chatId: sharingChatId, start: suspendLiveShare, failed: restoreFailedShare });
-  }, [reportShareSuspension, sharingChatId, explicitSharedRoute, active, client, suspendLiveShare, restoreFailedShare]);
   const chatSharingAction = api && !chromeHost && sharingChatId ? <ChatSharingButton key={sharingChatId} api={api}
-    chatId={sharingChatId} copyText={copyText} onLiveShareStart={suspendLiveShare} onLiveShareFailed={restoreFailedShare} /> : null;
+    chatId={sharingChatId} copyText={copyText} /> : null;
 
   return (
     <BotModelRecoveryProvider agentId={directBotId} client={client.agents} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh}><div
@@ -968,8 +959,8 @@ export function CanonicalChatWorkspace({
         {controller.detail && globalView === "conversation" ? (
           <>
             {!directBotId ? chatSharingAction : null}
-            <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
-              client={client.agents} directBotId={directBotId} detailsContainer={botDetailsContainer} headerContainer={botHeaderContainer}
+            <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id} visible={live && !inspectorExclusive}
+              client={client.agents} directBotId={directBotId} detailsContainer={frameDetailsContainer ?? botDetailsContainer} headerContainer={botHeaderContainer}
               headerActions={chatSharingAction}
               onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
@@ -1011,7 +1002,7 @@ export function CanonicalChatWorkspace({
             }} />
             </div>
             </ChatContextMenu>
-            <div className={cn("mx-auto w-full shrink-0 px-5 pb-5", CHAT_CONTENT_WIDTH_CLASS)}>{composer}</div>
+            <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>{composer}</div>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
           <div

@@ -99,6 +99,30 @@ describe("bot agent loop", () => {
     expect(saves[0]!.messages.map((message) => message.role)).toEqual(["system", "user", "assistant", "toolResult", "assistant"]);
   });
 
+  it("joins composite Pi tool progress to broker receipts while keeping original transcript IDs", async () => {
+    const sdkId = "call_write|fc_item_1";
+    const bridgeId = "call_dccaeae1358650916bbee4bce1dcb6fa436cee72d8b4eacd222cc18e5c299a18";
+    const { route } = scripted([
+      fauxAssistantMessage(fauxToolCall("write_artifact", { path: "briefs/acme.md", content: "# Acme", mimeType: "text/markdown" }, { id: sdkId }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxText("Saved the brief.")),
+    ]);
+    const { broker, events, tools, saves } = memoryBroker();
+
+    expect(await run({ broker, route })).toMatchObject({ status: "completed", toolActions: 1 });
+
+    expect(tools[0]!.toolCallId).toBe(bridgeId);
+    expect(events.filter((event) => event.event.type === "tool_progress").map((event) => event.event))
+      .toEqual([
+        { type: "tool_progress", toolCallId: bridgeId, capability: "artifact.write", phase: "started" },
+        { type: "tool_progress", toolCallId: bridgeId, capability: "artifact.write", phase: "completed" },
+      ]);
+    expect(JSON.stringify({ events, tools })).not.toContain(sdkId);
+    expect(saves[0]!.messages.find((message) => message.role === "assistant"))
+      .toMatchObject({ content: [expect.objectContaining({ type: "toolCall", id: sdkId })] });
+    expect(saves[0]!.messages.find((message) => message.role === "toolResult"))
+      .toMatchObject({ toolCallId: sdkId });
+  });
+
   it("ends the turn waiting for the person after a blocking question", async () => {
     const { handle, route } = scripted([
       fauxAssistantMessage(fauxToolCall("ask_person", { header: "Competitor", question: "Which company?", options: ["Acme", "Globex"], blocking: true }, { id: "call_ask" }), { stopReason: "toolUse" }),

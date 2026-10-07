@@ -93,7 +93,7 @@ suite("Electron Desktop Chat onboarding", () => {
     try {
       expect(await chat.count()).toBe(1);
       await chat.getByRole("button", { name: "Connect Claude Code", exact: true }).waitFor();
-      expect(await chat.getByRole("button", { name: "Connect Codex", exact: true }).isEnabled()).toBe(false);
+      expect(await chat.getByRole("button", { name: "Connect Codex", exact: true }).count()).toBe(0);
       const draft = chat.getByRole("textbox", { name: "Start a chat", exact: true });
       await draft.fill("Keep this onboarding draft");
       await page.screenshot({ path: join(output, "electron-disconnected.png") });
@@ -123,7 +123,10 @@ suite("Electron Desktop Chat onboarding", () => {
       await page.getByRole("button", { name: "Open account menu", exact: true }).click();
       await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
       await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
-      await page.getByRole("button", { name: "Log out Claude", exact: true }).waitFor();
+      // Settings opens its summary first; native account actions live inside
+      // the selected account card. Confirm the current account without relying
+      // on an expanded lifecycle panel to prove closing Chat stays closed.
+      await page.getByRole("button", { name: "Manage Claude connection", exact: true }).waitFor();
       expect(await chat.count()).toBe(0);
       await page.screenshot({ path: join(output, "electron-closed-chat.png") });
     } catch (error) {

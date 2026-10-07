@@ -7,7 +7,7 @@ import type { ServiceDefinition } from "./types.js";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { registerConnectedIntegrationWebhook, type VerifiedConnectedWebhookAdmission } from "./connected-webhook.js";
-import { listServices, getService, getAction } from "./registry.js";
+import { listServices, getService, getServiceByPipedreamApp, getAction } from "./registry.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog-projection.js";
@@ -89,11 +89,7 @@ const PROFILE_ENDPOINTS: Record<string, {
     // the verified primary if we want fuller coverage.)
     extract: (d) => d?.email ?? undefined,
   },
-  slack: {
-    url: "https://slack.com/api/auth.test",
-    // auth.test yields a username/display identifier, not an email address.
-    extract: () => undefined,
-  },
+  // Slack auth.test cannot return an email; do not spend a proxy credit on it.
   discord: {
     url: "https://discord.com/api/v10/users/@me",
     extract: (d) => d?.email ?? d?.username,
@@ -421,16 +417,16 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const existing = await db.listConnectedServices(uid);
       const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
 
-      const newAccounts = pdAccounts.filter((acc) => {
-        const service = getService(acc.app);
-        return !existingPdIds.has(acc.id) && service?.connectorKind === "pipedream";
+      const newAccounts = pdAccounts.flatMap(acc => {
+        const service = getServiceByPipedreamApp(acc.app);
+        return !existingPdIds.has(acc.id) && service ? [{ ...acc, serviceId: service.id }] : [];
       });
 
       // Resolve emails for new accounts missing them
       const resolvedEmails = await Promise.all(
         newAccounts.map(async (acc) => {
           if (acc.email) return acc.email;
-          return resolveAccountEmail(pipedream, externalId, acc.id, acc.app);
+          return resolveAccountEmail(pipedream, externalId, acc.id, acc.serviceId);
         }),
       );
 
@@ -446,10 +442,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         newAccounts.map(async (acc, i) => {
           const pendingKey = `${externalId}:${acc.app}`;
           const explicitLabel = consumePendingLabel(pendingKey);
-          const label = explicitLabel ?? acc.app;
+          const label = explicitLabel ?? acc.serviceId;
           const row = await db.connectService({
             userId: uid,
-            service: acc.app,
+            service: acc.serviceId,
             pipedreamAccountId: acc.id,
             accountLabel: label,
             accountEmail: resolvedEmails[i],
@@ -466,14 +462,15 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }
       const synced = upserted.filter((u) => u.row.inserted).length;
 
-      // Also backfill emails for existing connections missing them
+      // Consent polling must stay credit-free for existing accounts. Backfill
+      // only actual emails from the management inventory, never paid profiles.
       const missingEmail = existing.filter((s) => !s.account_email);
       await Promise.all(
         missingEmail.map(async (s) => {
           const conn = pdAccounts.find((a) => a.id === s.pipedream_account_id);
           if (!conn) return;
-          const email = await resolveAccountEmail(pipedream, externalId, conn.id, s.service);
-          if (email) await db.updateAccountEmail(s.id, email);
+          const email = z.email().safeParse(conn.email);
+          if (email.success) await db.updateAccountEmail(s.id, email.data);
         }),
       );
 
@@ -647,20 +644,21 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         const extId = await getOrCreateExternalId(uid);
         const pdAccounts = await pipedream.listAccounts(extId);
         const existingPdIds = new Set(connections.map((s) => s.pipedream_account_id));
-        const newAccounts = pdAccounts.filter(
-          (acc) => !existingPdIds.has(acc.id) && getService(acc.app),
-        );
+        const newAccounts = pdAccounts.flatMap(acc => {
+          const matchedService = getServiceByPipedreamApp(acc.app);
+          return !existingPdIds.has(acc.id) && matchedService ? [{ ...acc, serviceId: matchedService.id }] : [];
+        });
         if (newAccounts.length > 0) {
           await Promise.all(
             newAccounts.map(async (acc) => {
               const pendingKey = `${extId}:${acc.app}`;
               const explicitLabel = consumePendingLabel(pendingKey);
-              const lbl = explicitLabel ?? acc.app;
+              const lbl = explicitLabel ?? acc.serviceId;
               const resolvedEmail = acc.email
-                ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.app));
+                ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.serviceId));
               const row = await db.connectService({
                 userId: uid,
-                service: acc.app,
+                service: acc.serviceId,
                 pipedreamAccountId: acc.id,
                 accountLabel: lbl,
                 accountEmail: resolvedEmail,

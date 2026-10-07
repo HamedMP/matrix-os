@@ -9,14 +9,6 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { OS_VIEW_FIXED_APP_NAMES } from "../fixtures/os-view-parity";
 import { clearDesktopApps, seedDesktopApps } from "./apps-query-test-utils";
 
-const sharing = vi.hoisted(() => ({ props: [] as Array<{ kind: string; path: string }> }));
-vi.mock("../../desktop/src/renderer/src/features/files/DesktopResourceSharing", () => ({
-  DesktopResourceSharing: (props: { kind: string; path: string }) => {
-    sharing.props.push(props);
-    return React.createElement("span", { "data-testid": "app-sharing" });
-  },
-}));
-
 describe("AppLauncher", () => {
   beforeEach(() => {
     useConnection.setState({
@@ -68,14 +60,12 @@ describe("AppLauncher", () => {
     expect(screen.queryByRole("button", { name: /missing slug/i })).toBeNull();
   });
 
-  it("offers standalone app sharing by registry slug, not by the launch path", async () => {
-    sharing.props.length = 0;
+  it("offers no standalone app share: projects are the only live-shareable resource", async () => {
     render(<AppLauncher />);
 
     await screen.findByRole("button", { name: /Alpha/i });
-    // Alpha's launch path is nested (`apps/utilities/alpha/index.html`); the owner
-    // catalog resolves the registry slug, which is the only identity that exists there.
-    expect(sharing.props.at(-1)).toEqual({ kind: "app", path: "alpha" });
+    fireEvent.keyDown(screen.getByLabelText("Search apps"), { key: "ArrowDown" });
+    expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
   });
 
   it("resets the active app when the search query changes", async () => {

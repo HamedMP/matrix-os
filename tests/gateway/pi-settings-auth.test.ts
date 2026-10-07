@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createPiSettingsConnection, PI_SETTINGS_AUTH_WORKER } from "../../packages/gateway/src/ai-providers/pi-settings-auth.js";
 import type { OpenCodeProcess } from "../../packages/gateway/src/coding-agents/opencode-provider.js";
+import {createGenericNativeWriter, guardGenericNativeKeys} from "../../packages/gateway/src/ai-providers/generic-native-writer.js";
 function native(autoComplete = true) {
   const children: Array<EventEmitter & OpenCodeProcess & { stdout: EventEmitter; stderr: EventEmitter; stdin: { end: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn> } }> = [];
   const spawn = vi.fn((_command: string, args: string[]) => {
@@ -19,6 +20,36 @@ function native(autoComplete = true) {
 }
 const config = { node: "/runtime/bin/node", entry: "file:///runtime/pi/dist/index.js", cwd: "/owner", env: { HOME: "/owner" } };
 const request = { kind: "login" as const, method: "device_code" as const, harnessInstanceId: "pi", idempotencyKey: "pi-connect-key" };
+it("retains production key admission until actual Pi exit and route activation",async()=>{
+ const {mkdir,mkdtemp,rm}=await import("node:fs/promises"),{join}=await import("node:path"),{tmpdir}=await import("node:os");
+ const root=await mkdtemp(join(tmpdir(),"pi-guarded-key-")),home=join(root,"home"); await mkdir(home);
+ const n=native(false); let commit!:()=>void;
+ const enableConnected=vi.fn(()=>new Promise<void>(resolve=>{commit=resolve;}));
+ const writer=createGenericNativeWriter(home);
+ const connection=guardGenericNativeKeys(writer,"pi",createPiSettingsConnection({discover:async()=>config,spawn:n.spawn,enableConnected,fetch:async()=>new Response(null,{status:200})}));
+ try {
+   const running=connection.verifyKey({harnessInstanceId:"pi",providerId:"anthropic",apiKey:"synthetic"});
+   await vi.waitFor(()=>expect(n.children).toHaveLength(1));
+   n.children[0]!.stdout.emit("data",Buffer.from('{"type":"completed"}\n'));
+   await expect(createGenericNativeWriter(home).run("pi",async()=>{})).rejects.toThrow();
+   expect(enableConnected).not.toHaveBeenCalled();
+   n.children[0]!.emit("exit",0);
+   await vi.waitFor(()=>expect(enableConnected).toHaveBeenCalledOnce());
+   await expect(createGenericNativeWriter(home).run("pi",async()=>{})).rejects.toThrow();
+   commit(); await running;
+   await expect(createGenericNativeWriter(home).run("pi",async()=>"next")).resolves.toBe("next");
+ } finally {await connection.close(); await rm(root,{recursive:true,force:true});}
+});
+it.each([true, false])("qualifies the fixed public provider methods with empty read-only credentials (%s)", async supported => {
+  const { execFile } = await import("node:child_process"); const { promisify } = await import("node:util");
+  const entry = `data:text/javascript,${encodeURIComponent(`export class ModelRuntime {
+    static async create(options) { if (!options.credentials || await options.credentials.read('openai') !== undefined || (await options.credentials.list()).length || options.allowModelNetwork !== false) throw new Error('unsafe'); return new ModelRuntime(); }
+    login() {} getProvider(id) { return ${supported ? "true" : "id !== 'anthropic'"} ? {auth:{apiKey:{login(){}}}} : {}; }
+  }`)}`;
+  const task = promisify(execFile)(process.execPath, ["--input-type=module", "--eval", PI_SETTINGS_AUTH_WORKER, entry, "probe"], { timeout: 5000, maxBuffer: 4096 });
+  if (supported) expect((await task).stdout).toBe('{"type":"capability","supported":true}\n');
+  else await expect(task).rejects.toMatchObject({ code: 1, stdout: '{"type":"failed"}\n' });
+});
 describe("Pi sanctioned Settings auth", () => {
   it("coalesces SDK capability probes and fails closed for an unsupported installed runtime", async () => {
     const n = native(); const discover = vi.fn().mockResolvedValue(config);
@@ -33,7 +64,7 @@ describe("Pi sanctioned Settings auth", () => {
     await connection.start({ registerCleanup: () => {},  request, publish }); await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null }));
     expect(publish).toHaveBeenCalledWith({ deviceCode: "TEST-CODE", authorizationUrl: "https://auth.openai.com/codex/device" });
     expect(enableConnected).toHaveBeenCalledWith("pi", "openai-codex", expect.stringMatching(/^pi-connect-[a-f0-9]{64}$/));
-    expect(PI_SETTINGS_AUTH_WORKER).toContain('runtime.login(mode==="key"?"openai":"openai-codex"'); expect(PI_SETTINGS_AUTH_WORKER).not.toContain("readFile"); await connection.close();
+    expect(PI_SETTINGS_AUTH_WORKER).toContain('runtime.login(mode==="key"?provider:"openai-codex"'); expect(PI_SETTINGS_AUTH_WORKER).not.toContain("readFile"); await connection.close();
   });
   it("cancels and drains the native process without enabling or publishing success", async () => {
     const n = native(false); const enableConnected = vi.fn(); const publish = vi.fn();
@@ -120,4 +151,28 @@ it('waits for an already committing connection before cancellation returns', asy
   expect(await Promise.race([cancelling.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 20))])).toBe(false);
   finish(); await cancelling;
   expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }); await connection.close();
+});
+
+it.each(["anthropic", "openrouter"] as const)("saves %s using the native provider API without exposing the key", async providerId => {
+  const n = native(); const enableConnected = vi.fn(); const fetch = vi.fn(async () => new Response(null, { status: 200 }));
+  const connection = createPiSettingsConnection({ discover: async () => config, spawn: n.spawn, enableConnected, fetch });
+  await connection.verifyKey({ harnessInstanceId: "pi", providerId, apiKey: "test-secret" });
+  expect(n.children[0]!.stdin.end).toHaveBeenCalledWith(JSON.stringify({ key: "test-secret", provider: providerId }));
+  expect(enableConnected).toHaveBeenCalledWith("pi", providerId, expect.any(String));
+  expect(JSON.stringify(n.spawn.mock.calls)).not.toContain("test-secret");
+  await connection.close();
+});
+
+it("releases durable Pi admission after read-only discovery fails and retries after gateway recreation",async()=>{
+ const {mkdir,mkdtemp,rm}=await import("node:fs/promises"),{join}=await import("node:path"),{tmpdir}=await import("node:os");
+ const root=await mkdtemp(join(tmpdir(),"pi-discovery-retry-")),home=join(root,"home"); await mkdir(home);
+ const n=native(), discovery=vi.fn().mockRejectedValueOnce(new Error("version probe failed")).mockResolvedValue(config), enableConnected=vi.fn(async()=>{});
+ const make=()=>guardGenericNativeKeys(createGenericNativeWriter(home),"pi",createPiSettingsConnection({discover:discovery,spawn:n.spawn,enableConnected,fetch:async()=>new Response(null,{status:200})}));
+ const failed=make(),next=make();
+ try {
+  await expect(failed.verifyKey({harnessInstanceId:"pi",providerId:"anthropic",apiKey:"synthetic"})).rejects.toThrow();
+  expect(n.spawn).not.toHaveBeenCalled(); expect(enableConnected).not.toHaveBeenCalled();
+  await expect(next.verifyKey({harnessInstanceId:"pi",providerId:"anthropic",apiKey:"synthetic"})).resolves.toBeUndefined();
+  expect(n.spawn).toHaveBeenCalledOnce(); expect(enableConnected).toHaveBeenCalledOnce();
+ }finally{await failed.close();await next.close();await rm(root,{recursive:true,force:true});}
 });

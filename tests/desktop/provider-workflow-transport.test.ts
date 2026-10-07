@@ -40,7 +40,7 @@ describe("Electron provider workflow transport", () => {
     const api = { get } as unknown as ApiClient;
     const signal = new AbortController().signal;
     await expect(createDesktopProviderWorkflowClient(api, () => current).capabilities(signal)).rejects.toThrow();
-    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings/workflows/capabilities?connectionVersion=2", expect.objectContaining({ signal, maxBytes: 65536, timeoutMs: 15000 }));
+    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings/workflows/v2/capabilities", expect.objectContaining({ signal, maxBytes: 65536, timeoutMs: 15000 }));
   });
   it("reads history for the exact runtime and validates the response", async () => {
     const get = vi.fn().mockResolvedValue({ entries: [], nextCursor: null });
@@ -82,4 +82,14 @@ it('retains real API session expiry on 401 rather than classifying it as owner d
   const api = createApiClient({ baseUrl: 'https://matrix.invalid', getRuntimeSlot: () => 'primary', onUnauthorized, fetchFn: async () => Response.json({ error: { code: 'unauthorized', message: 'private' } }, { status: 401 }) });
   await expect(createDesktopProviderWorkflowClient(api, () => true).capabilities(new AbortController().signal)).rejects.toMatchObject({ reason: 'unauthorized', message: 'Provider action is unavailable.' });
   expect(onUnauthorized).toHaveBeenCalledOnce();
+});
+
+it("negotiates legacy discovery only for a real missing V2 endpoint", async () => {
+ const urls: string[] = [];
+ const api = createApiClient({baseUrl:"https://matrix.invalid", getRuntimeSlot:()=>"primary", fetchFn:async (url:string) => {
+   urls.push(new URL(url).pathname);
+   return urls.length === 1 ? Response.json({error:{code:"not_found",message:"Not found"}}, {status:404}) : Response.json([]);
+ }});
+ await expect(createDesktopProviderWorkflowClient(api,()=>true).capabilities(new AbortController().signal)).resolves.toEqual([]);
+ expect(urls).toEqual(["/api/ai/provider-settings/workflows/v2/capabilities", "/api/ai/provider-settings/workflows/capabilities"]);
 });

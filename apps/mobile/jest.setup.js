@@ -163,6 +163,11 @@ jest.mock(
   () => require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
 );
 
+// The composer refreshes the Clerk session token ahead of a send. Screen tests
+// mock Clerk without one, so the refresh is a no-op for them; the hook's own
+// suite unmocks it.
+jest.mock("@/lib/use-session-token-warmup", () => ({ useSessionTokenWarmup: () => () => undefined }));
+
 // PostHog pulls in optional native modules (expo-file-system/application/device,
 // the session-replay plugin) at import time. Stub it globally so screen tests that
 // transitively import lib/analytics never load the real SDK. The provider and mask

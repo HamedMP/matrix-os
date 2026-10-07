@@ -39,6 +39,8 @@ export {
 } from "./agents-providers/provider-settings-controller.js";
 
 export {
+  canonicalChatSubscriptionSelectionMatches,
+  canonicalProviderChoiceCanBeDefault,
   canonicalProviderAvailabilityLabel,
   canonicalProviderUnavailableSelectionLabel,
   deriveCanonicalProviderChoices,
@@ -113,7 +115,9 @@ export {
 } from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
-export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
+export { LegacyLiveAccessButton } from "./collaboration/LegacyLiveAccessButton.js";
+export { LegacyResourceAccessButton } from "./collaboration/LegacyResourceAccessButton.js";
+export { LegacyTerminalAccessButton } from "./collaboration/LegacyTerminalAccessButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
 export {
@@ -121,7 +125,6 @@ export {
   useProjectSharing,
   type ProjectSharingController,
 } from "./collaboration/useProjectSharing.js";
-export { ResourceSharingButton } from "./collaboration/ResourceSharingButton.js";
 export { ReadinessSummary } from "./collaboration/ReadinessSummary.js";
 export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
 export {
@@ -132,6 +135,7 @@ export {
 export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
+export { createOrganizationManagementActions, type OrganizationManagementActions } from "./organization-management/actions.js";
 export { createCollaborationDirectClient, CollaborationDirectError, type CollaborationDirectClient, type CollaborationDirectClientOptions, type CollaborationDirectErrorCode, type DirectScopeState } from "./collaboration/direct-client.js";
 export { createCollaborationDirectApi, type CollaborationDirectApi } from "./collaboration/direct-api.js";
 export { resolveOrganizationDriveNavigation, createRefreshGuard, driveBasePath, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive/paging.js";
@@ -141,6 +145,7 @@ export {
   notifyCollaborationDiscoveryChanged,
   subscribeCollaborationDiscoveryChanged,
 } from "./collaboration/discovery-events.js";
+export { isAcceptedProjectOwnedByRail } from "./collaboration/discovery-visibility.js";
 export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
@@ -219,3 +224,12 @@ export type { RailOrderPreference, RailSortMode } from "./chat/rail-order.js";
 export { ChatRailOrderContext, ChatRailOrderItem } from "./chat/RailOrderItem.js";
 export { createProviderWorkflowClient, isProviderWorkflowAuthorizationUrl, providerWorkflowTimeoutMs, ProviderWorkflowClientError, type ProviderWorkflowRequest } from "./agents-providers/provider-workflow-client.js";
 export type { ProviderWorkflowClient } from "./agents-providers/types.js";
+
+export { IntegrationMarketplace } from "./integrations/IntegrationMarketplace.js";
+export type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./agents-providers/local-chatgpt-plan-client.js";
+
+export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLabel } from "./chat-search-shortcut.js";
+
+export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry } from "./chat/canonical-slash-entries.js";
+export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
+export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";

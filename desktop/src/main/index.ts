@@ -5,6 +5,9 @@ import { createOrganizationDriveTransferService } from "./files/organization-dri
 import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization-drive-file-io";
 import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
+import { createNativeChatgptPlanService } from "./chatgpt-plan/service";
+import { createPlanVault } from "./chatgpt-plan/vault";
+import { registerChatgptPlanIpc } from "./ipc/chatgpt-plan";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
 import { readDesktopBuildSource } from "./build-source";
@@ -65,7 +68,7 @@ import {
 import { windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
-import { safeExternalHttpUrl } from "./external-url";
+import { safeExternalHttpUrl, safeChatgptAuthorizationUrl } from "./external-url";
 import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./renderer-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 import { createNativeAppOpenResolver } from "./embeds/native-app-open";
@@ -86,6 +89,9 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
+let planDrained = false;
+let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
 let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
@@ -241,6 +247,8 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          chatgptPlan?.cancelAll();
+          chatgptPlan?.resume();
           fileDownloads?.cancelAll();
           organizationDriveTransfers?.cancelAll();
           localChatImports?.cancelAll();
@@ -255,6 +263,22 @@ if (!gotLock) {
         },
       });
       await auth.init();
+      chatgptPlan = createNativeChatgptPlanService({
+        auth, vault: createPlanVault({ dir: userData, safeStorage }),
+        openBrowser: async url => {
+          const authorizationUrl = safeChatgptAuthorizationUrl(url);
+          if (!authorizationUrl) throw new Error("invalid authorization URL");
+          await shell.openExternal(authorizationUrl);
+        },
+      });
+      chatgptPlan.resume();
+      registerChatgptPlanIpc(ipcMain, chatgptPlan, rawEvent => {
+        const event = rawEvent as IpcMainInvokeEvent;
+        const contents = mainWindow?.webContents;
+        const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+        return !!contents && !contents.isDestroyed() && event.sender === contents
+          && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
+      });
 
       const rendererOrigin = desktopRendererUrl
         ? new URL(desktopRendererUrl).origin
@@ -444,6 +468,8 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
+          chatgptPlan?.cancelAll();
+          chatgptPlan?.resume();
           downloads.cancelAll();
           driveTransfers.cancelAll();
           localChatImports?.cancelAll();
@@ -583,6 +609,15 @@ if (!gotLock) {
   app.on("before-quit", (event) => {
     organizationDriveTransfers?.cancelAll();
     if (handleAnalyticsBeforeQuit?.(event)) return;
+    if (!planDrained && chatgptPlan) {
+      event.preventDefault();
+      if (!drainingPlan) {
+        drainingPlan = true;
+        void chatgptPlan.dispose().catch((error: unknown) => logMainError("subscription cleanup failed", error))
+          .finally(() => { planDrained = true; app.quit(); });
+      }
+      return;
+    }
     if(!importsDrained&&localChatImports){
       event.preventDefault();
       if(!drainingImports){drainingImports=true;void localChatImports.dispose().catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}

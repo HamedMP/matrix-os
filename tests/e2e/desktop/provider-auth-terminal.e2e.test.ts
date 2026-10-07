@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startProviderAuthGateway } from "./fixtures/provider-auth-gateway";
+import { createProviderWorkflowClient, ProviderWorkflowClientError } from "../../../packages/ui/src/agents-providers/provider-workflow-client";
 
 import { createEvidenceDirectory } from "./fixtures/evidence-directory";
 
@@ -21,6 +22,32 @@ let gateway: Awaited<ReturnType<typeof startProviderAuthGateway>>;
 let app: ElectronApplication;
 let page: Page;
 let profile: string;
+
+it("models absent V2 routes as 404 and rejects malformed successful modern discovery", async () => {
+  const fixture = await startProviderAuthGateway({ inlineClaude: true });
+  try {
+    const root = "/api/ai/provider-settings/workflows";
+    for (const path of ["/v2/capabilities", "/v2/fixture_claude_1"]) {
+      expect((await fetch(`${fixture.url}${root}${path}`, { signal: AbortSignal.timeout(5000) })).status).toBe(404);
+    }
+    const paths: string[] = [];
+    const client = createProviderWorkflowClient(async input => {
+      paths.push(input.path);
+      const response = await fetch(`${fixture.url}${input.path}`, { signal: input.signal });
+      if (response.status === 404) throw new ProviderWorkflowClientError("unsupported");
+      if (!response.ok) throw new ProviderWorkflowClientError();
+      return response.json();
+    });
+    const capabilities = await client.capabilities(AbortSignal.timeout(5000));
+    expect(capabilities[0]).toMatchObject({ harness: "claude", loginMethods: ["browser"] });
+    expect(paths).toEqual([`${root}/v2/capabilities`, `${root}/capabilities?connectionVersion=2`]);
+    let malformedRequests = 0;
+    const malformed = createProviderWorkflowClient(async () => { malformedRequests++; return capabilities; });
+    await expect(malformed.capabilities(AbortSignal.timeout(5000))).rejects.toMatchObject({ reason: "unavailable" });
+    expect(malformedRequests).toBe(1);
+    expect(fixture.workflowEvents).toEqual([]);
+  } finally { await fixture.close(); }
+});
 
 suite("Electron Desktop provider authentication Settings", () => {
 beforeAll(async () => {

@@ -147,7 +147,7 @@ describe("native desktop shell", () => {
       .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
       .toBe("var(--surface-brand-emphasis, #748E59)");
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Plugins" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect Apps" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Editor" })).toBeTruthy();
@@ -357,12 +357,12 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[useTabs.getState().activeTabId!]?.mode).toBe("window");
   });
 
-  it("deep-links Plugins to Services and launches native Notes plus bundled Whiteboard", () => {
+  it("deep-links Connect Apps to its Settings section and launches native Notes plus bundled Whiteboard", () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
-    fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
-    expect(useTabs.getState().tabs.find((tab) => tab.kind === "settings")?.title).toBe("Plugins");
-    expect(screen.getByText("Plugins content").getAttribute("data-settings-section")).toBe("services");
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Connect Apps" }));
+    expect(useTabs.getState().tabs.find((tab) => tab.kind === "settings")?.title).toBe("Connect Apps");
+    expect(screen.getByText("Connect Apps content").getAttribute("data-settings-section")).toBe("services");
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
     expect(useTabs.getState().tabs.find((tab) => tab.kind === "settings")?.title).toBe("Settings");
@@ -434,8 +434,10 @@ describe("native desktop shell", () => {
     const settingsWindow = screen.getByRole("dialog", { name: "Settings window" });
     expect(settingsWindow.querySelector("[data-os-window-sidebar]")).toBeTruthy();
     expect(settingsWindow.querySelector('[data-os-window-chrome-placement="sidebar"]')?.textContent).not.toContain("Settings");
-    expect(within(settingsWindow).getByRole("heading", { name: "Settings" })).toBeTruthy();
+    expect(within(settingsWindow).getByRole("navigation", { name: "Settings sections" })).toBeTruthy();
+    expect(within(settingsWindow).queryByRole("heading", { name: "Settings" })).toBeNull();
     expect(within(settingsWindow).getByRole("button", { name: "Account" })).toBeTruthy();
+    expect(within(settingsWindow).getByRole("button", { name: "Organization" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
 
     fireEvent.click(getWindowControl("Settings", "Maximize"));

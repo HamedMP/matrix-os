@@ -158,7 +158,7 @@ export async function appendMutationRecords(
     scope: ScopeRow;
     actorId: string;
     action: string;
-    recipients: Array<{ actorId: string; invitationId?: string }>;
+    recipients: Array<{ actorId: string; invitationId?: string; grantId?: string }>;
     discoveryState: "invited" | "accepted" | "revoked" | "deleted";
     publishDirectory?: boolean;
     now: string;
