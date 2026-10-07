@@ -79,3 +79,30 @@ it('retries the original unknown request even if its accepted run has become act
   expect(createTurn.mock.calls[1]).toEqual(createTurn.mock.calls[0]);
   expect(pending).toHaveBeenLastCalledWith(null);
 });
+
+it('keeps a pending request identity across subscription generations for the same Chat', async () => {
+  let generation = 1;
+  const createTurn = vi.fn().mockRejectedValueOnce(new DOMException('Timeout', 'TimeoutError')).mockResolvedValue(undefined);
+  const sender = createAoedeTextSender({ context: () => ({ generation, chatId: fixture.chat.id, revision: 0,
+    selection: { instanceId: 'codex_fixture', model: 'gpt-5.6-sol' } }),
+    catalog: async () => createCanonicalProviderCatalogFixture(), createTurn,
+    refresh: async () => {}, fail: vi.fn() });
+  expect(await sender('Original request')).toBe(false);
+  generation++;
+  expect(await sender('Original request')).toBe(true);
+  expect(createTurn.mock.calls[1]).toEqual(createTurn.mock.calls[0]);
+});
+
+it('never reuses an unresolved request for a different Chat', async () => {
+  let chatId = fixture.chat.id;
+  const createTurn = vi.fn().mockRejectedValueOnce(new DOMException('Timeout', 'TimeoutError')).mockResolvedValue(undefined);
+  const sender = createAoedeTextSender({ context: () => ({ generation: 1, chatId, revision: 0,
+    selection: { instanceId: 'codex_fixture', model: 'gpt-5.6-sol' } }),
+    catalog: async () => createCanonicalProviderCatalogFixture(), createTurn,
+    refresh: async () => {}, fail: vi.fn() });
+  expect(await sender('Original request')).toBe(false);
+  chatId = 'chat_next';
+  expect(await sender('New request')).toBe(true);
+  expect(createTurn.mock.calls[1][0]).toBe('chat_next');
+  expect(createTurn.mock.calls[1][1].clientRequestId).not.toBe(createTurn.mock.calls[0][1].clientRequestId);
+});

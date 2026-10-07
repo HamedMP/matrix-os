@@ -14,7 +14,12 @@ function Launcher() { const { open } = useAoede(); return <button data-testid="a
 it.each([{ surface: "web_desktop", closeDuringSend: false, editDuringSend: true },
   { surface: "web_canvas", closeDuringSend: true, editDuringSend: true },
   { surface: "web_desktop", closeDuringSend: false, editDuringSend: false },
-  { surface: "electron_desktop", closeDuringSend: true, editDuringSend: true }] as const)("recovers the exact unknown send after edits and reopening ($surface, $closeDuringSend, $editDuringSend)", async ({ surface, closeDuringSend, editDuringSend }) => {
+  { surface: "electron_desktop", closeDuringSend: true, editDuringSend: true },
+  { surface: "web_desktop", closeDuringSend: false, editDuringSend: true, failedCleanup: true },
+  { surface: "web_desktop", closeDuringSend: true, editDuringSend: true, failedCleanup: true, cleanupDuringSend: true }] as const)("recovers the exact unknown send after edits and reopening ($surface, $closeDuringSend, $editDuringSend)", async scenario => {
+  const { surface, closeDuringSend, editDuringSend } = scenario;
+  const failedCleanup = "failedCleanup" in scenario && scenario.failedCleanup;
+  const cleanupDuringSend = "cleanupDuringSend" in scenario && scenario.cleanupDuringSend;
   const fixture = createCanonicalChatFixture("idle").snapshot;
   const selection = { instanceId: "codex_fixture", model: "gpt-5.6-sol" };
   const detail: CanonicalChatDetailResponse = { record: { chat: { ...fixture.chat, currentSelection: selection } },
@@ -29,8 +34,16 @@ it.each([{ surface: "web_desktop", closeDuringSend: false, editDuringSend: true 
   const createTurn = vi.fn().mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; })).mockResolvedValue(undefined);
   const api = { bootstrap: async () => binding, detail: async () => detail, providers: async () => createCanonicalProviderCatalogFixture(), createTurn,
     events: () => ({ subscribe: () => ({ dispose: vi.fn() }), start: async () => {}, dispose: vi.fn() }) } as unknown as AoedeApi;
+  let rejectCleanup = false;
+  const end = vi.fn(async () => { if (rejectCleanup) { rejectCleanup = false; throw new Error("cleanup"); } });
+  const failNewConversation = async () => {
+    rejectCleanup = true;
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "More options" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "New conversation" })); });
+    expect(screen.getByText("Original request")).toBeTruthy();
+  };
   const media = { getSnapshot: () => ({ phase: "idle", voice: null, error: null, notice: null }),
-    subscribe: () => () => {}, end: async () => {}, dispose: vi.fn() } as unknown as VoiceSessionClient;
+    subscribe: () => () => {}, end, dispose: vi.fn() } as unknown as VoiceSessionClient;
   if (surface === "electron_desktop") {
     const controller = aoedeOwner.createAoedeController({ identityKey: "pending_test", baseUrl: "https://runtime.test", surface },
       { api, voiceFactory: () => media });
@@ -49,8 +62,12 @@ it.each([{ surface: "web_desktop", closeDuringSend: false, editDuringSend: true 
   await waitFor(() => expect(createTurn).toHaveBeenCalledOnce());
   if (editDuringSend) fireEvent.change(input, { target: { value: "Edited next request" } });
   if (closeDuringSend) await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Dismiss Aoede" })); });
+  if (cleanupDuringSend) {
+    await act(async () => { fireEvent.click(screen.getByTestId("aoede-launcher")); });
+    await failNewConversation();
+  }
   await act(async () => { reject(new DOMException("Timed out", "TimeoutError")); });
-  if (closeDuringSend) await act(async () => { fireEvent.click(screen.getByTestId("aoede-launcher")); });
+  if (closeDuringSend && !cleanupDuringSend) await act(async () => { fireEvent.click(screen.getByTestId("aoede-launcher")); });
   expect(screen.getByText("Original request")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Send message" }).hasAttribute("disabled")).toBe(true);
   if (closeDuringSend) {
@@ -58,6 +75,7 @@ it.each([{ surface: "web_desktop", closeDuringSend: false, editDuringSend: true 
     await act(async () => { fireEvent.click(screen.getByTestId("aoede-launcher")); });
   }
   expect(screen.getByText("Original request")).toBeTruthy();
+  if (failedCleanup && !cleanupDuringSend) await failNewConversation();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Retry message" })); });
   expect(createTurn).toHaveBeenCalledTimes(2);
   expect(createTurn.mock.calls[1]).toEqual(createTurn.mock.calls[0]);

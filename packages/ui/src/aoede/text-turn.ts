@@ -20,10 +20,11 @@ export function createAoedeTextSender(deps: {
   return async (value: string): Promise<boolean> => {
     const text = value.trim();
     const opening = deps.context();
-    const retrying = attempt?.context.generation === opening?.generation && attempt?.context.chatId === opening?.chatId && attempt?.text === text;
+    // A request belongs to its Chat; subscription generations only fence async work.
+    const retrying = attempt?.context.chatId === opening?.chatId && attempt?.text === text;
     if (!opening || !opening.selection || (opening.running && !retrying) || busy || !text || text.length > 8000) return false;
     let context: TextContext = opening;
-    if (attempt && (attempt.context.generation !== context.generation || attempt.context.chatId !== context.chatId)) { attempt = null; deps.onPendingChange?.(null); }
+    if (attempt && attempt.context.chatId !== context.chatId) { attempt = null; deps.onPendingChange?.(null); }
     // An unknown outcome must be retried exactly; never reuse its id for edited text.
     if (attempt && attempt.text !== text) return false;
     busy = true;
