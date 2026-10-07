@@ -5,7 +5,7 @@ import type { ProviderConnectionAttempt } from "@matrix-os/contracts";
 import { getGatewayUrl } from "@/lib/gateway";
 import { createProviderSettingsTransport } from "@/lib/provider-settings-transport";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
-import { OPEN_PROVIDER_TERMINAL_EVENT, PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
+import { openProviderSettings, OPEN_PROVIDER_TERMINAL_EVENT, PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 
 export function ChatProviderOnboarding({ children }: { children?: ReactNode }) {
   const identityKey = getGatewayUrl();
@@ -23,6 +23,9 @@ export function ChatProviderOnboarding({ children }: { children?: ReactNode }) {
     if (action.kind === "open_browser") return openProviderAuthorizationPath(action.authorizationPath);
     return false;
   }, [isIdentityCurrent]);
+  const onOpenSettings = useCallback(() => {
+    if (isIdentityCurrent()) openProviderSettings();
+  }, [isIdentityCurrent]);
   return <SharedOnboarding key={identityKey} identityKey={identityKey} transport={transport} isIdentityCurrent={isIdentityCurrent}
-    onCatalogChanged={onCatalogChanged} openAction={openAction} changedEvent={PROVIDER_SETTINGS_CHANGED_EVENT}>{children}</SharedOnboarding>;
+    onCatalogChanged={onCatalogChanged} openAction={openAction} onOpenSettings={onOpenSettings} changedEvent={PROVIDER_SETTINGS_CHANGED_EVENT}>{children}</SharedOnboarding>;
 }

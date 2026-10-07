@@ -9,7 +9,11 @@ export type OpenAgents = {
   view?: "library" | "recipes";
   title?: "Your AI team" | "New agent" | "Edit agent";
 };
+type BotDetailsRequest = {client: ChatAgentClient; chatId: string; agentId: string; sequence: number};
 type Navigation = {
+  detailsRequest: BotDetailsRequest | null;
+  requestDetails(client: ChatAgentClient, chatId: string, agentId: string): void;
+  consumeDetails(sequence: number): void;
   opened: OpenAgents | null;
   generation: number;
   getGeneration(): number;
@@ -21,12 +25,21 @@ const Context = createContext<Navigation | null>(null);
 
 function LocalWorkspace({ children }: { children: ReactNode }) {
   const [opened, setOpened] = useState<OpenAgents | null>(null);
+  const [detailsRequest, setDetailsRequest] = useState<BotDetailsRequest | null>(null);
+  const detailsSequence = useRef(0);
+  const requestDetails = useCallback((client: ChatAgentClient, chatId: string, agentId: string) => {
+    setDetailsRequest({client, chatId, agentId, sequence: ++detailsSequence.current});
+  }, []);
+  const consumeDetails = useCallback((sequence: number) => {
+    setDetailsRequest(request => request?.sequence === sequence ? null : request);
+  }, []);
   const [generation, setGeneration] = useState(0);
   const generationRef = useRef(0);
   const getGeneration = useCallback(() => generationRef.current, []);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const open = useCallback((value: OpenAgents, element: HTMLButtonElement) => {
     generationRef.current += 1; setGeneration(generationRef.current);
+    setDetailsRequest(null);
     trigger.current = element;
     setOpened({ ...value, title: value.view === "recipes" ? "New agent" : "Your AI team" });
   }, []);
@@ -37,9 +50,10 @@ function LocalWorkspace({ children }: { children: ReactNode }) {
   const close = useCallback((restoreFocus = false) => {
     generationRef.current += 1; setGeneration(generationRef.current);
     setOpened(null);
+    setDetailsRequest(null);
     if (restoreFocus && trigger.current?.isConnected) trigger.current.focus();
   }, []);
-  const value = useMemo(() => ({ opened, open, close, generation, getGeneration, setTitle }), [opened, open, close, generation, getGeneration, setTitle]);
+  const value = useMemo(() => ({ opened, open, close, generation, getGeneration, setTitle, detailsRequest, requestDetails, consumeDetails }), [opened, open, close, generation, getGeneration, setTitle, detailsRequest, requestDetails, consumeDetails]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 

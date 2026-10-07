@@ -1,4 +1,5 @@
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
+import { CanonicalChatClientProvider } from "../chat/CanonicalChatClientContext";
 import { useCompanyDriveChatHandoff } from "./use-company-drive-chat-handoff";
 import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, type ChatAgentDraftRequest } from "@matrix-os/ui";
@@ -98,7 +99,11 @@ export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active
     () => ({ client, eventSource, projectedChatTitles, projectChat, agentDraftRequest, requestAgentDraft, consumeAgentDraft }),
     [client, eventSource, projectChat, projectedChatTitles, agentDraftRequest, requestAgentDraft, consumeAgentDraft],
   );
-  return <WorkSurfaceRuntimeContext.Provider value={value}><ChatAgentsWorkspace>{children}</ChatAgentsWorkspace></WorkSurfaceRuntimeContext.Provider>;
+  return <WorkSurfaceRuntimeContext.Provider value={value}>
+    <CanonicalChatClientProvider api={api} client={client} runtimeSlot={runtimeSlot} authGeneration={authGeneration}>
+      <ChatAgentsWorkspace>{children}</ChatAgentsWorkspace>
+    </CanonicalChatClientProvider>
+  </WorkSurfaceRuntimeContext.Provider>;
 }
 
 export function useWorkSurfaceRuntime(): WorkSurfaceRuntime | null {

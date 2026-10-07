@@ -4,6 +4,7 @@ import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } f
 import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
 import { ChatSharingButton } from "../chat/ChatSharingButton";
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
+import { CanonicalChatClientProvider } from "../chat/CanonicalChatClientContext";
 import { ArrowLeft, PanelLeftCloseIcon, PanelRightCloseIcon, PanelRightOpen } from "@renderer/lib/hugeicons";
 import {
   useCallback,
@@ -824,6 +825,7 @@ function WorkTabContent({
   }, [active, chromeSpec, surfaceChromeHost]);
 
   return (
+    <CanonicalChatClientProvider api={api} client={client} runtimeSlot={runtimeSlot} authGeneration={authGeneration}>
     <ChatFileNavigationProvider key={`${runtimeSlot}:${authGeneration}`} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatId ?? "draft"}`} reveal={openInspector}>
     <div
       ref={workRef}
@@ -926,6 +928,7 @@ function WorkTabContent({
       </div>
     </div>
     </ChatFileNavigationProvider>
+    </CanonicalChatClientProvider>
   );
 }
 

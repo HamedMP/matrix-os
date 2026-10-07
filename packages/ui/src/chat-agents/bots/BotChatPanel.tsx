@@ -72,6 +72,13 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
     setShowAuthority(false);
     setError("");
   }, [chatId, bots, agentId]);
+  const railDetailsRequest = navigation?.detailsRequest;
+  const consumeRailDetails = navigation?.consumeDetails;
+  useEffect(() => {
+    if (!shown || !agentId || !chatId || railDetailsRequest?.agentId !== agentId || railDetailsRequest.client !== client || railDetailsRequest.chatId !== chatId) return;
+    setShowAuthority(true);
+    consumeRailDetails?.(railDetailsRequest.sequence);
+  }, [shown, agentId, chatId, client, railDetailsRequest, consumeRailDetails]);
   useEffect(() => {
     if (!agentId || !chatId || !bots || !client) return;
     let current = true;

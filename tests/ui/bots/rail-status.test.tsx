@@ -87,6 +87,53 @@ describe("Agent rail status", () => {
     await waitFor(() => expect(result.current[agent.id]?.state).toBe("unavailable"));
     expect(result.current[agent.id]?.label).toBe("Status unavailable");
   });
+  it("retains successful same-Bot status during navigation refresh and fences superseded results", async () => {
+    const client = fixture(); let finish!: (tasks: BotTaskSummary[]) => void;
+    const { result, rerender } = renderHook(({ scope }) => useBotRailStatuses(client, [agent], scope),
+      { initialProps: { scope: "chat_one:0" } });
+    await waitFor(() => expect(result.current[agent.id]?.state).toBe("working"));
+    vi.mocked(client.bots!.tasks).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    rerender({ scope: "chat_two:0" });
+    expect(result.current[agent.id]).toEqual({ state: "working", label: "Working" });
+    await waitFor(() => expect(client.bots!.tasks).toHaveBeenCalledTimes(2));
+    rerender({ scope: "project_one:0" });
+    expect(result.current[agent.id]?.state).toBe("working");
+    rerender({ scope: "project_one:1" });
+    expect(result.current[agent.id]?.state).toBe("working");
+    vi.mocked(client.bots!.tasks).mockResolvedValue([task("cancelled")]);
+    await act(async () => finish([task("completed")]));
+    await waitFor(() => expect(result.current[agent.id]).toEqual({ state: "idle", label: "Cancelled" }));
+  });
+  it("keeps established Bot status when discovery adds another Bot", async () => {
+    const client = fixture();
+    const added = { ...agent, id: "bot_additional" };
+    const { result, rerender } = renderHook(({ agents }) => useBotRailStatuses(client, agents, "chat_one"),
+      { initialProps: { agents: [agent] } });
+    await waitFor(() => expect(result.current[agent.id]?.state).toBe("working"));
+    vi.mocked(client.bots!.directChat).mockImplementation(id => id === added.id ? new Promise(() => {}) : Promise.resolve("chat_bot"));
+    rerender({ agents: [added, agent] });
+    expect(result.current[agent.id]?.state).toBe("working");
+    expect(result.current[added.id]?.state).toBe("loading");
+  });
+  it("does not carry task status across a changed recipe identity for the same Bot", async () => {
+    const client = fixture();
+    const { result, rerender } = renderHook(({ currentAgent }) => useBotRailStatuses(client, [currentAgent], "chat_one"),
+      { initialProps: { currentAgent: agent } });
+    await waitFor(() => expect(result.current[agent.id]?.state).toBe("working"));
+    vi.mocked(client.bots!.tasks).mockImplementation(() => new Promise(() => {}));
+    rerender({ currentAgent: { ...agent, recipeRef: { ...agent.recipeRef!, version: "2" } } });
+    expect(result.current[agent.id]?.state).toBe("loading");
+  });
+  it("replaces retained task evidence with unavailable when the background refresh fails", async () => {
+    const client = fixture();
+    const { result, rerender } = renderHook(({ scope }) => useBotRailStatuses(client, [agent], scope),
+      { initialProps: { scope: "chat_one" } });
+    await waitFor(() => expect(result.current[agent.id]?.state).toBe("working"));
+    vi.mocked(client.bots!.interactions).mockRejectedValue(new Error("private runtime failure"));
+    rerender({ scope: "chat_two" });
+    expect(result.current[agent.id]?.state).toBe("working");
+    await waitFor(() => expect(result.current[agent.id]).toEqual({ state: "unavailable", label: "Status unavailable" }));
+  });
   it("does not create an unbound direct Chat and keeps custom unbound agents neutral", async () => {
     const client = fixture(); vi.mocked(client.bots!.directChat).mockResolvedValue(null);
     const { result } = renderHook(() => useBotRailStatuses(client, [agent], "chat_one"));
