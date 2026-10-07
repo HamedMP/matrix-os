@@ -57,7 +57,14 @@ export default function SignIn() {
           .then((result) => {
             if (result.status === "authorized") {
               stopPolling();
-              void refresh().catch(() => setPhase("error"));
+              void refresh().then(() => {
+                // The store catches refresh failures and resolves signed-out.
+                // Approval alone does not mean the connection is ready.
+                if (useConnection.getState().status !== "signed-in") setPhase("error");
+              }).catch((error: unknown) => {
+                console.warn("[signin] approved connection refresh failed", error instanceof Error ? error.name : "Unknown error");
+                setPhase("error");
+              });
             } else if (result.status === "expired") {
               stopPolling();
               setPhase("expired");

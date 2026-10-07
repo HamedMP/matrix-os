@@ -27,6 +27,8 @@ action, and waiting status. Failed browser launches keep the code and a
 selectable verification URL available; operating-system errors are logged as
 sanitized diagnostics. Expiry or polling failure restores the account actions
 with a safe alert. Authorized polling stops before refreshing connection state.
+If the refresh resolves without a signed-in connection or rejects, the account
+actions return with a safe retry alert instead of remaining on the waiting screen.
 
 This is a presentation refresh of the existing native browser handoff, rather
 than a new authentication method. Web Canvas and Web Desktop already run in
@@ -35,7 +37,8 @@ the authenticated browser; their account routing and hosted setup are unchanged.
 ## Validation
 
 - `tests/desktop/signin-device-auth.test.tsx` covers account intent, busy state,
-  browser failures, expiry, polling errors, and authorized refresh.
+  browser failures, expiry, polling errors, authorized refresh, and recovery
+  when an approved connection cannot refresh.
 - The existing brand-panel tests protect the shared mark used by other surfaces.
 - `tests/e2e/desktop/signin-brand.e2e.test.ts` launches the built app with a
   temporary profile and isolated device-auth handlers. It verifies bundled

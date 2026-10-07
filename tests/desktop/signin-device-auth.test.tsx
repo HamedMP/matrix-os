@@ -18,7 +18,7 @@ vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
 describe("Electron Desktop device authorization sign-in", () => {
   beforeEach(() => {
     useConnection.setState(useConnection.getInitialState(), true);
-    useConnection.setState({ refresh: vi.fn(async () => undefined) });
+    useConnection.setState({ refresh: vi.fn(async () => { useConnection.setState({ status: "signed-in" }); }) });
     vi.mocked(invoke).mockReset();
   });
 
@@ -158,5 +158,31 @@ describe("Electron Desktop device authorization sign-in", () => {
     }
     await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
     expect(vi.mocked(invoke).mock.calls.filter(([channel]) => channel === "auth:poll")).toHaveLength(1);
+  });
+
+  it.each(["signed-out", "rejected"])("offers recovery when the approved connection refresh is %s", async (outcome) => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    useConnection.setState({ refresh: vi.fn(async () => {
+      if (outcome === "rejected") throw new Error("/private/sensitive/path");
+      useConnection.setState({ status: "signed-out" });
+    }) });
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === "auth:start-device-flow") return { userCode: "ABCD-EFGH", verificationUri: "https://app.matrix-os.com/auth/device", expiresIn: 2700 } as never;
+      if (channel === "auth:poll") return { status: "authorized" } as never;
+      return undefined as never;
+    });
+    render(<SignIn />);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sign in" })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(screen.getByRole("alert").textContent).toMatch(/couldn't connect/i);
+    expect((screen.getByRole("button", { name: "Sign in" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.body.textContent).not.toContain("/private/sensitive/path");
+    if (outcome === "rejected") expect(warn).toHaveBeenCalledWith("[signin] approved connection refresh failed", "Error");
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    expect(vi.mocked(invoke).mock.calls.filter(([channel]) => channel === "auth:poll")).toHaveLength(1);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Sign in" })));
+    expect(vi.mocked(invoke).mock.calls.filter(([channel]) => channel === "auth:start-device-flow")).toHaveLength(2);
   });
 });
