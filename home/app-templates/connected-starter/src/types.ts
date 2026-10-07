@@ -25,7 +25,12 @@ export interface Definition {
     | "focus";
   entity: string;
   fields: Field[];
-  services: { id: string; name: string; actions: string[]; optional?: boolean }[];
+  services: {
+    id: string;
+    name: string;
+    actions: string[];
+    optional?: boolean;
+  }[];
   importGoal: string;
   highlights: string[];
 }
@@ -87,6 +92,9 @@ export interface Database {
 declare global {
   interface Window {
     MatrixOS?: {
+      mail?: import("./edition/types").MailBridge;
+      mailCacheScope?: string;
+      mailDownloads?: import("./edition/runtime").EditionDownloadHost;
       db?: Database;
       integrations?: () => Promise<Connection[]>;
       generate?: (context: string) => void;
