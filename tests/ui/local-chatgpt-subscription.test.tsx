@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { LocalChatgptSubscription } from "../../packages/ui/src/agents-providers/LocalChatgptSubscription.js";
 import type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "../../packages/ui/src/agents-providers/local-chatgpt-plan-client.js";
@@ -12,9 +12,15 @@ const connected: LocalChatgptPlanStatus = { ...disconnected, state: "connected",
 function client(value = disconnected): LocalChatgptPlanClient {
   return { status: vi.fn().mockResolvedValue(value), connect: vi.fn().mockResolvedValue(connected), cancel: vi.fn().mockResolvedValue(disconnected), disconnect: vi.fn().mockResolvedValue(disconnected), refreshModels: vi.fn().mockResolvedValue(connected), setGrant: vi.fn().mockResolvedValue({ ...connected, grant: { revision: 1, enabled: true, background: false } }) };
 }
-it("places the real native subscription source in Matrix AI separately from Codex key management", async () => {
+it("shows only the personal ChatGPT card in Matrix AI without a Claude subscription or task consent entry", async () => {
   render(<YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [] } as never} capabilities={[]} client={undefined} localChatgptClient={client()} operationIds={{}} workflowStatus={{}} forbidden={false} disabled={false} onOpen={vi.fn()} onRefresh={vi.fn()}/>);
   expect(await screen.findByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled();
+  const subscriptions = screen.getByRole("region", { name: "Your subscriptions" });
+  expect(within(subscriptions).getAllByRole("article")).toHaveLength(1);
+  expect(within(subscriptions).getByRole("article", { name: "ChatGPT subscription" })).toBeVisible();
+  expect(within(subscriptions).queryByText(/Claude/)).toBeNull();
+  expect(within(subscriptions).queryByRole("region", { name: "Claude Code Bot authorization" })).toBeNull();
+  expect(within(subscriptions).queryByRole("checkbox")).toBeNull();
 });
 it("does not advertise a login action in unsupported Web or Canvas surfaces", () => {
   render(<LocalChatgptSubscription disabled={false} readOnly={false} onChanged={vi.fn()}/>);
