@@ -70,14 +70,15 @@ h1 { letter-spacing: -.045em; }
 :root:root:root[data-app] {
  --app-primary:var(--identity-accent); --app-primary-fg:var(--identity-on-accent);
  --app-accent:var(--identity-accent); --accent:var(--identity-accent);
+ --app-text-accent:color-mix(in srgb,var(--app-fg) 85%,var(--identity-accent));
  --app-bg:var(--matrix-bg,var(--identity-wash)); --background:var(--app-bg);
  --gallery-blush:color-mix(in srgb,var(--app-bg) 82%,var(--identity-glow));
 }
 :root[data-app] body { background:radial-gradient(ellipse at 100% 0%,var(--gallery-blush),transparent 68%),var(--app-bg); }
 :root[data-app] .brand-mark { color:var(--identity-on-accent); }
-:root[data-app] .tab.active,:root[data-app] .focus-presets button.active { color:var(--identity-accent); }
+:root[data-app] .tab.active,:root[data-app] .focus-presets button.active,:root[data-app] .nav-item--active,:root[data-app] .key--op { color:var(--app-text-accent); }
 @media(prefers-color-scheme:dark) {
  :root:root:root[data-app] { --app-bg:var(--matrix-bg,#1d2234); }
 }
 
-:root[data-app] .button--primary,:root[data-app] .primary-btn,:root[data-app] .exp-primary,:root[data-app] .focus-start,:root[data-app] .key--equals { color:var(--identity-on-accent); }
+:root[data-app] .button--primary,:root[data-app] .primary-btn,:root[data-app] .exp-primary,:root[data-app] .focus-start,:root[data-app] .key--equals,:root[data-app] .primary-action { color:var(--identity-on-accent); }
