@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -16,6 +16,7 @@ import {
 import {
   addLocalParityOperator,
   assertFixtureAddressInstalled,
+  assertParityTlsCertificate,
   assertLocalParityContainerOwnership,
   assertLocalParityMachinesAvailable,
   assertOrbStackCapacity,
@@ -35,7 +36,9 @@ import {
   localParityBuilderName,
   localParityLauncherLockArguments,
   platformContainerArguments,
+  platformEnvironment,
   platformImageBuildArguments,
+  publicBuildEnvironment,
   pendingLocalParityMachineId,
   qemuRuntimeArguments,
   renderLocalParityCloudInit,
@@ -46,6 +49,45 @@ import {
   startArtifactServer,
   storageTlsProxyArguments,
 } from "../../scripts/dev-production-parity.mjs";
+import { loadPlatformCollaborationConfig } from "../../packages/platform/src/collaboration/wiring.js";
+import { loadTicketSigningKeyring } from "../../packages/platform/src/collaboration/ticket-issuer.js";
+
+it("supplies valid local collaboration configuration with retained environment-specific signing", () => {
+  const state = { platformSecret: "saved-secret", platformJwtSecret: "saved-jwt" };
+  const env = platformEnvironment(state, "jwt-key");
+  expect(loadPlatformCollaborationConfig(env)?.relayOrigin).toBe("https://app.localhost:9445");
+  expect(loadPlatformCollaborationConfig(env)?.allowedOrigins).toEqual(["https://app.localhost:9445"]);
+  expect(publicBuildEnvironment().NEXT_PUBLIC_MATRIX_APP_URL).toBe("https://app.localhost:9445");
+  expect(env.NEXT_PUBLIC_MATRIX_APP_URL).toBe("https://app.localhost:9445");
+  expect(loadTicketSigningKeyring(env)).not.toBeNull();
+  expect(env.MATRIX_COLLABORATION_TICKET_KEYS).toBe(platformEnvironment(state, "other-jwt").MATRIX_COLLABORATION_TICKET_KEYS);
+  expect(env.MATRIX_COLLABORATION_TICKET_KEYS).not.toBe(platformEnvironment({ ...state, platformSecret: "other-environment" }, "jwt-key").MATRIX_COLLABORATION_TICKET_KEYS);
+  expect(storageTlsProxyArguments().at(-1)).toContain("TCP:host.docker.internal:9100");
+  expect(storageTlsProxyArguments({ port: 9445, targetPort: 9003 }).at(-1)).toContain("OPENSSL-LISTEN:9445");
+  expect(storageTlsProxyArguments({ port: 9445, targetPort: 9003 }).at(-1)).toContain("TCP:host.docker.internal:9003");
+});
+
+it("requires migration of a retained IP-only certificate without modifying its key", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "parity-tls-"));
+  const key = resolve(directory, "key.pem");
+  const certificate = resolve(directory, "certificate.pem");
+  try {
+    const generated = spawnSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+      "-days", "1", "-subj", "/CN=local", "-addext", "subjectAltName=IP:10.0.2.2",
+      "-keyout", key, "-out", certificate]);
+    expect(generated.status).toBe(0);
+    const retainedKey = readFileSync(key);
+    expect(() => assertParityTlsCertificate(certificate)).toThrow(/SANs.*manually/);
+    const migrated = spawnSync("openssl", ["req", "-x509", "-key", key, "-days", "1",
+      "-subj", "/CN=local", "-addext", "subjectAltName=IP:10.0.2.2,DNS:app.localhost,DNS:localhost",
+      "-out", certificate]);
+    expect(migrated.status).toBe(0);
+    expect(() => assertParityTlsCertificate(certificate)).not.toThrow();
+    expect(readFileSync(key)).toEqual(retainedKey);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 import {
   createSmokeCancellation,
   DOCKER_FULL_STACK_SERVICES,
@@ -666,6 +708,8 @@ describe("local development contracts", () => {
     expect(rendered).toContain("MATRIX_METADATA_INSTANCE_ID_URL=http://10.0.2.2:9876/metadata/instance-id");
     expect(rendered).toContain("MATRIX_METADATA_PUBLIC_IPV4_URL=http://10.0.2.2:9876/metadata/public-ipv4");
     expect(rendered).toContain("NODE_EXTRA_CA_CERTS=/opt/matrix/local-parity-storage-ca.pem");
+    expect(rendered).toContain("COLLABORATION_RELAY_ORIGIN=https://app.localhost:9445");
+    expect(rendered).toContain("MATRIX_COLLABORATION_CLIENT_ORIGINS=https://app.localhost:9445");
     expect(rendered).not.toContain("growpart:\n  mode: off\nresize_rootfs: false");
     expect(rendered).not.toMatch(/\{\{[a-zA-Z0-9_]+\}\}/);
     expect(rendered).not.toContain("MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED");
@@ -681,6 +725,7 @@ describe("local development contracts", () => {
     };
     expect(localSeed.users.map((user) => user.name)).toEqual(["matrix", "matrix-local-operator"]);
     expect(localSeed.bootcmd[0]).toContain("ip address replace 192.0.2.2/32");
+    expect(localSeed.bootcmd[0]).toContain("10.0.2.2 app.localhost");
     const encodedCertificate = localSeed.write_files.find(
       (file) => file.path === "/opt/matrix/local-parity-storage-ca.pem",
     )?.content;
