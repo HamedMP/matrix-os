@@ -5,9 +5,9 @@ import { createHash } from 'node:crypto';
 import { Script } from 'node:vm';
 import { reviewApps, reviewKey, reviewSize } from '../src/review-model.ts';
 
-test('every review entry has two self-contained, integrity-checked source documents', () => {
-  assert.equal(reviewApps.length, 17);
-  for (const app of reviewApps) for (const edition of ['current', 'original']) {
+test('every review entry has its available self-contained, integrity-checked source documents', () => {
+  assert.equal(reviewApps.length, 26);
+  for (const app of reviewApps) for (const edition of ('previous' in app && !app.previous ? ['current'] : ['current', 'original'])) {
     const key = reviewKey(app.id, edition);
     const { html, sha256, fictionalOnly } = JSON.parse(readFileSync(new URL(`../src/preview-documents/${key}.json`, import.meta.url), 'utf8'));
     assert.equal(fictionalOnly, true);
@@ -33,6 +33,8 @@ test('every review entry has two self-contained, integrity-checked source docume
 test('untrusted identifiers and editions cannot become preview keys', () => {
   for (const id of ['../secret', 'https://example.com', 'notes?owner=other', 'unknown']) assert.throws(() => reviewKey(id, 'current'));
   assert.throws(() => reviewKey('notes', '../secret'));
+  assert.throws(() => reviewKey('workout-coach', 'original'));
+  assert.equal(reviewKey('workout-coach', 'current'), 'current-workout-coach');
 });
 test('phone, tablet and desktop are actual distinct app widths', () => {
   assert.deepEqual(reviewSize('phone'), { width: 390, height: 760 });

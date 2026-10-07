@@ -57,3 +57,12 @@
   .listing-context { font-size: 11px; }
   .listing-screenshot > span { font-size: 10px; }
 }
+
+.store-listing.app-identity .listing-screenshot { border-color:color-mix(in srgb,var(--identity-accent) 28%,var(--paper)); background:var(--identity-wash); }
+.store-listing.app-identity .listing-get { color:var(--identity-accent); }
+.store-listing.app-identity .sculpture-icon { outline:2px solid color-mix(in srgb,var(--identity-accent) 25%,transparent); outline-offset:2px; border-radius:18px; }
+
+.app-card.app-identity .app-glyph { background:var(--identity-wash); color:var(--identity-accent); }
+.app-details-grid.app-identity .primary-button { background:var(--identity-accent); color:var(--identity-on-accent); }
+
+.app-details-grid.app-identity .app-glyph { background:var(--identity-wash); color:var(--identity-accent); }

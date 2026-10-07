@@ -1,11 +1,14 @@
 import type { AppInfo, ToolId } from './types';
-import { BookOpen, CalendarDays, Check, ChevronRight, CircleDollarSign, Clock3, CreditCard, FileText, Focus, Grid2X2, Layers3, Link2, Mail, MapPin, Search, ShieldCheck, Smartphone, Sparkles, Star, X } from 'lucide-react';
+import DemoFrame from './DemoFrame';
+import './AppIdentities.css';
+import { BriefcaseBusiness, Dumbbell, HandCoins, NotebookPen, ChessKnight, UsersRound, Utensils, WalletCards, BookOpen, CalendarDays, Check, ChevronRight, CircleDollarSign, Clock3, CreditCard, FileText, Focus, Grid2X2, Layers3, Link2, Mail, MapPin, Search, ShieldCheck, Smartphone, Sparkles, Star, X } from 'lucide-react';
 
 export const tools: { id: ToolId; name: string; description: string }[] = [
   { id: 'gmail', name: 'Gmail', description: 'Receipts, bookings and useful context' },
   { id: 'google_calendar', name: 'Google Calendar', description: 'Your days, plans and meetings' },
   { id: 'stripe', name: 'Stripe', description: 'Payments and invoices' },
   { id: 'linear', name: 'Linear', description: 'Projects, milestones and issues' },
+  { id: 'google_docs', name: 'Google Docs', description: 'Selected notes and document contents' },
 ];
 
 export const apps: AppInfo[] = [
@@ -17,9 +20,18 @@ export const apps: AppInfo[] = [
   { id: 'meeting-briefs', name: 'Meeting Briefs', category: 'Business', description: 'Walk in with the useful context.', detail: 'Prepare for your next meeting with the relevant conversation, attendees and your own notes collected into a readable brief.', tools: ['gmail', 'google_calendar'], glyph: 'briefs', benefits: ['Meeting preparation', 'Source-supported context', 'Your action notes'] },
   { id: 'projects', name: 'Projects', category: 'Business', description: 'See the work moving forward.', detail: 'Bring projects, milestones and issues into a view built for understanding what is moving and what needs attention.', tools: ['linear'], glyph: 'projects', benefits: ['Project milestones', 'Issue lanes and filters', 'Original issue references'] },
   { id: 'revenue', name: 'Revenue', category: 'Business', description: 'A clear view of money coming in.', detail: 'Review settled payments and invoices, keep currencies separate and inspect the evidence behind each number.', tools: ['stripe'], glyph: 'revenue', benefits: ['Settled revenue by currency', 'Invoice and payment review', 'Reconciliation details'] },
+  {"id": "workout-coach", "name": "Workout History Coach", "category": "Personal", "description": "A little stronger, every session.", "detail": "See your progress, one working set at a time. Log sets, compare volume and keep your own training history.", "tools": [], "glyph": "dumbbell", "benefits": ["Your records, saved in your computer", "Editable results and source evidence", "Designed for your phone and computer"]},
+  {"id": "paycheck-runway", "name": "Paycheck Runway", "category": "Personal", "description": "Know what fits before payday.", "detail": "Give every bill a place before the next payday. Plan confirmed income and commitments without guessing your bank balance.", "tools": [], "glyph": "wallet", "benefits": ["Your records, saved in your computer", "Editable results and source evidence", "Designed for your phone and computer"]},
+  {"id": "meal-planner", "name": "Meal Rotation & Grocery Plan", "category": "Personal", "description": "Good food. One easy list.", "detail": "Save the recipes you like, plan portions and turn the week into one practical grocery list.", "tools": [], "glyph": "utensils", "benefits": ["Your records, saved in your computer", "Editable results and source evidence", "Designed for your phone and computer"]},
+  {"id": "job-search", "name": "Job Search Companion", "category": "Personal", "description": "Your next chapter, organized.", "detail": "A calmer place for applications, interviews and the next step. Keep confirmed updates beside your own plans.", "tools": ["gmail"], "glyph": "briefcase", "benefits": ["Your records, saved in your computer", "Editable results and source evidence", "Designed for your phone and computer"]},
+  {"id": "study-notes", "name": "Study From My Notes", "category": "Personal", "description": "Make what you read stay with you.", "detail": "Turn your own notes into editable, source-backed questions. Practice recall and return to what needs another look.", "tools": ["google_docs"], "glyph": "book-open", "benefits": ["Your records, saved in your computer", "Editable results and source evidence", "Designed for your phone and computer"]},
+  {"id": "journal-memory", "name": "Journal That Remembers", "category": "Personal", "description": "A little room to remember.", "detail": "A private place to write, revisit themes and remember the decisions that mattered. You choose what is included.", "tools": [], "glyph": "notebook", "benefits": ["Your records, saved in your computer", "Editable results and source evidence", "Designed for your phone and computer"]},
+  {"id": "chess-coach", "name": "Chess Practice Coach", "category": "Personal", "description": "One game. One useful lesson.", "detail": "Revisit a completed game, inspect legal moves and practice a position using bounded local chess analysis.", "tools": [], "glyph": "chess", "benefits": ["Your records, saved in your computer", "Editable results and source evidence", "Designed for your phone and computer"]},
+  {"id": "people", "name": "People", "category": "Personal", "description": "A little more thoughtful.", "detail": "Remember the people, context, and next conversations that matter.", "tools": ["gmail"], "glyph": "people", "benefits": ["People and conversation context", "Upcoming touchpoints", "Account-aware organization"]},
+  {"id": "cashflow", "name": "Cashflow", "category": "Business", "description": "A clear view of what is owed.", "detail": "Track incoming invoices, due dates, and payment evidence.", "tools": ["stripe"], "glyph": "cashflow", "benefits": ["Invoice and payment ledger", "Receivables by currency", "Payment evidence"]},
 ];
 
-const glyphs = { folio: FileText, atlas: MapPin, agenda: CalendarDays, subscriptions: Clock3, focus: Focus, briefs: BookOpen, projects: Layers3, revenue: CircleDollarSign, search: Search, arrow: ChevronRight, check: Check, close: X, grid: Grid2X2, link: Link2, phone: Smartphone, shield: ShieldCheck, sparkles: Sparkles, star: Star, gmail: Mail, google_calendar: CalendarDays, stripe: CreditCard, linear: Layers3 };
+const glyphs = { folio: FileText, atlas: MapPin, agenda: CalendarDays, subscriptions: Clock3, focus: Focus, briefs: BookOpen, projects: Layers3, revenue: CircleDollarSign, search: Search, arrow: ChevronRight, check: Check, close: X, grid: Grid2X2, link: Link2, phone: Smartphone, shield: ShieldCheck, sparkles: Sparkles, star: Star, gmail: Mail, google_calendar: CalendarDays, stripe: CreditCard, linear: Layers3, google_docs: BookOpen, dumbbell: Dumbbell, wallet: WalletCards, utensils: Utensils, briefcase: BriefcaseBusiness, 'book-open': BookOpen, notebook: NotebookPen, chess: ChessKnight, people: UsersRound, cashflow: HandCoins };
 export function Glyph({ name, size = 22 }: { name: string; size?: number }) { const Icon = glyphs[name as keyof typeof glyphs] ?? Grid2X2; return <Icon size={size} strokeWidth={1.7} aria-hidden="true" />; }
 export function ToolName({ id }: { id: ToolId }) { return <span className="tool-name"><Glyph name={id} size={16} />{tools.find(tool => tool.id === id)?.name}</span>; }
 export function reason(app: AppInfo, connected: ToolId[]) {
@@ -29,8 +41,8 @@ export function reason(app: AppInfo, connected: ToolId[]) {
   return `Connect ${missing.map(id => tools.find(tool => tool.id === id)?.name).join(' and ')}`;
 }
 export function AppCard({ app, connected, onPick, compact = false }: { app: AppInfo; connected: ToolId[]; onPick: (app: AppInfo) => void; compact?: boolean }) {
-  return <button className={`app-card ${compact ? 'compact' : ''}`} onClick={() => onPick(app)} aria-label={`Explore ${app.name}`}>
-    <div className="app-shot"><img src={`./previews/${app.id}.webp`} width="1200" height="750" alt={`${app.name} actual starter interface with fictional example records`} loading="lazy" /><span>Example data</span></div>
+  return <button data-app={app.id} className={`app-card app-identity ${compact ? 'compact' : ''}`} onClick={() => onPick(app)} aria-label={`Explore ${app.name}`}>
+    <div className="app-shot"><DemoFrame id={app.id} /><span>Example data</span></div>
     <div className="app-card-body"><div className={`app-glyph glyph-${app.id}`}><Glyph name={app.glyph} /></div><div className="app-name-block"><h3>{app.name}</h3><p>{app.description}</p></div><Glyph name="arrow" size={18} /></div>
     <div className="app-card-foot"><span>{reason(app, connected)}</span><span>Free</span></div>
   </button>;
