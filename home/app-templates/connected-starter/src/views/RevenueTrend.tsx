@@ -1,5 +1,5 @@
 export default function RevenueTrend({ points, max }: { points: [string, number][]; max: number }) {
-  const x = (index: number) => points.length === 1 ? 300 : 20 + index * 560 / (points.length - 1);
+  const x = (index: number) => (index + 0.5) * 600 / points.length;
   const y = (value: number) => 145 - value / max * 125;
   return (
     <svg className="trend-line" viewBox="0 0 600 160" preserveAspectRatio="none" aria-hidden="true">

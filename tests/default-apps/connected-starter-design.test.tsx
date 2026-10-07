@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { createElement } from "react";
+import { createElement, useState } from "react";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Views from "../../home/app-templates/connected-starter/src/Views";
 import Sidebar from "../../home/app-templates/connected-starter/src/Sidebar";
+import RevenueTrend from "../../home/app-templates/connected-starter/src/views/RevenueTrend";
 import type { Definition, OwnerRecord } from "../../home/app-templates/connected-starter/src/types";
 import catalog from "../../home/system/app-gallery.json";
 afterEach(cleanup);
@@ -14,6 +15,22 @@ function props(id: string, records: OwnerRecord[]) {
   return { app: catalog.apps.find(app => app.id === id) as Definition, records, onEdit: vi.fn(), onEvidence: vi.fn(), onAdd: vi.fn(), onSave: vi.fn(async () => {}) };
 }
 describe("connected app subject-specific interactions", () => {
+  it("keeps the filter panel open while clearing a search", () => {
+    function Filters() {
+      const [query, setQuery] = useState("Lisbon");
+      return createElement(Sidebar, { ...props("atlas", []), count: 0, canUseRecords: true, canImport: true, accounts: [], query, setQuery, scope: "all", setScope: vi.fn(), account: "", setAccount: vi.fn(), onImport: vi.fn() });
+    }
+    render(createElement(Filters));
+    const panel = screen.getByText("Filters & connections").closest("details")!;
+    expect(panel.open).toBe(true);
+    fireEvent.change(screen.getByLabelText("Search records"), { target: { value: "" } });
+    expect(panel.open).toBe(true);
+    expect(screen.getByRole("button", { name: "Connect & import" })).toBeTruthy();
+  });
+  it("positions revenue dots at the centers of the shared label columns", () => {
+    const { container } = render(createElement(RevenueTrend, { points: [["2026-08", 20], ["2026-09", 40]], max: 40 }));
+    expect([...container.querySelectorAll("circle")].map(dot => Number(dot.getAttribute("cx")))).toEqual([150, 450]);
+  });
   it("selects a journey from the destination canvas, preserves actions and falls back when a filter removes it", () => {
     const first = record("a", { title: "Autumn in Lisbon", destination: "Lisbon", flight: "TP123", date: "2026-10-08" });
     const second = record("b", { title: "Northern weekend", destination: "Copenhagen", flight: "SK456" });

@@ -18,6 +18,8 @@
 .revenue-overview .segmented { border-color: #536571; }
 .revenue-overview .segmented button[aria-pressed="true"] { color: #fff; background: #435966; }
 .revenue-trend { position: relative; color: #c5dfeb; }
+.revenue-plot { position: relative; display: grid; width: 100%; flex: 0 0 auto; }
+.revenue-plot .bar-column { min-width: 0; padding: 0 6px; }
 .trend-line { position: absolute; width: 100%; height: 160px; top: 0; pointer-events: none; }
 .revenue-trend .bar-column { z-index: 1; justify-content: space-between; height: 185px; }
 .revenue-trend .bar { visibility: hidden; }

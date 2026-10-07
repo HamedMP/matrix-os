@@ -129,6 +129,7 @@ export default function Finance(props: ViewProps) {
                 role="img"
                 aria-label={`${chosen} settled amounts by ${period}`}
               >
+                <div className={app.id === "revenue" ? "revenue-plot" : "bar-columns"} style={app.id === "revenue" ? { gridTemplateColumns: `repeat(${points.length}, minmax(96px, 1fr))`, minWidth: points.length * 96 } : undefined}>
                 {app.id === "revenue" && <RevenueTrend points={points} max={max} />}
                 {points.map(([label, value]) => (
                   <div className="bar-column" key={label}>
@@ -142,6 +143,7 @@ export default function Finance(props: ViewProps) {
                     <span>{period === "months" ? label : label.slice(5)}</span>
                   </div>
                 ))}
+                </div>
               </div>
             ) : (
               <div className="chart-empty">
