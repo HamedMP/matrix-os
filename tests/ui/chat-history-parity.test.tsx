@@ -1,14 +1,52 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatHistory } from "../../packages/ui/src/chat/ChatHistory.js";
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 const items = [
   { id: "chat_task", title: "Launch website", updatedAt: 1, unread: false, conversationKind: "chat" as const },
   { id: "chat_voice", title: "Plan my week", updatedAt: 2, unread: true, conversationKind: "voice" as const },
 ];
 describe("shared Chat history presentation", () => {
+  it("retains server content matches outside the title and latest preview", () => {
+    render(<ChatHistory items={items} searchMode="remote" onSelect={vi.fn()} onNewChat={vi.fn()} onQueryChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "older message contents" } });
+    expect(screen.getByRole("button", { name: "Launch website" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Plan my week" })).toBeNull();
+  });
+  it("clears the filter when search is hidden", () => {
+    render(<ChatHistory items={items} onSelect={vi.fn()} onNewChat={vi.fn()} />);
+    const search = screen.getByRole("button", { name: "Search chats" });
+    fireEvent.click(search);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "absent" } });
+    expect(screen.queryByRole("button", { name: "Launch website" })).toBeNull();
+    fireEvent.click(search);
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.getByRole("button", { name: "Launch website" })).toBeTruthy();
+  });
+  it("debounces remote searches and cancels stale work on close or unmount", async () => {
+    vi.useFakeTimers();
+    const change = vi.fn();
+    const view = render(<ChatHistory items={items} searchMode="remote" onSelect={vi.fn()} onNewChat={vi.fn()} onQueryChange={change} />);
+    const search = screen.getByRole("button", { name: "Search chats" });
+    fireEvent.click(search);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "l" } });
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "launch" } });
+    expect(change).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(change.mock.calls).toEqual([["launch"]]);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "stale" } });
+    fireEvent.click(search);
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(change.mock.calls).toEqual([["launch"], [""]]);
+    fireEvent.click(search);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "unmounted" } });
+    view.unmount();
+    await act(() => vi.advanceTimersByTimeAsync(300));
+    expect(change).toHaveBeenCalledTimes(2);
+  });
   it("keeps voice sessions out of ordinary recents", () => {
     const select = vi.fn();
     render(<ChatHistory items={items} onSelect={select} onNewChat={vi.fn()} />);
