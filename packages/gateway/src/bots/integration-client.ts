@@ -11,12 +11,16 @@
 import type { Hono } from "hono";
 import { z } from "zod/v4";
 import { delegatedIntegrationHeaders } from "../integrations/delegated-identity.js";
+import { REFRESH_LIMITS } from "../integrations/refresh/contracts.js";
 import { INTEGRATION_READ_SCOPE_HEADER } from "../integrations/scope-provenance.js";
 
 const LIST_TIMEOUT_MS = 10_000;
 const CALL_TIMEOUT_MS = 25_000;
 const MAX_LIST_BYTES = 128 * 1024;
 const MAX_CALL_BYTES = 256 * 1024;
+// Manual imports validate the data page separately; allow bounded JSON framing
+// and the optional summary without increasing ordinary bot response limits.
+const MAX_IMPORT_CALL_BYTES = REFRESH_LIMITS.maxPageBytes + 32 * 1024;
 // One reviewed binary read returns inline base64url: 1 MiB decoded plus JSON
 // framing fits below this cap. No caller-supplied limits or generic expansion.
 const MAX_GMAIL_ATTACHMENT_CALL_BYTES = 1536 * 1024;
@@ -137,6 +141,20 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
     }
   }
 
+  type CallInput = { service: string; action: string; label: string; connectionId?: string; params: Record<string, unknown>; read: boolean };
+  async function call(ownerId: string, input: CallInput, maxBytes: number, signal?: AbortSignal) {
+    return send(ownerId, {
+      method: "POST",
+      path: input.read ? "/read-call" : "/call",
+      body: { service: input.service, action: input.action, label: input.label, params: input.params, ...(input.connectionId ? { connectionId: input.connectionId } : {}) },
+      readScope: input.read,
+    }, CALL_TIMEOUT_MS, async (response, bounded) => {
+      const result = CallResultSchema.safeParse(await readJson(response, maxBytes, bounded));
+      if (!result.success) throw new BotIntegrationError("unavailable");
+      return { data: result.data.data, ...(result.data.summary !== undefined ? { summary: result.data.summary } : {}) };
+    }, signal, !input.read);
+  }
+
   return {
     /** The owner's active connected accounts. */
     async inventory(ownerId: string, signal?: AbortSignal): Promise<BotIntegrationConnection[]> {
@@ -172,20 +190,15 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
         await readJson(response, MAX_CALL_BYTES, bounded);
       }, signal);
     },
+    /** Trusted manual-import seam: fixed bounded allowance and read-only routing. */
+    async callImportRead(ownerId: string, input: Omit<CallInput, "read">, signal?: AbortSignal) {
+      return call(ownerId, { ...input, read: true }, MAX_IMPORT_CALL_BYTES, signal);
+    },
     /** Runs one action on the account with `label`. Reads use the read-only route, which never syncs. */
     async call(ownerId: string, input: { service: string; action: string; label: string; connectionId?: string; params: Record<string, unknown>; read: boolean }, signal?: AbortSignal) {
       const maxBytes = input.read && input.service === "gmail" && input.action === "get_attachment"
         ? MAX_GMAIL_ATTACHMENT_CALL_BYTES : MAX_CALL_BYTES;
-      return send(ownerId, {
-        method: "POST",
-        path: input.read ? "/read-call" : "/call",
-        body: { service: input.service, action: input.action, label: input.label, params: input.params, ...(input.connectionId ? { connectionId: input.connectionId } : {}) },
-        readScope: input.read,
-      }, CALL_TIMEOUT_MS, async (response, bounded) => {
-        const result = CallResultSchema.safeParse(await readJson(response, maxBytes, bounded));
-        if (!result.success) throw new BotIntegrationError("unavailable");
-        return { data: result.data.data, ...(result.data.summary !== undefined ? { summary: result.data.summary } : {}) };
-      }, signal, !input.read);
+      return call(ownerId, input, maxBytes, signal);
     },
   };
 }
