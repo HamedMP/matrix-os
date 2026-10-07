@@ -1,3 +1,4 @@
+import { createPlatformImageClient } from "./image-generation/platform-client.js";
 import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-instance.js";
 import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
 import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
@@ -874,6 +875,7 @@ export async function createGateway(config: GatewayConfig) {
     fundedCredentialProvider,
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
+    platformImageClient: createPlatformImageClient(),
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);

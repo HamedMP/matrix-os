@@ -12,7 +12,8 @@
     "./codex-chat-import-client": "./src/codex-chat-import-client.ts",
     "./local-chat-import": "./src/local-chat-import/index.ts",
     "./bots": "./src/bots/index.ts",
-    "./integration-marketplace": "./src/integration-marketplace.ts"
+    "./integration-marketplace": "./src/integration-marketplace.ts",
+    "./image-generation/server": "./src/image-generation/server.ts"
   },
   "imports": {
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",

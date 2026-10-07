@@ -38,6 +38,15 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
   await db.transaction(async (trx) => {
     if (ownerHash) await lockAccountDeletionOwner(trx.executor,ownerHash(owner));
     await assertDeletionOwnershipSafe(trx, owner);
+    // Serialize image deletion with admission; ambiguous provider charges retain
+    // their reservation and evidence until an operator has reconciled them.
+    for (const imageOwner of ['__image_global__', owner]) {
+      await trx.executor.insertInto('image_owner_admissions').values({ owner_id: imageOwner }).onConflict(c => c.column('owner_id').doNothing()).execute();
+      await trx.executor.selectFrom('image_owner_admissions').select('owner_id').where('owner_id', '=', imageOwner).forUpdate().executeTakeFirstOrThrow();
+    }
+    const unresolvedImages = await trx.executor.selectFrom('image_generation_operations').select('request_id')
+      .where('owner_id', '=', owner).where('state', 'in', ['dispatching', 'uncertain']).limit(1).execute();
+    if (unresolvedImages.length) throw new Error('accounting_reconciliation_required');
     const unresolved = await trx.executor.selectFrom('ai_funded_usage_reservations').select('reservation_id')
       .where('owner_id', '=', owner).where('status', 'not in', ['settled', 'released', 'expired']).limit(1).execute();
     if (unresolved.length) throw new Error('accounting_reconciliation_required');
@@ -120,6 +129,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     await trx.executor.deleteFrom('ai_funded_credit_ledger').where('owner_id','=',owner).execute();
     for (const table of ['ai_runtime_credentials', 'ai_funded_priority_claims', 'ai_funded_runtime_policies',
       'ai_funded_promotional_grant_balances', 'ai_funded_runtime_balances', 'ai_funded_credit_restrictions',
+      'image_generation_operations', 'image_monthly_allowances', 'image_owner_admissions',
       'speech_operations', 'speech_runtime_allowances', 'ai_credit_checkout_claims', 'ai_funded_usage_reservations'] as const) {
       await trx.executor.deleteFrom(table).where('owner_id','=',owner).execute();
     }

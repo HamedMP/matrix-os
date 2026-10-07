@@ -10,6 +10,8 @@ import {
   type ImageResult,
 } from "../../packages/kernel/src/image-gen.js";
 
+import { png, providerResponse } from "../helpers/image-generation-fixture.js";
+
 const fakeImageBase64 = Buffer.from("fake-png-data").toString("base64");
 
 function geminiResponse(base64 = fakeImageBase64) {
@@ -59,6 +61,14 @@ describe("Image Generation Client", () => {
   });
 
   describe("generateImage", () => {
+    it("uses the real Interactions contract for explicit Nano Banana 2.1 BYOK", async () => {
+      const client = createImageClient("owner-key");
+      const mockFetch = vi.fn(async () => Response.json(providerResponse()));
+      const result = await client.generateImage("Original illustration", { imageDir, saveAs: "new-model.png", model: "gemini-nano-banana-2.1", fetchFn: mockFetch });
+      expect(readFileSync(result.localPath)).toEqual(Buffer.from(png, "base64"));
+      expect(result.cost).toBe(0.033615);
+      expect(mockFetch.mock.calls[0]).toEqual(expect.arrayContaining(["https://generativelanguage.googleapis.com/v1beta/interactions", expect.objectContaining({ headers: expect.objectContaining({ "x-goog-api-key": "owner-key" }) })]));
+    });
     it("returns image result with localPath, model, cost", async () => {
       const client = createImageClient("test-key");
       const mockFetch = vi.fn().mockResolvedValue(geminiResponse());

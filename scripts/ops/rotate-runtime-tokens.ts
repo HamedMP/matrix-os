@@ -6,6 +6,7 @@ import pg from 'pg';
 import {
   buildPlatformRuntimeVerificationToken,
   buildPlatformSpeechRuntimeVerificationToken,
+  buildPlatformImageRuntimeVerificationToken,
   buildPlatformSyncVerificationToken,
   buildPlatformVerificationToken,
 } from '../../packages/platform/src/platform-token.ts';
@@ -89,6 +90,7 @@ async function main(): Promise<void> {
           sync: buildPlatformSyncVerificationToken(identity, secret, targetEpoch),
           fundedAi: buildPlatformRuntimeVerificationToken(identity, secret, targetEpoch),
           speech: buildPlatformSpeechRuntimeVerificationToken(identity, secret, targetEpoch),
+          images: buildPlatformImageRuntimeVerificationToken(identity, secret, targetEpoch),
         },
       }, publicKey);
       await writeFile(options.out, JSON.stringify(envelope), { flag: 'wx', mode: 0o600 });

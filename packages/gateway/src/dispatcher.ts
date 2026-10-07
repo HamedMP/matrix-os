@@ -12,6 +12,7 @@ import {
   type MatrixDB,
   type OsViewAgentTools,
   type OwnerAudioTranscriber,
+  type ImageClient,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
 import { appendFile } from "node:fs/promises";
@@ -50,6 +51,7 @@ export interface DispatchOptions {
   onAiGeneration?: (input: AiGenerationInput) => void;
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
+  platformImageClient?: ImageClient;
 }
 
 export interface DispatchContext {
@@ -241,6 +243,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         requestApproval: entry.kernelOverrides?.requestApproval,
         osViewTools: opts.osViewTools,
         ownerAudioTranscriber: opts.ownerAudioTranscriber,
+        platformImageClient: opts.platformImageClient,
       };
       try {
         for await (const event of spawnFn(message, config, deadline.controller)) {
@@ -393,6 +396,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             env: credentialLaunch.env,
             osViewTools: opts.osViewTools,
             ownerAudioTranscriber: opts.ownerAudioTranscriber,
+            platformImageClient: opts.platformImageClient,
           };
 
           try {

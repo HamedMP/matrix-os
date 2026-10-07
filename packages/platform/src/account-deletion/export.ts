@@ -52,9 +52,39 @@ export async function exportOwnerPlatformData(db: PlatformDB, owner: string) {
       .where('clerk_user_id','=',owner).limit(1001).execute();
     const onboarding = await trx.executor.selectFrom('onboarding_first_run').select(['completed_at','goal','steps','source'])
       .where('clerk_user_id','=',owner).execute();
+    // Traverse the complete owner history, independently of the monthly admission
+    // cap. Bound this aggregate download at 100k records; overflow is an explicit
+    // capacity error, never a truncated successful export. SQL remains portable.
+    const imageAllowances = [] as Array<{ period_start: string; granted_microusd: number; spent_microusd: number; reserved_microusd: number }>;
+    let periodCursor: string | undefined;
+    while (true) {
+      let query = trx.executor.selectFrom('image_monthly_allowances')
+        .select(['period_start','granted_microusd','spent_microusd','reserved_microusd'])
+        .where('owner_id','=',owner).orderBy('period_start','asc').limit(1000);
+      if (periodCursor) query = query.where('period_start','>',periodCursor);
+      const page = await query.execute();
+      if (imageAllowances.length + page.length > 100000) throw new Error('Platform export capacity exceeded');
+      imageAllowances.push(...page);
+      if (page.length < 1000) break;
+      periodCursor = page.at(-1)!.period_start;
+    }
+    type ImageOperationExport = Pick<import('../db.js').ImageGenerationOperationsTable, 'request_id' | 'machine_id' | 'runtime_slot' | 'period_start' | 'state' | 'reserved_microusd' | 'actual_microusd' | 'created_at' | 'updated_at'>;
+    const imageOperations: ImageOperationExport[] = [];
+    let requestCursor: string | undefined;
+    while (true) {
+      let query = trx.executor.selectFrom('image_generation_operations')
+        .select(['request_id','machine_id','runtime_slot','period_start','state','reserved_microusd','actual_microusd','created_at','updated_at'])
+        .where('owner_id','=',owner).orderBy('request_id','asc').limit(1000);
+      if (requestCursor) query = query.where('request_id','>',requestCursor);
+      const page = await query.execute();
+      if (imageOperations.length + page.length > 100000) throw new Error('Platform export capacity exceeded');
+      imageOperations.push(...page);
+      if (page.length < 1000) break;
+      requestCursor = page.at(-1)!.request_id;
+    }
     if ([posts,comments,likes,follows].some((rows)=>rows.length>10000) || machines.length>1000 || billing.length>1000) {
       throw new Error('Platform export capacity exceeded');
     }
-    return { version:1,exportedAt:new Date().toISOString(),profile,posts,comments,likes,follows,machines,billing,onboarding };
+    return { version:1,exportedAt:new Date().toISOString(),profile,posts,comments,likes,follows,machines,billing,onboarding,images:{allowances:imageAllowances,operations:imageOperations} };
   });
 }

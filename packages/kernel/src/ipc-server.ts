@@ -16,7 +16,7 @@ import {
 } from "./ipc.js";
 import { loadSkillBody } from "./skills.js";
 import { createMemoryStore } from "./memory.js";
-import { createImageClient } from "./image-gen.js";
+import { createImageClient, type ImageClient } from "./image-gen.js";
 import { listConversationSummaries, getConversationMessages } from "./conversation-history.js";
 import { searchMemories } from "./memory-search.js";
 import { createUsageTracker } from "./usage.js";
@@ -82,6 +82,7 @@ export async function createIpcServer(
   homePath?: string,
   osViewTools?: OsViewAgentTools,
   ownerAudioTranscriber?: OwnerAudioTranscriber,
+  platformImageClient?: ImageClient,
 ) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   const transcribeOwnerAudio = homePath && ownerAudioTranscriber
@@ -671,19 +672,30 @@ export async function createIpcServer(
 
       tool(
         "generate_image",
-        "Generate an image from a text description using Nano Banana (Gemini). Saves to ~/data/images/. Returns the local file path.",
+        "Generate an original image. Uses platform-funded Nano Banana 2.1 when enabled, or explicit BYOK. Saves the real PNG in ~/data/images/ and returns its path. Never silently changes the funding source.",
         {
           prompt: z.string().describe("Text description of the image to generate"),
-          model: z.enum(["gemini-2.5-flash-image", "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"]).optional().describe("Model to use (default: gemini-2.5-flash-image for speed, 3.1-flash-image-preview for quality, 3-pro-image-preview for professional assets)"),
+          model: z.enum(["gemini-2.5-flash-image", "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview", "gemini-nano-banana-2.1"]).optional().describe("Platform default: gemini-nano-banana-2.1. Legacy models require explicit byok funding_source."),
           aspect_ratio: z.string().optional().describe("Aspect ratio (e.g. 1:1, 16:9, 9:16, 3:2). Default: 1:1"),
           image_size: z.string().optional().describe("Resolution: 512, 1K, 2K, or 4K. Default: 1K"),
           save_as: z.string().optional().describe("Custom filename for the saved image"),
+          funding_source: z.enum(["platform", "byok"]).optional().describe("Platform-funded by default when enabled; byok explicitly uses your saved key"),
         },
-        async ({ prompt, model, aspect_ratio, image_size, save_as }) => {
+        async ({ prompt, model, aspect_ratio, image_size, save_as, funding_source }) => {
           if (!homePath) {
             return { content: [{ type: "text" as const, text: "Cannot generate image (no home path)" }] };
           }
 
+          if (funding_source !== "byok") {
+            if (!platformImageClient) return { content: [{ type: "text" as const, text: "Image generation is unavailable." }] };
+            try {
+              const result = await platformImageClient.generateImage(prompt, { model, aspectRatio: aspect_ratio, imageSize: image_size, imageDir: join(homePath, "data", "images"), saveAs: save_as });
+              return { content: [{ type: "text" as const, text: `Image saved to ${result.localPath}\nPlatform-funded image generation.` }] };
+            } catch (error: unknown) {
+              console.warn("[ipc] Platform image generation failed", error instanceof Error ? error.name : "UnknownError");
+              return { content: [{ type: "text" as const, text: "Image generation is unavailable. Try again later." }] };
+            }
+          }
           const apiKey = process.env.GEMINI_API_KEY ?? "";
           if (!apiKey) {
             try {

@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { writeFile, mkdir, open, link, lstat, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { ImageGenerationRequestSchema, IMAGE_MODEL } from "@matrix-os/contracts";
+import { generateInteractionImage, validateImagePng } from "@matrix-os/contracts/image-generation/server";
 import { join } from "node:path";
 
 export const DEFAULT_ICON_STYLE = "Light premium iOS/macOS skeuomorphic app icon artwork with refined Apple-like product rendering. Fill the entire 1:1 square canvas edge to edge with a bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly represents the app. Use dimensional glass/plastic/ceramic materials, crisp high-detail edges, friendly premium colors, and consistent lighting across the icon family. Keep the family aligned with Matrix OS forest, cream, ember, and deep accents without making every icon monochrome. Do not include text, logos, watermarks, transparent background, black/dark dock backgrounds, or empty padding. The Matrix shell owns the final corner radius, so do not bake a separate visible icon frame into the artwork.";
@@ -93,8 +96,8 @@ function describeIconTarget(target: string | IconGenerationTarget): string {
   return typeof target === "string" ? target : target.slug;
 }
 
-function isSafeImageFileName(value: string): boolean {
-  return /^[a-zA-Z0-9_.-]+$/.test(value) && !value.includes("..") && value.endsWith(".png");
+export function isSafeImageFileName(value: string): boolean {
+  return value.length <= 200 && /^[a-zA-Z0-9_.-]+$/.test(value) && !value.includes("..") && value.endsWith(".png");
 }
 
 export interface ImageResult {
@@ -156,6 +159,12 @@ export function createImageClient(apiKey: string): ImageClient {
         throw new Error("Invalid image filename.");
       }
 
+      if (model === IMAGE_MODEL) {
+        await assertImageDestinationAvailable(opts);
+        const input = ImageGenerationRequestSchema.parse({ requestId: `byok_${randomUUID().replaceAll("-", "")}`, prompt, model, aspectRatio: opts.aspectRatio, imageSize: opts.imageSize });
+        const result = await generateInteractionImage(apiKey, input, fetchFn);
+        return { localPath: await saveGeneratedImage(validateImagePng(result.imageBase64), prompt, opts), model, cost: result.costMicrousd / 1_000_000 };
+      }
       const url = `${API_BASE}/${model}:generateContent`;
 
       const imageConfig: Record<string, string> = {};
@@ -226,4 +235,38 @@ export function createImageClient(apiKey: string): ImageClient {
       return { localPath, model, cost };
     },
   };
+}
+
+/** Save the exact validated PNG bytes exclusively within the caller's fixed image directory. */
+
+export async function assertImageDestinationAvailable(opts: Pick<GenerateOptions, "imageDir" | "saveAs">): Promise<void> {
+  if (opts.saveAs && !isSafeImageFileName(opts.saveAs)) throw new Error("Invalid image filename.");
+  await mkdir(opts.imageDir, { recursive: true });
+  if (opts.saveAs) {
+    try { await lstat(join(opts.imageDir, opts.saveAs)); }
+    catch (error: unknown) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+      throw error;
+    }
+    throw new Error("Image filename is already in use.");
+  }
+}
+
+export async function saveGeneratedImage(bytes: Uint8Array, prompt: string, opts: Pick<GenerateOptions, "imageDir" | "saveAs">): Promise<string> {
+  await assertImageDestinationAvailable(opts);
+  const slug = prompt.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
+  const name = opts.saveAs ?? `${Date.now()}-${slug}-${randomUUID().slice(0, 8)}.png`;
+  const path = join(opts.imageDir, name);
+  const temporary = join(opts.imageDir, `.matrix-image-${randomUUID()}.tmp`);
+  // A hard link publishes complete bytes atomically and refuses existing targets.
+  // The private staging file is deleted on success and every handled failure.
+  const file = await open(temporary, "wx", 0o600);
+  try {
+    try { await file.writeFile(bytes); } finally { await file.close(); }
+    await link(temporary, path);
+  } finally {
+    try { await unlink(temporary); }
+    catch (error: unknown) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) console.warn("[images] staging cleanup failed", error instanceof Error ? error.name : "UnknownError"); }
+  }
+  return path;
 }

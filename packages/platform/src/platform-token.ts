@@ -59,3 +59,7 @@ export function buildPlatformSpeechRuntimeVerificationToken(
     .update(runtimeTokenPayload("matrix-platform-speech-runtime", identity, epoch))
     .digest("hex");
 }
+
+export function buildPlatformImageRuntimeVerificationToken(identity: RuntimeIdentity, platformSecret: string, epoch = 1): string {
+ return createHmac("sha256", platformSecret).update(runtimeTokenPayload("matrix-platform-image-runtime", identity, epoch)).digest("hex");
+}

@@ -73,7 +73,7 @@ def apply_rotation(env_path, key_path, envelope_path):
             not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', payload['machineId']) or
             not re.fullmatch(r'[a-z0-9-]{1,32}', payload['runtimeSlot']) or
             type(payload.get('epoch')) is not int or not 2 <= payload['epoch'] <= 2147483647 or
-            not isinstance(tokens, dict) or set(tokens) != set(TOKEN_KEYS) or
+            not isinstance(tokens, dict) or set(tokens) not in (set(TOKEN_KEYS), set(TOKEN_KEYS) | {'images'}) or
             any(not isinstance(token, str) or not re.fullmatch(r'[a-f0-9]{64}', token) for token in tokens.values())):
         raise ValueError('Invalid rotation payload')
 
@@ -87,12 +87,24 @@ def apply_rotation(env_path, key_path, envelope_path):
     current_epoch = int(epochs[0].split('=', 1)[1]) if epochs else 1
     if payload['epoch'] != current_epoch + 1:
         raise ValueError('Unexpected runtime token epoch')
+    image_enabled = 'MATRIX_PLATFORM_IMAGE_ENABLED=true' in lines or 'MATRIX_PLATFORM_IMAGE_ENABLED=1' in lines
+    if image_enabled and 'images' not in tokens:
+        raise ValueError('Missing image runtime token')
+    token_keys = dict(TOKEN_KEYS)
+    if 'images' in tokens:
+        token_keys['images'] = 'MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN'
     for key_name in TOKEN_KEYS.values():
         one_value(lines, key_name)
-    replacements = {key_name: tokens[field] for field, key_name in TOKEN_KEYS.items()}
+    image_lines = [line for line in lines if line.startswith('MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=')]
+    if len(image_lines) > 1:
+        raise ValueError('Invalid host environment')
+    replacements = {key_name: tokens[field] for field, key_name in token_keys.items()}
     replacements['MATRIX_RUNTIME_TOKEN_EPOCH'] = str(payload['epoch'])
     next_lines = [line.split('=', 1)[0] + '=' + replacements[line.split('=', 1)[0]]
                   if line.split('=', 1)[0] in replacements else line for line in lines]
+    if 'images' in tokens and not image_lines:
+        next_lines.insert(-1 if next_lines[-1] == '' else len(next_lines),
+                          'MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=' + tokens['images'])
     if not epochs:
         next_lines.insert(-1 if next_lines[-1] == '' else len(next_lines),
                           'MATRIX_RUNTIME_TOKEN_EPOCH=' + str(payload['epoch']))
