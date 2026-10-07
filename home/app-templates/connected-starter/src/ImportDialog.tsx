@@ -111,7 +111,7 @@ export function ImportDialog({
               );
               return (
                 <fieldset key={service.id}>
-                  <legend>{service.name}</legend>
+                  <legend>{service.name}{service.optional ? " · optional source" : ""}</legend>
                   {accounts.length ? (
                     accounts
                       .filter(

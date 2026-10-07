@@ -34,7 +34,7 @@ export function parseListing(raw: unknown): GalleryAppListing[] {
   if (
     input.version !== 1 ||
     !Array.isArray(input.apps) ||
-    input.apps.length > 30
+    input.apps.length > 40
   )
     throw new Error("Gallery unavailable");
   const apps = input.apps.map((value) => {

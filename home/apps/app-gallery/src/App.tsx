@@ -98,7 +98,7 @@ function Detail({
                   <Icon name="grid" />
                 </span>
                 <div>
-                  <strong>{service.name}</strong>
+                  <strong>{service.name}{app.services.find(source => source.id === service.id)?.optional ? " · optional source" : ""}</strong>
                   <p>
                     {connections === null
                       ? "Connection inventory unavailable"

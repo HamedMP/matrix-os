@@ -3,6 +3,7 @@ import type { Definition, OwnerRecord } from "../types";
 export interface ViewProps {
   app: Definition;
   records: OwnerRecord[];
+  creationScope?: "personal" | "work";
   onEdit: (record: OwnerRecord) => void;
   onEvidence: (record: OwnerRecord) => void;
   onAdd: () => void;

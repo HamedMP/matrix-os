@@ -138,6 +138,16 @@
           "key": "notes",
           "label": "Notes",
           "kind": "longtext"
+        },
+        {
+          "key": "travel-mode",
+          "label": "Travel mode",
+          "kind": "text"
+        },
+        {
+          "key": "preparation",
+          "label": "Packing and preparation",
+          "kind": "longtext"
         }
       ],
       "services": [
@@ -154,7 +164,8 @@
           "name": "Google Calendar",
           "actions": [
             "list_events"
-          ]
+          ],
+          "optional": true
         }
       ],
       "importGoal": "Find actual travel reservations, flights and stays plus calendar travel plans. Use travel dates, not email dates. Merge evidence for the same journey. Keep tentative plans distinct from paid bookings and cancellations. Leave unknown flight times blank.",
@@ -211,6 +222,16 @@
           "key": "notes",
           "label": "Notes",
           "kind": "longtext"
+        },
+        {
+          "key": "timezone",
+          "label": "Time zone",
+          "kind": "text"
+        },
+        {
+          "key": "priority",
+          "label": "Your priority",
+          "kind": "text"
         }
       ],
       "services": [
@@ -359,6 +380,26 @@
           "key": "notes",
           "label": "Notes",
           "kind": "longtext"
+        },
+        {
+          "key": "renewal-date",
+          "label": "Next renewal",
+          "kind": "date"
+        },
+        {
+          "key": "renewal-certainty",
+          "label": "Renewal certainty",
+          "kind": "select",
+          "options": [
+            "Confirmed",
+            "Estimated",
+            "Unknown"
+          ]
+        },
+        {
+          "key": "cancel-by",
+          "label": "Cancel by",
+          "kind": "date"
         }
       ],
       "services": [
@@ -371,7 +412,7 @@
           ]
         }
       ],
-      "importGoal": "Extract recurring subscription receipts and explicit renewal notices. Do not double count receipts as separate subscriptions. Separate monthly and annual cadence and leave uncertain renewal dates blank.",
+      "importGoal": "Find recurring providers, original amount/currency and cadence from selected email bodies. Record renewal-date and cancel-by only when explicitly stated, renewal-certainty Confirmed/Estimated/Unknown, retain uncertainty and source evidence. Never cancel subscriptions or claim cancellation. Preserve owner edits and report incomplete coverage.",
       "highlights": [
         "Renewal calendar",
         "Costs by currency",
@@ -561,6 +602,21 @@
           "key": "notes",
           "label": "Notes",
           "kind": "longtext"
+        },
+        {
+          "key": "last-contact",
+          "label": "Last contact",
+          "kind": "date"
+        },
+        {
+          "key": "next-contact",
+          "label": "Next contact",
+          "kind": "date"
+        },
+        {
+          "key": "follow-up",
+          "label": "Outreach draft",
+          "kind": "longtext"
         }
       ],
       "services": [
@@ -577,10 +633,11 @@
           "name": "Google Calendar",
           "actions": [
             "list_events"
-          ]
+          ],
+          "optional": true
         }
       ],
-      "importGoal": "Find people from actual selected conversations and meetings. Deduplicate known email addresses. Keep source-supported context; never infer sensitive traits or fabricate relationships.",
+      "importGoal": "Propose reviewed individual contact records and dated interactions from selected email bodies and calendar events. Avoid automated senders. Retain identity/source evidence; do not merge people solely by display name. Record last-contact only from an actual dated source, keep next-contact owner-entered and outreach as drafts. Never send messages or copy sensitive full bodies.",
       "highlights": [
         "People and conversation context",
         "Upcoming touchpoints",
@@ -821,12 +878,35 @@
             "Sent",
             "Paid",
             "Overdue",
-            "Needs review"
+            "Needs review",
+            "Partial",
+            "Disputed",
+            "Externally paid"
           ]
         },
         {
           "key": "notes",
           "label": "Notes",
+          "kind": "longtext"
+        },
+        {
+          "key": "due-date",
+          "label": "Due date",
+          "kind": "date"
+        },
+        {
+          "key": "paid-amount",
+          "label": "Amount paid",
+          "kind": "money"
+        },
+        {
+          "key": "email",
+          "label": "Client email",
+          "kind": "text"
+        },
+        {
+          "key": "reminder-draft",
+          "label": "Reminder draft",
           "kind": "longtext"
         }
       ],
@@ -837,10 +917,20 @@
           "actions": [
             "search",
             "get_message"
-          ]
+          ],
+          "optional": true
+        },
+        {
+          "id": "stripe",
+          "name": "Stripe",
+          "actions": [
+            "list_invoices",
+            "list_customers"
+          ],
+          "optional": true
         }
       ],
-      "importGoal": "Find outgoing customer invoices and payment confirmations. Track receivables separately from expenses. Mark paid only with explicit evidence. Preserve invoice numbers and due dates.",
+      "importGoal": "Find sent client invoices and explicitly stated due dates, amount, currency, payment evidence and exceptions from selected email bodies. Unknown due dates stay empty; distinguish Partial, Disputed, Externally paid and Paid using evidence, not silence or estimates. Keep reminder-draft as a reviewable draft only, never send or move money. Preserve owner corrections. For a selected Stripe account use restricted invoice/customer reads and original invoice status, amount_paid and due_date. Choose live or test account explicitly. Recheck source payment status before any later approved reminder.",
       "highlights": [
         "Invoice and payment ledger",
         "Receivables by currency",
@@ -1052,6 +1142,16 @@
           "key": "notes",
           "label": "Notes",
           "kind": "longtext"
+        },
+        {
+          "key": "due-date",
+          "label": "Due date",
+          "kind": "date"
+        },
+        {
+          "key": "source-updated",
+          "label": "Source last updated",
+          "kind": "date"
         }
       ],
       "services": [
@@ -1064,7 +1164,7 @@
           ]
         }
       ],
-      "importGoal": "Read selected Linear projects and issues. Preserve IDs, assignees, status and original links. Do not change source issues. Scope imports to the selected project when supplied.",
+      "importGoal": "Read only the selected Linear projects and issues. Retain issue URLs, status, assignee, explicit due-date and source-updated timestamps. Derive risk from known blocked/overdue/stale facts; mark missing evidence uncertain. Never infer deployment or approval from a resolved ticket. Produce a source-grounded reviewable risk brief, never change tickets.",
       "highlights": [
         "Delivery board",
         "Owners and due dates",
@@ -1111,12 +1211,17 @@
         },
         {
           "key": "actions",
-          "label": "Next steps",
+          "label": "Actions: Task | Owner | YYYY-MM-DD | Open/Done",
           "kind": "longtext"
         },
         {
           "key": "notes",
           "label": "Notes",
+          "kind": "longtext"
+        },
+        {
+          "key": "decisions",
+          "label": "Reviewed decisions",
           "kind": "longtext"
         }
       ],
@@ -1134,7 +1239,8 @@
           "actions": [
             "search",
             "get_message"
-          ]
+          ],
+          "optional": true
         }
       ],
       "importGoal": "Read upcoming calendar meetings and relevant email threads for those meetings only. Separate source facts from suggested preparation. Do not invent meeting outcomes or send invitations.",
@@ -1672,6 +1778,557 @@
         "Project observations",
         "Source-supported metrics",
         "A decision notebook"
+      ]
+    },
+    {
+      "id": "workout-coach",
+      "name": "Workout History Coach",
+      "collection": "personal",
+      "category": "Health",
+      "description": "See your progress, one working set at a time. Log sets, compare volume and keep your own training history.",
+      "tagline": "A little stronger, every session.",
+      "icon": "dumbbell",
+      "accent": "violet",
+      "view": "habits",
+      "entity": "set",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Session",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date",
+          "required": true
+        },
+        {
+          "key": "exercise",
+          "label": "Exercise",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "reps",
+          "label": "Repetitions",
+          "kind": "number",
+          "required": true
+        },
+        {
+          "key": "weight",
+          "label": "Load",
+          "kind": "number",
+          "required": true
+        },
+        {
+          "key": "unit",
+          "label": "Unit",
+          "kind": "select",
+          "required": true,
+          "options": [
+            "kg",
+            "lb"
+          ]
+        },
+        {
+          "key": "set-type",
+          "label": "Set type",
+          "kind": "select",
+          "required": true,
+          "options": [
+            "Working",
+            "Warmup"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [],
+      "importGoal": "Use owner-entered completed training sets only. Distinguish warmups from working sets; do not give medical or injury advice.",
+      "highlights": [
+        "Your records, saved in your computer",
+        "Editable results and source evidence",
+        "Designed for your phone and computer"
+      ]
+    },
+    {
+      "id": "paycheck-runway",
+      "name": "Paycheck Runway",
+      "collection": "personal",
+      "category": "Money",
+      "description": "Give every bill a place before the next payday. Plan confirmed income and commitments without guessing your bank balance.",
+      "tagline": "Know what fits before payday.",
+      "icon": "wallet",
+      "accent": "blue",
+      "view": "finance",
+      "entity": "cash item",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Cash item",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date",
+          "required": true
+        },
+        {
+          "key": "kind",
+          "label": "Kind",
+          "kind": "select",
+          "required": true,
+          "options": [
+            "Opening balance",
+            "Income",
+            "Bill",
+            "Reserve"
+          ]
+        },
+        {
+          "key": "amount",
+          "label": "Amount",
+          "kind": "money",
+          "required": true
+        },
+        {
+          "key": "currency",
+          "label": "Currency",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "required": true,
+          "options": [
+            "Confirmed",
+            "Received",
+            "Estimate",
+            "Paid"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [],
+      "importGoal": "Only owner-confirmed opening cash, income, bills and reserves. Estimates remain outside confirmed runway. Keep currencies separate; do not infer balances from mail or claim bank access.",
+      "highlights": [
+        "Your records, saved in your computer",
+        "Editable results and source evidence",
+        "Designed for your phone and computer"
+      ]
+    },
+    {
+      "id": "meal-planner",
+      "name": "Meal Rotation & Grocery Plan",
+      "collection": "personal",
+      "category": "Food",
+      "description": "Save the recipes you like, plan portions and turn the week into one practical grocery list.",
+      "tagline": "Good food. One easy list.",
+      "icon": "utensils",
+      "accent": "teal",
+      "view": "library",
+      "entity": "recipe",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Recipe",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Planned day",
+          "kind": "date"
+        },
+        {
+          "key": "servings",
+          "label": "Recipe servings",
+          "kind": "number",
+          "required": true
+        },
+        {
+          "key": "planned-portions",
+          "label": "Planned portions",
+          "kind": "number"
+        },
+        {
+          "key": "ingredients",
+          "label": "Ingredients: name | quantity | unit",
+          "kind": "longtext",
+          "required": true
+        },
+        {
+          "key": "pantry",
+          "label": "Pantry: name | quantity | unit",
+          "kind": "longtext"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "options": [
+            "Recipe",
+            "Planned"
+          ],
+          "required": true
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [],
+      "importGoal": "Use owner-owned recipes and pantry quantities. Preserve ingredients and units; never guarantee nutrition or allergy safety or perform checkout.",
+      "highlights": [
+        "Your records, saved in your computer",
+        "Editable results and source evidence",
+        "Designed for your phone and computer"
+      ]
+    },
+    {
+      "id": "job-search",
+      "name": "Job Search Companion",
+      "collection": "personal",
+      "category": "Career",
+      "description": "A calmer place for applications, interviews and the next step. Keep confirmed updates beside your own plans.",
+      "tagline": "Your next chapter, organized.",
+      "icon": "briefcase",
+      "accent": "rose",
+      "view": "board",
+      "entity": "application",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Role",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "company",
+          "label": "Company",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Applied",
+          "kind": "date"
+        },
+        {
+          "key": "stage",
+          "label": "Stage",
+          "kind": "select",
+          "required": true,
+          "options": [
+            "Saved",
+            "Applied",
+            "Screening",
+            "Interview",
+            "Offer",
+            "Rejected",
+            "Withdrawn"
+          ]
+        },
+        {
+          "key": "certainty",
+          "label": "Stage certainty",
+          "kind": "select",
+          "required": true,
+          "options": [
+            "Confirmed",
+            "Estimate"
+          ]
+        },
+        {
+          "key": "interview-date",
+          "label": "Interview date",
+          "kind": "date"
+        },
+        {
+          "key": "interview-time",
+          "label": "Interview local time",
+          "kind": "text"
+        },
+        {
+          "key": "timezone",
+          "label": "Interview time zone",
+          "kind": "text"
+        },
+        {
+          "key": "url",
+          "label": "Application link",
+          "kind": "url"
+        },
+        {
+          "key": "resume",
+          "label": "Your resume notes",
+          "kind": "longtext"
+        },
+        {
+          "key": "next-step",
+          "label": "Next step / outreach draft",
+          "kind": "longtext"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "gmail",
+          "name": "Gmail",
+          "actions": [
+            "search",
+            "get_message"
+          ]
+        }
+      ],
+      "importGoal": "Read only bounded application confirmations and interview messages from selected email bodies. Extract role/company, explicitly confirmed stage, local interview date/time/time zone and source evidence. Do not infer acceptance or rejection from silence. Keep resume and next-step owner-edited; draft outreach only, never send.",
+      "highlights": [
+        "Your records, saved in your computer",
+        "Editable results and source evidence",
+        "Designed for your phone and computer"
+      ]
+    },
+    {
+      "id": "study-notes",
+      "name": "Study From My Notes",
+      "collection": "personal",
+      "category": "Learning",
+      "description": "Turn your own notes into editable, source-backed questions. Practice recall and return to what needs another look.",
+      "tagline": "Make what you read stay with you.",
+      "icon": "book-open",
+      "accent": "amber",
+      "view": "library",
+      "entity": "study card",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Topic",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "source-text",
+          "label": "Selected source text",
+          "kind": "longtext",
+          "required": true
+        },
+        {
+          "key": "question",
+          "label": "Question",
+          "kind": "longtext"
+        },
+        {
+          "key": "answer",
+          "label": "Answer",
+          "kind": "longtext"
+        },
+        {
+          "key": "quote",
+          "label": "Exact supporting quote",
+          "kind": "longtext"
+        },
+        {
+          "key": "practice",
+          "label": "Recall",
+          "kind": "select",
+          "options": [
+            "New",
+            "Again",
+            "Recalled"
+          ]
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [
+        {
+          "id": "google_docs",
+          "name": "Google Docs",
+          "actions": [
+            "get_document"
+          ]
+        }
+      ],
+      "importGoal": "Read only the exact owner-selected Google Docs document IDs from source context. Retain bounded text and exact supporting quotes. Propose five editable study questions and answers grounded in the actual source; reject unsupported quotes. No PDF OCR or Notion content claims. Preserve corrected answers and recall state.",
+      "highlights": [
+        "Your records, saved in your computer",
+        "Editable results and source evidence",
+        "Designed for your phone and computer"
+      ]
+    },
+    {
+      "id": "journal-memory",
+      "name": "Journal That Remembers",
+      "collection": "personal",
+      "category": "Reflection",
+      "description": "A private place to write, revisit themes and remember the decisions that mattered. You choose what is included.",
+      "tagline": "A little room to remember.",
+      "icon": "notebook",
+      "accent": "rose",
+      "view": "notes",
+      "entity": "entry",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Title",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date",
+          "required": true
+        },
+        {
+          "key": "entry",
+          "label": "Entry",
+          "kind": "longtext",
+          "required": true
+        },
+        {
+          "key": "tags",
+          "label": "People and themes",
+          "kind": "text"
+        },
+        {
+          "key": "include",
+          "label": "Reflection selection",
+          "kind": "select",
+          "options": [
+            "Include",
+            "Exclude"
+          ]
+        },
+        {
+          "key": "kind",
+          "label": "Kind",
+          "kind": "select",
+          "options": [
+            "Entry",
+            "Reflection"
+          ]
+        },
+        {
+          "key": "period-start",
+          "label": "Period starts",
+          "kind": "date"
+        },
+        {
+          "key": "period-end",
+          "label": "Period ends",
+          "kind": "date"
+        },
+        {
+          "key": "source-ids",
+          "label": "Supporting entry IDs",
+          "kind": "longtext"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [],
+      "importGoal": "Analyze only the owner-selected period and explicitly included private entries. Cite supporting entry IDs and exact excerpts, honor corrections/exclusions, and distinguish reported events from interpretations. No therapy, diagnosis or automatic sharing.",
+      "highlights": [
+        "Your records, saved in your computer",
+        "Editable results and source evidence",
+        "Designed for your phone and computer"
+      ]
+    },
+    {
+      "id": "chess-coach",
+      "name": "Chess Practice Coach",
+      "collection": "personal",
+      "category": "Games",
+      "description": "Revisit a completed game, inspect legal moves and practice a position using bounded local chess analysis.",
+      "tagline": "One game. One useful lesson.",
+      "icon": "chess",
+      "accent": "blue",
+      "view": "library",
+      "entity": "game",
+      "fields": [
+        {
+          "key": "title",
+          "label": "Game",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "kind": "date"
+        },
+        {
+          "key": "pgn",
+          "label": "Completed game PGN",
+          "kind": "longtext",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "kind": "select",
+          "required": true,
+          "options": [
+            "Completed"
+          ]
+        },
+        {
+          "key": "perspective",
+          "label": "Your side",
+          "kind": "select",
+          "required": true,
+          "options": [
+            "White",
+            "Black"
+          ]
+        },
+        {
+          "key": "analysis",
+          "label": "Saved analysis",
+          "kind": "longtext"
+        },
+        {
+          "key": "notes",
+          "label": "Practice notes",
+          "kind": "longtext"
+        }
+      ],
+      "services": [],
+      "importGoal": "Use only owner-provided completed PGNs. Never analyze live games or fabricate engine results. Local search must validate legal positions, expose its search depth and bound resources.",
+      "highlights": [
+        "Your records, saved in your computer",
+        "Editable results and source evidence",
+        "Designed for your phone and computer"
       ]
     }
   ]
