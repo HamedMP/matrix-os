@@ -39,6 +39,8 @@ function mapHostBundleRelease(row: HostBundleReleasesTable): HostBundleReleaseRe
     updateType: row.update_type,
     changelog: row.changelog,
     createdAt: row.created_at,
+    sourcePr: row.source_pr,
+    sourceAuthor: row.source_author,
   };
 }
 
@@ -64,6 +66,8 @@ function toHostBundleReleaseRow(record: NewHostBundleRelease): HostBundleRelease
     created_at: record.createdAt === undefined
       ? now
       : HostBundleTimestampSchema.parse(record.createdAt),
+    source_pr: record.sourcePr ?? null,
+    source_author: record.sourceAuthor ?? null,
   };
 }
 
@@ -96,6 +100,9 @@ export async function upsertHostBundleRelease(
             WHEN ${row.snapshot_eligibility_source} = 'explicit' THEN 'explicit'
             ELSE host_bundle_releases.snapshot_eligibility_source
           END`,
+          // A retry without provenance keeps what the first registration recorded.
+          source_pr: sql<number | null>`COALESCE(host_bundle_releases.source_pr, ${row.source_pr}::integer)`,
+          source_author: sql<string | null>`COALESCE(host_bundle_releases.source_author, ${row.source_author}::text)`,
         })
           .where(sql<boolean>`host_bundle_releases.bundle_key = ${row.bundle_key}`)
           .where(sql<boolean>`host_bundle_releases.git_commit = ${row.git_commit}`)
@@ -105,7 +112,10 @@ export async function upsertHostBundleRelease(
           .where(sql<boolean>`host_bundle_releases.incremental_manifest_key IS NOT DISTINCT FROM ${row.incremental_manifest_key}`)
           .where(sql<boolean>`host_bundle_releases.incremental_manifest_sha256 IS NOT DISTINCT FROM ${row.incremental_manifest_sha256}`)
           .where(sql<boolean>`host_bundle_releases.sha256 = ${row.sha256}`)
-          .where(sql<boolean>`host_bundle_releases.size = ${row.size}`),
+          .where(sql<boolean>`host_bundle_releases.size = ${row.size}`)
+          // Provenance is immutable once recorded: a different PR or author is a conflict.
+          .where(sql<boolean>`(${row.source_pr}::integer IS NULL OR host_bundle_releases.source_pr IS NULL OR host_bundle_releases.source_pr = ${row.source_pr}::integer)`)
+          .where(sql<boolean>`(${row.source_author}::text IS NULL OR host_bundle_releases.source_author IS NULL OR host_bundle_releases.source_author = ${row.source_author}::text)`),
       )
       .returningAll()
       .executeTakeFirst();
@@ -124,6 +134,23 @@ export async function getHostBundleRelease(
     .selectFrom('host_bundle_releases')
     .selectAll()
     .where('version', '=', version)
+    .executeTakeFirst();
+  return row ? mapHostBundleRelease(row) : undefined;
+}
+
+/** Newest bundle registered for a same-repository PR (spec 537). */
+export async function getLatestHostBundleReleaseForPr(
+  db: PlatformDB,
+  sourcePr: number,
+): Promise<HostBundleReleaseRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('host_bundle_releases')
+    .selectAll()
+    .where('source_pr', '=', sourcePr)
+    .orderBy('created_at', 'desc')
+    .orderBy('version', 'desc')
+    .limit(1)
     .executeTakeFirst();
   return row ? mapHostBundleRelease(row) : undefined;
 }

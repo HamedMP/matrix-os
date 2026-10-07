@@ -13,6 +13,8 @@ import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { openHelpInMatrixBrowser } from "../browser/help-navigation";
 
+const MENU_ROW_CLASS = "flex h-9 cursor-default items-center gap-2 px-2 text-left text-[13px] outline-none data-[highlighted]:bg-[var(--bg-hover)]";
+
 function AccountAvatar({
   imageUrl,
   label,
@@ -51,7 +53,7 @@ function MenuRow({
 }) {
   return (
     <DropdownMenu.Item
-      className="flex h-9 cursor-default items-center gap-2 px-2 text-left text-[13px] outline-none data-[highlighted]:bg-[var(--bg-hover)]"
+      className={MENU_ROW_CLASS}
       style={{ color: danger ? "var(--danger)" : "var(--text-primary)" }}
       onSelect={onSelect}
     >

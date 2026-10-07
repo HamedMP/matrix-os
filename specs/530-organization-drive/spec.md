@@ -12,8 +12,13 @@ handle or a member's login.
 ## Product behavior
 
 - Files shows each organization drive to current members on Web Canvas, Web
-  Desktop and Web Mobile. A member can list, upload and download files.
+  Desktop, Web Mobile and Electron Desktop. A member can list, upload and download files.
   Listings are paged by logical path so drives with more than one page remain usable.
+  The shared browser derives virtual folders, breadcrumbs, name/modified ordering,
+  loaded-file search, visible metadata and upload destination from those pages.
+  Search states its loaded-list scope when more pages remain; a view retains at
+  most 20 pages. Chat shows company drive shortcuts which select the exact
+  authorized scope in Files; it does not create a local project or share a Chat.
   Upload paths can contain virtual folder segments. The owner enables a drive
   from an existing organization-shared folder scope and grants Contributor
   access to the organization; each member activates that grant. Membership
@@ -67,18 +72,32 @@ operations without exposing long-lived credentials.
    duplicate visible file. Hash mismatch and abandoned staging objects fail
    closed and release capacity.
 5. Owner-home restart retains committed file metadata and immutable versions.
-6. Web Canvas, Web Desktop and Web Mobile expose the same listing, upload, download,
-   quota, loading and error states from the shared Files view.
+6. Web Canvas, Web Desktop, Web Mobile and Electron Desktop expose the same discovery,
+   grant activation, listing, upload, download, quota, loading and error states.
+7. On Electron Desktop, a changed account, runtime or credential generation
+   aborts active R2 I/O and prevents subsequent transfer steps. Local downloads appear only after the received
+   bytes match the authorized version's length and SHA-256 digest.
 
-## Electron Desktop limitation
+## Electron Desktop transfer
 
-The packaged Electron Desktop Files renderer has a `file://` origin and uses
-its own Files implementation. It cannot send browser CORS requests to the R2
-presigned URLs under the exact-origin policy. Electron Desktop needs a bounded
-native transfer bridge plus equivalent Files UI before organization drives
-are exposed there. The Web feature remains available from the same Matrix
-account on Web Desktop, Web Canvas and Web Mobile. Native Mobile is outside
-this initial transfer surface.
+The packaged Electron Desktop Files renderer has a `file://` origin, so it
+cannot send browser CORS requests to R2 presigned URLs. It discovers and
+manages drives with the same direct collaboration client and shared paging
+logic as the Web views. The renderer sends only validated scope, organization,
+file and runtime identifiers through IPC. The trusted main process independently
+authenticates to the scope authority, obtains presigned transfer URLs and
+uses native file dialogs. It reads uploads from user-selected regular files up
+to 100 MiB and writes verified downloads through a temporary file in the
+selected destination directory. It never accepts a renderer-supplied URL or
+local path, and it does not send a long-lived R2 credential to the renderer.
+
+The native bridge validates HTTPS and public DNS addresses before fetching a
+presigned URL, rejects redirects, checks account and runtime generation around
+the transfer, and closes its direct session after each operation. Node's fetch
+resolves DNS independently after validation; DNS rebinding remains a residual
+risk until the transport pins the validated address or the platform supplies
+an exact trusted storage endpoint allowlist. Native Mobile is outside this
+initial transfer surface.
 
 The R2 bucket used by Web clients needs exact-origin CORS entries for the
 deployed Matrix web origin, with GET and PUT access and only the required

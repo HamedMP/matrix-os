@@ -1,11 +1,14 @@
+import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { CUSTOM_MCP_UNAVAILABLE } from '@matrix-os/contracts';
 import { Hono, type Context, type Next } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB, type UserMachineRecord } from './db.js';
-import { getActivePreviewMachineByHandle } from './customer-vps-preview.js';
+import { getActivePreviewMachineByHandle, getActivePrivatePreviewMachineByHandle } from './customer-vps-preview.js';
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
+import { PRIVATE_PREVIEW_HANDLE_PATTERN } from './customer-vps-schema.js';
+import type { PrivatePreviewEligibility } from './private-preview-eligibility.js';
 
 const HandleSchema = z.string().regex(HANDLE_PATTERN);
 const BODY_LIMIT = 64 * 1024;
@@ -48,6 +51,11 @@ export async function resolveCustomMcpUserIdForMachine(
   handle: string | undefined,
 ): Promise<string | null> {
   if (!clerkUserId || !handle) return null;
+  // Spec 537: a Private Preview's handle is temporary. Resolve its owner's
+  // existing account only; never create one keyed to, or renamed to, that handle.
+  if (PRIVATE_PREVIEW_HANDLE_PATTERN.test(handle)) {
+    return (await accounts.getUserByClerkId(clerkUserId))?.id ?? null;
+  }
   const preview = await getActivePreviewMachineByHandle(db, handle);
   if (preview && (!isIsolatedPreviewFixture(preview, handle) || preview.clerkUserId !== clerkUserId)) {
     return null;
@@ -96,6 +104,8 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
+  /** Spec 537 P5; without it every Private Preview stays denied. */
+  privatePreviewEligibility?: PrivatePreviewEligibility;
 }): void {
   const external = new Hono<{ Variables: McpVariables }>();
   external.use('*', bodyLimit({ maxSize: BODY_LIMIT }), async (c, next) => {
@@ -111,6 +121,9 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
     }
     return next();
   });
+  const externalDeletionGuard = createAccountDeletionMutationGuard({ db: options.db,
+    resolveOwner: (c) => c.get('platformUserId') as string | undefined });
+  external.use('*', (c, next) => c.req.path === OAUTH_CALLBACK_PATH ? next() : externalDeletionGuard(c, next));
   mountBackend(external, options.customMcpRoutes);
   app.route('/api/mcp-servers', external);
 
@@ -134,6 +147,18 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
     // preview fixture is the only synthetic account allowed through.
     const isolatedFixture = isIsolatedPreviewFixture(preview, handle);
     if (preview && !isolatedFixture) return c.json({ error: 'Forbidden' }, 403);
+    if (!preview) {
+      const privatePreview = await getActivePrivatePreviewMachineByHandle(options.db, handle);
+      if (privatePreview && !(await options.privatePreviewEligibility?.(privatePreview))) {
+        return c.json({ error: 'Forbidden' }, 403);
+      }
+      // These routes always act as the machine owner, so a Private Preview
+      // request that names anyone else is refused rather than silently remapped.
+      const delegatedId = c.req.header('x-platform-user-id');
+      if (privatePreview && delegatedId !== undefined && delegatedId !== privatePreview.clerkUserId) {
+        return c.json({ error: 'Forbidden' }, 403);
+      }
+    }
     const record = preview ?? (await getRunningUserMachineByHandle(options.db, handle))
       ?? (await getContainer(options.db, handle));
     if (!record?.clerkUserId) return c.json({ error: 'Unknown handle' }, 404);
@@ -144,6 +169,8 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
   const mountInternal = (backend?: Hono<any>) => {
     const internal = new Hono<{ Variables: McpVariables }>();
     internal.use('*', bodyLimit({ maxSize: BODY_LIMIT }), internalAuth);
+    internal.use('*', createAccountDeletionMutationGuard({ db: options.db,
+      resolveOwner: (c) => c.get('internalContainerClerkUserId') as string | undefined }));
     mountBackend(internal, backend);
     return internal;
   };

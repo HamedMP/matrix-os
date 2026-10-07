@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseReleaseProvenance } from "./release-provenance.mjs";
 import { resolveReleaseSnapshotEligibility } from "./release-snapshot-eligibility.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +21,7 @@ const {
 
 function usage() {
   console.error(
-    "usage: publish-release-r2.mjs <version> [--channel <name>] [--severity <level>] [--changelog <text>] [--dry-run]",
+    "usage: publish-release-r2.mjs <version> [--channel <name>] [--severity <level>] [--changelog <text>] [--source-pr <n>] [--source-author <login>] [--dry-run]",
   );
 }
 
@@ -28,6 +29,8 @@ let version = "";
 let channel = process.env.HOST_BUNDLE_CHANNEL || process.env.MATRIX_IMAGE_VERSION || "dev";
 let severity = "normal";
 let changelog = "";
+let sourcePr;
+let sourceAuthor;
 let dryRun = false;
 
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -42,6 +45,12 @@ for (let i = 2; i < process.argv.length; i += 1) {
     case "--changelog":
       changelog = process.argv[++i] || changelog;
       break;
+    case "--source-pr":
+      sourcePr = process.argv[++i] ?? "";
+      break;
+    case "--source-author":
+      sourceAuthor = process.argv[++i] ?? "";
+      break;
     case "--dry-run":
       dryRun = true;
       break;
@@ -55,6 +64,14 @@ for (let i = 2; i < process.argv.length; i += 1) {
 
 if (!version) {
   usage();
+  process.exit(2);
+}
+
+let provenance;
+try {
+  provenance = parseReleaseProvenance({ sourcePr, sourceAuthor });
+} catch (error) {
+  console.error(error instanceof Error ? error.message : "Invalid release provenance");
   process.exit(2);
 }
 
@@ -236,6 +253,7 @@ const registrationBody = {
   updateType,
   changelog: changelog || null,
   snapshotEligible,
+  ...provenance,
   ...(channel === "none" ? {} : { channel }),
 };
 

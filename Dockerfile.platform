@@ -14,10 +14,13 @@ COPY patches/ patches/
 COPY packages/clerk-sync/package.json packages/clerk-sync/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/gateway/package.json packages/gateway/package.json
+COPY packages/scope-runtime/package.json packages/scope-runtime/package.json
+COPY packages/terminal-runtime/package.json packages/terminal-runtime/package.json
 COPY packages/kernel/package.json packages/kernel/package.json
 COPY packages/mcp-browser/package.json packages/mcp-browser/package.json
 COPY packages/observability/package.json packages/observability/package.json
 COPY packages/brand/package.json packages/brand/package.json
+COPY packages/ui/package.json packages/ui/package.json
 COPY packages/platform/package.json packages/platform/package.json
 COPY packages/sync-client/package.json packages/sync-client/package.json
 COPY shell/package.json shell/package.json
@@ -79,15 +82,20 @@ COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/node_modules 
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/package.json ./packages/clerk-sync/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/gateway/package.json ./packages/gateway/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/scope-runtime/package.json ./packages/scope-runtime/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/terminal-runtime/package.json ./packages/terminal-runtime/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/kernel/package.json ./packages/kernel/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/mcp-browser/package.json ./packages/mcp-browser/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/observability/package.json ./packages/observability/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/brand/package.json ./packages/brand/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/ui/package.json ./packages/ui/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/platform/package.json ./packages/platform/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/sync-client/package.json ./packages/sync-client/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/shell/package.json ./shell/package.json
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/src ./packages/clerk-sync/src
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/contracts/src ./packages/contracts/src
+COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/scope-runtime/src ./packages/scope-runtime/src
+COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/terminal-runtime/dist ./packages/terminal-runtime/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/sync-client/src ./packages/sync-client/src
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/gateway/dist ./packages/gateway/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/kernel/dist ./packages/kernel/dist

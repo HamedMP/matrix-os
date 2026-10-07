@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import React, { useState } from "react";
+import React, { useLayoutEffect, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
@@ -85,7 +85,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(surface.querySelector('[data-slot="shared-chat-composer"]')).toBeTruthy();
   });
 
-  it("uses the same content width for the transcript and canonical composer", async () => {
+  it("retains transcript width and caps the canonical composer at the approved Figma card width", async () => {
     render(
       <CanonicalChatWorkspace
         client={client()}
@@ -103,7 +103,9 @@ describe("CanonicalChatWorkspace", () => {
       .closest('[data-slot="shared-chat-composer"]');
     expect(composer?.parentElement).toBeTruthy();
     expect(transcript.className).toContain("max-w-[868px]");
-    expect(composer?.parentElement?.className).toContain("max-w-[868px]");
+    // The 808px wrapper minus 24px padding on each side yields the 760px card.
+    expect(composer?.parentElement?.className).toContain("max-w-[808px]");
+    expect(composer?.parentElement?.className).toContain("px-6");
   });
 
   it("renders Global Chat history beside the new-chat pane before a Chat is selected", async () => {
@@ -118,7 +120,7 @@ describe("CanonicalChatWorkspace", () => {
 
     expect(await screen.findByRole("complementary", { name: "Global chats" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Global Chat" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "What should we build today?" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "What should we build today?" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Build a new feature, app, or tool" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
@@ -209,7 +211,7 @@ describe("CanonicalChatWorkspace", () => {
       />,
     );
 
-    expect(await screen.findByRole("button", { name: "Explore and understand code" })).toBeTruthy();
+    expect(await screen.findByRole("textbox", { name: "Start a chat" })).toBeTruthy();
 
     view.rerender(
       <CanonicalChatWorkspace
@@ -284,7 +286,7 @@ describe("CanonicalChatWorkspace", () => {
 
     const starter = screen.getByRole("button", { name: "Explore and understand code" });
     const starterLabel = within(starter).getByText("Explore and understand code");
-    expect(starterLabel.className).toContain("text-[13px]");
+    expect(starterLabel.className).toContain("text-[14px]");
     expect(starterLabel.className).toContain("font-medium");
     expect(starterLabel.className).toContain("leading-[18px]");
   });
@@ -313,10 +315,8 @@ describe("CanonicalChatWorkspace", () => {
     expect(preview.className).toContain("text-[12px]");
     expect(preview.className).toContain("leading-[16px]");
 
-    const hero = screen.getByRole("heading", { name: "What should we build today?" });
-    expect(hero.className).toContain("text-[24px]");
-    expect(hero.className).toContain("font-medium");
-    expect(hero.className).toContain("leading-[32px]");
+    expect(screen.queryByRole("heading", { name: "What should we build today?" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
   });
 
   it("uses a single-column New Chat layout at the OS View minimum width", async () => {
@@ -347,7 +347,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(starterScroll?.className).toContain("overflow-y-auto");
     expect(starterScroll?.className).toContain("items-start");
     expect(starterStack?.className).toContain("my-auto");
-    expect(starterScroll?.style.scrollbarGutter).toBe("stable");
+    expect(starterScroll?.style.scrollbarGutter).toBe("stable both-edges");
     expect(newChatContent?.className).toContain("overflow-hidden");
     expect(composer?.getAttribute("data-layout")).toBe("narrow");
   });
@@ -416,11 +416,14 @@ describe("CanonicalChatWorkspace", () => {
   });
 
   it("keeps the focused prompt editable during a background full refresh", async () => {
-    let listener: ((event: CanonicalChatInvalidation) => void) | undefined;
+    const listeners: Array<(event: CanonicalChatInvalidation) => void> = [];
     const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
       subscribe(next) {
-        listener = next;
-        return { dispose: () => { listener = undefined; } };
+        listeners.push(next);
+        return { dispose: () => {
+          const index = listeners.indexOf(next);
+          if (index !== -1) listeners.splice(index, 1);
+        } };
       },
     };
     let resolveRefresh!: (value: { items: typeof record[] }) => void;
@@ -428,7 +431,7 @@ describe("CanonicalChatWorkspace", () => {
       resolveRefresh = resolve;
     });
     const routeClient = client();
-    render(
+    const { unmount } = render(
       <CanonicalChatWorkspace
         client={routeClient}
         projectId="matrix-os"
@@ -443,12 +446,14 @@ describe("CanonicalChatWorkspace", () => {
     prompt.focus();
     vi.mocked(routeClient.list).mockImplementationOnce(() => refresh);
 
-    act(() => listener?.({ type: "chat.full_refresh", cursor: 2 }));
+    act(() => listeners.slice().forEach((listener) => listener({ type: "chat.full_refresh", cursor: 2 })));
     await waitFor(() => expect(routeClient.list).toHaveBeenCalledTimes(2));
 
     expect(prompt.getAttribute("contenteditable")).toBe("true");
     expect(document.activeElement).toBe(prompt);
     await act(async () => resolveRefresh({ items: [record] }));
+    unmount();
+    expect(listeners).toEqual([]);
   });
 
   it("reveals a delete action on Chat row hover and removes the confirmed Chat", async () => {
@@ -963,8 +968,10 @@ describe("CanonicalChatWorkspace", () => {
 
     function Harness() {
       const [chatId, setChatId] = useState(record.chat.id);
-      navigate = setChatId;
-      routedChatId = chatId;
+      useLayoutEffect(() => {
+        navigate = setChatId;
+        routedChatId = chatId;
+      }, [chatId]);
       return (
         <CanonicalChatWorkspace
           client={routeClient}
@@ -1037,6 +1044,7 @@ describe("CanonicalChatWorkspace", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 20));
     });
 
+    expect(screen.getByRole("textbox", { name: "Start a chat" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeTruthy();
     expect(reportedIds).toEqual([]);
   });

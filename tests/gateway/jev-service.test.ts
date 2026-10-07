@@ -131,12 +131,15 @@ describe("Jev service idempotency", () => {
         status: 429, headers: { "x-matrix-jev-dispatch": "not-started" },
       }))
       .mockResolvedValueOnce(new Response(JSON.stringify(result), { status: 200 }));
-    const service = createJevService({ store, credentialProvider: provider(), fetchFn });
+    const credentialProvider = provider();
+    const service = createJevService({ store, credentialProvider, fetchFn });
     const input = { recipe: "email-triage-v1" as const, state: "hello", idempotencyKey: "thread:capacity" };
 
     await expect(service.evaluate("owner_a", input)).rejects.toEqual(
       expect.objectContaining<Partial<JevServiceError>>({ code: "unavailable" }),
     );
+    // Jev triage has no waiting person; it must never outrank an interactive turn.
+    expect(credentialProvider.getCredential).toHaveBeenCalledWith(expect.objectContaining({ requestClass: "background" }));
     expect(store.rows.size).toBe(0);
     await expect(service.evaluate("owner_a", input)).resolves.toEqual(result);
     expect(fetchFn).toHaveBeenCalledTimes(2);

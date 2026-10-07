@@ -293,13 +293,24 @@ export async function readSystemUpdateFailure(options: {
   };
 }
 
+/**
+ * Joins a path onto the update base while keeping the base's own path. A
+ * Private Preview's base is per machine (spec 537), so an absolute path here
+ * would silently reach the ordinary platform routes instead.
+ */
+export function updateManifestUrl(base: string, path: string): URL {
+  const url = new URL(base);
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  return url;
+}
+
 export async function fetchHostBundleChannelManifest(options: {
   platformUrl: string;
   channel: UpdateChannel;
   fetchImpl?: typeof fetch;
 }): Promise<HostBundleRelease> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const url = new URL(`/system-bundles/channels/${options.channel}.json`, options.platformUrl);
+  const url = updateManifestUrl(options.platformUrl, `system-bundles/channels/${options.channel}.json`);
   const res = await fetchImpl(url.toString(), {
     signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
   });
@@ -374,7 +385,7 @@ export async function listSystemReleases(options: {
   }
 
   const fetchImpl = options.fetchImpl ?? fetch;
-  const url = new URL("/system-bundles/releases", options.platformUrl);
+  const url = updateManifestUrl(options.platformUrl, "system-bundles/releases");
   url.searchParams.set("channel", options.channel);
   try {
     const res = await fetchImpl(url.toString(), {

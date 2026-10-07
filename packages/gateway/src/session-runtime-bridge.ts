@@ -4,7 +4,6 @@ import {
   TerminalTabClientFrameSchema,
   type TerminalRef,
   type TerminalTab,
-  type TerminalWorkspace,
 } from "@matrix-os/contracts";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { z } from "zod/v4";
@@ -47,16 +46,13 @@ const DEFAULT_MAX_ATTACHMENTS = 512;
 const DEFAULT_ATTACHMENT_TTL_MS = 60_000;
 
 type ProviderLoginRuntime = Pick<TerminalRuntimeSocketClient,
-  "listWorkspaces" | "ensureWorkspace" | "createTab" | "renameTab" | "terminateTab">;
+  "listWorkspaces" | "ensureWorkspace" | "createTab" | "renameTab" | "terminateTab">
+  & Partial<Pick<TerminalRuntimeSocketClient, "getCommandState" | "archiveEndedTab">>;
 
-type NamedTerminal = { name: string };
+type NamedTerminal = { name: string; agent?: AgentKind };
 
 function providerLoginRegistryError(code: "session_not_found" | "session_exists", message: string): Error {
   return Object.assign(new Error(message), { code });
-}
-
-function matchingProviderTabs(workspaces: readonly TerminalWorkspace[], name: string): TerminalTab[] {
-  return workspaces.flatMap((workspace) => workspace.tabs.filter((tab) => tab.name === name));
 }
 
 function providerLoginCwd(cwd: string | undefined): string {
@@ -65,15 +61,22 @@ function providerLoginCwd(cwd: string | undefined): string {
 }
 
 export function createProviderLoginTerminalRegistry(runtime: ProviderLoginRuntime) {
-  async function find(name: string): Promise<TerminalTab> {
-    const matches = matchingProviderTabs(await runtime.listWorkspaces(), name);
+  async function find(identity: string | TerminalRef): Promise<TerminalTab> {
+    const matches = (await runtime.listWorkspaces()).flatMap((workspace) => workspace.tabs
+      .filter((tab) => typeof identity === "string" ? tab.name === identity
+        : workspace.id === identity.workspaceId && tab.id === identity.tabId)
+      .map((tab) => ({ tab, workspaceId: workspace.id })));
     if (matches.length === 0) {
       throw providerLoginRegistryError("session_not_found", "Provider terminal was not found");
     }
     if (matches.length !== 1) {
       throw new Error("Provider terminal identity is ambiguous");
     }
-    return matches[0]!;
+    const match = matches[0]!;
+    if (match.tab.workspaceId !== match.workspaceId) {
+      throw new Error("Provider terminal identity is invalid");
+    }
+    return match.tab;
   }
 
   async function findOptional(name: string): Promise<TerminalTab | undefined> {
@@ -86,6 +89,21 @@ export function createProviderLoginTerminalRegistry(runtime: ProviderLoginRuntim
   }
 
   return {
+    async listProfileSessions(): Promise<NamedTerminal[]> {
+      return (await runtime.listWorkspaces()).flatMap(workspace => workspace.tabs.filter(tab =>
+        /^(?:provider-workflow-native-(?:codex|claude)-(?:install|uninstall)-|provider-auth-|provider-login-(?:codex|claude)-)/.test(tab.name))
+        .map(tab => ({ name: tab.name, ...(tab.agent ? { agent: tab.agent.providerId as AgentKind } : {}) })));
+    },
+    /** Resolve only the exact server-created tab, without creating or adopting another terminal. */
+    async resolveTerminalRef(identity: string): Promise<TerminalRef> {
+      const [workspaceId, tabId, extra] = identity.split(":");
+      const suppliedRef = TerminalRefSchema.safeParse({ workspaceId, tabId });
+      const tab = await find(extra === undefined && suppliedRef.success ? suppliedRef.data : identity);
+      const ref = TerminalRefSchema.safeParse({ workspaceId: tab.workspaceId, tabId: tab.id });
+      if (!ref.success) throw new Error("Provider terminal identity is invalid");
+      return ref.data;
+    },
+
     async create(input: {
       name: string;
       cwd?: string;
@@ -111,7 +129,8 @@ export function createProviderLoginTerminalRegistry(runtime: ProviderLoginRuntim
     },
 
     async get(name: string): Promise<NamedTerminal> {
-      return { name: (await find(name)).name };
+      const tab = await find(name);
+      return { name: tab.name, ...(tab.agent ? { agent: tab.agent.providerId as AgentKind } : {}) };
     },
 
     async delete(name: string, options: { force?: boolean } = {}): Promise<void> {
@@ -136,11 +155,28 @@ export function createProviderLoginTerminalRegistry(runtime: ProviderLoginRuntim
       return { name: renamed.name };
     },
 
+    async archiveStopped(name: string, nextName: string, agent: AgentKind): Promise<NamedTerminal> {
+      const tab = await find(name);
+      if (!runtime.archiveEndedTab || !tab.incarnation || tab.agent?.providerId !== agent
+        || (agent !== "claude" && agent !== "codex")) {
+        throw new Error("Provider terminal state is unavailable");
+      }
+      const archived = await runtime.archiveEndedTab(
+        { workspaceId: tab.workspaceId, tabId: tab.id },
+        { name: nextName, expectedName: name, providerId: agent,
+          expectedIncarnation: tab.incarnation, baseRevision: tab.revision },
+      );
+      return { name: archived.name };
+    },
+
     async observeAgentLiveness(name: string, agent: AgentKind): Promise<"running" | "stopped" | "unknown"> {
       const tab = await find(name);
-      if (["exited", "failed", "unavailable"].includes(tab.status)) return "stopped";
-      if (!tab.agent) return "unknown";
-      return tab.agent.providerId === agent ? "running" : "stopped";
+      if (tab.agent?.providerId !== agent) return "unknown";
+      if (tab.status === "exited") return "stopped";
+      if (["failed", "unavailable"].includes(tab.status)) return "unknown";
+      if (!runtime.getCommandState) return "unknown";
+      const state = await runtime.getCommandState({ workspaceId: tab.workspaceId, tabId: tab.id }, tab.incarnation);
+      return state === "exited" ? "stopped" : state === "running" ? "running" : "unknown";
     },
   };
 }

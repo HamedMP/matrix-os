@@ -32,6 +32,9 @@ export interface CustomerHostConfig {
   imageSource?: 'snapshot' | 'clean_image';
   targetBundleSha256?: string;
   snapshotSourceVersion?: string;
+  /** Whole host.env lines for Private Previews only; empty for every other class. */
+  updateManifestBaseUrlEnv?: string;
+  collaborationDisabledEnv?: string;
 }
 
 const SECRET_KEYS = [
@@ -56,6 +59,8 @@ export function renderCloudInitTemplate(template: string, input: CustomerHostCon
     imageSource: 'clean_image',
     targetBundleSha256: '',
     snapshotSourceVersion: '',
+    updateManifestBaseUrlEnv: '',
+    collaborationDisabledEnv: '',
   };
   return template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, rawKey: string) => {
     const key = rawKey as keyof CustomerHostConfig;

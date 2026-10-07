@@ -1,3 +1,4 @@
+import {chatAgentComposerDraft} from "../../desktop/src/renderer/src/features/chat/chat-agent-draft";
 // @vitest-environment jsdom
 
 import React, { useState } from "react";
@@ -230,30 +231,24 @@ function Harness({
 describe("SharedChatComposer", () => {
   afterEach(cleanup);
 
-  it("previews Markdown without changing the submitted source", async () => {
+  it("keeps Markdown source editable and submits it without a Preview or Edit toggle", () => {
     const onSubmit = vi.fn();
     const markdown = "**Important**: read [the guide](https://example.com/guide).";
     render(<Harness initialValue={markdown} onSubmit={onSubmit} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Preview Markdown" }));
-    const preview = screen.getByRole("region", { name: "Markdown preview" });
-    expect(preview.querySelector("strong")?.textContent).toBe("Important");
-    expect(preview.querySelector("a")?.textContent).toBe("the guide");
+    expect(screen.queryByRole("button", { name: "Preview Markdown" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Markdown" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Markdown preview" })).toBeNull();
+    expect(screen.getByLabelText("Message chat").textContent).toBe(markdown);
+    expect(screen.getByRole("button", {name:"Attach files"})).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(onSubmit.mock.calls[0]?.[0].text).toBe(markdown);
-    await waitFor(() => expect(screen.getByLabelText("Message chat").textContent).toBe(markdown));
-    expect(screen.getByRole("button", { name: "Preview Markdown" })).toBeTruthy();
   });
 
-  it("returns to Edit when the selected chat draft changes", async () => {
+  it("retains the editable selected Chat draft when its scope changes", async () => {
     const { rerender } = render(<Harness controlledValue="**First chat**" draftScopeKey="chat-1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Preview Markdown" }));
-    expect(screen.getByRole("region", { name: "Markdown preview" })).toBeTruthy();
-
     rerender(<Harness controlledValue="**Second chat**" draftScopeKey="chat-2" />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Preview Markdown" })).toBeTruthy());
-    expect(screen.queryByRole("region", { name: "Markdown preview" })).toBeNull();
-    expect(screen.getByLabelText("Message chat").textContent).toBe("**Second chat**");
+    await waitFor(() => expect(screen.getByLabelText("Message chat").textContent).toBe("**Second chat**"));
+    expect(screen.queryByRole("button", { name: "Preview Markdown" })).toBeNull();
   });
 
   it("renders the selected model and capability-backed controls in the Figma composer", () => {
@@ -348,11 +343,11 @@ describe("SharedChatComposer", () => {
 
     const attachmentButton = screen.getByRole("button", { name: "Attach files" });
     expect(attachmentButton.getAttribute("aria-haspopup")).toBeNull();
-    expect(attachmentButton.querySelector('[data-slot="attachment-paperclip-icon"]')).toBeTruthy();
+    expect(attachmentButton.querySelector('[data-slot="attachment-plus-icon"]')).toBeTruthy();
     fireEvent.click(attachmentButton);
 
     expect(onAttach).toHaveBeenCalledOnce();
-    expect(container.querySelector('[data-slot="attachment-paperclip-icon"]')).toBeTruthy();
+    expect(container.querySelector('[data-slot="attachment-plus-icon"]')).toBeTruthy();
     expect(screen.queryByRole("listbox", { name: "Add" })).toBeNull();
     expect(screen.queryByText("Files and folders")).toBeNull();
   });
@@ -550,7 +545,7 @@ describe("SharedChatComposer", () => {
     expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
   });
 
-  it("keeps unauthenticated harnesses dimmed but exposes setup inside the selector", () => {
+  it("keeps unauthenticated harness setup discoverable inside the selector", () => {
     const onProviderSetup = vi.fn();
     render(<Harness onProviderSetup={onProviderSetup} />);
 
@@ -946,4 +941,66 @@ describe("SharedChatComposer", () => {
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("GPT-5.6-Terra");
   });
+});
+
+
+it("keeps drive drafts unsent on unsupported routes and submits typed context only on an available drive route",async()=>{
+ const catalog=catalogFixture(),instance=catalog.instances.find(item=>item.id==="claude_personal")!;
+ const ref={kind:"organization_drive" as const,id:"00000000-0000-4000-8000-000000000001",label:"Authority",drive:{kind:"drive" as const,organizationId:"org_company",scopeId:"00000000-0000-4000-8000-000000000001"}};
+ const onSubmit=vi.fn();const draft=chatAgentComposerDraft({id:1,text:"Summarize the plan",resources:[ref]});
+ const props={value:draft.text,onChange:vi.fn(),referenceTokens:draft.referenceTokens,onSubmit,busy:false,catalog,selection:createCanonicalComposerSelection(catalog,"claude_personal"),onSelectionChange:vi.fn(),instanceLocked:false};
+ const view=render(<SharedChatComposer {...props}/>);
+ expect((screen.getByRole("button",{name:"Send"}) as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.keyDown(screen.getByRole("textbox",{name:"Message chat"}),{key:"Enter"});expect(onSubmit).not.toHaveBeenCalled();
+ const ready={...catalog,instances:catalog.instances.map(item=>item===instance?{...item,supports:{...item.supports,resources:["organization_drive" as const]}}:item)};
+ view.rerender(<SharedChatComposer {...props} catalog={ready}/>);
+ expect((screen.getByRole("button",{name:"Send"}) as HTMLButtonElement).disabled).toBe(false);
+ fireEvent.click(screen.getByRole("button",{name:"Send"}));expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({text:draft.text,resources:[ref]}));
+ cleanup();
+});
+
+it("fulfills a draft focus request once the composer becomes editable, without refocusing a consumed request", async () => {
+ const catalog = catalogFixture();
+ const props = {value:"", onChange:vi.fn(), onSubmit:vi.fn(), busy:false, catalog,
+  selection:createCanonicalComposerSelection(catalog,"claude_personal"), onSelectionChange:vi.fn(), instanceLocked:false, focusRequestId:42};
+ const view = render(<><button>Other focus</button><SharedChatComposer {...props} disabled /></>);
+ const other = screen.getByRole('button',{name:'Other focus'});
+ fireEvent.click(other); other.focus();
+ view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled={false}/></>);
+ const editor = screen.getByRole('textbox');
+ await waitFor(() => expect(document.activeElement).toBe(editor));
+ other.focus();
+ view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled/></>);
+ view.rerender(<><button>Other focus</button><SharedChatComposer {...props} disabled={false}/></>);
+ expect(document.activeElement).toBe(other);
+});
+
+it.each(['none','control','blank'])('restores request-owned focus after a later loading blur unless the user acted elsewhere (action=%s)', async action => {
+ const catalog=catalogFixture(); const props={value:"",onChange:vi.fn(),onSubmit:vi.fn(),busy:false,catalog,selection:createCanonicalComposerSelection(catalog,"claude_personal"),onSelectionChange:vi.fn(),instanceLocked:false,focusRequestId:77};
+ const view=render(<><button>Another control</button><SharedChatComposer {...props}/></>);
+ const editor=screen.getByRole('textbox'); await waitFor(() => expect(document.activeElement).toBe(editor));
+ view.rerender(<><button>Another control</button><SharedChatComposer {...props} disabled/></>);
+ // Chromium blurs a focused contenteditable when its loading gate disables it.
+ editor.blur();
+ const other=screen.getByRole('button',{name:'Another control'});
+ if(action === "control") other.focus();
+ if(action === "blank") fireEvent.pointerDown(document.body);
+ view.rerender(<><button>Another control</button><SharedChatComposer {...props} disabled={false}/></>);
+ await waitFor(() => expect(document.activeElement).toBe(action === "control" ? other : action === "blank" ? document.body : editor));
+});
+
+it('waits for the committed editable DOM before consuming focus when the browser rejects disabled roots', async () => {
+ const nativeFocus=HTMLElement.prototype.focus;
+ const focus=vi.spyOn(HTMLElement.prototype,'focus').mockImplementation(function(this:HTMLElement, options?:FocusOptions) {
+  if(this.getAttribute('role')==='textbox' && this.getAttribute('contenteditable')!=='true') {return;}
+  nativeFocus.call(this,options);
+ });
+ try {
+  const catalog=catalogFixture(); const props={value:"",onChange:vi.fn(),onSubmit:vi.fn(),busy:false,catalog,selection:createCanonicalComposerSelection(catalog,"claude_personal"),onSelectionChange:vi.fn(),instanceLocked:false,focusRequestId:91};
+  const view=render(<SharedChatComposer {...props} disabled/>);
+  view.rerender(<SharedChatComposer {...props} disabled={false}/>);
+  const editor=screen.getByRole('textbox');
+  await waitFor(() => expect(editor.getAttribute('contenteditable')).toBe('true'));
+  await waitFor(() => expect(document.activeElement).toBe(editor));
+ } finally {focus.mockRestore();}
 });

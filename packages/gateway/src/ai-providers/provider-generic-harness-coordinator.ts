@@ -4,11 +4,13 @@ import { join } from "node:path";
 import {
   AgentSettingsUpdateSchema,
   isRunnableGenericHarnessCredentialRoute,
+  ProviderModelReferenceSchema,
   ProviderSettingsMutationSchema,
   type AiProviderSnapshotV3,
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { isAgentConfigError } from "../agent-config/errors.js";
 import type { AgentRuntimeController } from "../agent-config/runtime-controller.js";
 import { readAgentConfig, readConfig } from "../agent-config/runtime-files.js";
 import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/service.js";
@@ -32,11 +34,20 @@ const OWNER_SETTINGS_PATH = "system/ai-providers/settings.json";
 const GenericHarnessSchema = z.enum(["hermes", "openclaw", "pi", "opencode"]);
 const CodingHarnessSchema = z.enum(["pi", "opencode"]);
 const SystemHarnessSchema = z.enum(["hermes", "openclaw"]);
-const RuntimeRouteSchema = z.object({
+const ConfiguredRuntimeRouteSchema = z.object({
   harness: SystemHarnessSchema,
   providerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
-  modelId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/),
+  // Match the Agent settings contract so every recorded route can be reapplied.
+  modelId: ProviderModelReferenceSchema,
 }).strict();
+// A first-run runtime has no messaging route. Agent settings cannot write an
+// empty route, so an unset route is recorded exactly and never replayed.
+const UnsetRuntimeRouteSchema = z.object({
+  harness: SystemHarnessSchema,
+  providerId: z.null(),
+  modelId: z.null(),
+}).strict();
+const RuntimeRouteSchema = z.union([ConfiguredRuntimeRouteSchema, UnsetRuntimeRouteSchema]);
 const ReceiptSchema = z.object({
   key: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
   payloadHash: z.string().length(64).regex(/^[a-f0-9]+$/),
@@ -66,6 +77,7 @@ const RepairDocumentSchema = z.object({
 }).strict();
 type GenericHarness = z.infer<typeof GenericHarnessSchema>;
 type RuntimeRoute = z.infer<typeof RuntimeRouteSchema>;
+type ConfiguredRuntimeRoute = z.infer<typeof ConfiguredRuntimeRouteSchema>;
 type RuntimeReceipt = z.infer<typeof ReceiptSchema>;
 type RuntimeState = { route: RuntimeRoute; revision: number };
 
@@ -179,6 +191,10 @@ function systemHarness(harness: ProviderHarnessKind): harness is "hermes" | "ope
   return harness === "hermes" || harness === "openclaw";
 }
 
+function configuredRoute(route: RuntimeRoute): route is ConfiguredRuntimeRoute {
+  return route.providerId !== null && route.modelId !== null;
+}
+
 export function createProviderGenericHarnessCoordinator(options: {
   homePath: string;
   runtimeController: Pick<AgentRuntimeController, "update">;
@@ -241,38 +257,59 @@ export function createProviderGenericHarnessCoordinator(options: {
       messagingModel: harness.route.modelId,
     });
     if (!update.success) throw new ProviderSettingsStoreError("invalid_route", 400);
-    return (await options.runtimeController.update(update.data)).revision;
+    try {
+      return (await options.runtimeController.update(update.data)).revision;
+    } catch (error) {
+      // Adapters raise not_configured only when the live catalog rejects the
+      // route, before changing it, so this is a safe refusal, not an outage.
+      if (isAgentConfigError(error) && error.kind === "not_configured") {
+        throw new ProviderSettingsStoreError("invalid_route", 400);
+      }
+      throw error;
+    }
   }
 
   async function currentRuntimeState(): Promise<RuntimeState> {
     const config = await readConfig(join(options.homePath, "system/config.json"));
     const revision = readAgentConfig(config).value.revision ?? 0;
     const snapshot = await readRuntimeSnapshot(options.runtimeSource);
-    return {
-      route: RuntimeRouteSchema.parse({
-        harness: snapshot.runtime.selected,
-        providerId: snapshot.messaging.provider,
-        modelId: snapshot.messaging.model,
-      }),
-      revision,
-    };
+    if (!snapshot.messaging.configured && snapshot.messagingObserved !== true) {
+      // A stopped or unreadable runtime reports no route without proving that
+      // none exists. Recording it as unset would drop its rollback target.
+      console.warn("[provider-settings] Generic harness runtime route is not observable");
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
+    const route = RuntimeRouteSchema.safeParse({
+      harness: snapshot.runtime.selected,
+      providerId: snapshot.messaging.configured ? snapshot.messaging.provider : null,
+      modelId: snapshot.messaging.configured ? snapshot.messaging.model : null,
+    });
+    if (!route.success) {
+      // A live route that cannot be recorded cannot be compensated either.
+      console.warn("[provider-settings] Generic harness runtime route is not recordable");
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
+    return { route: route.data, revision };
   }
 
   function configuredRuntimeRoute(harness: HarnessConfiguration & {
     harness: "hermes" | "openclaw";
-  }, snapshot?: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0]["snapshot"]): RuntimeRoute {
+  }, snapshot?: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0]["snapshot"]): ConfiguredRuntimeRoute {
     const source = snapshot?.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-    const nativeModel = source?.kind === "harness_profile" && harness.harness === "hermes"
+    const nativeModel = source?.kind === "harness_profile" && (harness.harness === "hermes" || harness.harness === "openclaw")
       ? hermesNativeModelId(harness, source) : undefined;
     if (nativeModel === null) throw new ProviderSettingsStoreError("invalid_route", 400);
-    return RuntimeRouteSchema.parse({
+    const route = ConfiguredRuntimeRouteSchema.safeParse({
       harness: harness.harness,
       providerId: harness.route.providerId,
       modelId: nativeModel ?? harness.route.modelId,
     });
+    if (!route.success) throw new ProviderSettingsStoreError("invalid_route", 400);
+    return route.data;
   }
 
   async function applyRuntimeRoute(route: RuntimeRoute): Promise<number> {
+    if (!configuredRoute(route)) throw new ProviderSettingsStoreError("runtime_unavailable", 503);
     return await applySystemRoute({
       id: `recovery_${route.harness}`,
       driverId: route.harness,
@@ -342,6 +379,13 @@ export function createProviderGenericHarnessCoordinator(options: {
       && current.revision !== receipt.afterRevision;
     if (sameRuntimeRoute(current.route, beforeRoute)) {
       // The compensation target is already active.
+    } else if (sameRuntimeRoute(current.route, afterRoute) && !configuredRoute(beforeRoute)) {
+      // The runtime had no route before this change and none can be written
+      // back. Owner settings stay authoritative for enablement, so retire the
+      // receipt at the live route instead of blocking every later mutation.
+      console.warn("[provider-settings] Generic harness kept its route because the prior route was unset");
+      await retireReceiptAtCurrentState(receipts, receipt, current);
+      return;
     } else if (sameRuntimeRoute(current.route, afterRoute)
       && (!displacedGeneration || receipt.state === "compensation_pending")) {
       try {
@@ -495,6 +539,10 @@ export function createProviderGenericHarnessCoordinator(options: {
       const fallback = input.after.harnesses.find((harness) =>
         harness.enabled && systemHarness(harness.harness) && harness.id !== target.id,
       );
+      // Off gates canonical Chat admission; it does not uninstall the native
+      // runtime or require installing another one. Preserve its configuration
+      // when no enabled system harness exists to receive messaging selection.
+      if (!fallback) return null;
       const supportedFallback = requireGenericHarness(fallback);
       await requireRuntimeSupport(supportedFallback, input.canonical, input.snapshot);
       return configuredRuntimeRoute(supportedFallback as typeof supportedFallback & {
@@ -533,7 +581,7 @@ export function createProviderGenericHarnessCoordinator(options: {
       const beforeRoute = duplicate.beforeRoute;
       const afterRoute = duplicate.afterRoute;
       if (duplicate.state === "applied") {
-        if (!beforeRoute || !afterRoute) return;
+        if (!beforeRoute || !afterRoute || !configuredRoute(afterRoute)) return;
         const current = await currentRuntimeState();
         if (!sameRuntimeRoute(current.route, afterRoute)) {
           const repaired = ReceiptSchema.parse({
@@ -612,16 +660,27 @@ export function createProviderGenericHarnessCoordinator(options: {
     replaceReceipt(receipts, receipt);
     await writeReceipts(receipts);
     recoveryBlocked = true;
-    receipt.afterRevision = sameRuntimeRoute(beforeRoute, afterRoute)
-      ? before.revision
-      : await applyRuntimeRoute(afterRoute);
+    try {
+      receipt.afterRevision = sameRuntimeRoute(beforeRoute, afterRoute)
+        ? before.revision
+        : await applyRuntimeRoute(afterRoute);
+    } catch (error) {
+      if (!(error instanceof ProviderSettingsStoreError) || error.code !== "invalid_route") throw error;
+      // A refused route left the runtime unchanged. Verify that against the
+      // live route before clearing the prepared receipt.
+      await compensatePendingReceipt(receipts, receipt);
+      recoveryBlocked = false;
+      throw error;
+    }
     receipt.state = "applied";
     replaceReceipt(receipts, receipt);
     try {
       await writeReceipts(receipts);
     } catch (error) {
       try {
-        if (!sameRuntimeRoute(beforeRoute, afterRoute)) await applyRuntimeRoute(beforeRoute);
+        if (!sameRuntimeRoute(beforeRoute, afterRoute) && configuredRoute(beforeRoute)) {
+          await applyRuntimeRoute(beforeRoute);
+        }
         receipts.receipts = receipts.receipts.filter((candidate) => candidate.key !== receipt.key);
         await writeReceipts(receipts);
         recoveryBlocked = false;
@@ -673,7 +732,9 @@ export function createProviderGenericHarnessCoordinator(options: {
     let compensationError: unknown;
     try {
       const current = await currentRuntimeState();
-      if (sameRuntimeRoute(current.route, receipt.afterRoute)) {
+      if (sameRuntimeRoute(current.route, receipt.afterRoute) && !configuredRoute(receipt.beforeRoute)) {
+        console.warn("[provider-settings] Generic harness kept its route because the prior route was unset");
+      } else if (sameRuntimeRoute(current.route, receipt.afterRoute)) {
         await applyRuntimeRoute(receipt.beforeRoute);
       } else if (!sameRuntimeRoute(current.route, receipt.beforeRoute)) {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);

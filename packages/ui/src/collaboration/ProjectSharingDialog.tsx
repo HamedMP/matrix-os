@@ -26,6 +26,9 @@ export function ProjectSharingDialog({
   inventory,
   refreshInventory,
   onManageMembers,
+  onConfirmed,
+  publicationDelayed = false,
+  onCheckPublication,
   onClose,
 }: {
   api: CollaborationApi;
@@ -34,6 +37,11 @@ export function ProjectSharingDialog({
   inventory: CollaborationProjectInventory;
   refreshInventory: () => Promise<CollaborationProjectInventory>;
   onManageMembers?: () => void;
+  /** Called once the home accepts the confirmation; the project then publishes asynchronously. */
+  onConfirmed?: () => void;
+  /** True once the bounded wait for publication ran out; the share continues on the home. */
+  publicationDelayed?: boolean;
+  onCheckPublication?: () => void;
   onClose: () => void;
 }) {
   const [currentInventory, setCurrentInventory] = useState(() =>
@@ -88,6 +96,7 @@ export function ProjectSharingDialog({
         setFeedback(result.status === "active"
           ? "The whole project is shared."
           : "Preparing the shared project. Everyone gets access only after publication completes.");
+        onConfirmed?.();
       }
     } catch (failure: unknown) {
       console.warn("[project-collaboration] confirmation failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -158,7 +167,12 @@ export function ProjectSharingDialog({
       {presentation.blockerMessages.map((message) => <p key={message}>{message}</p>)}
     </div> : null}
     {error ? <p role="alert" className="rounded-xl border p-3 text-sm">{error}</p> : null}
-    {feedback ? <p role="status" className="rounded-xl border p-3 text-sm">{feedback}</p> : null}
+    {publicationDelayed
+      ? <div role="status" className="flex items-center justify-between gap-3 rounded-xl border p-3 text-sm">
+        <span>Sharing is taking longer than expected. It continues in the background; check again in a moment.</span>
+        <button type="button" className={buttonClass} onClick={onCheckPublication}>Check again</button>
+      </div>
+      : feedback ? <p role="status" className="rounded-xl border p-3 text-sm">{feedback}</p> : null}
 
     <footer className="flex justify-end gap-2">
       {onManageMembers ? <button type="button" className={buttonClass} disabled={pending}

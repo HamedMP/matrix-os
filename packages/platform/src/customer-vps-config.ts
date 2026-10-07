@@ -32,12 +32,16 @@ export interface CustomerVpsConfig {
   reconciliationStaleAfterMs: number;
   maxProvisionAttempts: number;
   previewProvisioningLimit: number;
+  /** Active Private Previews one owner may hold (spec 537 P4). */
+  privatePreviewLimit: number;
   goldenSnapshots: GoldenSnapshotRuntimeConfig;
 }
 
 const DEFAULT_POSTHOG_PUBLIC_HOST = 'https://eu.posthog.com';
 const DEFAULT_PREVIEW_PROVISIONING_LIMIT = 8;
 const MAX_PREVIEW_PROVISIONING_LIMIT = 16;
+const DEFAULT_PRIVATE_PREVIEW_LIMIT = 2;
+const MAX_PRIVATE_PREVIEW_LIMIT = 4;
 
 function numberFromEnv(value: string | undefined, fallback: number): number {
   if (value === undefined || value === '') return fallback;
@@ -136,6 +140,11 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
       env.CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT,
       DEFAULT_PREVIEW_PROVISIONING_LIMIT,
       MAX_PREVIEW_PROVISIONING_LIMIT,
+    ),
+    privatePreviewLimit: boundedIntegerFromEnv(
+      env.MATRIX_PRIVATE_PREVIEW_LIMIT,
+      DEFAULT_PRIVATE_PREVIEW_LIMIT,
+      MAX_PRIVATE_PREVIEW_LIMIT,
     ),
     goldenSnapshots: GoldenSnapshotRuntimeConfigSchema.parse({
       enabled: enabledFromEnv(env.GOLDEN_SNAPSHOTS_ENABLED),

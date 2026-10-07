@@ -146,6 +146,38 @@ describe("owner collaboration surface composition", () => {
     expect(calls.resources).toHaveLength(0);
   });
 
+  it("normalizes Postgres BIGINT Chat revisions before inventory validation", async () => {
+    const query = (rows: unknown[]) => {
+      const builder: Record<string, unknown> = {};
+      for (const method of ["select", "selectAll", "where", "orderBy", "limit", "innerJoin", "distinctOn"]) {
+        builder[method] = () => builder;
+      }
+      builder.execute = async () => rows;
+      return builder;
+    };
+    const kysely = {
+      selectFrom: (table: string) => query(table === "chats"
+        ? [{ id: "chat_bigint_revision", revision: "9" }]
+        : []),
+    };
+    try {
+      await enableOwnerCollaborationSurfaces(runtime, dependencies({
+        chatRepository: { kysely } as unknown as OwnerCollaborationSurfaceDependencies["chatRepository"],
+        chatExecutionRoots: {
+          resolve: async () => ({ primaryWorkspaceRoot: homePath, fingerprint: "a".repeat(64) }),
+        } as unknown as OwnerCollaborationSurfaceDependencies["chatExecutionRoots"],
+      }));
+      const inventory = calls.project[0]!.inventorySource as {
+        listChats(ownerId: string, projectId: string): Promise<unknown[]>;
+      };
+      await expect(inventory.listChats(OWNER, "project_alpha")).resolves.toEqual([
+        expect.objectContaining({ id: "chat_bigint_revision", revision: "9" }),
+      ]);
+    } finally {
+      calls.resources[0]?.driver && (calls.resources[0].driver as { close(): void }).close();
+    }
+  });
+
   it("closes the resource driver when the runtime refuses the shared resources", async () => {
     const clear = vi.spyOn(globalThis, "clearInterval");
     const failing = {

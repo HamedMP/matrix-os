@@ -11,7 +11,7 @@ import { GmailId } from "./inbox-evidence.js";
 import { InboxPreviewError } from "./inbox-broker.js";
 const Request = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("get_profile"), params: z.strictObject({}) }),
-  z.strictObject({ action: z.literal("list_threads"), params: z.strictObject({}) }),
+  z.strictObject({ action: z.literal("list_threads"), params: z.strictObject({ pageToken: z.string().min(1).max(4096).optional() }) }),
   z.strictObject({ action: z.literal("get_thread_ids"), params: z.strictObject({ threadId: GmailId }) }),
   z.strictObject({ action: z.literal("get_message"), params: z.strictObject({ messageId: GmailId }) }),
 ]);

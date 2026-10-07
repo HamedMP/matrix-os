@@ -1,4 +1,6 @@
 import { chatRequestHash } from "./argument-digest.js";
+import {associateAdmittedDriveChat} from "./drive-project-database.js";
+import {admittedContextReferenceParts} from "./context-reference-parts.js";
 import { queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -572,6 +574,7 @@ export class ChatQueueRepository {
         created_at: createdAt,
         updated_at: createdAt,
       }).returningAll().executeTakeFirstOrThrow();
+      await associateAdmittedDriveChat(trx, chatId, clientRequestId, context);
       // Run output advances the chat-wide revision while the user is composing.
       // Appending a uniquely keyed queued turn does not overwrite concurrent state,
       // so serialize on the locked Chat row and advance its current revision.
@@ -763,8 +766,7 @@ export class ChatQueueRepository {
         .where("status", "=", "pending")
         .executeTakeFirst();
       const existingParts = CanonicalChatQueuedTurnSchema.shape.parts.parse(parseJson(queued.parts));
-      const mentions = (value: typeof parts) => value.filter((part) => part.type === "resource_reference"
-        && (part.resource.kind === "agent" || part.resource.kind === "chat"));
+      const mentions = admittedContextReferenceParts;
       if (JSON.stringify(mentions(existingParts)) !== JSON.stringify(mentions(parts))) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
@@ -1009,7 +1011,7 @@ export class ChatQueueRepository {
         createdAt: claimedAt,
         updatedAt: claimedAt,
       });
-      const context = await queuedRunContext(trx, queuedTurn, chat.title, Number(chat.message_count));
+      const context = await queuedRunContext(trx, queuedTurn, chat.title, Number(chat.message_count), !row.collaboration_scope_id && chat.collaboration === null);
       const run = CanonicalChatRunSchema.parse({
         id: runId,
         chatId,
@@ -1120,6 +1122,7 @@ export class ChatQueueRepository {
         .returning("id")
         .executeTakeFirst();
       if (!updatedChat) throw new ChatConflictError(chatId, Number(chat.revision));
+      if (!row.collaboration_scope_id) await associateAdmittedDriveChat(trx, chatId, turn.clientRequestId, run.context);
       if (row.collaboration_scope_id && sharedScope) {
         await appendSharedEvent(trx as unknown as Transaction<OwnerCollaborationDatabase>, {
           scopeId: row.collaboration_scope_id,

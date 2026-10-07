@@ -18,9 +18,11 @@ const COMMANDS = [
   "forward",
   "upload",
   "download",
+  "chats",
   "agent",
   "doctor",
   "instance",
+  "preview",
   "completion",
 ];
 

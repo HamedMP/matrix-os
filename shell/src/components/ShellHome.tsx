@@ -27,6 +27,7 @@ import {
   openAoedeNavigation,
   openAoedeResult,
 } from "@/lib/aoede-shell";
+import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -64,8 +65,8 @@ type ShellHomeProps = { initialCollaborationView?: ChatCollaborationView };
 const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
 export function ShellHome(props: ShellHomeProps = {}) {
-  if (localAuthBypass) {
-    return <ShellHomeContent {...props} userId={null} sessionId={null} />;
+  if (localAuthBypass || isSelfHostedRuntime()) {
+    return <ShellHomeContent {...props} userId={isSelfHostedRuntime() ? SELF_HOSTED_SHELL_USER_ID : null} sessionId={null} />;
   }
 
   return <ManagedShellHome {...props} />;
@@ -105,7 +106,8 @@ function ShellHomeContent({
 
   useGlobalShortcuts(
     // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by useGlobalShortcuts' useEffect dependency array ([onPalette]) which re-registers the keydown listener; a fresh function each render would re-add/remove the listener every render
-    useCallback(() => setPaletteOpen(true), []),
+    useCallback(() => setPaletteOpen(true), [setPaletteOpen]),
+    paletteOpen,
   );
 
   const register = useCommandStore((s) => s.register);

@@ -1,3 +1,4 @@
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, sameChatgptPlanSelectionBinding } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -20,6 +21,7 @@ export interface CanonicalProviderChoice {
   options: CanonicalProviderOptionDescriptor[];
   selectedOptions: Array<{ id: string; value: string | boolean }>;
   supportsFileAttachments: boolean;
+  supportsCompanyDriveContext?: boolean;
 }
 
 const MANAGED_GLM_MODEL_ID = "cloudflare:@cf/zai-org/glm-5.3-flash";
@@ -37,9 +39,11 @@ export function orderCanonicalProviderInstancesForDefault(
   return instances
     .map((instance, index) => ({ instance, index }))
     .sort((left, right) => {
+      const managedPiPriority = Number(right.instance.driverKind === "matrix_pi" && right.instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && right.instance.availability === "available")
+        - Number(left.instance.driverKind === "matrix_pi" && left.instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && left.instance.availability === "available");
       const priority = Number(isManagedGlmInstance(right.instance))
         - Number(isManagedGlmInstance(left.instance));
-      return priority || left.index - right.index;
+      return managedPiPriority || priority || left.index - right.index;
     })
     .map(({ instance }) => instance);
 }
@@ -66,33 +70,39 @@ function selectedOptionsFor(
   });
 }
 
-const UNAVAILABLE_LABELS: Record<
-  NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]>,
-  string
-> = {
-  disabled_in_settings: "Disabled in Settings",
-  settings_unavailable: "Settings unavailable",
-  runtime_not_runnable: "Not supported in this runtime",
-  runtime_inactive: "Runtime inactive",
-  runtime_unavailable: "Runtime unavailable",
-  not_installed: "Not installed",
-  authentication_required: "Authentication required",
-  multiple_profiles_unsupported: "Choose one enabled account",
-};
+/** Personal source execution is qualified by the current catalog, never saved labels. */
+export function canonicalChatSubscriptionSelectionMatches(
+  instance: CanonicalProviderInstanceDescriptor | undefined,
+  options?: CanonicalProviderChoice["selectedOptions"],
+): boolean {
+  if (instance?.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return true;
+  return isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })
+    && instance.supports.rootChat
+    && instance.defaultSelection?.instanceId === instance.id
+    && sameChatgptPlanSelectionBinding(options, instance.defaultSelection.options)
+    && instance.options.length === 2
+    && options?.every(option => instance.options.some(descriptor => descriptor.id === option.id
+      && descriptor.kind === "enum" && descriptor.values?.some(value => value.value === option.value))) === true;
+}
 
-export function canonicalProviderAvailabilityLabel(
-  instance: CanonicalProviderInstanceDescriptor,
-): string {
-  if (instance.unavailabilityReason !== "disabled_in_settings" && instance.unavailabilityReason !== "settings_unavailable") {
-    if (instance.connectionState === "credit_required") return "Matrix AI credit required";
-    if (instance.connectionState === "unavailable") return "Matrix AI unavailable";
-  }
-  if (instance.availability === "available") return (instance.driverKind === "codex" || instance.localObservation !== undefined)
-    ? codexLocalObservationLabel(instance.localObservation)
-    : "Available";
-  if (instance.unavailabilityReason) return UNAVAILABLE_LABELS[instance.unavailabilityReason];
-  if (instance.availability === "setup_required") return "Setup required";
-  if (instance.availability === "auth_required") return "Authentication required";
+/** Personal subscription is an explicit source choice, never an automatic default. */
+export function canonicalProviderChoiceCanBeDefault(choice: { instanceId: string }): boolean {
+  return choice.instanceId !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID;
+}
+
+export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
+  if (isLegacyMatrixSdkProvider(instance)) return "Unavailable";
+  const label = canonicalProviderAvailabilityReasonLabel(instance);
+  return label === "Available" && (instance.driverKind === "codex" || instance.localObservation !== undefined)
+    ? codexLocalObservationLabel(instance.localObservation) : label;
+}
+
+/** Preserve a bound route while reporting why it cannot execute. */
+export function canonicalProviderUnavailableSelectionLabel(instance?: CanonicalProviderInstanceDescriptor | null, modelId?: string): string {
+  if (!instance || isLegacyMatrixSdkProvider(instance) || !instance.models.some(model => model.id === modelId)) return "Unavailable";
+  const fundingState = canonicalProviderFundingState(instance);
+  if (fundingState === "credit_reserved") return "Credit reserved";
+  if (fundingState === "budget_exceeded") return "Monthly budget reached";
   return "Unavailable";
 }
 
@@ -113,15 +123,18 @@ export function deriveCanonicalProviderChoices(
   catalog: CanonicalProviderCatalog,
 ): CanonicalProviderChoice[] {
   return orderCanonicalProviderInstancesForDefault(catalog.instances).flatMap((instance) => {
-    if (instance.availability !== "available") return [];
+    if (isLegacyMatrixSdkProvider(instance) || instance.availability !== "available") return [];
     const interactionMode = instance.supports.interactionModes[0];
     const permissionMode = instance.supports.permissionModes[0];
     if (!interactionMode || !permissionMode) return [];
-    return instance.models.flatMap((model) => model.availability === "available" ? [{
+    const managedExecution = instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default";
+    const personalChat = isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind });
+    const harnessLabel = managedExecution || personalChat ? "Matrix AI" : isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "ChatGPT subscription" : instance.displayName;
+    return instance.models.flatMap((model) => model.availability === "available" && canonicalChatSubscriptionSelectionMatches(instance, selectedOptionsFor(instance, model.id)) ? [{
       instanceId: instance.id,
       driverKind: instance.driverKind,
-      harnessLabel: instance.displayName,
-      ...(instance.connectionLabel ? { connectionLabel: instance.connectionLabel } : {}),
+      harnessLabel,
+      ...(personalChat ? { connectionLabel: "ChatGPT subscription" } : instance.connectionLabel ? { connectionLabel: instance.connectionLabel } : {}),
       modelId: model.id,
       modelLabel: model.displayName,
       interactionMode,
@@ -130,6 +143,7 @@ export function deriveCanonicalProviderChoices(
       permissionModes: [...instance.supports.permissionModes],
       options: [...instance.options],
       selectedOptions: selectedOptionsFor(instance, model.id),
+      supportsCompanyDriveContext: instance.supports.resources.includes("organization_drive"),
       supportsFileAttachments: instance.supports.attachments.some((kind) => kind === "file" || kind === "image"),
     }] : []);
   });

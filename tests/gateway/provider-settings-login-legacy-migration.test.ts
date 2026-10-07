@@ -1,3 +1,4 @@
+import { createNativeProviderProfileGuard } from "../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -83,6 +84,7 @@ describe("provider terminal login legacy migration", () => {
     return createProviderTerminalLoginCoordinator({
       homePath,
       registry,
+      profileGuard: createNativeProviderProfileGuard({ homePath, registry }),
       enabledHarnesses: ["claude"],
       now: () => now,
     });
@@ -237,7 +239,7 @@ describe("provider terminal login legacy migration", () => {
     });
 
     let latest = sameKeyRenewal;
-    for (let revision = 3; revision <= 70; revision += 1) {
+    for (let revision = 3; revision <= 257; revision += 1) {
       checkedAt = new Date(Date.parse(latest.expiresAt) + 1);
       latest = await login.startLogin({
         ...legacyInput,
@@ -261,7 +263,7 @@ describe("provider terminal login legacy migration", () => {
       join(homePath, "system/ai-providers/login-recovery.json"),
       "utf8",
     )) as { receipts: unknown[] };
-    expect(receipts.receipts).toHaveLength(64);
+    expect(receipts.receipts).toHaveLength(256);
     expect(recovery.receipts).toHaveLength(1);
     expect(registry.create).not.toHaveBeenCalled();
     expect(registry.delete).not.toHaveBeenCalled();
@@ -298,7 +300,7 @@ describe("provider terminal login legacy migration", () => {
     expect(sessions).toContain(migratedSessionName);
     expect(sessions).not.toContain(legacy.sessionName);
 
-    for (let index = 0; index < 65; index += 1) {
+    for (let index = 0; index < 257; index += 1) {
       await login.startLogin({
         ...legacyInput,
         mutation: {
@@ -328,7 +330,7 @@ describe("provider terminal login legacy migration", () => {
       ...legacyInput,
       mutation: {
         ...legacyInput.mutation,
-        expectedRevision: 67,
+        expectedRevision: 259,
         idempotencyKey: "login_legacy_after_document_eviction",
       },
     });
@@ -363,7 +365,7 @@ describe("provider terminal login legacy migration", () => {
       ? migrated.action.terminalSessionId
       : "";
 
-    for (let index = 0; index < 65; index += 1) {
+    for (let index = 0; index < 257; index += 1) {
       await login.startLogin({
         ...legacyInput,
         mutation: {
@@ -383,7 +385,7 @@ describe("provider terminal login legacy migration", () => {
       ...legacyInput,
       mutation: {
         ...legacyInput.mutation,
-        expectedRevision: 67,
+        expectedRevision: 259,
         idempotencyKey: "login_legacy_after_stale_eviction",
       },
     })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
@@ -463,7 +465,7 @@ describe("provider terminal login legacy migration", () => {
   ])("does not migrate a legacy receipt across a changed %s identity", async (_field, changed) => {
     const legacy = await seedLegacyLoginReceipt();
 
-    const attempt = await coordinator().startLogin({
+    await expect(coordinator().startLogin({
       ...legacyInput,
       mutation: {
         ...legacyInput.mutation,
@@ -472,13 +474,10 @@ describe("provider terminal login legacy migration", () => {
         accountId: changed.accountId,
       },
       harness: { ...legacyInput.harness, providerId: changed.providerId },
-    });
+    })).rejects.toMatchObject({ code: "lifecycle_unavailable" });
 
-    expect(attempt.action).toMatchObject({ kind: "open_terminal" });
-    expect(attempt.action.kind === "open_terminal" && attempt.action.terminalSessionId)
-      .not.toBe(legacy.sessionName);
-    expect(registry.create).toHaveBeenCalledOnce();
+    expect(registry.create).not.toHaveBeenCalled();
     expect(sessions).toContain(legacy.sessionName);
-    expect(sessions.size).toBe(2);
+    expect(sessions.size).toBe(1);
   });
 });

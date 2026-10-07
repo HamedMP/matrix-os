@@ -23,6 +23,7 @@ import {
   type LegacyProjectOperationAdmission,
 } from "../collaboration/project-fence.js";
 import { z } from "zod/v4";
+import { toShellError } from "./errors.js";
 import {
   saveTerminalPasteAsset,
   TERMINAL_PASTE_ASSET_BODY_LIMIT,
@@ -60,10 +61,11 @@ const UiStateSchema = z.object({
 const DeleteWorkspaceSchema = z.object({ confirmTerminate: z.boolean() }).strict();
 const PaneActionQuerySchema = z.object({ chatId: CanonicalChatIdSchema.optional() }).strict();
 const PasteAssetsSchema = z.object({
+  kind: z.enum(["image", "file"]).default("image"),
   assets: z.array(z.object({
     name: z.string().min(1).max(255),
     mimeType: z.string().min(1).max(120),
-    dataBase64: z.string().min(1).max(TERMINAL_PASTE_ASSET_BASE64_LIMIT),
+    dataBase64: z.string().max(TERMINAL_PASTE_ASSET_BASE64_LIMIT),
   }).strict()).length(1),
 }).strict();
 
@@ -380,13 +382,14 @@ export function createTerminalWorkspaceRoutes(options: {
         if (!tab) return c.json({ error: "Terminal operation failed" }, 404);
         const assets = [];
         for (const asset of input.assets) {
-          const bytes = decodeBase64(asset.dataBase64);
+          const bytes = input.kind === "file" && asset.dataBase64 === "" ? new Uint8Array() : decodeBase64(asset.dataBase64);
           assets.push(await saveTerminalPasteAsset({
             homePath: options.homePath!,
             cwd: tab.cwd,
             bytes,
             contentType: asset.mimeType,
             filename: asset.name,
+            kind: input.kind,
           }));
         }
         return c.json({ assets });
@@ -437,6 +440,13 @@ function requestFailure(c: Parameters<typeof runtimeFailure>[0], error: unknown)
   }
   if (error instanceof z.ZodError || error instanceof SyntaxError) {
     return c.json({ error: "Invalid request" }, 400);
+  }
+  const shellFailure = toShellError(error);
+  if (shellFailure.code === "invalid_request" || shellFailure.code === "unsupported_media_type") {
+    return c.json({ error: "Invalid request" }, 400);
+  }
+  if (shellFailure.code === "payload_too_large") {
+    return c.json({ error: "Request body is too large" }, 413);
   }
   return runtimeFailure(c, error);
 }

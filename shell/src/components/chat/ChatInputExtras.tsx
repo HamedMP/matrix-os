@@ -1,3 +1,4 @@
+import {chatResourceKey} from "@matrix-os/ui";
 import { Button } from "@/components/ui/button";
 import { MicIcon, MicOffIcon, Loader2Icon } from "@/lib/hugeicons";
 import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
@@ -15,7 +16,7 @@ export function ChatMentionTokens({ resources, onRemove }: {
   resources: CanonicalChatResourceReference[]; onRemove(resource: CanonicalChatResourceReference): void;
 }) {
   if (!resources.length) return null;
-  return <div className="flex min-w-0 max-w-full flex-wrap gap-2">{resources.map((resource) => <span key={`${resource.kind}:${resource.id}`} className="flex min-w-0 max-w-full items-center gap-1 rounded-md border px-2 py-1 text-xs">
+  return <div className="flex min-w-0 max-w-full flex-wrap gap-2">{resources.map((resource) => <span key={chatResourceKey(resource)} className="flex min-w-0 max-w-full items-center gap-1 rounded-md border px-2 py-1 text-xs">
     <span className="min-w-0 truncate" title={resource.label}>@{resource.label}</span><button type="button" aria-label={`Remove ${resource.label}`} className="shrink-0 rounded px-1 focus-visible:ring-2" onClick={() => onRemove(resource)}>×</button>
   </span>)}</div>;
 }

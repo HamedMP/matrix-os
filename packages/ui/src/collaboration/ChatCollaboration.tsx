@@ -5,26 +5,26 @@ import {
   CollaborationDiscoveryItemSchema,
   CollaborationInvitationSchema,
   CollaborationMemberSchema,
-  CollaborationProjectSchema,
   CollaborationScopeSchema,
   CollaborationSharedChatMessageSchema,
   type CanonicalChatMessagePart,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { CanonicalPartView, keyedCanonicalParts } from "./CanonicalPartView.js";
 import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore, type CollaborationDraft } from "./chat-state.js";
 import { deriveChatPermissions } from "./permissions.js";
 import { SharedChatControls } from "./SharedChatControls.js";
+import { SharedProjectView } from "./SharedProjectView.js";
 import { SharedTerminalControls } from "./SharedTerminalControls.js";
 import { projectSharedChatTimeline } from "./chat-projection.js";
 import { SessionAccessControl } from "./SessionAccessControl.js";
 import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
+import { isAcceptedProjectOwnedByRail } from "./discovery-visibility.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -50,6 +50,7 @@ export function ChatCollaboration({
   onChatMetadata,
   headerContainer,
   layers,
+  hideAcceptedProjects = false,
 }: {
   view: ChatCollaborationView;
   api: CollaborationApi;
@@ -63,17 +64,19 @@ export function ChatCollaboration({
   onChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
   layers?: CollaborationOverlayLayers;
+  /** A host with a dedicated project navigator can keep accepted projects out of this list. */
+  hideAcceptedProjects?: boolean;
 }) {
   if (view.kind === "home") {
     return <CollaborationHome api={api} openInvitation={openInvitation} openChat={openChat}
-      openTerminal={openTerminal} openProject={openProject} />;
+      openTerminal={openTerminal} openProject={openProject} hideAcceptedProjects={hideAcceptedProjects} />;
   }
   if (view.kind === "invitation") {
     return <InvitationView api={api} invitationId={view.invitationId} openChat={openChat}
       openTerminal={openTerminal} openProject={openProject} />;
   }
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} layers={layers} />;
-  if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
+  if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} openChat={openChat} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
     runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata}
     headerContainer={headerContainer} layers={layers} />;
@@ -81,12 +84,13 @@ export function ChatCollaboration({
     scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} layers={layers} />;
 }
 
-function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject }: {
+function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject, hideAcceptedProjects }: {
   api: CollaborationApi;
   openInvitation: (invitationId: string) => void;
   openChat: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal: (scopeId: string) => void;
   openProject: (scopeId: string) => void;
+  hideAcceptedProjects: boolean;
 }) {
   const [items, setItems] = useState<DiscoveryItem[]>([]);
   const [inboxCursor, setInboxCursor] = useState<string | null>(null);
@@ -99,6 +103,9 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   const [invitationError, setInvitationError] = useState(false);
   const [organizationPending, setOrganizationPending] = useState<string | null>(null);
   const [organizationError, setOrganizationError] = useState<string | null>(null);
+  const visibleItems = useMemo(() => hideAcceptedProjects
+    ? items.filter((item) => !isAcceptedProjectOwnedByRail(item))
+    : items, [hideAcceptedProjects, items]);
   useEffect(() => {
     let active = true;
     void Promise.all([api.get("/api/collaboration/inbox"), api.get("/api/collaboration/shared")])
@@ -204,23 +211,27 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
     <header>
       <p className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: "var(--text-tertiary)" }}>Collaboration</p>
       <h1 className="mt-1 text-2xl font-semibold">Shared with me</h1>
-      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Invitations, Chats, terminals, and projects shared with your Matrix account.</p>
+      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{hideAcceptedProjects
+        ? "Invitations, Chats, and terminals shared with your Matrix account. Accepted projects live in the Projects rail."
+        : "Invitations, Chats, terminals, and projects shared with your Matrix account."}</p>
     </header>
     {loading ? <p role="status" className="rounded-2xl border p-6 text-sm">Loading shared items…</p> : null}
     {error ? <div role="alert" className="rounded-2xl border p-6">
       <p className="font-medium">Shared items are unavailable</p>
       <p className="mt-1 text-sm">Refresh the page to try again.</p>
     </div> : null}
-    {!loading && !error && items.length === 0 ? <div className="rounded-2xl border p-10 text-center">
+    {!loading && !error && visibleItems.length === 0 ? <div className="rounded-2xl border p-10 text-center">
       <div aria-hidden className="text-3xl">◇</div>
       <h2 className="mt-3 text-lg font-medium">Nothing shared yet</h2>
-      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Invitations and accepted shared items will appear here.</p>
+      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{hideAcceptedProjects
+        ? "Invitations and accepted shared items will appear here. Accepted projects stay in the Projects rail."
+        : "Invitations and accepted shared items will appear here."}</p>
     </div> : null}
     <div className="grid gap-3">
-      {items.map((item) => item.status === "organization_pending"
+      {visibleItems.map((item) => item.status === "organization_pending"
         ? <article key={`org:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
-            <p className="font-medium">Shared with your organization</p>
+            <p className="font-medium">Shared with you</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · opens when you join</p>
             {organizationError === item.scopeId ? <p role="alert" className="mt-1 text-sm">Share could not be opened. Try again.</p> : null}
           </div>
@@ -253,7 +264,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium">{"chat" in item.resource
               ? item.resource.chat.title
-              : "terminal" in item.resource ? item.resource.terminal.id : item.resource.project.id}</p>
+              : "terminal" in item.resource ? item.resource.terminal.id : item.resource.overview?.name ?? "Shared project"}</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · {roleLabel(item.resource.scope.role)}</p>
           </div>
           {"chat" in item.resource
@@ -298,70 +309,6 @@ function SharedTerminalView({ api, actorId, scopeId, layers }: {
   if (failed) return <SafeError title="Shared terminal unavailable" />;
   if (!scope) return <p role="status" className="p-8">Loading shared terminal…</p>;
   return <SharedTerminalControls api={api} scope={scope} actorId={actorId} layers={layers} />;
-}
-
-function SharedProjectView({ api, scopeId }: { api: CollaborationApi; scopeId: string }) {
-  const [value, setValue] = useState<{ scope: SharedScope; project: z.infer<typeof CollaborationProjectSchema> } | null>(null);
-  const [failed, setFailed] = useState(false);
-  const loadGeneration = useRef(0);
-  const load = useCallback(async () => {
-    const generation = ++loadGeneration.current;
-    const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
-    try {
-      const [scopeValue, projectValue] = await Promise.all([api.get(base), api.get(`${base}/project`)]);
-      const scope = CollaborationScopeSchema.parse(scopeValue);
-      const project = CollaborationProjectSchema.parse(projectValue);
-      if (scope.kind !== "project" || project.scopeId !== scope.id || project.id !== scope.resourceId) {
-        throw new Error("Project scope mismatch");
-      }
-      if (generation === loadGeneration.current) {
-        setValue({ scope, project });
-        setFailed(false);
-      }
-    } catch (error: unknown) {
-      console.warn("[project-collaboration] project load failed", error instanceof Error ? error.name : "UnknownError");
-      if (generation === loadGeneration.current) {
-        setValue(null);
-        setFailed(true);
-      }
-      throw error;
-    }
-  }, [api, scopeId]);
-  useEffect(() => {
-    setValue(null);
-    setFailed(false);
-    void load().catch((error: unknown) => {
-      console.warn("[project-collaboration] initial load unavailable", error instanceof Error ? error.name : "UnknownError");
-    });
-    return () => { loadGeneration.current += 1; };
-  }, [load]);
-  useEffect(() => api.subscribe?.(scopeId, load, () => {
-    loadGeneration.current += 1;
-    setValue(null);
-    setFailed(true);
-  }), [api, load, scopeId]);
-  if (failed) return <SafeError title="Shared project unavailable" />;
-  if (!value) return <p role="status" className="p-8">Loading shared project…</p>;
-  return <main className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-5 p-5 sm:p-8">
-    <header>
-      <p className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: "var(--text-tertiary)" }}>Shared project</p>
-      <h1 className="mt-1 text-2xl font-semibold">{value.project.id}</h1>
-      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-        {roleLabel(value.scope.role)} · {value.scope.role === "viewer" ? "read only" : "can edit"}
-      </p>
-    </header>
-    {value.project.status === "archived" ? <p role="status" className="rounded-xl border p-4 text-sm">This project is archived.</p> : null}
-    <section aria-labelledby="shared-project-contents">
-      <h2 id="shared-project-contents" className="font-medium">Project contents</h2>
-      <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-        {value.project.resources.map((resource) => <li key={`${resource.kind}:${resource.id}`}
-          className="rounded-xl border px-3 py-2 text-sm">
-          <span className="font-medium">{resource.id}</span>
-          <span className="ml-2 capitalize" style={{ color: "var(--text-secondary)" }}>{resource.kind}</span>
-        </li>)}
-      </ul>
-    </section>
-  </main>;
 }
 
 /** Why a discovered item could not be opened: ended access is not a lapsed sign-in. */
@@ -842,46 +789,6 @@ function NativeSharedMessageView({ message }: { message: ReturnType<typeof proje
   </article>;
 }
 
-function CanonicalPartView({ part, human = false }: { part: CanonicalChatMessagePart; human?: boolean }) {
-  if (part.type === "text" || part.type === "summary") {
-    return human ? <p className="whitespace-pre-wrap">{part.text}</p>
-      : <div className="max-w-none text-sm leading-6"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={safeMarkdownUrl}
-        components={{
-          h1: ({ children }) => <h1 className="mb-2 mt-4 text-xl font-semibold first:mt-0">{children}</h1>,
-          h2: ({ children }) => <h2 className="mb-2 mt-4 text-lg font-semibold first:mt-0">{children}</h2>,
-          h3: ({ children }) => <h3 className="mb-2 mt-3 text-base font-semibold first:mt-0">{children}</h3>,
-          p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
-          ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
-          ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
-          code: ({ children }) => <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">{children}</code>,
-        }}>{part.text}</ReactMarkdown></div>;
-  }
-  if (part.type === "tool_request") return <MessageDetail label={part.label} detail={part.inputPreview} />;
-  if (part.type === "tool_result") return <MessageDetail label={`Tool ${part.outcome}`} detail={part.text} />;
-  if (part.type === "attachment_reference") return <MessageDetail label={part.label} detail={part.kind} />;
-  if (part.type === "approval_request") return <MessageDetail label={part.title} detail={`${part.description} · ${part.risk} risk`} />;
-  if (part.type === "approval_result") return <MessageDetail label="Approval updated" detail={part.decision.replaceAll("_", " ")} />;
-  if (part.type === "status") return <MessageDetail label={part.label} detail={part.detail} tone={part.tone} />;
-  if (part.type === "invocation_reference") return <MessageDetail label={part.invocation.invocation} detail={part.invocation.arguments} />;
-  return <MessageDetail label={part.resource.label} detail={part.resource.path ?? part.resource.kind} />;
-}
-
-function keyedCanonicalParts(messageId: string, parts: CanonicalChatMessagePart[]) {
-  const occurrences = new Map<string, number>();
-  return parts.map((part) => {
-    const valueKey = JSON.stringify(part);
-    const occurrence = occurrences.get(valueKey) ?? 0;
-    occurrences.set(valueKey, occurrence + 1);
-    return { key: `${messageId}:${valueKey}:${occurrence}`, part };
-  });
-}
-
-function MessageDetail({ label, detail, tone }: { label: string; detail?: string; tone?: string }) {
-  return <div className="rounded-xl border px-3 py-2 text-sm" data-tone={tone}>
-    <p className="font-medium">{label}</p>
-    {detail ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted-foreground">{detail}</p> : null}
-  </div>;
-}
 
 function markRead(api: CollaborationApi, base: string, messages: readonly SharedMessage[]): void {
   const sequence = messages.at(-1)?.sequence;
@@ -898,15 +805,6 @@ function SafeError({ title }: { title: string }) {
   </div>;
 }
 
-function safeMarkdownUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    return ["https:", "http:", "mailto:"].includes(url.protocol) ? value : "";
-  } catch (error: unknown) {
-    if (!(error instanceof TypeError)) console.warn("[chat-collaboration] link validation failed", "UnknownError");
-    return "";
-  }
-}
 
 const noopStorage: Pick<Storage, "getItem" | "setItem" | "removeItem"> = {
   getItem: () => null,

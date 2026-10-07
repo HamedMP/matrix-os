@@ -115,6 +115,7 @@ function adapter(
     },
     serializeState: (value) => value,
     start,
+    resume: start,
     ...extra,
   };
 }
