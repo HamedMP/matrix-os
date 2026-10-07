@@ -65,6 +65,39 @@ function call(path: string, payload: unknown, token = 'owner-token', requestOrig
 }
 
 describe('WhatsApp account linking and delivery', () => {
+  it.each([false, true])('preserves verified queued replies after enrollment rollback unless revoked: %s', async (revoked) => {
+    const account = 'SE.rollback';
+    const production = { ...config, admissionMode: 'eea_selfserve' as const, allowedSenders: ['46709999999'] };
+    const { token } = await repo.startLink(account, 'rollback-link', now + 60_000, sender);
+    await repo.claim(token, owner);
+    const proof = await repo.lease();
+    const code = String(proof!.payload.text).match(/\b\d{6}\b/)![0];
+    await repo.finish(proof!.id, proof!.fence, 'complete');
+    await repo.confirm(token, owner, code, 'whatsapp-general-agent-v1');
+    const compose = (selected: typeof config) => createWhatsAppService({ config: selected, repository: repo, agent, now: () => now,
+      react: async (to, messageId, emoji) => { reactions.push({ to, messageId, emoji }); },
+      send: async (to, text) => { sends.push({ to, text }); return 'wamid.reply'; },
+    });
+    service = compose(production);
+    await service.tick(); // Finish connection acknowledgment before the test request.
+    await service.ingest([{ id: 'wamid.rollback', sender: account, phone: sender, type: 'text', text: 'Who are you?', timestamp: now / 1000 }]);
+    await service.tick(); // Persist the admitted agent checkpoint with its proven phone.
+    sends = []; reactions = [];
+    await service.shutdown();
+    if (revoked) await repo.disconnect(owner);
+    service = compose({ ...production, admissionMode: 'allowlist' });
+    await service.tick();
+    if (revoked) {
+      expect(sends).toEqual([]); expect(reactions).toEqual([]);
+    } else {
+      expect(sends).toEqual([{ to: account, text: 'Your Matrix agent is here.' }]);
+      expect(reactions).toEqual([{ to: account, messageId: 'wamid.rollback', emoji: '✅' }]);
+      const previous = sends.length;
+      await service.ingest([{ id: 'wamid.rollback-new', sender: 'SE.unlinked', phone: sender, type: 'text', text: 'Hello', timestamp: now / 1000 }]);
+      await service.tick();
+      expect(sends).toHaveLength(previous);
+    }
+  });
   it('waits for lease recovery after a prepared snapshot commits but its response is lost', async () => {
     const { token } = await repo.startLink(sender, 'link-unknown-preparation');
     await repo.claim(token, owner);
