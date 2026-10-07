@@ -25,6 +25,7 @@ import { PRESET_POLICY_VERSION } from "./repository-shared.js";
 
 const GRANTS_PATH = "/api/collaboration/scopes/:scopeId/grants";
 const OWNER_RUNTIME_HEADER = "x-matrix-collaboration-owner-runtime";
+const ACCESS_PRESENTATION_CONCURRENCY = 8;
 
 type CapabilityRouteOptions = Pick<
   CollaborationRouteOptions,
@@ -100,23 +101,28 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
       });
     }
     const people: CollaborationProjectAccessPresentation["people"] = [];
-    for (const [actorId, candidate] of [...byActor.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-      const effective = await evaluator.evaluateEffectiveAccess({ scopeId, actorId });
-      if (effective.preset === null && !candidate.directGrant) continue;
-      const directIsEffective = candidate.directGrant?.state === "active" && effective.preset !== null;
-      const inherited = candidate.organizationActivated && effective.preset !== null
-        && (!directIsEffective || organizationGrant?.preset === "contributor" || candidate.directGrant?.preset === "viewer");
-      people.push({
-        actor: await options.resolveParticipant(actorId),
-        status: effective.preset === null ? "pending" as const : "active" as const,
-        effectivePreset: effective.preset ?? candidate.directGrant?.preset ?? "viewer",
-        inherited,
-        ...(candidate.directGrant ? { directGrant: {
-          grantId: candidate.directGrant.grantId,
-          preset: candidate.directGrant.preset,
-          revision: String(candidate.directGrant.grantRevision),
-        } } : {}),
-      });
+    const candidates = [...byActor.entries()].sort(([left], [right]) => left.localeCompare(right));
+    for (let offset = 0; offset < candidates.length; offset += ACCESS_PRESENTATION_CONCURRENCY) {
+      const batch = await Promise.all(candidates.slice(offset, offset + ACCESS_PRESENTATION_CONCURRENCY)
+        .map(async ([actorId, candidate]): Promise<CollaborationProjectAccessPresentation["people"][number] | null> => {
+          const effective = await evaluator.evaluateEffectiveAccess({ scopeId, actorId });
+          if (effective.preset === null && !candidate.directGrant) return null;
+          const directIsEffective = candidate.directGrant?.state === "active" && effective.preset !== null;
+          const inherited = candidate.organizationActivated && effective.preset !== null
+            && (!directIsEffective || organizationGrant?.preset === "contributor" || candidate.directGrant?.preset === "viewer");
+          return {
+            actor: await options.resolveParticipant(actorId),
+            status: effective.preset === null ? "pending" : "active",
+            effectivePreset: effective.preset ?? candidate.directGrant?.preset ?? "viewer",
+            inherited,
+            ...(candidate.directGrant ? { directGrant: {
+              grantId: candidate.directGrant.grantId,
+              preset: candidate.directGrant.preset,
+              revision: String(candidate.directGrant.grantRevision),
+            } } : {}),
+          };
+        }));
+      people.push(...batch.filter((person): person is NonNullable<typeof person> => person !== null));
     }
     return c.json(CollaborationProjectAccessPresentationSchema.parse({
       scopeId,

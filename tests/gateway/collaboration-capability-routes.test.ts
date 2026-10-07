@@ -36,16 +36,29 @@ describe("collaboration capability HTTP routes", () => {
   let resourceDriver: ReturnType<typeof createOwnerResourceDriver>;
   /** The board app's registry identity, reassigned when a test re-registers the app. */
   let appRegistration: string;
+  let membershipDelayMs: number;
+  let activeMembershipChecks: number;
+  let maxActiveMembershipChecks: number;
 
   beforeEach(async () => {
+    membershipDelayMs = 0;
+    activeMembershipChecks = 0;
+    maxActiveMembershipChecks = 0;
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     runtime = await createGatewayCollaboration({
       organizationMembershipSource: {
         async assertMembership({ actorId, organizationId: requested }) {
-          return requested === organizationId && actorId !== outsiderId
-            ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), membershipEpoch: "1", aiSubmission: "owner_only" as const }
-            : { member: false };
+          activeMembershipChecks += 1;
+          maxActiveMembershipChecks = Math.max(maxActiveMembershipChecks, activeMembershipChecks);
+          try {
+            if (membershipDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, membershipDelayMs));
+            return requested === organizationId && actorId !== outsiderId
+              ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), membershipEpoch: "1", aiSubmission: "owner_only" as const }
+              : { member: false };
+          } finally {
+            activeMembershipChecks -= 1;
+          }
         },
       },
       db: fixture.db,
@@ -176,6 +189,27 @@ describe("collaboration capability HTTP routes", () => {
         directGrant: { grantId: directGrantId, preset: "contributor" } }],
     });
     expect((await signed({ actorId: memberId, method: "GET", path })).status).toBe(403);
+  });
+
+  it("bounds parallel access checks while presenting larger project audiences", async () => {
+    const now = new Date();
+    const memberIds = Array.from({ length: 12 }, (_, index) => `user_capability_batch_${index}`);
+    await fixture.db.insertInto("collaboration_grants").values(memberIds.map((actorId) => ({
+      id: randomUUID(), scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "member" as const, audience_actor_id: actorId, preset: "viewer" as const, state: "active" as const,
+      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }))).execute();
+    membershipDelayMs = 10;
+
+    const path = `/api/collaboration/scopes/${scopeId}/project/access`;
+    const response = await signed({ actorId: ownerId, method: "GET", path });
+
+    expect(response.status).toBe(200);
+    expect(CollaborationProjectAccessPresentationSchema.parse(await response.json()).people).toHaveLength(memberIds.length);
+    expect(maxActiveMembershipChecks).toBeGreaterThan(1);
+    expect(maxActiveMembershipChecks).toBeLessThanOrEqual(8);
+    expect(activeMembershipChecks).toBe(0);
   });
 
   it("rejects every new standalone live scope", async () => {
