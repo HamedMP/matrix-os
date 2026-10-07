@@ -117,7 +117,10 @@ export async function admitCanonicalTurn(
     let prepared;
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
-    const effective = { ...input, ...prepared, permissionMode: admissionPolicy.permissionMode };
+    // Server-selected bot modes remain authoritative unless a live session
+    // owns the Chat and supplies its stricter frozen execution policy.
+    const effective = { ...input, ...prepared,
+      ...(sessionPolicy ? { permissionMode: admissionPolicy.permissionMode } : {}) };
     const catalog = await deps.catalog.getCatalog(principal, effective.selection);
     const requirements = requirementsFor({
       ...effective,
@@ -148,7 +151,7 @@ export async function admitCanonicalTurn(
       );
     }
     try {
-      await revalidateActionPolicy(adapter, { driverKind: validated.instance.driverKind, selection: validated.selection, permissionMode: admissionPolicy.permissionMode }, admissionPolicy.runPolicy);
+      await revalidateActionPolicy(adapter, { driverKind: validated.instance.driverKind, selection: validated.selection, permissionMode: effective.permissionMode }, admissionPolicy.runPolicy);
     } catch (error: unknown) {
       console.warn("[chat] action policy qualification failed", error instanceof Error ? error.name : "UnknownError");
       throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "The selected Provider cannot enforce this execution policy."), 400);
@@ -271,7 +274,7 @@ export async function admitCanonicalTurn(
       selection: validated.selection,
       interactionMode: effective.interactionMode,
       ...(sessionContext ? { context: sessionContext } : {}),
-      permissionMode: admissionPolicy.permissionMode,
+      permissionMode: effective.permissionMode,
       ...(admissionPolicy.runPolicy ? { runPolicy: admissionPolicy.runPolicy } : {}),
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
