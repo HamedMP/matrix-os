@@ -20,12 +20,10 @@
 .aoede-live button:disabled { cursor: default; }
 .aoede-live :is(button, summary, section):focus-visible { outline: 2px solid var(--ring); outline-offset: 5px; }
 .aoede-header button { border: 1px solid var(--border); border-radius: 50%; width: 44px; background: #ffffff08; }
-.aoede-stage { min-height: 0; overflow: auto; padding: 32px 24px; display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 24px; scrollbar-width: thin; }
-.aoede-stage[data-tasks="true"] { justify-content: flex-start; padding-top: 28px; }
-.aoede-stage[data-tasks="true"] .aoede-orb { width: 220px; }
-.aoede-stage[data-tasks="true"] .aoede-presence { gap: 24px; }
+/* Anchor the voice stack independently of task count/disclosure state. */
+.aoede-stage { min-height: 0; overflow: auto; padding: clamp(32px, 12dvh, 120px) 24px 32px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 20px; scrollbar-width: thin; }
 .aoede-stage > * { flex-shrink: 0; }
-.aoede-presence { display: grid; justify-items: center; gap: 42px; }
+.aoede-presence { display: grid; justify-items: center; gap: 28px; }
 .aoede-presence > p { margin: 0; color: var(--muted-foreground); font-size: 13px; text-align: center; line-height: 1.6; }
 .aoede-orb {
   --aoede-level: 0; --aoede-speed: 14s; --aoede-sat: .55; --aoede-glow: .4;
@@ -73,11 +71,34 @@
 .aoede-captions { width: min(100%, 620px); max-height: 120px; overflow: auto; text-align: center; font-size: clamp(17px, 2vw, 22px); line-height: 1.55; font-weight: 400; scrollbar-width: thin; }
 .aoede-captions p { margin: 0; overflow-wrap: anywhere; text-wrap: pretty; }
 .aoede-captions strong { display: block; margin-bottom: 8px; color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
-.aoede-tasks { display: flex; flex-direction: column; gap: 12px; width: min(100%, 480px); max-height: 240px; overflow: auto; scrollbar-width: thin; flex-shrink: 0; }
-.aoede-tasks article { border: 1px solid var(--border); border-radius: 18px; background: #ffffff05; padding: 18px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-.aoede-tasks :is(h3, p) { margin: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 1.5; }
+.aoede-tasks { display: grid; gap: 12px; width: min(100%, 360px); font-size: 13px; line-height: 1.5; }
+.aoede-task-alerts { display: grid; gap: 20px; max-height: 220px; overflow: auto; scrollbar-width: thin; }
+.aoede-task-attention { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 8px 16px; }
+.aoede-tasks :is(h3, p) { margin: 0; overflow-wrap: anywhere; font-size: inherit; line-height: inherit; }
 .aoede-tasks h3 { font-weight: 500; }
 .aoede-task-status { color: var(--muted-foreground); }
+.aoede-task-attention[data-status="failed"] .aoede-task-status { color: #ffd2d9; }
+.aoede-task-description, .aoede-task-attention .aoede-actions { grid-column: 1 / -1; }
+.aoede-task-description { color: var(--muted-foreground); }
+.aoede-task-attention .aoede-actions { justify-content: flex-start; gap: 8px; }
+.aoede-task-disclosure { position: relative; }
+.aoede-live .aoede-task-trigger { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; margin-inline: auto; padding: 0 8px; border: 0; background: transparent; color: var(--muted-foreground); font: inherit; font-size: 12px; }
+.aoede-task-trigger:hover { color: var(--foreground); }
+.aoede-task-trigger svg { width: 14px; height: 14px; }
+.aoede-task-trigger svg:last-child { transition: transform 120ms ease; }
+.aoede-task-trigger[data-state="open"] svg:last-child { transform: rotate(180deg); }
+.aoede-task-details { max-height: min(220px, 24dvh); overflow: auto; scrollbar-width: thin; padding: 6px 0; }
+.aoede-task-details ul { display: grid; list-style: none; margin: 0; padding: 0; }
+/* Every state reserves the same status and action tracks; no per-row auto sizing. */
+.aoede-task-row { display: grid; grid-template-columns: minmax(0, 1fr) 80px 32px; align-items: center; gap: 8px; min-height: 44px; }
+.aoede-task-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.aoede-task-state { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.aoede-task-state svg { width: 14px; height: 14px; flex-shrink: 0; }
+.aoede-task-row[data-status="running"] .aoede-task-state svg { animation: aoede-flow 1.2s linear infinite; }
+.aoede-task-row[data-status="done"] .aoede-task-title { color: var(--muted-foreground); }
+.aoede-task-cancel { display: flex; align-items: center; justify-content: center; }
+.aoede-task-cancel button { width: 32px; padding: 0; border-radius: 50%; color: var(--muted-foreground); }
+.aoede-task-cancel button:hover { color: var(--foreground); }
 .aoede-recovery { margin: 0; max-width: 480px; color: var(--muted-foreground); font-size: 13px; line-height: 1.65; text-align: center; }
 .aoede-live [role="alert"] { color: #ffd2d9; }
 .aoede-actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; }
@@ -93,8 +114,10 @@
 @keyframes aoede-breathe { from { transform: scale(.98); } to { transform: scale(1.02); } }
 @media (max-width: 600px), (max-height: 700px) {
   .aoede-header { padding: max(16px, env(safe-area-inset-top)) 20px 12px; }
-  .aoede-stage { padding-top: 36px; gap: 20px; }
-  .aoede-presence { gap: 30px; }
+  .aoede-stage { padding-top: 20px; gap: 16px; }
+  .aoede-presence { gap: 24px; }
+  .aoede-orb { width: clamp(160px, 24vmin, 220px); }
+  .aoede-task-attention { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .aoede-footer { padding-top: 14px; gap: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {

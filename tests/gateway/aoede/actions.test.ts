@@ -28,9 +28,18 @@ beforeEach(async () => {
 afterEach(async () => { await storage?.db.destroy(); await rm(home, { recursive: true, force: true }); });
 
 it("leaves ambiguous or compound instructions to Chat", () => {
-  for (const text of ["open it", "open notes and delete files", "forget that", "append milk", "remember " , "open notes\nclose notes"])
+  for (const text of ["open it", "open notes and delete files", "forget that", "append milk", "remember " , "open notes\nclose notes",
+    "Can you open it?", "Could you open notes then delete files?", "Please open notes or calendar.", "Can you list my apps and open notes?"])
     expect(classify(text)).toBeNull();
   expect(classify('append "milk" to note "Groceries"')).toEqual({ type: "append_note", title: "Groceries", text: "milk" });
+});
+it("recognizes bounded conversational app commands without including politeness or punctuation in the target", () => {
+  for (const text of ["Can you open notes", "Could you please open my notes app?", "Please open notes.", "Would you open notes, please?"])
+    expect(classify(text)).toEqual({ type: "open_app", target: "notes" });
+  expect(classify("Can you close my calendar app? please")).toBeNull();
+  expect(classify("Can you close my calendar app? ")).toEqual({ type: "close_app", target: "calendar" });
+  for (const text of ["Can you list my apps", "Please list apps.", "Could you please list my apps?", "List my apps, please."])
+    expect(classify(text)).toEqual({ type: "list_apps" });
 });
 it("checks installed slug and actual correlated effect, never delivery alone", async () => {
   const action = classify("open my notes app")!;

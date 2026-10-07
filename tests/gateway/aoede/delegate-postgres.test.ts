@@ -209,16 +209,20 @@ it("an uncertain approval question is not replayed and does not authorize a late
 
 it("UI results validated by the session retain the action's correlation without claiming an uninstalled window effect", async () => {
   let opened: string | undefined;
+  const admit = vi.spyOn(orchestrator, "admitTurn");
   ctx.ui = async (phase, _, target) => {
     if (phase === "execute") opened = target;
     return { type: "aoede:ui_result", sessionId: ctx.sessionId, correlationId: randomUUID(), phase, status: "ok", slug: "notes" };
   };
-  await delegate.dispatch({ ...ctx, transcripts: [{ role: "user", text: "open notes", offset: 1 }] });
+  await delegate.dispatch({ ...ctx, transcripts: [{ role: "user", text: "Can you open notes", offset: 1 }] });
   expect(opened).toBe("notes"); expect(speech).toContain("Notes opened.");
+  await delegate.dispatch(await utterance("Can you list my apps"));
+  expect(speech.at(-1)).toBe("Installed apps: Notes.");
   const other = await utterance("open missing");
   other.ui = async phase => ({ type: "aoede:ui_result", sessionId: ctx.sessionId, correlationId: randomUUID(), phase, status: "ok", slug: "missing" });
   await delegate.dispatch(other);
   expect(speech.at(-1)).toBe("App is not installed.");
+  expect(admit).not.toHaveBeenCalled();
   expect((await repository.list(owner, { limit: 20 })).items).toEqual([]);
 });
 

@@ -28,9 +28,9 @@ export function classify(input: string): DirectAction | null {
   const s = input.trim();
   let action: unknown;
   let m: RegExpMatchArray | null;
-  if (/^(?:list apps|what apps do I have|which apps do I have installed)\??$/i.test(s)) action = { type: "list_apps" };
+  if (/^(?:(?:can|could|would) you (?:please )?|please )?(?:list (?:my )?apps|what apps do I have|which apps do I have installed)(?:,? please)?[?.]?$/i.test(s)) action = { type: "list_apps" };
   else if (/^(?:list facts|what do you know about me)\??$/i.test(s)) action = { type: "list_facts" };
-  else if ((m = s.match(/^(open|close) (?:my )?([\w -]+?)(?: app)?$/i))) {
+  else if ((m = s.match(/^(?:(?:can|could|would) you (?:please )?|please )?(open|close) (?:my )?([\w -]+?)(?: app)?(?:,? please)?[?.]?$/i))) {
     if (/\b(?:and|or|then|it|that|this|them)\b/i.test(m[2])) return null;
     action = { type: `${m[1].toLowerCase()}_app`, target: m[2] };
   } else if ((m = s.match(/^create note "([^"\n]+)" with "([^"\n]+)"$/i))) action = { type: "create_note", title: m[1], text: m[2] };

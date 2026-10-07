@@ -20,7 +20,7 @@ const bound = (text: string) => {
 const preamble = "Voice context: transcripts may be imperfect. Reply with facts, status and next step in at most three spoken sentences. Report success only after tools confirm.\n";
 const chatRequestId = (id: string) => `req_aoede_${id}`;
 type DeliveryContext = AoedeSessionContext & Pick<AoedeDispatchContext, "delegationId" | "requestId" | "record">;
-type Watch = { ctx: DeliveryContext; chatId: string; runId?: string; queuedTurnId?: string;
+type Watch = { ctx: DeliveryContext; chatId: string; runId?: string; queuedTurnId?: string; title?: string;
   admitted: boolean; terminal: boolean; approvalCount?: number; approval?: CanonicalChatApprovalView;
   asked?: string; presented?: string;
   decision?: { requestId: string; approvalId: string; decision: "approve" | "decline"; accepted?: boolean } };
@@ -59,6 +59,13 @@ export function createAoedeDelegation(options: {
     const run = detail.runs.find(r => r.id === w.runId);
     const queue = detail.queuedTurns.find(q => q.id === w.queuedTurnId);
     if (!run && !queue) return; // Missing history is not evidence of completion/cancellation.
+    if (!w.title) {
+      // Recovered cards use their own durable input, never the latest voice caption or shared chat title.
+      const input = run ? (await options.repository.getTurnRunContext(owner, w.chatId, run.turnId))?.message.parts : queue?.parts;
+      const text = input?.flatMap(p => p.type === "text" ? [p.text] : []).join("\n") ?? "";
+      const request = [...text.matchAll(/(?:^|\n)user: ([\s\S]*?)(?=\n(?:user|assistant): |$)/g)].at(-1)?.[1];
+      w.title = bound((request || "Voice task").replace(/\s+/g, " ").trim());
+    }
     const approvals = canonicalChatApprovals(detail).filter(a => a.runId === w.runId);
     const confirmed = w.decision?.accepted && approvals.find(a => a.approvalId === w.decision!.approvalId
       && !a.pending && a.decision === w.decision!.decision);
@@ -72,7 +79,7 @@ export function createAoedeDelegation(options: {
     const approval = w.approval;
     const terminal = run && ["completed", "failed", "aborted"].includes(run.status);
     w.ctx.emit({ type: "aoede:card", sessionId: w.ctx.sessionId, card: {
-      id: w.ctx.delegationId, chatId: w.chatId, title: bound(detail.record.chat.title),
+      id: w.ctx.delegationId, chatId: w.chatId, title: w.title,
       ...(w.runId ? { runId: w.runId } : {}), ...(w.queuedTurnId ? { queuedTurnId: w.queuedTurnId } : {}),
       status: !run ? "queued" : run.status === "completed" ? "done" : run.status === "failed" ? "failed"
         : run.status === "aborted" ? "cancelled" : pending.length ? "approval" : "running",
@@ -138,7 +145,7 @@ export function createAoedeDelegation(options: {
       await options.repository.cancelQueuedTurn(owner, { chatId: w.chatId, queuedTurnId: w.queuedTurnId,
         clientRequestId: chatRequestId(randomUUID()), baseRevision: current.chat.revision, cancelledAt: new Date().toISOString() });
       w.ctx.emit({ type: "aoede:card", sessionId: w.ctx.sessionId, card: { id: w.ctx.delegationId,
-        chatId: w.chatId, queuedTurnId: w.queuedTurnId, title: bound(current.chat.title), status: "cancelled" } });
+        chatId: w.chatId, queuedTurnId: w.queuedTurnId, title: w.title ?? "Voice task", status: "cancelled" } });
       w.terminal = true; await speak(w.ctx, "The queued Chat turn was cancelled.");
     }
     await refresh(w);
@@ -199,7 +206,7 @@ export function createAoedeDelegation(options: {
       if (!initial) throw new Error("Chat selection unavailable");
       const created = existing ?? await options.repository.create(owner, { id: `chat_aoede_${digest}`,
         clientRequestId: `req_aoede_${digest}`, title: "Aoede", currentSelection: initial });
-      const w: Watch = { ctx, chatId: created.chat.id, admitted: false, terminal: false };
+      const w: Watch = { ctx, chatId: created.chat.id, title: bound(text.replace(/\s+/g, " ")), admitted: false, terminal: false };
       watches.set(key(ctx), w); // Reserve before any admission I/O; concurrent replay is fenced locally too.
       try {
         for (let attempt = 0; attempt < 2; attempt++) {
