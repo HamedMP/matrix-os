@@ -223,6 +223,58 @@ it("a newer V3 observation supersedes a completed local mutation receipt", async
     idempotencyKey: expect.any(String) }, expect.any(AbortSignal));
 });
 
+it("keeps a completed Connect newer than a snapshot observed while it was pending, even without a successful following refresh", async () => {
+  const native = client(), changed = vi.fn();
+  let settle!: (value: MatrixAnthropicConnection) => void;
+  native.connect = vi.fn().mockImplementationOnce(() => new Promise(resolve => { settle = resolve; })).mockResolvedValue({ ...connected, revision: 2 });
+  const view = render(<MatrixAnthropicConnectionCard client={native} initialStatus={disconnected}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  await fillKey(); fireEvent.click(screen.getByRole("button", { name: "Connect Claude" }));
+  view.rerender(<MatrixAnthropicConnectionCard client={native} initialStatus={{ ...disconnected }} refreshRevision={1}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  await act(async () => { settle(connected); });
+  expect(screen.getByText("Connected")).toBeVisible();
+  // A failed subsequent Settings refresh supplies no new observation. The
+  // accepted receipt remains the CAS authority for the next explicit mutation.
+  fireEvent.click(screen.getByRole("button", { name: "Change API key" }));
+  fireEvent.change(screen.getByLabelText("Anthropic API key"), { target: { value: "sk-ant-next-synthetic" } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect Claude" }));
+  await waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+  expect(native.connect).toHaveBeenLastCalledWith(expect.objectContaining({ expectedRevision: 1, expectedCredentialGeneration: generation }), expect.any(AbortSignal));
+  expect(native.status).not.toHaveBeenCalled();
+});
+
+it("a lost Connect reconciliation remains newer than a snapshot observed before it finished", async () => {
+  const native = client(), changed = vi.fn();
+  let settle!: (value: MatrixAnthropicConnection) => void;
+  native.connect = vi.fn().mockRejectedValue(new Error("ResponseLostAfterPublication"));
+  native.status = vi.fn(() => new Promise(resolve => { settle = resolve; }));
+  const view = render(<MatrixAnthropicConnectionCard client={native} initialStatus={disconnected}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  await fillKey(); fireEvent.click(screen.getByRole("button", { name: "Connect Claude" }));
+  await waitFor(() => expect(native.status).toHaveBeenCalledOnce());
+  view.rerender(<MatrixAnthropicConnectionCard client={native} initialStatus={{ ...disconnected }} refreshRevision={1}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  await act(async () => { settle(connected); });
+  expect(screen.getByText("Connected")).toBeVisible();
+  expect(changed).toHaveBeenCalledOnce();
+});
+
+it("does not let an older mutation revision replace a newer authoritative connection observed while pending", async () => {
+  const native = client(), changed = vi.fn();
+  let settle!: (value: MatrixAnthropicConnection) => void;
+  native.connect = vi.fn(() => new Promise(resolve => { settle = resolve; }));
+  const view = render(<MatrixAnthropicConnectionCard client={native} initialStatus={disconnected}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  await fillKey(); fireEvent.click(screen.getByRole("button", { name: "Connect Claude" }));
+  const newer: MatrixAnthropicConnection = { ...connected, revision: 2, state: "refresh_required", models: [] };
+  view.rerender(<MatrixAnthropicConnectionCard client={native} initialStatus={newer}
+    disabled={false} readOnly={false} onChanged={changed}/>);
+  await act(async () => { settle(connected); });
+  expect(screen.getByText("Check connection")).toBeVisible();
+  expect(screen.queryByText(/Available for chats/)).toBeNull();
+});
+
 it("places the API connection inside Matrix AI without invoking native Claude setup", async () => {
   const native = client(); const openNative = vi.fn(); const changed = vi.fn();
   render(<YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [], matrixAnthropicConnection: disconnected } as never} capabilities={[]}

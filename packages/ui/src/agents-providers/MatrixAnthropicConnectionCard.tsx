@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MatrixAnthropicConnectSchema, type MatrixAnthropicConnection, type MatrixAnthropicDisconnect } from "@matrix-os/contracts";
 import type { MatrixAnthropicConnectionClient } from "./matrix-anthropic-connection-client.js";
 
@@ -13,29 +13,41 @@ export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled,
   client?: MatrixAnthropicConnectionClient; initialStatus?: MatrixAnthropicConnection | null;
   disabled: boolean; readOnly: boolean; refreshRevision?: number; onChanged(): void;
 }) {
+  const [observation, setObservation] = useState({ client, projection: initialStatus, refreshRevision, sequence: 0 });
+  if (observation.client !== client || observation.projection !== initialStatus || initialStatus !== undefined && observation.refreshRevision !== refreshRevision) {
+    setObservation({ client, projection: initialStatus, refreshRevision, sequence: observation.sequence + 1 });
+  }
   const [receipt, setReceipt] = useState<{ client: MatrixAnthropicConnectionClient; status: MatrixAnthropicConnection | null;
-    projection: MatrixAnthropicConnection | null | undefined } | null>(null);
+    observationSequence: number } | null>(null);
   const [error, setError] = useState<MatrixAnthropicConnectionClient | null>(null);
   const [active, setActive] = useState<MatrixAnthropicConnectionClient | null>(null);
   const [form, setForm] = useState<{ client: MatrixAnthropicConnectionClient; apiKey: string } | null>(null);
-  const scope = useRef<{ client: MatrixAnthropicConnectionClient; lifetime: AbortController; revision: number; pending: boolean } | null>(null);
+  const scope = useRef<{ client: MatrixAnthropicConnectionClient; lifetime: AbortController; revision: number; pending: boolean; observationSequence: number; projection: MatrixAnthropicConnection | null | undefined } | null>(null);
   const lastAttempt = useRef<{ client: MatrixAnthropicConnectionClient; kind: string; revision: number; generation: string | null; apiKey: string; id: string } | null>(null);
-  // A newer canonical snapshot supersedes any local receipt from the previous
-  // observation. null explicitly means unavailable, not permission to probe.
-  const status = receipt?.client === client && receipt?.projection === initialStatus ? receipt?.status : initialStatus ?? null;
+  // A receipt follows every snapshot observed before its response completed.
+  // The next canonical observation supersedes it; null never permits probing.
+  const status = receipt?.client === client && receipt?.observationSequence === observation.sequence ? receipt?.status : initialStatus ?? null;
   const busy = Boolean(client && active === client);
   const keyForm = client && form?.client === client ? form : null;
   const blocked = disabled || readOnly || busy || status?.state === "read_only";
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!client) return;
-    const current = { client, lifetime: new AbortController(), revision: 0, pending: false };
+    const current = { client, lifetime: new AbortController(), revision: 0, pending: false, observationSequence: 0, projection: undefined as MatrixAnthropicConnection | null | undefined };
     scope.current = current; lastAttempt.current = null; setForm(null);
     return () => {
       current.lifetime.abort();
       if (scope.current === current) { scope.current = null; lastAttempt.current = null; }
     };
   }, [client]);
+
+  useLayoutEffect(() => {
+    const current = scope.current;
+    if (current && current.client === client) {
+      current.observationSequence = observation.sequence;
+      current.projection = observation.projection;
+    }
+  }, [client, observation]);
 
   useEffect(() => {
     const current = scope.current;
@@ -44,7 +56,10 @@ export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled,
     const signal = AbortSignal.any([controller.signal, current.lifetime.signal]);
     void client.status(signal).then(value => {
       if (signal.aborted || scope.current !== current || revision !== current.revision) return;
-      setReceipt({ client, status: value, projection: initialStatus }); setError(null);
+      if (!current.projection || value.revision >= current.projection.revision) {
+        setReceipt({ client, status: value, observationSequence: current.observationSequence });
+      }
+      setError(null);
     }).catch(caught => {
       console.warn("[matrix-connection] Status unavailable:", caught instanceof Error ? caught.name : typeof caught);
       if (!signal.aborted && scope.current === current && revision === current.revision) setError(client);
@@ -72,7 +87,10 @@ export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled,
         : kind === "disconnect" ? await client.disconnect(intent, current.lifetime.signal)
           : await client.refresh(intent, current.lifetime.signal);
       if (current.lifetime.signal.aborted || scope.current !== current || revision !== current.revision) return;
-      setReceipt({ client, status: value, projection: initialStatus }); setForm(null); lastAttempt.current = null;
+      if (!current.projection || value.revision >= current.projection.revision) {
+        setReceipt({ client, status: value, observationSequence: current.observationSequence });
+      }
+      setForm(null); lastAttempt.current = null;
       onChanged();
     } catch (caught) {
       console.warn("[matrix-connection] Action unavailable:", caught instanceof Error ? caught.name : typeof caught);
@@ -82,13 +100,17 @@ export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled,
         // rejected discovery preserves the prior source; refresh failure must
         // withdraw readiness while its current authority is reconciled.
         if (kind !== "connect") {
-          setReceipt({ client, status: null, projection: initialStatus });
+          if (!current.projection || current.projection.revision <= status.revision) {
+            setReceipt({ client, status: null, observationSequence: current.observationSequence });
+          }
           onChanged();
         }
         try {
           const value = await client.status(current.lifetime.signal);
           if (!current.lifetime.signal.aborted && scope.current === current && revision === current.revision) {
-            setReceipt({ client, status: value, projection: initialStatus });
+            if (!current.projection || value.revision >= current.projection.revision) {
+              setReceipt({ client, status: value, observationSequence: current.observationSequence });
+            }
             if (value.revision !== status.revision || value.credentialGeneration !== status.credentialGeneration
               || value.sourceCredentialGeneration !== status.sourceCredentialGeneration) {
               lastAttempt.current = null;
