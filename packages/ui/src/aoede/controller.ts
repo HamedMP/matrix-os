@@ -1,3 +1,4 @@
+import { createAoedeTextSender, type PendingAoedeText } from "./text-turn.js";
 import type { ReactNode } from "react";
 import { CanonicalActionIdSchema, type CanonicalChatDetailResponse, type CanonicalChatApprovalView, type CanonicalChatApprovalDecision, type CanonicalChatInputView, type CanonicalSubmitChatInputRequest, type CanonicalChatModelSelection, type CanonicalChatRecord, type CanonicalUpdateChatSelectionRequest, type CanonicalChatActionCancellationResponse, type CanonicalProviderCatalog, type AoedeBootstrapRequest, type AoedeBootstrapResponse } from "@matrix-os/contracts";
 import type { SafeVoiceError } from "@matrix-os/contracts/voice-session";
@@ -23,8 +24,10 @@ export interface AoedeOwnerOptions {
   identityKey: string;
   baseUrl: string;
   fetcher?: typeof fetch;
-  surface: "web_canvas" | "web_desktop";
+  surface: "web_canvas" | "web_desktop" | "electron_desktop";
   projectId?: string;
+  /** Presentation remains stable while backend readiness changes. */
+  presentation?: "classic" | "halo";
   onOpenHistory?: (chatId: string) => void;
   onOpenResult?: (path: string) => void;
   /** Validated canonical navigation into installed app windows (`apps/<slug>` only). */
@@ -45,6 +48,7 @@ export interface AoedeSelectionApi {
 export type AoedeControllerApi = AoedeApi & Partial<AoedeSelectionApi>;
 
 export interface AoedeSnapshot {
+  pendingText: PendingAoedeText | null;
   visible: boolean;
   focusRevision: number;
   status: AoedeStatus;
@@ -77,7 +81,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     inputDeviceId: prefs.inputDeviceId ?? null,
     outputDeviceId: prefs.outputDeviceId ?? null,
     devicesRevision: 0,
-    binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null,
+    pendingText: null, binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null,
     canonical: projectAoedeCanonical(null), error: null,
   };
   // Bound subscriptions; unsubscribe and disposal are eviction. No global registry.
@@ -159,6 +163,12 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     if (path !== prefix && path !== `${prefix}.html` && !path.startsWith(`${prefix}/`)) return;
     options.onOpenNavigation?.({ ...(nav.kind === "close_app" ? { kind: nav.kind } : {}), app, path });
   };
+  const projectCurrent = () => {
+    const canonical = projectAoedeCanonical(detail);
+    const live = mediaLive() ? media?.getSnapshot().voice?.companion : undefined;
+    return live ? { ...canonical, captions: { ...canonical.captions, ...live.captions },
+      tasks: live.tasks.length ? live.tasks : canonical.tasks, sources: live.sources } : canonical;
+  };
   const acceptDetail = (value: CanonicalChatDetailResponse) => {
     if (value.record.chat.id !== snapshot.binding?.chatId || (detail && value.record.chat.revision < detail.record.chat.revision)) return;
     const navigations = (value.operations ?? []).filter(operation => operation.state === "succeeded" && operation.result?.navigation);
@@ -184,7 +194,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     const capability = snapshot.binding?.capability;
     const readinessError = capability?.status === "unavailable" ? capabilityUnavailableError(capability.reason) : null;
     const error = projectedMediaError(live) ?? readinessError;
-    patch({ canonical: projectAoedeCanonical(detail), boundProviderInstanceId: value.record.providerBinding?.instanceId ?? null,
+    patch({ canonical: projectCurrent(), boundProviderInstanceId: value.record.providerBinding?.instanceId ?? null,
       ...(recovered ? { error,
         ...(!error && snapshot.status === "failed" && !mediaLive() ? { status: live?.phase === "ended" ? "ended" as const : "idle" as const } : {}),
       } : {}) });
@@ -217,6 +227,10 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   };
   const attach = (binding: AoedeBootstrapResponse, epoch: number, reuseMedia = false) => {
     if (!current(epoch)) return;
+    if (binding.capability.conversationMode === "native_live" && snapshot.turnMode !== "hands_free") {
+      persistPrefs({ turnMode: "hands_free" });
+      patch({ turnMode: "hands_free" });
+    }
     if (!reuseMedia || !media) {
       const created = voiceFactory({ baseUrl: options.baseUrl, fetcher: options.fetcher, webSocketFactory: options.webSocketFactory,
         request: { turnMode: snapshot.turnMode, selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary",
@@ -244,7 +258,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       const provisional = voice?.provisionalTranscript?.text;
       patch({ status, microphoneActive: value.phase === "active" && !!voice && !voice.muted && (voice.turnMode !== "push_to_talk" || voice.pushToTalkActive),
         error: projectedMediaError(value) ?? requestError,
-        canonical: { ...projectAoedeCanonical(detail), ...(provisional ? { captions: { ...projectAoedeCanonical(detail).captions, utterance: boundedAoedeText(provisional), provisional: true } } : {}) } });
+        canonical: { ...projectCurrent(), ...(provisional ? { captions: { ...projectCurrent().captions, utterance: boundedAoedeText(provisional), provisional: true } } : {}) } });
     });
     source = api.events();
     source.subscribe(event => {
@@ -403,7 +417,26 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       return false;
     } finally { action.busy = false; }
   };
+  const sendText = createAoedeTextSender({
+    prepare: async () => {
+      // Native media never grants tools to its source Chat. Release that
+      // frozen owner before independently admitting a supervised typed run.
+      if (snapshot.binding?.capability.conversationMode !== "native_live" || !mediaLive()) return true;
+      if (!await endMedia()) return false;
+      await refresh();
+      return true;
+    },
+    context: () => disposed || suspended || unavailable || newFlight || !snapshot.binding || !detail || !api.createTurn ? null
+      : { generation, chatId: snapshot.binding.chatId, revision: detail.record.chat.revision, selection: detail.record.chat.currentSelection ?? snapshot.binding.selection, running: Boolean(detail.record.activeRun) },
+    onPendingChange: pendingText => patch({ pendingText }),
+    catalog: () => controller.listProviders(), createTurn: (chatId, input) => api.createTurn!(chatId, input), refresh, fail,
+  });
   const controller = {
+    sendText,
+    retryPendingText: () => snapshot.pendingText ? sendText(snapshot.pendingText.text) : Promise.resolve(false),
+    canSendText: () => Boolean(api.createTurn && detail && (detail.record.chat.currentSelection ?? snapshot.binding?.selection) && !detail.record.activeRun && !unavailable && !disposed && !suspended && !newFlight),
+    presentation: options.presentation ?? "halo",
+    surface: () => options.surface,
     getSnapshot: () => snapshot,
     /** Capture loudness (0…1) for the presence orb; bypasses React state. */
     subscribeInputLevel(listener: (level: number) => void) {
@@ -466,6 +499,9 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
         generation += 1; flight = null; refreshFlight = null; refreshAgain = false;
         source?.dispose(); source = null; unsubscribeMedia?.(); unsubscribeMedia = null;
         if (!await endMedia()) {
+          // The old admission may still settle after its generation was fenced.
+          // Keep its identity, but require explicit confirmation in this Chat.
+          if (snapshot.pendingText) patch({ pendingText: { ...snapshot.pendingText, status: "unknown" } });
           if (snapshot.binding && !unavailable) attach(snapshot.binding, generation, true);
           return;
         }
@@ -473,7 +509,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
         autoNavigatedOperations.clear(); autoNavigationBaselineReady = false;
         if (disposed) return;
         unavailable = false;
-        patch({ binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null, canonical: projectAoedeCanonical(null) });
+        patch({ pendingText: null, binding: null, boundProviderInstanceId: null, lastActionCancelOutcome: null, canonical: projectAoedeCanonical(null) });
         await bootstrap("new");
       })().finally(() => { if (newFlight === pending) newFlight = null; });
       newFlight = pending; return pending;
@@ -503,6 +539,10 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       const live = snapshot.canonical.inputs.find(item => item.runId === view.runId && item.requestId === view.requestId);
       if (!live?.pending || live.runId !== snapshot.canonical.runId || live.id !== view.id || JSON.stringify(live.questions) !== JSON.stringify(view.questions)) { void refresh(); return Promise.resolve(false); }
       return mutate(`input:${view.runId}:${view.requestId}`, (clientRequestId, chatId) => api.submitInput(chatId, view.runId, view.requestId, { ...answer, clientRequestId }));
+    },
+    openLinkedChat(chatId: string) {
+      if (unavailable || disposed || suspended) return;
+      if (snapshot.canonical.tasks?.some(t => t.chatId === chatId) || snapshot.canonical.sources?.some(s => s.chatId === chatId)) options.onOpenHistory?.(chatId);
     },
     viewHistory() { if (snapshot.binding && !unavailable) options.onOpenHistory?.(snapshot.binding.chatId); },
     openResult(path: string) { const safe = safeAoedeArtifactPath(path); if (safe && (snapshot.canonical.artifacts.some(item => item.path === safe) || snapshot.canonical.actionArtifacts.includes(safe))) options.onOpenResult?.(safe); },
@@ -612,7 +652,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
           outcome = response.cancellation;
           if (detail?.operations) {
             detail = { ...detail, operations: detail.operations.map((item) => item.id === response.operation.id ? response.operation : item) };
-            patch({ canonical: projectAoedeCanonical(detail) });
+            patch({ canonical: projectCurrent() });
           }
         })).then((ok) => {
           if (!ok || !current(epoch)) return null;

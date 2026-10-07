@@ -12,7 +12,9 @@ export function isCancellableOperation(operation: CanonicalOperationView): boole
 }
 
 export interface AoedeCanonicalProjection {
-  captions: { utterance?: string; response?: string; provisional?: boolean };
+  captions: { utterance?: string; response?: string; provisional?: boolean; interrupted?: boolean };
+  tasks?: Array<{ chatId: string; label: string; state?: string }>;
+  sources?: Array<{ chatId: string; title: string; snippet: string }>;
   approvals: CanonicalChatApprovalView[];
   inputs: CanonicalChatInputView[];
   progress: Array<Pick<CanonicalToolActivity, "id" | "kind" | "state" | "label" | "subagent">>;
@@ -104,7 +106,8 @@ export function projectAoedeCanonical(detail: CanonicalChatDetailResponse | null
   }
   const terminal = run && ["completed", "failed", "aborted"].includes(run.status);
   const cancellation = run?.capabilitySnapshot.cancellation;
-  return { captions: { ...(caption(user) ? { utterance: caption(user) } : {}), ...(caption(response) ? { response: caption(response) } : {}) },
+  const tasks = detail.messages.flatMap(m => m.parts.flatMap(p => p.type === "resource_reference" && p.resource.kind === "chat" && p.resource.id.startsWith("chat_live_task_") ? [{ chatId: p.resource.id, label: p.resource.label }] : [])).slice(-3);
+  return { tasks, captions: { ...(caption(user) ? { utterance: caption(user) } : {}), ...(caption(response) ? { response: caption(response) } : {}) },
     approvals, inputs: canonicalChatInputs(detail).slice(-32), progress, artifacts,
     operations,
     ...(navigation ? { navigation } : {}),

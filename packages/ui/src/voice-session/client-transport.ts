@@ -144,7 +144,7 @@ export function createTransportAttachment(deps: VoiceTransportAttachmentDeps): V
                 deps.media()?.interruptResponse(frame.responseId);
               } else if (frame.type === "transcript.final") {
                 deps.onTurnFinal(frame.turnId);
-              } else if (frame.type === "capture.completed") {
+              } else if (frame.type === "capture.completed" || frame.type === "companion.capture.completed") {
                 deps.onTurnFinal(frame.turnId);
               } else if (frame.type === "session.state" && frame.state === "ended") {
                 deps.onRemoteEnd();
