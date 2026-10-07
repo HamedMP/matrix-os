@@ -43,7 +43,7 @@ No new endpoints, pools, tables, or long-lived collections. Provider calls retai
 2. Database-backed connect -> sync -> call -> webhook and missed-webhook call recovery for Airtable's distinct OAuth slug; existing cross-owner isolation tests.
 3. Shared component search, auth/connected filtering, empty state and one-click actions; consent window opens synchronously, reports popup blocking, and remains retryable.
 4. Web Canvas/Web Desktop/Electron Desktop launcher and persisted path tests; native search and connection tests.
-5. Rendered checks for light/dark, narrow widths and overflowing content. Component preview checked at 375/768/1440 pixels in light/dark with real logos loaded and no horizontal overflow. Full authenticated Web Canvas, Web Desktop, and Electron Desktop runtime checks remain release verification.
+5. Rendered checks for light/dark, narrow widths and overflowing content. Component preview checked at 375/768/1440 pixels in light/dark with real logos loaded and no horizontal overflow. The actual Web Desktop Settings screen was also checked locally against a synthetic gateway on 2026-10-07: launcher navigation, loaded vendor logos, search, and 32px category column spacing pass. Both shell CSS entrypoints explicitly scan shared integrations. Full authenticated Web Canvas and Electron Desktop runtime checks remain release verification.
 6. Companion PR in FinnaAI/matrix-os-site updates `content/docs/guide/integrations.mdx` with the truthful catalog and authentication flow.
 7. Live OAuth and authenticated vendor reads require separately connected development accounts. Automated mocks and public metadata are not live authorization evidence. Do not claim live verification or deploy without it.
 
