@@ -42,8 +42,8 @@ export function createSharedBotModelRouteResolver(options: {
   return async (decision, modelId) => {
     if (!decision.allowedModelIds.includes(modelId)) throw new BotRouteError("model_unavailable");
     if (decision.harness === "codex") {
-      if (decision.providerInstanceId !== "codex_default") throw new BotRouteError("model_unavailable");
-      return createBotModelRouteResolver({ ...options, codexModel: modelId })();
+      // A shared policy cannot turn a native task credential into Pi inference.
+      throw new BotRouteError("model_unavailable");
     }
     if (decision.harness !== "claude_code" || !decision.accessSourceId) throw new BotRouteError("model_unavailable");
     return resolveBotRouteForAccessSource(await options.providers.getSnapshot(), decision.accessSourceId, modelId);

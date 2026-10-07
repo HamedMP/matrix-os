@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { forwardBotInference } from '../../../packages/gateway/src/bots/broker-inference.js';
+import { forwardChatGptPlanInference } from '../../../packages/gateway/src/bots/chatgpt-plan-inference.js';
 import { BotRuntimeRegistry } from '../../../packages/gateway/src/bots/runtime-registry.js';
 import type { ChatGptPlanAuthority } from '../../../packages/gateway/src/bots/chatgpt-plan.js';
 import { convertResponsesMessages, processResponsesStream } from '@earendil-works/pi-ai/api/openai-responses-shared';
@@ -43,9 +44,32 @@ function fixture(response = completed) {
     const fundedAdmission = { execute: vi.fn() };
     const deps = { homePath: '/owner', lifetime: new AbortController().signal, chatgptPlan: authority, fetchImpl, resolveCredentials, fundedAdmission };
     const send = (payload?: unknown) => forwardBotInference(frame(payload), binding, modelId => registry.authorize({ ...binding, action: 'inference.responses', modelId }), deps as never);
-    return { authority, registry, fetchImpl, resolveCredentials, fundedAdmission, send };
+    return { authority, registry, fetchImpl, resolveCredentials, fundedAdmission, send, deps };
 }
 describe('own-registration ChatGPT plan Pi broker', () => {
+    it('awaits live asynchronous authorization for paired-account inference', async () => {
+        const f = fixture();
+        const authorize = async (modelId: string) => f.registry.authorize({ ...binding, action: 'inference.responses', modelId });
+        expect(await forwardBotInference(frame(), binding, authorize, f.deps as never)).toMatchObject({ ok: true });
+        expect(f.authority.infer).toHaveBeenCalledTimes(1);
+    });
+    it('withholds a paired-account result when asynchronous authority is revoked during inference', async () => {
+        const f = fixture();
+        vi.mocked(f.authority.infer).mockImplementationOnce(async () => {
+            f.registry.release(binding.runtimeHandle);
+            return { status: 200, headers: { 'content-type': 'text/event-stream' }, body: completed };
+        });
+        const authorize = async (modelId: string) => f.registry.authorize({ ...binding, action: 'inference.responses', modelId });
+        expect(await forwardBotInference(frame(), binding, authorize, f.deps as never)).toMatchObject({ ok: false, error: 'action_denied' });
+        expect(f.authority.infer).toHaveBeenCalledTimes(1);
+    });
+    it('does not refresh paired credentials before a denied asynchronous authority check', async () => {
+        const f = fixture();
+        expect(await forwardChatGptPlanInference(frame(), binding, { authority: f.authority,
+            signal: f.deps.lifetime, stillAuthorized: async () => false })).toMatchObject({ ok: false, error: 'action_denied' });
+        expect(f.authority.revalidate).not.toHaveBeenCalled();
+        expect(f.authority.infer).not.toHaveBeenCalled();
+    });
     it('replays the actual pinned Pi reasoning signature and completed tool result on the same subscription', async () => {
         const reasoning = { id: 'rs_write', type: 'reasoning', content: [], encrypted_content: 'encrypted-fixture', summary: [] };
         const { output, input } = await piToolContinuation(reasoning);
