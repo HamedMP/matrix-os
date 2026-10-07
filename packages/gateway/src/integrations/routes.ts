@@ -7,7 +7,7 @@ import type { ServiceDefinition } from "./types.js";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { registerConnectedIntegrationWebhook, type VerifiedConnectedWebhookAdmission } from "./connected-webhook.js";
-import { listServices, getService, getAction } from "./registry.js";
+import { listServices, getService, getServiceByPipedreamApp, getAction } from "./registry.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog-projection.js";
@@ -417,16 +417,16 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const existing = await db.listConnectedServices(uid);
       const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
 
-      const newAccounts = pdAccounts.filter((acc) => {
-        const service = getService(acc.app);
-        return !existingPdIds.has(acc.id) && service?.connectorKind === "pipedream";
+      const newAccounts = pdAccounts.flatMap(acc => {
+        const service = getServiceByPipedreamApp(acc.app);
+        return !existingPdIds.has(acc.id) && service ? [{ ...acc, serviceId: service.id }] : [];
       });
 
       // Resolve emails for new accounts missing them
       const resolvedEmails = await Promise.all(
         newAccounts.map(async (acc) => {
           if (acc.email) return acc.email;
-          return resolveAccountEmail(pipedream, externalId, acc.id, acc.app);
+          return resolveAccountEmail(pipedream, externalId, acc.id, acc.serviceId);
         }),
       );
 
@@ -442,10 +442,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         newAccounts.map(async (acc, i) => {
           const pendingKey = `${externalId}:${acc.app}`;
           const explicitLabel = consumePendingLabel(pendingKey);
-          const label = explicitLabel ?? acc.app;
+          const label = explicitLabel ?? acc.serviceId;
           const row = await db.connectService({
             userId: uid,
-            service: acc.app,
+            service: acc.serviceId,
             pipedreamAccountId: acc.id,
             accountLabel: label,
             accountEmail: resolvedEmails[i],
@@ -644,20 +644,21 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         const extId = await getOrCreateExternalId(uid);
         const pdAccounts = await pipedream.listAccounts(extId);
         const existingPdIds = new Set(connections.map((s) => s.pipedream_account_id));
-        const newAccounts = pdAccounts.filter(
-          (acc) => !existingPdIds.has(acc.id) && getService(acc.app),
-        );
+        const newAccounts = pdAccounts.flatMap(acc => {
+          const matchedService = getServiceByPipedreamApp(acc.app);
+          return !existingPdIds.has(acc.id) && matchedService ? [{ ...acc, serviceId: matchedService.id }] : [];
+        });
         if (newAccounts.length > 0) {
           await Promise.all(
             newAccounts.map(async (acc) => {
               const pendingKey = `${extId}:${acc.app}`;
               const explicitLabel = consumePendingLabel(pendingKey);
-              const lbl = explicitLabel ?? acc.app;
+              const lbl = explicitLabel ?? acc.serviceId;
               const resolvedEmail = acc.email
-                ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.app));
+                ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.serviceId));
               const row = await db.connectService({
                 userId: uid,
-                service: acc.app,
+                service: acc.serviceId,
                 pipedreamAccountId: acc.id,
                 accountLabel: lbl,
                 accountEmail: resolvedEmail,

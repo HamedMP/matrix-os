@@ -2,12 +2,13 @@ import "@/lib/hermes-polyfills";
 import { View, Text, Linking } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useRouter } from "expo-router";
-import { useAuth } from "@clerk/clerk-expo";
+import { getClerkInstance, useAuth } from "@clerk/clerk-expo";
 import { useEffect, useState } from "react";
 import { HOSTED_GATEWAY_URL, getMobileJourneyGatewayUrl, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
 import { JourneyGate } from "@/components/JourneyGate";
 import { SignInScreen } from "@/components/auth/SignInScreen";
 import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
+import { forgetJourneyConnectable, rememberJourneyConnectable, wasJourneyConnectable } from "@/lib/journey-cache";
 import { clearAllScrollback } from "@/lib/terminal-scrollback";
 import { resetAnalytics } from "@/lib/analytics";
 
@@ -20,7 +21,7 @@ const JOURNEY_POLL_INTERVAL_MS = 5_000;
 // onboarding phase (plan / settling / building / retry) instead of a broken shell.
 function SignedInJourneyGate() {
   const router = useRouter();
-  const { getToken, signOut } = useAuth();
+  const { getToken, signOut, userId } = useAuth();
   const [result, setResult] = useState<JourneyFetchResult | null>(null);
   const [working, setWorking] = useState(false);
   const [nonce, setNonce] = useState(0);
@@ -29,19 +30,49 @@ function SignedInJourneyGate() {
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
+      // True once this launch has opened the shell on a remembered answer; the
+      // request below then only confirms it instead of holding the app back.
+      let enteredFromMemory = false;
       try {
-        const gateway = await getSelectedGatewayConnection();
+        const [gateway, remembered] = await Promise.all([
+          getSelectedGatewayConnection(),
+          userId ? wasJourneyConnectable(userId) : false,
+        ]);
         if (!isHostedGatewayUrl(gateway.url)) {
           router.replace("/(drawer)" as any);
           return;
         }
+        if (remembered && active) {
+          enteredFromMemory = true;
+          router.replace("/(drawer)" as any);
+        }
         const token = await getToken();
         const next = await fetchMobileJourney(getMobileJourneyGatewayUrl(gateway.url), token);
-        if (!active) return;
+        // With a remembered answer the shell has been open while this was in
+        // flight, so by now another account may be signed in.
+        const stillSignedIn = () => !enteredFromMemory || getClerkInstance().user?.id === userId;
         if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
-          router.replace("/(drawer)" as any);
+          if (userId && stillSignedIn()) void rememberJourneyConnectable(userId);
+          if (active && !enteredFromMemory) router.replace("/(drawer)" as any);
           return;
         }
+        if (enteredFromMemory) {
+          // Only a definite answer brings the user back to this gate. A check
+          // that could not be made leaves them in the shell, which reports its
+          // own connection errors.
+          if (next.status === "unreachable") return;
+          // The answer is about this user's account, so their remembered
+          // answer goes whoever is signed in now.
+          await forgetJourneyConnectable(userId);
+          const selected = await getSelectedGatewayConnection();
+          // Nothing is awaited between this check and the redirect: the
+          // session on screen is not sent to the gate by an answer about a
+          // different account or computer.
+          if (selected.url !== gateway.url || !stillSignedIn()) return;
+          router.replace("/" as any);
+          return;
+        }
+        if (!active) return;
         setResult(next);
         // Auto-poll transitional phases so the spinner actually progresses and
         // hands off to the shell once ready; terminal phases wait on the user.
@@ -52,14 +83,14 @@ function SignedInJourneyGate() {
         // getToken() (Clerk token refresh) can reject; don't strand the user on
         // a permanent spinner — surface a retryable unreachable state instead.
         console.warn("[mobile] journey load failed", err instanceof Error ? err.name : typeof err);
-        if (active) setResult({ status: "unreachable" });
+        if (active && !enteredFromMemory) setResult({ status: "unreachable" });
       }
     })();
     return () => {
       active = false;
       if (timer) clearTimeout(timer);
     };
-  }, [getToken, router, nonce]);
+  }, [getToken, router, nonce, userId]);
 
   function reload() {
     setResult(null);

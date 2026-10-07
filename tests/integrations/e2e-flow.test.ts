@@ -83,6 +83,37 @@ describe("E2E: connect -> call -> disconnect flow", () => {
     expect(readDriveFile).toHaveBeenCalledTimes(before + 1);
   });
 
+  it("maps the OAuth Airtable slug through connect, sync, call recovery, and webhook", async () => {
+    const connect = await app.request("/api/integrations/connect", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service: "airtable", label: "Work" }),
+    });
+    expect(connect.status).toBe(200);
+    expect(vi.mocked(pipedream.getOAuthUrl).mock.calls[0]?.[1]).toBe("airtable_oauth");
+    vi.mocked(pipedream.listAccounts).mockResolvedValue([{ id: "apn_airtable", app: "airtable_oauth" }]);
+    const sync = await app.request("/api/integrations/sync", { method: "POST" });
+    expect((await sync.json()).services).toEqual(expect.arrayContaining([expect.objectContaining({ service: "airtable", account_label: "Work" })]));
+    const call = await app.request("/api/integrations/call", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service: "airtable", action: "list_bases" }),
+    });
+    expect(call.status).toBe(200);
+    expect(pipedream.proxyGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "apn_airtable", url: "https://api.airtable.com/v0/meta/bases" }));
+    const payload = JSON.stringify({ external_user_id: "pd_ext_e2e", account_id: "apn_airtable_two", app: "airtable_oauth", label: "Personal" });
+    const webhook = await app.request("/api/integrations/webhook/connected", {
+      method: "POST", headers: { "Content-Type": "application/json", "x-pd-signature": createHmac("sha256", WEBHOOK_SECRET).update(payload).digest("hex") }, body: payload,
+    });
+    expect(webhook.status).toBe(200);
+    const list = await db.listConnectedServices(userId);
+    expect(list.map(connection => connection.service)).toEqual(["airtable", "airtable"]);
+    // A previously missed account must also reconcile on the agent call path.
+    await db.disconnectService(list[0]!.id);
+    await db.disconnectService(list[1]!.id);
+    vi.mocked(pipedream.listAccounts).mockResolvedValue([{ id: "apn_airtable_three", app: "airtable_oauth" }]);
+    const recovered = await app.request("/api/integrations/call", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service: "airtable", action: "list_bases" }),
+    });
+    expect(recovered.status).toBe(200);
+  });
+
   it("completes the full connect -> call -> disconnect lifecycle", async () => {
     // Step 1: Check no services connected
     const listBefore = await app.request("/api/integrations");

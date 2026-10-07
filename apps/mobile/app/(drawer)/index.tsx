@@ -49,6 +49,7 @@ import { useBotRecipes } from "@/lib/queries/use-bot-recipes";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
@@ -56,6 +57,7 @@ export default function ChatScreen() {
   const { isSignedIn, userId } = useAuth();
   const { user } = useUser();
   const { theme } = useUnistyles();
+  const warmSessionToken = useSessionTokenWarmup();
   const {
     activeChatId,
     selectionOverride,
@@ -80,7 +82,12 @@ export default function ChatScreen() {
   const { projects } = useProjects();
 
   const directBot = Boolean(botChat.snapshot);
-  const providerCatalogLoading = !directBot && (catalogPending || catalogFetching);
+  // The picker marks the catalog as being checked whenever it is fetched.
+  // Sending only waits when there is no catalog to choose a model from yet:
+  // one that is merely being re-checked already gives the selection, and the
+  // computer validates that selection when it admits the turn.
+  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching);
+  const providerCatalogLoading = !directBot && catalogPending;
   const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
@@ -120,7 +127,13 @@ export default function ChatScreen() {
       hidePickerTimer.current = null;
     }
     setInputFocused(true);
-  }, []);
+    warmSessionToken();
+  }, [warmSessionToken]);
+
+  const handleDraftChange = useCallback((text: string) => {
+    setDraft(text);
+    warmSessionToken();
+  }, [setDraft, warmSessionToken]);
 
   const handleInputBlur = useCallback(() => {
     hidePickerTimer.current = setTimeout(() => {
@@ -260,7 +273,7 @@ export default function ChatScreen() {
             ref={inputRef}
             accessibilityLabel="Message Matrix"
             value={draft}
-            onChangeText={setDraft}
+            onChangeText={handleDraftChange}
             onSubmitEditing={send}
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
@@ -282,7 +295,7 @@ export default function ChatScreen() {
                 <View onTouchStart={handlePickerTouchStart}>
                   {!directBot ? <ModelPicker
                     catalog={catalog}
-                    catalogLoading={providerCatalogLoading}
+                    catalogLoading={providerCatalogChecking}
                     selection={selection}
                     onSelectionChange={setSelectionOverride}
                   /> : <Text style={styles.systemText}>Bot model</Text>}

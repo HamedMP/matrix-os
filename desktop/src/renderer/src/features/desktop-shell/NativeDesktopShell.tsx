@@ -268,7 +268,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       }),
       plugins: () => openRoot(() => {
         useUi.getState().requestSettingsSection("services");
-        openTab({ kind: "settings", title: "Plugins" });
+        openTab({ kind: "settings", title: "Connect Apps" });
       }),
       browser: () => openRoot(() => openTab({ kind: "browser", title: "Browser" })),
       notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes" })),
