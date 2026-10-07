@@ -13,11 +13,14 @@ pnpm exec vite --host 127.0.0.1 --port 3036
 pnpm exec tsc -p tsconfig.json
 pnpm exec vite build
 node public/demos/verify.mjs
+node --test checks/catalog-search.test.mjs
 node checks/check-ui.mjs
 node checks/check-demos.mjs
 ```
 
 The browser check uses the existing Playwright dependency and a separately launched headless Google Chrome profile. It never attaches to the user's browser. `PREVIEW_ORIGIN` can point it at another locally running preview. Browser launch and local-server access must be permitted by the execution environment. The check closes every context and browser in `finally`.
+
+The dependency-free catalog tests verify suggestions, normalization and caller-provided collection boundaries. `check-ui.mjs` separately checks actual rendered search results: “trips” shows Atlas, Business hides it while retaining the query, and All apps restores it. Those added browser assertions were authored and syntax-checked, but not executed in the October 7 review because gallery browser access was denied. They remain pending until run in an authorized environment; do not use another browser route to bypass a denial.
 
 `check-demos.mjs` reproduces the 16 embedded flows: eight apps at outer 360/390 pixels, with the actual measured frame widths, physical create/edit/reopen/reset, 44-pixel controls, opaque isolation and browser-enforced blocked form POSTs. The adjacent design evidence also records 16 earlier direct-page phone checks, giving 32 recorded runs; this committed harness focuses on the stronger embedded boundary. `verify.mjs` independently checks temporary data/CAS/bounds and exact copied-asset digests. Local Check records usability is checked through physical browser clicks, not a disconnected mock button.
 

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { filterCatalog, searchSuggestions } from '../src/catalog-search.ts';
 
@@ -23,9 +22,6 @@ test('search normalizes case/whitespace and uses task details', () => {
   assert.equal(filterCatalog(apps, 'unrelated missing query').length, 0);
 });
 
-test('search respects the active collection and is wired into the storefront', () => {
+test('search respects the collection passed by the caller', () => {
   assert.equal(filterCatalog(apps.filter(app => app.category === 'Business'), 'trips').length, 0);
-  const source = readFileSync(new URL('../src/Storefront.tsx', import.meta.url), 'utf8');
-  assert.ok(source.includes('filterCatalog(props.apps, search)'));
-  assert.ok(source.includes('searchSuggestions'));
 });
