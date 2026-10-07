@@ -499,6 +499,9 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
         generation += 1; flight = null; refreshFlight = null; refreshAgain = false;
         source?.dispose(); source = null; unsubscribeMedia?.(); unsubscribeMedia = null;
         if (!await endMedia()) {
+          // The old admission may still settle after its generation was fenced.
+          // Keep its identity, but require explicit confirmation in this Chat.
+          if (snapshot.pendingText) patch({ pendingText: { ...snapshot.pendingText, status: "unknown" } });
           if (snapshot.binding && !unavailable) attach(snapshot.binding, generation, true);
           return;
         }
