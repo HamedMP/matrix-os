@@ -1,10 +1,6 @@
-<<<<<<< HEAD
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
-||||||| parent of 4d9c51887e (fix(settings): reconcile native Claude account sign-in)
-=======
 import { createClaudeNativeAccountMetadataReader } from "./ai-providers/claude-native-account-metadata.js";
->>>>>>> 4d9c51887e (fix(settings): reconcile native Claude account sign-in)
 import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-instance.js";
 import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
 import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
@@ -1425,12 +1421,8 @@ export async function createGateway(config: GatewayConfig) {
   });
   let matrixAnthropicRuntime: ReturnType<typeof createMatrixAnthropicRuntime> | undefined;
   const aiProviderService = new AiProviderService({
-<<<<<<< HEAD
     matrixAnthropicConnection: async () => terminalRuntimeOwnerId ? matrixAnthropicRuntime?.service?.observe(terminalRuntimeOwnerId) : undefined,
-||||||| parent of 4d9c51887e (fix(settings): reconcile native Claude account sign-in)
-=======
     exposeClaudeProfileAccount: true,
->>>>>>> 4d9c51887e (fix(settings): reconcile native Claude account sign-in)
     codexNativeKeyReadiness: createCodexNativeKeyReadinessReader({ homePath }),
     nativeHarnessCatalogReader: genericHarnessModelCatalog,
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
