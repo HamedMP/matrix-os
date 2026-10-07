@@ -72,6 +72,7 @@ export function PromptInput({
   return (
     <div
       className="prompt-card relative z-[1] flex flex-col rounded-[var(--radius-xl)] border"
+      data-chat-composer
       data-layout={layout}
       style={{ background: "var(--bg-surface)" }}
     >

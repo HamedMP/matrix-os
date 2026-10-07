@@ -1,6 +1,7 @@
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 import { canonicalComposerSelectionIsAvailable } from "./canonical-composer-state";
 import {
+  ChatPresentation,
   isChatUnread,
   chatReadAction,
   CanonicalSharedChatPanel,
@@ -749,7 +750,7 @@ export function CanonicalChatWorkspace({
   );
 
   return (
-    <div
+    <ChatPresentation
       ref={workspaceRef}
       className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${workspaceLayout === "narrow" ? "flex-col" : "flex-row"}`}
       data-slot="canonical-chat-workspace"
@@ -757,6 +758,7 @@ export function CanonicalChatWorkspace({
     >
       {!externalNavigation && (projectId === null ? (
         <CanonicalChatIndex
+          onRename={controller.renameChat}
           onToggleRead={(record) => { void controller.updateReadState(record.chat.id, chatReadAction(record)); }}
           items={controller.items}
           activeChatId={controller.activeChatId}
@@ -984,6 +986,6 @@ export function CanonicalChatWorkspace({
           }}
         />
       ) : null}
-    </div>
+    </ChatPresentation>
   );
 }

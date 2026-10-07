@@ -7,6 +7,7 @@ import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 export interface RenameableConversation {
   readState?: import("@matrix-os/contracts").CanonicalChatReadState;
   id: string;
+  conversationKind?: "chat" | "voice";
   title?: string;
   preview: string;
   messageCount: number;

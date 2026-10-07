@@ -137,6 +137,21 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it("keeps voice conversations out of Recents and Pinned but reachable in their own section", async () => {
+    const voice = record("chat_voice", "Plan my week", { pinned: true, updatedAt: "2026-10-06T12:00:00.000Z" });
+    voice.chat.conversationKind = "voice";
+    const client = { list: vi.fn(async () => ({ items: [recent, voice] })) } as unknown as CanonicalChatClient;
+    renderRail(client);
+    await screen.findByText("Plan my week");
+    const recents = screen.getByRole("button", { name: "Recents" }).closest("section")!;
+    const pinned = screen.getByRole("button", { name: "Pinned" }).closest("section")!;
+    expect(within(recents).queryByText("Plan my week")).toBeNull();
+    expect(within(pinned).queryByText("Plan my week")).toBeNull();
+    const voices = screen.getByRole("button", { name: "Voice conversations" }).closest("section")!;
+    expect(within(voices).getByText("Plan my week")).toBeTruthy();
+    expect(client.list).toHaveBeenCalledWith({ limit: 100, conversationKind: "all" });
+  });
+
   it("moves projects between Projects and Pinned when pin state changes", async () => {
     const client = { list: vi.fn(async () => ({ items: [] })) } as unknown as CanonicalChatClient;
     const actions = {
@@ -338,13 +353,13 @@ describe("WorkRail", () => {
     expect(unreadToggle.getAttribute("aria-pressed")).toBe("true");
     expect(unreadToggle.getAttribute("aria-label")).toBe("Show all chats");
     expect(unreadToggle.getAttribute("title")).toBe("Show all chats");
-    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ unreadOnly: true, limit: 100 }));
+    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ unreadOnly: true, limit: 100, conversationKind: "all" }));
 
     fireEvent.click(unreadToggle);
     expect(unreadToggle.getAttribute("aria-pressed")).toBe("false");
     expect(unreadToggle.getAttribute("aria-label")).toBe("Show unread chats only");
     expect(unreadToggle.getAttribute("title")).toBe("Show unread chats only");
-    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ limit: 100 }));
+    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ limit: 100, conversationKind: "all" }));
   });
 
   it("converges two Chat rows from the shared event source without adding WorkRail polling", async () => {
@@ -786,8 +801,8 @@ describe("WorkRail", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Older chat" })).toBeTruthy();
-    expect(client.list).toHaveBeenNthCalledWith(1, { limit: 100 });
-    expect(client.list).toHaveBeenNthCalledWith(2, { limit: 100, cursor: "chatcur_page2" });
+    expect(client.list).toHaveBeenNthCalledWith(1, { limit: 100, conversationKind: "all" });
+    expect(client.list).toHaveBeenNthCalledWith(2, { limit: 100, cursor: "chatcur_page2", conversationKind: "all" });
   });
 
   it("logs a classified initial-load failure while showing the safe rail error", async () => {

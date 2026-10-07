@@ -6,6 +6,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 
 interface ConversationMeta {
   id: string;
+  conversationKind?: "chat" | "voice";
   preview: string;
   messageCount: number;
   createdAt: number;

@@ -7,6 +7,8 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
 import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
+import { MatrixChatAvatar } from "@matrix-os/ui";
+import { useOptionalAoedeController } from "@matrix-os/ui/aoede";
 import {
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_CREATE_APP_APPEARANCE,
@@ -19,6 +21,7 @@ import {
   type OsViewDesktopBounds,
 } from "@matrix-os/contracts";
 type LauncherEntry =
+  | { type: "aoede"; key: "__aoede__"; name: "Aoede" }
   | { type: "create"; key: "__create-app__"; name: "Create app" }
   | { type: "os-view"; key: string; name: string; mode: OsViewMode }
   | { type: "fixed"; key: string; name: string; app: DesktopAppConfig }
@@ -91,6 +94,7 @@ export default function AppLauncher({
   onSwitchOsView?: (mode: OsViewMode) => void;
 } = {}) {
   const api = useConnection((s) => s.api);
+  const aoede = useOptionalAoedeController();
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const openTab = useTabs((s) => s.openTab);
@@ -161,11 +165,12 @@ export default function AppLauncher({
             : app,
         };
       }),
+      ...(aoede ? [{ type: "aoede" as const, key: "__aoede__" as const, name: "Aoede" as const }] : []),
       ...apps
         .filter((app) => !fixedNames.has(app.name.toLowerCase()))
         .map((app) => ({ type: "installed" as const, key: `installed:${app.slug}`, name: app.name, app })),
     ];
-  }, [apps, osViewMode, platformHost, presentation, runtimeSlot]);
+  }, [aoede, apps, osViewMode, platformHost, presentation, runtimeSlot]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -189,6 +194,7 @@ export default function AppLauncher({
   };
 
   const open = (entry: LauncherEntry) => {
+    if (entry.type === "aoede") { aoede?.focus(); onCloseLauncher?.(); return; }
     if (entry.type === "create") {
       onCreateApp?.();
       return;
@@ -321,7 +327,7 @@ export default function AppLauncher({
                   }}
                   onMouseEnter={() => setActive(i)}
                   onContextMenu={(event) => {
-                    if (entry.type === "create" || entry.type === "os-view") return;
+                    if (entry.type === "create" || entry.type === "os-view" || entry.type === "aoede") return;
                     if (placementPending) return;
                     event.preventDefault();
                     const point = clampOsViewContextMenuPoint(
@@ -345,6 +351,8 @@ export default function AppLauncher({
                     </span>
                   ) : entry.type === "os-view" ? (
                     <OsViewDestinationIcon path={entry.key} />
+                  ) : entry.type === "aoede" ? (
+                    <MatrixChatAvatar className="matrix-chat-avatar--launcher" />
                   ) : entry.type === "fixed" ? (
                     <span className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]" style={{ background: entry.app.color, color: entry.app.iconColor }}>
                       {entry.app.iconUrl
@@ -382,7 +390,7 @@ export default function AppLauncher({
               onClick={async () => {
                 if (placementPending) return;
                 const entry = contextMenu.entry;
-                if (entry.type === "create" || entry.type === "os-view") return;
+                if (entry.type === "create" || entry.type === "os-view" || entry.type === "aoede") return;
                 const path = entry.app.path;
                 if (!path) {
                   setContextError("Could not add the app. Please try again.");

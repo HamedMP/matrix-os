@@ -107,6 +107,18 @@ beforeEach(() => {
 });
 
 describe("Chat canonical provider state", () => {
+  it("keeps voice history separate and selects its saved canonical Chat", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const select = vi.fn();
+    render(<ChatApp messages={[]} busy={false} connected conversations={[
+      { id: "chat_task", title: "Build website", preview: "", messageCount: 1, updatedAt: 1, conversationKind: "chat" },
+      { id: "chat_voice", title: "Plan my week", preview: "", messageCount: 2, updatedAt: 2, conversationKind: "voice" },
+    ]} onNewChat={vi.fn()} onSwitchConversation={select} onSubmit={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Plan my week" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /Voice conversations/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Plan my week" }));
+    expect(select).toHaveBeenCalledWith("chat_voice");
+  });
   it("copies the canonical chat ID from Web Desktop and Web Canvas conversation content", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     const writeText = vi.fn(async () => undefined);

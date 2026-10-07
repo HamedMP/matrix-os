@@ -1,4 +1,5 @@
-import { useChatReadState, mergeChatReadState } from "@matrix-os/ui";
+import { useChatReadState, mergeChatReadState, mergeCanonicalChatRecord } from "@matrix-os/ui";
+import { useCanonicalChatTitle } from "./use-canonical-chat-title";
 import type { CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
@@ -146,8 +147,8 @@ export function useCanonicalChatRouteController({
     if (!options.background) setStatus("loading");
     try {
       const page = query.trim()
-        ? await client.search(query, { projectId, limit: 100 })
-        : await client.list({ projectId, limit: 100 });
+        ? await client.search(query, { projectId, limit: 100, conversationKind: "all" })
+        : await client.list({ projectId, limit: 100, conversationKind: "all" });
       if (sequence !== listRequestSequence.current) return;
       setItems((current) => page.items.map((item) => {
         const previous = current.find((candidate) => candidate.chat.id === item.chat.id);
@@ -158,7 +159,7 @@ export function useCanonicalChatRouteController({
       setActiveChatId((current) => {
         const next = current && page.items.some((record) => record.chat.id === current)
           ? current
-          : autoSelectFirst ? page.items[0]?.chat.id ?? null : null;
+          : autoSelectFirst ? page.items.find(record => record.chat.conversationKind !== "voice")?.chat.id ?? null : null;
         activeChatIdRef.current = next;
         return next;
       });
@@ -888,7 +889,19 @@ export function useCanonicalChatRouteController({
     active, onRead: updateReadState,
   });
 
+  const captureTitleScope = useCallback(() => {
+    const scope = routeScopeRef.current;
+    return () => Boolean(scope?.active && routeScopeRef.current === scope);
+  }, []);
+  const publishTitle = useCallback((record: CanonicalChatRecord) => {
+    setItems(items => items.map(item => item.chat.id === record.chat.id ? mergeCanonicalChatRecord(item, record) : item));
+    updateDetail(current => current?.record.chat.id === record.chat.id
+      ? { ...current, record: mergeCanonicalChatRecord(current.record, record) } : current);
+  }, [updateDetail]);
+  const renameChat = useCanonicalChatTitle(client, captureTitleScope, publishTitle);
+
   return {
+    renameChat,
     updateReadState,
     items,
     activeChatId,

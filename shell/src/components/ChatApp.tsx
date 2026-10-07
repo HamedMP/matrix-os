@@ -1,7 +1,7 @@
 "use client";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
-import { useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
+import { ChatPresentation, ChatHistory, ChatStarterCards, MatrixChatAvatar, useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
@@ -48,7 +48,6 @@ import { ToolCallGroup } from "@/components/ToolCallGroup";
 import { Button } from "@/components/ui/button";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   CANONICAL_PROVIDER_SETUP_ERROR,
   executeCanonicalProviderSetupAction,
@@ -68,7 +67,6 @@ import {
 } from "./chat/CanonicalApprovalMessage";
 import {
   ChatTitleEditor,
-  RenameableConversationRow,
   type RenameableConversation,
 } from "./chat/ChatTitleRename";
 import {
@@ -76,7 +74,6 @@ import {
   PanelLeftIcon,
   SearchIcon,
   MessageSquareIcon,
-  BotIcon,
   Settings2Icon,
   ChevronDownIcon,
 } from "@/lib/hugeicons";
@@ -162,33 +159,6 @@ interface ChatAppProps {
   mobile?: boolean;
 }
 
-function groupConversationsByTime(conversations: ConversationMeta[]) {
-  const now = Date.now();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayMs = today.getTime();
-  const yesterdayMs = todayMs - 86_400_000;
-  const weekMs = todayMs - 7 * 86_400_000;
-
-  const groups: { label: string; items: ConversationMeta[] }[] = [
-    { label: "Today", items: [] },
-    { label: "Yesterday", items: [] },
-    { label: "Previous 7 days", items: [] },
-    { label: "Older", items: [] },
-  ];
-
-  const sorted = conversations.toSorted((a, b) => b.updatedAt - a.updatedAt);
-
-  for (const conv of sorted) {
-    if (conv.updatedAt >= todayMs) groups[0].items.push(conv);
-    else if (conv.updatedAt >= yesterdayMs) groups[1].items.push(conv);
-    else if (conv.updatedAt >= weekMs) groups[2].items.push(conv);
-    else groups[3].items.push(conv);
-  }
-
-  return groups.filter((g) => g.items.length > 0);
-}
-
 export function ChatApp(props: ChatAppProps) {
   return <ChatAgentsWorkspace><ChatAppContent {...props} /></ChatAgentsWorkspace>;
 }
@@ -257,7 +227,6 @@ function ChatAppContent({
     setPreviewFile({ chatId: sessionId, path: target.path });
     return true;
   };
-  const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
   const [providerSetupError, setProviderSetupError] = useState<string | null>(null);
@@ -315,15 +284,6 @@ function ChatAppContent({
     });
   };
 
-  const trimmedSearch = searchQuery.trim();
-  const filteredConversations = !trimmedSearch
-    ? conversations
-    : conversations.filter((c) =>
-        `${c.title ?? ""}\n${c.preview ?? ""}`.toLowerCase().includes(searchQuery.toLowerCase()),
-      );
-
-  const timeGroups = groupConversationsByTime(unreadOnly ? filteredConversations.filter((item) => item.readState?.unread) : filteredConversations);
-
   const suggestions = getMessageSuggestions(messages);
 
   const isEmpty = messages.length === 0 && !busy;
@@ -347,7 +307,7 @@ function ChatAppContent({
   };
 
   return (
-    <div className="relative flex h-full bg-background" onClickCapture={(event) => {
+    <ChatPresentation className="relative flex h-full" onClickCapture={(event) => {
       const element = event.target instanceof Element ? event.target : null;
       const anchor = element?.closest("a");
       const code = element?.closest("code");
@@ -369,105 +329,29 @@ function ChatAppContent({
           </ShellNotificationCard>
         </ShellNotificationPortal>
       )}
-      {/* Sidebar */}
-      <aside
-        className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
-          sidebarOpen
-            ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
-            : "w-0 overflow-hidden"
-        }`}
-      >
-        <div className="flex items-center justify-between p-3 pb-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Close Chat sidebar"
-            className={`${touchIcon} text-muted-foreground hover:text-foreground`}
-            onClick={() => setSidebarOpen(false)}
-          >
-            <PanelLeftIcon className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`${touchIcon} text-muted-foreground hover:text-foreground`}
-            onClick={onNewChat}
-            title="New chat"
-          >
-            <PlusIcon className="size-4" />
-          </Button>
-        </div>
-
-        <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
-        {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
-          onOpenSharedHome();
-          if (mobile) setSidebarOpen(false);
-        }} /> : null}
-        {/* Search */}
-        <div className="px-3 pb-2">
-          <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
-            <SearchIcon className="size-3.5 text-muted-foreground" />
-            <input
-              type="text"
-              aria-label="Search chats"
-              placeholder="Search chats..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 bg-transparent outline-none placeholder:text-muted-foreground/60 text-foreground"
-            />
-          </div>
-        </div>
-
-        <div className="flex gap-2 px-3 pb-2 text-xs">
-          <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
-          <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
-        </div>
-        {unreadOnly && timeGroups.length === 0 ? <p className="px-3 text-xs text-muted-foreground">No unread chats.</p> : null}
-        {/* Conversation list */}
-        <ScrollArea className="min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
-          <div className="px-2 pb-3">
-            {timeGroups.map((group) => (
-              <div key={group.label}>
-                <div className="px-2 pt-4 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                  {group.label}
-                </div>
-                {group.items.map((conv) => (
-                  <RenameableConversationRow
-                    key={conv.id}
-                    conversation={conv}
-                    onToggleRead={onUpdateReadState ? () => { void onUpdateReadState(conv.id, conv.readState?.unread
-                      ? { type: "mark_read", throughSeq: conv.readState.latestIncomingSeq, baseVersion: conv.readState.version }
-                      : { type: "mark_unread" }); } : undefined}
-                    active={conv.id === sessionId && (!agentsNavigation?.opened || agentsNavigation.opened.client !== agentClient)}
-                    mobile={mobile}
-                    editing={editingChat?.source === "rail" && editingChat.id === conv.id}
-                    renamePending={renamePending && editingChat?.id === conv.id}
-                    onSelect={() => onSwitchConversation(conv.id)}
-                    onRenameStart={!mobile && onRenameConversation && !renamePending ? () => setEditingChat({ id: conv.id, source: "rail" }) : undefined}
-                    onRenameCancel={() => setEditingChat(null)}
-                    onRenameCommit={(title) => {
-                      if (!onRenameConversation || renamePending) return;
-                      setRenamePending(true);
-                      void onRenameConversation(conv.id, title).then((saved) => {
-                        if (saved) setEditingChat(null);
-                      }).catch((error: unknown) => {
-                        console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
-                      }).finally(() => setRenamePending(false));
-                    }}
-                  />
-                ))}
-              </div>
-            ))}
-            {conversations.length === 0 && (
-              <div className="flex flex-col items-center gap-2 px-3 py-10 text-center">
-                <span className="inline-flex size-9 items-center justify-center rounded-full bg-foreground/5 text-muted-foreground/60">
-                  <MessageSquareIcon className="size-4" aria-hidden="true" />
-                </span>
-                <p className="text-xs text-muted-foreground/60">No conversations yet</p>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
+      <aside className={`z-20 flex min-h-0 flex-col border-r ${sidebarOpen
+        ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[240px] shrink-0"
+        : "w-0 overflow-hidden"}`} style={{ borderColor: "var(--chat-border)", background: "var(--chat-surface)" }}>
+        <ChatHistory
+          items={conversations.map(conversation => ({ id: conversation.id, title: conversation.title || conversation.preview || "New chat",
+            preview: conversation.preview, updatedAt: conversation.updatedAt, unread: conversation.readState?.unread,
+            conversationKind: conversation.conversationKind }))}
+          activeChatId={sessionId} onSelect={onSwitchConversation} onNewChat={onNewChat}
+          unreadOnly={unreadOnly} onUnreadOnlyChange={value => { setUnreadOnly(value); onUnreadFilterChange?.(value); }}
+          onRename={onRenameConversation} renameDisabled={renamePending}
+          onToggleRead={onUpdateReadState ? id => {
+            const conversation = conversations.find(item => item.id === id);
+            if (!conversation) return;
+            void onUpdateReadState(id, conversation.readState?.unread
+              ? { type: "mark_read", throughSeq: conversation.readState.latestIncomingSeq, baseVersion: conversation.readState.version }
+              : { type: "mark_unread" });
+          } : undefined}
+          searchIcon={<SearchIcon className="size-4" />} newChatIcon={<PlusIcon className="size-4" />}
+        >
+          <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+          {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => { onOpenSharedHome(); if (mobile) setSidebarOpen(false); }} /> : null}
+          {mobile ? <Button variant="ghost" size="sm" onClick={() => setSidebarOpen(false)}>Close sidebar</Button> : null}
+        </ChatHistory>
       </aside>
 
       {/* Main content */}
@@ -499,9 +383,7 @@ function ChatAppContent({
           )}
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-center gap-2">
-              <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <BotIcon className="size-3.5" aria-hidden="true" />
-              </span>
+              <MatrixChatAvatar />
               <div className="min-w-0 flex-1 text-center">
                 {collaborationView ? (
                   <span className="block truncate px-1 text-sm font-semibold leading-4 text-foreground">
@@ -614,11 +496,9 @@ function ChatAppContent({
             composerProps={{ composer, agentClient, scope: composerScope, permissionMode: providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
-            suggestions={suggestions}
             mobile={mobile}
             composerDraftRequest={activeDraftRequest}
             onComposerDraftConsumed={consumeDraftRequest}
-            modelLabel={providerState.selected?.modelLabel ?? null}
             providerReady={providerState.selected !== null}
             attachmentsEnabled={providerState.selected?.supportsFileAttachments ?? false}
           />
@@ -627,7 +507,7 @@ function ChatAppContent({
             <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
             <div className="contents">
             <Conversation>
-              <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
+              <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[868px]">
                 {grouped.map((group) => {
                   if (group.type === "tool_group") {
                     return <ToolCallGroup key={`tg-${group.messages[0].id}`} tools={group.messages} />;
@@ -638,7 +518,7 @@ function ChatAppContent({
                       {msg.role === "user" ? (
                         <Message from="user">
                           {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
-                          {msg.content.trim() ? <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
+                          {msg.content.trim() ? <MessageContent data-chat-message="user">
                             <span className="whitespace-pre-wrap">{msg.content}</span>
                           </MessageContent> : null}
                         </Message>
@@ -696,7 +576,7 @@ function ChatAppContent({
             </ChatContextMenu>
 
             {/* Suggestions + Input */}
-            <div className="mx-auto w-full max-w-[720px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">
+            <div className="mx-auto w-full max-w-[868px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">
               {!busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
@@ -727,7 +607,7 @@ function ChatAppContent({
         if (previewTrigger.current?.isConnected) previewTrigger.current.focus();
       }} /> : null}
       </ChatAgentsContent>
-    </div>
+    </ChatPresentation>
   );
 }
 
@@ -735,66 +615,36 @@ function EmptyState({
   composerProps,
   onSubmit,
   connected,
-  suggestions,
   mobile,
   composerDraftRequest,
   onComposerDraftConsumed,
-  modelLabel,
   providerReady,
   attachmentsEnabled,
 }: {
   composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
-  suggestions: string[];
   mobile: boolean;
   composerDraftRequest?: ChatAgentDraftRequest | null;
   onComposerDraftConsumed?: (id: number) => void;
-  modelLabel: string | null;
   providerReady: boolean;
   attachmentsEnabled: boolean;
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-4">
-      <div className="w-full max-w-[600px] space-y-8">
-        {/* Greeting */}
-        <div className="text-center space-y-2">
-          <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
-            What should Matrix do?
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {modelLabel ? `Using ${modelLabel}` : "Connect a harness in Settings to start chatting."}
-          </p>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-8">
+        <div className="w-full max-w-[480px]">
+          {!providerReady ? <p role="status" className="mb-3 text-sm text-muted-foreground">Connect a harness in Settings to start chatting.</p> : null}
+          <ChatStarterCards layout="two-by-two" density={mobile ? "compact" : "regular"}
+            onSelect={text => composerProps.composer.setDraft({ text, resources: [] })} />
         </div>
-
-        {/* Input */}
-        <ChatInput
-          key={`composer:${composerProps.scope}`} {...composerProps}
-          connected={connected && providerReady}
-          busy={false}
-          onSubmit={onSubmit}
-          autoFocus={!mobile}
-          draftRequest={composerDraftRequest}
-          onDraftConsumed={onComposerDraftConsumed}
+      </div>
+      <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
+        <ChatInput key={`composer:${composerProps.scope}`} {...composerProps}
+          connected={connected && providerReady} busy={false} onSubmit={onSubmit}
+          autoFocus={!mobile} draftRequest={composerDraftRequest} onDraftConsumed={onComposerDraftConsumed}
           unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
-          attachmentsEnabled={attachmentsEnabled}
-        />
-
-        {/* Suggestions */}
-        {suggestions.length > 0 && (
-          <div className="flex flex-wrap justify-center gap-2">
-            {suggestions.map((s, i) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => onSubmit(s)}
-                className={`rounded-full border border-border/60 bg-card/50 px-3.5 text-xs text-foreground/70 transition-all hover:bg-accent/40 hover:text-foreground hover:border-border ${mobile ? "py-2.5" : "py-1.5"}`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
+          attachmentsEnabled={attachmentsEnabled} />
       </div>
     </div>
   );
@@ -824,7 +674,7 @@ function AssistantBubble({
 
   return (
     <Message from="assistant">
-      <MessageContent>
+      <MessageContent data-chat-message="assistant">
         {attachments?.length ? <ChatAttachments align="start" attachments={attachments} open={openAttachment} loadImage={loadImage} /> : null}
         {thinking && <Reasoning content={thinking} />}
         {planSteps && <Plan steps={planSteps} />}

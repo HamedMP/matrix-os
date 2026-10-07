@@ -44,6 +44,7 @@ function conversationMeta(record: CanonicalChatRecord) {
   return {
     readState: record.readState,
     id: record.chat.id,
+    conversationKind: record.chat.conversationKind,
     title: record.chat.title,
     preview: record.chat.lastMessagePreview ?? record.chat.title,
     messageCount: record.chat.messageCount,
@@ -152,7 +153,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
       let cursor: string | undefined;
       // Match the Work Rail's bounded 1,000-chat window, following server cursors.
       for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
-        const page = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), ...(cursor ? { cursor } : {}) });
+        const page = await client.list({ conversationKind: "all", ...(unreadOnly ? { unreadOnly: true } : {}), ...(cursor ? { cursor } : {}) });
         if (listGeneration.current !== generation) return;
         loaded.push(...page.items);
         if (!page.nextCursor || page.nextCursor === cursor) break;
@@ -163,7 +164,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
         return previous ? mergeCanonicalChatRecord(previous, record) : record;
       }));
       if (autoRestoreChatRef.current) {
-        setActiveChatId((current) => current ?? loaded[0]?.chat.id);
+        setActiveChatId((current) => current ?? loaded.find(record => record.chat.conversationKind !== "voice")?.chat.id);
       }
     } catch (error: unknown) {
       if (listGeneration.current !== generation) return;

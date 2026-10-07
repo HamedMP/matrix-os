@@ -139,13 +139,7 @@ export function ChatInput({
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
       {speech.error ? <p role="alert" className="text-xs text-destructive">{speech.error}</p> : null}
       <Attachments attachments={attachments} onRemove={removeFile} />
-      <div className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
-        <AttachmentButton
-          onFilesSelected={addFiles}
-          disabled={!connected || !attachmentsEnabled}
-          title={attachmentsEnabled ? "Attach files" : "Attachments are unavailable for this harness"}
-          className="mb-2.5 ml-3"
-        />
+      <div data-chat-composer className="relative flex flex-col rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
         <Textarea
           aria-label="Message chat"
           ref={textareaRef}
@@ -160,9 +154,18 @@ export function ChatInput({
                 ? "Recording — stop when you're done"
                 : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder })}
           rows={1}
-          className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
+          className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none pt-3.5 pb-3 px-4 w-full"
         />
-        <div className="flex items-center gap-0.5 mb-2 mr-2">
+        <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+        <AttachmentButton
+          onFilesSelected={addFiles}
+          disabled={!connected || !attachmentsEnabled}
+          title={attachmentsEnabled ? "Attach files" : "Attachments are unavailable for this harness"}
+          className="size-8"
+        />
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
           {speech.isSupported ? (
             <Button
               type="button"
@@ -206,6 +209,7 @@ export function ChatInput({
           >
             <SendIcon className="size-4" />
           </Button>
+          </div>
         </div>
       </div>
     </div>

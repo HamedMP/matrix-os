@@ -49,7 +49,7 @@ export function UserMessage({
             : segment.kind === "reference" && segment.referenceKind === "file" ? [{ ...segment, kind: "file" as const }] : [])}
             open={callbacks.openAttachment} loadImage={callbacks.loadImage} />
           {hasBubbleContent ? <Bubble variant="secondary" align="end" className="max-w-[min(85%,48rem)]">
-            <BubbleContent className="max-w-full [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[14px] leading-relaxed"
+            <BubbleContent data-chat-message="user" className="max-w-full [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[14px] leading-relaxed"
               style={{ background: "color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface))", borderColor: "color-mix(in srgb, var(--text-primary) 6%, transparent)" }} data-selectable>
               {collapsible && !expanded ? <span className="sr-only">Message preview: {message.markdown.slice(0, 200)}</span> : null}
               <div data-message-preview-content inert={collapsible && !expanded ? true : undefined} className={collapsible && !expanded ? "max-h-[6rem] overflow-hidden" : undefined}>

@@ -99,7 +99,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       response = await fetchFn(url, {
         ...init,
         ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
-          headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
+          headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "2" },
         } : {}),
         signal: signalWithTimeout(callerSignal, requestOptions?.timeoutMs ?? API_TIMEOUT_MS),
       });

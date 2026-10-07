@@ -10,6 +10,8 @@ import { OS_VIEW_FIXED_APP_NAMES } from "../fixtures/os-view-parity";
 import { clearDesktopApps, seedDesktopApps } from "./apps-query-test-utils";
 
 const sharing = vi.hoisted(() => ({ props: [] as Array<{ kind: string; path: string }> }));
+const aoede = vi.hoisted(() => ({ controller: null as null | { focus: ReturnType<typeof vi.fn> } }));
+vi.mock("@matrix-os/ui/aoede", () => ({ useOptionalAoedeController: () => aoede.controller }));
 vi.mock("../../desktop/src/renderer/src/features/files/DesktopResourceSharing", () => ({
   DesktopResourceSharing: (props: { kind: string; path: string }) => {
     sharing.props.push(props);
@@ -19,6 +21,7 @@ vi.mock("../../desktop/src/renderer/src/features/files/DesktopResourceSharing", 
 
 describe("AppLauncher", () => {
   beforeEach(() => {
+    aoede.controller = null;
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -39,6 +42,20 @@ describe("AppLauncher", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("opens the shared Aoede companion without creating a fake app tab or capturing audio", () => {
+    const focus = vi.fn();
+    aoede.controller = { focus };
+    const onCloseLauncher = vi.fn();
+    render(<AppLauncher presentation="launchpad" onCloseLauncher={onCloseLauncher} />);
+    fireEvent.change(screen.getByLabelText("Search apps"), { target: { value: "Aoede" } });
+    const launcher = screen.getByRole("button", { name: "Aoede" });
+    expect(launcher.querySelector(".matrix-chat-avatar img")).not.toBeNull();
+    fireEvent.click(launcher);
+    expect(focus).toHaveBeenCalledOnce();
+    expect(onCloseLauncher).toHaveBeenCalledOnce();
+    expect(useTabs.getState().tabs).toEqual([]);
   });
 
   it("falls back to slug names and skips invalid app rows", async () => {

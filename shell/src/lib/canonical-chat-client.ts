@@ -43,7 +43,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface CanonicalShellChatClient {
   agents?: ChatAgentClient;
-  list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
+  list(input?: { conversationKind?: "chat" | "voice" | "all"; unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
@@ -170,7 +170,7 @@ export function createCanonicalShellChatClient(options: {
   const request = (path: string, init: RequestInit = {}) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatReadStateVersionUrl(path) : path}`, {
     ...init,
     ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
-      headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
+      headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "2" },
     } : {}),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   }).then(jsonResponse);
@@ -185,7 +185,7 @@ export function createCanonicalShellChatClient(options: {
         headers: {
           Accept: "text/event-stream",
           "X-Matrix-Chat-Protocol": "2",
-          "X-Matrix-Chat-Metadata": "1",
+          "X-Matrix-Chat-Metadata": "2",
           ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }),
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60 * 1000)]),
@@ -195,6 +195,7 @@ export function createCanonicalShellChatClient(options: {
     },
     async list(input = {}) {
       const query = new URLSearchParams({ limit: "100", scope: "global" });
+      if (input.conversationKind) query.set("conversationKind", input.conversationKind);
       if (input.unreadOnly) query.set("unread", "true");
       if (input.cursor) query.set("cursor", input.cursor);
       return CanonicalChatListResponseSchema.parse(await request(`/api/chats?${query}`));

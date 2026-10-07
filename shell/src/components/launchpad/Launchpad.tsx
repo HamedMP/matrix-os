@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { MatrixChatAvatar } from "@matrix-os/ui";
 import {
   Blocks,
   BrushIcon,
@@ -315,6 +316,8 @@ function LaunchpadTile({ app, onLaunch, onContextMenu }: { app: AppEntry; onLaun
           >
             <PlusIcon className="size-12" aria-hidden="true" />
           </span>
+        ) : app.path === "__aoede__" ? (
+          <MatrixChatAvatar className="matrix-chat-avatar--launcher" />
         ) : useFixedIcon && builtInAppearance ? (
           <span
             data-launchpad-built-in-icon
