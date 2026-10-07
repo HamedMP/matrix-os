@@ -40,7 +40,9 @@ export interface ProviderLifecycleAccount {
   harness: ProviderHarnessKind;
   installState: ProviderHarnessInstallState;
   authenticated: boolean;
-  /** CLI drivers currently own one active account; multiple rows are ambiguous. */
+  /** Private native identity proof; never serialized in snapshots or receipts. */
+  nativeClaudeAccount?: import("./claude-native-account-metadata.js").ClaudeNativeAccountMetadata;
+  /** Distinct credentials addressing the same native store; aliases count once. */
   driverAccountCount: number;
 }
 

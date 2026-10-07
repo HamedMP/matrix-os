@@ -83,7 +83,7 @@ export function createClaudeNativeAccountMetadataReader(input: {
           // invalid allowance before returning identity so stale usage cannot leak.
           if (metadata.usage && quota && !await quota.isCurrent()) delete metadata.usage;
           return Date.parse(metadata.staleAfter) > +now();
-        }) as ClaudeNativeAccountMetadata;
+        }, JSON.stringify({ home, principal })) as ClaudeNativeAccountMetadata;
       } catch (error: unknown) {
         console.warn('[provider-settings] Claude account status unavailable:', error instanceof Error ? error.name : 'UnknownError');
         return null;

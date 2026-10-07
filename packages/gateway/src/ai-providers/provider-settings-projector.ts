@@ -1,3 +1,4 @@
+import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
 import { projectClaudeNativeAccount } from "./claude-native-account-projection.js";
 import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
 import { projectMatrixModelInventory } from "./provider-matrix-model-inventory.js";
@@ -297,13 +298,7 @@ async function projectAccounts(input: {
     const accessSourceId = input.sourceByAccount.get(account.id);
     const stored = input.config.accountProfiles.find((profile) => profile.id === account.id);
     if (!accessSourceId || !input.sourceIds.has(accessSourceId) || (account.authMethod === null && !stored)) return null;
-    const selectedHarnesses = input.config.harnesses.filter((harness) => harness.selectedAccountId === account.id);
-    const dependencies = input.dependencies
-      ? await input.dependencies.getAccountDependencies({
-          accountId: account.id,
-          harnessInstanceIds: selectedHarnesses.map((harness) => harness.id),
-        })
-      : { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: selectedHarnesses.length };
+    const dependencies = await readLifecycleAccountDependencies({ accountId: account.id, config: input.config, reader: input.dependencies });
     return {
       id: account.id,
       providerId: account.vendor,

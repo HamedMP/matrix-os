@@ -1,3 +1,4 @@
+import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
 import { assertClaudeNativeLoginSelection } from "./claude-native-login-completion.js";
 import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
 import { renewProviderSettingsNativeObservation } from "./provider-settings-native-renewal.js";
@@ -10,7 +11,6 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
   ProviderConnectionAttemptSchema,
-  ProviderDependencyCountsSchema,
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
   type AiProviderSnapshotV3,
@@ -204,7 +204,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         hermesNativeAccountMetadata,
         now: this.#now(),
         dependencies: this.#dependencies,
-        supportedActions: this.#supportedActions(config, canonical),
+        supportedActions: this.#supportedActions(config, canonical, claudeNativeAccountMetadata),
         fundingSummary,
         chatAvailability,
         fundedPolicy,
@@ -230,6 +230,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   #supportedActions(
     config: ProviderSettingsConfiguration,
     canonical: AiProviderSnapshotV3,
+    claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null,
   ): ProviderSettingsSupportedAction[] {
     return supportedProviderSettingsActions({
       runtime: this.#runtime,
@@ -239,6 +240,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       config,
       canonical,
       gatewayPolicyAuthority: this.#fundingSummary ? "platform" : "local",
+      claudeNativeAccountMetadata,
     });
   }
 
@@ -414,14 +416,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     expected: ProviderDependencyCounts,
   ): Promise<ProviderDependencyCounts> {
     if (!this.#dependencies) throw new ProviderSettingsStoreError("dependency_unavailable", 503);
-    const harnessInstanceIds = config.harnesses
-      .filter((harness) => harness.selectedAccountId === accountId)
-      .map((harness) => harness.id);
     let actual: ProviderDependencyCounts;
     try {
-      actual = ProviderDependencyCountsSchema.parse(
-        await this.#dependencies.getAccountDependencies({ accountId, harnessInstanceIds }),
-      );
+      actual = await readLifecycleAccountDependencies({ accountId, config, reader: this.#dependencies });
     } catch (error) {
       console.warn("[provider-settings] Account dependency check unavailable");
       throw new ProviderSettingsStoreError("dependency_unavailable", 503);
@@ -543,8 +540,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       this.#assertSupported(claudeNativeCompletion ? "set_harness_enabled" : mutation.type, config, canonical);
       // Read and revalidate the current native principal inside mutation admission.
       // The earlier UI snapshot is not authority for changing a saved route.
-      const claudeMetadata = claudeNativeCompletion
-        ? await verifyNativeAccountMetadata(await this.#claudeAccountMetadata?.()) : null;
+      const nativeClaudeLifecycle = (mutation.type === "logout_account" || mutation.type === "remove_account")
+        && mutation.accountId === "owner_claude_profile";
+      const claudeMetadata = claudeNativeCompletion || nativeClaudeLifecycle
+        ? await verifyNativeAccountMetadata(await this.#claudeAccountMetadata?.(false)) : null;
       if (claudeNativeCompletion && !claudeMetadata) throw new ProviderSettingsStoreError("invalid_route", 400);
       const snapshot = await this.#project(canonical, config, false, enrichment, null, null, claudeMetadata);
       if (claudeNativeCompletion) assertClaudeNativeLoginSelection({ mutation, snapshot });
@@ -607,7 +606,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             throw new ProviderSettingsStoreError("not_found", 404);
           }
           const account = requireCoordinatorLifecycleAccount(
-            this.#lifecycle, mutation.accountId, config, canonical,
+            this.#lifecycle, mutation.accountId, config, canonical, claudeMetadata,
           );
           await this.#coordinate(() => this.#lifecycle!.logout({
             account,
@@ -630,7 +629,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             throw new ProviderSettingsStoreError("account_in_use", 409);
           }
           const account = requireCoordinatorLifecycleAccount(
-            this.#lifecycle, mutation.accountId, config, canonical,
+            this.#lifecycle, mutation.accountId, config, canonical, claudeMetadata,
           );
           await this.#coordinate(() => this.#lifecycle!.remove({
             account,
