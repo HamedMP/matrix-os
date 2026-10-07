@@ -1,3 +1,4 @@
+import { openingVoiceTitle, finishVoiceTitle } from "./voice-title.js";
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { z } from "zod/v4";
@@ -22,6 +23,7 @@ export function createLiveHistory(repository: ChatRepository, ownerInput: ChatOw
     return record;
   };
   return {
+    finish: () => finishVoiceTitle(repository, owner, chatId),
     async journal(raw: Parameters<LiveCompanionPort["journal"]>[0]) {
       const input = JournalSchema.parse(raw);
       const messageId = `msg_live_${createHash("sha256").update(`${owner.type}:${owner.ownerId}:${chatId}:${input.id}`).digest("hex")}`;
@@ -57,7 +59,14 @@ export function createLiveHistory(repository: ChatRepository, ownerInput: ChatOw
           if (!same(elected)) throw new ChatConflictError(chatId, Number(chat.revision));
           return;
         }
-        const updated = await db.updateTable("chats").set({ revision: Number(chat.revision) + 1, message_count: Number(chat.message_count) + 1, last_message_preview: input.text.slice(0, 280), activity_at: now, updated_at: now })
+        // The first exchange is complete or the opening 2–3 messages reveal a
+        // topic. Rename under the same row lock/CAS as the transcript, once only;
+        // manual owner titles and ordinary Chat are never touched.
+        let title: string | null = null;
+        if (Number(chat.message_count) >= 1 || input.role === "assistant") title = await openingVoiceTitle(db, chat);
+        const updated = await db.updateTable("chats").set({ revision: Number(chat.revision) + 1, message_count: Number(chat.message_count) + 1, last_message_preview: input.text.slice(0, 280), activity_at: now, updated_at: now,
+          ...(title ? { title, title_version: Number(chat.title_version) + 1 } : {}),
+        })
           .where("id", "=", chatId).where("revision", "=", chat.revision).returning("revision").executeTakeFirst();
         if (!updated) throw new ChatConflictError(chatId, 0);
         await repo.appendOutboxEvent(owner, chatId, Number(updated.revision), "chat.updated");

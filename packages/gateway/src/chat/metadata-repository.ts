@@ -19,6 +19,7 @@ const validateOwner = (owner: ChatOwner) => CanonicalOwnerScopeSchema.parse(owne
 const requireSafeRef = (value: string) => z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).parse(value);
 
 export async function listChats(deps: MetadataDependencies, ownerInput: ChatOwner, input: {
+    conversationKind?: "chat" | "voice";
     unreadOnly?: boolean;
     limit: number;
     lifecycle?: "active" | "archived";
@@ -32,6 +33,7 @@ export async function listChats(deps: MetadataDependencies, ownerInput: ChatOwne
         .as("cursor_activity_at"))
       .where("owner_type", "=", owner.type)
       .where("owner_id", "=", owner.ownerId);
+    if (input.conversationKind) query = query.where("conversation_kind", "=", z.enum(["chat", "voice"]).parse(input.conversationKind));
     if (input.unreadOnly) query = query.where(unreadChatPredicate(owner.ownerId));
     if (input.lifecycle) query = query.where("lifecycle", "=", input.lifecycle);
     if (input.projectId !== undefined) query = input.projectId === null

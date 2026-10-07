@@ -19,7 +19,7 @@ export const AoedeScopeSchema = z.object({
 export const AoedeBootstrapResponseSchema = z.object({
   chatId: CanonicalChatIdSchema,
   scope: AoedeScopeSchema,
-  selection: CanonicalChatModelSelectionSchema,
+  selection: CanonicalChatModelSelectionSchema.optional(),
   capability: VoiceCapabilitySchema,
 }).strict();
 

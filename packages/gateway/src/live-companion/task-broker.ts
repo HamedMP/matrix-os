@@ -16,12 +16,17 @@ import type { LiveCompanionPort } from "./coordinator.js";
  * linked Chats are acceptable if catalog/admission fails: retry selects the
  * same Chat; accepted turns reconcile through the existing dispatcher.
  */
+class LiveTaskRouteUnavailableError extends Error {
+  readonly code = "provider_unavailable";
+  constructor() { super("Task route unavailable"); this.name = "LiveTaskRouteUnavailableError"; }
+}
+
 export function createCanonicalLivePort(options: {
   repository: ChatRepository;
   orchestrator: Pick<CanonicalChatOrchestrator, "admitTurn">;
   principal: RequestPrincipal;
   chatId: string;
-  selection: CanonicalChatModelSelection;
+  selection: CanonicalChatModelSelection | undefined;
   taskEvents?: import("../voice-session/ports.js").VoiceChatEventSource;
 }): LiveCompanionPort {
   const { repository, principal, chatId, selection } = options;
@@ -97,6 +102,9 @@ export function createCanonicalLivePort(options: {
       return dispose;
     },
     async delegate(input) {
+      // Conversation is independent; tasks still require a real selected route
+      // and the orchestrator independently verifies authentication and funding.
+      if (!selection) throw new LiveTaskRouteUnavailableError();
       const sourceId = z.string().min(1).max(160).regex(/^msg_live_[a-f0-9]{64}$/).parse(input.sourceId);
       const kind = z.enum(["build_app", "task", "open_app", "terminal"]).parse(input.kind);
       const hash = createHash("sha256").update(`${principal.userId}:${chatId}:${sourceId}:${kind}`).digest("hex");

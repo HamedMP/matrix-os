@@ -715,6 +715,11 @@ export class VoiceSessionPipeline {
     // The admission rides the freshest known revision, not the stale
     // capture-time snapshot; the canonical port additionally re-reads and
     // retries once on a revision conflict.
+    if (!s.selection) {
+      this.completeFailedCapture(turn);
+      this.runtime.emitError("provider_unavailable", false);
+      return;
+    }
     turn.baseRevision = await this.runtime.hydrateChatRevision();
     const result = await this.host.admission.admitFinalTranscript({
       sessionId: s.sessionId,

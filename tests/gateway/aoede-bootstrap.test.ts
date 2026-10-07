@@ -110,6 +110,23 @@ describe("standalone Aoede bootstrap (real owner-local PGlite, fake readiness on
     expect(readiness).not.toHaveBeenCalled();
   });
 
+  it("bootstraps funded native conversation without probing or inventing a task route", async () => {
+    catalog.getCatalog.mockRejectedValue(new Error("Task account unavailable"));
+    const native = new AoedeBootstrapService({ repository: bindings, catalog,
+      runtimeIdentity: { machineId: "machine_a", runtimeSlot: "slot_a" }, resolveProject,
+      nativeConversationOnly: true,
+      resolveReadiness: async input => ({ selection: input.selection,
+        capability: { ...capability, conversationMode: "native_live", turnModes: ["hands_free"] } }),
+    });
+    const response = await native.bootstrap(principal, request("no_subscription"));
+    expect(response.capability.status).toBe("available");
+    expect(response.selection).toBeUndefined();
+    expect(catalog.getCatalog).not.toHaveBeenCalled();
+    expect((await chats.get({ type: "personal", ownerId: principal.userId }, response.chatId))?.chat.currentSelection).toBeUndefined();
+    expect(await chats.kysely.selectFrom("chat_runs").selectAll().execute()).toHaveLength(0);
+    expect((await native.bootstrap(principal, request("resume_no_subscription"))).chatId).toBe(response.chatId);
+  });
+
   it("racing Continue and durable reload reuse one canonical conversation without dispatch", async () => {
     const results = await Promise.all([service.bootstrap(principal, request("one")), service.bootstrap(principal, request("two"))]);
     expect(results[0].chatId).toBe(results[1].chatId);

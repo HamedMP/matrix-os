@@ -4,6 +4,7 @@ import type { VoiceTurnAdmissionResult } from "../voice-session/ports.js";
 import type { ServerFramePayload } from "../voice-session/session-runtime.js";
 
 export interface LiveCompanionPort {
+  finish?(): Promise<void>;
   journal(input: { id: string; role: "user" | "assistant"; text: string; heard?: boolean; playedThroughMs?: number }): Promise<{ messageId: string }>;
   delegate(input: { sourceId: string; kind: "build_app" | "task" | "open_app" | "terminal"; prompt: string }): Promise<VoiceTurnAdmissionResult & { chatId?: string; state?: CanonicalOperationState }>;
   search(query: string): Promise<Array<{ chatId: string; title: string; snippet: string }>>;
@@ -189,6 +190,8 @@ export function createLiveCompanion(options: {
       if (closed) return;
       await live.interrupt();
       await finalizeInput();
+      try { await options.port.finish?.(); }
+      catch (error: unknown) { console.warn("[live-companion] title finalization unavailable", error instanceof Error ? error.name : "UnknownError"); }
       closed = true;
       tasks.clear();
       input = null;

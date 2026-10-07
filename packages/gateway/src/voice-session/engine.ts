@@ -75,7 +75,7 @@ export interface VoiceSessionCreateInput {
   turnMode: VoiceTurnMode;
   memoryMode: VoiceMemoryMode;
   requestedTransport?: "relayed_websocket" | "direct_webrtc";
-  selection: CanonicalChatModelSelection;
+  selection: CanonicalChatModelSelection | undefined;
   interactionMode: string;
   permissionMode: string;
   locale?: string;
@@ -315,6 +315,9 @@ export class VoiceSessionEngine implements VoiceSessionHost {
       throw new VoiceSessionError("provider_unavailable", "No voice adapter is configured", 503);
     }
     const caps = adapter.capabilities;
+    if (!request.selection && caps.conversationMode !== "native_live") {
+      throw new VoiceSessionError("provider_unavailable", "Task route unavailable", 503);
+    }
     if (caps.conversationMode === "native_live" && [...this.sessions.values()].some(session =>
       session.principalId === principal.userId && !this.isTerminal(session))) {
       throw new VoiceSessionError("session_conflict", "A voice session is already active", 409);

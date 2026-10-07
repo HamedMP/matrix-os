@@ -8,7 +8,7 @@ describe("contracts native Node runtime", () => {
       [
         "--input-type=module",
         "-e",
-        'import("@matrix-os/contracts").then(({ OS_VIEW_MODES, CanonicalChatContentFrameSchema }) => console.log(OS_VIEW_MODES.join(","), typeof CanonicalChatContentFrameSchema.safeParse))',
+        'import("@matrix-os/contracts").then(({ OS_VIEW_MODES, CanonicalChatContentFrameSchema, generatedVoiceChatTitle }) => console.log(OS_VIEW_MODES.join(","), typeof CanonicalChatContentFrameSchema.safeParse, generatedVoiceChatTitle(["Plan the launch week"])))',
       ],
       {
         cwd: process.cwd(),
@@ -17,6 +17,6 @@ describe("contracts native Node runtime", () => {
       },
     );
 
-    expect(output.trim()).toBe("desktop,canvas function");
+    expect(output.trim()).toBe("desktop,canvas function Plan the launch week");
   });
 });

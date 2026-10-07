@@ -308,6 +308,7 @@ export function createCanonicalChatService(
     async list(owner, input): Promise<CanonicalChatListResponse> {
       await options.orchestrator?.reconcileActiveRuns(owner);
       const page = await repository.list(owner, {
+        conversationKind: input.conversationKind === "all" ? undefined : input.conversationKind ?? "chat",
         ...(input.unreadOnly === undefined ? {} : { unreadOnly: input.unreadOnly }),
         limit: input.limit,
         ...(input.lifecycle === undefined ? {} : { lifecycle: input.lifecycle }),
@@ -335,6 +336,7 @@ export function createCanonicalChatService(
           input.query,
           input.limit,
           input.projectId,
+          input.conversationKind === "all" ? undefined : input.conversationKind ?? "chat",
         ),
       });
     },

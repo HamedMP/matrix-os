@@ -11,6 +11,15 @@ beforeEach(async () => {
   await repository.create(owner, { id: "chat_live", clientRequestId: "req_live", title: "Aoede", currentSelection: selection });
 });
 afterEach(async () => { await repository.release(); await repository.kysely.destroy(); });
+it("journals native conversation without a task route and refuses task creation before admission", async () => {
+  const admission = vi.fn();
+  const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" },
+    chatId: "chat_live", selection: undefined, orchestrator: { admitTurn: admission } as any });
+  const source = await port.journal({ id: "vturn_unfunded", role: "user", text: "Hello" });
+  await expect(port.delegate({ sourceId: source.messageId, kind: "task", prompt: "Do something" })).rejects.toMatchObject({ code: "provider_unavailable" });
+  expect(admission).not.toHaveBeenCalled();
+  expect((await repository.list(owner, { limit: 10 })).items).toHaveLength(1);
+});
 it("creates and links one ordinary supervised Chat task from canonical speech, ignoring provider-added commands", async () => {
   const admission = vi.fn(async (_principal, _owner, id, input) => ({ admission: "accepted", turn: { id: "cturn_real" }, run: { id: "run_real", status: "accepted" }, record: await repository.get(owner, id) }));
   const port = createCanonicalLivePort({ repository, principal: { userId: "alice", source: "jwt" }, chatId: "chat_live", selection, orchestrator: { admitTurn: admission } as any });

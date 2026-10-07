@@ -197,6 +197,8 @@ export const CanonicalChatSchema = z.object({
   ownerScope: CanonicalOwnerScopeSchema,
   title: canonicalBoundedText(200, 1024),
   titleVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  /** Server-owned history category. Older clients/records omit ordinary Chat. */
+  conversationKind: z.enum(["chat", "voice"]).optional(),
   activityAt: IsoTimestampSchema.optional(),
   lifecycle: z.enum(["active", "archived"]),
   attention: CanonicalChatAttentionSchema,
