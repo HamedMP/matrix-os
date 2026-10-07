@@ -33,7 +33,7 @@ import {
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
+import { GatewayClient } from "@/lib/gateway-client";
 import { CanonicalChatSessionProvider } from "@/lib/canonical-chat-session-context";
 import { mobileQueryClient } from "@/lib/query-client";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
@@ -75,7 +75,6 @@ const tokenCache = {
 
 interface GatewayContextValue {
   client: GatewayClient | null;
-  connectionState: ConnectionState;
   gateway: GatewayConnection | null;
   setGateway: (gw: GatewayConnection) => void;
   unreadCount: number;
@@ -85,7 +84,6 @@ interface GatewayContextValue {
 
 const GatewayContext = createContext<GatewayContextValue>({
   client: null,
-  connectionState: "disconnected",
   gateway: null,
   setGateway: () => {},
   unreadCount: 0,
@@ -237,12 +235,10 @@ function GatewayShell() {
   const { theme } = useUnistyles();
   const { isLoaded, isSignedIn, getToken, userId } = useAuth();
   const [client, setClient] = useState<GatewayClient | null>(null);
-  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [gateway, setGatewayState] = useState<GatewayConnection | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const getTokenRef = useRef(getToken);
   const connectionKeyRef = useRef<string | null>(null);
-  const clientRef = useRef<GatewayClient | null>(null);
 
   useEffect(() => {
     getTokenRef.current = getToken;
@@ -261,35 +257,22 @@ function GatewayShell() {
     setUnreadCount(0);
   }, []);
 
+  // The client is held for its REST helpers and terminal WebSocket URLs only.
+  // Chat runs over the canonical event stream and nothing consumes the legacy
+  // main chat WebSocket, so it is never opened here; the terminal mints its
+  // own ws-token on each attach.
   const setGateway = useCallback((gw: GatewayConnection) => {
     const nextKey = `${gw.url}:${gw.token ?? ""}`;
     if (connectionKeyRef.current === nextKey) return;
     connectionKeyRef.current = nextKey;
-    clientRef.current?.disconnect();
     // Hosted computers carry no stored credential: authenticate with the live
-    // Clerk token provider and a fresh WS upgrade token, mirroring the mount
-    // path. Self-hosted gateways keep their session credential.
+    // Clerk token provider, mirroring the mount path. Self-hosted gateways
+    // keep their session credential.
     const newClient = gw.token
       ? new GatewayClient(gw.url, gw.token)
       : new GatewayClient(gw.url, () => getTokenRef.current());
-    newClient.onStateChange(setConnectionState);
-    clientRef.current = newClient;
     setClient(newClient);
     setGatewayState(gw);
-    setConnectionState("connecting");
-    void (async () => {
-      // A failed token fetch must not strand the switch at "connecting":
-      // fall back to connecting with header auth, mirroring the mount path.
-      try {
-        const wsToken = await newClient.getWsToken();
-        if (clientRef.current !== newClient) return;
-        if (wsToken) newClient.setWebSocketToken(wsToken);
-      } catch (err: unknown) {
-        console.warn("[mobile] ws-token unavailable during switch", err instanceof Error ? err.name : typeof err);
-        if (clientRef.current !== newClient) return;
-      }
-      newClient.connect();
-    })();
   }, []);
 
   useEffect(() => {
@@ -297,7 +280,7 @@ function GatewayShell() {
 
     let cancelled = false;
 
-    async function connectSelectedGateway() {
+    async function selectGatewayClient() {
       const selectedGateway = await getSelectedGatewayConnection();
       if (cancelled) return;
 
@@ -307,27 +290,15 @@ function GatewayShell() {
           if (connectionKeyRef.current === nextKey) return;
           connectionKeyRef.current = nextKey;
 
-          clientRef.current?.disconnect();
-          const nextClient = new GatewayClient(selectedGateway.url, selectedGateway.token);
-          clientRef.current = nextClient;
-          setClient(nextClient);
+          setClient(new GatewayClient(selectedGateway.url, selectedGateway.token));
           setGatewayState(selectedGateway);
-          setConnectionState("connecting");
-          nextClient.onStateChange(setConnectionState);
-          const wsToken = await nextClient.getWsToken();
-          if (cancelled || clientRef.current !== nextClient) return;
-          if (wsToken) nextClient.setWebSocketToken(wsToken);
-          nextClient.connect();
           return;
         }
 
         if (connectionKeyRef.current === null) return;
         connectionKeyRef.current = null;
-        clientRef.current?.disconnect();
-        clientRef.current = null;
         setClient(null);
         setGatewayState(null);
-        setConnectionState("disconnected");
         return;
       }
 
@@ -335,11 +306,8 @@ function GatewayShell() {
       if (cancelled) return;
       if (!token) {
         connectionKeyRef.current = null;
-        clientRef.current?.disconnect();
-        clientRef.current = null;
         setClient(null);
         setGatewayState(null);
-        setConnectionState("disconnected");
         console.warn("[mobile] Clerk is signed in but no session token was available for Matrix OS");
         return;
       }
@@ -352,45 +320,22 @@ function GatewayShell() {
       if (connectionKeyRef.current === nextKey) return;
       connectionKeyRef.current = nextKey;
 
-      clientRef.current?.disconnect();
-      const nextClient = selectedGateway.token
+      setClient(selectedGateway.token
         ? new GatewayClient(authenticatedGateway.url, selectedGateway.token)
-        : new GatewayClient(authenticatedGateway.url, () => getTokenRef.current());
-      clientRef.current = nextClient;
-      setClient(nextClient);
+        : new GatewayClient(authenticatedGateway.url, () => getTokenRef.current()));
       setGatewayState(authenticatedGateway);
-      setConnectionState("connecting");
-
-      nextClient.onStateChange(setConnectionState);
-      const wsToken = await nextClient.getWsToken();
-      if (cancelled || clientRef.current !== nextClient) return;
-      if (!wsToken) {
-        console.warn("[mobile] ws-token unavailable, connecting without upgrade token");
-        nextClient.connect();
-        return;
-      }
-      nextClient.setWebSocketToken(wsToken);
-      nextClient.connect();
     }
 
-    connectSelectedGateway();
+    selectGatewayClient();
 
     return () => {
       cancelled = true;
     };
   }, [isLoaded, isSignedIn]);
 
-  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- intentional: read the latest client on unmount; the client is assigned by a later effect, so capturing clientRef.current at mount (null) would skip disconnect.
-  useEffect(() => {
-    return () => {
-      clientRef.current?.disconnect();
-      clientRef.current = null;
-    };
-  }, []);
-
   const contextValue = useMemo<GatewayContextValue>(
-    () => ({ client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread }),
-    [client, connectionState, gateway, setGateway, unreadCount, incrementUnread, clearUnread],
+    () => ({ client, gateway, setGateway, unreadCount, incrementUnread, clearUnread }),
+    [client, gateway, setGateway, unreadCount, incrementUnread, clearUnread],
   );
 
   return (
