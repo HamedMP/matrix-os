@@ -5,6 +5,7 @@ import { createOnboardingHandler } from "../onboarding/ws-handler.js";
 import { createReadinessService } from "../onboarding/readiness-service.js";
 import type { GeminiLiveConnection } from "../onboarding/gemini-live.js";
 import { createVocalHandler } from "../vocal/ws-handler.js";
+import type { NativeProviderProfileGuard } from "../ai-providers/native-provider-profile-guard.js";
 
 export interface VoiceWebSocketRouteOptions {
   app: Hono;
@@ -12,6 +13,7 @@ export interface VoiceWebSocketRouteOptions {
   homePath: string;
   geminiLiveConnection: GeminiLiveConnection;
   readinessService: ReturnType<typeof createReadinessService>;
+  nativeProviderProfileGuard: NativeProviderProfileGuard;
   captureGatewayProductEvent(event: string, properties?: Record<string, string | number | boolean | undefined>): void;
 }
 
@@ -24,6 +26,7 @@ export function registerVoiceWebSocketRoutes(options: VoiceWebSocketRouteOptions
     geminiConnection: geminiLiveConnection,
     geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
     readinessService,
+    nativeProviderProfileGuard: options.nativeProviderProfileGuard,
     ownerId: process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
     onFailure: ({ stage, reasonKind }) => {
       captureGatewayProductEvent("onboarding_failed", { stage, reason_kind: reasonKind });

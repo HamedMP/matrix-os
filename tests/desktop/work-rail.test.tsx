@@ -354,7 +354,7 @@ describe("WorkRail", () => {
     expect(screen.queryByRole("button", { name: "Deleted elsewhere" })).toBeNull();
   });
 
-  it("matches the Settings sidebar title, groups, and item styling", async () => {
+  it("uses the Chat rail typography and contained section headings", async () => {
     setup();
     const rail = screen.getByRole("navigation", { name: "Chat navigation" });
     const newChat = screen.getByRole("button", { name: "New chat" });
@@ -364,19 +364,20 @@ describe("WorkRail", () => {
     expect(rail.className).toContain("gap-0.5");
     expect(rail.className).toContain("overflow-hidden");
     expect(screen.getByTestId("work-rail-scroll").className).toContain("overflow-y-auto");
-    expect(rail.className).toContain("py-2");
+    expect(rail.className).toContain("pt-3");
+    expect(rail.className).toContain("pb-2");
     expect(rail.className).not.toContain("px-2");
-    expect(screen.getByTestId("work-rail-scroll").className).toContain("px-2");
+    expect(screen.getByTestId("work-rail-scroll").className).toContain("pl-2.5");
     expect(rail.getAttribute("style")).toContain("background: var(--bg-surface)");
     expect(newChat.className).toContain("gap-2.5");
     expect(newChat.className).toContain("px-2.5");
-    expect(newChat.className).toContain("py-1.5");
-    expect(newChat.className).toContain("text-sm");
-    expect(newChat.className).toContain("font-medium");
+    expect(newChat.className).toContain("h-8");
+    expect(newChat.className).toContain("text-[14px]");
+    expect(newChat.className).toContain("font-normal");
     expect(newChat.closest('[data-slot="chat-sidebar-new-chat"]')).toBeTruthy();
     expect(screen.getByTestId("work-rail-scroll").contains(search)).toBe(true);
     expect(search.closest('[data-slot="chat-sidebar-section-heading"]')).toBeNull();
-    expect(search.textContent).toBe("Search");
+    expect(search.querySelector("span")?.textContent).toBe("Search");
 
     const pinnedChat = await screen.findByRole("button", { name: "Pinned global" });
     fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
@@ -391,7 +392,7 @@ describe("WorkRail", () => {
       expect(item.className).toContain("px-2.5");
       expect(item.className).toContain("py-1.5");
       expect(item.className).toContain("text-sm");
-      expect(item.className).toContain("font-medium");
+      expect(item.className).toContain("font-normal");
     }
     expect(projectsHeading.className).toContain("text-xs");
     expect(projectsHeading.className).toContain("uppercase");
@@ -407,13 +408,10 @@ describe("WorkRail", () => {
     }
   });
 
-  it("sorts instead of filtering and retains every ordinary Chat without Recent", async () => {
+  it("keeps every ordinary Chat without filter/sort controls", async () => {
     const { client } = setup();
     await screen.findByRole("button", { name: "Recent global" });
-    const sort = screen.getByRole("button", { name: "Sort chats" });
-    expect(sort.parentElement).toBe(screen.getByRole("button", {name:"Search chats"}).parentElement);
-    fireEvent.pointerDown(sort, {button:0, ctrlKey:false, pointerType:"mouse"});
-    fireEvent.click(await screen.findByRole("menuitemradio", {name:"Manual order"}));
+    expect(screen.queryByRole("button", {name:"Sort chats"})).toBeNull();
     expect(screen.queryByRole("button", {name:"Recent"})).toBeNull();
     expect(screen.getByRole("button", {name:"Recent global"}).closest("section")?.querySelector("[aria-label=Done]")).toBeTruthy();
     expect(client.list).toHaveBeenLastCalledWith({limit:100});

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { createDesktopProviderWorkflowClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "./provider-workflow-transport";
+import { createDesktopChatgptPlanClient } from "./local-chatgpt-plan-client";
 import {
   createDesktopProviderSettingsTransport,
   desktopProviderIdentityKey,
@@ -100,6 +101,9 @@ function ConnectedAgentsProvidersAdapter({
     [identityKey],
   );
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
+  const authGeneration = useConnection((state) => state.authGeneration);
+  const localChatgptClient = useMemo(() => createDesktopChatgptPlanClient({ runtimeSlot, authGeneration }, isIdentityCurrent),
+    [runtimeSlot, authGeneration, isIdentityCurrent]);
   const loadUsageHistory = useCallback((cursor: string | null, signal: AbortSignal) => loadDesktopAiCreditHistory({
     api: runtimeApi, runtimeSlot, cursor, signal, isIdentityCurrent,
   }), [runtimeApi, runtimeSlot, isIdentityCurrent]);
@@ -188,6 +192,7 @@ function ConnectedAgentsProvidersAdapter({
       onOpenTerminal={openTerminal}
       onOpenBrowser={openBrowser}
       workflowClient={workflowClient}
+      localChatgptClient={localChatgptClient}
       onOpenAuthorizationUrl={(url) => {
         if (!isIdentityCurrent()) return;
         void openDesktopProviderWorkflowAuthorization(url).then(opened => {

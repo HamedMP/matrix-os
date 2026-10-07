@@ -1,4 +1,4 @@
-import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, sameChatgptPlanSelectionBinding } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -39,8 +39,8 @@ export function orderCanonicalProviderInstancesForDefault(
   return instances
     .map((instance, index) => ({ instance, index }))
     .sort((left, right) => {
-      const managedPiPriority = Number(right.instance.driverKind === "matrix_pi" && right.instance.availability === "available")
-        - Number(left.instance.driverKind === "matrix_pi" && left.instance.availability === "available");
+      const managedPiPriority = Number(right.instance.driverKind === "matrix_pi" && right.instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && right.instance.availability === "available")
+        - Number(left.instance.driverKind === "matrix_pi" && left.instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && left.instance.availability === "available");
       const priority = Number(isManagedGlmInstance(right.instance))
         - Number(isManagedGlmInstance(left.instance));
       return managedPiPriority || priority || left.index - right.index;
@@ -68,6 +68,26 @@ function selectedOptionsFor(
     const value = selected ?? defaultOptionValue(descriptor);
     return value === undefined ? [] : [{ id: descriptor.id, value }];
   });
+}
+
+/** Personal source execution is qualified by the current catalog, never saved labels. */
+export function canonicalChatSubscriptionSelectionMatches(
+  instance: CanonicalProviderInstanceDescriptor | undefined,
+  options?: CanonicalProviderChoice["selectedOptions"],
+): boolean {
+  if (instance?.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return true;
+  return isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })
+    && instance.supports.rootChat
+    && instance.defaultSelection?.instanceId === instance.id
+    && sameChatgptPlanSelectionBinding(options, instance.defaultSelection.options)
+    && instance.options.length === 2
+    && options?.every(option => instance.options.some(descriptor => descriptor.id === option.id
+      && descriptor.kind === "enum" && descriptor.values?.some(value => value.value === option.value))) === true;
+}
+
+/** Personal subscription is an explicit source choice, never an automatic default. */
+export function canonicalProviderChoiceCanBeDefault(choice: { instanceId: string }): boolean {
+  return choice.instanceId !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID;
 }
 
 export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
@@ -108,12 +128,12 @@ export function deriveCanonicalProviderChoices(
     const permissionMode = instance.supports.permissionModes[0];
     if (!interactionMode || !permissionMode) return [];
     const managedExecution = instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default";
-    const harnessLabel = managedExecution ? "Matrix AI" : instance.displayName;
-    return instance.models.flatMap((model) => model.availability === "available" ? [{
+    const harnessLabel = instance.id === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID ? "Codex · ChatGPT subscription" : managedExecution ? "Matrix AI" : isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "ChatGPT subscription" : instance.displayName;
+    return instance.models.flatMap((model) => model.availability === "available" && canonicalChatSubscriptionSelectionMatches(instance, selectedOptionsFor(instance, model.id)) ? [{
       instanceId: instance.id,
       driverKind: instance.driverKind,
       harnessLabel,
-      ...(instance.connectionLabel ? { connectionLabel: instance.connectionLabel } : {}),
+      ...(instance.connectionLabel && instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID ? { connectionLabel: instance.connectionLabel } : {}),
       modelId: model.id,
       modelLabel: model.displayName,
       interactionMode,

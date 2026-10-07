@@ -296,7 +296,7 @@ export function createProviderGenericHarnessCoordinator(options: {
     harness: "hermes" | "openclaw";
   }, snapshot?: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0]["snapshot"]): ConfiguredRuntimeRoute {
     const source = snapshot?.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-    const nativeModel = source?.kind === "harness_profile" && harness.harness === "hermes"
+    const nativeModel = source?.kind === "harness_profile" && (harness.harness === "hermes" || harness.harness === "openclaw")
       ? hermesNativeModelId(harness, source) : undefined;
     if (nativeModel === null) throw new ProviderSettingsStoreError("invalid_route", 400);
     const route = ConfiguredRuntimeRouteSchema.safeParse({

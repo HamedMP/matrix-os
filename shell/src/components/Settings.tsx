@@ -17,6 +17,7 @@ import {
   DownloadIcon,
   CheckCircle2Icon,
   UploadIcon,
+  UsersIcon,
 } from "@/lib/hugeicons";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
@@ -46,10 +47,12 @@ import { DesignCaptionButtons } from "./window/DesignCaptionButtons";
 import { DefaultInstallsStep } from "./onboarding/DefaultInstallsStep";
 import type { DeveloperToolId } from "./onboarding/developer-tools";
 import type { TerminalLaunchAction } from "@/lib/terminal-launch";
+import OrganizationSection from "./settings/sections/OrganizationSection";
 
 
 const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
+  { id: "organization", label: "Organization", icon: UsersIcon },
   { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
   { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
@@ -215,7 +218,7 @@ function SettingsFrame({
     : canonicalLockedSection;
   const standardFrameSections: SettingsSection[] = showBillingSection
     ? visibleSections
-    : visibleSections.filter((section) => section.id !== "billing");
+    : visibleSections.filter((section) => section.id !== "billing" && section.id !== "organization");
   const frameVisibleSections: SettingsSection[] = onboardingMode
     ? standardFrameSections.reduce<SettingsSection[]>((result, section) => {
         result.push(section);
@@ -409,6 +412,7 @@ function SettingsFrame({
 
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
+              {activeSection === "organization" && <OrganizationSection />}
               {activeSection === "agents-providers" && (
                 <AgentSection onOpenTerminal={onOpenProviderTerminalSession} />
               )}

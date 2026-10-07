@@ -6,6 +6,7 @@ export default defineConfig({
     conditions: ["node"],
     alias: {
       "@": path.resolve(__dirname, "shell/src"),
+      "@renderer": path.resolve(__dirname, "desktop/src/renderer/src"),
       "@matrix-os/kernel/security/external-content": path.resolve(__dirname, "packages/kernel/src/security/external-content.ts"),
       "@matrix-os/kernel/security/audit": path.resolve(__dirname, "packages/kernel/src/security/audit.ts"),
       "@matrix-os/kernel/security/ssrf-guard": path.resolve(__dirname, "packages/kernel/src/security/ssrf-guard.ts"),

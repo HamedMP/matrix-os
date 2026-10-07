@@ -52,6 +52,7 @@ function rememberScanOffset(directory: string, offset: number): void {
 }
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
+  "agent.task": "write",
   "artifact.read": "read",
   "artifact.write": "write",
   "integration.inventory": "read",
@@ -193,6 +194,7 @@ export function createBotToolDispatcher(deps: {
   interactions?: Pick<BotInteractionService, "createFromTool">;
   memory?: Pick<BotMemoryService, "propose" | "search">;
   integrations?: Pick<BotIntegrationTools, "inventory" | "call">;
+  nativeTask?: { prepare(binding: PiRuntimeBinding): Promise<void>; execute(binding: PiRuntimeBinding, prompt: string, cwd: string, signal: AbortSignal): Promise<BotToolResult> };
 }): BotToolDispatcher {
   async function workspace(binding: PiRuntimeBinding): Promise<string> {
     try {
@@ -308,12 +310,20 @@ export function createBotToolDispatcher(deps: {
   return {
     effectClass: (request) => request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
+      if (request.capability === 'agent.task') {
+        if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
+        await deps.nativeTask.prepare(binding); return;
+      }
       if (isManagedPiBinding(binding) && !request.capability.startsWith("artifact.")) {
         if (!deps.managedTools) throw new BotBrokerActionError("not_granted");
         await deps.managedTools.prepare(binding, request, signal);
       }
     },
     async dispatch(binding, request, signal) {
+      if (request.capability === 'agent.task') {
+        if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
+        return { result: await deps.nativeTask.execute(binding, request.args.prompt, await workspace(binding), signal) };
+      }
       if (request.capability === "artifact.write") {
         // Paths may hold characters the checkpoint reference does not allow; the digest names the file.
         const outcomeRef = `artifact:${createHash("sha256").update(request.args.relPath).digest("hex").slice(0, 32)}`;

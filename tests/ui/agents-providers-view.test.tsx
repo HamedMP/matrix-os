@@ -850,7 +850,7 @@ describe("AgentsProvidersView", () => {
     expect(within(personal).getByRole("progressbar", { name: "Personal remaining allowance" })).toHaveAttribute("value", "7500");
     expect(within(work).getByText("$0.13 observed")).toBeVisible();
     fireEvent.click(within(personal).getByRole("button", { name: "Log out Personal" }));
-    expect(within(work).getByRole("button", { name: "Log in Work" })).toBeDisabled();
+    expect(within(work).queryByRole("button", { name: "Log in Work" })).toBeNull();
     await waitFor(() => expect(within(work).getByRole("button", { name: "Remove Work" })).toBeEnabled());
     fireEvent.click(within(work).getByRole("button", { name: "Remove Work" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
@@ -901,7 +901,7 @@ describe("AgentsProvidersView", () => {
     expect(choices).not.toContain("Work Anthropic key");
   });
 
-  it("opens only opaque terminal session ids and owner-gateway authorization paths", () => {
+  it("does not continue unsupported generic subscription login attempts", () => {
     const terminalAttempt: ProviderConnectionAttempt = {
       id: "attempt_terminal",
       harnessInstanceId: "harness_hermes",
@@ -915,7 +915,7 @@ describe("AgentsProvidersView", () => {
     const onOpenTerminal = vi.fn();
     const onOpenBrowser = vi.fn();
     const { rerender } = setup({ connectionAttempt: terminalAttempt, onOpenTerminal, onOpenBrowser });
-    expect(screen.getByRole("button", { name: "Continue in Terminal" })).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continue in Terminal" })).toBeNull();
     expect(onOpenTerminal).not.toHaveBeenCalled();
 
     const browserAttempt: ProviderConnectionAttempt = {
@@ -925,7 +925,7 @@ describe("AgentsProvidersView", () => {
       action: { kind: "open_browser", authorizationPath: "/api/ai/providers/login-attempts/attempt_browser/authorize" },
     };
     rerender(<AgentsProvidersView {...setupProps(snapshot(), { connectionAttempt: browserAttempt, onOpenTerminal, onOpenBrowser })} />);
-    expect(screen.getByRole("button", { name: "Continue in browser" })).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continue in browser" })).toBeNull();
     expect(onOpenBrowser).not.toHaveBeenCalled();
   });
 

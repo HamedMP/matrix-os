@@ -122,9 +122,9 @@ it("does not describe an unselected creation placeholder as an unavailable saved
   const props = { recipe, models, catalog: ready, error: "", pending: false, onSelectionChange: vi.fn(), onCreate: vi.fn(), onClose: vi.fn() };
   const view = render(<BotRecipeSetup {...props} selection={null}/>);
   expect(screen.getByRole("option", { name: "Choose a bot model" })).toBeTruthy();
-  expect(screen.queryByText("This saved Matrix AI model is unavailable. Choose another model or check Agents & providers.")).toBeNull();
+  expect(screen.queryByText("This saved bot model is unavailable. Choose another model or check Agents & providers.")).toBeNull();
   view.rerender(<BotRecipeSetup {...props} selection={{ ...selection, model: "removed-model" }}/>);
-  expect(screen.getByText("This saved Matrix AI model is unavailable. Choose another model or check Agents & providers.")).toBeTruthy();
+  expect(screen.getByText("This saved bot model is unavailable. Choose another model or check Agents & providers.")).toBeTruthy();
 });
 
 it.each([

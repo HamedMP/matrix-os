@@ -181,7 +181,7 @@ describe("authenticated drawer layout", () => {
     expect(screen.queryByLabelText("Switch computer")).toBeNull();
     expect(screen.getByLabelText("Files")).toBeTruthy();
     expect(screen.getByLabelText("Terminal")).toBeTruthy();
-    expect(screen.getByLabelText("Integrations")).toBeTruthy();
+    expect(screen.getByLabelText("Connect Apps")).toBeTruthy();
     expect(screen.getByLabelText("Apps")).toBeTruthy();
     expect(screen.getByLabelText("Shared with me, 3 pending invitations")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();

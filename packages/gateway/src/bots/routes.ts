@@ -5,6 +5,8 @@
  * with allowlisted codes and generic messages, and responses are private.
  */
 import { BotChatBindingResponseSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, type BotTaskSummary } from "@matrix-os/contracts";
+import { z } from "zod/v4";
+import { BotEntryError } from "./custom-direct-chat.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -17,6 +19,10 @@ import { BotGrantError, type BotGrantService } from "./grants-service.js";
 import { BotAuthorityError, type BotAuthority } from "./authority.js";
 import type { BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotChatLookup } from "../chat/agent-context.js";
+import { createBotProviderConnectionRoutes } from './provider-connection-routes.js';
+import { createChatGptPlanPeerRoutes } from './chatgpt-plan-peer-routes.js';
+import type { ChatGptPlanPeers } from './chatgpt-plan-peers.js';
+import type { BotProviderConnectionsService } from './provider-connections.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -44,11 +50,15 @@ export function createBotRoutes(options: {
   memory?: Pick<BotMemoryService, "forget" | "confirm">;
   grants?: Pick<BotGrantService, "revoke">;
   authority?: Pick<BotAuthority, "view">;
+  providerConnections?: BotProviderConnectionsService;
+  chatgptPlanPeers?: ChatGptPlanPeers;
   /** Admits the owner's answer as the next message; resolved at route registration. */
   admitContinuation?: BotContinuationAdmitter;
   getPrincipal(context: Context): RequestPrincipal;
 }): Hono {
   const routes = new Hono();
+  routes.route('/', createChatGptPlanPeerRoutes({ peers: options.chatgptPlanPeers, getPrincipal: options.getPrincipal }));
+  routes.route('/', createBotProviderConnectionRoutes({ service: options.providerConnections, getPrincipal: options.getPrincipal }));
   const limit = bodyLimit({
     maxSize: MAX_BODY_BYTES,
     onError: (context) => {
@@ -64,7 +74,7 @@ export function createBotRoutes(options: {
       return context.json(mapped.body, mapped.status);
     }
     if (error instanceof SyntaxError) return errorResponse(context, "invalid_request");
-    if (error instanceof BotInstantiationError || error instanceof BotInteractionError || error instanceof BotMemoryError
+    if (error instanceof BotEntryError || error instanceof BotInstantiationError || error instanceof BotInteractionError || error instanceof BotMemoryError
       || error instanceof BotGrantError || error instanceof BotAuthorityError) {
       return errorResponse(context, error.code);
     }
@@ -95,6 +105,17 @@ export function createBotRoutes(options: {
     const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
     if (!agentId.success) return errorResponse(context, "invalid_request");
     const chatId = await options.botChats.directChat({ type: "personal", ownerId: principal.userId }, agentId.data);
+    context.header("Cache-Control", "private, no-store");
+    return context.json(BotChatBindingResponseSchema.parse({ chatId }));
+  });
+
+  routes.post("/api/chat-agents/:agentId/direct-chat", limit, async context => {
+    const principal = options.getPrincipal(context);
+    if (!options.botChats?.ensureDirectChat) return errorResponse(context, "unavailable");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    const body = z.object({}).strict().safeParse(await context.req.json());
+    if (!agentId.success || !body.success) return errorResponse(context, "invalid_request");
+    const chatId = await options.botChats.ensureDirectChat({ type: "personal", ownerId: principal.userId }, agentId.data);
     context.header("Cache-Control", "private, no-store");
     return context.json(BotChatBindingResponseSchema.parse({ chatId }));
   });
