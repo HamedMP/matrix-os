@@ -317,7 +317,7 @@ export default function ChatScreen() {
                 iconColor={theme.v2.appColors.ink}
               />
               <View style={styles.composerControlsRight}>
-                <View onTouchStart={handlePickerTouchStart}>
+                <View style={styles.composerPickers} onTouchStart={handlePickerTouchStart}>
                   {!directBot ? <ModelPicker
                     catalog={catalog}
                     catalogLoading={providerCatalogLoading}
@@ -604,9 +604,15 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
   },
+  // Both shrink so wide pickers wrap inside the row and the send button, which
+  // keeps its size, always stays in view.
   composerControlsRight: {
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  composerPickers: {
+    flexShrink: 1,
   },
 }));
