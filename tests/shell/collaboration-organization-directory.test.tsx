@@ -128,8 +128,8 @@ describe("organization directory reads through the direct API", () => {
     expect(within(audience).getAllByRole("option")).toHaveLength(others.length + 1);
 
     expect(organizationRequests.map((request) => new URL(request.url).pathname + new URL(request.url).search)).toEqual([
-      `/api/organizations/${organizationId}/members?include=profile`,
-      expect.stringMatching(new RegExp(`^/api/organizations/${organizationId}/members\\?include=profile&cursor=[A-Za-z0-9_-]+$`)),
+      `/api/organizations/${organizationId}/members`,
+      expect.stringMatching(new RegExp(`^/api/organizations/${organizationId}/members\\?cursor=[A-Za-z0-9_-]+$`)),
     ]);
     expect(organizationRequests.every((request) => request.credentials === "same-origin")).toBe(true);
   });

@@ -151,17 +151,10 @@ function organizationManagementUrl(baseUrl: URL, path: string, method: "GET" | "
   if (method !== "GET" || !organizationId || !CollaborationOrganizationIdSchema.safeParse(organizationId).success) return null;
   const url = new URL(`/api/organizations/${organizationId}/members`, baseUrl);
   const keys = [...requested.searchParams.keys()];
-  if (keys.some((key) => key !== "include" && key !== "cursor") || new Set(keys).size !== keys.length) return null;
-  if (requested.searchParams.has("include")) {
-    // Member names and emails for Share: the only optional section the platform offers.
-    if (requested.searchParams.get("include") !== "profile") return null;
-    url.searchParams.set("include", "profile");
-  }
-  if (requested.searchParams.has("cursor")) {
-    const cursor = CollaborationOrganizationMembersCursorSchema.safeParse(requested.searchParams.get("cursor"));
-    if (!cursor.success) return null;
-    url.searchParams.set("cursor", cursor.data);
-  }
+  if (keys.length === 0) return url;
+  const cursor = CollaborationOrganizationMembersCursorSchema.safeParse(requested.searchParams.get("cursor"));
+  if (keys.length !== 1 || keys[0] !== "cursor" || !cursor.success) return null;
+  url.searchParams.set("cursor", cursor.data);
   return url;
 }
 

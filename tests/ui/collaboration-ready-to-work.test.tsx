@@ -135,7 +135,7 @@ describe("organization ready-to-work presentation", () => {
   it("creates only Viewer or Contributor grants for a current organization member or the organization", async () => {
     let revision = "4";
     const api = {
-      baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members?include=profile")
+      baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members")
         ? { members: [{ actorId: "user_ada", displayName: "Ada", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" }] }
         : path.endsWith("/grants") ? [] : { ...scope, revision }),
       post: vi.fn(async (_path: string, body: { audience: unknown; preset: string }) => {

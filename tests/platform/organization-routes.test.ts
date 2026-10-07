@@ -286,15 +286,13 @@ describe("platform organization routes (T018)", () => {
     });
     expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_2", unnamed, clock), body: unnamed })).status).toBe(200);
 
-    const page = await (await app.request(`/api/organizations/${org}/members?include=profile`)).json() as { members: Array<Record<string, unknown>> };
+    const page = await (await app.request(`/api/organizations/${org}/members`)).json() as { members: Array<Record<string, unknown>> };
     expect(page.members).toEqual([
       { actorId: admin, displayName: "Alex Admin", emailAddress: "alex@example.com", role: "org:admin", joinedAt: new Date(5_000).toISOString() },
       { actorId: member, role: "org:member", joinedAt: new Date(5_000).toISOString(),
         displayName: "Ada Lovelace", emailAddress: "ada@example.com" },
     ]);
-    // The current management contract always includes a safe display label.
-    const plain = await (await app.request(`/api/organizations/${org}/members`)).json() as { members: Array<Record<string, unknown>> };
-    expect(plain.members).toEqual(page.members);
+    // The current management contract always includes a safe display label and rejects unknown query sections.
     expect((await app.request(`/api/organizations/${org}/members?include=everything`)).status).toBe(422);
 
     // A later name change with the same membership timestamp updates the name, never the membership epoch.

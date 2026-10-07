@@ -8,8 +8,6 @@ import { useEffect, useState } from "react";
 import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { memberLabel } from "./member-label.js";
-
-const MEMBERS_QUERY = "include=profile";
 const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
@@ -45,7 +43,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = tr
     if (!orgId) { setLoading(false); setError(true); return; }
     let active = true;
     const membersRequest = allowNewGrants
-      ? api.get(`/api/organizations/${encodeURIComponent(orgId)}/members?${MEMBERS_QUERY}`)
+      ? api.get(`/api/organizations/${encodeURIComponent(orgId)}/members`)
       : Promise.resolve(null);
     void Promise.all([
       membersRequest,
@@ -73,7 +71,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = tr
     if (!orgId || !cursor || pending) return;
     setPending(true);
     try {
-      const page = OrganizationManagementMembersPageSchema.parse(await api.get(`/api/organizations/${encodeURIComponent(orgId)}/members?${MEMBERS_QUERY}&cursor=${encodeURIComponent(cursor)}`));
+      const page = OrganizationManagementMembersPageSchema.parse(await api.get(`/api/organizations/${encodeURIComponent(orgId)}/members?cursor=${encodeURIComponent(cursor)}`));
       setMembers((current) => {
         const byActor = new Map(current.map((member) => [member.actorId, member]));
         for (const member of page.members) if (member.actorId !== scope.ownerId) byActor.set(member.actorId, member);
