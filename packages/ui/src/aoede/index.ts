@@ -1,4 +1,4 @@
-export { AoedeProvider, AoedeAssistant, useAoede, type AoedeProviderProps } from "./AoedeProvider.js";
+export { AoedeProvider, AoedeAssistant, useAoede, useOptionalAoedeController, type AoedeProviderProps } from "./AoedeProvider.js";
 export { createAoedeController, type AoedeController, type AoedeControllerApi, type AoedeOwnerOptions, type AoedeSelectionApi, type AoedeSnapshot } from "./controller.js";
 export { createAoedeApi, AoedeRequestError, type AoedeApi } from "./client.js";
 export { projectAoedeCanonical, safeAoedeArtifactPath, type AoedeCanonicalProjection } from "./projection.js";

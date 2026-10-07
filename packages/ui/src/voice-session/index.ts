@@ -10,6 +10,7 @@ export {
   createVoiceSessionApi,
   VoiceSessionApiError,
   voiceErrorForCode,
+  boundedJson,
   type VoiceSessionApi,
   type CreateVoiceSessionRequest,
   type CreateVoiceSessionResponse,

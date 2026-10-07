@@ -1,0 +1,36 @@
+/* Shared compact Chat widget, approved Figma 1177:1239 and 1176:1715. */
+.matrix-aoede-live { position: fixed; inset: 0; pointer-events: none; color: var(--live-ink); font-family: var(--live-sans); }
+.matrix-aoede-live__halo { position: absolute; inset: 0; border: 2px solid color-mix(in srgb, var(--live-gold) 65%, transparent); box-shadow: inset 0 0 42px color-mix(in srgb, var(--live-coral) 32%, transparent), inset 0 0 100px color-mix(in srgb, var(--live-blue) 12%, transparent); transition: opacity 180ms ease; }
+.matrix-aoede-live[data-state="paused"] .matrix-aoede-live__halo { opacity: .3; }
+.matrix-aoede-live__conversation { position: absolute; right: 24px; bottom: max(92px, env(safe-area-inset-bottom)); width: min(390px, calc(100vw - 32px)); max-height: calc(100dvh - 150px); display: flex; flex-direction: column; pointer-events: auto; background: var(--live-widget); border: 1px solid var(--live-border); border-radius: 16px; box-shadow: 0 16px 40px -8px rgb(0 0 0 / .22); overflow: hidden; outline: none; }
+.matrix-aoede-live__header { display: flex; gap: 10px; align-items: center; min-height: 55px; padding: 12px 14px; border-bottom: 1px solid var(--live-border); }
+.matrix-aoede-live__header strong { flex: 1; font-size: 14px; font-weight: 500; }
+.matrix-aoede-live__avatar { display: grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%; background: var(--live-ink); }
+.matrix-aoede-live__avatar img { width: 16px; height: 20px; }
+.matrix-aoede-live button { cursor: pointer; color: inherit; background: transparent; border: 1px solid var(--live-border); border-radius: 10px; font: 500 14px/20px var(--live-sans); padding: 6px 10px; }
+.matrix-aoede-live button:focus-visible, .matrix-aoede-live input:focus-visible { outline: 2px solid var(--live-forest); outline-offset: 2px; }
+.matrix-aoede-live button:disabled { opacity: .45; cursor: default; }
+.matrix-aoede-live__header button { display: grid; place-items: center; border: 0; padding: 4px; min-height: 24px; min-width: 24px; }
+.matrix-aoede-live__header button img { width: 14px; height: 14px; }
+.matrix-aoede-live__body { min-height: 150px; overflow-y: auto; padding: 16px; }
+.matrix-aoede-live__meta { font-weight: 500; display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--live-muted); }
+.matrix-aoede-live__captions { font-family: var(--live-sans); font-weight: 400; color: var(--live-text); font-size: 14px; line-height: 1.45; max-height: 14rem; overflow-y: auto; }
+.matrix-aoede-live__captions p, .matrix-aoede-live__response { overflow-wrap: anywhere; margin: 14px 0; }
+.matrix-aoede-live__captions span { font-weight: 500; display: block; font-size: 12px; color: var(--live-muted); margin-bottom: 4px; }
+.matrix-aoede-live__error { font-size: 13px; line-height: 1.5; color: var(--live-muted); }
+.matrix-aoede-live__readiness { font-size: 12px; color: var(--live-muted); }
+.matrix-aoede-live__controls, .matrix-aoede-live__options { display: flex; flex-wrap: wrap; gap: 6px; }
+.matrix-aoede-live__options { margin-top: 10px; }
+.matrix-aoede-live [hidden] { display: none; }
+.matrix-aoede-live__context { max-height: 18rem; overflow-y: auto; padding-top: 12px; font-size: 13px; }
+.matrix-aoede-live__composer { background: var(--live-composer); display: flex; align-items: center; gap: 8px; margin: 0 12px; padding: 8px 8px 8px 12px; border: 1px solid var(--live-border); border-radius: 12px; }
+.matrix-aoede-live__composer input { flex: 1; min-width: 0; border: 0; background: transparent; font: 14px var(--live-sans); color: inherit; }
+.matrix-aoede-live__composer input::placeholder { color: var(--live-placeholder); }
+.matrix-aoede-live__composer button { border: 0; padding: 4px; display: grid; place-items: center; }
+.matrix-aoede-live__composer button img { width: 16px; height: 16px; }
+.matrix-aoede-live__composer .matrix-aoede-live__send { border-radius: 50%; width: 28px; height: 28px; background: var(--live-ink); color: white; }
+.matrix-aoede-live__send img { filter: brightness(0) invert(1); }
+.matrix-aoede-live__privacy { font-weight: 500; margin: 8px 16px 12px; font-size: 12px; color: var(--live-muted); }
+@media (max-width: 640px) { .matrix-aoede-live__conversation { right: 16px; bottom: max(80px, env(safe-area-inset-bottom)); } }
+@media (prefers-reduced-motion: reduce) { .matrix-aoede-live__halo { transition: none; } }
+@media (forced-colors: active) { .matrix-aoede-live__conversation { background: Canvas; color: CanvasText; border-color: CanvasText; } .matrix-aoede-live button { border-color: ButtonText; } .matrix-aoede-live__halo { box-shadow: none; border-color: Highlight; } }

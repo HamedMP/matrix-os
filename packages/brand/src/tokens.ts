@@ -21,7 +21,7 @@ export const palette = {
 export const bootGradientColors = ["#647141", "#BED77B", "#F1C377", "#EAB6A7", "#C6D8E3", "#6D777D", "#647141"] as const;
 
 export const fonts = {
-  display: "var(--font-serif-display), 'Instrument Serif', Georgia, serif",
+  display: "var(--font-serif-display, 'Instrument Serif'), Georgia, serif",
   sans: "var(--font-instrument), 'Instrument Sans', system-ui, sans-serif",
   heading: "var(--font-bricolage), 'Bricolage Grotesque', sans-serif",
   ui: "var(--font-geist-sans), Geist, system-ui, sans-serif",
@@ -49,6 +49,21 @@ export const desktopFonts = {
   display: '"Bricolage Grotesque", Geist, ui-sans-serif, system-ui, sans-serif',
   sans: 'Geist, ui-sans-serif, system-ui, sans-serif',
   mono: '"Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace',
+} as const;
+
+/** Desktop-app Figma 1176:1715; shared compact conversation widget. */
+export const chatWidget = {
+  fontFamily: "var(--font-geist-sans, Geist), system-ui, sans-serif",
+  colors: {
+    surface: "#FFFEFC",
+    border: "#ECEAE8",
+    ink: "#0D0C0C",
+    text: "#242323",
+    muted: "#6E6969",
+    placeholder: "#999494",
+    composer: "#FFFFFF",
+    secondary: "#F3F2F0",
+  },
 } as const;
 
 /** Compact onboarding checklist tokens shared by landing-adjacent shells. */

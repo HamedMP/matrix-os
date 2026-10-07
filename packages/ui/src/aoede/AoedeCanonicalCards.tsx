@@ -120,6 +120,15 @@ export function AoedeCanonicalCards({ projection, controller }: AoedeCanonicalCa
       state: activity.state === "completed" ? "Done" : friendlyToolLabel(activity.state),
     }));
   return <>
+    {projection.tasks?.length ? <section aria-label="Chat tasks"><h3>Tasks</h3>{projection.tasks.map(task => <div key={task.chatId}>
+      <p>{boundedAoedeText(task.label, 160)}{task.state ? ` · ${task.state.replaceAll("_", " ")}` : ""}</p>
+      <button type="button" onClick={() => controller.openLinkedChat(task.chatId)}>Open task in Chat</button>
+      {task.state === "waiting_for_approval" ? <p>Review the exact action in Chat before approving.</p> : null}
+    </div>)}</section> : null}
+    {projection.sources?.length ? <section aria-label="Previous chat sources"><h3>Sources</h3>{projection.sources.map(source => <div key={source.chatId}>
+      <button type="button" onClick={() => controller.openLinkedChat(source.chatId)}>{boundedAoedeText(source.title, 160)}</button>
+      <p>{boundedAoedeText(source.snippet, 1600)}</p>
+    </div>)}</section> : null}
     {projection.approvals.map(view => <ApprovalCard key={`${view.runId}:${view.approvalId}:${view.argumentDigest}`} view={view} controller={controller} />)}
     {projection.inputs.map(request => <CanonicalChatInputForm key={`${request.runId}:${request.requestId}:${request.id}`} request={request} onSubmit={answer => controller.submitInput(request, answer)} />)}
     {technicalTools.length ? <ToolDisclosure tools={technicalTools} /> : null}

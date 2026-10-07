@@ -27,13 +27,13 @@ it("shared provider works with Chat absent through StrictMode and presentation s
   const { rerender } = render(view("account/runtime", "web_canvas")); fireEvent.click(screen.getByRole("button", { name: "Launch Aoede" }));
   await waitFor(() => expect(screen.getByText("Voice ready")).toBeTruthy()); expect(voice.startVoice).not.toHaveBeenCalled();
   rerender(view("account/runtime", "web_desktop"));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Start" })).toBeTruthy());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Start talking" })).toBeTruthy());
   const bootstraps = vi.mocked(fetcher).mock.calls.filter(([url]) => String(url).includes("bootstrap"));
   expect(bootstraps).toHaveLength(2);
   const requests = bootstraps.map(([, init]) => JSON.parse(String(init?.body)) as { surface: string });
   expect(requests.map(request => request.surface)).toEqual(["web_canvas", "web_desktop"]);
   expect(voice.end).not.toHaveBeenCalled();
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start talking" })); });
   expect(voice.startVoice).toHaveBeenCalledExactlyOnceWith("chat_owner");
   expect(screen.queryByText("Permission")).toBeNull();
   rerender(view("other-account/runtime", "web_desktop")); expect(screen.queryByText("Voice ready")).toBeNull(); await act(async () => {}); expect(voice.end).toHaveBeenCalled();
@@ -42,7 +42,7 @@ it("focus entry point refocuses the same visible assistant and dismissal returns
   render(<AoedeProvider identityKey="focus/runtime" baseUrl="https://runtime.test" fetcher={fakeFetcher()} surface="web_canvas"><Launcher /></AoedeProvider>);
   fireEvent.click(screen.getByRole("button", { name: "Launch Aoede" })); await waitFor(() => expect(screen.getByText("Voice ready")).toBeTruthy());
   const focus = screen.getByRole("button", { name: "Focus Aoede" }); focus.focus(); fireEvent.click(focus);
-  await waitFor(() => expect(document.activeElement?.contains(screen.getByRole("heading", { name: "Aoede" }))).toBe(true));
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("dialog", { name: "Aoede live conversation" })));
   fireEvent.click(screen.getByRole("button", { name: "Dismiss Aoede" })); await waitFor(() => expect(document.activeElement).toBe(focus)); expect(voice.startVoice).not.toHaveBeenCalled();
 });
 it("renders canonical approval preview and exact bound view without raw arguments", async () => {

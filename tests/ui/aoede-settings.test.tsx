@@ -46,6 +46,16 @@ function makeSnapshot(overrides: Partial<AoedeSnapshot> = {}): AoedeSnapshot {
 }
 
 describe("Aoede settings", () => {
+  it("explains platform-paid native voice and selects a task agent without an existing task account", async () => {
+    const controller = makeController(); const snapshot = makeSnapshot();
+    snapshot.binding = { ...snapshot.binding!, selection: undefined,
+      capability: { ...capability, conversationMode: "native_live" } };
+    render(<AoedeSettings controller={controller} snapshot={snapshot} />);
+    expect(screen.getByText(/Voice is paid by Matrix and works without an AI subscription/)).toBeInTheDocument();
+    const agent = await screen.findByLabelText("Task agent");
+    fireEvent.change(agent, { target: { value: "codex_fixture" } });
+    await waitFor(() => expect(controller.setSelection).toHaveBeenCalledWith({ instanceId: "codex_fixture", model: "gpt-5.6-sol" }));
+  });
   it("shows the spoken language and routes Automatic through the controller", async () => {
     const controller = makeController();
     render(<AoedeSettings controller={controller} snapshot={makeSnapshot({ preferredLanguage: "ur" })} />);

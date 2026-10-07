@@ -359,6 +359,9 @@ importers:
       '@finnaai/matrix':
         specifier: workspace:*
         version: link:../packages/sync-client
+      '@fontsource-variable/geist':
+        specifier: 5.3.0
+        version: 5.3.0
       '@fontsource/instrument-sans':
         specifier: ^5.2.5
         version: 5.2.8
@@ -1066,6 +1069,15 @@ importers:
 
   packages/ui:
     dependencies:
+      '@hugeicons/core-free-icons':
+        specifier: ^4.3.0
+        version: 4.3.0
+      '@hugeicons/react':
+        specifier: ^1.1.9
+        version: 1.1.9(react@19.2.6)
+      '@matrix-os/brand':
+        specifier: workspace:*
+        version: link:../brand
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../contracts

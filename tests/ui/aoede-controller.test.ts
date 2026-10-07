@@ -26,6 +26,19 @@ function harness(bootstrap = vi.fn(async () => binding), initialDetail = detail,
 const catalog = createCanonicalProviderCatalogFixture();
 const devices = [{ deviceId: "mic_usb", kind: "audioinput" as const, label: "USB Mic" }, { deviceId: "spk_hdmi", kind: "audiooutput" as const, label: "HDMI" }];
 const operationView = { id: "action_timer", chatId: "chat_aoede", runId: "run_op", toolId: "tool_timer", schemaRevision: "s1", policyRevision: "p1", state: "authorized" as const, argumentDigest: "a".repeat(64), cancellationRequested: false, createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z" };
+it("starts native media without a task account and leaves typed task admission disabled", async () => {
+  const nativeBinding = { ...binding, selection: undefined, capability: { ...binding.capability,
+    conversationMode: "native_live" as const, turnModes: ["hands_free" as const], actionMode: "conversation_only" as const, actionCancellation: "none" as const } };
+  const h = harness(vi.fn(async () => nativeBinding));
+  Object.assign(h.api, { createTurn: vi.fn() });
+  await h.controller.open();
+  expect(h.controller.getSnapshot().status).toBe("idle");
+  expect(h.controller.canSendText()).toBe(false);
+  await h.controller.start();
+  expect(h.media.startVoice).toHaveBeenCalledWith(binding.chatId);
+  expect(h.factory.mock.calls[0]?.[0].request.selection).toBeUndefined();
+  h.controller.dispose();
+});
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function runningDetail(): CanonicalChatDetailResponse {
   const fixture = createCanonicalChatFixture("running").snapshot;
@@ -664,4 +677,29 @@ describe("Aoede shell owner", () => {
       h.controller.dispose();
     } finally { vi.unstubAllGlobals(); }
   });
+});
+
+it('uses the same bound canonical Chat for typed messages while voice is unavailable', async () => {
+  const selected = catalog.instances[0]!.defaultSelection!;
+  const h = harness(vi.fn(async () => ({ ...binding, selection: selected, capability: { ...binding.capability, status: 'unavailable' as const, reason: 'not_configured' as const, turnModes: [], transportModes: [] } })));
+  const createTurn = vi.fn(async () => undefined); h.api.createTurn = createTurn;
+  await h.controller.open(); expect(h.controller.canSendText()).toBe(true);
+  expect(await h.controller.sendText('Build a timer')).toBe(true);
+  expect(createTurn).toHaveBeenCalledWith(binding.chatId, expect.objectContaining({ selection: selected, permissionMode: 'supervised', parts: [{ type: 'text', text: 'Build a timer' }] }));
+  expect(h.media.startVoice).not.toHaveBeenCalled(); h.controller.dispose();
+});
+
+it.each([false, true])('releases native media before typed admission (end fails=%s)', async endFails => {
+  const selected = catalog.instances[0]!.defaultSelection!;
+  const h = harness(vi.fn(async () => ({ ...binding, selection: selected,
+    capability: { ...binding.capability, conversationMode: 'native_live' as const } })));
+  const order: string[] = [];
+  const createTurn = vi.fn(async () => { order.push('typed'); }); h.api.createTurn = createTurn;
+  await h.controller.open();
+  vi.mocked(h.media.getSnapshot).mockReturnValue({ ...h.media.getSnapshot(), phase: 'listening' } as never);
+  vi.mocked(h.media.end).mockImplementation(async () => { order.push('end'); if (endFails) throw new Error('cleanup failed'); });
+  expect(await h.controller.sendText('Test connection')).toBe(!endFails);
+  expect(order).toEqual(endFails ? ['end'] : ['end', 'typed']);
+  if (!endFails) expect(createTurn).toHaveBeenCalledWith(binding.chatId, expect.objectContaining({ permissionMode: 'supervised' }));
+  h.controller.dispose();
 });

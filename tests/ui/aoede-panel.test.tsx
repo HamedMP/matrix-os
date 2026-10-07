@@ -26,6 +26,7 @@ const labels = {
   paused: "Paused", reconnecting: "Reconnecting", ending: "Ending", failed: "Failed", ended: "Ended",
 } as const;
 
+function setupCommands() { return { start: vi.fn(), dismiss: vi.fn(), end: vi.fn(), pause: vi.fn(), resume: vi.fn(), stopSpeaking: vi.fn(), pushToTalkStart: vi.fn(), pushToTalkStop: vi.fn(), retry: vi.fn(), newConversation: vi.fn(), viewHistory: vi.fn() }; }
 function setup(overrides: Partial<AoedePanelProps> = {}) {
   const commands = {
     start: vi.fn(), dismiss: vi.fn(), end: vi.fn(), pause: vi.fn(), resume: vi.fn(),
@@ -40,6 +41,66 @@ function setup(overrides: Partial<AoedePanelProps> = {}) {
 }
 
 describe("AoedePanel standalone presentation", () => {
+  it("does not show an active voice session during bootstrap", () => {
+    setup({ presentation: "halo", capability: undefined, status: "connecting", canOpenConversation: false });
+    expect(screen.getByText("Connecting to your workspace…")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Mute" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand conversation" })).toBeDisabled();
+    expect(document.querySelector(".matrix-aoede-live__halo")).toBeNull();
+  });
+  it.each([undefined, { ...capability, status: "unavailable" as const }])("retains the compact halo presentation when readiness is missing or unavailable", readiness => {
+    setup({ presentation: "halo", surface: "electron_desktop", capability: readiness, status: "failed",
+      error: { code: "provider_unavailable", retryable: true, recovery: "retry_connection" } });
+    expect(screen.getByRole("dialog", { name: "Aoede live conversation" })).toBeVisible();
+    expect(screen.queryByTestId("aoede-orb")).not.toBeInTheDocument();
+    expect(screen.queryByText("I'm here. Take your time.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start talking" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(Number(screen.getByRole("dialog", { name: "Aoede live conversation" }).parentElement!.style.zIndex)).toBe(49);
+  });
+  it("keeps a typed draft on failure and expands into the same canonical conversation", async () => {
+    const sendText = vi.fn(async () => false);
+    const view = setup({ presentation: "halo", canSendText: true, commands: { ...setupCommands(), sendText } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Message Matrix" }), { target: { value: "Research the weather" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await vi.waitFor(() => expect(sendText).toHaveBeenCalledWith("Research the weather"));
+    expect(screen.getByRole("textbox", { name: "Message Matrix" })).toHaveValue("Research the weather");
+    fireEvent.click(screen.getByRole("button", { name: "Expand conversation" }));
+    expect(view.props.commands.viewHistory).toHaveBeenCalledOnce();
+  });
+  it.each([['web_canvas', 680], ['web_desktop', 680], ['electron_desktop', 49]] as const)("keeps %s native conversation below protected shell controls", (surface, expected) => {
+    setup({ capability: { ...capability, surface, conversationMode: "native_live" }, status: "listening" });
+    const layer = screen.getByRole("dialog", { name: "Aoede live conversation" }).parentElement!;
+    expect(Number(layer.style.zIndex)).toBe(expected);
+    expect(Number(layer.style.zIndex)).toBeLessThan(surface === 'electron_desktop' ? 50 : 700);
+  });
+
+  it("shows live caption lanes and explicit voice controls while keeping context observers mounted", () => {
+    const mounted = vi.fn();
+    function Context() { React.useEffect(() => { mounted(); }, []); return <p>Canonical task context</p>; }
+    const { commands } = setup({ capability: { ...capability, conversationMode: "native_live" }, status: "speaking", microphoneActive: true,
+      captions: { utterance: "Please build a tracker", response: "I've accepted the task." }, children: <Context /> });
+    expect(screen.getByText("Please build a tracker")).toBeVisible();
+    expect(screen.getByText("I've accepted the task.")).toBeVisible();
+    expect(mounted).toHaveBeenCalledOnce();
+    expect(screen.getByText("Canonical task context")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Mute" })); expect(commands.pause).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "End voice" })); expect(commands.end).toHaveBeenCalledOnce();
+    expect(commands.cancelGeneration).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "More options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Context & tasks" }));
+    expect(screen.getByText("Canonical task context")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
+    expect(commands.newConversation).toHaveBeenCalledOnce();
+  });
+  it("keeps push-to-talk release semantics in the halo presentation", () => {
+    const view = setup({ presentation: "halo", status: "listening", turnMode: "push_to_talk" });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Push to talk" }), { key: " " });
+    expect(view.commands.pushToTalkStart).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss Aoede" }));
+    expect(view.commands.pushToTalkStop).toHaveBeenCalledOnce();
+    expect(view.commands.dismiss).toHaveBeenCalledOnce();
+  });
   it("shows terminal readiness failure rather than an ongoing check after timeout", () => {
     setup({ status: "failed", capability: undefined,
       error: { code: "connection_failed", retryable: true, recovery: "retry_connection" } });
