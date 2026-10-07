@@ -51,7 +51,7 @@ export interface MemberProfile {
 const MAX_DISPLAY_NAME = 120;
 const MAX_EMAIL = 254;
 const MAX_IMAGE_URL = 2_048;
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MemberEmailSchema = z.email().max(MAX_EMAIL);
 const CONTROL_CHARACTERS = /\p{Cc}/gu;
 
 function label(value: unknown, max: number): string | null {
@@ -68,13 +68,16 @@ function label(value: unknown, max: number): string | null {
  */
 export function projectMemberProfile(data: Readonly<Record<string, unknown>>, observedAt: Date): MemberProfile | undefined {
   const profile: MemberProfile = { observedAt };
-  if ("first_name" in data || "last_name" in data) {
+  // A single name field is not enough to safely rebuild the combined name. Both keys may still
+  // carry null, which is an explicit report that one side is absent.
+  if ("first_name" in data && "last_name" in data) {
     profile.displayName = label([label(data.first_name, MAX_DISPLAY_NAME), label(data.last_name, MAX_DISPLAY_NAME)]
       .filter((part): part is string => part !== null).join(" "), MAX_DISPLAY_NAME);
   }
   if ("identifier" in data) {
     const identifier = label(data.identifier, MAX_EMAIL + 1);
-    profile.email = identifier && identifier.length <= MAX_EMAIL && EMAIL_PATTERN.test(identifier) ? identifier : null;
+    const email = MemberEmailSchema.safeParse(identifier);
+    profile.email = email.success ? email.data : null;
   }
   if ("image_url" in data || "profile_image_url" in data) {
     profile.imageUrl = httpsImage(data.image_url) ?? httpsImage(data.profile_image_url);
@@ -189,6 +192,9 @@ export function parseClerkOrganizationWebhook(eventId: string, body: unknown): P
     const data = ClerkMembershipDataSchema.safeParse(envelope.data.data);
     if (!data.success) return { kind: "invalid" };
     const sourceUpdatedAt = data.data.updated_at !== undefined ? new Date(data.data.updated_at) : occurredAt;
+    const profileObservedAt = envelope.data.timestamp !== undefined
+      ? occurredAt
+      : data.data.updated_at !== undefined ? new Date(data.data.updated_at) : undefined;
     return {
       kind: "organization",
       event: {
@@ -201,7 +207,7 @@ export function parseClerkOrganizationWebhook(eventId: string, body: unknown): P
           actorId: data.data.public_user_data.user_id,
           role: normalizeClerkRole(data.data.role),
           sourceUpdatedAt,
-          profile: projectMemberProfile(data.data.public_user_data, occurredAt),
+          ...(profileObservedAt ? { profile: projectMemberProfile(data.data.public_user_data, profileObservedAt) } : {}),
         },
       },
     };

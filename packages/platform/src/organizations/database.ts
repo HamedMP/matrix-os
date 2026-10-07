@@ -105,6 +105,12 @@ export interface OrganizationPlatformDatabase {
   collaboration_denial_runtimes: CollaborationDenialRuntimesTable;
 }
 
+/** Bump whenever organization DDL changes, so completed startups skip all table ALTERs. */
+export const ORGANIZATION_SCHEMA_REVISION = {
+  generation: 1,
+  fingerprint: "30379c3d8a7dad92ea88c58ad1dc935a17e6ebaf17b3add810cc2acae7dcadb0",
+} as const;
+
 /**
  * Runs the DDL under the platform schema-migration advisory lock inside one
  * transaction with deadlock retry, so concurrent platform revisions cannot
@@ -113,7 +119,10 @@ export interface OrganizationPlatformDatabase {
 export async function bootstrapPlatformOrganizationDatabase(
   db: Kysely<OrganizationPlatformDatabase>,
 ): Promise<void> {
-  await runPlatformMigration(db, (transaction) => createOrganizationTables(transaction));
+  await runPlatformMigration(db, (transaction) => createOrganizationTables(transaction), {
+    scope: "organizations",
+    revision: ORGANIZATION_SCHEMA_REVISION,
+  });
 }
 
 async function createOrganizationTables(db: Transaction<OrganizationPlatformDatabase>): Promise<void> {

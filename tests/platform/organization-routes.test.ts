@@ -310,6 +310,21 @@ describe("platform organization routes (T018)", () => {
     expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King" });
   });
 
+  it("drops an invalid stored email so the safe directory fallback keeps Share available", async () => {
+    await projection.reconcile(org);
+    const body = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "Lovelace", identifier: "a..b@example.com",
+    }, clock.getTime());
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_invalid_email", body, clock), body })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ email: null });
+    const response = await app.request(`/api/organizations/${org}/members`);
+    expect(response.status).toBe(200);
+    const page = await response.json() as { members: Array<{ actorId: string; displayName: string; emailAddress?: string }> };
+    expect(page.members.find((entry) => entry.actorId === member)).toMatchObject({
+      displayName: "Ada Lovelace", emailAddress: "morgan@example.com",
+    });
+  });
+
   it("keeps the newest member profile whichever of the webhook and the reconcile arrives last", async () => {
     await projection.reconcile(org);
     // Clerk renamed the member at t=9s; a reconcile read the new name at t=12s (the clock).
@@ -322,6 +337,19 @@ describe("platform organization routes (T018)", () => {
       first_name: "Ada", last_name: "Lovelace", identifier: "ada@example.com",
     }, clock.getTime() - 60_000);
     expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_2", delayed, clock), body: delayed })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King" });
+    // Without an envelope timestamp, the membership source timestamp orders the profile. A delayed
+    // webhook cannot look newly observed merely because it arrived now.
+    const noEnvelopeTimestamp = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "Old", identifier: "old@example.com",
+    });
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_no_timestamp", noEnvelopeTimestamp, clock), body: noEnvelopeTimestamp })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King", email: "ada@example.com" });
+    // One name key cannot safely rebuild the combined display name, so it leaves the stored name.
+    const partialName = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      last_name: "Byron",
+    }, clock.getTime() + 30_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_partial_name", partialName, clock), body: partialName })).status).toBe(200);
     expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King" });
     // A payload that does not report the name or email leaves the stored ones alone.
     const sparse = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {}, clock.getTime() + 1_000);
