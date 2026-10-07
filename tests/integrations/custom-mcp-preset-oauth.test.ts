@@ -32,8 +32,9 @@ describe("managed preset OAuth callback", () => {
         manager.complete(state, "test-code"),
         manager.complete(state, "test-code"),
       ]);
+      const stored = await db.getCustomMcpServerForBroker(server.id, owner.id);
       expect(completions.filter((result) => result.status === "fulfilled")).toEqual([
-        { status: "fulfilled", value: { serverId: server.id } },
+        { status: "fulfilled", value: { serverId: server.id, revision: stored!.revision } },
       ]);
       expect(completions.filter((result) => result.status === "rejected")).toHaveLength(1);
       await expect(manager.complete(state, "test-code")).rejects.toMatchObject({ code: "invalid" });

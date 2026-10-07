@@ -9,6 +9,7 @@ import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platfor
 import { HANDLE_PATTERN } from './platform-route-utils.js';
 import { PRIVATE_PREVIEW_HANDLE_PATTERN } from './customer-vps-schema.js';
 import type { PrivatePreviewEligibility } from './private-preview-eligibility.js';
+import { MATRIX_OAUTH_CLIENT_METADATA } from './oauth-client-metadata.js';
 
 const HandleSchema = z.string().regex(HANDLE_PATTERN);
 const BODY_LIMIT = 64 * 1024;
@@ -108,6 +109,11 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
   privatePreviewEligibility?: PrivatePreviewEligibility;
 }): void {
   const external = new Hono<{ Variables: McpVariables }>();
+  // CIMD must be readable by authorization servers without a Matrix session.
+  external.get('/oauth/client-metadata', (c) => {
+    c.header('Cache-Control', 'public, max-age=300');
+    return c.json(MATRIX_OAUTH_CLIENT_METADATA);
+  });
   external.use('*', bodyLimit({ maxSize: BODY_LIMIT }), async (c, next) => {
     if (c.req.method === 'GET' && c.req.path === OAUTH_CALLBACK_PATH) {
       c.header('Cache-Control', 'no-store, private');
