@@ -16,14 +16,15 @@ function isEmptyBotPlaceholder(instance: CanonicalProviderInstanceDescriptor): b
     && instance.models.length === 0 && instance.setupActions.length === 0;
 }
 
-/** Presentation groups retain real server instance IDs; Matrix AI is an access source. */
+/** Matrix AI groups presentation only; each funding source retains its executable identity. */
 export function deriveChatPickerEntries(catalog: CanonicalProviderCatalog): ChatPickerEntry[] {
   const visibleInstances = catalog.instances.filter(instance => !isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || instance.supports.rootChat);
-  const managed = visibleInstances.filter(instance => instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default");
+  const managed = visibleInstances.filter(instance => instance.driverKind === "matrix_pi" && (instance.id === "matrix_pi_default"
+    || isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })));
   return [{ id: "matrix-ai", label: "Matrix AI", iconKind: "kernel", instances: managed, capabilityClass: "system_agent" },
     ...catalog.drivers.flatMap(driver => visibleInstances.filter(instance => instance.driverKind === driver.kind && !isLegacyMatrixSdkProvider(instance) && !isEmptyBotPlaceholder(instance)
       && !managed.some(candidate => candidate.id === instance.id))
-      .map(instance => ({ id: instance.id, label: instance.displayName, iconKind: isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "codex" as const : instance.driverKind,
+      .map(instance => ({ id: instance.id, label: instance.displayName, iconKind: instance.driverKind,
         instances: [instance], capabilityClass: driver.capabilityClass })))];
 }
 
@@ -36,6 +37,12 @@ export function chatPickerEntryInstance(entry?: ChatPickerEntry): CanonicalProvi
   return entry?.instances.find(instance => instance.availability === "available")
     ?? entry?.instances.find(instance => canonicalProviderFundingState(instance) === "credit_reserved")
     ?? entry?.instances[0];
+}
+
+/** Recovery is source-specific even when another source makes the category ready. */
+export function chatPickerEntryRecoveryInstances(entry?: ChatPickerEntry, selectedInstanceId?: string): CanonicalProviderInstanceDescriptor[] {
+  return (entry?.instances ?? []).filter(instance => instance.availability !== "available")
+    .sort((left, right) => Number(right.id === selectedInstanceId) - Number(left.id === selectedInstanceId));
 }
 
 export interface ChatPickerModelRow {
@@ -60,12 +67,13 @@ export function deriveChatPickerModelRows(
         && canonicalChatSubscriptionSelectionMatches(instance, candidate.selectedOptions))
       : undefined;
     const managed = instance.id === "matrix_pi_default" && instance.driverKind === "matrix_pi";
+    const personal = isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind });
     // Retain prior executable-only discovery for other harnesses.
     if (!choice && !managed && instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return [];
     return [{
       instanceId: instance.id, modelId: model.id, modelLabel: model.displayName, modelAvailability: model.availability,
-      harnessLabel: managed ? "Matrix AI" : choice?.harnessLabel ?? instance.displayName,
-      connectionLabel: instance.id === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID ? undefined : instance.connectionLabel, driverKind: instance.driverKind,
+      harnessLabel: managed || personal ? "Matrix AI" : choice?.harnessLabel ?? instance.displayName,
+      connectionLabel: personal ? "ChatGPT subscription" : instance.connectionLabel, driverKind: instance.driverKind,
       ...(choice ? { choice } : {}),
     }];
   }));

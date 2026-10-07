@@ -52,7 +52,7 @@ it("opens real installation when available and never fabricates an unavailable C
  expect(screen.getByRole("button",{name:"Install"})).toBeEnabled();
  expect(client.start).not.toHaveBeenCalled();
  expect(within(subscriptions).queryByRole("button",{name:"Connect Claude"})).not.toBeInTheDocument();
- expect(within(subscriptions).getByText(/Claude Code connection is unavailable/)).toBeInTheDocument();
+ expect(within(subscriptions).queryByText(/Claude/)).toBeNull();
 });
 it("preserves legacy Codex key entry while suppressing old subscription methods", async () => {
  const {props,client}=setup({connectionOptions:undefined,loginMethods:["device_code","terminal"]}); render(<AgentsProvidersView {...props}/>);
@@ -74,7 +74,7 @@ it("clears a prior Computer's shortcut operation and fences late capability disc
  expect(within(screen.getByRole("region",{name:"Your subscriptions"})).queryByRole("button",{name:"Review Codex connection"})).not.toBeInTheDocument();
  expect(replacement.get).not.toHaveBeenCalled();
 });
-it("opens Claude's advertised official browser flow separately from Codex and Bot consent", async () => {
+it("keeps Claude's official browser flow in its independent native card and out of Matrix AI subscriptions", async () => {
  const {props,client,capability}=setup();
  const option={id:"claude:anthropic:browser",providerId:"anthropic",authKind:"subscription",method:"browser",billingKind:"subscription",executionKind:"native",availability:"available"} as const;
  props.snapshot.harnesses.push({...props.snapshot.harnesses[0]!,id:"claude",harness:"claude",displayName:"Claude Code",route:{kind:"fixed",providerId:"anthropic",modelId:"native"}});
@@ -83,7 +83,11 @@ it("opens Claude's advertised official browser flow separately from Codex and Bo
  vi.mocked(client.startConnection!).mockResolvedValue({id:"claude_login",harnessInstanceId:"claude",kind:"login",state:"running",expiresAt:new Date(Date.now()+60000).toISOString(),terminalSessionId:null,deviceCode:null,authorizationUrl:null,safeFailure:null,connectionOption:option});
  render(<AgentsProvidersView {...props}/>);
  const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
- fireEvent.click(await within(subscriptions).findByRole("button",{name:"Connect Claude"}));
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ expect(within(subscriptions).queryByText(/Claude/)).toBeNull();
+ expect(within(subscriptions).queryByRole("button",{name:"Connect Claude"})).toBeNull();
+ expect(within(subscriptions).queryByRole("region",{name:"Claude Code Bot authorization"})).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:/^Claude Code/}));
  fireEvent.click(screen.getByRole("button",{name:/Claude account · Sign in in browser/}));
  await waitFor(()=>expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:"claude",optionId:option.id}),expect.any(AbortSignal)));
  expect(props.onSelectHarness).toHaveBeenCalledWith("claude");
@@ -154,7 +158,9 @@ it.each([false, true])("does not present legacy Matrix-funded Claude as a native
  vi.mocked(client.capabilities).mockResolvedValue([{...capability,harnessInstanceId:"claude",harness:"claude",displayName:"Claude Code",loginMethods:["terminal"],connectionOptions:[{id:"claude:anthropic:terminal",providerId:"anthropic",authKind:"subscription",method:"terminal",billingKind:"subscription",executionKind:"native",availability:"available"}]}]);
  render(<AgentsProvidersView {...props} onRefreshForConnection={vi.fn()}/>);
  const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
- fireEvent.click(await within(subscriptions).findByRole("button",{name:"Connect Claude"}));
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ expect(within(subscriptions).queryByText(/Claude/)).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:/^Claude Code/}));
  expect(within(subscriptions).getAllByText("Not connected")[0]).toBeVisible();
  expect(within(subscriptions).queryByText("Saved connection")).toBeNull();
  expect(within(subscriptions).queryByText("Connected")).toBeNull();
@@ -173,9 +179,10 @@ it.each(["owner_subscription", "owner_api_key"] as const)("retains matched nativ
  vi.mocked(client.capabilities).mockResolvedValue([{...capability,harnessInstanceId:"claude",harness:"claude",displayName:"Claude Code",loginMethods:["terminal"],connectionOptions:[]}]);
  render(<AgentsProvidersView {...props} onRefreshForConnection={vi.fn()}/>);
  const subscriptions=await screen.findByRole("region",{name:"Your subscriptions"});
- fireEvent.click(await within(subscriptions).findByRole("button",{name:"Manage Claude connection"}));
- expect(within(subscriptions).getByText("Saved connection")).toBeVisible();
- expect(within(subscriptions).getByText("Native Claude owner")).toBeVisible();
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ expect(within(subscriptions).queryByText(/Claude/)).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:/^Claude Code/}));
+ expect(within(subscriptions).queryByText("Native Claude owner")).toBeNull();
  expect(screen.getByRole("button",{name:"Connect saved connection"})).toBeEnabled();
  expect(client.startConnection).not.toHaveBeenCalled();
  expect(client.start).not.toHaveBeenCalled();
@@ -207,8 +214,8 @@ it.each(["anthropic", "openai"])("checks source-absent legacy Claude account pro
  await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
  const subscriptions=screen.getByRole("region",{name:"Your subscriptions"});
  if (providerId === "anthropic") {
-  fireEvent.click(await within(subscriptions).findByRole("button",{name:"Manage Claude connection"}));
-  expect(within(subscriptions).getByText("Legacy native owner")).toBeVisible();
+  fireEvent.click(screen.getByRole("button",{name:/^Claude Code/}));
+  expect(within(subscriptions).queryByText("Legacy native owner")).toBeNull();
   expect(screen.getByRole("button",{name:"Connect saved connection"})).toBeEnabled();
  } else {
   expect(within(subscriptions).queryByText("Legacy native owner")).toBeNull();
@@ -227,7 +234,10 @@ it("offers Claude connection for the migrated kernel identity with qualified sub
  Object.assign(props.snapshot.harnesses[0]!,{id:"harness_kernel",harness:"claude",displayName:"Claude Code",enabled:false,configuredEnabled:false,route:{kind:"fixed",providerId:"anthropic",modelId:"native"}});
  render(<AgentsProvidersView {...props}/>);
  const subscriptions=screen.getByRole("region",{name:"Your subscriptions"});
- expect(await within(subscriptions).findByRole("button",{name:"Connect Claude"})).toBeEnabled();
- expect(within(subscriptions).queryByText(/Claude Code connection is unavailable/)).toBeNull();
+ await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
+ expect(within(subscriptions).queryByText(/Claude/)).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:/^Claude Code/}));
+ expect(screen.getByRole("button",{name:/Claude account · Sign in in browser/})).toBeEnabled();
+ expect(screen.getByRole("button",{name:/Claude account · Log in in Terminal/})).toBeEnabled();
  expect(client.startConnection).not.toHaveBeenCalled(); expect(props.onMutate).not.toHaveBeenCalled();
 });

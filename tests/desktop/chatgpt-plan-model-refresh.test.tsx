@@ -42,8 +42,8 @@ it.each(["removed", "unavailable"] as const)("retains a touched new Chat's exact
  expect(refreshed.instances[1]?.defaultSelection?.options).toEqual(planBinding);
  const view = render(<DraftComposer catalog={initial}/>);
  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
- fireEvent.click(screen.getByRole("button", { name: "Codex · ChatGPT subscription agent, Available" }));
- fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Codex · ChatGPT subscription" }));
+ fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Available" }));
+ fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Matrix AI · ChatGPT subscription" }));
  expect(JSON.parse(screen.getByTestId("selection").textContent!)).toEqual(explicitSelection);
  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
  view.rerender(<DraftComposer catalog={refreshed}/>);
@@ -51,7 +51,7 @@ it.each(["removed", "unavailable"] as const)("retains a touched new Chat's exact
  expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveTextContent("Unavailable");
  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
- fireEvent.click(screen.getByRole("option", { name: "Replacement GPT via Codex · ChatGPT subscription" }));
+ fireEvent.click(screen.getByRole("option", { name: "Replacement GPT via Matrix AI · ChatGPT subscription" }));
  expect(JSON.parse(screen.getByTestId("selection").textContent!)).toEqual({ ...explicitSelection, model: "gpt-replacement" });
  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
  view.rerender(<DraftComposer catalog={{ ...refreshed, revision: "second_refresh" }}/>);
@@ -126,8 +126,8 @@ it.each(["accountId", "grantRevision"] as const)("keeps touched personal intent 
  const catalog = ordinaryPlanCatalog();
  const view = render(<DraftComposer catalog={catalog}/>);
  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
- fireEvent.click(screen.getByRole("button", { name: "Codex · ChatGPT subscription agent, Available" }));
- fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Codex · ChatGPT subscription" }));
+ fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Available" }));
+ fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Matrix AI · ChatGPT subscription" }));
  const refreshed = ordinaryPlanCatalog(), source = refreshed.instances[1]!;
  const binding = planBinding.map(option => option.id === bindingId ? { ...option, value: bindingId === "accountId" ? "account-b" : "4" } : option);
  source.defaultSelection!.options = binding;
@@ -136,7 +136,7 @@ it.each(["accountId", "grantRevision"] as const)("keeps touched personal intent 
  expect(JSON.parse(screen.getByTestId("selection").textContent!)).toEqual(explicitSelection);
  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
- fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Codex · ChatGPT subscription" }));
+ fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Matrix AI · ChatGPT subscription" }));
  expect(JSON.parse(screen.getByTestId("selection").textContent!)).toEqual({ ...explicitSelection, options: binding });
  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
  expect(useProviderPreferences.getState().composerSelections[planId]?.options).toEqual(binding);

@@ -80,3 +80,21 @@ Render an available ordinary subscription alongside custom coding routes: the cu
 ### 7. Wrong vs Correct
 
 Wrong: `isChatAgentDriver(instance.driverKind)` alone establishes custom Bot applicability. Correct: apply the route's context-specific identity constraint at both the editor and authenticated save boundary; preserve downstream admission as defense in depth.
+
+## Matrix AI presentation grouping
+
+`deriveChatPickerEntries(catalog)` groups the exact ordinary `matrix_pi_chatgpt_plan` and funded `matrix_pi_default` identities under the existing `matrix-ai` category and rabbit glyph. Native Coding Codex stays independent. `deriveCanonicalProviderChoices` and `canonicalProviderModelRouteLabel` show personal GPT as Matrix AI with `ChatGPT subscription` funding; Web and Electron consume the same derivation. Grouping is presentation only: selection retains its real `instanceId`, model and current `accountId`/`grantRevision` options.
+
+An available source makes the category available, but each row still checks its own instance/model eligibility and binding. Funded-unavailable/subscription-ready permits only the subscription rows; the inverse permits only funded rows. First-turn locking compares the actual instance ID even within one category. Equal model IDs from separate sources stay separate. Every unavailable source in the active category keeps its own recovery actions reachable even when another source makes the category ready. Prioritize the selected unavailable source, then retain the other sources. Recovery uses each exact source as its action target and never selects, replaces or authorizes a model.
+
+`tests/shell/canonical-chat-wiring.test.ts` must require the shared picker to render `recoveryInstance.setupActions` and invoke `onSetupAction(recoveryInstance, action)`. Pair that composition guard with actual grouped-picker regressions for unavailable selected and unselected sources, both mixed-readiness directions, and two unavailable sources. Click each recovery action and verify its exact source while selection remains unchanged. Binding recovery to the category's available `activeInstance` is incorrect.
+
+Good: choose a qualified GPT inside Matrix AI and persist the personal instance with its complete binding. Base: a reopened subscription Chat highlights Matrix AI and its actual selected row. Bad: rewriting the selection to `matrix_pi_default`, granting every row from category readiness, or hiding selected or unselected source recovery. Tests must cover both independent availability states, exact selection options, stale recovery, locks, duplicate model IDs, source search, no search autofocus and cached reopening. Actual Electron acceptance must select GPT inside Matrix AI, receive a subscription reply and verify the durable instance/binding; a separate Codex menu or fixture reply is insufficient.
+
+## Matrix AI subscription Settings placement
+
+Matrix AI represents the Matrix Pi execution path. Its `Your subscriptions` section exposes personal ChatGPT/Codex connections only; personal Claude subscription cards, copy and connection shortcuts belong to the independent native Claude Code Settings card. Preserve native Claude browser/Terminal workflows and existing Bot task authorization without deleting credentials or changing grants. Funded gateway Claude/GLM models remain under Matrix AI, independently of personal subscription placement.
+
+Use the shared Settings composition in Web and Electron. A single subscription card fills the available section instead of leaving an empty second column. Regression tests must assert absence of Claude actions within Matrix AI while exercising the retained native connection entry and saved-account/Terminal authorization fences. Placement evidence is an actual packaged Electron Settings screenshot; connection visibility does not establish successful subscription inference.
+
+This removes a misleading subscription shortcut only. An explicit owner Anthropic API-billed Matrix Pi connection is separate follow-up work: retaining Claude models does not imply importing Claude subscription credentials or treating native Claude Code login as Pi inference readiness.

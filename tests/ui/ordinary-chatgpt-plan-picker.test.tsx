@@ -9,13 +9,14 @@ import { CompactChatProviderChoices } from "../../packages/ui/src/compact-chat-p
 import { createCanonicalComposerSelection, canonicalComposerSelectionIsAvailable } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
 import { ordinaryPlanCatalog, planBinding, planId } from "./ordinary-chatgpt-plan-fixture";
 afterEach(cleanup);
-it("projects a distinct Codex personal source and selects its observed model with exact binding", () => {
+it("projects a Matrix AI personal source and selects its observed model with exact binding", () => {
  const catalog = ordinaryPlanCatalog(), choices = deriveCanonicalProviderChoices(catalog), select = vi.fn();
  const plan = choices.find(choice => choice.instanceId === planId)!;
- expect(plan.harnessLabel).toBe("Codex · ChatGPT subscription");
- expect(deriveChatPickerEntries(catalog).find(entry => entry.id === planId)?.iconKind).toBe("codex");
+ expect(plan.harnessLabel).toBe("Matrix AI");
+ expect(plan.connectionLabel).toBe("ChatGPT subscription");
+ expect(deriveChatPickerEntries(catalog).find(entry => entry.id === "matrix-ai")?.iconKind).toBe("kernel");
  render(<CompactChatProviderChoices catalog={catalog} choices={choices} selected={plan} onSelect={select}/>);
- fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Codex · ChatGPT subscription" }));
+ fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Matrix AI · ChatGPT subscription" }));
  expect(select).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instanceId: planId, modelId: "gpt-owner", selectedOptions: planBinding }));
  expect(screen.getByRole("searchbox", { name: "Search models and connections" })).not.toHaveFocus();
 });
@@ -38,7 +39,7 @@ it("shows unavailable personal models but prevents stale choice callbacks after 
  const catalog = ordinaryPlanCatalog(), choices = deriveCanonicalProviderChoices(catalog), select = vi.fn();
  const plan = catalog.instances[1]!; plan.availability = "unavailable"; plan.defaultSelection = undefined;
  render(<CompactChatProviderChoices catalog={catalog} choices={choices} selected={{ instanceId: planId, modelId: "gpt-owner" }} onSelect={select}/>);
- const row = screen.getByRole("option", { name: "Owner GPT via Codex · ChatGPT subscription" });
+ const row = screen.getByRole("option", { name: "Owner GPT via Matrix AI · ChatGPT subscription" });
  expect(row).toBeDisabled(); fireEvent.click(row); expect(select).not.toHaveBeenCalled();
  expect(createCanonicalComposerSelection(catalog, planId)).toBeNull();
 });
