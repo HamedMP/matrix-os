@@ -8,9 +8,74 @@ import {
   generateIconBatch,
   type ImageClient,
   type ImageResult,
+  createImageStagingCleanup,
+  saveGeneratedImage,
 } from "../../packages/kernel/src/image-gen.js";
 
 import { png, providerResponse } from "../helpers/image-generation-fixture.js";
+import { open, writeFile, utimes, symlink, readdir, lstat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+
+describe("interrupted image staging cleanup", () => {
+  let dir: string;
+  beforeEach(() => { dir = resolve(mkdtempSync(join(tmpdir(), "image-staging-"))); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); rmSync(dir, { recursive: true, force: true }); });
+  const temporary = (directory: string) => join(directory, `.matrix-image-${randomUUID()}.tmp`);
+  async function stale(path: string) { await writeFile(path, "interrupted bytes"); await utimes(path, new Date(0), new Date(0)); }
+  it("recurrently removes stale regular staging files, preserving fresh files, owner data, and symlinks", async () => {
+    vi.useFakeTimers();
+    const old = temporary(dir), fresh = temporary(dir), owner = join(dir, "owner.png"), alias = temporary(dir);
+    await stale(old); await writeFile(fresh, "in progress"); await stale(owner); await symlink(owner, alias);
+    const cleanup = createImageStagingCleanup(dir);
+    try {
+      await cleanup.sweep();
+      expect(existsSync(old)).toBe(false); expect(existsSync(fresh)).toBe(true); expect(existsSync(owner)).toBe(true); expect((await lstat(alias)).isSymbolicLink()).toBe(true);
+      const later = temporary(dir); await stale(later);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      await cleanup.sweep(); expect(existsSync(later)).toBe(false);
+      await cleanup.close();
+      const afterClose = temporary(dir); await stale(afterClose);
+      await vi.advanceTimersByTimeAsync(10 * 60_000); expect(existsSync(afterClose)).toBe(true);
+    } finally { await cleanup.close(); }
+  });
+  it("skips an actively writing staging file even when its timestamp appears stale", async () => {
+    const probe = await open(join(dir, "probe"), "wx");
+    const prototype = Object.getPrototypeOf(probe);
+    const original = prototype.writeFile;
+    await probe.close();
+    let release!: () => void;
+    let started!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const writing = new Promise<void>(resolve => { started = resolve; });
+    vi.spyOn(prototype, "writeFile").mockImplementationOnce(async function (this: unknown, ...args: unknown[]) { started(); await blocked; return original.apply(this, args); });
+    const saving = saveGeneratedImage(Buffer.from(png, "base64"), "Original icon", { imageDir: dir, saveAs: "saved.png" });
+    await writing;
+    const name = (await readdir(dir)).find(name => name.startsWith(".matrix-image-"))!;
+    await utimes(join(dir, name), new Date(0), new Date(0));
+    const cleanup = createImageStagingCleanup(dir);
+    try { await cleanup.sweep(); expect(existsSync(join(dir, name))).toBe(true); }
+    finally { release(); await saving; await cleanup.close(); }
+    expect(readFileSync(join(dir, "saved.png"))).toEqual(Buffer.from(png, "base64"));
+    expect(existsSync(join(dir, name))).toBe(false);
+  });
+  it("bounds each sweep and continues its directory cursor without starving later entries", async () => {
+    for (let index = 0; index < 300; index++) await stale(temporary(dir));
+    const cleanup = createImageStagingCleanup(dir);
+    try {
+      await cleanup.sweep(); expect((await readdir(dir)).length).toBeGreaterThan(0);
+      for (let index = 0; index < 6; index++) await cleanup.sweep();
+      expect(await readdir(dir)).toEqual([]);
+    } finally { await cleanup.close(); }
+  });
+  it("does not sweep through a symbolic-link image directory", async () => {
+    const nested = join(dir, "actual"); mkdirSync(nested);
+    const old = temporary(nested); await stale(old);
+    const alias = join(dir, "alias"); await symlink(nested, alias);
+    const cleanup = createImageStagingCleanup(alias);
+    try { await cleanup.sweep(); expect(existsSync(old)).toBe(true); }
+    finally { await cleanup.close(); }
+  });
+});
 
 const fakeImageBase64 = Buffer.from("fake-png-data").toString("base64");
 

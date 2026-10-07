@@ -17,6 +17,7 @@ import {
 import { loadSkillBody } from "./skills.js";
 import { createMemoryStore } from "./memory.js";
 import { createImageClient, type ImageClient } from "./image-gen.js";
+import { safeImageErrorDetails } from "@matrix-os/contracts/image-generation/server";
 import { listConversationSummaries, getConversationMessages } from "./conversation-history.js";
 import { searchMemories } from "./memory-search.js";
 import { createUsageTracker } from "./usage.js";
@@ -686,13 +687,14 @@ export async function createIpcServer(
             return { content: [{ type: "text" as const, text: "Cannot generate image (no home path)" }] };
           }
 
+          const imageRequestId = `image_${randomUUID().replaceAll("-", "")}`;
           if (funding_source !== "byok") {
             if (!platformImageClient) return { content: [{ type: "text" as const, text: "Image generation is unavailable." }] };
             try {
-              const result = await platformImageClient.generateImage(prompt, { model, aspectRatio: aspect_ratio, imageSize: image_size, imageDir: join(homePath, "data", "images"), saveAs: save_as });
+              const result = await platformImageClient.generateImage(prompt, { requestId: imageRequestId, model, aspectRatio: aspect_ratio, imageSize: image_size, imageDir: join(homePath, "data", "images"), saveAs: save_as });
               return { content: [{ type: "text" as const, text: `Image saved to ${result.localPath}\nPlatform-funded image generation.` }] };
             } catch (error: unknown) {
-              console.warn("[ipc] Platform image generation failed", error instanceof Error ? error.name : "UnknownError");
+              console.warn("[ipc] Platform image generation failed", { requestId: imageRequestId, ...safeImageErrorDetails(error) });
               return { content: [{ type: "text" as const, text: "Image generation is unavailable. Try again later." }] };
             }
           }
@@ -721,6 +723,7 @@ export async function createIpcServer(
 
             try {
               const result = await client.generateImage(prompt, {
+                requestId: imageRequestId,
                 model,
                 aspectRatio: aspect_ratio,
                 imageSize: image_size,
@@ -737,7 +740,7 @@ export async function createIpcServer(
                 }],
               };
             } catch (error: unknown) {
-              console.warn("[ipc] BYOK image generation failed", error);
+              console.warn("[ipc] BYOK image generation failed", { requestId: imageRequestId, ...safeImageErrorDetails(error) });
               return {
                 content: [{
                   type: "text" as const,

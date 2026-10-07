@@ -14,6 +14,7 @@ import {
   backupModule,
   checkModuleHealth,
   createHeartbeat,
+  createImageStagingCleanup,
   createMemoryStore,
   createWatchdog,
   DEFAULT_APPROVAL_POLICY,
@@ -1830,6 +1831,7 @@ export async function createGateway(config: GatewayConfig) {
 
   const server = serve({ fetch: app.fetch, port });
   injectWebSocket(server);
+  const imageStagingCleanup = createImageStagingCleanup(join(homePath, "data", "images"));
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,
     onError: (error) => logBestEffortFailure("Temporary Chat attachment cleanup failed", error),
@@ -1855,6 +1857,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await imageStagingCleanup.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();

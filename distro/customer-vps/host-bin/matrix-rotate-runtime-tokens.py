@@ -22,6 +22,11 @@ TOKEN_KEYS = {
 }
 
 
+def supported_token_domains():
+    """Read-only capability probe; older installed helpers reject this command."""
+    return sorted(set(TOKEN_KEYS) | {'images'})
+
+
 def read_regular(path, maximum, root_only=False):
     info = os.lstat(path)
     if not stat.S_ISREG(info.st_mode) or info.st_size > maximum or info.st_mode & 0o022:
@@ -132,6 +137,9 @@ def apply_rotation(env_path, key_path, envelope_path):
 
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == 'token-domains':
+        print(json.dumps(supported_token_domains()))
+        return
     if os.geteuid() != 0:
         raise ValueError('Root is required')
     if len(sys.argv) == 2 and sys.argv[1] == 'init':
@@ -162,7 +170,7 @@ def main():
         epoch = apply_rotation(ENV_PATH, KEY_PATH, sys.argv[2])
         print(f'Runtime token epoch {epoch} installed. Restart dependent services.')
         return
-    raise ValueError('Usage: matrix-rotate-runtime-tokens.py <init|public-key|verifier-digest|apply ENCRYPTED_FILE>')
+    raise ValueError('Usage: matrix-rotate-runtime-tokens.py <init|public-key|verifier-digest|token-domains|apply ENCRYPTED_FILE>')
 
 
 if __name__ == '__main__':

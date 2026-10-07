@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { rm } from 'node:fs/promises';
 import { encryptRuntimeTokenRotation } from '../../scripts/ops/runtime-token-envelope.mjs';
+import { buildRotationPayload, parseRotationFlags } from '../../scripts/ops/rotate-runtime-tokens.js';
 
 const hostScript = fileURLToPath(new URL('../../distro/customer-vps/host-bin/matrix-rotate-runtime-tokens.py', import.meta.url));
 function apply(paths: { envPath: string; keyPath: string; envelopePath: string }) {
@@ -96,6 +97,27 @@ describe('host runtime-token rotation', () => {
 });
 
 describe('image runtime-token rotation compatibility', () => {
+ it.each(['prepare', 'prepare-recovery'])('operator %s defaults to the three-domain payload accepted by older hosts', async (action) => {
+  const paths = await fixture();
+  const args = [action, '--machine-id', 'machine-1', '--db-file', 'db', '--secret-file', 'secret', '--public-key-file', 'public', '--verifier-digest', 'a'.repeat(64), '--out', 'out'];
+  if (action === 'prepare-recovery') args.push('--host-epoch', '1');
+  const options = parseRotationFlags(args);
+  const payload = buildRotationPayload({ machine_id: 'machine-1', handle: 'images', runtime_slot: 'primary' }, 'operator-secret-at-least-thirty-two-bytes', 2, options['host-image-support']);
+  expect(Object.keys(payload.tokens).sort()).toEqual(['fundedAi', 'speech', 'sync']);
+  await writeFile(paths.envelopePath, JSON.stringify(encryptRuntimeTokenRotation(payload, paths.publicKey)));
+  expect(apply(paths).status).toBe(0);
+  expect(await readFile(paths.envPath, 'utf8')).not.toContain('MATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN');
+ });
+ it('operator includes image tokens only with explicit confirmed host support', () => {
+  const probe = spawnSync('python3', [hostScript, 'token-domains'], { encoding: 'utf8' });
+  expect(probe.status).toBe(0);
+  expect(JSON.parse(probe.stdout)).toEqual(['fundedAi', 'images', 'speech', 'sync']);
+  const args = ['prepare', '--machine-id', 'machine-1', '--db-file', 'db', '--secret-file', 'secret', '--public-key-file', 'public', '--verifier-digest', 'a'.repeat(64), '--out', 'out'];
+  expect(() => parseRotationFlags([...args, '--host-image-support', 'unknown'])).toThrow();
+  const options = parseRotationFlags([...args, '--host-image-support', 'confirmed']);
+  const payload = buildRotationPayload({ machine_id: 'machine-1', handle: 'images', runtime_slot: 'primary' }, 'operator-secret-at-least-thirty-two-bytes', 2, options['host-image-support']);
+  expect(Object.keys(payload.tokens).sort()).toEqual(['fundedAi', 'images', 'speech', 'sync']);
+ });
  it('rotates image credentials along with existing domains on a new host', async () => {
   const paths = await fixture();
   await writeFile(paths.envPath, (await readFile(paths.envPath, 'utf8')) + 'MATRIX_PLATFORM_IMAGE_ENABLED=true\nMATRIX_PLATFORM_IMAGE_RUNTIME_TOKEN=old\n');

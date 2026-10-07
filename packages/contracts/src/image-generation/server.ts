@@ -20,6 +20,18 @@ const ThoughtImage = z.object({ type: z.literal("image"), mime_type: z.enum(["im
 const Thought = z.object({ type: z.literal("thought"), signature: z.string().max(8192).optional(), summary: z.array(z.union([TextContent, ThoughtImage])).max(8).optional() });
 const ResponseSchema = z.object({ status: z.literal("completed"), steps: z.array(z.discriminatedUnion("type", [ModelOutput, Thought])).min(1).max(8), usage: Usage });
 
+/** Server diagnostics use bounded, allowlisted metadata, never arbitrary messages,
+ * stacks, causes, request bodies, credentials, or generated image contents. */
+export function safeImageErrorDetails(error: unknown) {
+    if (error instanceof z.ZodError) return { name: "ZodError", reason: "Image contract validation failed", issues: error.issues.slice(0, 8).map(issue => ({ code: issue.code, path: issue.path.slice(0, 8).map(part => typeof part === "number" ? part : ["steps", "content", "usage", "status", "data", "mime_type", "type", "total_input_tokens", "total_output_tokens", "total_thought_tokens", "total_tokens", "input_tokens_by_modality", "output_tokens_by_modality", "modality", "tokens", "imageBase64", "costMicrousd", "requestId"].includes(String(part)) ? part : "field") })) };
+    const name = error instanceof Error && ["Error", "TypeError", "SyntaxError", "AbortError", "TimeoutError"].includes(error.name) ? error.name : "UnknownError";
+    const message = error instanceof Error ? error.message : undefined;
+    const reason = message && ["Invalid image response", "Invalid image bytes", "Unresolved image usage", "Image generation is unavailable", "Image service returned unsuccessful status", "Invalid image filename", "Invalid image filename.", "Image filename is already in use.", "fetch failed"].includes(message) ? message : name === "AbortError" || name === "TimeoutError" ? "Image request interrupted or timed out" : "Unexpected image failure";
+    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+    const status = error && typeof error === "object" && "status" in error ? error.status : undefined;
+    return { name, reason, ...(typeof code === "string" && ["ENOENT", "EEXIST", "EACCES", "ENOSPC", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "23503", "23505", "23514", "40001", "40P01", "08006"].includes(code) ? { code } : {}), ...(Number.isInteger(status) && Number(status) >= 400 && Number(status) <= 599 ? { upstreamStatus: status } : {}) };
+}
+
 export async function readBoundedImageJson(response: Response): Promise<unknown> {
     const length = Number(response.headers.get("content-length"));
     if (Number.isFinite(length) && length > IMAGE_MAX_RESPONSE_BYTES) {
@@ -148,7 +160,7 @@ export async function generateInteractionImage(apiKey: string, input: ImageGener
     const response = await fetchFn("https://generativelanguage.googleapis.com/v1beta/interactions", { method: "POST", redirect: "error", signal: shutdownSignal ? AbortSignal.any([shutdownSignal, AbortSignal.timeout(90000)]) : AbortSignal.timeout(90000), headers: { "x-goog-api-key": apiKey, "content-type": "application/json" }, body: JSON.stringify({ model: IMAGE_MODEL, input: [{ type: "text", text: input.prompt }], store: false, response_format: { type: "image", aspect_ratio: input.aspectRatio, image_size: input.imageSize, mime_type: "image/png" }, generation_config: { max_output_tokens: 8192 } }) });
     if (!response.ok) {
         await response.body?.cancel();
-        throw new Error("Image generation is unavailable");
+        throw Object.assign(new Error("Image generation is unavailable"), { status: response.status });
     }
     return parseInteractionImage(await readBoundedImageJson(response));
 }

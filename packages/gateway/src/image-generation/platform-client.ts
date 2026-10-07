@@ -22,7 +22,7 @@ export function createPlatformImageClient(env: NodeJS.ProcessEnv = process.env, 
     return { isConfigured: () => true, async generateImage(prompt, opts) {
             if (opts.saveAs && !isSafeImageFileName(opts.saveAs))
                 throw new Error("Invalid image filename");
-            const request = ImageGenerationRequestSchema.parse({ requestId: `image_${randomUUID().replaceAll("-", "")}`, prompt, model: opts.model, aspectRatio: opts.aspectRatio, imageSize: opts.imageSize });
+            const request = ImageGenerationRequestSchema.parse({ requestId: opts.requestId ?? `image_${randomUUID().replaceAll("-", "")}`, prompt, model: opts.model, aspectRatio: opts.aspectRatio, imageSize: opts.imageSize });
             await assertImageDestinationAvailable(opts);
             const response = await fetchFn(url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(110000), headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(request) });
             if (!response.ok) {

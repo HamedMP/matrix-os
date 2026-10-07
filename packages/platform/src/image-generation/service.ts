@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { ImageGenerationRequestSchema, IMAGE_RESERVATION_MICROUSD, type ImageRuntimeIdentity } from "@matrix-os/contracts";
-import { generateInteractionImage } from "@matrix-os/contracts/image-generation/server";
+import { generateInteractionImage, safeImageErrorDetails } from "@matrix-os/contracts/image-generation/server";
 import type { PlatformDB } from "../db.js";
 import type { PlatformImageConfig } from "./config.js";
+import { withAccountDeletionOwnerLock } from "../account-deletion/admission.js";
 export class PlatformImageError extends Error {
     constructor(readonly code: "unavailable" | "allowance_exhausted" | "request_conflict" | "busy" | "invalid_request") { super("Image generation is unavailable"); }
 }
@@ -29,7 +30,8 @@ export function createPlatformImageService(options: {
         const stamp = at.toISOString();
         const period = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
         const hash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
-        await options.db.transaction(async (transaction) => {
+        await withAccountDeletionOwnerLock(options.db, identity.ownerId, async (transaction, admission) => {
+            if (!admission.newWorkAllowed) throw new PlatformImageError("unavailable");
             const trx = transaction.executor;
             // Global then owner locks serialize admission across machines/months. Never
             // expire an ambiguous provider dispatch and accidentally make it spendable.
@@ -60,8 +62,10 @@ export function createPlatformImageService(options: {
                 throw new PlatformImageError("allowance_exhausted");
             await trx.insertInto("image_generation_operations").values({ owner_id: identity.ownerId, request_id: input.requestId, machine_id: identity.machineId, runtime_slot: identity.runtimeSlot, period_start: period, payload_hash: hash, state: "dispatching", reserved_microusd: IMAGE_RESERVATION_MICROUSD, actual_microusd: null, created_at: stamp, updated_at: stamp }).execute();
         });
+        let stage: "provider" | "settlement" = "provider";
         try {
             const result = await generateInteractionImage(config.apiKey, input, options.fetchFn, shutdown.signal);
+            stage = "settlement";
             await options.db.transaction(async (transaction) => {
                 const trx = transaction.executor;
                 const op = await trx.updateTable("image_generation_operations").set({ state: "succeeded", actual_microusd: result.costMicrousd, updated_at: now().toISOString() }).where("owner_id", "=", identity.ownerId).where("request_id", "=", input.requestId).where("state", "=", "dispatching").returningAll().executeTakeFirst();
@@ -74,7 +78,7 @@ export function createPlatformImageService(options: {
             return result;
         }
         catch (error: unknown) {
-            console.warn("[platform-images] dispatch or settlement failed", error instanceof Error ? error.name : "UnknownError");
+            console.warn("[platform-images] dispatch or settlement failed", { ownerId: identity.ownerId, machineId: identity.machineId, requestId: input.requestId, stage, ...safeImageErrorDetails(error) });
             // A timeout, malformed response or crash is not evidence of no charge.
             await options.db.executor.updateTable("image_generation_operations").set({ state: "uncertain", updated_at: now().toISOString() }).where("owner_id", "=", identity.ownerId).where("request_id", "=", input.requestId).where("state", "=", "dispatching").execute();
             throw new PlatformImageError("unavailable");

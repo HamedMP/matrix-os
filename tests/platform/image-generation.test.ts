@@ -18,6 +18,7 @@ import { reconcilePlatformImageOperation } from "../../packages/platform/src/ima
 import { createPlatformImageService } from "../../packages/platform/src/image-generation/service.js";
 import { buildPlatformImageRuntimeVerificationToken, buildPlatformSpeechRuntimeVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { AccountDeletionRepository } from "../../packages/platform/src/account-deletion/repository.js";
 const sdk = vi.hoisted(() => ({
     createSdkMcpServer: vi.fn((config: unknown) => config),
     tool: vi.fn((name: string, _description: string, _schema: unknown, handler: unknown) => ({ name, handler })),
@@ -37,6 +38,48 @@ describe("platform funded image service", () => {
     }
     const request = (id = "img_1") => ({ requestId: id, prompt: "An original Matrix icon", model: "gemini-nano-banana-2.1", aspectRatio: "1:1", imageSize: "1K" });
     const token = () => buildPlatformImageRuntimeVerificationToken({ handle: "images", machineId: identity.machineId, runtimeSlot: "primary" }, secret);
+    it("denies paid work throughout account deletion before granting or reserving allowance", async () => {
+        vi.stubEnv("ACCOUNT_DELETION_SECRET", secret);
+        const repository = new AccountDeletionRepository(db.kysely, { secret });
+        await repository.accept({ clerkUserId: identity.ownerId, appleTokens: [] }, false);
+        const { service, fetchFn } = setup();
+        for (const status of ["scheduled", "processing", "completed"] as const) {
+            await db.executor.updateTable("account_deletion_jobs").set({ status }).execute();
+            await expect(service.generate(identity, request(status))).rejects.toThrow();
+        }
+        expect(fetchFn).not.toHaveBeenCalled();
+        expect(await db.executor.selectFrom("image_monthly_allowances").selectAll().execute()).toEqual([]);
+        expect(await db.executor.selectFrom("image_generation_operations").selectAll().execute()).toEqual([]);
+        await db.executor.updateTable("account_deletion_jobs").set({ status: "cancelled" }).execute();
+        await service.generate(identity, request("cancelled"));
+        expect(fetchFn).toHaveBeenCalledTimes(1);
+    });
+    it("logs a correlated bounded validation diagnostic without response data or credentials", async () => {
+        const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { service } = setup(vi.fn(async () => Response.json({ ...providerResponse(), usage: { secret: "platform-only-key", image: png } })));
+        await expect(service.generate(identity, request("diagnostic_request"))).rejects.toThrow();
+        expect(warning).toHaveBeenCalledWith("[platform-images] dispatch or settlement failed", expect.objectContaining({ requestId: "diagnostic_request", ownerId: identity.ownerId, name: "ZodError", reason: "Image contract validation failed", issues: expect.any(Array) }));
+        expect(JSON.stringify(warning.mock.calls)).not.toContain("platform-only-key");
+        expect(JSON.stringify(warning.mock.calls)).not.toContain(png);
+    });
+    it("logs authenticated route failures with request identity and safe database codes", async () => {
+        const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { service } = setup();
+        vi.spyOn(service, "generate").mockRejectedValue(Object.assign(new Error("private key=secret database details"), { code: "23514" }));
+        const app = new Hono().route("/internal/containers/:handle/images", createImageGenerationRoutes({ db, platformSecret: secret, service }));
+        const result = await app.request("/internal/containers/images/images?runtimeSlot=primary", { method: "POST", headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" }, body: JSON.stringify(request("route_failure")) });
+        expect(result.status).toBe(503);
+        expect(await result.json()).toEqual({ error: "Image generation is unavailable" });
+        expect(warning).toHaveBeenCalledWith("[platform-images] request failed", expect.objectContaining({ requestId: "route_failure", ownerId: identity.ownerId, code: "23514", reason: "Unexpected image failure" }));
+        expect(JSON.stringify(warning.mock.calls)).not.toContain("private key");
+    });
+    it("records safe upstream status and phase without logging provider response bodies", async () => {
+        const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { service } = setup(vi.fn(async () => new Response("provider key=secret private details", { status: 429 })));
+        await expect(service.generate(identity, request("provider_failure"))).rejects.toThrow();
+        expect(warning).toHaveBeenCalledWith("[platform-images] dispatch or settlement failed", expect.objectContaining({ requestId: "provider_failure", stage: "provider", upstreamStatus: 429, reason: "Image generation is unavailable" }));
+        expect(JSON.stringify(warning.mock.calls)).not.toContain("key=secret");
+    });
     it("uses Interactions with platform-only key and settles exact usage", async () => {
         const { service, fetchFn } = setup();
         const result = await service.generate(identity, request());
@@ -206,7 +249,9 @@ describe("platform funded image service", () => {
             const config = sdk.createSdkMcpServer.mock.calls.at(-1)![0] as { tools: Array<{ name: string; handler: (input: unknown) => Promise<{ content: Array<{ text: string }> }> }> };
             const result = await config.tools.find(tool => tool.name === "generate_image")!.handler({ prompt: "Original illustration", model: "gemini-nano-banana-2.1", funding_source: "byok" });
             expect(result.content[0]!.text).toBe("Image generation is unavailable. Try again later.");
-            expect(warning).toHaveBeenCalledWith("[ipc] BYOK image generation failed", failure);
+            expect(warning).toHaveBeenCalledWith("[ipc] BYOK image generation failed", expect.objectContaining({ requestId: expect.stringMatching(/^image_[a-f0-9]{32}$/), reason: "Unexpected image failure" }));
+            expect(JSON.stringify(warning.mock.calls)).not.toContain("token=secret");
+            expect(JSON.stringify(warning.mock.calls)).not.toContain("private validation detail");
         } finally { await rm(dir, { recursive: true, force: true }); }
     });
     it("reconciles an uncertain charge once using reviewed evidence without resetting spent", async () => {
