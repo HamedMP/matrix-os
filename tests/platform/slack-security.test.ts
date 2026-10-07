@@ -25,7 +25,15 @@ describe("Slack security", () => {
     expect(encryptSlackToken("xoxb-secret", key, context)).not.toBe(ciphertext);
     expect(decryptSlackToken(ciphertext, key, context)).toBe("xoxb-secret");
     expect(() => decryptSlackToken(ciphertext, key, "A123:T999")).toThrow();
-    expect(() => decryptSlackToken(ciphertext.slice(0, -2) + "xx", key, context)).toThrow();
+    for (const segment of [1, 2, 3]) {
+      const parts = ciphertext.split(".");
+      const bytes = Buffer.from(parts[segment], "base64url");
+      // Changing encoded padding bits can leave the authenticated bytes unchanged.
+      bytes[0] ^= 1;
+      parts[segment] = bytes.toString("base64url");
+      expect(parts.join(".")).not.toBe(ciphertext);
+      expect(() => decryptSlackToken(parts.join("."), key, context)).toThrow();
+    }
   });
   it("neutralizes mention/broadcast syntax and encodes ampersands", () => {
     expect(escapeSlackText("Hi <@U123> <!channel> & <https://example.com>")).toBe("Hi &lt;@U123&gt; &lt;!channel&gt; &amp; &lt;https://example.com&gt;");
