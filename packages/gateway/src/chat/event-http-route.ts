@@ -1,3 +1,4 @@
+import { ChatRunWireVersionSchema, projectChatRunResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
 import { projectChatFundingErrors } from "./funding-error-wire.js";
@@ -70,6 +71,8 @@ export function registerCanonicalChatEventHttpRoute(options: {
     if (!messageVersion.success) return context.json({ error: "Unsupported message version" }, 400);
     const inputVersion = ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion"));
     if (!inputVersion.success) return context.json({ error: "Unsupported input version" }, 400);
+    const runVersion = ChatRunWireVersionSchema.safeParse(context.req.query("runVersion"));
+    if (!runVersion.success || (context.req.queries("runVersion")?.length ?? 0) > 1) return context.json({ error: "Unsupported run version" }, 400);
     const metadataVersion = ChatMetadataVersionSchema.safeParse(context.req.header("x-matrix-chat-metadata"));
     if (!metadataVersion.success) return context.json({ error: "Unsupported metadata version" }, 400);
     const fundingVersion = ChatFundingWireVersionSchema.safeParse(context.req.query("fundingVersion"));
@@ -121,7 +124,7 @@ export function registerCanonicalChatEventHttpRoute(options: {
           const readProjected = projected.type === "chat.content" ? {
             ...projected, content: projectChatReadStateResponse(projected.content, readStateVersion.data),
           } : projected;
-          controller.enqueue(encodeFrame(encoder, projectChatFundingErrors(projectChatMetadata(projectChatRecipeSources(readProjected), metadataVersion.data), fundingVersion.data)));
+          controller.enqueue(encodeFrame(encoder, projectChatRunResponse(projectChatFundingErrors(projectChatMetadata(projectChatRecipeSources(readProjected), metadataVersion.data), fundingVersion.data), runVersion.data)));
           return true;
         } catch (error: unknown) {
           console.warn("[chat/event-http-route] Frame enqueue failed:", error instanceof Error ? error.name : "UnknownError");

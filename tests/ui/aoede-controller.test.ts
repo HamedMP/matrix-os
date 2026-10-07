@@ -209,7 +209,7 @@ it("client calls providers, PATCH selection and POST action cancel with schema v
   const updated = await api.updateSelection("chat_aoede", selection);
   expect(updated.chat.id).toBe("chat_aoede");
   const patchCall = vi.mocked(fetcher).mock.calls[1];
-  expect(String(patchCall[0])).toBe("https://runtime.test/api/chats/chat_aoede/selection");
+  expect(String(patchCall[0])).toBe("https://runtime.test/api/chats/chat_aoede/selection?runVersion=1");
   expect(patchCall[1]?.method).toBe("PATCH");
   expect(JSON.parse(patchCall[1]?.body as string)).toEqual(selection);
 
