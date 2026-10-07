@@ -26,7 +26,7 @@ describe('feature-off native Gmail user disconnect', () => {
       containerId: 'other', pipedreamExternalId: 'external-other' })).id;
     paid = vi.fn(async () => { throw new Error('Paid fallback must never execute'); });
     const legacy = { revokeAccount: paid, getAppInfo: async () => null } as unknown as PipedreamConnectClient;
-    const env = { GMAIL_OAUTH_ENABLED: 'true', GMAIL_OAUTH_CLIENT_ID: 'client.apps.googleusercontent.com', GMAIL_OAUTH_CLIENT_SECRET: 'client-secret',
+    const env = { GMAIL_OAUTH_INTERNAL_CLERK_IDS: 'user_owner', GMAIL_OAUTH_ENABLED: 'true', GMAIL_OAUTH_CLIENT_ID: 'client.apps.googleusercontent.com', GMAIL_OAUTH_CLIENT_SECRET: 'client-secret',
       GMAIL_OAUTH_CALLBACK_URL: 'https://app.matrix-os.com/api/integrations/gmail/oauth/callback', GMAIL_CREDENTIAL_ENCRYPTION_KEY: '12'.repeat(32) };
     fetcher = vi.fn(async (url: string) => {
       if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'access', refresh_token: 'refresh', token_type: 'Bearer',

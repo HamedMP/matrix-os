@@ -1,3 +1,4 @@
+import { loadNativeGmailPilotIds } from './policy.js';
 import { parseCustomMcpEncryptionKey } from '../custom-mcp/crypto.js';
 export function loadNativeGmailConfig(env: NodeJS.ProcessEnv) {
   const retained = [env.GMAIL_OAUTH_CLIENT_ID, env.GMAIL_OAUTH_CLIENT_SECRET,
@@ -17,7 +18,8 @@ export function loadNativeGmailConfig(env: NodeJS.ProcessEnv) {
     if (others.some(secret => Boolean(secret) && secret === rawKey)) throw new Error();
     if (env.MCP_CREDENTIAL_ENCRYPTION_KEY
       && encryptionKey.equals(parseCustomMcpEncryptionKey(env.MCP_CREDENTIAL_ENCRYPTION_KEY))) throw new Error();
-    return { clientId, clientSecret, redirectUri, encryptionKey };
+    const pilotClerkIds = env.GMAIL_OAUTH_ENABLED === 'true' ? loadNativeGmailPilotIds(env.GMAIL_OAUTH_INTERNAL_CLERK_IDS) : Object.freeze([] as string[]);
+    return { clientId, clientSecret, redirectUri, encryptionKey, pilotClerkIds };
   } catch (error) {
     console.error('[native-gmail] Configuration rejected:', error instanceof Error ? error.name : 'Unknown error');
     throw new Error('Gmail OAuth configuration unavailable');

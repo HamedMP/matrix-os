@@ -234,3 +234,6 @@ export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLab
 export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry } from "./chat/canonical-slash-entries.js";
 export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
+
+export { GmailConnectionChoice } from "./integrations/GmailConnectionChoice.js";
+export { useGmailConnectionChoice } from "./integrations/use-gmail-connection-choice.js";

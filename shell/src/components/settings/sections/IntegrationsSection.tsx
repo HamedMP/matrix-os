@@ -8,9 +8,10 @@ import {
   shouldLogIntegrationWarning,
   type ConnectedService,
 } from "./integrations-helpers";
-import { IntegrationMarketplace } from "@matrix-os/ui";
-import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
+import { GmailConnectionChoice, useGmailConnectionChoice, IntegrationMarketplace } from "@matrix-os/ui";
+import type { GmailConnectionMethod, IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
 import { ConnectedIntegrationAccounts } from "./ConnectedIntegrationAccounts";
+import { fetchGmailConnectionOptions } from "./gmail-connection-request";
 import { CustomMcpServersPanel } from "./CustomMcpServersPanel";
 
 const GATEWAY = getGatewayUrl();
@@ -31,6 +32,8 @@ export function IntegrationsSection() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState<string>("");
   const [savingRename, setSavingRename] = useState<string | null>(null);
+  const loadGmailOptions = useCallback(() => fetchGmailConnectionOptions(GATEWAY), []);
+  const gmailChoice = useGmailConnectionChoice(loadGmailOptions);
   const connectInFlight = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -173,7 +176,7 @@ export function IntegrationsSection() {
     };
   }, [loadData]);
 
-  const handleConnect = async (serviceId: string, label?: string) => {
+  const handleConnect = async (serviceId: string, label?: string, connectionMethod?: GmailConnectionMethod) => {
     if (connecting || connectInFlight.current) return;
     connectInFlight.current = true;
     let popup: Window | null = null;
@@ -184,6 +187,7 @@ export function IntegrationsSection() {
       if (!popup) throw new Error("Consent window blocked");
       const payload: Record<string, string> = { service: serviceId };
       if (label?.trim()) payload.label = label.trim();
+      if (serviceId === "gmail" && connectionMethod) payload.connectionMethod = connectionMethod;
       const res = await fetch(`${GATEWAY}/api/integrations/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -422,7 +426,8 @@ export function IntegrationsSection() {
 
       <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }} />
 
-      <IntegrationMarketplace services={available} connectedIds={connected.map(c => c.service)} connectingId={connecting} onConnect={id => void handleConnect(id)} />
+      <IntegrationMarketplace services={available} connectedIds={connected.map(c => c.service)} connectingId={connecting} onConnect={id => { if (id === "gmail") gmailChoice.request(method => void handleConnect(id, undefined, method)); else void handleConnect(id); }} />
+      <GmailConnectionChoice choice={gmailChoice} />
       <CustomMcpServersPanel />
     </div>
   );

@@ -19,6 +19,7 @@ export async function initializeOwnedIntegrationDb<T extends { migrate(): Promis
 }
 export interface PlatformGmailRuntime {
   client: LegacyClient;
+  isEligible?: (userId: string) => Promise<boolean>;
   launchRoutes?: Hono;
   cleanup?: { revoke(input: { userId: string; connectionId: string }): Promise<boolean> };
   oauth?: { revoke(input: { userId: string; connectionId: string }): Promise<boolean> };
@@ -43,7 +44,7 @@ export async function createConfiguredPlatformGmail(options: {
   resolveUserId?: (c: Context) => Promise<string | null>;
   loadModule?: () => Promise<RuntimeModule>;
 }): Promise<PlatformGmailRuntime> {
-  if (!requiresPlatformGmailRuntime(options.env)) return { client: options.legacy };
+  if (!requiresPlatformGmailRuntime(options.env)) return { client: options.legacy, isEligible: async () => false };
   const module: RuntimeModule = await (options.loadModule ?? (() => import(new URL('../../gateway/dist/integrations/native-gmail/runtime.js', import.meta.url).href)))();
   return module.createNativeGmailRuntime({ db: options.integrationDb, legacy: options.legacy, env: options.env, resolveUserId: options.resolveUserId,
     admit: async (userId, persist) => {

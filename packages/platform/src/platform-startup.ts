@@ -166,6 +166,7 @@ interface GatewayIntegrationRoutesModule {
     pipedream: unknown;
     nativeGmail?: unknown;
     nativeGmailCleanup?: unknown;
+    nativeGmailEligible?: (userId: string) => Promise<boolean>;
     webhookSecret: string;
     resolveUserId: (c: Context) => Promise<string | null>;
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
@@ -535,6 +536,7 @@ async function startPlatformServerWithCleanup(
       pipedream,
       nativeGmail: gmail.oauth,
       nativeGmailCleanup: gmail.cleanup,
+      nativeGmailEligible: gmail.isEligible,
       webhookSecret,
       verifiedConnectedWebhook,
       resolveUserId: async (c) => {
@@ -549,6 +551,7 @@ async function startPlatformServerWithCleanup(
       pipedream,
       nativeGmail: gmail.oauth,
       nativeGmailCleanup: gmail.cleanup,
+      nativeGmailEligible: gmail.isEligible,
       webhookSecret,
       verifiedConnectedWebhook,
       authorizeJevLabelCall: authorizeInternalJevLabels,

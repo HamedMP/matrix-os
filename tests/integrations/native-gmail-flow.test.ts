@@ -40,7 +40,7 @@ describe('native Gmail consent through real integration actions', () => {
       redirectUri: 'https://app.matrix-os.com/api/integrations/gmail/oauth/callback', encryptionKey: Buffer.alloc(32, 8), fetcher });
     const client = createNativeGmailClient({ legacy, oauth, fetcher });
     const resolveUserId = async (c: any) => c.req.header('x-owner') ?? null;
-    app = new Hono().route('/api/integrations', createIntegrationRoutes({ db, nativeGmail: oauth, pipedream: client, webhookSecret: '', resolveUserId }));
+    app = new Hono().route('/api/integrations', createIntegrationRoutes({ db, nativeGmail: oauth, nativeGmailEligible: async () => true, pipedream: client, webhookSecret: '', resolveUserId }));
     app.route('/auth', createNativeGmailLaunchRoutes({ oauth, resolveUserId }));
   });
   afterEach(async () => db.destroy());

@@ -19,9 +19,11 @@ const baseEnv: Record<string, string> = {
   MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: 'false', IMAGE_DIGEST: 'image@sha256:fixture',
   GMAIL_OAUTH_ENABLED: 'false', GMAIL_OAUTH_CLIENT_ID: '', GMAIL_OAUTH_CALLBACK_URL: '',
   GMAIL_OAUTH_CLIENT_SECRET_VERSION: '1', GMAIL_CREDENTIAL_ENCRYPTION_KEY_VERSION: '1',
+  GMAIL_OAUTH_INTERNAL_CLERK_IDS: '',
 };
 const enabledEnv = { GMAIL_OAUTH_ENABLED: 'true',
-  GMAIL_OAUTH_CLIENT_ID: 'fixture.apps.googleusercontent.com', GMAIL_OAUTH_CALLBACK_URL: callback };
+  GMAIL_OAUTH_CLIENT_ID: 'fixture.apps.googleusercontent.com', GMAIL_OAUTH_CALLBACK_URL: callback,
+  GMAIL_OAUTH_INTERNAL_CLERK_IDS: 'user_InternalAlice,user_InternalBob' };
 const execute = (script: string, overrides: Record<string, string> = {}) => spawnSync('bash', ['-c', script], {
   encoding: 'utf8', env: { PATH: process.env.PATH, ...baseEnv, ...overrides },
 });
@@ -39,7 +41,7 @@ function bindings(result: ReturnType<typeof deploy>, flag: string) {
 }
 
 describe('Native Gmail Cloud Run deployment', () => {
-  it('defaults off and declares only public configuration and pinned version inputs', () => {
+  it('defaults off and declares public registration and pinned credential versions', () => {
     expect(workflow.jobs.deploy.env.GMAIL_OAUTH_ENABLED).toBe("${{ vars.GMAIL_OAUTH_ENABLED || 'false' }}");
     for (const key of ['GMAIL_OAUTH_CLIENT_ID', 'GMAIL_OAUTH_CALLBACK_URL']) {
       expect(workflow.jobs.deploy.env[key]).toBe(`\${{ vars.${key} }}`);
@@ -65,6 +67,34 @@ describe('Native Gmail Cloud Run deployment', () => {
     expect(env.some(value => /^GMAIL_(OAUTH_CLIENT_SECRET|CREDENTIAL_ENCRYPTION_KEY)=/.test(value))).toBe(false);
     expect(secrets).toContain('GMAIL_OAUTH_CLIENT_SECRET=gmail-oauth-client-secret:3');
     expect(secrets).toContain('GMAIL_CREDENTIAL_ENCRYPTION_KEY=gmail-credential-encryption-key:7');
+  });
+
+  it('keeps pilot identities in a masked repository secret and binds them only when enabled', () => {
+    expect(workflow.jobs.deploy.env.GMAIL_OAUTH_INTERNAL_CLERK_IDS).toBe('${{ secrets.GMAIL_OAUTH_INTERNAL_CLERK_IDS }}');
+    const enabled = bindings(deploy(enabledEnv), '--set-env-vars').slice(3).split('|');
+    expect(enabled).toContain(`GMAIL_OAUTH_INTERNAL_CLERK_IDS=${enabledEnv.GMAIL_OAUTH_INTERNAL_CLERK_IDS}`);
+    const disabled = bindings(deploy({ ...enabledEnv, GMAIL_OAUTH_ENABLED: 'false' }), '--set-env-vars');
+    expect(disabled).not.toContain('GMAIL_OAUTH_INTERNAL_CLERK_IDS=');
+  });
+
+  it.each(['', '   ', ' user_InternalAlice , user_InternalBob '])('accepts empty or bounded pilot lists (%j)', list => {
+    const result = validate({ ...enabledEnv, GMAIL_OAUTH_INTERNAL_CLERK_IDS: list });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    'user_InternalAlice|INJECTED=true', 'not_a_clerk_id', 'user_', 'user_InternalAlice,',
+    'user_InternalAlice,user_InternalAlice', `user_${'x'.repeat(124)}`,
+    Array.from({ length: 101 }, (_, i) => `user_Test${i}`).join(','), ' '.repeat(12900),
+  ])('rejects invalid enabled pilot lists without exposing identities (%j)', list => {
+    const result = validate({ ...enabledEnv, GMAIL_OAUTH_INTERNAL_CLERK_IDS: list });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).not.toContain(list);
+  });
+
+  it('does not require a pilot list for retained disabled cleanup', () => {
+    const result = validate({ ...enabledEnv, GMAIL_OAUTH_ENABLED: 'false', GMAIL_OAUTH_INTERNAL_CLERK_IDS: 'no-longer-valid' });
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it('requires no Gmail registration or secret bindings for an unconfigured disabled deployment', () => {

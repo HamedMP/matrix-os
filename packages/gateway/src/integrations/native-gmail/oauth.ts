@@ -24,6 +24,7 @@ export interface NativeGmailOAuthOptions {
   store: NativeGmailStore; clientId: string; clientSecret: string; redirectUri: string; encryptionKey: Buffer;
   fetcher?: typeof fetch; now?: () => number;
   admit?: (userId: string, persist: () => Promise<void>) => Promise<void>;
+  isEligible?: (userId: string) => Promise<boolean>;
 }
 
 /** OAuth holds no plaintext credentials or replay state between operations. */
@@ -40,6 +41,7 @@ export class NativeGmailOAuthManager {
 
   async start(input: { userId: string; externalUserId: string; label?: string; redirectUri?: string }): Promise<{ url: string }> {
     if (!input.userId || !input.externalUserId || (input.redirectUri && input.redirectUri !== "matrixos://integrations")) throw new NativeGmailOAuthError();
+    await this.assertEligible(input.userId);
     const labelValue = input.label === undefined ? undefined : z.string().trim().min(1).max(100).safeParse(input.label);
     if (labelValue && !labelValue.success) throw new NativeGmailOAuthError();
     // Empty durable label means no explicit rename; reconnect preserves the saved label.
@@ -58,6 +60,7 @@ export class NativeGmailOAuthManager {
     if (!/^[A-Za-z0-9_-]{43}$/.test(state)) throw new NativeGmailOAuthError();
     const pending = await this.options.store.inspectState(hash(state), new Date(this.now()));
     if (!pending || pending.userId !== owner.userId) throw new NativeGmailOAuthError();
+    await this.assertEligible(pending.userId);
     const { verifier } = z.object({ verifier: z.string().min(43).max(128) }).parse(decryptCustomMcpCredential(
       pending.encryptedVerifier, this.options.encryptionKey, stateBinding(pending.userId, pending.hash)));
     return { url: this.authorizationUrl(state, verifier), browserProof: this.browserProof(state) };
@@ -92,6 +95,7 @@ export class NativeGmailOAuthManager {
     if (!pending || !code || code.length > 4096) throw new NativeGmailOAuthError();
     let connected: NativeGmailConnection | undefined;
     const persist = async () => {
+      await this.assertEligible(pending.userId);
       const ownerLease = await this.options.store.acquireOwnerLease(pending.userId, new Date(this.now()));
       if (!ownerLease) throw new NativeGmailOAuthError();
       try {
@@ -100,9 +104,11 @@ export class NativeGmailOAuthManager {
         const credentials = await this.exchange(new URLSearchParams({ grant_type: "authorization_code", code,
           code_verifier: verifier, redirect_uri: this.options.redirectUri, client_id: this.options.clientId,
           client_secret: this.options.clientSecret }));
+        await this.assertEligible(pending.userId);
         const response = await gmailOAuthRequest({ endpoint: "profile", fetcher: this.fetcher, accessToken: credentials.accessToken });
         if (response.status !== 200) throw new NativeGmailOAuthError();
         const profile = z.object({ emailAddress: z.email().max(254) }).parse(this.parse(response.body));
+        await this.assertEligible(pending.userId);
         connected = await this.options.store.connect({ userId: pending.userId, externalUserId: pending.externalUserId,
           email: profile.emailAddress.toLowerCase(), label: pending.label || undefined, scopes: credentials.scope.split(/\s+/),
           encrypt: (accountId) => this.encrypt(credentials, pending.userId, accountId), now: new Date(this.now()), ownerLease });
@@ -135,14 +141,18 @@ export class NativeGmailOAuthManager {
           if (!row) throw new NativeGmailOAuthError();
         }
         if (row) {
+          await this.bounded(this.assertEligible(row.userId), signal);
           const credentials = this.decrypt(row);
           if (!granted(credentials.scope)) throw new NativeGmailOAuthError();
           if (credentials.expiresAt <= this.now() + 60_000) {
             try { return await this.refreshRow(row, signal); }
             catch (error) { if (!(error instanceof RefreshLeaseBusy)) throw error; }
-          } else if (await this.bounded(this.options.store.assertCurrent(row, new Date(this.now())), signal)) {
-            signal.throwIfAborted();
-            return credentials.accessToken;
+          } else {
+            await this.bounded(this.assertEligible(row.userId), signal);
+            if (await this.bounded(this.options.store.assertCurrent(row, new Date(this.now())), signal)) {
+              signal.throwIfAborted();
+              return credentials.accessToken;
+            }
           }
         }
         await wait(100, undefined, { signal });
@@ -166,6 +176,7 @@ export class NativeGmailOAuthManager {
   }
 
   async refresh(binding: { userId: string; connectionId: string }): Promise<void> {
+    await this.assertEligible(binding.userId);
     const row = await this.options.store.byConnection(binding);
     if (!row || row.status !== "active") throw new NativeGmailOAuthError();
     try { await this.refreshRow(row); }
@@ -176,6 +187,7 @@ export class NativeGmailOAuthManager {
   }
 
   private async refreshRow(row: NativeGmailConnection, signal?: AbortSignal): Promise<string> {
+    await this.assertEligible(row.userId);
     const lease = await this.options.store.acquireLease(row, new Date(this.now()));
     if (!lease) throw new RefreshLeaseBusy();
     try {
@@ -185,6 +197,7 @@ export class NativeGmailOAuthManager {
       signal?.throwIfAborted();
       if (!await this.options.store.settle(lease, this.encrypt(updated, row.userId, row.accountId), "active", new Date(this.now()))) throw new NativeGmailOAuthError();
       // Revalidate canonical policy and revision after settlement before direct dispatch.
+      await this.assertEligible(row.userId);
       if (!await this.options.store.assertCurrent({ ...row, revision: row.revision + 1 }, new Date(this.now()))) throw new NativeGmailOAuthError();
       return updated.accessToken;
     } catch (error) {
@@ -216,6 +229,10 @@ export class NativeGmailOAuthManager {
         return true;
       } finally { await this.options.store.releaseLease(lease); }
     } finally { await this.options.store.releaseOwnerLease(binding.userId, ownerLease); }
+  }
+
+  private async assertEligible(userId: string): Promise<void> {
+    if (this.options.isEligible && !await this.options.isEligible(userId)) throw new NativeGmailOAuthError();
   }
 
   private async exchange(body: URLSearchParams, previous?: NativeGmailCredentials, signal?: AbortSignal): Promise<NativeGmailCredentials> {

@@ -18,7 +18,7 @@ describe('platform native Gmail startup', () => {
   it('composes revocation-only startup after feature-off rollback and account deletion revokes the stored grant', async () => {
     const { db, instance } = await createTestPlatformDb();
     const integrationDb = createIntegrationDb({ dialect: instance.dialect });
-    const env = { GMAIL_OAUTH_ENABLED: 'true', GMAIL_OAUTH_CLIENT_ID: 'client.apps.googleusercontent.com', GMAIL_OAUTH_CLIENT_SECRET: 'google-secret',
+    const env = { GMAIL_OAUTH_INTERNAL_CLERK_IDS: 'user_gmailcleanup', GMAIL_OAUTH_ENABLED: 'true', GMAIL_OAUTH_CLIENT_ID: 'client.apps.googleusercontent.com', GMAIL_OAUTH_CLIENT_SECRET: 'google-secret',
       GMAIL_OAUTH_CALLBACK_URL: 'https://app.matrix-os.com/api/integrations/gmail/oauth/callback', GMAIL_CREDENTIAL_ENCRYPTION_KEY: '12'.repeat(32),
       ACCOUNT_DELETION_SECRET: 'gmail-deletion-secret-at-least-32' };
     const legacy = { listAccounts: vi.fn(async () => []), revokeAccount: vi.fn() } as unknown as PipedreamConnectClient;
@@ -28,7 +28,7 @@ describe('platform native Gmail startup', () => {
     vi.stubGlobal('fetch', request);
     try {
       await integrationDb.migrate();
-      const owner = await integrationDb.createUser({ clerkId: 'user_gmail_cleanup', handle: 'gmail-cleanup', displayName: 'Owner',
+      const owner = await integrationDb.createUser({ clerkId: 'user_gmailcleanup', handle: 'gmail-cleanup', displayName: 'Owner',
         email: 'owner@example.test', containerId: 'gmail-cleanup', pipedreamExternalId: 'external-owner' });
       const enabled = createNativeGmailRuntime({ env, db: integrationDb, legacy });
       const url = new URL((await enabled.oauth!.start({ userId: owner.id, externalUserId: 'external-owner' })).url);
@@ -47,14 +47,14 @@ describe('platform native Gmail startup', () => {
         env: { ...env, GMAIL_OAUTH_ENABLED: 'false', GMAIL_OAUTH_CLIENT_ID: 'wrong-client.apps.googleusercontent.com' },
         loadModule: async () => ({ createNativeGmailRuntime: options => createNativeGmailRuntime({ ...options, db: integrationDb, legacy }) }) });
       await expect(createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync', pipedream: legacy, nativeGmail: mismatched.cleanup })
-        .integrations({ clerkUserId: 'user_gmail_cleanup', appleTokens: [] })).rejects.toThrow('Gmail connection unavailable');
+        .integrations({ clerkUserId: 'user_gmailcleanup', appleTokens: [] })).rejects.toThrow('Gmail connection unavailable');
       expect(await integrationDb.getConnectedService(connected.connectionId)).not.toBeNull();
       expect(request).toHaveBeenCalledTimes(2);
       // Cleanup remains permitted after deletion admission has already stopped new consent.
       const repository = new AccountDeletionRepository(db.kysely, { secret: env.ACCOUNT_DELETION_SECRET });
-      await repository.accept({ clerkUserId: 'user_gmail_cleanup', appleTokens: [] }, false);
+      await repository.accept({ clerkUserId: 'user_gmailcleanup', appleTokens: [] }, false);
       await createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync', pipedream: legacy, nativeGmail: runtime.cleanup })
-        .integrations({ clerkUserId: 'user_gmail_cleanup', appleTokens: [] });
+        .integrations({ clerkUserId: 'user_gmailcleanup', appleTokens: [] });
       expect(await integrationDb.getConnectedService(connected.connectionId)).toBeNull();
       expect(request).toHaveBeenCalledTimes(3);
       expect(request.mock.calls[2][0]).toBe('https://oauth2.googleapis.com/revoke');

@@ -77,6 +77,8 @@ jobs:
       MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: ${{ vars.MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION || '1' }}
       # Disable consent/mailbox calls with false; retain registration variables for grant cleanup.
       GMAIL_OAUTH_ENABLED: ${{ vars.GMAIL_OAUTH_ENABLED || 'false' }}
+      # Private immutable account IDs; an empty list admits nobody to the direct pilot.
+      GMAIL_OAUTH_INTERNAL_CLERK_IDS: ${{ secrets.GMAIL_OAUTH_INTERNAL_CLERK_IDS }}
       GMAIL_OAUTH_CLIENT_ID: ${{ vars.GMAIL_OAUTH_CLIENT_ID }}
       GMAIL_OAUTH_CALLBACK_URL: ${{ vars.GMAIL_OAUTH_CALLBACK_URL }}
       GMAIL_OAUTH_CLIENT_SECRET_VERSION: ${{ vars.GMAIL_OAUTH_CLIENT_SECRET_VERSION || '1' }}
@@ -144,6 +146,17 @@ jobs:
               exit 1
               ;;
           esac
+          if [ "${GMAIL_OAUTH_ENABLED:-false}" = "true" ]; then
+            node <<'NODE'
+          const raw = process.env.GMAIL_OAUTH_INTERNAL_CLERK_IDS ?? '';
+          const ids = raw.trim() ? raw.split(',').map(id => id.trim()) : [];
+          if (raw.length > 12899 || ids.length > 100 || new Set(ids).size !== ids.length
+            || ids.some(id => id.length > 128 || !/^user_[A-Za-z0-9]+$/.test(id))) {
+            console.error('Gmail pilot requires a bounded list of unique immutable account IDs.');
+            process.exit(1);
+          }
+          NODE
+          fi
           # Existing grants still need revocation when consent and mailbox execution are disabled.
           if [ "${GMAIL_OAUTH_ENABLED:-false}" = "true" ] || [ -n "${GMAIL_OAUTH_CLIENT_ID:-}" ] || [ -n "${GMAIL_OAUTH_CALLBACK_URL:-}" ]; then
             if ! [[ "${GMAIL_OAUTH_CLIENT_ID:-}" =~ ^[A-Za-z0-9._-]+$ ]] || [ "${#GMAIL_OAUTH_CLIENT_ID}" -gt 512 ]; then
@@ -903,6 +916,9 @@ jobs:
           if [ "${GMAIL_OAUTH_ENABLED:-false}" = "true" ] || [ -n "${GMAIL_OAUTH_CLIENT_ID:-}" ] || [ -n "${GMAIL_OAUTH_CALLBACK_URL:-}" ]; then
             gmail_env_bindings="${gmail_env_bindings}|GMAIL_OAUTH_CLIENT_ID=${GMAIL_OAUTH_CLIENT_ID}|GMAIL_OAUTH_CALLBACK_URL=${GMAIL_OAUTH_CALLBACK_URL}"
             gmail_secret_bindings=",GMAIL_OAUTH_CLIENT_SECRET=gmail-oauth-client-secret:${GMAIL_OAUTH_CLIENT_SECRET_VERSION},GMAIL_CREDENTIAL_ENCRYPTION_KEY=gmail-credential-encryption-key:${GMAIL_CREDENTIAL_ENCRYPTION_KEY_VERSION}"
+          fi
+          if [ "${GMAIL_OAUTH_ENABLED:-false}" = "true" ]; then
+            gmail_env_bindings="${gmail_env_bindings}|GMAIL_OAUTH_INTERNAL_CLERK_IDS=${GMAIL_OAUTH_INTERNAL_CLERK_IDS:-}"
           fi
           if [ "$CUSTOM_MCP_ENABLED" = "true" ]; then
             custom_mcp_secret_bindings=",MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:${MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION}"

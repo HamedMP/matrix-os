@@ -12,7 +12,7 @@ function setup() {
   const db = { getUserById: vi.fn(async () => ({ pipedream_external_id: 'external-owner' })),
     updatePipedreamExternalId: vi.fn(), getConnectedService: vi.fn(async () => connection) };
   const broadcast = vi.fn();
-  const app = new Hono().route('/', createNativeGmailRoutes({ db, oauth, broadcast, resolveUserId: async c => c.req.header('x-owner') ?? null }));
+  const app = new Hono().route('/', createNativeGmailRoutes({ db, oauth, broadcast, isEligible: async () => true, resolveUserId: async c => c.req.header('x-owner') ?? null }));
   app.route('/auth', createNativeGmailLaunchRoutes({ oauth, resolveUserId: async c => c.req.header('x-owner') ?? null }));
   app.all('*', c => c.json({ legacy: true })); return { app, db, oauth, broadcast };
 }

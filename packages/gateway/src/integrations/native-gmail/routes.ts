@@ -1,3 +1,4 @@
+import { createNativeGmailConnectionRoutes } from './connection-routes.js';
 import { createNativeGmailDisconnectRoutes } from './disconnect-routes.js';
 import { createHash } from 'node:crypto';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
@@ -16,8 +17,6 @@ export interface NativeGmailLifecycle {
   refresh(input: { userId: string; connectionId: string }): Promise<void>;
   revoke(input: { userId: string; connectionId: string }): Promise<boolean>;
 }
-const Connect = z.object({ service: z.string().min(1).max(100), label: z.string().trim().min(1).max(100).optional(),
-  redirectUri: z.literal('matrixos://integrations').optional() });
 const Callback = z.object({ state: z.string().min(1).max(2048).regex(/^[A-Za-z0-9_.-]+$/),
   code: z.string().min(1).max(4096).regex(/^[^\s\x00-\x1f\x7f]+$/).optional(),
   error: z.string().min(1).max(128).optional() }).refine(v => Boolean(v.code) !== Boolean(v.error));
@@ -28,40 +27,15 @@ const success = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Gma
 export function createNativeGmailRoutes(options: {
   db: Pick<PlatformDb, 'getUserById' | 'updatePipedreamExternalId' | 'getConnectedService'>;
   oauth: NativeGmailLifecycle;
+  isEligible?: (userId: string) => Promise<boolean>;
   resolveUserId(c: Context): Promise<string | null>;
   broadcast?: IntegrationBroadcast;
 }): Hono {
-  const app = new Hono().route('/', createNativeGmailDisconnectRoutes({ db: options.db, cleanup: options.oauth, resolveUserId: options.resolveUserId, broadcast: options.broadcast }));
+  const app = new Hono().route('/', createNativeGmailConnectionRoutes({ ...options, isEligible: options.isEligible ?? (async () => false) })).route('/', createNativeGmailDisconnectRoutes({ db: options.db, cleanup: options.oauth, resolveUserId: options.resolveUserId, broadcast: options.broadcast }));
   const notify = (event: { type: 'integration:connected'; service: string; accountLabel: string } | { type: 'integration:disconnected'; service: string; id: string }) => {
     try { if (event.type === 'integration:connected') options.broadcast?.(event); else options.broadcast?.(event); }
     catch (error) { console.warn('[native-gmail] Connection notification failed:', error); }
   };
-  app.post('/connect', bodyLimit({ maxSize: 4096 }), async (c, next) => {
-    const userId = await options.resolveUserId(c);
-    if (!userId) return c.json({ error: 'Unauthorized' }, 401);
-    let body: unknown;
-    try { body = await c.req.json(); }
-    catch (error) { if (error instanceof Error && error.name === 'BodyLimitError') return c.json({ error: 'Request too large' }, 413); if (!(error instanceof SyntaxError)) console.warn('[native-gmail] Connect body unavailable'); return c.json({ error: 'Invalid request' }, 400); }
-    const parsed = Connect.safeParse(body);
-    if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
-    if (parsed.data.service !== 'gmail') return next();
-    try {
-      const user = await options.db.getUserById(userId);
-      if (!user) return c.json({ error: 'Connection unavailable' }, 503);
-      const externalUserId = user.pipedream_external_id ?? userId;
-      if (!user.pipedream_external_id) await options.db.updatePipedreamExternalId(userId, externalUserId);
-      const { url } = await options.oauth.start({ userId, externalUserId,
-        ...(parsed.data.label ? { label: parsed.data.label } : {}),
-        ...(parsed.data.redirectUri ? { redirectUri: parsed.data.redirectUri } : {}) });
-      const authorization = new URL(url);
-      const state = authorization.searchParams.get('state');
-      const callback = authorization.searchParams.get('redirect_uri');
-      if (!state || !callback) throw new Error('Consent unavailable');
-      const launch = new URL('/auth/gmail', new URL(callback).origin);
-      launch.searchParams.set('state', state);
-      return c.json({ url: launch.href, service: 'gmail' });
-    } catch (error) { console.warn('[native-gmail] Connection start failed:', error); return c.json({ error: 'Connection unavailable' }, 502); }
-  });
   app.get('/gmail/oauth/callback', async c => {
     c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer');
     c.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");

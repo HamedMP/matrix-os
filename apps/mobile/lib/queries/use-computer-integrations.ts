@@ -7,6 +7,8 @@ import {
   fetchActiveComputer,
   fetchAvailableIntegrations,
   fetchConnectedIntegrations,
+  fetchGmailConnectionOptions,
+  type IntegrationConnectOptions,
   mobileQueryKeys,
   refreshIntegrationConnection,
   syncIntegrationConnections,
@@ -73,13 +75,14 @@ export function useComputerIntegrations() {
     },
   });
   const startConnectionMutation = useMutation({
-    mutationFn: async (serviceId: string) => {
+    mutationFn: async ({ serviceId, options }: { serviceId: string; options?: IntegrationConnectOptions }) => {
       const token = await getToken();
       if (!token || !computer) throw new Error("Could not start connection. Try again.");
       return createIntegrationConnectUrl(
         token,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
         serviceId,
+        options,
       );
     },
   });
@@ -98,6 +101,7 @@ export function useComputerIntegrations() {
   });
 
   return {
+    connectionContextKey: `${userId ?? "signed-out"}:${computerKey}`,
     computer,
     available: integrations.data?.available ?? [],
     connected: integrations.data?.connected ?? [],
@@ -108,13 +112,18 @@ export function useComputerIntegrations() {
     isError: activeComputer.isError || integrations.isError,
     refreshConnection: (connectionId: string) => refreshMutation.mutateAsync(connectionId),
     deleteConnection: (connectionId: string) => deleteMutation.mutateAsync(connectionId),
-    startConnection: (serviceId: string) => startConnectionMutation.mutateAsync(serviceId),
+    gmailConnectionOptions: async () => {
+      const token = await getToken();
+      if (!token || !computer) throw new Error("Could not load Gmail connection options. Try again.");
+      return fetchGmailConnectionOptions(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+    },
+    startConnection: (serviceId: string, options?: IntegrationConnectOptions) => startConnectionMutation.mutateAsync({ serviceId, options }),
     syncConnections: () => syncMutation.mutateAsync(),
     isMutating: refreshMutation.isPending || deleteMutation.isPending,
     refreshingConnectionId: refreshMutation.isPending ? refreshMutation.variables : null,
     deletingConnectionId: deleteMutation.isPending ? deleteMutation.variables : null,
     connectingServiceId: startConnectionMutation.isPending
-      ? startConnectionMutation.variables
+      ? startConnectionMutation.variables?.serviceId ?? null
       : null,
     isSyncing: syncMutation.isPending,
     refresh: async () => {

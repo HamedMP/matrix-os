@@ -3,67 +3,13 @@ import {
   JevEmailTriageScoresSchema,
   evaluateEmailTriagePolicy,
 } from "@matrix-os/contracts";
-import { createHmac } from "node:crypto";
 import { wrapExternalContent } from "../security/external-content.js";
 
-const GATEWAY_BASE = process.env.GATEWAY_URL ?? "http://localhost:4000";
-const API_TIMEOUT_MS = 10_000;
-const ACTION_TIMEOUT_MS = 35_000; // Pipedream actions timeout at 30s
-
-export function gatewayAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const scopedToken = process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
-  if (scopedToken !== undefined) {
-    if (!/^[a-f0-9]{64}$/.test(scopedToken)) throw new Error("InvalidAgentIntegrationCapability");
-    headers.Authorization = `Bearer ${scopedToken}`;
-    return headers;
-  }
-  const token = process.env.MATRIX_AUTH_TOKEN;
-  const clerkUserId = process.env.MATRIX_CLERK_USER_ID;
-  if (process.env.MATRIX_AGENT_OWNER_ID || process.env.MATRIX_AGENT_OWNER_PROOF) {
-    throw new Error("LegacyAgentDelegationRejected");
-  }
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  // The local MCP process inherits the authenticated Chat run's owner ID.
-  // The gateway ignores an unsigned user header and otherwise falls back to
-  // the VPS owner, which can be a different user on a shared Preview computer.
-  if (token && clerkUserId && /^[A-Za-z0-9_-]{1,256}$/.test(clerkUserId)) {
-    headers["x-platform-user-id"] = clerkUserId;
-    headers["x-platform-verified"] = createHmac("sha256", token).update(clerkUserId).digest("hex");
-  }
-  return headers;
-}
-const authHeaders = gatewayAuthHeaders;
-
-export interface GatewayFetchResponse {
-  ok: boolean;
-  status: number;
-  json(): Promise<unknown>;
-  text(): Promise<string>;
-}
-
-export type GatewayFetcher = (
-  url: string,
-  init: RequestInit,
-) => Promise<GatewayFetchResponse>;
-
-interface ToolResult {
-  [key: string]: unknown;
-  isError?: boolean;
-  content: Array<{ type: "text"; text: string }>;
-}
-
-function textResult(text: string): ToolResult {
-  return { content: [{ type: "text" as const, text }] };
-}
-
-function errorResult(text: string): ToolResult {
-  return { isError: true, content: [{ type: "text" as const, text }] };
-}
-
-function defaultFetcher(): GatewayFetcher {
-  return fetch as unknown as GatewayFetcher;
-}
+import { GATEWAY_BASE, API_TIMEOUT_MS, ACTION_TIMEOUT_MS, gatewayAuthHeaders as authHeaders,
+  textResult, errorResult, defaultFetcher, type GatewayFetcher, type ToolResult } from "./integration-gateway.js";
+export { gatewayAuthHeaders, type GatewayFetcher, type GatewayFetchResponse } from "./integration-gateway.js";
+export { ConnectServiceInputSchema, connectServiceHandler, getGmailConnectionOptionsHandler,
+  type ConnectServiceInput } from "./integration-connections.js";
 
 interface ConnectedServiceInventoryItem {
   service: string;
@@ -173,42 +119,6 @@ export async function describeServiceHandler(
   } catch (err: unknown) {
     console.error("[integrations] describe service error:", err instanceof Error ? err.message : err);
     return textResult("Integration service details are currently unavailable.");
-  }
-}
-
-// ---------------------------------------------------------------------------
-// connect_service
-// ---------------------------------------------------------------------------
-
-export interface ConnectServiceInput {
-  service: string;
-  label?: string;
-}
-
-export async function connectServiceHandler(
-  input: ConnectServiceInput,
-  fetcher: GatewayFetcher = defaultFetcher(),
-): Promise<ToolResult> {
-  try {
-    const res = await fetcher(`${GATEWAY_BASE}/api/integrations/connect`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ service: input.service, label: input.label }),
-      signal: AbortSignal.timeout(API_TIMEOUT_MS),
-    });
-
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      return textResult(data.error ?? `Failed to connect ${input.service} (status ${res.status})`);
-    }
-
-    const data = (await res.json()) as { url: string; service: string };
-    return textResult(
-      `To connect ${data.service}, open this URL in your browser:\n\n${data.url}\n\nAfter authorizing, the connection will appear automatically.`,
-    );
-  } catch (err: unknown) {
-    console.error("[integrations] connect_service error:", err instanceof Error ? err.message : err);
-    return textResult("Integration service is temporarily unavailable. Please try again later.");
   }
 }
 
