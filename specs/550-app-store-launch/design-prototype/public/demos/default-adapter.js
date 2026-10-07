@@ -19,7 +19,7 @@
     queueMicrotask(() => {
       if (!active) return;
       for (const subscriber of [...subscriptions]) if (subscriber.key === key) {
-        try { subscriber.fn(); } catch (cause) { console.error('Preview subscription failed', cause); }
+        try { subscriber.fn(); } catch (cause) { console.error('Preview subscription failed', cause instanceof Error ? cause.name : typeof cause); }
       }
     });
   }

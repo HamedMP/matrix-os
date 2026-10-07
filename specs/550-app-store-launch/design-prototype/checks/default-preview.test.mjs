@@ -3,15 +3,15 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { Script, createContext } from 'node:vm';
 const source = readFileSync(new URL('../public/demos/default-adapter.js', import.meta.url), 'utf8');
-function fixture() {
+function fixture(logger = console) {
   const events = {}, timers = [];
-  const ctx = createContext({ console, TextEncoder, URL, queueMicrotask, crypto: { randomUUID: () => 'new-id' },
+  const ctx = createContext({ console: logger, TextEncoder, URL, queueMicrotask, crypto: { randomUUID: () => 'new-id' },
     window: { addEventListener: (name, fn) => events[name] = fn },
     document: { getElementById: () => ({ textContent: JSON.stringify({ tables: { notes: [{ id: 'note-1', title: 'Example' }] }, kv: {}, weather: { current: { temperature_2m: 18 } } }) }), addEventListener() {} },
     setTimeout: fn => { timers.push(fn); return timers.length; }, clearTimeout() {},
   });
   new Script(source).runInContext(ctx);
-  return { bridge: ctx.window.MatrixOS, events, window: ctx.window };
+  return { bridge: ctx.window.MatrixOS, events, window: ctx.window, context: ctx };
 }
 test('fictional defaults clone reads, scope tables and reset per frame', async () => {
   const a = fixture();
@@ -49,4 +49,16 @@ test('weather is a fixed fixture; arbitrary transports stay unavailable', async 
   await assert.rejects(a.bridge.proxyFetch('https://example.com/api/private'));
   assert.throws(() => a.window.fetch('/api/system/info'));
   assert.throws(() => a.window.open('https://example.com'));
+});
+
+test('failed subscribers stay isolated and logs classify Error and non-Error values', async () => {
+  const logs = [];
+  const a = fixture({ error: (...args) => logs.push(args) });
+  let delivered = 0;
+  a.bridge.db.onChange('notes', new Script('() => { throw new TypeError("private detail"); }').runInContext(a.context));
+  a.bridge.db.onChange('notes', () => { throw 'private thrown value'; });
+  a.bridge.db.onChange('notes', () => delivered++);
+  await a.bridge.db.update('notes', 'note-1', { title: 'Changed' });
+  assert.equal(delivered, 1);
+  assert.deepEqual(logs, [['Preview subscription failed', 'TypeError'], ['Preview subscription failed', 'string']]);
 });

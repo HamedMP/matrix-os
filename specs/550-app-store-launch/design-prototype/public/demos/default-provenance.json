@@ -39,10 +39,10 @@
         }
       },
       "weather": {
-        "sourceSha256": "f2cf73befa3f62fec4408bcf87d8544891b9afe6a2bfd561d48bee3e132e3679",
+        "sourceSha256": "195eecc79f9d4d6bfd9ec663f725914715f2c80f89afcebe69d5f1d0aa296eb5",
         "outputs": {
           "app.js": "3e8ecbf07131aab782709a186302b95b68917e8e1da959ad5a74e195caf59453",
-          "app.css": "0c84bec82d6fcdea00d763245514f00ecf8653114e694b5ab2fbfef603af4b7c"
+          "app.css": "bb1db4ece5af2ed3381a53caf1aa6951d135dfc8b1b523184b6e6ecbc228acb1"
         }
       },
       "expense-tracker": {
