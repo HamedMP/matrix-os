@@ -23,9 +23,9 @@ it("fences two terminal login coordinators before an in-flight launch publishes 
   const registry = {
     get: async (name: string) => {
       if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" });
-      return { name, agent: "codex" };
+      return { name, agent: "claude" };
     },
-    listProfileSessions: async () => [...sessions].map(name => ({ name, agent: "codex" })),
+    listProfileSessions: async () => [...sessions].map(name => ({ name, agent: "claude" })),
     create: vi.fn(async ({ name }: { name: string }) => {
       if (registry.create.mock.calls.length === 1) await gate.promise;
       sessions.add(name); return { name };
@@ -34,15 +34,15 @@ it("fences two terminal login coordinators before an in-flight launch publishes 
     rename: async (name: string, next: string) => { sessions.delete(name); sessions.add(next); return { name: next }; },
     observeAgentLiveness: async () => "running" as const,
   };
-  const coordinator = () => createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ["codex"],
+  const coordinator = () => createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ["claude"],
     profileGuard: createNativeProviderProfileGuard({ homePath: home, registry }) });
   const input = (id: string) => ({ mutation: { type: "start_login" as const, expectedRevision: 0, idempotencyKey: `login_${id}`,
     harnessInstanceId: id, accountId: null, method: "terminal" as const },
-    harness: { id, driverId: "codex", harness: "codex" as const, providerId: "openai", modelId: "gpt-test", installState: "installed" as const } });
-  const first = coordinator().startLogin(input("harness_codex"));
+    harness: { id, driverId: "claude_code", harness: "claude" as const, providerId: "anthropic", modelId: "claude-sonnet-5", installState: "installed" as const } });
+  const first = coordinator().startLogin(input("harness_claude_code"));
   try {
     await vi.waitFor(() => expect(registry.create).toHaveBeenCalledOnce());
-    await expect(coordinator().startLogin(input("harness_codex_second"))).rejects.toThrow("lifecycle_unavailable");
+    await expect(coordinator().startLogin(input("harness_claude_code_second"))).rejects.toThrow("lifecycle_unavailable");
     expect(registry.create).toHaveBeenCalledOnce();
   } finally { gate.resolve(); await first; }
 });
@@ -74,13 +74,13 @@ it.each(["snapshot", "revision"] as const)("preserves previous native auth bytes
 
 function loginInput() {
   return { mutation: { type: "start_login" as const, expectedRevision: 0, idempotencyKey: "login_drain",
-    harnessInstanceId: "harness_codex", accountId: null, method: "terminal" as const },
-    harness: { id: "harness_codex", driverId: "codex", harness: "codex" as const, providerId: "openai", modelId: "gpt-test", installState: "installed" as const } };
+    harnessInstanceId: "harness_claude_code", accountId: null, method: "terminal" as const },
+    harness: { id: "harness_claude_code", driverId: "claude_code", harness: "claude" as const, providerId: "anthropic", modelId: "claude-sonnet-5", installState: "installed" as const } };
 }
 it.each(["validation", "deleted-running", "deleted-unknown", "deleted-stopped", "stopped", "running", "unknown", "lost-rpc"] as const)("releases login handoff only with proven drain: %s", async outcome => {
   const home = await fixture(); const sessions = new Set<string>();
   const registry = {
-    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" }); return { name, agent: "codex" }; },
+    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" }); return { name, agent: "claude" }; },
     create: vi.fn(async ({ name }: { name: string }) => { if (outcome === "lost-rpc") throw new Error("lost reply"); sessions.add(name); return { name }; }),
     delete: vi.fn(async (name: string) => { if (!outcome.startsWith("deleted-")) throw new Error("delete unavailable"); sessions.delete(name); }),
     rename: async (_name: string, next: string) => ({ name: next }),
@@ -88,11 +88,11 @@ it.each(["validation", "deleted-running", "deleted-unknown", "deleted-stopped", 
     observeAgentLiveness: vi.fn(async () => outcome === "stopped" || outcome === "deleted-stopped" || outcome === "lost-rpc" ? "stopped" as const : outcome === "unknown" || outcome === "deleted-unknown" ? "unknown" as const : "running" as const),
   };
   const guard = () => createNativeProviderProfileGuard({ homePath: home, registry });
-  const login = createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ["codex"], profileGuard: guard(),
+  const login = createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ["claude"], profileGuard: guard(),
     persistReceipt: async () => { throw new Error("receipt unavailable"); } });
   const input = loginInput(); if (outcome === "validation") input.harness.driverId = "uninstalled";
   await expect(login.startLogin(input)).rejects.toThrow();
-  const probe = guard().run("codex", { kind: "write" }, async () => "available");
+  const probe = guard().run("claude", { kind: "write" }, async () => "available");
   if (["validation", "deleted-stopped", "stopped"].includes(outcome)) await expect(probe).resolves.toBe("available");
   else await expect(probe).rejects.toThrow("lifecycle_unavailable");
   expect(registry.create).toHaveBeenCalledTimes(outcome === "validation" ? 0 : 1);
@@ -101,12 +101,12 @@ it.each(["validation", "deleted-running", "deleted-unknown", "deleted-stopped", 
 it("releases temporary handoff after exact cross-coordinator live replay without launching again", async () => {
   const home = await fixture(); const sessions = new Set<string>();
   const registry = {
-    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" }); return { name, agent: "codex" }; },
+    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" }); return { name, agent: "claude" }; },
     create: vi.fn(async ({ name }: { name: string }) => { sessions.add(name); return { name }; }),
     delete: async () => {}, rename: async (_name: string, name: string) => ({ name }),
     observeAgentLiveness: async () => "running" as const,
   };
-  const coordinator = () => createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ["codex"],
+  const coordinator = () => createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ["claude"],
     profileGuard: createNativeProviderProfileGuard({ homePath: home, registry }) });
   const first = await coordinator().startLogin(loginInput()); expect(await coordinator().startLogin(loginInput())).toEqual(first);
   expect(registry.create).toHaveBeenCalledOnce();
@@ -150,8 +150,8 @@ it("rechecks native session visibility after acquiring a lease from a stale idle
   const home = await fixture(), sessions = new Set<string>();
   const idleObserved = Promise.withResolvers<void>(), resumePreflight = Promise.withResolvers<void>();
   const registry = {
-    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" }); return { name, agent: "codex" }; },
-    listProfileSessions: async () => [...sessions].map(name => ({ name, agent: "codex" })),
+    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error("missing"), { code: "session_not_found" }); return { name, agent: "claude" }; },
+    listProfileSessions: async () => [...sessions].map(name => ({ name, agent: "claude" })),
     create: async ({ name }: { name: string }) => { sessions.add(name); return { name }; },
     delete: async () => {}, rename: async (_name: string, name: string) => ({ name }), observeAgentLiveness: async () => "running" as const,
   };
@@ -159,10 +159,10 @@ it("rechecks native session visibility after acquiring a lease from a stale idle
     const idle = await registry.listProfileSessions(); idleObserved.resolve(); await resumePreflight.promise; return idle;
   } };
   const writer = vi.fn(async () => "must-not-run");
-  const stale = createNativeProviderProfileGuard({ homePath: home, registry: staleRegistry }).run("codex", { kind: "write" }, writer);
+  const stale = createNativeProviderProfileGuard({ homePath: home, registry: staleRegistry }).run("claude", { kind: "write" }, writer);
   const refused = expect(stale).rejects.toThrow("lifecycle_unavailable");
   await idleObserved.promise;
-  const coordinator = createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ["codex"],
+  const coordinator = createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ["claude"],
     profileGuard: createNativeProviderProfileGuard({ homePath: home, registry }) });
   await coordinator.startLogin(loginInput()); resumePreflight.resolve(); await refused; expect(writer).not.toHaveBeenCalled();
 });

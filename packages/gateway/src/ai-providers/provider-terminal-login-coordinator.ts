@@ -38,10 +38,6 @@ type ReceiptDocument = z.infer<typeof ReceiptDocumentSchema>;
 type ReceiptWriter = (path: string, value: ReceiptDocument) => Promise<void>;
 
 const LOGIN_COMMANDS = {
-  codex: {
-    agent: "codex" as const,
-    command: "sh -lc 'export MATRIX_NODE_PREFIX=\"${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}\"; export PATH=\"$MATRIX_NODE_PREFIX/bin:$PATH\"; codex login --device-auth'",
-  },
   claude: {
     agent: "claude" as const,
     command: "sh -lc 'export MATRIX_NODE_PREFIX=\"${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}\"; export PATH=\"$MATRIX_NODE_PREFIX/bin:$PATH\"; claude'",
@@ -174,12 +170,9 @@ function replaceBoundedReceipt(document: ReceiptDocument, receipt: ReceiptDocume
 function supportsHarness(
   enabledHarnesses: ReadonlySet<"codex" | "claude">,
   harness: LoginHarness,
-): harness is LoginHarness & { harness: "codex" | "claude" } {
+): harness is LoginHarness & { harness: "claude" } {
   return harness.installState === "installed"
-    && (
-      (harness.harness === "codex" && harness.driverId === "codex")
-      || (harness.harness === "claude" && harness.driverId === "claude_code")
-    )
+    && harness.harness === "claude" && harness.driverId === "claude_code"
     && enabledHarnesses.has(harness.harness);
 }
 
@@ -196,7 +189,8 @@ export function createProviderTerminalLoginCoordinator(options: {
     || !options.registry.rename || !options.registry.observeAgentLiveness) {
     throw new Error("Provider login shell registry is required");
   }
-  const enabledHarnesses = new Set(EnabledHarnessSchema.array().max(2).parse(options.enabledHarnesses));
+  // Accept legacy configuration shape, but never enable hosted Codex subscription login.
+  const enabledHarnesses = new Set(EnabledHarnessSchema.array().max(2).parse(options.enabledHarnesses).filter(harness => harness === "claude"));
   const receiptsPath = join(options.homePath, "system/ai-providers/login-receipts.json");
   const recoveryPath = join(options.homePath, "system/ai-providers/login-recovery.json");
   const now = options.now ?? (() => new Date());
@@ -248,6 +242,12 @@ export function createProviderTerminalLoginCoordinator(options: {
     },
 
     async startLogin(input) {
+      // Reject excluded providers before profile admission, receipt reads or native effects.
+      if (input.harness.id !== input.mutation.harnessInstanceId
+        || input.mutation.method !== "terminal"
+        || !supportsHarness(enabledHarnesses, input.harness)) {
+        throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+      }
       let requestedSession: string | undefined;
       let confirmedSession = false;
       const createSession = async (request: Parameters<ProviderLoginRegistry["create"]>[0]) => {
@@ -591,7 +591,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         return attempt;
       });
-      if (options.profileGuard && (input.harness.harness === "codex" || input.harness.harness === "claude")) {
+      if (options.profileGuard) {
         // Preserve the historical conflict response before profile admission.
         // This is a read-only preflight; the serialized path rechecks receipts.
         const known = (await Promise.all([readReceipts(receiptsPath), readReceipts(recoveryPath)]))

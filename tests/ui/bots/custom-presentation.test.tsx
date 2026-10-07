@@ -51,3 +51,28 @@ it("keeps a custom saved model visible when its executor catalog has no models",
  expect(await screen.findByText(/openai-codex:gpt-5.6-sol.*unavailable/)).toBeTruthy();
  expect(client.update).not.toHaveBeenCalled();
 });
+
+it.each(["composer", "details", "editor"])("does not mount recipe-only task execution in a custom Bot %s", async (surface) => {
+ const {BotComposerControls}=await import("../../../packages/ui/src/chat-agents/bots/BotComposerControls.js");
+ const {BotDetailsPanel}=await import("../../../packages/ui/src/chat-agents/bots/BotDetailsPanel.js");
+ const {BotEditDialog}=await import("../../../packages/ui/src/chat-agents/bots/BotEditDialog.js");
+ HTMLDialogElement.prototype.showModal=function(){this.setAttribute("open", "");};
+ HTMLDialogElement.prototype.close=function(){this.removeAttribute("open");};
+ const agent={...saved,recipeRef:undefined};
+ const client=clientFixture();const catalog=await client.catalog();
+ client.list.mockResolvedValue({enabled:true,agents:[agent]});
+ const bots={connections:vi.fn(async()=>({connections:[]})),execution:vi.fn(async()=>({revision:0,connectionId:null,model:null,grantRevision:null}))};
+ const scoped={...client,bots} as unknown as ChatAgentClient;
+ if(surface==="composer"){
+  render(<BotComposerControls client={scoped} agentId={agent.id} catalog={catalog}/>);
+  await waitFor(()=>expect(screen.getByRole("button",{name:"Choose bot agent and model"}).textContent).toContain(agent.name));
+  fireEvent.click(screen.getByRole("button",{name:"Choose bot agent and model"}));
+ }else if(surface==="details"){
+  render(<BotDetailsPanel agent={agent} agentId={agent.id} authority={null} bots={bots as never} catalog={catalog} pending={false} onModelChange={vi.fn()} onClose={vi.fn()} onChanged={vi.fn()} onEdit={vi.fn()}/>);
+ }else{
+  render(<BotEditDialog agent={agent} client={scoped} catalog={catalog} onSaved={vi.fn()} onClose={vi.fn()}/>);
+ }
+ expect(screen.queryByRole("combobox",{name:"Task executor"})).toBeNull();
+ expect(bots.execution).not.toHaveBeenCalled();
+ expect(bots.connections).not.toHaveBeenCalled();
+});

@@ -18,6 +18,7 @@ const textEncoder = new TextEncoder();
 
 /** M1 capabilities. Later milestones add handoffs and computer actions. */
 export const BotToolCapabilitySchema = z.enum([
+  "agent.task",
   "integration.inventory",
   "integration.call",
   "integration.describe",
@@ -38,6 +39,7 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 }).strict();
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
+  capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),
   capability("integration.describe", z.object({ service: BotIntegrationServiceSchema }).strict()),
   capability("mcp.inventory", z.object({}).strict()),

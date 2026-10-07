@@ -1,3 +1,4 @@
+import { revokeOwnerAnthropicKey } from "./owner-anthropic-key.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -102,7 +103,7 @@ async function readReceipts(path: string) {
 
 function accountDriver(account: ProviderLifecycleAccount): "codex" | "claude_code" | null {
   if (account.driverId === "claude_code" && account.harness === "claude"
-    && account.providerId === "anthropic" && account.authMethod === "terminal") {
+    && account.providerId === "anthropic" && (account.authMethod === "terminal" || account.authMethod === "api_key" && account.accessSourceId === "owner_anthropic_key")) {
     return "claude_code";
   }
   if (account.driverId === "codex" && account.harness === "codex"
@@ -206,6 +207,9 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
           }
         }
         try {
+          if (driver === "claude_code" && input.account.authMethod === "api_key") {
+            await revokeOwnerAnthropicKey(homePath);
+          } else {
           const command = COMMANDS[driver];
           CommandResultSchema.parse(await run(command.command, [...command.args], {
             cwd: homePath,
@@ -213,6 +217,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
             maxOutputBytes: MAX_OUTPUT_BYTES,
             env: lifecycleEnvironment(homePath),
           }));
+          }
         } catch (error) {
           receipt.state = "failed";
           await writeProviderJsonAtomic(receiptsPath, ReceiptDocumentSchema.parse(document)).catch(

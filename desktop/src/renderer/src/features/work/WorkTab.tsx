@@ -1,4 +1,3 @@
-import { HostedChatShareSuspensionContext, useHostedChatShareSuspension } from "../chat/hosted-chat-share-suspension";
 import { mergeCanonicalChatRecord } from "@matrix-os/ui";
 import type { StartAgentChat } from "@matrix-os/ui";
 import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
@@ -207,6 +206,7 @@ export default function WorkTab(props: ComponentProps<typeof WorkTabContent>) {
   return <ChatAgentsWorkspace><WorkTabContent {...props} /></ChatAgentsWorkspace>;
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing Work surface coordinates routes, the rail, hosted Chat chrome and inspectors; this change only removes the live-share suspension wiring. Splitting it belongs in a focused refactor.
 function WorkTabContent({
   tabId,
   route,
@@ -785,10 +785,9 @@ function WorkTabContent({
       route,
       sharedScopeId,
     ]);
-  const shareSuspension = useHostedChatShareSuspension(client, initialChatId, `${runtimeSlot}:${authGeneration}`);
   const sharingControl = useMemo(() => api && initialChatId ? (
-    <ChatSharingButton key={`${runtimeSlot}:${authGeneration}:${initialChatId}`} api={api} chatId={initialChatId} copyText={async (text) => { await navigator.clipboard.writeText(text); }} onLiveShareStart={shareSuspension.start} onLiveShareFailed={shareSuspension.failed} />
-  ) : null, [api, initialChatId, runtimeSlot, authGeneration, shareSuspension]);
+    <ChatSharingButton key={`${runtimeSlot}:${authGeneration}:${initialChatId}`} api={api} chatId={initialChatId} copyText={async (text) => { await navigator.clipboard.writeText(text); }} />
+  ) : null, [api, initialChatId, runtimeSlot, authGeneration]);
   const sharedChromeSlot = useMemo(() => sharedScopeId ? (
     <div ref={setSharedHeaderContainer} data-slot="desktop-shared-chat-controls"
       className="no-drag pointer-events-auto flex items-center gap-1" />
@@ -914,7 +913,6 @@ function WorkTabContent({
             ? "hidden"
             : "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"}
         >
-          <HostedChatShareSuspensionContext.Provider value={sharedScopeId ? null : shareSuspension.report}>
           <BotHeaderBindingContext.Provider value={sharedScopeId ? null : reportContentBinding}>
           <BotHeaderContext.Provider value={!agentsOpen && headerAgentId ? botHeaderContainer : null}>
           <ChatAgentsContent hostedChrome client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
@@ -924,7 +922,6 @@ function WorkTabContent({
           </ChatAgentsContent>
           </BotHeaderContext.Provider>
           </BotHeaderBindingContext.Provider>
-          </HostedChatShareSuspensionContext.Provider>
         </div>
       </div>
     </div>

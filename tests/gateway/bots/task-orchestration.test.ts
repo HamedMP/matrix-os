@@ -43,6 +43,7 @@ function setup(options: {
   worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
   resolveRoute?: () => Promise<{ route: BotModelRoute; accessSourceId: "matrix_included" }>;
   admit?: () => Promise<never>;
+  executorReady?: () => Promise<boolean>;
   cancelDelivered?: boolean;
   activeDeadlineMs?: number;
   cancelGraceMs?: number;
@@ -87,6 +88,7 @@ function setup(options: {
     agents: { get: vi.fn(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
     recipes: createBotRecipeCatalog(),
     resolveRoute: options.resolveRoute ?? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })),
+    executorReady: options.executorReady,
     admission,
     registry,
     client: { runBot: runBot as never },
@@ -126,6 +128,23 @@ describe("bot turns through the matrix_bot adapter", () => {
       text: "Hello", signal: new AbortController().signal });
     expect(await run.result).toMatchObject({ status: "completed" });
     expect(resolveRoute).toHaveBeenCalledExactlyOnceWith(undefined);
+  });
+
+  it("advertises the selected native task executor only after fresh Bot authorization with a Matrix-funded coordinator", async () => {
+    const executorReady = vi.fn(async () => true);
+    const { adapter, orchestrator, admission } = setup({ executorReady, worker: async (input) => {
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      expect(spec.capabilities).toContain("agent.task"); expect(spec.route).toEqual(ROUTE);
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    await collect(adapter.start(turn())); expect(executorReady).toHaveBeenCalledWith(OWNER, BOT);
+    expect(admission.admit).toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: "matrix_included", capabilities: expect.arrayContaining(["agent.task"]) }));
+  });
+
+  it("blocks a saved executor whose authorization is revoked before coordinator admission", async () => {
+    const { adapter, admission, commands } = setup({ executorReady: async () => { throw new Error("Revoked"); } });
+    await collect(adapter.start(turn())); expect(admission.admit).not.toHaveBeenCalled(); expect(commands).toEqual([]);
+    expect(await tasks()).toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "policy_denied" })]);
   });
 
   it("runs one turn in the bot workload and projects its events onto Chat", async () => {

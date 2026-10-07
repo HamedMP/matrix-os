@@ -73,3 +73,15 @@ it('keeps an unsupported saved Bot route distinct from Automatic',async()=>{
  expect(trigger.textContent).not.toContain('Automatic');
  expect(client.update).not.toHaveBeenCalled();
 });
+
+it('keeps Bot-only subscription models out of a custom Bot harness selector',async()=>{
+ const plan={...base,id:'matrix_chatgpt_plan',driverKind:'matrix_bot' as const,displayName:'ChatGPT subscription',connectionLabel:'ChatGPT subscription',supports:{...base.supports,rootChat:false,permissionModes:['default']},models:[{...base.models[0]!,id:'personal-model',displayName:'Personal model'}]};
+ const customCatalog={...catalog,instances:[...catalog.instances,plan]};
+ const custom={...bot,recipeRef:undefined};const client={...makeClient(),list:vi.fn(async()=>({enabled:true,agents:[custom]}))};
+ render(<BotComposerControls agentId={custom.id} client={client as never} catalog={customCatalog}/>);
+ const trigger=screen.getByRole('button',{name:'Choose bot agent and model'});
+ await waitFor(()=>expect(trigger.textContent).toContain('Writer Rabbit'));
+ fireEvent.click(trigger);
+ const select=screen.getByRole('combobox',{name:'Model'});
+ expect(within(select).queryByRole('option',{name:/Personal model|ChatGPT subscription/})).toBeNull();
+});

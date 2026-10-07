@@ -1,5 +1,6 @@
-import { writeFile, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createOwnerAnthropicKeySaver, readOwnerAnthropicKey } from "../ai-providers/owner-anthropic-key.js";
+import { createNativeProviderWriterLease } from "../ai-providers/native-provider-writer-lease.js";
+import { NativeProviderWriteNotStartedError, NativeProviderWriteRestoredError, type NativeProviderProfileGuard } from "../ai-providers/native-provider-profile-guard.js";
 
 export function validateApiKeyFormat(key: string): { valid: true } | { valid: false; error: string } {
   if (!key || !key.startsWith("sk-ant-")) {
@@ -35,37 +36,20 @@ export async function validateApiKeyLive(key: string): Promise<{ valid: true } |
   }
 }
 
-export async function storeApiKey(homePath: string, apiKey: string): Promise<void> {
-  const configPath = join(homePath, "system", "config.json");
-  let config: Record<string, unknown> = {};
-  try {
-    const raw = await readFile(configPath, "utf-8");
-    config = JSON.parse(raw);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") {
-      console.error("[api-key] Failed to read config:", (err as Error).message);
-    }
+/** Legacy onboarding and Settings share the owner workflow credential and writer fence. */
+export async function storeApiKey(homePath: string, apiKey: string, profileGuard?: NativeProviderProfileGuard): Promise<void> {
+  const save = () => createOwnerAnthropicKeySaver({ homePath })(apiKey);
+  if (profileGuard) return profileGuard.run("claude", { kind: "write", durable: true }, save);
+  const release = await createNativeProviderWriterLease(homePath).acquire("claude");
+  try { await save(); await release(); }
+  catch (error) {
+    if (error instanceof NativeProviderWriteNotStartedError || error instanceof NativeProviderWriteRestoredError) await release();
+    throw error;
   }
-  const kernel = (config.kernel as Record<string, unknown>) ?? {};
-  kernel.anthropicApiKey = apiKey;
-  config.kernel = kernel;
-  await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
 }
 
+/** Ambient operator credentials never describe this owner's connected source. */
 export async function hasApiKey(homePath: string): Promise<boolean> {
-  // Check env var first (set in Docker/.env)
-  if (process.env.ANTHROPIC_API_KEY) return true;
-  // Agent SDK uses Claude Code login -- no API key needed
-  if (process.env.CLAUDE_CODE_AUTH || process.env.NODE_ENV === "development") return true;
-  try {
-    const raw = await readFile(join(homePath, "system", "config.json"), "utf-8");
-    const config = JSON.parse(raw);
-    return Boolean(config?.kernel?.anthropicApiKey);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.error("[api-key] Failed to read config:", err instanceof Error ? err.message : String(err));
-    }
-    return false;
-  }
+  const source = await readOwnerAnthropicKey(homePath);
+  return source.state === "unverified" && source.key !== undefined;
 }

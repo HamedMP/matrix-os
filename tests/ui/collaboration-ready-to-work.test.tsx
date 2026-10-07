@@ -6,7 +6,6 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { CollaborationReadiness, CollaborationScope } from "@matrix-os/contracts";
 import { ReadinessSummary } from "../../packages/ui/src/collaboration/ReadinessSummary";
 import { AudienceGrantPicker } from "../../packages/ui/src/collaboration/AudienceGrantPicker";
-import { ResourceSharingButton } from "../../packages/ui/src/collaboration/ResourceSharingButton";
 import { ChatCollaboratorsDialog } from "../../packages/ui/src/collaboration/ChatCollaboratorsDialog";
 import { ChatCollaboration } from "../../packages/ui/src/collaboration/ChatCollaboration";
 
@@ -192,58 +191,6 @@ describe("organization ready-to-work presentation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants/${grant.id}`,
       expect.objectContaining({ expectedRevision: "5", expectedMemberRevision: "3" })));
-  });
-
-  it("resolves an exact file identity only to detect legacy access", async () => {
-    const api = { baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members") ? { members: [] }
-      : path.endsWith("/grants") ? [] : { ...scope, kind: "file", resourceId: "30000000-0000-4000-8000-000000000401" }),
-      post: vi.fn(async (path: string) => path.endsWith("/catalog/resolve")
-        ? { id: "30000000-0000-4000-8000-000000000401", kind: "file", path: "notes/plan.md", incarnation: "file_v1", revision: "1" }
-        : path.endsWith("/scopes/preflight") ? { eligible: false, reason: "unsupported", resourceRevision: "1" }
-        : undefined), delete: vi.fn() };
-    render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="file" path="notes/plan.md" projectId="proj_launch" />);
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/collaboration/runtimes/vps%3Aowner/catalog/resolve", {
-      kind: "file", path: "notes/plan.md", organizationId: "org_matrix_team",
-    }));
-    expect(api.post).toHaveBeenCalledWith("/api/collaboration/runtimes/vps%3Aowner/scopes/preflight", {
-      kind: "file", resourceId: "30000000-0000-4000-8000-000000000401", organizationId: "org_matrix_team",
-    });
-    expect(screen.queryByRole("button", { name: /file access/i })).toBeNull();
-    expect(api.post).not.toHaveBeenCalledWith(expect.stringMatching(/\/scopes$/), expect.anything());
-  });
-
-  it("shares an app by its registry identifier and refuses a launch path", async () => {
-    const appId = "30000000-0000-4000-8000-000000000402";
-    const appScope = { ...scope, kind: "app" as const, resourceId: appId };
-    const api = { baseUrl: "http://localhost",
-      get: vi.fn(async (path: string) => path.endsWith("/members") ? { members: [] }
-        : path.endsWith("/grants") ? [] : appScope),
-      post: vi.fn(async (path: string) => path.endsWith("/catalog/resolve")
-        ? { id: appId, kind: "app", path: "notes", incarnation: "app_v1", revision: "1" }
-        : path.endsWith("/scopes/preflight") ? { eligible: false, reason: "unsupported", resourceRevision: "1", existingScopeId: scope.id, existingLifecycle: "shared" }
-        : undefined), delete: vi.fn() };
-    const { unmount } = render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="app" path="notes" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Manage app access" }));
-    expect(await screen.findByRole("dialog", { name: "Manage access" })).toBeVisible();
-    expect(api.post).toHaveBeenCalledWith("/api/collaboration/runtimes/vps%3Aowner/catalog/resolve", {
-      kind: "app", path: "notes", organizationId: "org_matrix_team",
-    });
-    unmount();
-    api.post.mockClear();
-    // A launch path locates an app's assets; the owner catalog resolves the registry
-    // identifier, so the surface must refuse rather than spend a doomed request.
-    render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="app" path="apps/notes/index.html" />);
-    expect(screen.queryByRole("button", { name: /app access/i })).toBeNull();
-    expect(api.post).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when catalog resolves a different folder path", async () => {
-    const api = { baseUrl: "http://localhost", get: vi.fn(), post: vi.fn(async () => ({
-      id: "30000000-0000-4000-8000-000000000401", kind: "folder", path: "notes", incarnation: "folder_v1", revision: "1",
-    })), delete: vi.fn() };
-    render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="folder" path="notes/private" />);
-    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole("button", { name: /folder access/i })).toBeNull();
   });
 
   it("places the organization member picker in the existing owner manager", async () => {
