@@ -63,3 +63,19 @@ it('does not classify authorization-code rejection as a saved refresh credential
  const failure=await planJson(vi.fn(async()=>Response.json({error:'invalid_grant'},{status:400})),'token',{method:'POST',body:new URLSearchParams({grant_type:'authorization_code'})}).catch(error=>error);
  expect(failure).toMatchObject({category:'http_error'});
 });
+
+it('accepts a bounded large model catalog without increasing OAuth response budgets', async () => {
+ const body = JSON.stringify({models:[{slug:'fixture-visible',display_name:'Fixture visible',visibility:'list',description:'x'.repeat(768*1024)}]});
+ const fetchFn = vi.fn(async () => new Response(body));
+ const catalog = await planJson(fetchFn, 'models');
+ expect(catalog).toHaveProperty('models.0.slug', 'fixture-visible');
+ for (const path of ['token', 'jwks', 'discovery'] as const) {
+  await expect(planJson(fetchFn, path)).rejects.toMatchObject({category:'response_oversize'});
+ }
+});
+it('cancels model response bodies over the hard catalog limit and releases the reader', async () => {
+ const cancel = vi.fn();
+ const stream = new ReadableStream<Uint8Array>({start(controller) {controller.enqueue(new Uint8Array(2*1024*1024+1));},cancel});
+ await expect(planJson(vi.fn(async () => new Response(stream)), 'models')).rejects.toMatchObject({stage:'catalog',category:'response_oversize'});
+ expect(cancel).toHaveBeenCalledOnce(); expect(stream.locked).toBe(false);
+});
