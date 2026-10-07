@@ -17,16 +17,16 @@ try {
       await page.evaluate(() => document.fonts.ready);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width, `page overflow at ${width}`);
       assert.equal(await page.locator('.store-listing').count(), 8);
-      assert.equal(await page.locator('.feature-screenshot').first().evaluate(element => element.getBoundingClientRect().top < 650), true, 'real apps must appear early');
+      assert.equal(await page.locator('.listing-screenshot').first().evaluate(element => element.getBoundingClientRect().top < 650), true, 'real apps must appear early');
       // Exercise actual main.tsx collection selection and rendered listings.
       const search = page.getByRole('searchbox', { name: 'Search apps' });
       await search.fill('trips');
       await page.locator('.store-listing.listing-atlas').waitFor();
       assert.deepEqual(await page.locator('.store-listing').evaluateAll(elements => elements.map(element => element.getAttribute('aria-label'))), ['Explore Atlas'], 'trips renders only Atlas');
-      await page.getByRole('button', { name: 'Business', exact: true }).click();
+      await page.getByRole('button', { name: 'Work', exact: true }).click();
       await page.getByRole('heading', { name: 'No apps found.' }).waitFor();
       assert.equal(await search.inputValue(), 'trips', 'collection switch retains search');
-      assert.equal(await page.locator('.store-listing').count(), 0, 'Business excludes the personal trip app');
+      assert.equal(await page.locator('.store-listing').count(), 0, 'Work excludes the personal trip app');
       await page.getByRole('button', { name: 'All apps', exact: true }).click();
       await page.locator('.store-listing.listing-atlas').waitFor();
       assert.deepEqual(await page.locator('.store-listing').evaluateAll(elements => elements.map(element => element.getAttribute('aria-label'))), ['Explore Atlas'], 'returning to All apps restores Atlas');

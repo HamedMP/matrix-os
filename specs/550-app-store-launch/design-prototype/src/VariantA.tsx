@@ -28,11 +28,11 @@ export default function VariantA({
         <header className="va-header">
           <div className="va-wordmark">
             <span className="va-mark"><Glyph name="grid" size={23} /></span>
-            <span>App Store</span>
+            <span>App Gallery</span>
           </div>
           <button className="va-connect-button" onClick={onConnect}>
             <Glyph name="link" size={17} />
-            <span>{connected.length ? 'Your tools' : 'Connect tools'}</span>
+            <span>{connected.length ? 'Your Tools' : 'Connect Tools'}</span>
           </button>
         </header>
 
