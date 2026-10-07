@@ -31,6 +31,12 @@ const APP_RASTER_ICON_SLUGS = new Set([
 ]);
 
 const SHIPPED_SVG_ICON_SLUGS = new Set([
+  "dumbbell",
+  "wallet",
+  "utensils",
+  "briefcase",
+  "book-open",
+  "notebook",
   "app-gallery",
   "folio",
   "atlas",
