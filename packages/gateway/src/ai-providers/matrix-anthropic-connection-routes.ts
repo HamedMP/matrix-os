@@ -13,7 +13,9 @@ export function createMatrixAnthropicConnectionRoutes(options: {
 }) {
   if (!options.getPrincipal) throw new Error("Matrix connection route dependencies required");
   const app = new Hono();
-  app.use("*", async (context, next) => {
+  const path = "/matrix-connections/anthropic";
+  // Hono subtree matching includes this exact root, without neighboring prefixes.
+  app.use(`${path}/*`, async (context, next) => {
     context.header("Cache-Control", "private, no-store");
     const principal = options.getPrincipal(context);
     if (!principal) return context.json({ error: { code: "unauthorized", message: "Authentication is required." } }, 401);
@@ -21,7 +23,7 @@ export function createMatrixAnthropicConnectionRoutes(options: {
     if (!options.ownerId || !options.service || !options.providerSnapshotReader) return context.json({ error: { code: "unavailable", message: "This operation is unavailable. Refresh and try again." } }, 503);
     await next();
   });
-  app.use("*", bodyLimit({ maxSize: 8192, onError: context => context.json({ error: { code: "body_too_large", message: "Request body is too large." } }, 413) }));
+  app.use(`${path}/*`, bodyLimit({ maxSize: 8192, onError: context => context.json({ error: { code: "body_too_large", message: "Request body is too large." } }, 413) }));
   async function handle(context: Context, action?: (service: MatrixAnthropicConnectionService, owner: string) => Promise<unknown>) {
     try {
       if (action) await action(options.service!, options.ownerId!);
@@ -43,7 +45,6 @@ export function createMatrixAnthropicConnectionRoutes(options: {
     catch (error) { if (error instanceof Error && error.name === "BodyLimitError") throw error; if (!(error instanceof SyntaxError)) console.warn("[matrix-connection] Invalid body:", error instanceof Error ? error.name : "UnknownError"); return undefined; }
   }
   const invalid = (context: Context) => context.json({ error: { code: "invalid_request", message: "Invalid request." } }, 400);
-  const path = "/matrix-connections/anthropic";
   app.get(path, context => handle(context));
   app.post(`${path}/connect`, async context => { const body = MatrixAnthropicConnectSchema.safeParse(await json(context));
     return body.success ? handle(context, (service, owner) => service.connect(owner, body.data)) : invalid(context); });

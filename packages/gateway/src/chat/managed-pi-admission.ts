@@ -67,6 +67,11 @@ export function createManagedPiAdmission(deps: {
       : await deps.roots.resolve({ type: "personal", ownerId: binding.ownerId }, owned.workspace.ref)
         .then((root) => ({ path: root.primaryWorkspaceRoot, fingerprint: root.fingerprint }));
     if (root.fingerprint !== binding.rootFingerprint) throw new BotAdmissionError("root_changed");
+    // Root resolution awaits filesystem/project state. Native credential writes
+    // can revoke the source during that wait without aborting the run signal.
+    if (signal.aborted) throw new BotAdmissionError("not_found");
+    await assertSource(row, binding.ownerId, owned);
+    if (signal.aborted) throw new BotAdmissionError("not_found");
     return root.path;
   }
   return {
