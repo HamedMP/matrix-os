@@ -164,7 +164,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   };
   const projectCurrent = () => {
     const canonical = projectAoedeCanonical(detail);
-    const live = media?.getSnapshot().voice?.companion;
+    const live = mediaLive() ? media?.getSnapshot().voice?.companion : undefined;
     return live ? { ...canonical, captions: { ...canonical.captions, ...live.captions },
       tasks: live.tasks.length ? live.tasks : canonical.tasks, sources: live.sources } : canonical;
   };

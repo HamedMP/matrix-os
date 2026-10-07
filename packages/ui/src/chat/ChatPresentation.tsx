@@ -14,7 +14,7 @@ export function MatrixChatAvatar({ className = "" }: { className?: string }) {
  */
 export function ChatPresentation({ className = "", style, ...props }: ComponentProps<"div">) {
   const colors = chatWidget.colors;
-  return <div {...props} data-matrix-chat className={`matrix-chat-presentation ${className}`} style={{
+  return <div {...props} data-matrix-chat className={`matrix-chat-presentation ph-no-capture ${className}`} style={{
     "--font-ui": chatWidget.fontFamily, "--font-sans": chatWidget.fontFamily,
     "--chat-font": chatWidget.fontFamily, "--chat-surface": colors.surface,
     "--chat-border": colors.border, "--chat-text": colors.text, "--chat-ink": colors.ink,
