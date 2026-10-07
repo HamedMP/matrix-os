@@ -7,10 +7,25 @@ export function renderAppIdentities(identities) {
   if(!/^[a-z][a-z0-9-]{0,63}$/.test(id)) throw Error('Invalid app identity');
   for(const key of ['accent','darkAccent','wash','glow']) if(!/^#[a-f0-9]{6}$/i.test(value[key])) throw Error('Invalid identity color');
  }
- const selectors=id=>`.workbench[data-app="${id}"], .app-identity[data-app="${id}"], :root:root:root[data-app="${id}"]`;
+ const installed=id=>`.workbench[data-app="${id}"], :root:root:root[data-app="${id}"]`;
+ const selectors=id=>`${installed(id)}, .app-identity[data-app="${id}"]`;
+ // The bridge exposes actual surface colors, not a light/dark attribute. Relative
+ // RGB selects a palette from the injected background (including theme updates).
+ // Below a weighted sRGB brightness of 128 use the dark palette; media preference
+ // supplies the standalone background. Engines without relative RGB retain the
+ // media fallback and require device qualification before claiming host parity.
+ // Gallery cards retain light accents because their identity washes stay light.
+ const channels=hex=>hex.slice(1).match(/../g).map(value=>parseInt(value,16));
+ const themedColor=(light,dark)=> {
+  const darkChannels=channels(dark);
+  const output=channels(light).map((value,index)=>`calc(${value} + (${darkChannels[index]-value}) * clamp(0, 128 - r * 0.2126 - g * 0.7152 - b * 0.0722, 1))`).join(' ');
+  return `rgb(from var(--matrix-bg, var(--identity-fallback-bg)) ${output} / 1)`;
+ };
  return '/* Generated from @matrix-os/brand app-identities.json. Update the palette source, then regenerate. */\n'+
-  entries.map(([id,p])=>`${selectors(id)} { --identity-accent:${p.accent}; --identity-wash:${p.wash}; --identity-glow:${p.glow}; --identity-on-accent:#ffffff; }`).join('\n')+
-  '\n@media (prefers-color-scheme: dark) {\n'+entries.map(([id,p])=>` ${selectors(id)} { --identity-accent:${p.darkAccent}; --identity-on-accent:#202338; }`).join('\n')+'\n}\n';
+  entries.map(([id,p])=>`${selectors(id)} { --identity-accent:${p.accent}; --identity-wash:${p.wash}; --identity-glow:${p.glow}; --identity-on-accent:#ffffff; --identity-fallback-bg:#ffffff; }`).join('\n')+
+  '\n@media (prefers-color-scheme: dark) {\n'+entries.map(([id,p])=>` ${installed(id)} { --identity-accent:${p.darkAccent}; --identity-on-accent:#202338; --identity-fallback-bg:#202338; }`).join('\n')+'\n}\n'+
+  '@supports (color: rgb(from white calc(r + g * 0) g b)) {\n'+
+  entries.map(([id,p])=>` ${installed(id)} { --identity-accent:${themedColor(p.accent,p.darkAccent)}; --identity-on-accent:${themedColor('#ffffff','#202338')}; }`).join('\n')+'\n}\n';
 }
 async function generate(args) {
  const flags=['--connected-source','--default-source','--preview-source','--site-source'];
