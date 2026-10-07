@@ -1,5 +1,7 @@
 import type { IntegrationActionRisk, ServiceAction, ServiceDefinition } from "./types.js";
 
+import { POSTHOG_SUPPORT_ACTIONS } from "./posthog-support.js";
+
 const LOGO_BASE = "https://pipedream.com/s.v0";
 const NOTION_HEADERS = Object.freeze({ "Notion-Version": "2022-06-28" });
 
@@ -206,6 +208,7 @@ export const EXPANSION_SERVICE_REGISTRY: Record<string, ExpansionService> = {
     icon: "chart",
     logoUrl: `${LOGO_BASE}/posthog/logo/48`,
     actions: {
+      ...POSTHOG_SUPPORT_ACTIONS,
       list_projects: { description: "List PostHog projects", risk: "read", params: {} },
       list_insights: { description: "List insights in a PostHog project", risk: "read", params: { projectId: { type: "number", required: true }, limit: { type: "number" } } },
       get_insight: { description: "Get a PostHog insight", risk: "read", params: { projectId: { type: "number", required: true }, insightId: { type: "number", required: true } } },

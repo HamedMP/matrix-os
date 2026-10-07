@@ -4,6 +4,8 @@ import { X_SERVICE_REGISTRY } from "./registry-x.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { GMAIL_SERVICE } from "./gmail.js";
 import { GOOGLE_SERVICES } from "./google.js";
+import { GITHUB_READ_ACTIONS } from "./github-read.js";
+import { SLACK_READ_ACTIONS } from "./slack-read.js";
 import { listValidation } from "./list-validation.js";
 
 const LOGO_BASE = "https://pipedream.com/s.v0";
@@ -98,6 +100,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     // with an "Integration call failed" message -- not ideal UX, but safer
     // than smuggling arbitrary path segments into a real URL.
     actions: {
+      ...GITHUB_READ_ACTIONS,
       // GitHub API: GET /user/repos. Defaults to sort=updated so the most
       // active repos surface first; matches what `gh repo list` does.
       list_repos: {
@@ -292,7 +295,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
           method: "POST",
           url: "https://api.linear.app/graphql",
           mapBody: (p) => linearGraphqlBody(`
-            query MatrixLinearWorkflowStates($teamId: String!, $first: Int!) {
+            query MatrixLinearWorkflowStates($teamId: ID!, $first: Int!) {
               workflowStates(first: $first, filter: { team: { id: { eq: $teamId } } }) {
                 nodes { id name type color position team { id key name } }
               }
@@ -330,12 +333,12 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
             const variableDefs = ["$first: Int!", "$after: String"];
             const filters: string[] = [];
             if (teamId) {
-              variableDefs.push("$teamId: String!");
+              variableDefs.push("$teamId: ID!");
               filters.push("team: { id: { eq: $teamId } }");
               variables.teamId = teamId;
             }
             if (projectId) {
-              variableDefs.push("$projectId: String!");
+              variableDefs.push("$projectId: ID!");
               filters.push("project: { id: { eq: $projectId } }");
               variables.projectId = projectId;
             }
@@ -528,6 +531,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     // conversations.list etc. Channel param accepts either a channel ID (C...)
     // or a `#channelname` string -- Slack resolves both.
     actions: {
+      ...SLACK_READ_ACTIONS,
       // Slack Web API: chat.postMessage. JSON body works as long as the
       // token is passed via Authorization header (Pipedream's proxy handles
       // that). Channel can be either a channel ID (C012AB34) or a public

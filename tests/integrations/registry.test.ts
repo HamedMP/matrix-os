@@ -107,7 +107,7 @@ describe("Service Registry", () => {
         write: ["post_comment"],
       },
       posthog: {
-        read: ["list_projects", "list_insights", "get_insight", "query"],
+        read: ["list_tickets", "get_ticket", "list_ticket_messages", "list_projects", "list_insights", "get_insight", "query"],
         write: [],
       },
       jira: {
