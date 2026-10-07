@@ -62,6 +62,7 @@ export default function Preview({
   app: GalleryAppListing;
   large?: boolean;
 }) {
+  if (app.id === "edition") return <div className={`preview ${large ? "preview-large" : ""}`}><img src="./edition-preview.jpg" alt="Edition publication library — fictional preview" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"top left",borderRadius:"inherit"}} /></div>;
   const boardLabels = app.fields
     .find((field) => field.kind === "select")
     ?.options?.slice(0, 3) ?? ["Plan", "In progress", "Done"];
