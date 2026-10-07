@@ -119,10 +119,16 @@ export async function forwardBotInference(
   }
   if (authorization.accessSourceId === "matrix_chatgpt_plan") {
     if (!deps.chatgptPlan) return failure(request.requestId, "provider_unavailable");
-    return forwardChatGptPlanInference(request, binding, { authority: deps.chatgptPlan, signal: lifecycle,
+    const authority = deps.chatgptPlan;
+    return forwardChatGptPlanInference(request, binding, { authority: {
+      ...authority,
+      infer: (candidate, body, signal) => authority.infer(candidate, body, signal),
+      revalidate: async (candidate, signal) => (!deps.revalidateBinding || await deps.revalidateBinding(candidate))
+        && !signal.aborted && await authority.revalidate(candidate, signal),
+    }, signal: lifecycle,
       stillAuthorized: () => { const current = authorize(modelId); return !lifecycle.aborted && current.allowed && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId); } });
   }
-  // Subscription custody stays with the explicit native task executor. Own Matrix SIWC is not qualified.
+  // Borrowed native profiles remain task-executor-only; never substitute them for the explicit paired-device source.
   if (authorization.accessSourceId === "owner_openai_profile" || authorization.accessSourceId === "owner_anthropic_profile"
     || request.action === "inference.responses") return failure(request.requestId, "provider_unavailable");
   // Chat completions exist only on Matrix's managed route (the funded relay).

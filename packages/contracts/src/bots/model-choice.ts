@@ -4,6 +4,11 @@ import { MATRIX_BOT_SELECTION } from "#bots/selection";
 
 export const MATRIX_PI_CHAT_INSTANCE_ID = "matrix_pi_default";
 export const MATRIX_CHATGPT_PLAN_INSTANCE_ID = "matrix_chatgpt_plan";
+/** Ordinary private Chat uses its own Pi admission, never the recipe-only Bot route. */
+export const MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID = "matrix_pi_chatgpt_plan";
+export function isChatgptPlanChatRoute(route: { instanceId: string; driverKind: string }): boolean {
+  return route.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && route.driverKind === "matrix_pi";
+}
 
 export function isChatgptPlanBotRoute(route: { instanceId: string; driverKind: string }): boolean {
   return route.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID && route.driverKind === "matrix_bot";
@@ -114,6 +119,7 @@ export function canonicalProviderAvailabilityReasonLabel(
 export function canonicalProviderModelRouteLabel(instance: CanonicalProviderInstanceDescriptor | undefined,
   modelLabel: string): string {
   if (!instance) return modelLabel;
+  if (isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })) return `${modelLabel} · Codex · ChatGPT subscription`;
   if (isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })) return `${modelLabel} · ChatGPT subscription`;
   if (isManagedPiBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isLegacyMatrixSdkProvider(instance)) {
     return `${modelLabel} · Matrix AI`;

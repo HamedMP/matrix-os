@@ -34,3 +34,35 @@ describe('owner-local Bot coordinator catalog', () => {
         expect(result.instances[0]).not.toHaveProperty('defaultSelection');
     });
 });
+
+it('projects ordinary Pi and recipe Bot from one account observation with distinct capabilities', async () => {
+    const observe = vi.fn(async () => connection);
+    const baseRead = vi.fn(async () => ({ revision: 'base', drivers: [], instances: [] }));
+    const wrapped = withChatGptPlanProviderInstance({ getCatalog: baseRead }, { observe } as never, () => true);
+    const selection = { instanceId: 'matrix_pi_chatgpt_plan', model: 'gpt-account-model', options: [{ id: 'accountId', value: 'account-local' }, { id: 'grantRevision', value: '5' }] };
+    const result = CanonicalProviderCatalogSchema.parse(await wrapped.getCatalog({ userId: 'owner', source: 'jwt' }, selection));
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(baseRead).toHaveBeenCalledWith({ userId: 'owner', source: 'jwt' }, selection);
+    expect(result.instances.find(instance => instance.id === selection.instanceId)).toMatchObject({
+        driverKind: 'matrix_pi', displayName: 'Codex · ChatGPT subscription', workspaceRequirement: 'project_optional', defaultSelection: selection,
+        supports: { rootChat: true, approvals: true, worktrees: 'optional', permissionModes: ['supervised', 'full_access'] },
+    });
+    expect(result.instances.find(instance => instance.id === 'matrix_chatgpt_plan')?.supports.rootChat).toBe(false);
+    expect(result.drivers.some(driver => driver.kind === 'matrix_pi')).toBe(true);
+});
+
+
+it('does not advertise ordinary subscription execution until the managed Pi runtime is registered and available', async () => {
+    let ready = false;
+    const wrapped = withChatGptPlanProviderInstance({ getCatalog: async () => ({ revision: 'base', drivers: [], instances: [] }) },
+        { observe: async () => connection }, () => ready);
+    const unavailable = await wrapped.getCatalog({ userId: 'owner', source: 'jwt' });
+    const chat = unavailable.instances.find(instance => instance.id === 'matrix_pi_chatgpt_plan')!;
+    expect(chat).toMatchObject({ availability: 'unavailable', models: [], unavailabilityReason: 'runtime_unavailable' });
+    expect(chat).not.toHaveProperty('defaultSelection');
+    expect(unavailable.instances.find(instance => instance.id === 'matrix_chatgpt_plan')?.availability).toBe('available');
+    ready = true;
+    const available = await wrapped.getCatalog({ userId: 'owner', source: 'jwt' });
+    expect(available.revision).not.toBe(unavailable.revision);
+    expect(available.instances.find(instance => instance.id === 'matrix_pi_chatgpt_plan')?.defaultSelection?.model).toBe('gpt-account-model');
+});

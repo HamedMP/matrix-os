@@ -39,6 +39,8 @@ export {
 } from "./agents-providers/provider-settings-controller.js";
 
 export {
+  canonicalChatSubscriptionSelectionMatches,
+  canonicalProviderChoiceCanBeDefault,
   canonicalProviderAvailabilityLabel,
   canonicalProviderUnavailableSelectionLabel,
   deriveCanonicalProviderChoices,

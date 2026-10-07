@@ -32,7 +32,7 @@ it("connecting authorizes interactive Bots without extra checkbox or grant contr
   expect(native.setGrant).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Use for Bots" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Stop Bot use" })).toBeNull();
-  expect(screen.getByText("Available for interactive Bots on this Computer.")).toBeVisible();
+  expect(screen.getByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeVisible();
   expect(changed).toHaveBeenCalledTimes(1);
 });
 it("offers explicit reconnect for an existing disabled account without changing grants on read", async () => {
@@ -43,7 +43,7 @@ it("offers explicit reconnect for an existing disabled account without changing 
   expect(screen.queryByRole("checkbox")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Reconnect ChatGPT" }));
   await waitFor(() => expect(native.connect).toHaveBeenCalledWith({ purpose: "personal_local" }, expect.any(AbortSignal)));
-  expect(await screen.findByText("Available for interactive Bots on this Computer.")).toBeVisible();
+  expect(await screen.findByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeVisible();
   expect(native.setGrant).not.toHaveBeenCalled();
 });
 it("keeps failed reconnect visibly disabled and leaves read-only accounts untouched", async () => {
@@ -53,7 +53,7 @@ it("keeps failed reconnect visibly disabled and leaves read-only accounts untouc
   await screen.findByText("Owner account");
   fireEvent.click(screen.getByRole("button", { name: "Reconnect ChatGPT" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("ChatGPT connection could not be updated");
-  expect(screen.queryByText("Available for interactive Bots on this Computer.")).toBeNull();
+  expect(screen.queryByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeNull();
   expect(screen.queryByText(/private upstream/)).toBeNull();
   view.rerender(<LocalChatgptSubscription client={native} disabled={false} readOnly={true} onChanged={vi.fn()}/>);
   expect(screen.queryByRole("button", { name: "Reconnect ChatGPT" })).toBeNull();
@@ -63,7 +63,7 @@ it("does not claim availability while disconnected from the selected Computer", 
   render(<LocalChatgptSubscription client={client({ ...connected, bridgeConnected: false })} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
   await screen.findByText("Owner account");
   expect(screen.queryByRole("checkbox")).toBeNull();
-  expect(screen.queryByText("Available for interactive Bots on this Computer.")).toBeNull();
+  expect(screen.queryByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeNull();
 });
 it("preserves the connected account and safe error after a failed disconnect", async () => {
   const native = client(connected); vi.mocked(native.disconnect).mockRejectedValue(new Error("private secret error"));
@@ -100,9 +100,9 @@ it("polls asynchronous local login until default interactive Bot connection is r
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Continue with ChatGPT" })));
     expect(screen.getByRole("button", { name: "Cancel ChatGPT connection" })).toBeEnabled();
     await act(async () => vi.advanceTimersByTimeAsync(1500));
-    expect(screen.queryByText("Available for interactive Bots on this Computer.")).toBeNull();
+    expect(screen.queryByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeNull();
     await act(async () => vi.advanceTimersByTimeAsync(1500));
-    expect(screen.getByText("Available for interactive Bots on this Computer.")).toBeVisible();
+    expect(screen.getByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeVisible();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(native.setGrant).not.toHaveBeenCalled();
     expect(changed).toHaveBeenCalledTimes(2);
@@ -122,7 +122,7 @@ it("lets cancellation fence a late native login receipt", async () => {
 it("does not claim Bot availability when a connected account loses its model catalog", async () => {
   render(<LocalChatgptSubscription client={client({ ...connected, models: [], grant: { revision: 2, enabled: true, background: false } })} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
   await screen.findByText("Owner account");
-  expect(screen.queryByText("Available for interactive Bots on this Computer.")).toBeNull();
+  expect(screen.queryByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeNull();
   expect(screen.getByText(/No subscription models are available/)).toBeVisible();
 });
 
@@ -140,7 +140,7 @@ it("offers a model check only when a connected catalog is missing", async () => 
   await screen.findByText("Owner account");
   fireEvent.click(screen.getByRole("button", { name: "Check subscription models" }));
   await waitFor(() => expect(native.refreshModels).toHaveBeenCalledWith(expect.any(AbortSignal)));
-  expect(await screen.findByText("Available for interactive Bots on this Computer.")).toBeVisible();
+  expect(await screen.findByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Check subscription models" })).toBeNull();
   expect(native.connect).not.toHaveBeenCalled(); expect(native.setGrant).not.toHaveBeenCalled();
 });
@@ -205,7 +205,7 @@ it("keeps refresh read-only and preserves a deliberately disabled Bot grant", as
   await screen.findByText("Owner account");
   view.rerender(<LocalChatgptSubscription {...props} refreshRevision={1}/>);
   await waitFor(() => expect(native.status).toHaveBeenCalledTimes(2));
-  expect(screen.queryByText("Available for interactive Bots on this Computer.")).toBeNull();
+  expect(screen.queryByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeNull();
   expect(screen.queryByRole("button")).toBeNull();
   expect(native.connect).not.toHaveBeenCalled(); expect(native.setGrant).not.toHaveBeenCalled();
 });
@@ -222,7 +222,7 @@ it("keeps an explicit connection in progress when Settings is refreshed", async 
   expect(native.status).toHaveBeenCalledTimes(1);
   expect(vi.mocked(native.connect).mock.calls[0][1].aborted).toBe(false);
   await act(async () => settle(connected));
-  expect(screen.getByText("Available for interactive Bots on this Computer.")).toBeVisible();
+  expect(screen.getByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeVisible();
   expect(changed).toHaveBeenCalledTimes(1);
   expect(native.setGrant).not.toHaveBeenCalled();
 });

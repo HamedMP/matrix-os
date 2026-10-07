@@ -98,10 +98,10 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
     <div className="matrix-ap-subscription-head"><strong>Codex · ChatGPT subscription</strong>
       <span className="matrix-ap-status-chip" data-state={connected ? "ready" : "attention"}><i aria-hidden="true"/>{label}</span>
     </div>
-    <p className="matrix-ap-help">Use your ChatGPT plan for Matrix Bots. Keep this device connected while your Bot runs.</p>
+    <p className="matrix-ap-help">Use your ChatGPT plan for chats and Matrix Bots. Keep this device connected while they run.</p>
     {!client ? <p className="matrix-ap-help">Available in Electron Desktop on your personal device. Native Codex login and API keys are managed separately.</p> : null}
     {connected ? <><p className="matrix-ap-help">{status.account!.label}</p>
-      <p className="matrix-ap-help">{status.bridgeConnected ? !status.models.length ? "No subscription models are available. Check subscription models." : status.grant.enabled ? "Available for interactive Bots on this Computer." : "Reconnect ChatGPT to resume interactive Bots on this Computer." : "Device connection to this Computer is unavailable. Bot requests cannot start."}</p>
+      <p className="matrix-ap-help">{status.bridgeConnected ? !status.models.length ? "No subscription models are available. Check subscription models." : status.grant.enabled ? "Available for chats and interactive Matrix Bots on this Computer." : "Reconnect ChatGPT to resume chats and interactive Matrix Bots on this Computer." : "Device connection to this Computer is unavailable. Chat and Bot requests cannot start."}</p>
     </> : null}
     {status?.revocation === "unconfirmed" ? <p className="matrix-ap-help" role="status">Local access stopped. Provider sign-out could not be confirmed; check your ChatGPT connected apps.</p> : null}
     {error && error.client === client ? <p className="matrix-ap-help" role="alert">{error.text}</p> : null}

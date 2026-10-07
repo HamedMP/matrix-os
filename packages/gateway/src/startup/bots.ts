@@ -300,7 +300,7 @@ export async function startBots(options: {
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
   ];
-  const managedAdmission = createManagedPiAdmission({ db, homePath: options.homePath, host, registry, roots: options.executionRoots, toolCapabilities: managedCapabilities });
+  const managedAdmission = createManagedPiAdmission({ ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots, toolCapabilities: managedCapabilities });
   const ownerTools = createManagedPiOwnerTools({ authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
     ...(integrationClient ? { integrations: integrationClient } : {}),
     ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });
@@ -331,7 +331,7 @@ export async function startBots(options: {
     client: host.client,
     onRunFinished: (runId) => forgetRun(runId),
   });
-  const managed = createManagedPiRuntime({ ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const actions = createBotBrokerActions({
     db,
@@ -355,7 +355,7 @@ export async function startBots(options: {
       onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
       revalidateBinding: async (binding) => {
         if (!isManagedPiBinding(binding)) return true;
-        try { await managedAdmission.workspace(binding); return true; }
+        try { await managedAdmission.toolAuthority(binding); return true; }
         catch (error: unknown) { console.warn("[managed-pi] authority revalidation failed", error instanceof Error ? error.name : "UnknownError"); return false; }
       },
       lifetime: lifetime.signal,

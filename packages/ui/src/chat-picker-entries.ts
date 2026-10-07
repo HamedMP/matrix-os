@@ -1,6 +1,6 @@
 import type { CanonicalProviderCatalog, CanonicalProviderDriverKind, CanonicalProviderInstanceDescriptor } from "@matrix-os/contracts";
-import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute } from "@matrix-os/contracts";
-import { canonicalProviderAvailabilityLabel, orderCanonicalProviderInstancesForDefault, type CanonicalProviderChoice } from "./canonical-provider-choice.js";
+import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
+import { canonicalChatSubscriptionSelectionMatches, canonicalProviderAvailabilityLabel, orderCanonicalProviderInstancesForDefault, type CanonicalProviderChoice } from "./canonical-provider-choice.js";
 
 export interface ChatPickerEntry {
   id: string;
@@ -23,7 +23,7 @@ export function deriveChatPickerEntries(catalog: CanonicalProviderCatalog): Chat
   return [{ id: "matrix-ai", label: "Matrix AI", iconKind: "kernel", instances: managed, capabilityClass: "system_agent" },
     ...catalog.drivers.flatMap(driver => visibleInstances.filter(instance => instance.driverKind === driver.kind && !isLegacyMatrixSdkProvider(instance) && !isEmptyBotPlaceholder(instance)
       && !managed.some(candidate => candidate.id === instance.id))
-      .map(instance => ({ id: instance.id, label: instance.displayName, iconKind: instance.driverKind,
+      .map(instance => ({ id: instance.id, label: instance.displayName, iconKind: isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "codex" as const : instance.driverKind,
         instances: [instance], capabilityClass: driver.capabilityClass })))];
 }
 
@@ -56,15 +56,16 @@ export function deriveChatPickerModelRows(
 ): ChatPickerModelRow[] {
   return orderCanonicalProviderInstancesForDefault(catalog.instances.filter(instance => !isLegacyMatrixSdkProvider(instance))).flatMap(instance => instance.models.flatMap(model => {
     const choice = instance.availability === "available" && model.availability === "available"
-      ? choices.find(candidate => candidate.instanceId === instance.id && candidate.modelId === model.id)
+      ? choices.find(candidate => candidate.instanceId === instance.id && candidate.driverKind === instance.driverKind && candidate.modelId === model.id
+        && canonicalChatSubscriptionSelectionMatches(instance, candidate.selectedOptions))
       : undefined;
     const managed = instance.id === "matrix_pi_default" && instance.driverKind === "matrix_pi";
     // Retain prior executable-only discovery for other harnesses.
-    if (!choice && !managed) return [];
+    if (!choice && !managed && instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return [];
     return [{
       instanceId: instance.id, modelId: model.id, modelLabel: model.displayName, modelAvailability: model.availability,
       harnessLabel: managed ? "Matrix AI" : choice?.harnessLabel ?? instance.displayName,
-      connectionLabel: instance.connectionLabel, driverKind: instance.driverKind,
+      connectionLabel: instance.id === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID ? undefined : instance.connectionLabel, driverKind: instance.driverKind,
       ...(choice ? { choice } : {}),
     }];
   }));

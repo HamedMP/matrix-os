@@ -1,4 +1,5 @@
-import { isLegacyMatrixSdkProvider } from "@matrix-os/contracts";
+import { canonicalChatSubscriptionSelectionMatches } from "@matrix-os/ui";
+import { isLegacyMatrixSdkProvider, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
 import type { CanonicalChatSummary, CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -83,13 +84,18 @@ export function useCanonicalComposerSelection({
           model.id === current.model && model.availability === "available"
         ))
         && currentInstance.supports.permissionModes.includes(current.permissionMode)
-        && rememberedOptions(catalog, current).length === current.options.length;
+        && rememberedOptions(catalog, current).length === current.options.length
+        && canonicalChatSubscriptionSelectionMatches(currentInstance, current.options);
       if (!chatChanged && !scopeChanged && composerSelectionTouched.current && currentIsSupported) return current;
+      if (!chatChanged && !scopeChanged && composerSelectionTouched.current && current
+        && current.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID
+        && (!currentInstance || !canonicalChatSubscriptionSelectionMatches(currentInstance, current.options))) return current;
       // Existing Chats retain their saved route even when it cannot run. Choosing
       // a global default here would silently change the harness/account.
       if (chatId && currentSelection && (!requiredInstance
         || isLegacyMatrixSdkProvider(requiredInstance)
         || requiredInstance.availability !== "available"
+        || !canonicalChatSubscriptionSelectionMatches(requiredInstance, currentSelection.options)
         || !requiredInstance.models.some((model) => model.id === currentSelection.model && model.availability === "available"))) {
         return {
           instanceId: boundInstanceId ?? currentSelection.instanceId,
@@ -103,10 +109,13 @@ export function useCanonicalComposerSelection({
         ? createCanonicalComposerSelection(catalog, requiredInstance.id)
         : createCanonicalComposerSelection(catalog);
       if (!next || (chatId && boundInstanceId && next.instanceId !== boundInstanceId)) return null;
+      const preference = useProviderPreferences.getState().composerSelections[next.instanceId];
+      if (!chatId && preference && requiredInstance
+        && !canonicalChatSubscriptionSelectionMatches(requiredInstance, preference.options)) return null;
       const preferred = applyCanonicalComposerPreference(
         catalog,
         next,
-        useProviderPreferences.getState().composerSelections[next.instanceId],
+        preference,
       );
       const rememberedModel = currentSelection && currentSelection.instanceId === preferred.instanceId
         ? requiredInstance?.models.find((model) => (

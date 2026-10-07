@@ -1542,7 +1542,8 @@ export async function createGateway(config: GatewayConfig) {
       ...(fundedAdmission ? { fundedAdmission } : {}),
     });
     if (botServices?.chatgptPlanPeers) {
-      const enhanced = withChatGptPlanProviderInstance(baseCanonicalChatProviderCatalog, botServices.chatgptPlanPeers);
+      const enhanced = withChatGptPlanProviderInstance(baseCanonicalChatProviderCatalog, botServices.chatgptPlanPeers,
+        () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available));
       canonicalChatProviderCatalog = { ...baseCanonicalChatProviderCatalog, getCatalog: enhanced.getCatalog,
         refresh: async (principal, readOptions) => { await baseCanonicalChatProviderCatalog.refresh(principal, readOptions); return enhanced.getCatalog(principal); } };
     }
