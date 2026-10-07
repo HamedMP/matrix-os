@@ -200,4 +200,13 @@ describe("AppViewer bridged runtime loading", () => {
       expect(isAllowedBridgeFetchUrl("resource-manager", "https://app.matrix-os.com/api/system/activity")).toBe(false);
     });
   });
+  it('allows bundled blob workers while keeping runtime apps opaque and network-restricted',()=>{
+    const html=injectBridgeIntoAppHtml('<html><head></head><body></body></html>','chess-coach',{},'/apps/chess-coach/');
+    expect(html).toContain("worker-src 'self' blob:");
+    expect(html).toContain("connect-src 'self'");
+    expect(APP_IFRAME_SANDBOX).not.toContain('allow-same-origin');
+    expect(html).not.toContain('worker-src https:');
+    expect(html).not.toContain('worker-src data:');
+  });
+
 });

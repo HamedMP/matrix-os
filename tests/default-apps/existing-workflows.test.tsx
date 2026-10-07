@@ -127,4 +127,17 @@ describe("grounded existing workflows", () => {
         expect(within(screen.getByRole("region", { name: "Today brief" })).getByText("Planning")).toBeTruthy();
         expect(p.onSave).not.toHaveBeenCalled();
     });
+    it.each([['atlas','Preparation journey','Preparation note for First','preparation'],['meeting-briefs','Action meeting','Actions for First','actions']])('keeps %s selection fixed until its unsaved draft is explicitly discarded', (id,selector,label,field) => {
+        const p = props(id, [record('first',{title:'First',date:day,status:'Confirmed',[field]:'Saved note'}),record('second',{title:'Second',date:day,status:'Confirmed'})]);
+        render(createElement(ExistingWorkflows,p));
+        fireEvent.change(screen.getByLabelText(label),{target:{value:'Unsaved correction'}});
+        expect((screen.getByLabelText(selector) as HTMLSelectElement).disabled).toBe(true);
+        expect((screen.getByLabelText(label) as HTMLTextAreaElement).value).toBe('Unsaved correction');
+        fireEvent.click(screen.getByRole('button',{name:'Discard draft and reload saved text'}));
+        expect((screen.getByLabelText(selector) as HTMLSelectElement).disabled).toBe(false);
+        fireEvent.change(screen.getByLabelText(selector),{target:{value:'second'}});
+        expect((screen.getByLabelText(selector) as HTMLSelectElement).value).toBe('second');
+        expect(p.onSave).not.toHaveBeenCalled();
+    });
+
 });

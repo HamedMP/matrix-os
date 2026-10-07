@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+import ChessWorker from "./chess.worker.ts?worker&inline";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { OwnerRecord } from "../types";
 import type { ViewProps } from "../views/common";
@@ -44,7 +46,9 @@ export default function ChessCoach(props: ViewProps) {
     if (!record || !parsed.game || !pgn || busy) return;
     cancel(); setError(""); setBusy(true); setReveal(false);
     try {
-      const worker = new Worker(new URL("./chess.worker.ts", import.meta.url), { type: "module" });
+      // Installed apps use an opaque-origin srcDoc sandbox. The built worker
+      // carries its engine in a local Blob instead of requesting an app asset.
+      const worker = new ChessWorker();
       const timer = setTimeout(() => { if (active.current?.worker === worker) { cancel(); setBusy(false); setError("Local search reached its time limit. Your game is unchanged; try again."); } }, 8000);
       active.current = { worker, timer };
       worker.onmessage = (event: MessageEvent<unknown>) => {

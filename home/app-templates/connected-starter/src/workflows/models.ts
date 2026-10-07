@@ -42,12 +42,17 @@ export function planRunway(records: OwnerRecord[], options: { today: string; pay
     let availableCents = Math.round(Number(group.opening?.fields.amount ?? 0) * 100);
     // Received cash after the opening snapshot can be allocated. Forecast income
     // never increases today's available money, even when its date is confirmed.
-    for (const row of matching) if (group.opening && row.fields.kind === "Income" && row.fields.status === "Received" && String(row.fields.date) > openingDate && String(row.fields.date) <= options.today) availableCents += Math.round(Number(row.fields.amount) * 100);
+    for (const row of matching) {
+      if (!group.opening || String(row.fields.date) <= openingDate || String(row.fields.date) > options.today) continue;
+      const amountCents = Math.round(Number(row.fields.amount) * 100);
+      if (row.fields.kind === "Income" && row.fields.status === "Received") availableCents += amountCents;
+      if (["Bill", "Reserve"].includes(String(row.fields.kind)) && row.fields.status === "Paid") availableCents -= amountCents;
+    }
     group.available = availableCents / 100;
     const commitments = matching.filter(row => ["Bill", "Reserve"].includes(String(row.fields.kind)) && row.fields.status === "Confirmed" && String(row.fields.date) <= options.payday).sort((a, b) => String(a.fields.date).localeCompare(String(b.fields.date)) || a.id.localeCompare(b.id));
     let requiredCents = 0;
     for (const row of commitments) {
-      const amount = Math.round(Number(row.fields.amount) * 100), allocated = Math.min(availableCents, amount);
+      const amount = Math.round(Number(row.fields.amount) * 100), allocated = Math.min(Math.max(0, availableCents), amount);
       availableCents -= allocated; requiredCents += amount;
       group.allocations.push({ record: row, allocated: allocated / 100, shortfall: (amount - allocated) / 100 });
     }

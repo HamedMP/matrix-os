@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import React from "react";
+import * as jsxRuntime from "react/jsx-runtime";
+import * as jsxDevRuntime from "react/jsx-dev-runtime";
+import type { ViewProps } from "../../home/app-templates/connected-starter/src/views/common";
+import { JSDOM } from "jsdom";
+import { build } from "vite";
+import { runInNewContext } from "node:vm";
+import { fileURLToPath } from "node:url";
 import { completedGame, searchPosition, analyzeCompletedGame, isLegalVariation } from "../../home/app-templates/connected-starter/src/workflows/chess-engine";
 
 const mate = '[Result "1-0"]\n\n1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7# 1-0';
@@ -36,5 +44,89 @@ describe("completed-game local chess analysis", () => {
     expect(result.positions).toHaveLength(2);
     expect(result.positions.every(position => isLegalVariation(position.before.fen, position.before.variation))).toBe(true);
     expect(result.engine).toContain("Local");
+  });
+});
+
+// Exercise the real production transform: dev/test worker constructors can hide
+// external worker chunks that cannot be started in a srcDoc opaque origin.
+let testDom: JSDOM | undefined;
+afterEach(async () => {
+  if (testDom) {
+    const { act, cleanup } = await import("@testing-library/react");
+    await act(async () => cleanup());
+    await new Promise<void>(resolve => setImmediate(resolve));
+    testDom.window.close(); testDom = undefined;
+  }
+  vi.unstubAllGlobals();
+});
+describe("installed chess worker loading", () => {
+  it("bundles the engine into a local Blob, completes actual bounded search, and terminates it", async () => {
+    const result = await build({
+      configFile: false,
+      root: fileURLToPath(new URL("../../home/app-templates/connected-starter", import.meta.url)),
+      logLevel: "silent",
+      esbuild: { jsx: "automatic" },
+      build: {
+        write: false, minify: false,
+        lib: { entry: "src/workflows/ChessCoach.tsx", name: "BuiltChessCoach", formats: ["iife"] },
+        rollupOptions: { external: ["react", "react/jsx-runtime", "react/jsx-dev-runtime"], output: { globals: { react: "React", "react/jsx-runtime": "ReactJSXRuntime", "react/jsx-dev-runtime": "ReactJSXDevRuntime" } } },
+      },
+    });
+    const output = (Array.isArray(result) ? result[0] : result).output;
+    expect(output.filter(chunk => /chess\.worker.*\.js$/.test(chunk.fileName))).toHaveLength(0);
+    const entry = output.find(chunk => chunk.type === "chunk");
+    if (!entry || entry.type !== "chunk") throw new Error("Missing built component");
+    const blobs = new Map<string, string>();
+    const workers: OpaqueWorker[] = [];
+    const revoke = vi.fn((url: string) => blobs.delete(url));
+    class LocalBlob { constructor(readonly parts: string[]) {} }
+    class OpaqueWorker {
+      addEventListener = vi.fn();
+      onmessage: ((event: { data: unknown }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      terminate = vi.fn();
+      context: { onmessage?: (event: { data: unknown }) => void; postMessage: (data: unknown) => void };
+      constructor(url: string) {
+        // An external asset URL must never be accepted by this opaque-origin
+        // harness. Execute the bundled worker itself, not a fabricated score.
+        if (!url.startsWith("blob:")) throw new Error("External workers cannot load from this opaque origin");
+        const code = blobs.get(url);
+        if (!code) throw new Error("Missing local Blob code");
+        this.context = { postMessage: data => this.onmessage?.({ data }) };
+        runInNewContext(code, { self: this.context, performance, console }, { timeout: 6000 });
+        workers.push(this);
+      }
+      postMessage(data: unknown) { this.context.onmessage?.({ data }); }
+    }
+    const context = {
+      React, ReactJSXRuntime: jsxRuntime, ReactJSXDevRuntime: jsxDevRuntime, Worker: OpaqueWorker, Blob: LocalBlob,
+      URL: { createObjectURL(blob: LocalBlob) { const url = `blob:null/${blobs.size}`; blobs.set(url, blob.parts.join("")); return url; }, revokeObjectURL: revoke },
+      window: {}, atob, performance, console, setTimeout, clearTimeout,
+    };
+    Object.assign(context, { self: { Blob: LocalBlob, URL: context.URL } });
+    runInNewContext(entry.code, context, { timeout: 1000 });
+    const dom = new JSDOM("<!doctype html><html><body></body></html>"); testDom = dom;
+    vi.stubGlobal("window", dom.window); vi.stubGlobal("document", dom.window.document); vi.stubGlobal("navigator", dom.window.navigator);
+    const { fireEvent, render, screen, waitFor } = await import("@testing-library/react");
+    const Component = (context as typeof context & { BuiltChessCoach: React.ComponentType<ViewProps> }).BuiltChessCoach;
+    const onSave = vi.fn(async (_record: ViewProps["records"][number]) => undefined);
+    const pgn = "1. e4 1-0";
+    render(React.createElement(Component, {
+      app: { id: "chess-coach", fields: [] } as unknown as ViewProps["app"],
+      records: [{ id: "finished", scope: "personal", fields: { title: "Finished", pgn, status: "Completed" }, sources: [], accounts: [], manualFields: [], updatedAt: "2026-10-07" }],
+      onSave, onEdit: vi.fn(), onAdd: vi.fn(), onEvidence: vi.fn(),
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Analyze completed game" }));
+    expect(workers).toHaveLength(1);
+    expect(workers[0].terminate).toHaveBeenCalledOnce();
+    expect(revoke).toHaveBeenCalled(); expect(blobs.size).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Save this local review" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    const review = JSON.parse(String(onSave.mock.calls[0][0].fields.analysis));
+    expect(review.positions).toHaveLength(1);
+    expect(review.positions[0].before.depth).toBeLessThanOrEqual(3);
+    expect(review.positions[0].before.nodes).toBeLessThanOrEqual(20000);
+    expect(isLegalVariation(review.positions[0].before.fen, review.positions[0].before.variation)).toBe(true);
+    expect(review.sourceSignature).toBeTruthy();
   });
 });

@@ -43,6 +43,25 @@ describe("cash allocation before payday", () => {
     const rows = [record("old", { kind: "Opening balance", status: "Confirmed", amount: 100, currency: "USD", date: "2026-10-01" }), record("latest", { kind: "Opening balance", status: "Confirmed", amount: 50, currency: "USD", date: "2026-10-05" }), record("income", { kind: "Income", status: "Received", amount: 10, currency: "USD", date: "2026-10-06" })];
     expect(planRunway(rows, options)[0].available).toBe(60);
   });
+  it("deducts paid commitments only after the opening snapshot through today", () => {
+    const cash = record("cash", { kind: "Opening balance", status: "Confirmed", amount: 100, currency: "USD", date: "2026-10-05" });
+    const paid = (id: string, date: string, amount: number, kind = "Bill") => record(id, { kind, status: "Paid", amount, currency: "USD", date });
+    const upcoming = record("upcoming", { kind: "Bill", status: "Confirmed", amount: 80, currency: "USD", date: "2026-10-10" });
+    const futureIncome = record("future-income", { kind: "Income", status: "Received", amount: 900, currency: "USD", date: "2026-10-08" });
+    const plan = planRunway([cash, paid("before", "2026-10-04", 400), paid("snapshot", "2026-10-05", 400), paid("bill", "2026-10-06", 40), paid("reserve", options.today, 20, "Reserve"), paid("future", "2026-10-08", 400), upcoming, futureIncome], options)[0];
+    expect(plan).toMatchObject({ available: 40, required: 80, shortfall: 40, remaining: 0 });
+    expect(plan.allocations).toEqual([expect.objectContaining({ record: upcoming, allocated: 40, shortfall: 40 })]);
+  });
+  it("never allocates negative cash when paid commitments exceed the snapshot", () => {
+    const plan = planRunway([
+      record("cash", { kind: "Opening balance", status: "Confirmed", amount: 100, currency: "USD", date: "2026-10-05" }),
+      record("paid", { kind: "Reserve", status: "Paid", amount: 150, currency: "USD", date: options.today }),
+      record("bill", { kind: "Bill", status: "Confirmed", amount: 80, currency: "USD", date: options.payday }),
+    ], options)[0];
+    expect(plan.available).toBe(-50); expect(plan.allocations[0]).toMatchObject({ allocated: 0, shortfall: 80 });
+    expect(plan.shortfall).toBe(130);
+    expect(planRunway([record("paid", { kind: "Bill", status: "Paid", amount: 60, currency: "USD", date: options.today })], options)[0].available).toBe(0);
+  });
   it("includes confirmed overdue unpaid bills before allocating later commitments", () => {
     const rows = [record("cash", { kind: "Opening balance", status: "Confirmed", amount: 100, currency: "USD", date: options.today }), record("old", { kind: "Bill", status: "Confirmed", amount: 50, currency: "USD", date: "2026-10-01" })];
     expect(planRunway(rows, options)[0].allocations[0]).toMatchObject({ record: { id: "old" }, allocated: 50 });

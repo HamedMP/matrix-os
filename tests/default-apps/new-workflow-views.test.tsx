@@ -112,6 +112,47 @@ describe("new saved app workflows", () => {
     expect(screen.getByText("1400 g")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Edit Rice" })[0]); expect(p.onEdit).toHaveBeenCalled();
   });
+  it("freezes reviewed meal dates and portions through a failed save and retry", async () => {
+    const recipe = row("recipe", { title: "Rice", status: "Recipe", servings: 2, ingredients: "rice | 200 | g" });
+    const p = props("meal-planner", [recipe]); p.onSave.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("failure"));
+    render(<NewWorkflows {...p} />);
+    fireEvent.change(screen.getByLabelText("Week starts"), { target: { value: "2026-10-07" } });
+    fireEvent.change(screen.getByLabelText("Portions each meal"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview seven-day rotation" }));
+    expect((screen.getByLabelText("Week starts") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Portions each meal") as HTMLInputElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Portions each meal"), { target: { value: "4" } });
+    expect(screen.getAllByText(/Rice · 3 portions/)).toHaveLength(7);
+    fireEvent.click(screen.getByRole("button", { name: "Save this rotation" })); await screen.findByRole("alert");
+    expect((screen.getByLabelText("Week starts") as HTMLInputElement).disabled).toBe(true);
+    const pending = p.onSave.mock.calls[1][0];
+    fireEvent.click(screen.getByRole("button", { name: "Retry remaining meals" })); await waitFor(() => expect(p.onSave).toHaveBeenCalledTimes(8));
+    expect(p.onSave.mock.calls[2][0].id).toBe(pending.id);
+    expect(p.onSave.mock.calls.every(([meal]) => meal.fields["planned-portions"] === 3 && String(meal.fields.date) >= "2026-10-07" && String(meal.fields.date) <= "2026-10-13")).toBe(true);
+    await waitFor(() => expect((screen.getByLabelText("Week starts") as HTMLInputElement).disabled).toBe(false));
+  });
+  it("retains edited journal digests until explicit discard, including failed saves", async () => {
+    const p = props("journal-memory", [row("entry", { title: "Walk", date: "2026-10-05", entry: "A quiet walk" })]);
+    p.onSave.mockRejectedValueOnce(new Error("failure")); render(<NewWorkflows {...p} />);
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-10-01" } });
+    fireEvent.change(screen.getByLabelText("Through"), { target: { value: "2026-10-07" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare a cited entry digest" }));
+    fireEvent.change(screen.getByLabelText("Review and correct your digest"), { target: { value: "My unsaved reflection" } });
+    expect((screen.getByLabelText("From") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Through") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Prepare a cited entry digest" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-10-02" } });
+    expect((screen.getByLabelText("Review and correct your digest") as HTMLTextAreaElement).value).toBe("My unsaved reflection");
+    fireEvent.click(screen.getByRole("button", { name: "Save reviewed digest" })); await screen.findByRole("alert");
+    expect((screen.getByLabelText("Review and correct your digest") as HTMLTextAreaElement).value).toBe("My unsaved reflection");
+    expect(p.onSave.mock.calls[0][0].fields["period-start"]).toBe("2026-10-01");
+    fireEvent.click(screen.getByRole("button", { name: "Discard digest draft" }));
+    expect(screen.queryByLabelText("Review and correct your digest")).toBeNull();
+    expect((screen.getByLabelText("From") as HTMLInputElement).disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-10-02" } });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare a cited entry digest" }));
+    expect((screen.getByLabelText("Review and correct your digest") as HTMLTextAreaElement).value).toContain("2026-10-02");
+  });
   it("preserves a prepared interview draft when a newer application arrives", () => {
     const original = row("role", { title: "Designer", company: "Example studio", stage: "Interview", notes: "Original notes" });
     const p = props("job-search", [original]), view = render(<NewWorkflows {...p} />);
@@ -155,7 +196,7 @@ describe("new saved app workflows", () => {
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-10-01" } }); fireEvent.change(screen.getByLabelText("Through"), { target: { value: "2026-10-07" } }); fireEvent.click(screen.getByRole("button", { name: "Prepare a cited entry digest" }));
     view.rerender(<NewWorkflows {...p} records={[{ ...record, scope: "work" }]} />);
     expect((screen.getByRole("button", { name: "Save reviewed digest" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Prepare a cited entry digest" })); expect((screen.getByRole("button", { name: "Save reviewed digest" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Discard digest draft" })); fireEvent.click(screen.getByRole("button", { name: "Prepare a cited entry digest" })); expect((screen.getByRole("button", { name: "Save reviewed digest" }) as HTMLButtonElement).disabled).toBe(false);
   });
   it("does not prepare a second packet while the first save is unresolved", async () => {
     const p = props("job-search", [row("a", { title: "A", company: "A studio", stage: "Applied" }), row("b", { title: "B", company: "B studio", stage: "Applied" })]);
