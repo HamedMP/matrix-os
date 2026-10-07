@@ -68,6 +68,12 @@ export const GMAIL_SERVICE: ServiceDefinition = {
         method: "GET", url: (p) => `${BASE}/messages/${encodeURIComponent(String(p.messageId))}?format=full`,
       },
     },
+    get_metadata: {
+      risk: "read", description: "Read exact message labels without downloading its body",
+      params: { messageId: { type: "string", required: true } },
+      paramsSchema: z.strictObject({ messageId: identifier }),
+      directApi: { method: "GET", url: p => `${BASE}/messages/${encodeURIComponent(String(p.messageId))}?format=minimal&fields=id,threadId,labelIds,historyId` },
+    },
     // Preserve the existing plain-text RFC 2822 send interface. Multipart
     // attachments and HTML bodies are outside this connector's send action.
     send_email: {

@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { MailReadRequestSchema } from "#mail";
 import { canonicalBoundedText, canonicalEncodedByteLength, canonicalOwnerRelativePath, canonicalReferenceId } from "#canonical-chat-primitives";
 import { BotConnectionIdSchema, BotIntegrationServiceSchema } from "#bots/ids";
 import { BotInteractionPayloadSchema } from "#bots/interactions";
@@ -22,6 +23,7 @@ export const BotToolCapabilitySchema = z.enum([
   "integration.inventory",
   "integration.call",
   "integration.describe",
+  "mail.read",
   "mcp.inventory",
   "mcp.describe",
   "mcp.call",
@@ -42,6 +44,7 @@ const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),
   capability("integration.describe", z.object({ service: BotIntegrationServiceSchema }).strict()),
+  capability("mail.read", MailReadRequestSchema),
   capability("mcp.inventory", z.object({}).strict()),
   capability("mcp.describe", z.object({ serverId: z.uuid() }).strict()),
   capability("mcp.call", z.object({ serverId: z.uuid(), tool: canonicalBoundedText(128, 512),

@@ -9,7 +9,7 @@ export function isAllowedAppGalleryBridgeRequest(url: string, method = "GET"): b
 // do not inherit gateway credentials or inventory access.
 export const APP_GALLERY_STARTER_IDENTITIES = [
   "folio", "atlas", "agenda", "follow-ups", "subscriptions", "deliveries",
-  "reading-library", "people", "files", "notes", "habits", "focus",
+  "reading-library", "edition", "people", "files", "notes", "habits", "focus",
   "cashflow", "revenue", "pipeline", "projects", "meeting-briefs", "support",
   "hiring", "company-spend", "releases", "knowledge", "campaigns", "analytics",
   "workout-coach", "paycheck-runway", "meal-planner", "job-search",

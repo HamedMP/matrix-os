@@ -1,0 +1,8 @@
+import {describe,it,expect} from 'vitest';
+import {parseMailDeviceCache,MailDeviceCacheRequestSchema,mailDeviceCacheByteLength} from '../../packages/contracts/src/mail-device-cache.js';
+const article={id:'msg1',sourceId:'source1',subject:'A letter',sender:'Weekly',publication:'Weekly',receivedAt:'2026-10-07T12:00:00Z',excerpt:'',text:'Saved reading',contentVersion:'a'.repeat(64),classification:'newsletter',saved:false,read:false,progress:0,revision:1,readingRevision:0};
+describe('owner device downloads',()=>{
+ it('measures UTF-8 without a web-only TextEncoder, including lone surrogates',()=>{for(const value of ['', 'plain', 'é', '界', '📰', '\ud800', '\udfff', '\ud800x', 'a\ud800\udfffz'])expect(mailDeviceCacheByteLength(value)).toBe(Buffer.byteLength(value));});
+ it('accepts inert articles and reading-only revisioned updates',()=>{const raw=JSON.stringify({messages:[article],sources:[],pending:[{id:'msg1',baseRevision:0,saved:true}]});expect(parseMailDeviceCache(raw).messages[0].text).toBe('Saved reading');});
+ it('bounds content and rejects source operations, forged authority and oversized batches',()=>{for(const invalid of [{messages:[article],sources:[],pending:[{id:'msg1',baseRevision:0,action:'cleanup-commit'}]},{messages:Array(51).fill(article),sources:[],pending:[]},{messages:[{...article,ownerId:'other'}],sources:[],pending:[]}])expect(()=>parseMailDeviceCache(JSON.stringify(invalid))).toThrow();expect(()=>parseMailDeviceCache(' '.repeat(5*1024*1024+1))).toThrow();expect(MailDeviceCacheRequestSchema.safeParse({action:'load',scope:'other'}).success).toBe(false);});
+});
