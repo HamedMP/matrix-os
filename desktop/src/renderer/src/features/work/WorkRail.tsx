@@ -1,4 +1,5 @@
 import {
+  ChatPresentation,
   mergeCanonicalChatRecord,
   notifyCollaborationDiscoveryChanged,
   chatReadAction,
@@ -117,6 +118,7 @@ export function WorkRail({
     needsYou: true,
     working: true,
     done: true,
+    voice: true,
   });
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [pinning, setPinning] = useState<Record<string, boolean>>({});
@@ -147,10 +149,13 @@ export function WorkRail({
       generation: routeScopeRef.current.generation + 1,
     };
   }
-  const recordIds = useMemo(() => records.map(record => record.chat.id), [records]);
+  const recordIds = useMemo(() => records.filter(record => record.chat.conversationKind !== "voice").map(record => record.chat.id), [records]);
   const botSummaries = useBotConversationSummaries(client?.agents, recordIds, active, botRefreshKey);
   const excludedChatIds = useMemo(() => [...botSummaries.unresolvedChatIds, ...botSummaries.conversations.map(bot => bot.chatId)], [botSummaries.unresolvedChatIds, botSummaries.conversations]);
-  const ordinaryRecords = useMemo(() => recordsClientRef.current === client ? records.filter(record => !excludedChatIds.includes(record.chat.id)) : [], [client, records, excludedChatIds]);
+  const searchableRecords = useMemo(() => recordsClientRef.current === client
+    ? records.filter(record => record.chat.conversationKind === "voice" || !excludedChatIds.includes(record.chat.id)) : [], [client, records, excludedChatIds]);
+  const ordinaryRecords = useMemo(() => searchableRecords.filter(record => record.chat.conversationKind !== "voice"), [searchableRecords]);
+  const voiceRecords = useMemo(() => searchableRecords.filter(record => record.chat.conversationKind === "voice"), [searchableRecords]);
   const order = useWorkRailOrder(ordinaryRecords, projects);
   const model = useMemo(() => buildWorkRailModel(order.chats, order.projects), [order.chats, order.projects]);
   const projectGroups = useMemo(
@@ -443,7 +448,7 @@ export function WorkRail({
     onPin={() => updatePinned(record)} onDelete={() => { setDeleteChatError(null); setDeleteChatTarget(record); }} /></WorkRailOrderItem>;
 
   return (
-    <WorkRailOrderContext.Provider value={{manual:true,move:order.move,scopeKey:order.scopeKey}}><nav
+    <WorkRailOrderContext.Provider value={{manual:true,move:order.move,scopeKey:order.scopeKey}}><ChatPresentation role="navigation"
       aria-label="Chat navigation"
       className={`matrix-chat-work-rail flex min-h-0 shrink-0 flex-col gap-0.5 overflow-hidden border-r pb-2 pt-3 ${className}`}
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
@@ -459,7 +464,7 @@ export function WorkRail({
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
       <ChatAgentsRailSection visible={visible} activeChatId={activeChatId} client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
-        renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
+        renderProject={renderProjectGroup} renderChat={renderChatRow} voiceRecords={voiceRecords} bots={botSummaries.conversations}
         sharedProjects={sharedProjects.receivedProjects}
         onOpenBotChat={onOpenBotChat ? (chatId) => { agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
         revealSharedProjectRequest={sharedProjectRevealRequest}
@@ -503,7 +508,7 @@ export function WorkRail({
       ) : null}
       <WorkRailSearchDialog
         open={searchOpen}
-        records={ordinaryRecords}
+        records={searchableRecords}
         projects={projects}
         status={status}
         onSelectProject={(project) => { setSearchOpen(false); onSelectProject(project); }}
@@ -529,6 +534,6 @@ export function WorkRail({
           onClose={() => setShareProjectTarget(null)}
         />
       ) : null}
-    </nav></WorkRailOrderContext.Provider>
+    </ChatPresentation></WorkRailOrderContext.Provider>
   );
 }

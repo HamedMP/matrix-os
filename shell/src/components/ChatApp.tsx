@@ -7,7 +7,7 @@ import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigati
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
-import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
+import { ChatPresentation, ChatHistory, ChatStarterCards, MatrixChatAvatar, ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
@@ -53,10 +53,10 @@ import { Task } from "@/components/ai-elements/task";
 import { parseTask } from "@/components/ai-elements/task-utils";
 import { RichContent } from "@/components/ui-blocks";
 import { ToolCallGroup } from "@/components/ToolCallGroup";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   CANONICAL_PROVIDER_SETUP_ERROR,
   executeCanonicalProviderSetupAction,
@@ -84,7 +84,6 @@ import {
   PanelLeftIcon,
   SearchIcon,
   MessageSquareIcon,
-  BotIcon,
   Settings2Icon,
   ChevronDownIcon,
 } from "@/lib/hugeicons";
@@ -228,6 +227,7 @@ function ChatAppContent({
   const botDraftNavigation = useWebBotDraftNavigation({client:agentClient,scope:composerScope,sourceChatId:sessionId,newChatSequence,seed:composer.seedChatDraft,open:onSwitchConversation,
     restore:source=>{ agentsNavigation?.close(); if(source.chatId) switchConversation(source.chatId); else {setNewChatSequence(source.sequence);setAgentDraftRequest(null);createChat();} },
   });
+  const [searchQuery, setSearchQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const revealSearch = useCallback(() => setSidebarOpen(true), []);
   const agentDraftSequence = useRef(0);
@@ -252,7 +252,6 @@ function ChatAppContent({
     setPreviewFile({ chatId: sessionId, path: target.path });
     return true;
   };
-  const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
   const [providerSetupError, setProviderSetupError] = useState<string | null>(null);
@@ -368,7 +367,7 @@ function ChatAppContent({
   };
 
   return (
-    <div className="relative flex h-full bg-background" onClickCapture={(event) => {
+    <ChatPresentation className="relative flex h-full" onClickCapture={(event) => {
       const element = event.target instanceof Element ? event.target : null;
       const anchor = element?.closest("a");
       const code = element?.closest("code");
@@ -517,9 +516,7 @@ function ChatAppContent({
           )}
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-center gap-2">
-              <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <BotIcon className="size-3.5" aria-hidden="true" />
-              </span>
+              <MatrixChatAvatar />
               <div className="min-w-0 flex-1 text-center">
                 {collaborationView ? (
                   <span className="block truncate px-1 text-sm font-semibold leading-4 text-foreground">
@@ -649,11 +646,9 @@ function ChatAppContent({
             composerProps={{ slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
-            suggestions={suggestions}
             mobile={mobile}
             composerDraftRequest={activeDraftRequest}
             onComposerDraftConsumed={consumeDraftRequest}
-            modelLabel={directBotId ? null : providerState.selected?.modelLabel ?? null}
             providerReady={providerReady}
             attachmentsEnabled={!botIdentityUnknown && !directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
           /></>
@@ -662,7 +657,7 @@ function ChatAppContent({
             <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
             <div className="contents">
             <Conversation>
-              <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
+              <ConversationContent className="gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[868px]">
                 {grouped.map((group, groupIndex) => {
                   if (group.type === "tool_group") {
                     return <div key={`tg-${group.messages[0].id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/></div>;
@@ -673,7 +668,7 @@ function ChatAppContent({
                       {msg.role === "user" ? (
                         <Message from="user">
                           {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
-                          {msg.content.trim() ? <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
+                          {msg.content.trim() ? <MessageContent data-chat-message="user">
                             <span className="whitespace-pre-wrap">{msg.content}</span>
                           </MessageContent> : null}
                         </Message>
@@ -733,7 +728,7 @@ function ChatAppContent({
             </ChatContextMenu>
 
             {/* Suggestions + Input */}
-            <div className="mx-auto w-full max-w-[720px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">
+            <div className="mx-auto w-full max-w-[868px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">
               {!busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
@@ -773,7 +768,7 @@ function ChatAppContent({
         if (previewTrigger.current?.isConnected) previewTrigger.current.focus();
       }} /> : null}
       </ChatAgentsContent></BotModelRecoveryProvider>
-    </div>
+    </ChatPresentation>
   );
 }
 
@@ -781,69 +776,36 @@ function EmptyState({
   composerProps,
   onSubmit,
   connected,
-  suggestions,
   mobile,
   composerDraftRequest,
   onComposerDraftConsumed,
-  modelLabel,
   providerReady,
   attachmentsEnabled,
 }: {
   composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
-  suggestions: string[];
   mobile: boolean;
   composerDraftRequest?: ChatAgentDraftRequest | null;
   onComposerDraftConsumed?: (id: number) => void;
-  modelLabel: string | null;
   providerReady: boolean;
   attachmentsEnabled: boolean;
 }) {
   return (
-    <div data-slot="chat-empty-state-scroll" className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 py-4">
-      <div data-slot="chat-empty-state-stack" className="my-auto w-full max-w-[600px] shrink-0 space-y-8">
-        {/* Greeting */}
-        <ChatProviderOnboarding><div className="grid justify-items-center gap-2 text-center">
-          <AgentAvatar id="matrix_home" name="Matrix"/>
-          <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
-            What should Matrix do?
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {modelLabel ? `Using ${modelLabel}` : "Choose a model to start chatting."}
-          </p>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-8">
+        <div className="w-full max-w-[480px]">
+          <ChatProviderOnboarding>{!providerReady ? <p role="status" className="mb-3 text-sm text-muted-foreground">Choose a model to start chatting.</p> : null}</ChatProviderOnboarding>
+          <ChatStarterCards layout="two-by-two" density={mobile ? "compact" : "regular"}
+            onSelect={text => composerProps.composer.setDraft({ text, resources: [] })} />
         </div>
-
-        </ChatProviderOnboarding>
-
-        {/* Input */}
-        <ChatInput
-          key={`composer:${composerProps.scope}`} {...composerProps}
-          connected={connected && providerReady}
-          busy={false}
-          onSubmit={onSubmit}
-          autoFocus={!mobile}
-          draftRequest={composerDraftRequest}
-          onDraftConsumed={onComposerDraftConsumed}
+      </div>
+      <div className="mx-auto w-full max-w-[868px] shrink-0 px-5 pb-5">
+        <ChatInput key={`composer:${composerProps.scope}`} {...composerProps}
+          connected={connected && providerReady} busy={false} onSubmit={onSubmit}
+          autoFocus={!mobile} draftRequest={composerDraftRequest} onDraftConsumed={onComposerDraftConsumed}
           unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
-          attachmentsEnabled={attachmentsEnabled}
-        />
-
-        {/* Suggestions */}
-        {suggestions.length > 0 && (
-          <div className="flex flex-wrap justify-center gap-2">
-            {suggestions.map((s, i) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => composerProps.composer.setText(s)}
-                className={`rounded-full border border-border/60 bg-card/50 px-3.5 text-xs text-foreground/70 transition-all hover:bg-accent/40 hover:text-foreground hover:border-border ${mobile ? "py-2.5" : "py-1.5"}`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
+          attachmentsEnabled={attachmentsEnabled} />
       </div>
     </div>
   );
@@ -873,7 +835,7 @@ function AssistantBubble({
 
   return (
     <Message from="assistant">
-      <MessageContent>
+      <MessageContent data-chat-message="assistant">
         {attachments?.length ? <ChatAttachments align="start" attachments={attachments} open={openAttachment} loadImage={loadImage} /> : null}
         {thinking && <Reasoning content={thinking} />}
         {planSteps && <Plan steps={planSteps} />}

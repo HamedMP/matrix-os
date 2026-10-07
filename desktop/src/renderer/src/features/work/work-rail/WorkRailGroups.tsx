@@ -5,9 +5,10 @@ import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
 import { SharedWorkRailProjectList } from "./SharedWorkRailProjects";
 import { WorkRailSection } from "./WorkRailSection";
 
-export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
-export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives, sharedProjects, revealSharedProjectRequest }: {
+export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done" | "voice";
+export function WorkRailGroups({ model, voiceRecords = [], activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives, sharedProjects, revealSharedProjectRequest }: {
   model: WorkRailModel;
+  voiceRecords?: readonly CanonicalChatRecord[];
   activeChatId?: string;
   sections: Record<WorkRailSectionKey, boolean>;
   onToggle: (key: WorkRailSectionKey) => void;
@@ -61,6 +62,9 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
         </WorkRailSection>
         <WorkRailSection label="Done" count={model.doneDisplay.length} expanded={sections.done} onToggle={() => onToggle("done")}>
           {model.doneDisplay.map(record => renderChat(record, "recent"))}
+        </WorkRailSection>
+        <WorkRailSection label="Voice conversations" count={voiceRecords.length} expanded={sections.voice} onToggle={() => onToggle("voice")}>
+          {voiceRecords.map(record => renderChat(record, "recent"))}
         </WorkRailSection>
   </>;
 }

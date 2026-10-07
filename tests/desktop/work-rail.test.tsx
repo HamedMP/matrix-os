@@ -139,6 +139,59 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it("keeps voice conversations out of Done and Pinned but reachable in their own section", async () => {
+    const voice = record("chat_voice", "Plan my week", { pinned: true, updatedAt: "2026-10-06T12:00:00.000Z" });
+    voice.chat.conversationKind = "voice";
+    const client = { list: vi.fn(async () => ({ items: [recent, voice] })) } as unknown as CanonicalChatClient;
+    renderRail(client);
+    await screen.findByText("Plan my week");
+    const recents = screen.getByRole("button", { name: "Done" }).closest("section")!;
+    const pinned = screen.getByRole("button", { name: "Pinned" }).closest("section")!;
+    expect(within(recents).queryByText("Plan my week")).toBeNull();
+    expect(within(pinned).queryByText("Plan my week")).toBeNull();
+    const voices = screen.getByRole("button", { name: "Voice conversations" }).closest("section")!;
+    expect(within(voices).getByText("Plan my week")).toBeTruthy();
+    expect(client.list).toHaveBeenCalledWith({ limit: 100, conversationKind: "all" });
+  });
+
+  it("keeps saved voice history discoverable when the bot identity service is unavailable", async () => {
+    const voice = record("chat_voice_bot_failure", "Voice planning", { updatedAt: "2026-10-07T00:00:00Z" });
+    voice.chat.conversationKind = "voice";
+    const directBot = vi.fn(async () => { throw new Error("Identity unavailable"); });
+    const client = { list: vi.fn(async () => ({ items: [recent, voice] })),
+      agents: { list: vi.fn(async () => ({ enabled: true, agents: [] })), bots: { directBot } },
+    } as unknown as CanonicalChatClient;
+    const onSelectChat = vi.fn();
+    render(<WorkRail client={client} projects={[]} active onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()}
+      onNewProjectChat={vi.fn()} onSelectProject={vi.fn()} onSelectChat={onSelectChat} onCollapse={vi.fn()} />);
+    await waitFor(() => expect(directBot).toHaveBeenCalledWith(recent.chat.id));
+    const voices = screen.getByRole("button", { name: "Voice conversations" }).closest("section")!;
+    expect(within(voices).getByText("Voice planning")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "Voice planning" } });
+    fireEvent.click(screen.getByRole("option", { name: "Voice planning, Voice · Global" }));
+    expect(onSelectChat).toHaveBeenCalledWith(voice);
+    expect(directBot).not.toHaveBeenCalledWith(voice.chat.id);
+  });
+
+  it("finds and opens a saved voice conversation through Work search", async () => {
+    const voice = record("chat_voice_search", "Plan my week", {});
+    voice.chat.conversationKind = "voice";
+    const client = { list: vi.fn(async () => ({ items: [recent, voice] })) } as unknown as CanonicalChatClient;
+    const onSelectChat = vi.fn();
+    render(<WorkRail client={client} projects={[]} active
+      onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()}
+      onSelectChat={onSelectChat} onCollapse={vi.fn()} />);
+    await screen.findByRole("button", { name: "Plan my week" });
+    fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), {
+      target: { value: "plan my week" },
+    });
+    fireEvent.click(screen.getByRole("option", { name: "Plan my week, Voice · Global" }));
+    expect(onSelectChat).toHaveBeenCalledWith(voice);
+    expect(screen.queryByRole("dialog", { name: "Search chats" })).toBeNull();
+  });
+
   it("refreshes shared project discovery immediately after a canonical Chat is created", async () => {
     const events = eventHarness();
     const client = { list: vi.fn(async () => ({ items: [] })) } as unknown as CanonicalChatClient;
@@ -216,7 +269,7 @@ describe("WorkRail", () => {
     expect(scroller.contains(screen.getByRole("button", { name: "New chat" }))).toBe(false);
     expect(scroller.querySelector("button")?.getAttribute("aria-label")).toBe("Search chats");
     const labels = [...scroller.querySelectorAll('[data-slot="chat-sidebar-section-heading"] button')].map(button => button.getAttribute("aria-label"));
-    expect(labels.filter(label => label !== "Create project")).toEqual(["Pinned", "Projects", "Needs you", "Working", "Done"]);
+    expect(labels.filter(label => label !== "Create project")).toEqual(["Pinned", "Projects", "Needs you", "Working", "Done", "Voice conversations"]);
   });
 
   it("moves projects between Projects and Pinned when pin state changes", async () => {
@@ -414,7 +467,7 @@ describe("WorkRail", () => {
     expect(screen.queryByRole("button", {name:"Sort chats"})).toBeNull();
     expect(screen.queryByRole("button", {name:"Recent"})).toBeNull();
     expect(screen.getByRole("button", {name:"Recent global"}).closest("section")?.querySelector("[aria-label=Done]")).toBeTruthy();
-    expect(client.list).toHaveBeenLastCalledWith({limit:100});
+    expect(client.list).toHaveBeenLastCalledWith({limit:100,conversationKind:"all"});
   });
 
   it("converges two Chat rows from the shared event source without adding WorkRail polling", async () => {
@@ -856,8 +909,8 @@ describe("WorkRail", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Older chat" })).toBeTruthy();
-    expect(client.list).toHaveBeenNthCalledWith(1, { limit: 100 });
-    expect(client.list).toHaveBeenNthCalledWith(2, { limit: 100, cursor: "chatcur_page2" });
+    expect(client.list).toHaveBeenNthCalledWith(1, { limit: 100, conversationKind: "all" });
+    expect(client.list).toHaveBeenNthCalledWith(2, { limit: 100, cursor: "chatcur_page2", conversationKind: "all" });
   });
 
   it("logs a classified initial-load failure while showing the safe rail error", async () => {

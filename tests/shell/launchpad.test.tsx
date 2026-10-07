@@ -323,6 +323,15 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(canvas.querySelector("[data-launchpad-built-in-icon] svg")).toBeTruthy();
   });
 
+  it.each(["macos-glass", "default"])("uses the rabbit for Aoede in the %s launcher", async (style) => {
+    setDesign(style);
+    await renderLauncher({ apps: [{ name: "Aoede", path: "__aoede__" }] });
+    const assistant = screen.getByRole("button", { name: "Aoede" });
+    const rabbit = assistant.querySelector(".matrix-chat-avatar img");
+    expect(rabbit?.getAttribute("src")).toMatch(/^data:image\/svg\+xml,/);
+    expect(assistant.querySelector(".launchpad-icon-fallback")).toBeNull();
+  });
+
   it("reserves the grid padding and gaps so launchpad stays centered in the viewport", () => {
     expect(computeLaunchpadColumns(560)).toBe(3);
     expect(computeLaunchpadColumns(1024)).toBe(6);

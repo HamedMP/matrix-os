@@ -360,13 +360,14 @@ describe("canonical Chat route controller", () => {
     );
 
     await waitFor(() => expect(result.current.status).toBe("ready"));
-    expect(sharedClient.list).toHaveBeenLastCalledWith({ projectId: null, limit: 100 });
+    expect(sharedClient.list).toHaveBeenLastCalledWith({ projectId: null, limit: 100, conversationKind: "all" });
     expect(result.current.activeChatId).toBe("chat_global");
 
     rerender({ projectId: "project_1" });
     await waitFor(() => expect(sharedClient.list).toHaveBeenLastCalledWith({
       projectId: "project_1",
       limit: 100,
+      conversationKind: "all",
     }));
   });
 
@@ -521,6 +522,7 @@ describe("canonical Chat route controller", () => {
     expect(search).toHaveBeenCalledWith("release plan", {
       projectId: "project_1",
       limit: 100,
+      conversationKind: "all",
     });
   });
 

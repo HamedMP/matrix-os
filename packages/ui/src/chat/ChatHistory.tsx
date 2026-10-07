@@ -130,7 +130,10 @@ export function ChatHistory(props: ChatHistoryProps) {
               event.preventDefault(); if (selectTimer.current) clearTimeout(selectTimer.current); selectTimer.current = null;
               setRename({ id: item.id, value: item.title }); setRenameError(false);
             } : undefined}>
-              {item.unread ? <span className="matrix-chat-history__unread" aria-label="Unread" /> : null}<span className="text-[14px] leading-[20px]">{item.title}</span>
+              {item.unread ? <span className="matrix-chat-history__unread" aria-label="Unread" /> : null}<span className="matrix-chat-history__text">
+                <span className="text-[14px] leading-[20px]">{item.title}</span>
+                {item.preview ? <span className="matrix-chat-history__preview text-[12px] leading-[16px]">{item.preview}</span> : null}
+              </span>
             </button>
             {props.onRename || props.onDelete || props.onToggleRead ? <button type="button" aria-label={`Options for ${item.title}`} aria-expanded={optionsId === item.id} className="matrix-chat-history__options-trigger" onClick={() => setOptionsId(value => value === item.id ? null : item.id)}><ChatIcon name="more" size={14} /></button> : null}
             {optionsId === item.id ? <div className="matrix-chat-history__options">

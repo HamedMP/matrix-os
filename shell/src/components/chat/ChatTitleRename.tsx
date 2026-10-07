@@ -8,6 +8,7 @@ export interface RenameableConversation {
   canonicalRecord?: import("@matrix-os/contracts").CanonicalChatRecord;
   readState?: import("@matrix-os/contracts").CanonicalChatReadState;
   id: string;
+  conversationKind?: "chat" | "voice";
   title?: string;
   preview: string;
   messageCount: number;

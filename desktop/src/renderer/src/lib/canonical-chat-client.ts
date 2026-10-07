@@ -86,6 +86,7 @@ import {
 export type { CanonicalChatResponseAnalytics } from "./canonical-chat-analytics";
 
 const CanonicalChatListInputSchema = z.object({
+  conversationKind: z.enum(["chat", "voice", "all"]).optional(),
   unreadOnly: z.boolean().optional(),
   limit: z.number().int().min(1).max(100).optional(),
   lifecycle: z.enum(["active", "archived"]).optional(),
@@ -94,6 +95,7 @@ const CanonicalChatListInputSchema = z.object({
 }).strict();
 
 const CanonicalChatSearchInputSchema = z.object({
+  conversationKind: z.enum(["chat", "voice", "all"]).optional(),
   limit: z.number().int().min(1).max(100).optional(),
   projectId: CanonicalCreateChatRequestSchema.shape.projectId.nullable().optional(),
 }).strict();
@@ -232,6 +234,7 @@ export function createCanonicalChatClient(
     async list(input = {}) {
       const parsed = CanonicalChatListInputSchema.parse(input);
       const response = await api.get(withQuery("/api/chats", {
+        conversationKind: parsed.conversationKind,
         unread: parsed.unreadOnly === undefined ? undefined : String(parsed.unreadOnly),
         limit: parsed.limit,
         lifecycle: parsed.lifecycle,
@@ -247,6 +250,7 @@ export function createCanonicalChatClient(
       const parsed = CanonicalChatSearchInputSchema.parse(input);
       const response = await api.get(withQuery("/api/chats/search", {
         query: parsedQuery,
+        conversationKind: parsed.conversationKind,
         limit: parsed.limit,
         projectId: parsed.projectId ?? undefined,
         scope: parsed.projectId === null ? "global" : undefined,

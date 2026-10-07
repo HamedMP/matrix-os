@@ -52,3 +52,5 @@
 
 .matrix-chat-avatar.matrix-chat-avatar--launcher { width: 64px; height: 64px; }
 .matrix-chat-avatar--launcher img { width: 32px; height: 40px; }
+.matrix-chat-history__text { min-width: 0; }
+.matrix-chat-history__preview { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 16px; color: var(--chat-muted); }

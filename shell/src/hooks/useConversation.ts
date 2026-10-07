@@ -7,6 +7,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 interface ConversationMeta {
   canonicalRecord?: import("@matrix-os/contracts").CanonicalChatRecord;
   id: string;
+  conversationKind?: "chat" | "voice";
   preview: string;
   messageCount: number;
   createdAt: number;

@@ -87,7 +87,7 @@ describe("createApiClient", () => {
       "https://app.matrix-os.com/api/chats/events?fundingVersion=1&runVersion=1&runtime=computer-b",
       expect.objectContaining({
         method: "GET",
-        headers: { accept: "text/event-stream", "last-event-id": "12", "X-Matrix-Chat-Metadata": "1" },
+        headers: { accept: "text/event-stream", "last-event-id": "12", "X-Matrix-Chat-Metadata": "2" },
       }),
     );
     expect(timeout).toHaveBeenCalledWith(300_000);

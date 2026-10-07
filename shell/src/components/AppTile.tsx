@@ -1,4 +1,5 @@
 "use client";
+import { MatrixChatAvatar } from "@matrix-os/ui";
 import { PinIcon, PlusIcon, RefreshCwIcon, PencilIcon, EyeOffIcon } from "@/lib/hugeicons";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import {
@@ -20,10 +21,11 @@ interface AppTileProps {
   onRename?: (newName: string) => void;
   onRemoveFromCanvas?: () => void;
   createApp?: boolean;
+  matrixAssistant?: boolean;
   onAddToDesktop?: () => void;
 }
 
-export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas, createApp = false, onAddToDesktop }: AppTileProps) {
+export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, onRegenerateIcon, onRename, onRemoveFromCanvas, createApp = false, matrixAssistant = false, onAddToDesktop }: AppTileProps) {
   const initial = name.charAt(0).toUpperCase();
   const { showImage, onError: onImgError } = useIconWithFallback(iconUrl);
 
@@ -46,6 +48,8 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
         >
           {createApp ? (
             <PlusIcon className="size-12" aria-hidden="true" />
+          ) : matrixAssistant ? (
+            <MatrixChatAvatar className="matrix-chat-avatar--launcher" />
           ) : showImage ? (
             // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image
             <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />

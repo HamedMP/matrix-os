@@ -2,16 +2,17 @@ import React, { Fragment, type ReactNode } from 'react';
 import { resolveCanonicalChatLifecycleGroup } from '@matrix-os/ui';
 import type { RenameableConversation } from './ChatTitleRename';
 
-type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done';
+type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done' | 'voice';
 export function webChatLifecycleGroup(item: RenameableConversation): GroupKey {
   const record = item.canonicalRecord;
+  if (item.conversationKind === "voice" || record?.chat.conversationKind === "voice") return "voice";
   if (!record) return "done";
   if (record.chat.userState?.pinned) return "pinned";
   const group = resolveCanonicalChatLifecycleGroup(record);
   return group === "recent" ? "done" : group;
 }
 export function groupWebChats(items: readonly RenameableConversation[]): Record<GroupKey, RenameableConversation[]> {
-  const result: Record<GroupKey, RenameableConversation[]> = { pinned: [], needsYou: [], working: [], done: [] };
+  const result: Record<GroupKey, RenameableConversation[]> = { pinned: [], needsYou: [], working: [], done: [], voice: [] };
   for (const item of items) result[webChatLifecycleGroup(item)].push(item);
   return result;
 }
@@ -24,5 +25,5 @@ export function WebChatLifecycleGroups({ conversations, projects, attention, ren
     <h3 className="px-2 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</h3>
     {groups[key].map(item => <Fragment key={item.id}>{renderRow(item)}</Fragment>)}{extra}
   </section> : null;
-  return <>{section('pinned','Pinned')}{projects}{section('needsYou','Needs you',attention)}{section('working','Working')}{section('done','Done')}</>;
+  return <>{section('pinned','Pinned')}{projects}{section('needsYou','Needs you',attention)}{section('working','Working')}{section('done','Done')}{section('voice','Voice conversations')}</>;
 }

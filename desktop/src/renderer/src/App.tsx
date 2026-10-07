@@ -1,6 +1,7 @@
 import { startDesktopProviderCatalogCoordinator } from "./features/chat/provider-catalog-coordinator";
 import { NativeChatBadge } from "./features/chat/NativeChatBadge";
 import RuntimeCompatibilityGate from "./features/updates/RuntimeCompatibilityGate";
+import DesktopAoedeHost from "./features/aoede/DesktopAoedeHost";
 import { MatrixBootScreen } from "@matrix-os/brand";
 import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
 import * as Tooltip from "@radix-ui/react-tooltip";
@@ -44,7 +45,7 @@ export default function App() {
           <>
             {/* Outside the runtime gate: organizations come from the platform, not the computer. */}
             <DesktopDefaultOrganization />
-            <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
+            <RuntimeCompatibilityGate key={scope}><DesktopAoedeHost><MissionControl /></DesktopAoedeHost></RuntimeCompatibilityGate>
           </>
         )}
       </div>
