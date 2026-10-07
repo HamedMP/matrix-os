@@ -15,7 +15,7 @@ const EVIDENCE_TTL_MS = COLLABORATION_DIRECT_LIMITS.organizationEvidenceTtlSecon
 const REQUEST_WINDOW_MS = COLLABORATION_DIRECT_LIMITS.ticketTtlSeconds * 1_000;
 const SKEW_MS = COLLABORATION_DIRECT_LIMITS.clockSkewSeconds * 1_000;
 const MAX_SESSIONS = 256;
-const RUNTIME_PATH = /^\/api\/collaboration\/runtimes\/((?:[A-Za-z0-9:_-]|%3[Aa]){1,128})\/(catalog\/resolve|scopes\/preflight|scopes)$/;
+const RUNTIME_PATH = /^\/api\/collaboration\/runtimes\/((?:[A-Za-z0-9:_-]|%3[Aa]){1,128})\/(catalog\/(?:lookup|resolve)|scopes\/preflight|scopes)$/;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const OWNER_PROJECT_PATH = new RegExp(`^/api/collaboration/scopes/(${UUID})(?:/(members|project/inventory|project/confirm|grants|grants/${UUID}))?$`);
 
