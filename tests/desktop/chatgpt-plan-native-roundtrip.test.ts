@@ -22,12 +22,14 @@ async function fixture(runtimeSlot='primary') {
  const authState={...localSession,signedIn:true as const,userId:'owner',handle:'computer'};
  let authUrl:URL|undefined;let browserOpens=0;let rejectNonce=false;let expiresIn=300;
  let jwksGate:Promise<void>|null=null;let releaseJwks:()=>void=()=>{};let jwksHeld=false;
+ let catalogOverride:{gate:Promise<void>;fail:boolean;model:string}|null=null;let responseGate:Promise<void>|null=null;let releaseResponse:()=>void=()=>{};let responseAborted=false;
+ let disconnectGate:Promise<void>|null=null;
  let rejectCatalog=false;let visibleModel='fixture-visible';let catalogGate:Promise<void>|null=null;let releaseCatalog:()=>void=()=>{};let refreshGate:Promise<void>|null=null;let releaseRefresh:()=>void=()=>{};let lateFailure=false;
  const snapshots:unknown[]=[];const replies:Array<Record<string,unknown>>=[];const providerBodies:unknown[]=[];
  let queued:ChatGptPlanPeerRequest[]=[];let refreshes=0;let polls=0;let revoked=false;
  const fetchFn=vi.fn(async(input: string|URL|Request,init?:RequestInit):Promise<Response>=>{
   const url=new URL(String(input));
-  if(url.hostname==='matrix.test')expect(url.searchParams.get('runtime')).toBe(runtimeSlot==='primary'?null:runtimeSlot);
+  if(url.hostname==='matrix.test')expect(url.searchParams.get('runtime')).toBe(authState.runtimeSlot==='primary'?null:authState.runtimeSlot);
   else expect(url.searchParams.has('runtime')).toBe(false);
   const json=(x:unknown)=>Response.json(x);
   if(url.pathname==='/.well-known/jwks.json'){if(jwksGate){jwksHeld=true;await jwksGate;}return json({keys:[{...await exportJWK(pair.publicKey),kid:'test',alg:'RS256'}]});}
@@ -38,17 +40,21 @@ async function fixture(runtimeSlot='primary') {
    expect(form.get('redirect_uri')).toBe(authUrl?.searchParams.get('redirect_uri'));expect(form.get('code_verifier')).toBeTruthy();
    return json(await tokens('oaiapp_matrix_fixture',rejectNonce?'wrong':authUrl?.searchParams.get('nonce')??undefined,'subject',expiresIn));
   }
-  if(url.pathname==='/v1/models'){if(catalogGate)await catalogGate;if(rejectCatalog)throw new Error('catalog unavailable');return json({models:[{slug:visibleModel,display_name:'Visible fixture',visibility:'list'},{slug:'fixture-hidden',display_name:'Hidden',visibility:'hidden'}]});}
+  if(url.pathname==='/v1/models'){const override=catalogOverride;catalogOverride=null;if(override)await override.gate;if(catalogGate)await catalogGate;if(override?.fail||rejectCatalog)throw new Error('catalog unavailable');return json({models:[{slug:override?.model??visibleModel,display_name:'Visible fixture',visibility:'list'},{slug:'fixture-hidden',display_name:'Hidden',visibility:'hidden'}]});}
   if(url.pathname==='/v1/responses'){
    providerBodies.push(JSON.parse(String(init?.body)));expect(init?.headers).toHaveProperty('authorization');
+   if(responseGate){const gate=responseGate;return new Response(new ReadableStream<Uint8Array>({
+    start(controller){controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"pending"}\n\n'));void gate.then(()=>{if(responseAborted)return;controller.enqueue(new TextEncoder().encode('data: {"type":"response.completed","response":{"status":"completed","model":"fixture-visible"}}\n\n'));controller.close();});},
+    cancel(){responseAborted=true;},
+   }),{headers:{'content-type':'text/event-stream'}});}
    return new Response((lateFailure?'data: {"type":"response.failed"}\n\n':'')+'data: {"type":"response.output_text.delta","delta":"fixture"}\n\ndata: {"type":"response.completed","response":{"status":"completed","model":"fixture-visible"}}\n\n',{headers:{'content-type':'text/event-stream'}});
   }
   if(url.pathname==='/.well-known/openid-configuration')return json({revocation_endpoint:'https://auth.openai.com/api/accounts/oauth/revoke'});
   if(url.pathname==='/api/accounts/oauth/revoke'){revoked=true;return new Response(null,{status:200});}
-  if(url.pathname==='/api/chatgpt-plan/device/challenge')return json({version:1,challenge:'a'.repeat(64),ownerId:'owner',computerId:'computer',expiresAt:new Date(Date.now()+60000).toISOString()});
+  if(url.pathname==='/api/chatgpt-plan/device/challenge')return json({version:1,challenge:'a'.repeat(64),ownerId:authState.userId,computerId:authState.handle,expiresAt:new Date(Date.now()+60000).toISOString()});
   if(url.pathname==='/api/chatgpt-plan/device/connect'){
    const body=JSON.parse(String(init?.body));snapshots.push(body.snapshot);
-   const proof=chatGptPlanPeerProof({challenge:body.challenge,ownerId:'owner',computerId:'computer',snapshot:body.snapshot});
+   const proof=chatGptPlanPeerProof({challenge:body.challenge,ownerId:authState.userId,computerId:authState.handle,snapshot:body.snapshot});
    expect(verify(null,Buffer.from(proof),createPublicKey({key:Buffer.from(body.publicKey,'base64url'),type:'spki',format:'der'}),Buffer.from(body.signature,'base64url'))).toBe(true);
    expect(JSON.stringify(body)).not.toContain('accessToken');expect(JSON.stringify(body)).not.toContain('refreshToken');
    return json({version:1,sessionId:'00000000-0000-4000-8000-000000000001'});
@@ -59,13 +65,13 @@ async function fixture(runtimeSlot='primary') {
    const requests=queued;queued=[];return json({version:1,requests});
   }
   if(url.pathname==='/api/chatgpt-plan/device/reply'){replies.push(JSON.parse(String(init?.body)));return json({ok:true});}
-  if(url.pathname==='/api/chatgpt-plan/device/disconnect')return json({ok:true});
+  if(url.pathname==='/api/chatgpt-plan/device/disconnect'){const gate=disconnectGate;disconnectGate=null;if(gate)await gate;return json({ok:true});}
   throw new Error('unexpected fixture endpoint');
  });
  const service=createNativeChatgptPlanService({vault,auth:{getStatus:()=>authState,getToken:()=> 'fixture-matrix-bearer',getGatewayOrigin:()=> 'https://matrix.test'},openBrowser:async url=>{browserOpens++;authUrl=new URL(url);},fetchFn});
  async function finish(){const callback=new URL(authUrl!.searchParams.get('redirect_uri')!);callback.searchParams.set('state',authUrl!.searchParams.get('state')!);callback.searchParams.set('code','fixture-code');callback.searchParams.set('client_id','oaiapp_matrix_fixture');expect((await fetch(callback)).status).toBe(200);}
  async function signedIn(){await service.connect({...localSession,purpose:'personal_local'});await finish();await vi.waitFor(async()=>expect((await service.status(localSession)).bridgeConnected).toBe(true));}
- return {service,vault,authState,snapshots,replies,providerBodies,fetchFn,finish,signedIn,queue:(items:ChatGptPlanPeerRequest[])=>{queued.push(...items);},changeModel:(model:string)=>{visibleModel=model;},holdCatalog:()=>{catalogGate=new Promise(resolve=>{releaseCatalog=()=>{catalogGate=null;resolve();};});return ()=>releaseCatalog();},holdRefresh:()=>{refreshGate=new Promise(resolve=>{releaseRefresh=()=>{refreshGate=null;resolve();};});return ()=>releaseRefresh();},lateFailure:()=>{lateFailure=true;},rejectNonce:()=>{rejectNonce=true;},expireSoon:()=>{expiresIn=1;},holdJwks:()=>{jwksHeld=false;jwksGate=new Promise(resolve=>{releaseJwks=()=>{jwksGate=null;resolve();};});return ()=>releaseJwks();},rejectCatalog:()=>{rejectCatalog=true;},get browserOpens(){return browserOpens;},get jwksHeld(){return jwksHeld;},get refreshes(){return refreshes;},get polls(){return polls;},get revoked(){return revoked;},cleanup:async()=>{await service.dispose();await rm(dir,{recursive:true,force:true});}};
+ return {service,vault,authState,snapshots,holdDisconnect:()=>{let release:()=>void=()=>{};disconnectGate=new Promise<void>(resolve=>{release=resolve;});return release;},clearRequests:()=>{queued=[];},allowCatalog:()=>{rejectCatalog=false;},holdOneCatalog:(fail=false,model=visibleModel)=>{let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});catalogOverride={gate,fail,model};return release;},holdResponse:()=>{responseGate=new Promise<void>(resolve=>{releaseResponse=()=>{responseGate=null;resolve();};});return ()=>releaseResponse();},get responseAborted(){return responseAborted;},replies,providerBodies,fetchFn,finish,signedIn,queue:(items:ChatGptPlanPeerRequest[])=>{queued.push(...items);},changeModel:(model:string)=>{visibleModel=model;},holdCatalog:()=>{catalogGate=new Promise(resolve=>{releaseCatalog=()=>{catalogGate=null;resolve();};});return ()=>releaseCatalog();},holdRefresh:()=>{refreshGate=new Promise(resolve=>{releaseRefresh=()=>{refreshGate=null;resolve();};});return ()=>releaseRefresh();},lateFailure:()=>{lateFailure=true;},rejectNonce:()=>{rejectNonce=true;},expireSoon:()=>{expiresIn=1;},holdJwks:()=>{jwksHeld=false;jwksGate=new Promise(resolve=>{releaseJwks=()=>{jwksGate=null;resolve();};});return ()=>releaseJwks();},rejectCatalog:()=>{rejectCatalog=true;},get browserOpens(){return browserOpens;},get jwksHeld(){return jwksHeld;},get refreshes(){return refreshes;},get polls(){return polls;},get revoked(){return revoked;},cleanup:async()=>{await service.dispose();await rm(dir,{recursive:true,force:true});}};
 }
 function request(id:string,accountId:string,grantRevision:number):ChatGptPlanPeerRequest {
  const sequence=Number.parseInt(id.slice(-12),16);
@@ -223,4 +229,107 @@ describe('native subscription authorization to signed peer transport (explicit m
    const out=await x.service.disconnect(session);expect(out.state).toBe('disconnected');expect(out.revocation).toBe('confirmed');expect(x.revoked).toBe(true);expect((await x.vault.load('owner')).accounts[0]?.tokens).toBeNull();
   }finally{await x.cleanup();}
  });
+});
+
+
+describe('native catalog failure immediately fences the current inference source',()=>{
+ it('failed explicit refresh clears models, disconnects old peer and recovers without another OAuth or grant change',async()=>{
+  const x=await fixture();try{
+   await x.signedIn();const before=await x.service.status(session);const browsers=x.browserOpens;
+   x.rejectCatalog();await expect(x.service.refreshModels(session)).rejects.toThrow();
+   expect(await x.service.status(session)).toMatchObject({state:'error',models:[],bridgeConnected:false,grant:before.grant,account:before.account});
+   x.queue([request('00000000-0000-4000-8000-000000000020',before.account!.id,before.grant.revision)]);
+   await new Promise(resolve=>setTimeout(resolve,40));expect(x.providerBodies).toHaveLength(0);x.clearRequests();
+   const stored=await x.vault.load('owner');expect(stored.accounts[0]?.tokens).not.toBeNull();expect(stored.grants[0]).toMatchObject(before.grant);
+   x.allowCatalog();const after=await x.service.connect({...session,purpose:'personal_local'});
+   expect(after).toMatchObject({state:'connected',models:[{id:'fixture-visible'}],bridgeConnected:true,grant:before.grant,account:before.account});expect(x.browserOpens).toBe(browsers);
+   x.queue([request('00000000-0000-4000-8000-000000000021',after.account!.id,after.grant.revision)]);
+   await vi.waitFor(()=>expect(x.replies).toHaveLength(1));expect(x.replies[0]?.ok).toBe(true);
+  }finally{await x.cleanup();}
+ });
+ it('failed periodic refresh immediately stops the peer before the five-minute inference window elapses',async()=>{
+  vi.useFakeTimers({toFake:['setInterval','clearInterval']});const x=await fixture();let dateSpy:ReturnType<typeof vi.spyOn>|undefined;try{
+   await x.signedIn();const before=await x.service.status(session);x.rejectCatalog();dateSpy=vi.spyOn(Date,'now').mockReturnValue(Date.now()+4*60000+1000);
+   vi.advanceTimersByTime(10000);
+   await vi.waitFor(()=>expect(x.fetchFn.mock.calls.some(call=>String(call[0]).endsWith('/api/chatgpt-plan/device/disconnect'))).toBe(true));
+   expect(await x.service.status(session)).toMatchObject({state:'error',models:[],bridgeConnected:false,grant:before.grant});
+   dateSpy.mockRestore();dateSpy=undefined;x.allowCatalog();expect(await x.service.refreshModels(session)).toMatchObject({state:'connected',models:[{id:'fixture-visible'}],bridgeConnected:true,grant:before.grant});
+  }finally{dateSpy?.mockRestore();await x.cleanup();vi.useRealTimers();}
+ });
+ it.each([true,false])('a delayed old catalog read (failure=%s) cannot override a newer successful qualified catalog',async(fail)=>{
+  const x=await fixture();let release=()=>{};try{
+   await x.signedIn();release=x.holdOneCatalog(fail,'fixture-old');
+   const older=x.service.refreshModels(session);const outcome=older.then(()=>undefined,()=>undefined);
+   await vi.waitFor(()=>expect(x.fetchFn.mock.calls.filter(call=>String(call[0]).endsWith('/v1/models')).length).toBeGreaterThan(1));
+   x.changeModel('fixture-new');expect((await x.service.refreshModels(session)).models[0]?.id).toBe('fixture-new');const connections=x.snapshots.length;
+   release();await outcome;
+   expect(await x.service.status(session)).toMatchObject({state:'connected',models:[{id:'fixture-new'}],bridgeConnected:true});expect(x.snapshots).toHaveLength(connections);
+  }finally{release();await x.cleanup();}
+ });
+ it('catalog invalidation cancels an in-flight native SSE body after response headers and cannot publish its late completion',async()=>{
+  const x=await fixture();let release=()=>{};try{
+   await x.signedIn();const before=await x.service.status(session);release=x.holdResponse();
+   x.queue([request('00000000-0000-4000-8000-000000000030',before.account!.id,before.grant.revision)]);
+   await vi.waitFor(()=>expect(x.providerBodies).toHaveLength(1));x.rejectCatalog();await expect(x.service.refreshModels(session)).rejects.toThrow();
+   expect(x.responseAborted).toBe(true);release();await new Promise(resolve=>setTimeout(resolve,30));expect(x.replies.some(reply=>reply.ok===true)).toBe(false);
+   expect(await x.service.status(session)).toMatchObject({state:'error',models:[],bridgeConnected:false,grant:before.grant});
+  }finally{release();await x.cleanup();}
+ });
+});
+
+
+it('a failed refresh withdraws the old inference source while a newer catalog is still unqualified',async()=>{
+ const x=await fixture();let releaseOld=()=>{};let releaseNew=()=>{};try{
+  await x.signedIn();const before=await x.service.status(session);releaseOld=x.holdOneCatalog(true);
+  const old=x.service.refreshModels(session);const rejected=expect(old).rejects.toThrow();
+  await vi.waitFor(()=>expect(x.fetchFn.mock.calls.filter(call=>String(call[0]).endsWith('/v1/models')).length).toBe(2));
+  releaseNew=x.holdOneCatalog(false,'fixture-new');const newer=x.service.refreshModels(session).then(value=>({value}),error=>({error}));
+  await vi.waitFor(()=>expect(x.fetchFn.mock.calls.filter(call=>String(call[0]).endsWith('/v1/models')).length).toBe(3));
+  releaseOld();await rejected;x.queue([request('00000000-0000-4000-8000-000000000040',before.account!.id,before.grant.revision)]);
+  await new Promise(resolve=>setTimeout(resolve,40));expect(x.providerBodies).toHaveLength(0);x.clearRequests();
+  releaseNew();expect(await newer).toMatchObject({value:{state:'connected',models:[{id:'fixture-new'}],bridgeConnected:true,grant:before.grant}});
+ }finally{releaseOld();releaseNew();await x.cleanup();}
+});
+
+
+it.each(['account','owner','computer_runtime'])('a delayed failure cannot disconnect the replacement %s source',async(kind)=>{
+ const x=await fixture();let release=()=>{};try{
+  await x.signedIn();release=x.holdOneCatalog(true);const older=x.service.refreshModels(session);const rejected=expect(older).rejects.toThrow();
+  await vi.waitFor(()=>expect(x.fetchFn.mock.calls.filter(call=>String(call[0]).endsWith('/v1/models')).length).toBe(2));
+  const saved=await x.vault.load('owner');
+  if(kind==='account'){
+   const account={...saved.accounts[0]!,id:'00000000-0000-4000-8000-000000000002'};await x.vault.save('owner',{...saved,activeAccountId:account.id,accounts:[account]});
+  }else if(kind==='owner'){
+   x.authState.userId='other-owner';await x.vault.save('other-owner',{...saved,ownerId:'other-owner'});
+  }else{
+   x.authState.handle='other-computer';x.authState.runtimeSlot='preview';await x.vault.save('owner',{...saved,grants:[...saved.grants,{computerId:'other-computer',revision:4,enabled:true,background:false}]});
+  }
+  x.authState.authGeneration=2;x.service.cancelAll();const next={runtimeSlot:x.authState.runtimeSlot,authGeneration:2};x.changeModel('fixture-new');
+  const replacement=await x.service.status(next);expect(replacement).toMatchObject({state:'connected',models:[{id:'fixture-new'}],bridgeConnected:true});const connections=x.snapshots.length;
+  release();await rejected;expect(await x.service.status(next)).toEqual(replacement);expect(x.snapshots).toHaveLength(connections);expect(x.providerBodies).toHaveLength(0);
+ }finally{release();await x.cleanup();}
+});
+
+
+it('an old failed-catalog drain settles without waiting for or stopping the recovered live peer',async()=>{
+ const x=await fixture();let release=()=>{};let settled=false;try{
+  await x.signedIn();const before=await x.service.status(session);release=x.holdDisconnect();x.rejectCatalog();
+  const older=x.service.refreshModels(session).then(()=>{settled=true;},()=>{settled=true;});
+  await vi.waitFor(()=>expect(x.fetchFn.mock.calls.filter(call=>String(call[0]).endsWith('/device/disconnect'))).toHaveLength(1));
+  x.allowCatalog();x.changeModel('fixture-new');const recovered=await x.service.refreshModels(session);
+  expect(recovered).toMatchObject({state:'connected',models:[{id:'fixture-new'}],bridgeConnected:true,grant:before.grant});
+  release();await vi.waitFor(()=>expect(settled).toBe(true),{timeout:250});await older;
+  expect(await x.service.status(session)).toEqual(recovered);
+ }finally{release();await x.cleanup();}
+});
+
+it('a catalog invalidation fences a captured peer restart delayed by disconnect',async()=>{
+ const x=await fixture();let release=()=>{};try{
+  await x.signedIn();const connections=x.snapshots.length;release=x.holdDisconnect();x.changeModel('fixture-stale');
+  const restarting=x.service.refreshModels(session).then(value=>({value}),error=>({error}));
+  await vi.waitFor(()=>expect(x.fetchFn.mock.calls.filter(call=>String(call[0]).endsWith('/device/disconnect'))).toHaveLength(1));
+  x.rejectCatalog();await expect(x.service.refreshModels(session)).rejects.toThrow();release();const result=await restarting;
+  expect(x.snapshots).toHaveLength(connections);expect(result).toHaveProperty('error');
+  expect(await x.service.status(session)).toMatchObject({state:'error',models:[],bridgeConnected:false});
+ }finally{release();await x.cleanup();}
 });

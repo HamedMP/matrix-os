@@ -61,6 +61,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
     }
     async function stop() {
         const previous = connection;
+        const previousTask = task;
         connection = null;
         previous?.controller.abort();
         for (const controller of calls.values())
@@ -77,16 +78,18 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                 logPlanFailure('peer_disconnect', error);
             }
         }
-        await task;
+        await previousTask;
     }
-    async function start(binding: PlanPeerBinding, snapshot: ChatGptPlanPeerSnapshot) {
+    async function start(binding: PlanPeerBinding, snapshot: ChatGptPlanPeerSnapshot, qualified = () => true) {
         await stop();
+        if (!qualified()) throw new Error('source changed');
         const controller = new AbortController();
         const value = {
             controller, binding, sessionId: undefined as string | undefined
         };
         connection = value;
         const challenge = ChatGptPlanPeerChallengeSchema.parse(await post(binding, 'challenge', {}, controller.signal));
+        if (!qualified()) throw new Error('source changed');
         if (challenge.ownerId !== binding.ownerId || challenge.computerId !== binding.computerId || Date.parse(challenge.expiresAt) <= Date.now())
             throw new Error('peer identity mismatch');
         const proof = chatGptPlanPeerProof({
@@ -97,7 +100,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             version: 1, challenge: challenge.challenge, publicKey: binding.publicKey, snapshot, signature
         }, controller.signal));
         value.sessionId = session.sessionId;
-        if (connection !== value)
+        if (connection !== value || !qualified())
             throw new Error('peer changed');
         deps.connected(true);
         let lastSequence = 0; // Session-scoped high-water mark, never evicted.
@@ -163,8 +166,9 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             }
             finally {
                 controller.abort();
-                for (const call of calls.values())
-                    call.abort();
+                if (connection === value) {
+                    for (const call of calls.values()) call.abort();
+                }
                 await Promise.allSettled(pending);
                 if (connection === value) {
                     connection = null;

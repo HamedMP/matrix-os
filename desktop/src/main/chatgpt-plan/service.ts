@@ -1,3 +1,4 @@
+import { createPlanCatalogRefresh } from './catalog-refresh';
 import { logPlanFailure } from './diagnostics';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod/v4';
@@ -50,6 +51,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     let mutationTail: Promise<unknown> = Promise.resolve();
     let refreshTask: Promise<void> | null = null;
     let lifecycleTask: Promise<void> | null = null;
+    const refreshCatalog = createPlanCatalogRefresh();
     const requests = new Set<AbortController>(); // <=4 native calls; peer enforces admission.
     function bound(input: ChatgptPlanSession): Bound {
         const live = deps.auth.getStatus();
@@ -191,14 +193,26 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     async function readCatalog(value: Bound, signal: AbortSignal) {
         const epoch = generation;
         const accountId = active()?.id;
-        const tokens = await freshTokens(value, signal);
-        const next = planCatalog(await planJson(fetchFn, 'models', {
-            headers: { authorization: `Bearer ${tokens.accessToken}` }, signal
-        }));
+        await refreshCatalog({
+            current: () => epoch === generation && active()?.id === accountId && current(value),
+            read: async () => {
+                const tokens = await freshTokens(value, signal);
+                return planCatalog(await planJson(fetchFn, 'models', {
+                    headers: { authorization: `Bearer ${tokens.accessToken}` }, signal
+                }));
+            },
+            mutate,
+            apply: next => { signal.throwIfAborted(); models = next; catalogAt = Date.now(); state = pending ? 'connecting' : 'connected'; },
+            invalidate: () => {
+                models = [];
+                catalogAt = 0;
+                state = pending ? 'connecting' : 'error';
+                for (const controller of requests) controller.abort();
+                return peer.stop();
+            },
+        });
         if (epoch !== generation || active()?.id !== accountId || !current(value))
             throw new Error('connection changed');
-        models = next;
-        catalogAt = Date.now();
     }
     async function restartPeer(value: Bound): Promise<void> {
         if (peerSyncTask) {
@@ -227,6 +241,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             const next = {
                 deviceId: record.deviceId, accountId: account.id, grantRevision: permission.revision, enabled: permission.enabled, background: false, models
             };
+            const qualified = () => current(value) && epoch === generation && active()?.id === account.id
+                && models === next.models && catalogAt > 0 && grant(value.computerId).revision === permission.revision;
             const signature = JSON.stringify(next);
             if (bridgeConnected && peerSignature === signature)
                 return;
@@ -234,12 +250,12 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 privateKey: record.devicePrivateKey, publicKey: record.devicePublicKey
             };
             await peer.stop();
-            if (!current(value) || epoch !== generation || active()?.id !== account.id)
+            if (!qualified())
                 throw new Error('source changed');
             await peer.start({
                 ...value, ...keys
-            }, next);
-            if (!current(value) || epoch !== generation) {
+            }, next, qualified);
+            if (!qualified()) {
                 await peer.stop();
                 throw new Error('source changed');
             }
@@ -310,16 +326,13 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         if (active()?.tokens && (!catalogAt || Date.now() - catalogAt > 5 * 60000)) {
             try {
                 await readCatalog(value, AbortSignal.timeout(15000));
-                state = 'connected';
                 await restartPeer(value);
             }
             catch (error: unknown) {
                 if (!current(value) || epoch !== generation)
                     throw error;
                 logPlanFailure('catalog', error);
-                models = [];
-                state = 'error';
-                await peer.stop();
+                // readCatalog owns the fenced invalidation shared by every refresh entry point.
             }
         }
         return snapshot(value);
@@ -335,10 +348,13 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         const selected = active();
         // Explicit reconnect recovers the same local account without another OAuth
         // prompt. Read-only status/catalog checks never change Bot authorization.
-        if (state === 'connected' && selected?.tokens && !grant(value.computerId).enabled) {
+        if (selected?.tokens && (state === 'error' || state === 'connected' && !grant(value.computerId).enabled)) {
             const expected = { accountId: selected.id, generation };
             await readCatalog(value, AbortSignal.timeout(15000));
-            return setGrant({ runtimeSlot: value.runtimeSlot, authGeneration: value.authGeneration, enabled: true, background: false }, expected);
+            if (!grant(value.computerId).enabled)
+                return setGrant({ runtimeSlot: value.runtimeSlot, authGeneration: value.authGeneration, enabled: true, background: false }, expected);
+            await restartPeer(value);
+            return snapshot(value);
         }
         const operation = {
             controller: new AbortController(), bound: value, close: undefined as (() => Promise<void>) | undefined

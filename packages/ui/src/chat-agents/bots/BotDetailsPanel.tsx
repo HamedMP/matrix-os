@@ -1,11 +1,12 @@
+import { useState } from "react";
 import {BotTaskExecutorControl} from "./BotTaskExecutorControl.js";
-import { botExecutionPresentation } from '@matrix-os/contracts';
+import { botExecutionPresentation, isAutomaticBotSelection } from '@matrix-os/contracts';
 import type { BotAuthorityView, BotTaskSummary, CanonicalChatModelSelection, CanonicalProviderCatalog, ChatAgent } from '@matrix-os/contracts';
 import { deriveCanonicalProviderChoices } from '../../canonical-provider-choice.js';
 import { AgentAvatar } from '../AgentAvatar.js';
 import { chatAgentButtonClass, chatAgentMutedStyle } from '../theme.js';
 import { AgentModelField } from '../AgentEditor.js';
-import { MatrixBotModelField } from './MatrixBotModelField.js';
+import { MatrixBotModelField, matrixBotSelectableModelChoices, botModelChoiceMatchesSelection } from './MatrixBotModelField.js';
 import { BotTaskStatus } from "./BotTaskStatus.js";
 import { BotAuthorityPanel } from './BotAuthorityPanel.js';
 import type { BotClient } from './client.js';
@@ -16,8 +17,19 @@ export function BotDetailsPanel({ agent, agentId, authority, bots, catalog, cata
   pending: boolean; onModelChange(selection: CanonicalChatModelSelection): void; onClose(): void; onChanged(): void; onEdit(): void;
 }) {
   const models = catalog ? deriveCanonicalProviderChoices(catalog) : [];
+  const authoritativeKey = agent ? JSON.stringify([agent.id, agent.revision, agent.selection]) : "";
+  const [modelDraft, setModelDraft] = useState<{ bots: BotClient; agentId: string; authoritativeKey: string; selection: CanonicalChatModelSelection | null } | null>(null);
+  const draftCurrent = modelDraft?.bots === bots && modelDraft.agentId === agentId && modelDraft.authoritativeKey === authoritativeKey;
+  // Discard draft intent on authoritative or owner changes, including a switch back.
+  if (modelDraft && !draftCurrent) setModelDraft(null);
+  const changeRecipeModel = (selection: CanonicalChatModelSelection | null) => {
+    if (!agent || pending || catalogLoading || !catalog) return;
+    setModelDraft({ bots, agentId, authoritativeKey, selection });
+    if (selection && (isAutomaticBotSelection(selection)
+      || matrixBotSelectableModelChoices(models, catalog).some(choice => botModelChoiceMatchesSelection(choice, selection)))) onModelChange(selection);
+  };
   const modelDetails = <section className='grid gap-2'><h4 className='text-xs font-semibold'>Runs on</h4><p className='text-xs' style={chatAgentMutedStyle}>{agent ? botExecutionPresentation(agent, catalog).modelLabel : "Checking bot model…"}</p>
-      {agent && !agent.recipeRef ? <AgentModelField id={`custom-bot-model-${agentId}`} selected={agent.selection} pending={pending || Boolean(catalogLoading) || !catalog} models={models} hermesOnly={Boolean(agent.recipe?.skills.includes("matrix-jev-email-triage"))} onSetup={onSetup} change={value => { if (value.selection) onModelChange(value.selection); }}/> : agent ? <MatrixBotModelField botClient={bots} label='Bot model' selection={agent.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} pending={pending || !catalog} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} onChange={onModelChange}/> : <p role="status" className="text-xs" style={chatAgentMutedStyle}>Bot model is unavailable. <button type="button" className={chatAgentButtonClass} onClick={onChanged}>Retry bot details</button></p>}
+      {agent && !agent.recipeRef ? <AgentModelField id={`custom-bot-model-${agentId}`} selected={agent.selection} pending={pending || Boolean(catalogLoading) || !catalog} models={models} hermesOnly={Boolean(agent.recipe?.skills.includes("matrix-jev-email-triage"))} onSetup={onSetup} change={value => { if (value.selection) onModelChange(value.selection); }}/> : agent ? <MatrixBotModelField key={`${agentId}:${authoritativeKey}`} botClient={bots} label='Bot model' selection={draftCurrent ? modelDraft.selection : agent.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} pending={pending || !catalog} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} onChange={changeRecipeModel}/> : <p role="status" className="text-xs" style={chatAgentMutedStyle}>Bot model is unavailable. <button type="button" className={chatAgentButtonClass} onClick={onChanged}>Retry bot details</button></p>}
       {agent?.recipeRef ? <BotTaskExecutorControl client={bots} agentId={agentId} pending={pending} onSetup={onSetup}/> : null}
       <p className='text-xs leading-5' style={chatAgentMutedStyle}>Automatic uses the route configured on this computer. Matrix AI models use Matrix AI credit. App access still requires the bot’s permission.</p>
     </section>;
@@ -25,9 +37,9 @@ export function BotDetailsPanel({ agent, agentId, authority, bots, catalog, cata
     <header className='flex items-start gap-3'>
       <AgentAvatar id={agentId} name={agent?.name ?? "Your bot"} size='small'/>
       <div className='min-w-0 flex-1'><h3 className='truncate text-sm font-semibold'>{agent?.name ?? "Your bot"}</h3><p className='mt-1 text-xs' style={chatAgentMutedStyle}>{agent?.description || 'Persistent bot conversation'}</p></div>
-      <button type='button' aria-label='Close bot details' className={chatAgentButtonClass} onClick={onClose}>×</button>
+      <button type='button' aria-label='Close bot details' className={chatAgentButtonClass} onClick={() => { setModelDraft(null); onClose(); }}>×</button>
     </header>
-    <section className='grid gap-2'><div className='flex items-center justify-between'><h4 className='text-xs font-semibold'>Instructions</h4><button type='button' className='text-xs underline underline-offset-2' disabled={!agent} onClick={onEdit}>Edit bot</button></div><p className='whitespace-pre-wrap text-sm leading-6'>{agent?.instructions ?? "Bot instructions are unavailable."}</p></section>
+    <section className='grid gap-2'><div className='flex items-center justify-between'><h4 className='text-xs font-semibold'>Instructions</h4><button type='button' className='text-xs underline underline-offset-2' disabled={!agent} onClick={() => { setModelDraft(null); onEdit(); }}>Edit bot</button></div><p className='whitespace-pre-wrap text-sm leading-6'>{agent?.instructions ?? "Bot instructions are unavailable."}</p></section>
     {tasks.length ? <details className="text-xs"><summary className="cursor-pointer font-semibold">Task history</summary><ul className="mt-2 grid gap-2">{tasks.map(task => <li key={task.taskId}><BotTaskStatus task={task}/><time className="text-xs" style={chatAgentMutedStyle} dateTime={task.updatedAt}>{new Date(task.updatedAt).toLocaleString()}</time></li>)}</ul></details> : null}
     {agent && !agent.recipeRef ? <><p className='text-xs' style={chatAgentMutedStyle}>This bot uses its saved runtime and request permissions. Recipe task, app access and memory controls are unavailable for this bot.</p>{modelDetails}</> : authority ? <BotAuthorityPanel compact title="Apps" beforeMemory={modelDetails} view={authority} onRevoke={grantId=>bots.revoke(agentId,grantId)} onMemory={(itemId, action, input)=>bots.memory(agentId,itemId,action,input)} onChanged={onChanged}/> : <><p role='status' className='text-xs' style={chatAgentMutedStyle}>Loading access and memory…</p>{modelDetails}</>}
   </aside>;
