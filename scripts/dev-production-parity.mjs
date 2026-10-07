@@ -143,6 +143,8 @@ export function renderLocalParityCloudInit(template, input) {
     posthogApiHost: "/relay",
     fundedAiEnabled: "false",
     fundedAiRelayUrl: "",
+    updateManifestBaseUrlEnv: "",
+    collaborationDisabledEnv: "",
   };
   let rendered = template;
   rendered = rendered.replace(
