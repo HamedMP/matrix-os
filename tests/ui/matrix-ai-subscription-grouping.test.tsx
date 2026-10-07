@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
 import { canonicalProviderModelRouteLabel } from "@matrix-os/contracts";
@@ -9,6 +9,7 @@ import { chatPickerEntryForSelection, deriveChatPickerEntries } from "../../pack
 import { CompactChatProviderChoices } from "../../packages/ui/src/compact-chat-provider-choices.js";
 import { ordinaryPlanCatalog, planBinding, planId } from "./ordinary-chatgpt-plan-fixture.js";
 import { ordinaryApiCatalog } from "./ordinary-anthropic-api-fixture.js";
+import { executeCanonicalProviderSetupAction, OPEN_PROVIDER_SETTINGS_EVENT, OPEN_PROVIDER_TERMINAL_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
 
 afterEach(cleanup);
 const fundedId = "matrix_pi_default";
@@ -37,7 +38,7 @@ it("offers one Settings navigation beside reserved credit, unavailable API and i
   funded.setupActions = [{ id: "matrix_ai_settings", kind: "open_settings", label: "Agents & providers" }];
   const api = ordinaryApiCatalog().instances[1]!;
   api.availability = "unavailable";
-  api.setupActions = [{ id: "anthropic_api_settings", kind: "open_settings", label: "Agents & providers" }];
+  api.setupActions = [{ id: "matrix_anthropic_settings", kind: "open_settings", label: "Agents & providers" }];
   catalog.instances.push(api);
   const { select, setup } = show(catalog, planId);
   expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
@@ -54,6 +55,29 @@ it("offers one Settings navigation beside reserved credit, unavailable API and i
   fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
   expect(setup).toHaveBeenCalledExactlyOnceWith(funded, funded.setupActions[0]);
   expect(screen.getByRole("searchbox")).not.toHaveFocus(); expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("the API-priority shared Web picker opens canonical Settings once without a request or Terminal", async () => {
+  const catalog = groupedCatalog(), api = ordinaryApiCatalog().instances[1]!;
+  api.availability = "unavailable";
+  api.setupActions = [{ id: "matrix_anthropic_settings", kind: "open_settings", label: "Agents & providers" }];
+  catalog.instances.push(api);
+  const opened = vi.fn(), terminal = vi.fn(), fetcher = vi.fn(), select = vi.fn();
+  window.addEventListener(OPEN_PROVIDER_SETTINGS_EVENT, opened);
+  window.addEventListener(OPEN_PROVIDER_TERMINAL_EVENT, terminal);
+  try {
+    render(<CompactChatProviderChoices catalog={catalog} choices={deriveCanonicalProviderChoices(catalog)}
+      selected={{ instanceId: planId, modelId: "gpt-owner" }} onSelect={select}
+      onSetupAction={(instance, action) => { void executeCanonicalProviderSetupAction({ instance, action, fetcher }); }}/>);
+    expect(personalRow()).toBeEnabled(); expect(fundedRow()).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+    await waitFor(() => expect(opened).toHaveBeenCalledOnce());
+    expect(terminal).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled(); expect(select).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, opened);
+    window.removeEventListener(OPEN_PROVIDER_TERMINAL_EVENT, terminal);
+  }
 });
 
 it("groups both exact Matrix sources under the rabbit while keeping native Coding categories independent", () => {
