@@ -5,7 +5,6 @@ import { ChatRailOrderContext, ChatRailOrderItem } from "@matrix-os/ui";
 import { WebChatLifecycleGroups, webChatLifecycleGroup } from "./chat/WebChatLifecycleGroups";
 import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigation";
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
-import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
 import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
@@ -17,7 +16,7 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
-import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
+import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
@@ -135,6 +134,8 @@ interface ChatAppProps {
   filterUnreadOnly?: boolean;
   onUnreadFilterChange?: (value: boolean) => void;
   active?: boolean;
+  /** Actual window visibility, independent of keyboard focus. */
+  visible?: boolean;
   readState?: import("@matrix-os/contracts").CanonicalChatReadState;
   displayedThroughSeq?: number;
   onUpdateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
@@ -182,7 +183,7 @@ export function ChatApp(props: ChatAppProps) {
 function ChatAppContent({
   collaborationView, onOpenSharedChat, onOpenSharedProject, onOpenSharedHome,
   filterUnreadOnly, onUnreadFilterChange,
-  active = true, readState, displayedThroughSeq = 0, onUpdateReadState,
+  active = true, visible = true, readState, displayedThroughSeq = 0, onUpdateReadState,
   messages,
   sessionId,
   busy,
@@ -228,6 +229,7 @@ function ChatAppContent({
     restore:source=>{ agentsNavigation?.close(); if(source.chatId) switchConversation(source.chatId); else {setNewChatSequence(source.sequence);setAgentDraftRequest(null);createChat();} },
   });
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
+  const revealSearch = useCallback(() => setSidebarOpen(true), []);
   const agentDraftSequence = useRef(0);
   const startAgentChat: StartAgentChat = (text, resources) => {
     agentDraftSequence.current += 1;
@@ -285,8 +287,12 @@ function ChatAppContent({
   const [botModelRevision, setBotModelRevision] = useState(0);
   const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
   const botComposerControls = directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={agentClient} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision} zIndex={SHELL_Z_INDEX.popover} onChanged={() => setBotModelRevision(value => value + 1)}/> : undefined;
-  const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error";
-  const providerReady = !botIdentityUnknown && Boolean(directBotId || (!providerState.loading && providerState.selected));
+  const botExecution = useBotExecution(directBotId, agentClient, providerState.catalog, (botEventRevision ?? 0) + botModelRevision);
+  const botPresentation = botExecution.presentation;
+  const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
+  const slashInstance = !botIdentityUnknown && !directBotId ? providerState.activeInstance ?? undefined : undefined;
+  const slashCatalogLoading = botBinding.loading || providerState.loading;
+  const providerReady = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : Boolean(!providerState.loading && providerState.selected));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
@@ -302,10 +308,14 @@ function ChatAppContent({
     mentionOptions?: ChatSubmitOptions,
   ) => {
     if (botIdentityUnknown) return Promise.resolve(false);
-    if (directBotId) return onSubmit(text, files, { displayText: text, instanceId: MATRIX_BOT_SELECTION.instanceId, model: MATRIX_BOT_SELECTION.model,
-      interactionMode: "default", permissionMode: "default", modelOptions: [],
-      ...(mentionOptions?.resources?.length ? { resources: mentionOptions.resources, clientRequestId: mentionOptions.clientRequestId } : {}),
-    });
+    if (directBotId) {
+      if (!botPresentation || !botPresentation.available) return Promise.resolve(false);
+      return onSubmit(text, files, { displayText: text, instanceId: botPresentation.selection.instanceId, model: botPresentation.selection.model,
+        interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.kind === "custom" ? mentionOptions?.permissionMode ?? botPresentation.permissionMode : "default", modelOptions: botPresentation.selection.options ?? [],
+        ...((botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources)?.length ? { resources: botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources } : {}),
+        ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
+      });
+    }
     if (!providerState.selected) return Promise.resolve(false);
     const usesChannels = providerState.selected.driverKind === "hermes";
     const promptText = usesChannels ? createChannelConfiguredPrompt(text, selectedChannels) : text;
@@ -381,7 +391,7 @@ function ChatAppContent({
         </ShellNotificationPortal>
       )}
       {/* Sidebar */}
-      <ChatRailOrderContext.Provider value={{manual:!mobile && railOrder.mode === "manual",move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root
+      <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root
         className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
           sidebarOpen
             ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
@@ -410,7 +420,7 @@ function ChatAppContent({
 
         <ScrollArea className="min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
         {/* Search */}
-        {!mobile ? <WebChatRailControls query={searchQuery} onQuery={setSearchQuery} mode={railOrder.mode} onSort={railOrder.setMode}/> : <div className="px-3 pb-2">
+        {!mobile ? <WebChatRailControls active={active} onSearch={revealSearch} query={searchQuery} onQuery={setSearchQuery}/> : <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
             <SearchIcon className="size-3.5 text-muted-foreground" />
             <input
@@ -429,7 +439,7 @@ function ChatAppContent({
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
-        <div className="px-2 pb-2"><ChatAgentsRailSection activeChatId={sessionId} client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        <div className="px-2 pb-2"><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
         {mobile ? <div className="flex gap-2 px-3 pb-2 text-xs">
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
@@ -584,8 +594,7 @@ function ChatAppContent({
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header> : null}
-        {botIdentityUnknown ? <BotBindingStatus loading={botBinding.loading} retry={botBinding.retry}/> : null}
-
+        {botIdentityUnknown ? <BotBindingStatus loading={botBinding.loading || botExecution.loading} retry={() => { botBinding.retry(); botExecution.retry(); }}/> : null}
         {!collaborationView && !botIdentityUnknown && !directBotId && setupOpen && (
           <ChatProviderSetupPanel
             onDismiss={() => {
@@ -621,7 +630,7 @@ function ChatAppContent({
           <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat} onOpenProject={onOpenSharedProject}
             onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
-        <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} detailsContainer={botDetailsContainer}
+        <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} visible={visible} detailsContainer={botDetailsContainer}
           headerLeading={!sidebarOpen ? <>
             <Button variant="ghost" size="icon" aria-label="Open Chat sidebar" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={() => setSidebarOpen(true)}><PanelLeftIcon className="size-4" /></Button>
             <Button variant="ghost" size="icon" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={onNewChat} title="New chat"><PlusIcon className="size-4" /></Button>
@@ -637,7 +646,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/></div><EmptyState
-            composerProps={{ botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, permissionMode: directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             suggestions={suggestions}
@@ -734,11 +743,13 @@ function ChatAppContent({
                 </div>
               )}
               <ChatInput
+                slashInstance={slashInstance}
+                slashCatalogLoading={slashCatalogLoading}
                 botContext={Boolean(directBotId)}
                 botControls={botComposerControls}
                 driveContextEnabled={!botIdentityUnknown && !directBotId && providerState.selected?.supportsCompanyDriveContext === true}
                 onOpenBotMention={botDraftNavigation.openBotMention}
-                key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} permissionMode={directBotId ? "default" : providerState.selected?.permissionMode ?? "supervised"}
+                key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} botConsentResources={botExecution.consentResources} botRequiresFullAccess={botPresentation?.requiresFullAccess} permissionMode={directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised"}
                 connected={connected && providerReady}
                 busy={busy}
                 activeRunId={activeRunId}
@@ -778,7 +789,7 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "onOpenBotMention">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   suggestions: string[];

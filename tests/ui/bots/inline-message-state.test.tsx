@@ -7,6 +7,7 @@ import { BotRunMessageBody, BotUnassignedMessageBody } from '../../../packages/u
 import { BotTaskSummarySchema } from '@matrix-os/contracts';
 import { ConversationTranscript } from '../../../desktop/src/renderer/src/components/conversation/transcript.js';
 import { botTranscriptPlacement, BotTranscriptRunState, BotTranscriptFallback } from '../../../shell/src/components/BotTranscriptState.js';
+import { saved } from '../../desktop/chat-agents-fixture.js';
 
 beforeEach(() => { globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver; });
 
@@ -20,7 +21,8 @@ function clientFor(tasks = [task], requests = [interaction]) {
   return { bots: { directBot: vi.fn(async () => interaction.agentId), tasks: vi.fn(async () => tasks),
     interactions: vi.fn(async () => requests), authority: vi.fn(async () => ({ agentId: interaction.agentId, revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
     resolve: vi.fn(async () => ({ interaction: { interactionId: interaction.interactionId, status: 'resolved', revision: 2 } })) },
-    list: vi.fn(async () => ({ enabled: true, agents: [] })) };
+    list: vi.fn(async () => ({ enabled: true, agents: [{ ...saved, id: interaction.agentId,
+      recipeRef: { recipeId: 'writing-bot', version: '1' } }] })) };
 }
 it('keeps question and waiting status in their exact run body, outside the identity header', async () => {
   const client = clientFor();

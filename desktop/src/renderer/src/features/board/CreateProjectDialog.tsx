@@ -74,9 +74,9 @@ function ModeCard({
 
 // Inner form mounts only while open, so its state is fresh per open (no
 // reset-on-prop effect). autoFocus replaces a focus setTimeout.
-function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject, onProjectReady }: {
+function CreateProjectForm({ onClose, shareAvailability, onCreatedProject, onProjectReady }: {
   onClose: () => void;
-  canShareAfterCreate: boolean;
+  shareAvailability: "loading" | "none" | "member" | "unavailable";
   onCreatedProject: (project: Project) => void;
   onProjectReady?: (project: Project) => Promise<void | (() => void)>;
 }) {
@@ -236,7 +236,7 @@ function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject, onP
         isCurrent,
         setError,
         close: closeFromUser,
-        ...(shareAfterCreating ? { onCreatedProject } : {}),
+        ...(shareAfterCreating && shareAvailability === "member" ? { onCreatedProject } : {}),
         onProjectReady,
       },
     };
@@ -472,18 +472,20 @@ function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject, onP
 
       {error ? <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : null}
 
-      {canShareAfterCreate ? <label className="flex items-start gap-2 rounded-lg border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>
+      {shareAvailability !== "none" ? <label className="flex items-start gap-2 rounded-lg border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>
         <input
           type="checkbox"
           aria-label="Share project after creating"
           checked={shareAfterCreating}
-          disabled={submitting}
+          disabled={submitting || shareAvailability !== "member"}
           onChange={(event) => setShareAfterCreating(event.target.checked)}
           className="mt-0.5"
         />
         <span className="flex flex-col gap-0.5">
           <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>Share project after creating</span>
-          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>Choose organization members after creation. The entire project is shared.</span>
+          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>{shareAvailability === "member"
+            ? "Choose organization members after creation. The entire project is shared."
+            : shareAvailability === "loading" ? "Checking organization access…" : "Sharing is temporarily unavailable."}</span>
         </span>
       </label> : null}
 
@@ -499,6 +501,7 @@ function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject, onP
 
 export default function CreateProjectDialog({ open, onClose, onProjectReady }: { open: boolean; onClose: () => void; onProjectReady?: (project: Project) => Promise<void | (() => void)> }) {
   const organizationId = useConnection((state) => state.organizationId);
+  const organizationStatus = useConnection((state) => state.organizationStatus);
   const [shareTarget, setShareTarget] = useState<{
     id: string;
     name: string;
@@ -506,8 +509,11 @@ export default function CreateProjectDialog({ open, onClose, onProjectReady }: {
     requestId: string;
   } | null>(null);
   const sharing = useDesktopProjectSharingContext(
-    organizationId !== null && (open || shareTarget !== null),
+    organizationStatus === "member" && (open || shareTarget !== null),
   );
+  const shareAvailability = organizationStatus === "member" && !sharing
+    ? "unavailable"
+    : organizationStatus;
 
   useEffect(() => {
     if (shareTarget && shareTarget.organizationId !== organizationId) setShareTarget(null);
@@ -530,7 +536,7 @@ export default function CreateProjectDialog({ open, onClose, onProjectReady }: {
     <Dialog open={open} onClose={onClose} width={480} title="Create a project" placement="center">
       <CreateProjectForm
         onClose={onClose}
-        canShareAfterCreate={Boolean(open && sharing?.organizationId)}
+        shareAvailability={shareAvailability}
         onCreatedProject={handleCreatedProject}
         onProjectReady={onProjectReady}
       />

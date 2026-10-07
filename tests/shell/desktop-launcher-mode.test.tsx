@@ -13,6 +13,12 @@ import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib
 import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 import { appKeys, type ApiAppEntry } from "../../shell/src/api/apps.js";
 
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ userId: null }),
+  useOrganization: () => ({ organization: null }),
+  useOrganizationList: () => ({ isLoaded: false, setActive: undefined }),
+}));
+
 const fileWatcher = vi.hoisted(() => ({ callback: null as null | ((path: string, event: string) => void) }));
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: (callback: (path: string, event: string) => void) => { fileWatcher.callback = callback; },
@@ -98,6 +104,12 @@ vi.mock("../../shell/src/components/DotGrid.js", () => ({
 
 vi.mock("../../shell/src/components/Settings.js", () => ({
   Settings: () => null,
+}));
+
+// Organization authentication is covered by organization-management-ui.test.tsx;
+// launcher tests isolate host chrome without mounting a Clerk session.
+vi.mock("../../shell/src/components/organization/OrganizationSwitcher", () => ({
+  OrganizationSwitcher: () => null,
 }));
 
 vi.mock("../../shell/src/components/canvas/CanvasRenderer.js", () => ({

@@ -14,6 +14,7 @@ import { parseDesktopFirstRunStatus, type DesktopFirstRunStatus } from "@/lib/de
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
 import { Settings, type SettingsSectionId } from "./Settings";
+import { OrganizationSwitcher } from "./organization/OrganizationSwitcher";
 import { CanvasRenderer } from "./canvas/CanvasRenderer";
 import {
   Tooltip,
@@ -1278,6 +1279,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                   onOpenFirstWork={openGettingStartedWork}
                 />
               )}
+              headerLeadingAction={<OrganizationSwitcher onOpenSettings={openWebSettings} />}
               onOpenSettings={(section: WebDesktopSettingsSection) => {
                 setSettingsDefaultSection(section);
                 setSettingsOpen(true);

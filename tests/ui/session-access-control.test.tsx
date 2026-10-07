@@ -114,7 +114,7 @@ describe("SessionAccessControl", () => {
     const currentScope = { ...scope, revision: "3" };
     const collaborationApi = api();
     collaborationApi.get.mockImplementation(async (path: string) => path.startsWith("/api/organizations/")
-      ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
+      ? { members: [{ actorId: "user_ada", displayName: "Ada", role: "org:member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
       : path.endsWith("/grants") ? [] : path.endsWith("/members") ? { members } : currentScope);
     collaborationApi.post.mockImplementation(async (path: string, body: { audience?: unknown; preset?: string }) =>
       path.endsWith("/policy/preflight") ? undefined : {

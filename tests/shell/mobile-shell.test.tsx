@@ -4,6 +4,9 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ChatProvider } from "../../shell/src/stores/chat-context.js";
+import { clientFixture, saved } from "../desktop/chat-agents-fixture.js";
+import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat.js";
 import { toast } from "sonner";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
@@ -66,11 +69,14 @@ vi.mock("../../shell/src/components/Settings.js", () => ({
   },
 }));
 
+vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+
 vi.mock("sonner", () => ({
   toast: vi.fn(),
 }));
 
 vi.mock("@clerk/nextjs", () => ({
+  useOrganization: () => ({ organization: null }),
   PricingTable: () => <div data-testid="pricing-table" />,
   useAuth: () => ({
     isLoaded: true,
@@ -158,6 +164,7 @@ describe("mobile shell", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("uses launcher-first mode on phone-sized browser viewports", async () => {
@@ -509,4 +516,34 @@ describe("mobile shell", () => {
 
     expect(renderToString(<MobileShell />)).toContain("--:--");
   });
+
+  it.each(["Apps", "Terminal"])("pauses retained Web Mobile Chat Bot reads behind %s and refreshes on return", async destination => {
+    const catalog = createCanonicalProviderCatalogFixture();
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(String(url).includes("chat-providers") ? catalog : [])));
+    vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+    const MobileShell = await loadMobileShell();
+    const agent = { ...saved, recipeRef: { recipeId: "writer", version: "1" } };
+    const client = clientFixture();
+    client.list.mockResolvedValue({ enabled: true, agents: [agent] });
+    const tasks = vi.fn(async () => [{ taskId: "task_one", agentId: agent.id, chatId: "chat_bot",
+      revision: 1, status: "running" as const, updatedAt: "2026-10-07T00:00:00.000Z" }]);
+    const agentClient = { ...client, bots: { directChat: vi.fn(async () => "chat_bot"), tasks, interactions: vi.fn(async () => []) } };
+    const chat = { messages: [], sessionId: undefined, busy: false, connected: true, conversations: [],
+      newChat: vi.fn(), switchConversation: vi.fn(), submitMessage: vi.fn(), agentClient } as unknown as React.ComponentProps<typeof ChatProvider>["value"];
+    vi.useFakeTimers();
+    render(<ChatProvider value={chat}><MobileShell launchAppPath="__chat__"/></ChatProvider>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    fireEvent.click(screen.getByRole("button", { name: "Open Chat sidebar" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByRole("button", { name: `Chat with ${agent.name}` }).getAttribute("data-agent-rail-state")).toBe("working");
+    const reads = tasks.mock.calls.length;
+    fireEvent.click(within(screen.getByTestId("mobile-bottom-dock")).getByRole("button", { name: destination, exact: true }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(tasks).toHaveBeenCalledTimes(reads);
+    fireEvent.click(within(screen.getByTestId("mobile-bottom-dock")).getByRole("button", { name: "Hermes", exact: true }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(tasks.mock.calls.length).toBeGreaterThan(reads);
+    expect(screen.getByRole("button", { name: `Chat with ${agent.name}` }).getAttribute("data-agent-rail-state")).toBe("working");
+  });
+
 });

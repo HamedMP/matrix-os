@@ -14,7 +14,7 @@ export function ProjectSharingButton({ api, runtimeId, organizationId, projectId
   return <div className="relative inline-flex shrink-0 items-center">
     <button type="button" className={buttonClass} aria-label="Share project" disabled={sharing.pending || !runtimeId || !organizationId}
       aria-expanded={sharing.open} onClick={() => sharing.open ? sharing.close() : sharing.start()}>
-      {sharing.pending || !runtimeId ? "Loading share…" : !organizationId ? "Join an organization to share" : "Share"}
+      {sharing.pending || !runtimeId || !organizationId ? "Loading share…" : "Share"}
     </button>
     {sharing.error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">
       {PROJECT_SHARING_UNAVAILABLE_MESSAGE}

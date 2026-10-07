@@ -732,6 +732,8 @@ function WorkTabContent({
       eventSource={eventSource ?? undefined}
       projects={projects}
       active={active}
+      visible={visible && navigationVisible}
+      newChatShortcutActive={active && route === "chat"}
       activeChatId={initialChatId}
       activeProjectSlug={route === "project" ? projectSlug : undefined}
       className="w-full flex-1"
@@ -751,7 +753,7 @@ function WorkTabContent({
       onStartAgentChat={openAgentDraft}
       onOpenBotChat={openBotChat}
     />
-  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openBotChat, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectProject, selectRailChat, layout, showChat]);
+  ), [active, visible, navigationVisible, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openBotChat, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectProject, selectRailChat, layout, showChat]);
   const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
     ? sharedScopeId ? <span className="block min-w-0 max-w-full truncate" title={activeChatTitle}>{activeChatTitle}</span>
       : editingChatTitle ? (

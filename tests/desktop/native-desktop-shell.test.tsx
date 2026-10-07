@@ -434,8 +434,10 @@ describe("native desktop shell", () => {
     const settingsWindow = screen.getByRole("dialog", { name: "Settings window" });
     expect(settingsWindow.querySelector("[data-os-window-sidebar]")).toBeTruthy();
     expect(settingsWindow.querySelector('[data-os-window-chrome-placement="sidebar"]')?.textContent).not.toContain("Settings");
-    expect(within(settingsWindow).getByRole("heading", { name: "Settings" })).toBeTruthy();
+    expect(within(settingsWindow).getByRole("navigation", { name: "Settings sections" })).toBeTruthy();
+    expect(within(settingsWindow).queryByRole("heading", { name: "Settings" })).toBeNull();
     expect(within(settingsWindow).getByRole("button", { name: "Account" })).toBeTruthy();
+    expect(within(settingsWindow).getByRole("button", { name: "Organization" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
 
     fireEvent.click(getWindowControl("Settings", "Maximize"));

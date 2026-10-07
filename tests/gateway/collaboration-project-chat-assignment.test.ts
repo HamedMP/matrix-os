@@ -2,12 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
 import { ChatConflictError, ChatNotFoundError } from "../../packages/gateway/src/chat/errors.js";
+import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
+import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { createProjectChatAssignmentCoordinator } from "../../packages/gateway/src/collaboration/project-chat-assignment.js";
 import { PROJECT_CHAT_ROUTE_EVENT, readProjectOverview } from "../../packages/gateway/src/collaboration/project-chat-routes.js";
-import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
+import {
+  allowAllOrganizationPrecondition,
+  createCollaborationTestDatabase,
+  type CollaborationTestDatabase,
+} from "./collaboration-test-support.js";
 
 const OWNER_ID = "user_project_owner";
+const MEMBER_ID = "user_project_member";
 const OWNER = { type: "personal" as const, ownerId: OWNER_ID };
 const PROJECT_ID = "project_alpha";
 const PROJECT_SCOPE = "10000000-0000-4000-8000-000000000a71";
@@ -32,6 +40,18 @@ describe("shared project Chat assignment", () => {
       lifecycle: "shared", revision: 4, auth_epoch: 1, authority_runtime_id: RUNTIME_ID,
       authority_generation: 2, execution_generation: null, execution_eligibility: null,
       created_at: NOW, updated_at: NOW, deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: PROJECT_SCOPE, actor_id: OWNER_ID, role: "owner", status: "accepted",
+      organization_id: ORGANIZATION_ID, invitation_id: null, invited_by: OWNER_ID,
+      accepted_at: NOW, expires_at: null, revision: 1, joined_at: NOW,
+      updated_at: NOW, dispositioned_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: PROJECT_SCOPE, actor_id: MEMBER_ID, role: "editor", status: "accepted",
+      organization_id: ORGANIZATION_ID, invitation_id: null, invited_by: OWNER_ID,
+      accepted_at: NOW, expires_at: null, revision: 1, joined_at: NOW,
+      updated_at: NOW, dispositioned_at: null,
     }).execute();
     sequence = 1;
     endedScopes = [];
@@ -66,6 +86,21 @@ describe("shared project Chat assignment", () => {
     });
   }
 
+  function collaborationAccess() {
+    const authority = new CollaborationAuthority(new CollaborationRepository(fixture.db, { now: () => NOW }), {
+      now: () => NOW,
+      organizationPrecondition: allowAllOrganizationPrecondition,
+    });
+    const adapter = new CollaborationChatAdapter({
+      db: fixture.db,
+      authority,
+      now: () => NOW,
+      createId: () => "50000000-0000-4000-8000-000000000a72",
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId === MEMBER_ID ? "Project member" : "Project owner" }),
+    });
+    return { authority, adapter };
+  }
+
   it("atomically binds and routes a Chat created in an already-shared project", async () => {
     const created = await service().create(OWNER, {
       clientRequestId: "req_shared_project_create",
@@ -85,6 +120,98 @@ describe("shared project Chat assignment", () => {
     await expect(readProjectOverview(fixture.db, { scopeId: PROJECT_SCOPE, projectName: async () => "Alpha" }))
       .resolves.toMatchObject({ chats: [expect.objectContaining({ chatId: created.chat.id, title: "Release plan" })] });
     expect((await repository.get(OWNER, created.chat.id))?.chat.revision).toBe(created.chat.revision);
+  });
+
+  it("lets an accepted project member read and write the canonical inherited Chat", async () => {
+    const created = await service().create(OWNER, {
+      clientRequestId: "req_shared_project_transcript",
+      title: "Canonical transcript",
+      projectId: PROJECT_ID,
+    });
+    const child = await fixture.db.selectFrom("collaboration_scopes")
+      .select(["id", "revision"])
+      .where("kind", "=", "chat")
+      .where("resource_id", "=", created.chat.id)
+      .executeTakeFirstOrThrow();
+    await fixture.db.insertInto("chat_messages").values({
+      id: "msg_project_transcript", chat_id: created.chat.id, seq: 1,
+      role: "user", state: "committed", turn_id: null, run_id: null,
+      actor_id: OWNER_ID, purpose: "ai_request",
+      parts: JSON.stringify([{ type: "text", text: "Keep this canonical." }]),
+      byte_count: 64, search_text: "Keep this canonical.", created_at: NOW,
+    }).execute();
+    await fixture.db.updateTable("chats").set({ message_count: 1 })
+      .where("id", "=", created.chat.id).execute();
+    const { authority, adapter } = collaborationAccess();
+    const context = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "read" });
+
+    await expect(adapter.getChat(context)).resolves.toMatchObject({
+      id: created.chat.id,
+      scopeId: child.id,
+      messageCount: "1",
+    });
+    await expect(adapter.listMessages(context, { afterSequence: "0", limit: 100 }))
+      .resolves.toMatchObject([{
+        id: "msg_project_transcript",
+        chatId: created.chat.id,
+        parts: [{ type: "text", text: "Keep this canonical." }],
+      }]);
+    const writer = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "discuss" });
+    await expect(adapter.appendDiscussion(writer, {
+      clientRequestId: "60000000-0000-4000-8000-000000000a72",
+      expectedRevision: String(child.revision),
+      text: "Shared project note",
+    })).resolves.toMatchObject({
+      chatId: created.chat.id,
+      sequence: "2",
+      actor: { actorId: MEMBER_ID, displayName: "Project member" },
+    });
+    await expect(adapter.updateDiscussionUserState(context, { readThroughSeq: "2" }))
+      .resolves.toMatchObject({ readThroughSeq: "2" });
+    await expect(adapter.updateUserState(context, { readThroughSeq: "2", pinned: true }))
+      .resolves.toMatchObject({ readThroughSeq: "2", pinned: true });
+  });
+
+  it("rejects an inherited Chat whose resource binding is blocked", async () => {
+    const created = await service().create(OWNER, {
+      clientRequestId: "req_shared_project_blocked_binding",
+      projectId: PROJECT_ID,
+    });
+    const child = await fixture.db.selectFrom("collaboration_scopes").select("id")
+      .where("kind", "=", "chat").where("resource_id", "=", created.chat.id).executeTakeFirstOrThrow();
+    await fixture.db.updateTable("collaboration_resource_bindings")
+      .set({ readiness: "blocked", blocker: "test_blocked" })
+      .where("resource_scope_id", "=", child.id).execute();
+    const { authority, adapter } = collaborationAccess();
+    const context = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "read" });
+
+    await expect(adapter.getChat(context)).rejects.toMatchObject({ code: "unavailable" });
+    await expect(adapter.updateUserState(context, { pinned: true }))
+      .rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it("rejects an inherited Chat whose binding authority does not match its scope", async () => {
+    const created = await service().create(OWNER, {
+      clientRequestId: "req_shared_project_mismatched_binding",
+      projectId: PROJECT_ID,
+    });
+    const child = await fixture.db.selectFrom("collaboration_scopes").select("id")
+      .where("kind", "=", "chat").where("resource_id", "=", created.chat.id).executeTakeFirstOrThrow();
+    await fixture.db.updateTable("collaboration_resource_bindings")
+      .set({ authority_generation: 3 })
+      .where("resource_scope_id", "=", child.id).execute();
+    const { authority, adapter } = collaborationAccess();
+    const reader = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "read" });
+    const writer = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "discuss" });
+
+    await expect(adapter.getChat(reader)).rejects.toMatchObject({ code: "unavailable" });
+    await expect(adapter.appendDiscussion(writer, {
+      clientRequestId: "60000000-0000-4000-8000-000000000a73",
+      expectedRevision: "0",
+      text: "Do not accept mismatched authority",
+    })).rejects.toMatchObject({ code: "unavailable" });
+    await expect(adapter.updateDiscussionUserState(reader, { readThroughSeq: "0" }))
+      .rejects.toMatchObject({ code: "unavailable" });
   });
 
   it("rolls the Chat creation back when its inherited binding cannot commit", async () => {

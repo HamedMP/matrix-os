@@ -77,7 +77,7 @@ describe("organization ready-to-work presentation", () => {
     render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_member" openProject={openProject} />);
     fireEvent.click(await screen.findByRole("button", { name: "Open" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Share could not be opened. Try again.");
-    expect(screen.getByText("Shared with your organization")).toBeVisible();
+    expect(screen.getByText("Shared with you")).toBeVisible();
     expect(screen.queryByText("private membership detail")).toBeNull();
     expect(openProject).not.toHaveBeenCalled();
   });
@@ -137,7 +137,7 @@ describe("organization ready-to-work presentation", () => {
     let revision = "4";
     const api = {
       baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members")
-        ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-01-01T00:00:00.000Z" }] }
+        ? { members: [{ actorId: "user_ada", displayName: "Ada", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" }] }
         : path.endsWith("/grants") ? [] : { ...scope, revision }),
       post: vi.fn(async (_path: string, body: { audience: unknown; preset: string }) => {
         revision = "5";
@@ -172,7 +172,7 @@ describe("organization ready-to-work presentation", () => {
     let currentGrants = [grant];
     const api = { baseUrl: "http://localhost",
       get: vi.fn(async (path: string) => path.startsWith("/api/organizations/")
-        ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-01-01T00:00:00.000Z" }] }
+        ? { members: [{ actorId: "user_ada", displayName: "Ada", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" }] }
         : path.endsWith("/grants") ? currentGrants : currentScope),
       post: vi.fn(),
       patch: vi.fn(async () => {

@@ -43,10 +43,17 @@ type MobileEasConfig = {
     };
     development?: { channel?: string };
     "development-device"?: { channel?: string };
-    preview?: { channel?: string };
+    preview?: {
+      channel?: string;
+      distribution?: string;
+      environment?: string;
+      env?: Record<string, string>;
+    };
     production?: {
       autoIncrement?: boolean;
       channel?: string;
+      environment?: string;
+      env?: Record<string, string>;
       android?: {
         buildType?: string;
       };
@@ -157,5 +164,26 @@ describe("mobile over-the-air update configuration", () => {
     expect(easConfig.build?.["development-device"]?.channel).toBe("development");
     expect(easConfig.build?.preview?.channel).toBe("preview");
     expect(easConfig.build?.production?.channel).toBe("production");
+  });
+
+  it("builds both release channels against the production EAS environment", () => {
+    // A preview update is promoted to production byte-for-byte, so the preview
+    // binary and its bundles must read the same variables as production. Without
+    // an explicit environment an internal build resolves to the empty `preview`
+    // EAS environment and ships with no Clerk key.
+    expect(easConfig.build?.preview?.distribution).toBe("internal");
+    expect(easConfig.build?.preview?.environment).toBe("production");
+    expect(easConfig.build?.production?.environment).toBe("production");
+  });
+
+  it("keeps public runtime variables out of build profiles so binaries and updates cannot drift", () => {
+    // `eas update` never reads a build profile's `env`, so a variable declared
+    // there reaches the store binary but not the update that replaces its JS.
+    for (const profile of [easConfig.build?.preview, easConfig.build?.production]) {
+      const publicKeys = Object.keys(profile?.env ?? {}).filter((key) =>
+        key.startsWith("EXPO_PUBLIC_"),
+      );
+      expect(publicKeys).toEqual([]);
+    }
   });
 });

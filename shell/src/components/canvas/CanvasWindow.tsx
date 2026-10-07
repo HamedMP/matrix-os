@@ -481,6 +481,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
                 filterUnreadOnly={chatState.unreadOnly}
                 onUnreadFilterChange={chatState.setUnreadOnly}
                 active={isFocused && !win.minimized}
+                visible={!win.minimized}
                 readState={chatState.readState}
                 displayedThroughSeq={chatState.displayedThroughSeq}
                 onUpdateReadState={chatState.updateReadState}
