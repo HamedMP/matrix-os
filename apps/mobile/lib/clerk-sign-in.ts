@@ -130,6 +130,55 @@ export function describeClerkError(error: unknown, fallback: string): string {
   return message && message.trim().length > 0 ? message : fallback;
 }
 
+const NEW_ACCOUNTS_UNAVAILABLE = "New accounts cannot be created from the app right now.";
+const ACCOUNT_CANNOT_SIGN_IN = "This account cannot sign in. Contact support.";
+const ALREADY_SIGNED_IN = "You are already signed in.";
+
+/**
+ * The Clerk error codes this app has its own copy for. Keys are Clerk's codes;
+ * a code that is not listed here gets the caller's fallback.
+ */
+const KNOWN_CLERK_ERROR_COPY: Readonly<Record<string, string>> = {
+  user_locked: "This account is locked. Try again later or contact support.",
+  user_banned: ACCOUNT_CANNOT_SIGN_IN,
+  user_deactivated: ACCOUNT_CANNOT_SIGN_IN,
+  not_allowed_access: "This account is not allowed to sign in to Matrix OS.",
+  not_allowed_to_sign_up: NEW_ACCOUNTS_UNAVAILABLE,
+  sign_up_mode_restricted: NEW_ACCOUNTS_UNAVAILABLE,
+  sign_up_restricted_waitlist: NEW_ACCOUNTS_UNAVAILABLE,
+  signup_rate_limit_exceeded: "Too many attempts. Wait a moment and try again.",
+  session_exists: ALREADY_SIGNED_IN,
+  identifier_already_signed_in: ALREADY_SIGNED_IN,
+};
+
+/**
+ * Resolves a Clerk error to copy written for this app. Clerk's own
+ * `longMessage` is never returned: its wording and length are not ours to
+ * vouch for, so an unlisted code collapses to the caller's fallback.
+ */
+export function describeKnownClerkError(error: unknown, fallback: string): string {
+  if (typeof error !== "object" || error === null) return fallback;
+  const errors = (error as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return fallback;
+  for (const entry of errors) {
+    const code = (entry as { code?: unknown } | null)?.code;
+    if (typeof code === "string" && Object.hasOwn(KNOWN_CLERK_ERROR_COPY, code)) {
+      return KNOWN_CLERK_ERROR_COPY[code];
+    }
+  }
+  return fallback;
+}
+
+/**
+ * `describeSignInFailure` for flows that only show copy this app wrote: errors
+ * raised by these modules keep their message, and a raw Clerk error goes
+ * through `describeKnownClerkError`.
+ */
+export function describeKnownSignInFailure(error: unknown, fallback: string): string {
+  if (error instanceof EmailCodeSignInError) return error.message;
+  return describeKnownClerkError(error, fallback);
+}
+
 /** True when Clerk lists `password` among the account's usable first factors. */
 export function supportsPassword(factors: FirstFactorLike[] | null | undefined): boolean {
   return Boolean(factors?.some((factor) => factor.strategy === "password"));

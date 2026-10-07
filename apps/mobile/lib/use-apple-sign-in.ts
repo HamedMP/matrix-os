@@ -8,7 +8,7 @@ import {
   signInWithApple,
   type AppleCredentialLike,
 } from "./apple-sign-in";
-import { EmailCodeSignInError, describeSignInFailure } from "./clerk-sign-in";
+import { EmailCodeSignInError, describeKnownSignInFailure } from "./clerk-sign-in";
 import { registerAppleAuthorizationCode } from "./requests/apple-authorization";
 import { SignInStepError } from "./use-email-code-sign-in";
 
@@ -120,7 +120,7 @@ export function useAppleSignIn({
       onError(
         err instanceof SignInStepError
           ? err.message
-          : describeSignInFailure(
+          : describeKnownSignInFailure(
               err,
               "We could not sign you in with Apple. Try again in a moment.",
             ),

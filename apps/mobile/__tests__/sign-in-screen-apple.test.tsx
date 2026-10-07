@@ -308,16 +308,38 @@ describe("SignInScreen Sign in with Apple", () => {
     expect(mockSignInCreate).not.toHaveBeenCalled();
   });
 
-  it("explains a failed Apple sign-in on the screen", async () => {
+  it("explains a failed Apple sign-in on the screen in this app's own words", async () => {
     mockSignInCreate.mockImplementationOnce(() =>
-      Promise.reject({ errors: [{ longMessage: "This account has been locked." }] }),
+      Promise.reject({
+        errors: [{ code: "user_locked", longMessage: "Your account is locked for 30 minutes." }],
+      }),
     );
     render(<SignInScreen />);
 
     fireEvent.press(screen.getByTestId(APPLE_BUTTON));
 
-    expect(await screen.findByText("This account has been locked.")).toBeTruthy();
+    expect(
+      await screen.findByText("This account is locked. Try again later or contact support."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/30 minutes/)).toBeNull();
     expect(mockSetActive).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("does not show a provider message when the session fails to activate", async () => {
+    mockSetActive.mockImplementationOnce(() =>
+      Promise.reject({
+        errors: [{ code: "mystery_failure", longMessage: "pq: connection refused at 10.0.0.4" }],
+      }),
+    );
+    render(<SignInScreen />);
+
+    fireEvent.press(screen.getByTestId(APPLE_BUTTON));
+
+    expect(
+      await screen.findByText("We could not sign you in with Apple. Try again in a moment."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/connection refused/)).toBeNull();
     expect(mockReplace).not.toHaveBeenCalled();
   });
 

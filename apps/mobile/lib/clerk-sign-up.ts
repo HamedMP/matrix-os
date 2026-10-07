@@ -9,7 +9,11 @@
  * `clerk-sign-in`, this stays free of React and `@clerk/clerk-expo`.
  */
 import { getRandomValues } from "expo-crypto";
-import { EmailCodeSignInError, describeClerkError, hasClerkErrorCode } from "./clerk-sign-in";
+import {
+  EmailCodeSignInError,
+  describeKnownClerkError,
+  hasClerkErrorCode,
+} from "./clerk-sign-in";
 
 /** Clerk's lower bound for a username on this instance. */
 const USERNAME_MIN_LENGTH = 4;
@@ -125,11 +129,10 @@ async function submitRequirements(
     if (usernameTaken && attempt < MAX_USERNAME_ATTEMPTS - 1) {
       return submitRequirements(signUp, fields, usernameFor, attempt + 1);
     }
-    // The user never chose the username, so Clerk's "that username is taken"
-    // would describe a problem they cannot see or fix.
-    throw new AccountSetupError(
-      usernameTaken ? ACCOUNT_SETUP_FAILED : describeClerkError(error, ACCOUNT_SETUP_FAILED),
-    );
+    // Only this app's own copy is shown. That also covers a username that
+    // stayed taken: the user never chose it, so Clerk's "that username is
+    // taken" would describe a problem they cannot see or fix.
+    throw new AccountSetupError(describeKnownClerkError(error, ACCOUNT_SETUP_FAILED));
   }
 }
 

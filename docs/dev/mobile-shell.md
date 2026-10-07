@@ -199,6 +199,10 @@ activates the session, so the tap does not end in nothing:
   It is a starting value; the user can change it before a computer exists.
 - Anything else Clerk still asks for (an unverified address, a phone number)
   cannot be supplied from the app, and the user is told to finish on the web.
+- These paths and Sign in with Apple never show Clerk's own error text.
+  `describeKnownClerkError` maps the Clerk error codes it lists to copy written
+  for this app and returns the caller's fallback for every other code. Add a
+  code and its copy there when a failure deserves its own message.
 
 ### Sign in with Apple
 

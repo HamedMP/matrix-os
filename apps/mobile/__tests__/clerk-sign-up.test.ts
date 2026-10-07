@@ -164,14 +164,30 @@ describe("completePendingSignUp", () => {
 
   it("does not retry a failure that is not about the handle", async () => {
     const update = jest.fn().mockRejectedValue({
-      errors: [{ code: "form_param_format_invalid", longMessage: "Sign-ups are paused." }],
+      errors: [{ code: "sign_up_mode_restricted", longMessage: "Sign-ups are paused." }],
     });
     const signUp = pendingSignUp({ update });
 
     await expect(completePendingSignUp(signUp, { randomSuffix: suffix })).rejects.toThrow(
-      "Sign-ups are paused.",
+      "New accounts cannot be created from the app right now.",
     );
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a Clerk message it has no copy for off the screen", async () => {
+    const update = jest.fn().mockRejectedValue({
+      errors: [
+        {
+          code: "form_param_format_invalid",
+          longMessage: `username is invalid: ${"x".repeat(2000)}`,
+        },
+      ],
+    });
+    const signUp = pendingSignUp({ update });
+
+    await expect(completePendingSignUp(signUp, { randomSuffix: suffix })).rejects.toThrow(
+      /^We could not finish creating your account\. Try again in a moment\.$/,
+    );
   });
 
   it("does not retry a taken identifier when no handle was being set", async () => {

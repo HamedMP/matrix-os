@@ -175,16 +175,53 @@ describe("signInWithApple", () => {
     expect(deps.signIn.create).not.toHaveBeenCalled();
   });
 
-  it("shows Clerk's reason when it rejects the token", async () => {
+  it("uses this app's copy when Clerk rejects the token for a reason it knows", async () => {
     const deps = dependencies({
       signIn: {
         create: jest.fn(() =>
-          Promise.reject({ errors: [{ longMessage: "This account has been locked." }] }),
+          Promise.reject({
+            errors: [{ code: "user_locked", longMessage: "Your account is locked for 30 minutes." }],
+          }),
         ),
       },
     });
 
-    await expect(signInWithApple(deps)).rejects.toThrow("This account has been locked.");
+    await expect(signInWithApple(deps)).rejects.toThrow(
+      /^This account is locked\. Try again later or contact support\.$/,
+    );
+  });
+
+  it("keeps a Clerk message it has no copy for off the screen", async () => {
+    const deps = dependencies({
+      signIn: {
+        create: jest.fn(() =>
+          Promise.reject({
+            errors: [{ code: "oauth_token_invalid", longMessage: `aud mismatch ${"x".repeat(900)}` }],
+          }),
+        ),
+      },
+    });
+
+    await expect(signInWithApple(deps)).rejects.toThrow(
+      /^We could not sign you in with Apple\. Try again in a moment\.$/,
+    );
+  });
+
+  it("uses this app's copy when the account transfer is refused for a known reason", async () => {
+    const deps = dependencies({
+      signIn: transferableSignIn(),
+      signUp: {
+        create: jest.fn(() =>
+          Promise.reject({
+            errors: [{ code: "sign_up_restricted_waitlist", longMessage: "Join the waitlist." }],
+          }),
+        ),
+      },
+    });
+
+    await expect(signInWithApple(deps)).rejects.toThrow(
+      /^New accounts cannot be created from the app right now\.$/,
+    );
   });
 
   it("falls back to its own copy when the token exchange fails without a Clerk reason", async () => {

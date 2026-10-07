@@ -8,7 +8,7 @@
  * here and the code is handed back to the caller. Dependencies are passed in to
  * keep the branching unit testable.
  */
-import { EmailCodeSignInError, describeClerkError } from "./clerk-sign-in";
+import { EmailCodeSignInError, describeKnownClerkError } from "./clerk-sign-in";
 import {
   ACCOUNT_SETUP_FAILED,
   AccountSetupError,
@@ -112,7 +112,7 @@ export async function signInWithApple({
   try {
     attempt = await signIn.create({ strategy: "oauth_token_apple", token: identityToken });
   } catch (error: unknown) {
-    throw new EmailCodeSignInError(describeClerkError(error, APPLE_SIGN_IN_FAILED));
+    throw new EmailCodeSignInError(describeKnownClerkError(error, APPLE_SIGN_IN_FAILED));
   }
 
   const authorizationCode = credential.authorizationCode ?? null;
@@ -124,7 +124,7 @@ export async function signInWithApple({
     try {
       pending = await signUp.create({ transfer: true });
     } catch (error: unknown) {
-      throw new AccountSetupError(describeClerkError(error, ACCOUNT_SETUP_FAILED));
+      throw new AccountSetupError(describeKnownClerkError(error, ACCOUNT_SETUP_FAILED));
     }
     const createdSessionId = await completePendingSignUp(pending, {
       firstName: credential.fullName?.givenName,
