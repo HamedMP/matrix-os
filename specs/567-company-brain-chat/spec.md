@@ -1,7 +1,6 @@
 # Company Brain chat
 
-**Status:** Implementation target (server side now; the app side is a placeholder below). Builds on specs 536, 544,
-551-566.  
+**Status:** Implementation target (the server side; the app side is spec 563). Builds on specs 536, 544, 551-566.  
 **Owner:** gateway `bots/`, bot-runtime `brain-tools.ts`, contracts `bots/`  
 **Date:** 2026-10-08
 
@@ -21,14 +20,15 @@ In scope (server): the `company-brain` recipe and its answer rules, the read-onl
 (contract, worker tools, run setup, broker dispatch), thread Chats bound to one project (migration v7 and two routes),
 the optional run effort, leaving Bot chats out of the `matrix_chat` brain source, and their tests.
 
-Out of scope here and named below: the Brain app chat tab and the web and Electron hosts (App side), and every item
-under Deferred. OS-view surface matrix: N/A for this increment (no UI); the App side fills it in.
+Out of scope here: the Brain app chat tab and the web and Electron hosts (spec 563, see App side), and every item under
+Deferred. OS-view surface matrix: N/A for this increment (no UI); spec 563 has the app's matrix.
 
 ## The Company Brain Bot
 
 - A server catalog recipe, `company-brain` version `2026-10-08.1` (`bots/recipe-catalog.ts`). The gateway resolves
   `{recipeId, version}` from the catalog and never trusts a client copy. One Bot per owner, created from the Brain app
-  with `POST /api/chat-agents/instantiate` and an explicit model selection (spec 544).
+  with `POST /api/chat-agents/instantiate` and no model, so the server picks Automatic; the owner can change the model
+  later in the chat's Bot controls (spec 544).
 - Capabilities exactly `["brain.read"]`, no integrations. `exactCapabilities: true`: a run never gets anything added,
   not even a connected task executor (`agent.task`), so a brain run cannot hand work to a full-access agent. The
   catalog refuses any recipe with `brain.read`, the `company_brain` profile or `threads` unless it has
@@ -213,16 +213,14 @@ No in-memory collections, temp files or timers are added.
 - **Auth source of truth**: the request principal for routes; the run binding's owner and project for brain reads.
 - **Deferred scope**: see Deferred.
 
-## App side (to follow)
+## App side
 
-Placeholders the app work fills in:
-
-- Brain app tabs: Chat first, then Today, Decisions, Timeline, Search, Sources; old ids keep working.
-- Chat slot: `BrainAppProps.chat` with the surface's chat view; drafts become threads on first send.
-- Find or create the Bot (`recipeId=company-brain`), list threads per project, opening order.
-- Web Desktop, Web Canvas and Web Mobile host; Electron host; Open in Chat.
-- OS-view surface matrix, unavailable states, accessibility.
-- Sources card spend text.
+Specified in spec 563 (Chat, States, Integration wiring, OS-view surface matrix, Accessibility): the Brain app opens
+on Chat (then Today, Decisions, Timeline, Search, Sources; old ids keep working); the Chat tab finds or starts the Bot
+(`recipeId=company-brain`), lists the project's threads with their opening order, and lends each surface's own chat
+view a slot (`BrainAppProps.chat`) where a draft becomes a thread on its first send; Web Desktop, Web Canvas, Web
+Mobile and Electron Desktop host it, with Open in Chat; the unavailable states, including no runtime host; and the
+Sources card's spend text.
 
 ## Integration test checkpoint
 
@@ -234,8 +232,9 @@ tests/gateway/bots/bot-threads-routes.test.ts tests/gateway/bots/company-brain-n
 tests/gateway/brain-matrix-chat-exclusion.test.ts`. No test calls a model. With `MATRIX_TEST_POSTGRES_URL` set to a
 dedicated test database, the pooled Postgres case checks concurrent thread creation.
 
-A real run against a dev gateway (10 questions on two threads across surfaces, at most $1 on a capped key) follows
-with the app side.
+A real run against a gateway with the app (10 questions on two threads across surfaces, at most $1 on a capped key)
+follows. Bots run only where the scope-runtime host runs (a customer VPS, or a dev setup that starts it); the Docker
+dev setup has none, so there the tab shows its not running state and the run cannot happen.
 
 ## Code review checklist
 
@@ -246,7 +245,7 @@ only; no new dependency.
 ## Delivery and evidence
 
 - [ ] Server PR under 3,000 additions and 50 files, checks green, Invariants and the OS-view matrix (N/A) in the body.
-- [ ] App PR with the App side above and the real run.
+- [ ] App PR (spec 563), then the real run.
 
 ## Deferred
 
