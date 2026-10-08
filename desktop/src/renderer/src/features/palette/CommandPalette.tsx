@@ -1,7 +1,7 @@
-import { useGettingStartedBlocker } from "@matrix-os/ui";
+import { BRAIN_APP_KEYWORDS, BRAIN_SHELL_VIEW, useGettingStartedBlocker } from "@matrix-os/ui";
 import { Command } from "cmdk";
 import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
-import { Notebook } from "@renderer/lib/hugeicons";
+import { Brain, Notebook } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { ClipboardCheck, GitBranch, Globe2, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Search, Settings, Sparkles, SquareTerminal } from "@renderer/lib/hugeicons";
@@ -344,6 +344,12 @@ export default function CommandPalette() {
             <PaletteItem icon={<Globe2 size={14} />} label="Open Browser" onSelect={() => run(() => openTab(HOSTED_SHELL_TAB_SPEC))} />
             <PaletteItem icon={<SquareTerminal size={14} />} label="Open Terminal" onSelect={() => run(() => openTab({ kind: "terminals", title: "Terminal" }))} />
             <PaletteItem icon={<Notebook size={14} />} label="Open Notes" onSelect={() => run(() => openTab({ kind: "notes", title: "Notes" }))} />
+            <PaletteItem
+              icon={<Brain size={14} />}
+              label={`Open ${BRAIN_SHELL_VIEW.title}`}
+              keywords={[...BRAIN_APP_KEYWORDS]}
+              onSelect={() => run(() => openTab({ kind: "brain", title: BRAIN_SHELL_VIEW.title }))}
+            />
             <PaletteItem
               icon={<LayoutGrid size={14} />}
               label="Open Apps"
