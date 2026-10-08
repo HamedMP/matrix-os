@@ -18,7 +18,7 @@ import { brainMeaningFor, brainSearchFreshness, createBrainSearchIndex } from ".
 import { createBrainPgVectorStore } from "./pgvector.js";
 import {
   brainSearchCursorMode, brainSearchFingerprint, decodeBrainSearchCursor, encodeBrainSearchCursor,
-  parseBrainSearchQuery,
+  parseBrainSearchQuery, type BrainSearchCursor,
 } from "./query.js";
 import { brainSearchPatterns } from "./snippet.js";
 import { brainSearchNeedsAnyTerm, filterBrainVectorCandidates, rankBrainTextHits } from "./text.js";
@@ -109,10 +109,8 @@ export function createBrainSearch(deps: BrainSearchServiceDeps): BrainSearchFeat
   /** Text mode: keyset page on (score, hitId). Hybrid: offset page within the fused window. */
   async function rank(
     trx: Kysely<BrainDatabase>, scope: BrainScopeKey, query: BrainParsedSearchQuery, mode: "text" | "hybrid",
-    vector: VectorHits, fingerprint: string, notices: BrainSearchNotice[],
+    vector: VectorHits, fingerprint: string, cursor: BrainSearchCursor | null, notices: BrainSearchNotice[],
   ): Promise<{ readonly page: BrainRankedHit[]; readonly nextCursor: string | null }> {
-    const cursor = query.cursor === null ? null
-      : decodeBrainSearchCursor(query.cursor, fingerprint, mode === "text" ? "t" : "h");
     const any = await brainSearchNeedsAnyTerm(trx, scope, query);
     if (any) notices.push("any_term_fallback");
     if (mode === "text") {
@@ -165,6 +163,10 @@ export function createBrainSearch(deps: BrainSearchServiceDeps): BrainSearchFeat
       throw new BrainFeatureError("vector_search_unavailable");
     }
     let mode: "text" | "hybrid" = query.mode === "text" || active === null || continued === "t" ? "text" : "hybrid";
+    // A cursor must continue this query and mode: checked before any provider call, and even when no term is left to
+    // rank. With a cursor the mode stays as it is here (a provider failure is then vector_search_unavailable).
+    const cursor = query.cursor === null ? null
+      : decodeBrainSearchCursor(query.cursor, brainSearchFingerprint(query, mode), mode === "text" ? "t" : "h");
     const notices: BrainSearchNotice[] = query.termsDropped ? ["terms_dropped"] : [];
     if (query.terms.length === 0) notices.push("query_empty_after_parse");
     let found: VectorDocuments | null = null;
@@ -178,7 +180,7 @@ export function createBrainSearch(deps: BrainSearchServiceDeps): BrainSearchFeat
     const view = await withSearchRead(db, async (trx) => {
       const vector = await vectorHits(trx, scope, query, found);
       const { page, nextCursor } = query.terms.length === 0 ? { page: [], nextCursor: null }
-        : await rank(trx, scope, query, mode, vector, fingerprint, notices);
+        : await rank(trx, scope, query, mode, vector, fingerprint, cursor, notices);
       const items = await hydrateBrainHits(trx, scope, page, brainSearchPatterns(query.terms));
       return { items, nextCursor, freshness: await brainSearchFreshness(trx, scope, embed) };
     }, true);
