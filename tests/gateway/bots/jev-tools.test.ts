@@ -11,7 +11,8 @@ const grant: BotGrantRecord = { grantId: "gr_jevtest", ownerId: "owner", botId: 
   revision: 1, createdAt: new Date().toISOString(), expiresAt: null, revokedAt: null };
 function setup() {
   const run = new AbortController();
-  const state = { grants: [structuredClone(grant)], revision: 2, recipeId: "jev-inbox-triage", email: "owner@example.com" };
+  const state = { grants: [structuredClone(grant)], revision: 2, recipeId: "jev-inbox-triage", email: "owner@example.com",
+    accounts: [{ id: "connection", service: "gmail", account_label: "Work", account_email: "owner@example.com", status: "active" }] };
   const read = vi.fn(async (_owner, _scope, action) => action === "get_profile" ? { emailAddress: state.email } : { threads: [] });
   const evaluate = vi.fn();
   const fundedReady = vi.fn(async () => true);
@@ -25,12 +26,52 @@ function setup() {
     listGrants: async () => state.grants,
     signalFor: () => run.signal,
     recipes: { resolve: () => ({ capabilities: ["jev.inbox"], integrations: [{ service: "gmail", effects: ["read", "label"] }] }) } as never,
-    workflow: { read, evaluate, fundedReady, batchStore, listGmailAccounts: async () => [
-      { id: "connection", service: "gmail", account_label: "Work", account_email: state.email, status: "active" } ] },
+    workflow: { read, evaluate, fundedReady, batchStore, listGmailAccounts: async () => state.accounts },
   });
   return { tools, state, read, evaluate, run, fundedReady };
 }
 describe("Pi Bot Jev authority", () => {
+  it("accepts an explicitly approved replacement while ignoring a disconnected account's grant", async () => {
+    const { tools, state, read } = setup();
+    try {
+      state.grants.push({ ...grant, grantId: "gr_replacement", connectionId: "replacement" });
+      state.accounts[0]!.id = "replacement";
+      await tools.call(binding, { operation: "discover" }, AbortSignal.timeout(1000));
+      expect(read.mock.calls[0]?.[1]).toMatchObject({ account: { connectionId: "replacement", expectedEmail: state.email } });
+    } finally { await tools.close(); }
+  });
+  it("denies two active approved accounts and ambiguous labels before reading mail", async () => {
+    const { tools, state, read } = setup();
+    try {
+      state.grants.push({ ...grant, grantId: "gr_home", connectionId: "home", accountLabel: "Home" });
+      state.accounts.push({ ...state.accounts[0]!, id: "home", account_label: "Home" });
+      await expect(tools.call(binding, { operation: "discover" }, AbortSignal.timeout(1000))).rejects.toMatchObject({ code: "not_granted" });
+      state.grants.pop(); state.accounts[1]!.account_label = "Work";
+      await expect(tools.call(binding, { operation: "discover" }, AbortSignal.timeout(1000))).rejects.toMatchObject({ code: "not_granted" });
+      expect(read).not.toHaveBeenCalled();
+    } finally { await tools.close(); }
+  });
+  it("refuses an old discovery receipt when the approved account is replaced", async () => {
+    const { tools, state, read } = setup();
+    try {
+      const discovery = JSON.parse((await tools.call(binding, { operation: "discover" }, AbortSignal.timeout(1000))).content[0]!.text!);
+      state.grants.push({ ...grant, grantId: "gr_replacement", connectionId: "replacement" });
+      state.accounts[0]!.id = "replacement"; read.mockClear();
+      await expect(tools.call(binding, { operation: "select", receipt: discovery.receipt, threadId: "thread1" }, AbortSignal.timeout(1000))).rejects.toMatchObject({ code: "not_granted" });
+      expect(read).not.toHaveBeenCalled();
+    } finally { await tools.close(); }
+  });
+  it("does not carry saved batches across replacement-account authority", async () => {
+    const { tools, state, read, evaluate } = setup();
+    try {
+      const started = JSON.parse((await tools.call(binding, { operation: "batch_start" }, AbortSignal.timeout(1000))).content[0]!.text!);
+      state.grants.push({ ...grant, grantId: "gr_replacement", connectionId: "replacement" });
+      state.accounts[0]!.id = "replacement"; read.mockClear();
+      await expect(tools.call(binding, { operation: "batch_status", jobId: started.jobId }, AbortSignal.timeout(1000))).rejects.toMatchObject({ code: "not_granted" });
+      await expect(tools.call({ ...binding, runId: "replacement_run" }, { operation: "batch_status", jobId: started.jobId }, AbortSignal.timeout(1000))).rejects.toThrow("Inbox batch unavailable");
+      expect(read).not.toHaveBeenCalled(); expect(evaluate).not.toHaveBeenCalled();
+    } finally { await tools.close(); }
+  });
   it("reads saved progress in a fresh unfunded run without Gmail calls, but still gates later work", async () => {
     const { tools, fundedReady, read, evaluate, state } = setup();
     const started = JSON.parse((await tools.call(binding, { operation: "batch_start" }, AbortSignal.timeout(1000))).content[0]!.text!);
@@ -75,9 +116,11 @@ describe("Pi Bot Jev authority", () => {
     expect(read.mock.calls[0]?.[1]).toMatchObject({ agentId: binding.botId, account: { expectedEmail: "owner@example.com", labelingEnabled: true } });
     expect(evaluate).not.toHaveBeenCalled();
   });
-  it.each(["missing", "read_only", "wrong_account", "expired", "revoked", "ambiguous", "wrong_recipe", "wrong_owner"])("denies %s authority before reading mail", async reason => {
+  it.each(["missing", "read_only", "wrong_account", "expired", "revoked", "ambiguous", "wrong_recipe", "wrong_owner", "missing_email", "inactive_account"])("denies %s authority before reading mail", async reason => {
     const { tools, state, read } = setup();
     if (reason === "missing") state.grants = [];
+    if (reason === "missing_email") state.accounts[0]!.account_email = "";
+    if (reason === "inactive_account") state.accounts[0]!.status = "inactive";
     if (reason === "read_only") state.grants[0]!.effects = ["read"];
     if (reason === "wrong_account") state.grants[0]!.connectionId = "other";
     if (reason === "expired") state.grants[0]!.expiresAt = "2020-01-01T00:00:00Z";

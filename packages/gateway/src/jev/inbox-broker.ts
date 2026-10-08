@@ -18,6 +18,10 @@ const MAX_RUNS = 128;
 export class InboxPreviewError extends Error {
   constructor(readonly code: "denied" | "unavailable" | "invalid_request") { super("Inbox preview unavailable"); }
 }
+/** A receipt was refused before this call started classification or labeling. */
+export class InboxReceiptError extends InboxPreviewError {
+  constructor() { super("denied"); }
+}
 export function assertJevInboxProfile(raw: unknown, scope: HermesJevScope): void {
   const value = Profile.safeParse(raw);
   if (!value.success || value.data.emailAddress !== scope.account.expectedEmail) throw new InboxPreviewError("denied");
@@ -136,7 +140,7 @@ export function createJevInboxBroker(options: {
         }
         return completed(current.discovering, current, false);
       }
-      if (!record) throw new InboxPreviewError("denied");
+      if (!record) throw new InboxReceiptError();
       const current = record;
       if (input.operation === "select") {
         if (input.receipt !== current.discoveryReceipt || !current.discovery?.threads.some((t) => t.id === input.threadId)
@@ -180,7 +184,7 @@ export function createJevInboxBroker(options: {
         return completed(current.selecting, current, false);
       }
       const selected = current.selection;
-      if (!selected?.evidence || !selected.identity || input.receipt !== selected.receipt) throw new InboxPreviewError("denied");
+      if (!selected?.evidence || !selected.identity || input.receipt !== selected.receipt) throw new InboxReceiptError();
       if (!current.evaluating) current.evaluating = (async () => {
         const prepared = await boundedOperation<PreparedEvaluation>(async preparationSignal => {
           await profile(ownerId, scope, current, preparationSignal);

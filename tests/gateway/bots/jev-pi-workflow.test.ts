@@ -15,12 +15,13 @@ import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runti
 import type { BatchDocument, JevInboxBatchStore } from "../../../packages/gateway/src/jev/inbox-batch-store.js";
 import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
-it.each(["success", "revoke", "uncertain", "preflight_denied"])("Pi worker Jev workflow preserves checkpoint certainty (%s)", async mode => {
+it.each(["success", "revoke", "uncertain", "preflight_denied", "invalid_receipt", "missing_receipt", "expired_receipt", "expired_after_evaluation"])("Pi worker Jev workflow preserves checkpoint certainty (%s)", async mode => {
   const { db, destroy } = await createBotStateDatabase();
   const run = new AbortController();
   let tools: ReturnType<typeof createBotJevTools> | undefined;
   try {
     const observedTime = Date.now();
+    let clock = observedTime;
     const now = new Date(observedTime).toISOString();
     const savedGrant = await createBotGrantsRepository(db).grant({ ownerId: OWNER, botId: BOT, service: "gmail", connectionId: "conn_pi", accountLabel: "Work",
       effects: ["read", "label"], audience: "direct", grantedByActorId: OWNER, now });
@@ -45,6 +46,11 @@ it.each(["success", "revoke", "uncertain", "preflight_denied"])("Pi worker Jev w
     });
     const evaluate = vi.fn(async () => ({ requestId: "jev_req_pi_fixture", recipe: "email-triage-v1" as const, model: "typesafe/jev" as const, latencyMs: 1,
       answers: JEV_EMAIL_TRIAGE_ANSWER_IDS.map(id => ({ id, type: "boolean" as const, probability: id === "newsletter" ? .96 : .1 })) }));
+    if (mode === "expired_after_evaluation") evaluate.mockImplementation(async () => {
+      clock += 16 * 60_000;
+      return { requestId: "jev_req_pi_fixture", recipe: "email-triage-v1" as const, model: "typesafe/jev" as const, latencyMs: 1,
+        answers: JEV_EMAIL_TRIAGE_ANSWER_IDS.map(id => ({ id, type: "boolean" as const, probability: .1 })) };
+    });
     const label = vi.fn(async (_owner, _scope, input, _signal, authorize) => {
       await authorize();
       const existing = mail.get(input.threadId)!;
@@ -59,7 +65,7 @@ it.each(["success", "revoke", "uncertain", "preflight_denied"])("Pi worker Jev w
       async open(value) { document = structuredClone(value); return structuredClone(document); },
       async save(value, revision) { if (document?.revision !== revision) throw new Error("Revision conflict"); document = structuredClone(value); return structuredClone(document); },
     };
-    tools = createBotJevTools({ agents: { get: async () => ({ id: BOT, revision: 1, recipeRef: { recipeId: recipe.recipeId, version: recipe.version } }) as never }, recipes,
+    tools = createBotJevTools({ now: () => clock, agents: { get: async () => ({ id: BOT, revision: 1, recipeRef: { recipeId: recipe.recipeId, version: recipe.version } }) as never }, recipes,
       listGrants: (ownerId, botId) => createBotGrantsRepository(db).listLive({ ownerId, botId, audience: "direct", now }), signalFor: candidate => registry.inferenceSignal(candidate) ?? undefined,
       workflow: { read, evaluate, label, batchStore, fundedReady: async () => true,
         listGmailAccounts: async () => [{ id: "conn_pi", service: "gmail", account_label: "Work", account_email: "work@example.test", status: "active" }] } });
@@ -88,6 +94,30 @@ it.each(["success", "revoke", "uncertain", "preflight_denied"])("Pi worker Jev w
       const checkpoints = await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: binding.runId });
       expect(checkpoints.map(row => row.phase)).toEqual(["observed_complete"]);
       expect(document).toBeNull(); expect(evaluate).not.toHaveBeenCalled(); expect(label).not.toHaveBeenCalled();
+      return;
+    }
+    if (mode === "expired_after_evaluation") {
+      const discovery = await execute({ operation: "discover" });
+      const selected = await execute({ operation: "select", receipt: discovery.receipt, threadId: "thread1" });
+      await expect(execute({ operation: "evaluate", receipt: selected.receipt })).rejects.toThrow("unavailable");
+      const checkpoints = await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: binding.runId });
+      expect(checkpoints.filter(row => row.phase === "effect_unknown")).toHaveLength(1);
+      expect(evaluate).toHaveBeenCalledOnce(); expect(label).not.toHaveBeenCalled();
+      return;
+    }
+    if (["invalid_receipt", "missing_receipt", "expired_receipt"].includes(mode)) {
+      let receipt = "a".repeat(64);
+      if (mode !== "missing_receipt") {
+        const discovery = await execute({ operation: "discover" });
+        const selected = await execute({ operation: "select", receipt: discovery.receipt, threadId: "thread1" });
+        if (mode === "expired_receipt") { receipt = selected.receipt; clock += 16 * 60_000; }
+      }
+      read.mockClear(); evaluate.mockClear(); label.mockClear();
+      await expect(execute({ operation: "evaluate", receipt })).rejects.toThrow("does not have access");
+      const checkpoints = await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: binding.runId });
+      expect(checkpoints.every(row => row.phase === "observed_complete")).toBe(true);
+      expect(evaluate).not.toHaveBeenCalled(); expect(label).not.toHaveBeenCalled();
+      expect(read.mock.calls.every(call => call[2] === "get_profile")).toBe(true);
       return;
     }
     const start = await execute({ operation: "batch_start" });

@@ -20,14 +20,14 @@ Existing read-only Inbox Bots continue resolving their saved version without new
 
 - The recipe declares a dedicated `jev.inbox` capability and Gmail `read` plus narrow `label` effects. It does not expose `integration.call`, shell execution, arbitrary Gmail mutation or credential access.
 - The account-choice and connection consent disclose the requested effects before granting access: read Inbox and add Jev classification labels; preserve existing labels; no archive, send, delete or mark read. A label grant is distinct from generic integration `write`.
-- The gateway derives the account from the owner's exact live Bot grant and active Gmail connection, including expected profile email. Model arguments cannot select an arbitrary account, owner, message payload or classification result.
+- The gateway derives the account from the owner's exact live Bot grant and active Gmail connection, including expected profile email. Disconnected grants do not block an explicitly approved replacement; exactly one usable grant must match one active account by both label and connection ID. Multiple usable grants or duplicate active labels are denied. Model arguments cannot select an arbitrary account, owner, message payload or classification result.
 - Every checkpoint revalidates owner, exact recipe version, Bot revision, selected connection and grant identity/revision/expiry. Revocation or replacement stops subsequent effects. The authority fingerprint also binds receipts and durable batches.
 - No legacy permission, binding or batch is silently imported into a native Bot. Existing agents remain available for compatibility; a newly created Pi Bot obtains fresh consent.
 - Reuse the existing server-discovered evidence, funded Jev evaluation, deterministic classification policy, label-only execution and Gmail readback. No main-model claims substitute for actual Jev results or confirmed label writes.
 - Jev uses the existing Matrix AI Gateway owner funding route. Main-model credentials remain governed by the owned Pi route resolver. No Hermes Python SDK or launch check applies to a Pi run.
 - Native task execution is optional. An authenticated shared-runtime reviewer can run an authorized Pi Bot with coordinator tools without accessing the runtime owner's native provider connections. Such a run never advertises `agent.task`. Owner runs with a saved native executor still require fresh admission; revoked or unavailable saved authorization blocks the run instead of silently dropping it.
 
-Saved batch status still checks live Bot/account authority but does not require paid Jev readiness or fetch Gmail. A later processing operation must complete normal admission; known profile preflight refusals are reported as refusals, not uncertain writes.
+Saved batch status still checks live Bot/account authority but does not require paid Jev readiness or fetch Gmail. A later processing operation must complete normal admission; known profile preflight refusals are reported as refusals, not uncertain writes. A missing, wrong or expired evaluation receipt refused before classification or labeling records a certain refusal. Failures after paid classification or label dispatch may have started remain uncertain, including authority loss and partial batch effects.
 
 ## Authentication and resource boundaries
 

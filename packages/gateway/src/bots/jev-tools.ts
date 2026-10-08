@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ChatAgent, BotToolResult } from "@matrix-os/contracts";
 import type { HermesJevScope } from "../chat/hermes-integration-capability.js";
 import type { GmailAccountRow } from "../chat/jev-recipe-authority.js";
-import { createJevInboxBroker, InboxPreviewError, InboxPreviewInput } from "../jev/inbox-broker.js";
+import { createJevInboxBroker, InboxPreviewError, InboxPreviewInput, InboxReceiptError } from "../jev/inbox-broker.js";
 import { createJevInboxBatch } from "../jev/inbox-batch.js";
 import { createInboxBatchProcessor } from "../jev/inbox-batch-process.js";
 import type { JevInboxBatchStore } from "../jev/inbox-batch-store.js";
@@ -47,15 +47,21 @@ export function createBotJevTools(deps: {
     const grants = (await deps.listGrants(binding.ownerId, binding.botId)).filter(grant => grant.ownerId === binding.ownerId
       && grant.botId === binding.botId && grant.service === "gmail" && grant.audience === "direct" && !grant.revokedAt
       && (!grant.expiresAt || Date.parse(grant.expiresAt) > now()) && grant.effects.includes("read") && grant.effects.includes("label"));
-    if (grants.length !== 1) throw new BotBrokerActionError("not_granted");
-    const grant = grants[0]!;
     const accounts = (await deps.workflow.listGmailAccounts(binding.ownerId)).filter(account => account.service === "gmail"
-      && account.status === "active" && account.account_label === grant.accountLabel);
-    if (accounts.length !== 1 || accounts[0]!.id !== grant.connectionId || !accounts[0]!.account_email) throw new BotBrokerActionError("not_granted");
+      && account.status === "active");
+    // Disconnected grants do not authorize work or block an approved replacement.
+    // Duplicate active labels and multiple usable grants remain ambiguous.
+    const usable = grants.flatMap(grant => {
+      const matching = accounts.filter(account => account.account_label === grant.accountLabel);
+      return matching.length === 1 && matching[0]!.id === grant.connectionId && matching[0]!.account_email
+        ? [{ grant, account: matching[0]! }] : [];
+    });
+    if (usable.length !== 1) throw new BotBrokerActionError("not_granted");
+    const { grant, account } = usable[0]!;
     return { kind: "jev_inbox_preview", agentId: binding.botId, runId: binding.runId, revision: agent.revision,
       authorityStamp: digest([agent.recipeRef, grant.grantId, grant.revision, grant.grantedByActorId, grant.expiresAt]),
       account: { service: "gmail", accountLabel: grant.accountLabel, connectionId: grant.connectionId,
-        expectedEmail: accounts[0]!.account_email!, labelingEnabled: true } };
+        expectedEmail: account.account_email!, labelingEnabled: true } };
   }
   function clear(owner: string, run: string) {
     const entry = active.get(key(owner, run));
@@ -147,7 +153,9 @@ export function createBotJevTools(deps: {
       }
       catch (error: unknown) {
         const operation = input.data.operation;
-        if ((operation === "evaluate" || operation === "batch_next") && (error instanceof BotBrokerActionError || error instanceof InboxPreviewError)) {
+        const knownReceiptRefusal = operation === "evaluate" && error instanceof InboxReceiptError;
+        if ((operation === "evaluate" || operation === "batch_next") && !knownReceiptRefusal
+          && (error instanceof BotBrokerActionError || error instanceof InboxPreviewError)) {
           // Authority can disappear after a partial external effect. Never mark it observed_complete.
           throw new Error("Jev Inbox execution could not be confirmed", { cause: error });
         }
