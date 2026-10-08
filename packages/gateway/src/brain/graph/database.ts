@@ -43,6 +43,10 @@ export async function bootstrapBrainGraphDatabase(db: Kysely<BrainDatabase>): Pr
     // matches no digest, so a row written before the column reads as pending.
     await sql`ALTER TABLE brain_graph_state ADD COLUMN IF NOT EXISTS
       refs_digest TEXT NOT NULL DEFAULT ${sql.lit("0".repeat(32))} CHECK (refs_digest ~ '^[a-f0-9]{32}$')`.execute(trx);
+    // Each path the decision quotes name -> whether a path ref of the scope named it then (decided_in file links read
+    // other documents' refs, so a path ref added or gone makes the row pending).
+    await sql`ALTER TABLE brain_graph_state ADD COLUMN IF NOT EXISTS
+      decision_paths JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(decision_paths) = 'object')`.execute(trx);
 
     // Document entities carry document_id (cascade); every other kind leaves it null (the FK is then not checked).
     await sql`

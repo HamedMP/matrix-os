@@ -47,6 +47,17 @@ export function claimsDigestSql(d: string) {
     AND c.revision = ${ref("revision")})`;
 }
 
+/**
+ * Whether state row `s` read a decision path as known (a path ref of the scope) that is no longer, or the reverse:
+ * its decided_in file links then disagree with the scope's path refs.
+ */
+export function decisionPathsChangedSql(s: string) {
+  const ref = (column: string) => sql.ref(`${s}.${column}`);
+  return sql<boolean>`EXISTS (SELECT 1 FROM jsonb_each(${ref("decision_paths")}) AS p(path, known)
+    WHERE p.known <> to_jsonb(EXISTS (SELECT 1 FROM brain_document_refs r WHERE r.owner_id = ${ref("owner_id")}
+      AND r.scope_id = ${ref("scope_id")} AND r.kind = 'path' AND r.value = p.path)))`;
+}
+
 /** md5 of the refs of document `d` (a sync replaces refs without a new revision when the content is unchanged). */
 export function refsDigestSql(d: string) {
   const ref = (column: string) => sql.ref(`${d}.${column}`);
@@ -220,9 +231,10 @@ export async function deriveGraphDocument(
   const known = candidates.length === 0 ? [] : await trx.selectFrom("brain_document_refs").select("value").distinct()
     .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("kind", "=", "path")
     .where("value", "in", candidates).execute();
+  const knownPaths = new Set(known.map((row) => row.value));
   const derivation = deriveBrainGraph({
     documentId, provenance: document.provenance, title: document.title, body: document.body, refs,
-    decisionQuotes, knownPaths: new Set(known.map((row) => row.value)),
+    decisionQuotes, knownPaths,
     parentTargets: await parentTargets(trx, scope, refs),
     commitPullRequests: document.provenance === "git_commit" ? await commitPullRequests(trx, scope, document.body) : [],
   });
@@ -243,9 +255,11 @@ export async function deriveGraphDocument(
     })).execute();
   }
   const identities = derivation.identities.slice(0, BRAIN_GRAPH_IDENTITIES_PER_DOCUMENT);
+  const decisionPaths = Object.fromEntries(candidates.map((path) => [path, knownPaths.has(path)]));
   const state = {
     incarnation: document.incarnation, revision: document.revision, claims_digest: document.claims_digest,
     refs_digest: document.refs_digest, identities: sql`${JSON.stringify(identities)}::jsonb`,
+    decision_paths: sql`${JSON.stringify(decisionPaths)}::jsonb`,
     link_count: derivation.links.length, derived_at: now.toISOString(),
   };
   await trx.insertInto("brain_graph_state")
