@@ -244,3 +244,72 @@ export function extractBrainWhySections(
   }
   return { summary, invariants };
 }
+
+// Items.
+
+type ItemOrigin = Pick<BrainWhyItem, "number" | "sha" | "link"> & {
+  readonly message: string;
+  readonly messageTruncated: boolean;
+};
+
+function whyKind(provenance: string): BrainWhyKind {
+  if (provenance === GIT_PROVENANCE.pullRequest) return "pr";
+  return provenance === GIT_PROVENANCE.spec ? "spec" : "commit";
+}
+
+function gitOrigin(kind: "pr" | "commit", body: string): ItemOrigin {
+  const footer = parseBrainGitFooter(body);
+  if (footer === null) return { number: null, sha: null, link: "none", message: body, messageTruncated: false };
+  const { message, messageTruncated, sha } = footer;
+  if (kind === "commit" || footer.number === null || footer.sigil === null) {
+    return { number: null, sha, link: "none", message, messageTruncated };
+  }
+  const link: BrainWhyLink = footer.mergedBranch || footer.sigil === "!" ? "explicit" : "inferred";
+  return { number: footer.number, sha, link, message, messageTruncated };
+}
+
+function specOrigin(document: BrainDocument): ItemOrigin {
+  return { number: null, sha: null, link: "none", message: document.body, messageTruncated: false };
+}
+
+function toWhyItem(match: BrainRefMatch, detail: BrainWhyDetail): BrainWhyItem {
+  const { document, refs } = match;
+  const kind = whyKind(document.provenance);
+  const values = (refKind: string) => refs.filter((ref) => ref.kind === refKind).map((ref) => ref.value);
+  const [paths, specs, handles] = [values("path"), values("spec"), values("handle")];
+  const origin = kind === "spec" ? specOrigin(document) : gitOrigin(kind, document.body);
+  // The one cite rule every Company Brain view uses (brain/cite.ts); refs come sorted, so [0] is the first by value.
+  const label = brainCiteLabel({
+    provenance: document.provenance, title: document.title, bodyTail: document.body, handle: handles[0] ?? null,
+    spec: specs[0] ?? null,
+  });
+  const { summary, invariants } = extractBrainWhySections(origin.message, {
+    kind, maxChars: BRAIN_WHY_EXCERPT_MAX_CHARS[detail], messageTruncated: origin.messageTruncated,
+    title: document.title,
+  });
+  return {
+    documentId: document.documentId, kind, label, number: origin.number, sha: origin.sha,
+    title: document.title, date: document.sourceUpdatedAt, permalink: document.permalink, link: origin.link,
+    summary, invariants, specs: specs.slice(0, BRAIN_WHY_SPECS_MAX[detail]),
+    matchedPaths: paths.slice(0, BRAIN_WHY_MATCHED_PATHS_MAX[detail]), matchedPathCount: paths.length,
+  };
+}
+
+/** Pull requests, commits and specs that touched `query.path`; a bad path, detail, limit or cursor is "invalid". */
+export async function brainWhy(
+  repository: Pick<BrainRepository, "listDocumentsByRef">,
+  scope: BrainScopeKey,
+  query: BrainWhyQuery,
+): Promise<BrainWhyPage> {
+  const target = normalizeBrainWhyPath(query.path);
+  const detail = query.detail ?? "brief";
+  if (target === null || (detail !== "brief" && detail !== "full")) throw new BrainStoreError("invalid");
+  const page = await repository.listDocumentsByRef(scope, {
+    kind: "path", value: target.path, mode: target.match === "folder" ? "under" : "exact_or_under",
+    provenances: WHY_PROVENANCES, extraRefKinds: ["spec", "handle"],
+    limit: query.limit ?? BRAIN_WHY_DEFAULT_LIMIT, cursor: query.cursor ?? null,
+  });
+  const { total, totalCapped, nextCursor } = page;
+  const items = page.items.map((match) => toWhyItem(match, detail));
+  return { path: target.path, match: target.match, detail, total, totalCapped, items, nextCursor };
+}
