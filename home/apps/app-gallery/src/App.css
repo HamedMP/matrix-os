@@ -58,7 +58,7 @@ h1,h2,h3,p { margin:0; } h1,h2,h3 { font-family:var(--display-font); font-weight
 .installed-empty > svg { width:24px; height:24px; flex:none; }
 .installed-empty h3 { margin:0 0 4px; color:var(--fg); font-size:14px; font-weight:600; }
 .installed-empty p { margin:0 0 6px; }
-.installed-empty a { display:inline-flex; align-items:center; min-height:44px; color:var(--fg); text-underline-offset:3px; }
+.installed-empty button { display:inline-flex; align-items:center; min-height:44px; padding:0; background:transparent; color:var(--fg); text-decoration:underline; text-underline-offset:3px; }
 .category-tabs { display:flex; gap:2px; flex-wrap:wrap; justify-content:flex-end; }
 .readiness-tools { display:flex; align-items:center; justify-content:space-between; margin:-12px 0 14px; color:var(--gallery-subtle); font-size:11px; }
 .readiness-tools select { font-size:11px; border:0; background:transparent; padding:4px 0; max-width:200px; }

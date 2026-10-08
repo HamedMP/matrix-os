@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import Gallery from '../../home/apps/app-gallery/src/App';
 import catalog from '../../home/system/app-gallery.json';
-afterEach(() => { cleanup(); delete window.MatrixOS; });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); delete window.MatrixOS; });
 it('offers installed apps, a working build request and a returnable full app detail', async () => {
   const generate=vi.fn();
   window.MatrixOS={generate, integrations:async()=>[], gatewayFetch:async()=>({version:1,apps:catalog.apps.slice(0,3).map((app,i)=>({...app,installed:i===0, ...(i===0 ? {launchPath:`apps/${app.id}`}:{})}))})};
@@ -56,5 +56,30 @@ it('helps a new owner find their first app from the installed-app empty state', 
   const heading=await screen.findByRole('heading',{name:'No apps yet'});
   expect(heading.closest('.installed-empty')?.querySelector('svg')).toBeTruthy();
   expect(screen.getByText('Get an app from Gallery to make it yours.')).toBeTruthy();
-  expect(screen.getByRole('link',{name:'Explore Gallery'}).getAttribute('href')).toBe('#catalog-title');
+  const base=document.createElement('base');
+  base.href='https://preview.example/apps/app-gallery/';
+  document.head.append(base);
+  try {
+    const before=window.location.href;
+    const bridge=window.MatrixOS;
+    const target=screen.getByRole('heading',{name:'Gallery',exact:true});
+    const scroll=vi.fn(); target.scrollIntoView=scroll;
+    fireEvent.click(screen.getByRole('button',{name:'Explore Gallery'}));
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(target);
+    expect(window.location.href).toBe(before);
+    expect(window.MatrixOS).toBe(bridge);
+  } finally { base.remove(); }
+});
+
+it('distinguishes unavailable installed inventory from a successfully empty collection and supports retry', async () => {
+  const gatewayFetch=vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue({version:1,apps:[]});
+  window.MatrixOS={integrations:async()=>[],gatewayFetch};
+  render(<Gallery/>);
+  expect(await screen.findByRole('heading',{name:'Your apps are unavailable'})).toBeTruthy();
+  expect(screen.queryByRole('heading',{name:'No apps yet'})).toBeNull();
+  expect(screen.getByText('Refresh Gallery to try again.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'Try again'}));
+  expect(await screen.findByRole('heading',{name:'No apps yet'})).toBeTruthy();
+  expect(screen.queryByRole('heading',{name:'Your apps are unavailable'})).toBeNull();
 });
