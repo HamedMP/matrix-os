@@ -140,3 +140,107 @@ export async function deleteOrphans(
       UNION SELECT document_id FROM v) gone`.execute(trx);
   return Number(result.rows[0]!.n);
 }
+
+const tsv = (text: SqlFragment, weight: "A" | "B" | "D") =>
+  sql`setweight(to_tsvector('simple', coalesce(${text}, '')), ${sql.lit(weight)})`;
+
+/**
+ * Rebuilds the rows and claim rows of up to BRAIN_SEARCH_REBUILD_BATCH documents; returns the (incarnation,
+ * revision) indexed per live document. The row of a document no longer live stays for the sweep, which drops its
+ * chunks first.
+ */
+export async function rebuildDocuments(
+  trx: Transaction<BrainDatabase>, scope: BrainScopeKey, documentIds: readonly string[], now: Date,
+): Promise<BrainSearchOrphan[]> {
+  const ids = sql.join([...documentIds]);
+  const refs = sql`(SELECT string_agg(r.value, ' ' ORDER BY r.kind, r.value) FROM brain_document_refs r
+    WHERE r.owner_id = d.owner_id AND r.scope_id = d.scope_id AND r.document_id = d.document_id
+      AND r.kind IN ('handle', 'label'))`;
+  const statements = sql`(SELECT string_agg(c.statement, ' ' ORDER BY c.claim_id, c.extractor) FROM brain_claims c
+    WHERE c.owner_id = d.owner_id AND c.scope_id = d.scope_id AND c.document_id = d.document_id
+      AND c.incarnation = d.incarnation AND c.revision = d.revision)`;
+  // Claim statements are embedded too, so a claims change re-embeds; chunks whose text is unchanged keep their vectors.
+  const same = sql`brain_search_documents.incarnation = excluded.incarnation
+    AND brain_search_documents.revision = excluded.revision AND brain_search_documents.claims_key = excluded.claims_key`;
+  const written = await sql<BuiltRow>`
+    INSERT INTO brain_search_documents
+      (owner_id, scope_id, document_id, incarnation, revision, claims_key, embedded_provider, tsv, indexed_at)
+    SELECT d.owner_id, d.scope_id, d.document_id, d.incarnation, d.revision, ${CLAIMS_KEY}, NULL,
+      ${tsv(sql.ref("d.title"), "A")} || ${tsv(refs, "B")} || ${tsv(statements, "B")} || ${tsv(sql.ref("d.body"), "D")},
+      ${now}
+    FROM brain_documents d
+    WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.document_id IN (${ids})
+      AND d.deleted_at IS NULL
+    ON CONFLICT (owner_id, scope_id, document_id) DO UPDATE SET
+      embedded_provider = CASE WHEN ${same} THEN brain_search_documents.embedded_provider END,
+      embed_failed_at = CASE WHEN ${same} THEN brain_search_documents.embed_failed_at END,
+      incarnation = excluded.incarnation, revision = excluded.revision, claims_key = excluded.claims_key,
+      tsv = excluded.tsv, indexed_at = excluded.indexed_at
+    RETURNING document_id, incarnation, revision`.execute(trx);
+  const built = asBuilt(written.rows);
+  await sql`DELETE FROM brain_search_claims
+    WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId} AND document_id IN (${ids})`.execute(trx);
+  if (built.length === 0) return built;
+  await sql`
+    INSERT INTO brain_search_claims
+      (owner_id, scope_id, document_id, claim_id, extractor, kind, incarnation, revision, tsv)
+    SELECT c.owner_id, c.scope_id, c.document_id, c.claim_id, c.extractor, c.kind, c.incarnation, c.revision,
+      ${tsv(sql.ref("c.label"), "A")} || ${tsv(sql.ref("c.statement"), "B")} || ${tsv(sql.ref("c.quote"), "D")}
+    FROM brain_claims c
+    WHERE c.owner_id = ${scope.ownerId} AND c.scope_id = ${scope.scopeId}
+      AND c.document_id IN (${sql.join(built.map((row) => row.documentId))})`.execute(trx);
+  return built;
+}
+
+/**
+ * Marks a row embedded under `marker` (store and provider), or (marker null) records a failed attempt at `now`, only
+ * while the row still holds the (incarnation, revision) the attempt was for.
+ */
+export async function markEmbedding(
+  trx: Transaction<BrainDatabase>, scope: BrainScopeKey, built: BrainSearchOrphan, marker: string | null, now: Date,
+): Promise<void> {
+  const set = marker === null ? sql`embed_failed_at = ${now}`
+    : sql`embedded_provider = ${marker}, embed_failed_at = NULL`;
+  await sql`UPDATE brain_search_documents SET ${set}
+    WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId} AND document_id = ${built.documentId}
+      AND incarnation = ${built.incarnation}::uuid AND revision = ${built.revision}`.execute(trx);
+}
+
+/** True while the document is live at (incarnation, revision): a vector write for anything else is skipped. */
+export async function isLiveAt(
+  trx: QueryExecutorProvider, scope: BrainScopeKey, built: BrainSearchOrphan,
+): Promise<boolean> {
+  const rows = await sql`SELECT 1 FROM brain_documents
+    WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId} AND document_id = ${built.documentId}
+      AND deleted_at IS NULL AND incarnation = ${built.incarnation}::uuid AND revision = ${built.revision}`.execute(trx);
+  return rows.rows.length > 0;
+}
+
+/** scope_erased: rows that survived the cascade (none are expected). */
+export async function deleteScopeRows(trx: Transaction<BrainDatabase>, scope: BrainScopeKey): Promise<void> {
+  for (const table of DOCUMENT_TABLES) {
+    await sql`DELETE FROM ${sql.table(table)}
+      WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId}`.execute(trx);
+  }
+}
+
+/** What the embedding pass reads per live document: title, body and the joined statements of its current claims. */
+export interface BrainSearchEmbedSource {
+  readonly document_id: string; readonly incarnation: string; readonly revision: number; readonly title: string;
+  readonly body: string; readonly statements: string;
+}
+
+/** Only documents of a provenance the target may send are read; any other id is left out. */
+export async function selectEmbedSources(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, embed: BrainSearchEmbedTarget, ids: readonly string[],
+): Promise<BrainSearchEmbedSource[]> {
+  const rows = await sql<BrainSearchEmbedSource>`SELECT d.document_id, d.incarnation, d.revision, d.title, d.body,
+      coalesce(left((SELECT string_agg(DISTINCT c.statement, E'\\n' ORDER BY c.statement) FROM brain_claims c
+        WHERE c.owner_id = d.owner_id AND c.scope_id = d.scope_id AND c.document_id = d.document_id
+          AND c.incarnation = d.incarnation AND c.revision = d.revision), ${BRAIN_SEARCH_CHUNK.maxChars}::int), '')
+        AS statements
+    FROM brain_documents d
+    WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL
+      AND ${sendable(embed)} AND d.document_id IN (${sql.join([...ids])})`.execute(db);
+  return rows.rows;
+}
