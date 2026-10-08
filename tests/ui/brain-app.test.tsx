@@ -137,6 +137,16 @@ describe("BrainApp", () => {
     expect(api.brief).toHaveBeenCalled();
   });
 
+  it("never grows wider than a phone screen: the column shrinks, the nav wraps and the tab row scrolls", async () => {
+    renderApp();
+    const tablist = await screen.findByRole("tablist");
+    const nav = screen.getByRole("navigation", { name: "Company Brain" });
+    // A grid column sized by its content would take the whole tab row's width (501 px at 390 px on Web Mobile).
+    expect(nav.parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]", "min-w-0");
+    expect(nav).toHaveClass("min-w-0", "flex-wrap");
+    expect(tablist).toHaveClass("min-w-0", "max-w-full", "overflow-x-auto");
+  });
+
   it("still opens the old screen ids: ask is Search, commitments and risks are kinds on Decisions", async () => {
     renderApp(fakeBrainApi(), { initialScreen: "ask" });
     expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent("Search");
