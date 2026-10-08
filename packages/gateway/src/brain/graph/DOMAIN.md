@@ -40,8 +40,9 @@ the synced documents, their refs and their current decision claims. Spec: `specs
 - Alias actions (`aliases.ts`): merge; split ("not the same person": the row stays, the pair is never merged or
   suggested again); unmerge (the app's Undo of a manual merge: the manual row is deleted and carried aliases go
   back, so the pair can be suggested again and a `name:` key is decided by derivation again).
-- A refresh that stops at the entity limit says so in `stopReason: "graph_capacity"`; an abort or a spent budget
-  is no stop reason.
+- Each document checks the entity limit under the graph lock, counting every entity it would add (its own document
+  entity included); one that adds none derives at the limit. A refresh that stops at the entity limit says so in
+  `stopReason: "graph_capacity"`; an abort or a spent budget is no stop reason.
 
 ## Auth And Trust Boundaries
 

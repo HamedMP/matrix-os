@@ -45,8 +45,9 @@ export interface GraphHarness extends BrainHarness {
   refresh(): Promise<{ processed: number; removed: number; caughtUp: boolean }>;
 }
 
-export async function createGraphHarness(): Promise<GraphHarness> {
-  const harness = await createBrainHarness();
+/** Over `base` when given (a PostgreSQL store), else a fresh PGlite store. */
+export async function createGraphHarness(base?: BrainHarness): Promise<GraphHarness> {
+  const harness = base ?? await createBrainHarness();
   await bootstrapBrainGraphDatabase(harness.db);
   const graph = createBrainGraph({ repository: harness.repository, resolver, now: harness.now });
   const sources = {} as Record<"git" | "github" | "linear", string>;
