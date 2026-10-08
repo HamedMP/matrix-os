@@ -29,7 +29,10 @@ suite("Electron Desktop branded account entry", () => {
     page = await app.firstWindow();
     await page.getByRole("button", { name: "Create account", exact: true }).waitFor();
     await app.evaluate(({ ipcMain, BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]!.setContentSize(1280, 800);
+      const window = BrowserWindow.getAllWindows()[0]!;
+      // Allow the responsive fixture to reach narrow sizes even on large displays.
+      window.setMinimumSize(320, 480);
+      window.setContentSize(1280, 800);
       // Exercise the real renderer/preload bridge without creating an account
       // or opening a browser on the operator's computer.
       for (const channel of ["auth:start-device-flow", "auth:poll", "shell:open-external"]) {
@@ -80,8 +83,31 @@ suite("Electron Desktop branded account entry", () => {
     }
   });
 
+  it.each([1280, 640])("keeps artwork below the native titlebar at %i px wide", async (width) => {
+    await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setContentSize(size, 800), width);
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
+    const chrome = await page.evaluate(() => {
+      const titlebar = document.querySelector<HTMLElement>(".signin-titlebar")!;
+      const scene = document.querySelector<HTMLElement>(".signin-scene")!;
+      const signin = document.querySelector<HTMLElement>(".signin")!;
+      signin.scrollTop = 0;
+      return {
+        artworkTop: scene.getBoundingClientRect().top,
+        titlebarBottom: titlebar.getBoundingClientRect().bottom,
+        position: getComputedStyle(titlebar).position,
+        background: getComputedStyle(titlebar).backgroundColor,
+        paper: getComputedStyle(signin).backgroundColor,
+      };
+    });
+    expect(chrome.artworkTop).toBeGreaterThanOrEqual(chrome.titlebarBottom);
+    expect(chrome.position).toBe("fixed");
+    expect(chrome.background).toBe(chrome.paper);
+    await page.screenshot({ path: join(output, `titlebar-${width}.png`) });
+  });
+
   it("keeps approval reachable and avoids overflow in a narrow window", async () => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setContentSize(640, 720));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(640);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     const reopen = page.getByRole("button", { name: "Open browser again", exact: true });
     await reopen.click(); // Playwright scrolls the actual scroll container.

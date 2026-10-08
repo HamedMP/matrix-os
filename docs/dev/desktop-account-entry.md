@@ -12,6 +12,8 @@ entry palette stays fixed across workspace themes. Headings use Bricolage
 Grotesque and controls/body copy use Geist. Compact windows stack the scene and
 account panel, with scrolling so approval actions remain reachable. Controls
 provide a visible focus ring and respect reduced motion.
+The artwork starts below the shared native titlebar height, leaving the window
+controls on a fixed paper-colored drag region at every window width.
 
 ## Browser handoff
 
