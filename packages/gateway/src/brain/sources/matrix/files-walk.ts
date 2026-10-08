@@ -61,6 +61,8 @@ export function compareSegments(a: readonly string[], b: readonly string[]): num
 export interface WalkBudget {
   /** Entries examined; the walk stops (and can resume) when it runs out. */
   entries: number;
+  /** Directory entries the page may still read, skipped names included; the walk stops when it runs out too. */
+  reads: number;
   /** utf8 bytes a root-relative path may take; longer paths are left out. */
   readonly pathBytes: number;
   /** The last entry whose visit is complete (a file handled by the caller, or a directory entered). */
@@ -85,6 +87,8 @@ async function sortedEntries(directory: string, budget: WalkBudget) {
     if (entry.isFile()) entries.push({ name: entry.name, kind: "file" });
     else if (entry.isDirectory() && !isSecretLikeName(entry.name)) entries.push({ name: entry.name, kind: "directory" });
   }
+  // The page pays for the whole folder, so many folders full of skipped names cannot outrun its read budget.
+  budget.reads -= examined;
   // Names in one directory are unique, so the order is total.
   return entries.sort((a, b) => (a.name < b.name ? -1 : 1));
 }
@@ -111,8 +115,9 @@ export async function* walkFiles(
     const onPath = after !== null && after.length > segments.length
       && compareSegments(after.slice(0, segments.length), segments) === 0;
     if (!onPath && (order < 0 || (order === 0 && entry.kind === "file"))) continue;
-    // Entries before the resume point cost a comparison only, so every page makes progress.
-    if (budget.entries <= 0) return;
+    // Entries before the resume point cost a comparison only, so every page makes progress. A folder is read only
+    // after this check, so a page reads at most one folder past dirReadsPerPage.
+    if (budget.entries <= 0 || budget.reads <= 0) return;
     budget.entries -= 1;
     const path = join(directory, entry.name);
     if (Buffer.byteLength(segments.join("/"), "utf8") > budget.pathBytes) {
