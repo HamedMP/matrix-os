@@ -1,4 +1,6 @@
 :root {
+  --game-accent: #9a5931;
+  --game-wash: #f8eee6;
   --app-bg: var(--matrix-bg, #fafaf5);
   --app-fg: var(--matrix-fg, #32352e);
   --app-card: var(--matrix-card, #ffffff);
@@ -423,4 +425,35 @@ body {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Keep the wooden play surface and checker ink independent of host palettes. */
+:root {
+  --frame: #6d513d;
+  --felt: #f3ead9;
+  --bar-tone: #634937;
+  --tray-tone: #56402f;
+  --tri-a: #b67446;
+  --tri-b: #667768;
+}
+.bg-app { gap: 18px; padding: 20px; }
+.bg-topbar { gap: 12px; }
+.bg-title { font-size: 20px; letter-spacing: -.035em; }
+.bg-pip { border: 1px solid var(--app-border); border-radius: 16px; padding: 7px 12px; }
+.bg-pip .value { font-size: 18px; }
+.bg-status { flex-wrap: wrap; line-height: 1.5; }
+.die-choice { flex-wrap: wrap; }
+.bg-board { max-width: min(100%, calc((100dvh - 160px) * 1.5625)); }
+@media (max-width: 760px) {
+  .bg-app { overflow-y: auto; gap: 14px; }
+  .bg-title { width: 100%; }
+  .bg-spacer { display: none; }
+  .bg-actions { flex-wrap: wrap; }
+  .bg-board-wrap { flex: none; }
+  .bg-board { height: auto; max-width: 100%; }
+  .bg-svg { height: auto; }
+  .bg-records { margin-left: 0; width: 100%; }
+  .bg-overlay { padding: 12px; gap: 8px; }
+  .bg-overlay h2 { font-size: 22px; }
+  .bg-overlay p { font-size: 12px; }
 }

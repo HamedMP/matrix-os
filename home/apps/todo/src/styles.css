@@ -517,3 +517,28 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Capture and tasks share the soft family without becoming a dashboard. */
+.todo-app .sidebar { background: color-mix(in srgb, var(--app-card) 55%, transparent); }
+.todo-app .nav-item { border-radius: 14px; }
+.todo-app .nav-item--active { background: var(--family-surface); box-shadow: var(--family-lift); }
+.todo-app .content { min-width: 0; }
+.todo-app .content-head { flex-wrap: wrap; gap: 6px 12px; }
+.todo-app .capture { background: transparent; border: 0; border-radius: 18px; }
+.todo-app .capture-input { border: 1px solid var(--app-border); border-radius: 18px; background: var(--family-surface); box-shadow: var(--family-inset); }
+.todo-app .task-list { display: flex; flex-direction: column; gap: 8px; }
+.todo-app .task-row { min-height: 80px; border: 1px solid var(--app-border); border-radius: 18px; padding: 14px; background: var(--family-surface); box-shadow: var(--shadow); flex-shrink: 0; }
+.todo-app .task-row--selected { border-color: color-mix(in srgb, var(--app-accent) 40%, var(--app-border)); box-shadow: var(--family-lift); }
+.todo-app .task-title { min-height: 44px; overflow-wrap: anywhere; }
+.todo-app .task-main { align-self: center; }
+.todo-app .inspector { border: 1px solid var(--app-border); border-radius: var(--family-radius); }
+.todo-app .field { text-transform: none; letter-spacing: 0; }
+.todo-app .field :is(input, textarea, select) { font-size: 16px; }
+@media (max-width: 760px) {
+ .todo-app .sidebar { max-height: 190px; }
+ .todo-app .task-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap: 4px 8px; padding: 12px; }
+ .todo-app .task-main { grid-column: 2; grid-row: 1 / 3; }
+ .todo-app .flag { grid-column: 3; grid-row: 1; }
+ .todo-app .row-delete { grid-column: 3; grid-row: 2; }
+ .todo-app .inspector { inset: 8px; width: auto; max-height: none; }
+}

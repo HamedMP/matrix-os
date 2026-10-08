@@ -613,3 +613,29 @@ button:focus-visible,
     transition: none !important;
   }
 }
+
+/* Keep the living sky; forecast cards use the common porcelain surfaces. */
+.weather-app .sidebar { background: color-mix(in srgb, var(--app-card) 55%, transparent); }
+.weather-app .loc-chip { border-radius: 16px; }
+.weather-app .loc-chip--active { background: var(--family-surface); border-color: color-mix(in srgb, var(--app-accent) 28%, var(--app-border)); box-shadow: var(--family-lift); }
+.weather-app .hero { border-radius: var(--family-radius); box-shadow: var(--shadow-lg); flex-shrink: 0; }
+.weather-app .hero__chips { flex-wrap: wrap; }
+.weather-app .hero__meta { flex-wrap: wrap; }
+.weather-app .panel { background: var(--family-surface); border: 1px solid var(--app-border); border-radius: var(--family-radius); padding: 22px; box-shadow: var(--family-lift); flex-shrink: 0; }
+.weather-app .panel__title { text-transform: none; letter-spacing: 0; color: var(--app-fg); font-weight: 650; }
+.weather-app .hourly-strip { gap: 12px; }
+.weather-app .hourly-cell { border-radius: 16px; background: color-mix(in srgb, var(--app-muted) 65%, transparent); }
+:root .search-bar input { min-width: 0; }
+@media (max-width: 760px) {
+ .weather-app .sidebar { display: flex; height: auto; max-height: 210px; flex-shrink: 0; }
+ .weather-app .sidebar__head { flex-shrink: 0; }
+ .weather-app .location-list { min-height: 64px; flex-shrink: 0; }
+ .weather-app .sidebar__hint { margin: 0; padding: 0; }
+ .weather-app .hero { padding: 24px; min-height: 300px; }
+ .weather-app .hero__content { padding: 0; }
+ .weather-app .hero__temp { font-size: clamp(72px, 23vw, 110px); }
+ .weather-app .panel { padding: 18px; }
+ .weather-app .daily-row { grid-template-columns: 36px 24px 30px minmax(24px, 1fr) 30px; gap: 6px; }
+ .weather-app .daily-row__day { font-size: 13px; }
+ :root .search-overlay { padding-top: max(20px, env(safe-area-inset-top)); }
+}
