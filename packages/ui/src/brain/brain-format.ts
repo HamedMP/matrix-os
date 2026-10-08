@@ -54,15 +54,26 @@ export function brainUsdText(microUsd: number): string {
 /** One line about the project's model budget, or "" without one (the gateway has no model settings). */
 export function brainModelBudgetText(spend: BrainModelSpend | null): string {
   if (spend === null) return "";
-  return `Model budget (per owner, all projects): ${brainUsdText(spend.remainingMicroUsd)} of `
+  return `Background model work (claims, all projects): ${brainUsdText(spend.remainingMicroUsd)} of `
     + `${brainUsdText(spend.capMicroUsd)} USD left for the last 30 days.`;
 }
 
 /** The model spend on its own, across all of the owner's projects; "" without a budget. */
 export function brainModelSpendText(spend: BrainModelSpend | null): string {
   if (spend === null) return "";
-  return `Model spend in the last 30 days, all projects: ${brainUsdText(spend.spentMicroUsd)} of `
-    + `${brainUsdText(spend.capMicroUsd)} USD.`;
+  return `Background model work in the last 30 days, all projects: ${brainUsdText(spend.spentMicroUsd)} of `
+    + `${brainUsdText(spend.capMicroUsd)} USD. Chat answers are billed like any Chat.`;
+}
+
+/** How long ago, short: "now", "5m", "3h", "2d", then the day. */
+export function brainAgo(iso: string, now: number): string {
+  const minutes = Math.floor((now - Date.parse(iso)) / 60_000);
+  if (!Number.isFinite(minutes)) return "";
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)}h`;
+  if (minutes < 7 * 24 * 60) return `${Math.floor(minutes / (24 * 60))}d`;
+  return brainDay(iso);
 }
 
 /** "2026-10-02" from an ISO instant; the brain stores UTC dates. */
