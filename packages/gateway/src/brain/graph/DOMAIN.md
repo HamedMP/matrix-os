@@ -64,8 +64,9 @@ the synced documents, their refs and their current decision claims. Spec: `specs
   unreferenced entities; a document refused at the entity limit stays pending while the pass goes on (one that adds
   no entity may free some), then refresh sweeps and goes on when that made room.
   A hook with document ids that removed any document sweeps too, 1,000 at a time until fewer go or its budget ends,
-  so a removed source's people are gone when its purge reports done. A foreign-key violation (document erased
-  mid-write) skips that document.
+  so a removed source's people are gone when its purge reports done. Freshness counts documents only, so the next
+  start's index catch-up refreshes every listed scope, finishing a sweep a shutdown cut short. A foreign-key
+  violation (document erased mid-write) skips that document.
 - Deriving or removing a document marks outdated the documents that read it, only when what they read changed
   (children through `parent` refs, never itself; git commits whose link disagrees with a github_pr's `commit` refs),
   each set marked in one write, never a capped list. Their state row stays, so refresh re-derives a live one and

@@ -3,8 +3,10 @@
  * hooks are closed before the HTTP server, so a sync that commits during shutdown emits into a closed bus):
  * - createBrainIndexCatchUp: a one-shot job shortly after start. It lists the scopes that have or had a source
  *   (a removed source's tombstones still need dropping), newest change first, at most BRAIN_SCHEDULED_SCOPES_MAX,
- *   and runs one bounded refresh of each derived index whose freshness shows pending documents. One pass under a
- *   wall-clock budget; stop() aborts it and waits briefly. Timers are unref'd.
+ *   and runs one bounded refresh of each derived index, even one whose freshness shows no pending document: the
+ *   graph's freshness counts documents, not the entities a sweep cut short by a shutdown left unreferenced, which
+ *   only a refresh removes. One pass under a wall-clock budget; stop() aborts it and waits briefly. Timers are
+ *   unref'd.
  * - purgeBrainRemovedSource: right after a source is removed, the listeners drop the derived rows of its tombstoned
  *   documents, whenever they were tombstoned (in id batches, under a budget), so person names, emails and text do not
  *   stay readable until the next refresh. Returns false when it could not finish; the caller then emits the change
@@ -48,7 +50,7 @@ export async function listBrainSourceScopes(db: Kysely<BrainDatabase>, limit: nu
   return rows.map((row) => ({ ownerId: row.owner_id, scopeId: row.scope_id }));
 }
 
-/** One pass: a bounded refresh of every index that is behind, scope by scope. Never throws; failures are logged. */
+/** One pass: a bounded refresh of every index, scope by scope. Never throws; failures are logged. */
 export async function runBrainIndexCatchUp(
   db: Kysely<BrainDatabase>, indexes: readonly BrainDerivedIndex[], signal: AbortSignal,
 ): Promise<{ readonly scopes: number; readonly refreshed: number; readonly failed: number }> {
@@ -66,7 +68,6 @@ export async function runBrainIndexCatchUp(
     for (const index of indexes) {
       if (signal.aborted) break;
       try {
-        if ((await index.freshness(scope)).caughtUp) continue;
         await index.refresh(scope, BRAIN_DERIVED_REFRESH_DEFAULTS, signal);
         refreshed += 1;
       } catch (error: unknown) {
