@@ -19,7 +19,7 @@ stubs): see Deferred. OS-view surface matrix: N/A (no UI; a JSON API, nothing to
 
 ## Request
 
-- `client.beta.messages.create` on a new SDK client per request (explicit `apiKey`, `authToken: null` and `baseURL`
+- `client.beta.messages.create` on a new SDK client per call (explicit `apiKey`, `authToken: null` and `baseURL`
   `https://api.anthropic.com`, so `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` never apply; `timeout` 60 s per
   attempt; `maxRetries` 1, but a 429 or 5xx asking to wait over 5 s (`retry-after`, `retry-after-ms`) is marked
   `x-should-retry: false` and fails at once; `fetchOptions: { redirect: "error" }`, so a redirect never carries the key
@@ -68,7 +68,8 @@ stubs): see Deferred. OS-view surface matrix: N/A (no UI; a JSON API, nothing to
   any other provenance as `provenance_not_allowed` before a call, whatever the store returned.
 - Skipped without a call, in order: a footer-stripped body over the byte cap (utf8) `document_too_large`; under 200
   characters after trimming `body_too_short`; only `* ` bullets, `Co-authored-by:` or `Signed-off-by:` trailers and
-  `---` rules `commit_list_only`. A skipped revision (refusals included) is not pending again until the document
+  `---` rules `commit_list_only`. The job asks the model (`skip`) before the spend cap, so a skip costs nothing and never
+  waits on a budget it does not need. A skipped revision (refusals included) is not pending again until the document
   changes. `- ` bullet lists are sent (written summaries here, 37 bodies); an empty body is done with no call.
 - Grounded in this repository's 2,129 synced dev documents (footer stripped):
 
@@ -84,18 +85,24 @@ stubs): see Deferred. OS-view surface matrix: N/A (no UI; a JSON API, nothing to
 ## Errors and next actions
 
 The client maps errors around the call only, by typed SDK class, most specific first, into `BrainModelError(code, {
-cause })`; no message text is read, a status only for 402 and 408 (no class). A caller abort is rethrown first.
+cause, unanswered })`; no message text is read, a status only for 402 and 408 (no class). A caller abort is rethrown
+first. Each call's fetch counts its attempts: one that rejected after the request may have left is lost, and
+`unanswered` is set when one was; a connect-phase `code` on the fetch's cause (`ENOTFOUND`, `EAI_AGAIN`,
+`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `UND_ERR_CONNECT_TIMEOUT`) means nothing left. The job charges an
+`unanswered` call at its worst case, whatever the code.
 
 | Cause | SDK class | Fetches | Code | Document | Run, nextAction |
 | --- | --- | --- | --- | --- | --- |
 | run signal aborted | `APIUserAbortError` (rethrown) | 1 | none | untouched; a sent call is charged at its worst case | stops, `run_again` |
 | job per-call timeout (60 s) | `APIUserAbortError` (rethrown) | 1 | none | failed `model_timeout`; charged at its worst case | partial, `retry_later` |
 | SDK per-attempt timeout | `APIConnectionTimeoutError` | 2 | `model_timeout` | failed `model_timeout`; charged at its worst case; run goes on within its budgets | partial, `retry_later` |
-| network | `APIConnectionError` | 2 | `model_unavailable` | no state | failed, `retry_later` |
+| network, the request may have left (dropped connection) | `APIConnectionError` | 2 | `model_unavailable` | no state; charged at its worst case | failed, `retry_later` |
+| network, never connected (DNS, refused, unreachable) | `APIConnectionError` | 2 | `model_unavailable` | no state; not charged | failed, `retry_later` |
 | 401, 403, 404 (model id), 402 `billing_error` | `AuthenticationError`, `PermissionDeniedError`, `NotFoundError`, `APIError` 402 | 1 | `model_auth_failed` | no state | failed, `configure_model` |
 | 408, 409, 429, 5xx, 529 `overloaded_error` | `APIError` 408, `ConflictError`, `RateLimitError`, `InternalServerError` | 2; 1 if asked to wait over 5 s | `model_unavailable` | no state | failed, `retry_later` |
 | 400, 413, 422, any other status | `BadRequestError`, `APIError`, `UnprocessableEntityError` | 1 | `model_rejected` | failed `model_failed`, then the run stops | failed, `contact_support` |
-| non-SDK throw | rethrown | n/a | none | failed `model_failed` (spec 554) | partial, `retry_later` |
+| 2xx whose body cannot be read | none (the body read rejects) | 1 | `model_unavailable` | no state; charged at its worst case | failed, `retry_later` |
+| other non-SDK throw | rethrown | n/a | none | failed `model_failed` (spec 554) | partial, `retry_later` |
 | 200 refusal | none | 1 | none | skipped `model_refused`, usage counted | succeeded |
 | 200 refusal with `recommended_model` | none | 1 | none | failed `model_output_invalid`, usage counted | partial, `retry_later` |
 | 200 not `end_turn`, not JSON, wrong shape | none | 1 | none | failed `model_output_invalid`, usage counted | partial, `retry_later` |
@@ -136,8 +143,11 @@ attempt. The document still gains one, so a poison document drops out after 3 ru
   worst case is 6 billed attempts (two SDK attempts, each up to three models: the requested one, then each default
   fallback in turn while they decline; the price table bounds the chain), each reading the title and body bytes plus
   8,192 prompt tokens at 6.3 micro-USD and writing 8,192 tokens at 25 micro-USD: about 1.54 USD for a short document.
-  A call that timed out or was aborted after it was sent returns no usage but may still be billed, so it is charged
-  at that worst case. Only the call in flight when a run is lost (a crash) goes uncounted: at most one per lost run.
+  A call that timed out, was aborted after it was sent or lost its answer (a dropped connection, a 2xx body that could
+  not be read) returns no usage but may still be billed, so it is charged at that worst case; a status error after a
+  lost attempt is charged the same. An attempt lost before an answered retry adds one attempt's worst case (half a
+  call's) to that call's usage. A connection that never opened sends nothing and is not charged. Only the call in
+  flight when a run is lost (a crash) goes uncounted: at most one per lost run.
 - Retention: the 50-run prune keeps every run that cost anything inside the window. At 1,000 such runs the window is
   full and the cap stops new calls until the oldest ages out, so the sum always covers the whole window.
 - A store without `readModelSpend` never gets a model call (`store_unavailable`); a read failure is `store_unavailable`.
@@ -234,7 +244,7 @@ release older than the workspace's 7-day minimum release age; the two run column
 | per call: body; output; fetches; timeout | 32 KiB (env, 1 to 64 KiB); `max_tokens` 8,192; 2 (`maxRetries` 1; a wait over 5 s is not retried); 60 s | `prompt.ts`, `client.ts`, `job.ts` |
 | per document: claims asked; candidates; claims kept | 20; 200; 50 | `prompt.ts`, `verify.ts` |
 | per owner over 30 days, all projects: model spend; runs that cost anything | 5,000,000 micro-USD (env, at most 500,000,000); 1,000 | `spend.ts`, `job.ts`, `store.ts` |
-| memory and files | one SDK client per request, then dropped; no cache or map; `config.json` read up to 64 KiB per request; nothing written | `config.ts` |
+| memory and files | one SDK client per call, then dropped; no cache or map; `config.json` read up to 64 KiB per request; nothing written | `config.ts` |
 
 ## Invariants
 
