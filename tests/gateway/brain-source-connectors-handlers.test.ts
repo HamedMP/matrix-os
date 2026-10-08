@@ -115,3 +115,116 @@ describe("connector kind handlers", () => {
     expect(await linear.loadConfig(connectorScope, harness.sourceId)).toBeNull();
   });
 });
+
+describe("connector text helpers", () => {
+  it("bound titles, bodies, links, person keys and refs", () => {
+    expect(clampTitle("  a\n b  ", "x")).toBe("a b");
+    expect(clampTitle(null, " fallback ")).toBe("fallback");
+    expect(composeBody("t", "  ", ["f"])).toEqual({ body: "f", truncated: false });
+    expect(canonicalPermalink("https://Example.com/a b")).toBe("https://example.com/a%20b");
+    for (const raw of ["http://x.y", "https://u:p@x.y", "not a url", 5, `https://x.y/${"a".repeat(2_100)}`]) expect(canonicalPermalink(raw)).toBe("");
+    expect(canonicalPermalink(`https://x.y/${"\u00e9".repeat(400)}`)).toBe("");
+    expect(personKey("email", " A@B.C ")).toBe("email:a@b.c");
+    expect(personKey("linear", "")).toBeNull();
+    expect(personKey("linear", "a\u0001")).toBeNull();
+    expect(isoInstant("x")).toBeNull();
+    const refs = new RefSet().add("handle", "A").add("handle", "B").add("label", "a\u0000b").add("label", "x".repeat(600))
+      .add("label", undefined).add("label", "y").add("label", "y");
+    expect(refs.list()).toEqual([{ kind: "handle", value: "A" }, { kind: "label", value: "a\uFFFDb" }, { kind: "label", value: "y" }]);
+    const many = new RefSet();
+    for (let index = 0; index < 250; index += 1) {
+      many.add(index < 50 ? "attendee" : index < 100 ? "participant" : "commit", `email:p${index}@x.y`);
+    }
+    many.add("label", "late");
+    expect(many.list()).toHaveLength(200);
+  });
+
+  it("encode and decode versioned cursors and refuse damaged ones", () => {
+    const schema = z.object({ v: z.literal(1) }).strict();
+    const text = encodeCursor("t1", { v: 1 });
+    expect(decodeCursor("t1", text, schema)).toEqual({ v: 1 });
+    expect(decodeCursor("t2", text, schema)).toBeNull();
+    expect(decodeCursor("t1", null, schema)).toBeNull();
+    expect(decodeCursor("t1", "t1:%%%", schema)).toBeNull();
+    expect(decodeCursor("t1", encodeCursor("t1", { v: 2 }), schema)).toBeNull();
+    expect(() => encodeCursor("t1", { pad: "x".repeat(2_000) })).toThrow(RangeError);
+    // Only a syntax error means a damaged cursor; any other parse failure propagates.
+    const parse = vi.spyOn(JSON, "parse").mockImplementationOnce(() => { throw new RangeError("too deep"); });
+    expect(() => decodeCursor("t1", text, schema)).toThrow(RangeError);
+    parse.mockRestore();
+  });
+});
+
+describe("snapshot adapter", () => {
+  const id = (n: number) => `${n}`.padStart(64, "0");
+  const stamp = "2026-09-01T00:00:00.000Z";
+  function setup(
+    stored: number[], options: { storedMax?: number; retain?: number; sweepOnMigrate?: boolean } = {}, complete = true,
+  ) {
+    let lists = 0;
+    const documents = {
+      async listDocuments(_scope: unknown, options: { cursor?: string | null }) {
+        const index = options.cursor === null || options.cursor === undefined ? 0 : Number(options.cursor);
+        const item = stored[index];
+        return {
+          items: item === undefined ? [] : [{ documentId: id(item), sourceUpdatedAt: `2026-08-${10 + item}T00:00:00.000Z` }],
+          nextCursor: index + 1 < stored.length ? String(index + 1) : null,
+        };
+      },
+    };
+    const adapter = createSnapshotAdapter<object, { documentId: string; stamp: string }>({
+      kind: "slack_bridge", cursorPrefix: "t1", fingerprint: "f", buildsPerPage: 10, sweep: options.retain === undefined,
+      ...options,
+      list: async () => {
+        lists += 1;
+        return { ok: true, value: { items: [{ documentId: id(1), stamp: "2026-09-02T00:00:00.000Z" }, { documentId: id(2), stamp }],
+          complete, gone: [id(3), id(4)], notices: [] } };
+      },
+      build: async (item) => ({ ok: true, value: { upsert: {
+        documentId: item.documentId, title: "t", body: "b", permalink: "", sourceUpdatedAt: item.stamp, provenance: "slack_thread",
+        refs: [{ kind: "channel", value: "T1/C1" }],
+      }, notices: [] } }),
+    });
+    const read = (cursor: string | null, maxRefs = 10) => adapter.readPage({
+      scope: connectorScope, sourceId: `src_${"0".repeat(32)}`, externalRef: "x", config: {}, cursor,
+      limits: { maxUpserts: 10, maxDeletions: 10, maxRefs }, signal: new AbortController().signal,
+      documents: documents as never, now: () => new Date(stamp),
+    });
+    return { read, lists: () => lists };
+  }
+
+  it("deletes gone ids only when stored and sweeps only after reading every stored document", async () => {
+    const full = await setup([3, 5]).read(null);
+    expect(full.ok && full.page.deletions).toEqual([id(3), id(5)]);
+    const capped = await setup([3, 5], { storedMax: 1 }).read(null);
+    expect(capped.ok && [capped.page.deletions, capped.page.notices]).toEqual([[id(3)], ["items_truncated"]]);
+  });
+
+  it("keeps at most retain documents by deleting the oldest stored ones missing from the listing", async () => {
+    const kept = await setup([3, 5, 7, 6], { retain: 3 }).read(null);
+    expect(kept.ok && kept.page.deletions).toEqual([id(3), id(5), id(6)]);
+    const under = await setup([5], { retain: 3 }).read(null);
+    expect(under.ok && under.page.deletions).toEqual([]);
+  });
+
+  it("sweeps past retain on a config change once a listing is complete, keeping the re-render open until then", async () => {
+    const partial = await setup([3, 5, 6], { retain: 10, sweepOnMigrate: true }, false).read(null);
+    expect(partial.ok && [partial.page.deletions, partial.page.caughtUp]).toEqual([[id(3)], true]);
+    const cursor = partial.ok ? partial.page.nextCursor : null;
+    const swept = await setup([5, 6], { retain: 10, sweepOnMigrate: true }).read(cursor);
+    expect(swept.ok && swept.page.deletions).toEqual([id(5), id(6)]);
+    const settled = await setup([5, 6], { retain: 10, sweepOnMigrate: true }).read(swept.ok ? swept.page.nextCursor : null);
+    expect(settled.ok && settled.page.deletions).toEqual([]);
+  });
+
+  it("splits a page at the ref cap and plans again when the cursor moved elsewhere", async () => {
+    const run = setup([]);
+    const first = await run.read(null, 1);
+    expect(first.ok && [first.page.upserts.length, first.page.caughtUp]).toEqual([1, false]);
+    const next = await run.read(first.ok ? first.page.nextCursor : null, 1);
+    expect(next.ok && next.page.caughtUp).toBe(true);
+    expect(run.lists()).toBe(1);
+    await run.read("t1:other");
+    expect(run.lists()).toBe(2);
+  });
+});
