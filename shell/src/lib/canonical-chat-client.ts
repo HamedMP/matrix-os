@@ -49,6 +49,8 @@ export interface CanonicalShellChatClient {
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
+  /** DELETE /api/chats/:id; a retry with the same request id is answered the same. */
+  delete(chatId: string, clientRequestId: string): Promise<void>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
   queueTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatQueueAdmissionResponse>;
   cancelQueuedTurn(chatId: string, queuedTurnId: string, input: CanonicalCancelQueuedChatTurnRequest): Promise<CanonicalChatQueueCancellationResponse>;
@@ -226,6 +228,11 @@ export function createCanonicalShellChatClient(options: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       }));
+    },
+    async delete(chatId, clientRequestId) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const query = new URLSearchParams({ clientRequestId: CanonicalChatRequestIdSchema.parse(clientRequestId) });
+      await request(`/api/chats/${encodeURIComponent(id)}?${query}`, { method: "DELETE" });
     },
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
