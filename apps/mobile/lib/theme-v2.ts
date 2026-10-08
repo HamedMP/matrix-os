@@ -106,6 +106,7 @@ export const size = {
   badge: 16,
   tabItemWidth: 70,
   tabIcon: 24,
+  sidePanel: 330,
 } as const;
 
 export const borderWidth = {
