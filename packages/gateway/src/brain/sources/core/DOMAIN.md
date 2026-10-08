@@ -19,9 +19,9 @@ registry, the shared sync runner and the start step for the source tables. Spec:
 
 ## Source of truth
 
-- `brain_sources` (through `BrainRepository`: `createSource`, `updateSource`, `deleteSource`, `listSources`,
-  `getSource`, receipts) and each kind's config table (through its handler). Documents are written only by the
-  runner's `applySyncBatch`.
+- `brain_sources` (through `BrainRepository`: `createSource`, `updateSource`, `deleteSource`, `replaceSource`,
+  `listSources`, `getSource`, receipts) and each kind's config table (through its handler). Documents are written
+  only by the runner's `applySyncBatch`.
 - In memory: per service, a connect queue of at most 64 keys (dropped when their work settles); in the runner, a set
   of at most 16 running sources (cleared in `finally`). Nothing else is kept between calls.
 
@@ -58,7 +58,9 @@ their types and limits. `../connectors/index.ts` re-exports `runBrainSourceSync`
   save leaves label, status, revision and config as they were, and a client that reads the new revision always reads
   the new config. A config that changes the identity is refused. One that turns calendar event bodies off (purging
   stored revisions), or changes a GitHub source's `since` or `include` (its cursor was read under the old ones),
-  removes the source and connects it again, so the next sync reads from the start.
+  removes the source and connects it again, so the next sync reads from the start. That is one transaction too
+  (`replaceSource`, with the new config written in it): the successor keeps the removed source's createdAt (its place
+  under the per-kind cap), and a failed save leaves the old source, its documents and its config as they were.
 - Remove is `deleteSource` with the client's revision, then `purgeRemoved` (given by `api/start.ts`): the search,
   graph and brief listeners drop the derived rows of the documents that removal tombstoned (in batches of 500, at most
   5,000, under 15 s) before the answer, so the removed source's people and text are gone at once. When that cannot

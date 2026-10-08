@@ -4,7 +4,8 @@
  * missing, foreign, tombstoned or malformed source is source_not_found). Connect runs parseConfig, account pinning,
  * identify, checkConfig, createSource, saveConfig, and removes the new source again when anything after createSource
  * fails, so a refused config never leaves a live source. An update saves the config in the transaction that moves the
- * revision. Sync is exactly one bounded run of the shared runner (the project's git source delegates to gitSync).
+ * revision, or that replaces the source when the config needs a reconnect. Sync is exactly one bounded run of the
+ * shared runner (the project's git source delegates to gitSync).
  * Holds no state between calls; every call outside the store has a deadline.
  */
 import { BrainApiError } from "../../api/types.js";
@@ -239,7 +240,7 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
   /** createSource then saveConfig; the new source is removed again when the cap or the config save refuses it. */
   async function createWithConfig(
     scope: BrainScopeKey, handler: BrainAnySourceKindHandler, config: unknown,
-    row: { readonly externalRef: string; readonly label: string; readonly status?: BrainSource["status"] },
+    row: { readonly externalRef: string; readonly label: string },
   ): Promise<{ readonly source: KnownSource; readonly created: boolean }> {
     const { source, created } = await repository.createSource(scope, { kind: handler.kind, ...row });
     const known: KnownSource = { ...source, kind: handler.kind };
@@ -322,13 +323,14 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
     const label = input.label ?? source.label;
     const status = input.status ?? source.status;
     if (restartsSource(handler.kind, stored, config)) {
-      const again = await queue(queueKey(scope, handler.kind), async () => {
-        await afterRemove(scope, await repository.deleteSource(scope, {
-          sourceId: source.sourceId, expectedRevision: input.expectedRevision,
-        }));
-        return createWithConfig(scope, handler, config, { externalRef: source.externalRef, label, status });
-      });
-      return view(scope, again.source);
+      // Removed and connected again in one transaction with the new config: a failed save leaves the old source, its
+      // documents and its config as they were, and the new source is never seen without its config. It keeps the old
+      // one's place among its kind, so the per-kind cap is unchanged.
+      const { removed, source: again } = await repository.replaceSource(scope, {
+        sourceId: source.sourceId, expectedRevision: input.expectedRevision, label, status,
+      }, (trx, next) => handler.saveConfig(scope, next.sourceId, config, trx));
+      await afterRemove(scope, removed);
+      return view(scope, { ...again, kind: source.kind });
     }
     // The config is written in the transaction that moves the revision: both land or neither does, and a client that
     // reads the new revision always sees the new config, so it never saves an older one over it.

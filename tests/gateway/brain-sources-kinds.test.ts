@@ -191,9 +191,14 @@ describe("start and kind rules", () => {
     const { source } = await sources.connect(OWNER, "proj_a", { kind: "github", config: pullsOnly });
     // The listing holds only issues: each is read and passed over, and the cursor moves past them.
     expect((await sources.sync(OWNER, "proj_a", source.sourceId)).counts.written).toBe(0);
-    const withIssues = await sources.update(OWNER, "proj_a", source.sourceId, {
-      expectedRevision: 1, config: { ...pullsOnly, include: { pullRequests: true, reviews: false, issues: true } },
-    });
+    const issues = { expectedRevision: 1, config: { ...pullsOnly, include: { pullRequests: true, reviews: false, issues: true } } };
+    // The reconnect is one transaction: a refused config write leaves the source and its config as they were.
+    await sql`ALTER TABLE brain_github_sources ADD CONSTRAINT refuse_writes CHECK (false) NOT VALID`.execute(harness.db);
+    await expect(sources.update(OWNER, "proj_a", source.sourceId, issues)).rejects.toThrow();
+    expect((await sources.list(OWNER, "proj_a")).items.filter((item) => item.kind === "github"))
+      .toEqual([expect.objectContaining({ sourceId: source.sourceId, revision: 1, config: source.config })]);
+    await sql`ALTER TABLE brain_github_sources DROP CONSTRAINT refuse_writes`.execute(harness.db);
+    const withIssues = await sources.update(OWNER, "proj_a", source.sourceId, issues);
     expect(withIssues).toMatchObject({ revision: 1, label: source.label, config: { issues: true, accountLabel: "work" } });
     expect(withIssues.sourceId).not.toBe(source.sourceId);
     const run = await sources.sync(OWNER, "proj_a", withIssues.sourceId);

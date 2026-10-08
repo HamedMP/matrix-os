@@ -277,6 +277,33 @@ describe("update and remove", () => {
     expect(harness.hooks.events).toEqual([expect.objectContaining({ type: "documents_changed", sourceId: source.sourceId, documentIds: null })]);
   });
 
+  it("leaves a reconnecting source and its documents as they were when the new config cannot be saved", async () => {
+    let refuse = false;
+    const handler = fakeHandler("google_calendar", {
+      saveConfig: async () => { if (refuse) throw new Error("config save failed"); },
+    });
+    const sources = service([handler]);
+    const bodies = { items: ["c"], includeEventBodies: true };
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "google_calendar", config: bodies });
+    expect((await sources.sync(OWNER, "proj_a", source.sourceId)).counts.written).toBe(1);
+    const events = harness.hooks.events.length;
+    refuse = true;
+    const noBodies = { expectedRevision: 1, label: "Renamed", status: "paused", config: { items: ["c"], includeEventBodies: false } } as const;
+    await expect(sources.update(OWNER, "proj_a", source.sourceId, noBodies)).rejects.toThrow("config save failed");
+    expect((await harness.liveSources()).map((live) => live.sourceId)).toEqual([source.sourceId]);
+    expect(await harness.repository.getSource(SCOPE_A, source.sourceId))
+      .toMatchObject({ revision: 1, label: source.label, status: "active" });
+    expect((await harness.repository.listDocuments(SCOPE_A, { sourceId: source.sourceId })).items).toHaveLength(1);
+    expect([...handler.configs.values()]).toEqual([bodies]);
+    expect(harness.hooks.events).toHaveLength(events);
+    // The revision the client holds is still the current one; the new source keeps the old one's place among its kind.
+    refuse = false;
+    harness.tick();
+    const fresh = await sources.update(OWNER, "proj_a", source.sourceId, noBodies);
+    expect(fresh).toMatchObject({ revision: 1, label: "Renamed", status: "paused", createdAt: source.createdAt });
+    expect((await harness.liveSources()).map((live) => live.sourceId)).toEqual([fresh.sourceId]);
+  });
+
   it("hands the caller's signal to the run, so a background run's stop ends it between pages", async () => {
     const runner = vi.fn(runBrainSourceSync);
     const sources = service([fakeHandler("linear")], { runner: runner as never });
