@@ -128,7 +128,22 @@ class BrainGatewayStatus extends Error {
   constructor() { super("BrainGatewayStatus"); this.name = "BrainGatewayStatus"; }
 }
 
-/** Reads at most RESPONSE_MAX_BYTES of UTF-8, yielding between chunks; the caller's signal bounds the time. */
+function cleanupFailed(error: unknown): void {
+  console.warn("[brain-tools] Cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+}
+
+/** Settles as `work` does, or rejects with the signal's reason once it aborts, so a transport that ignores it cannot stall. */
+function withinDeadline<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  let stop = () => {};
+  const deadline = new Promise<never>((_, reject) => {
+    stop = () => reject(signal.reason);
+    if (signal.aborted) stop();
+    else signal.addEventListener("abort", stop, { once: true });
+  });
+  return Promise.race([work, deadline]).finally(() => signal.removeEventListener("abort", stop));
+}
+
+/** Reads at most RESPONSE_MAX_BYTES of UTF-8, yielding between chunks; every read ends by the caller's deadline. */
 async function readBounded(response: Response, signal: AbortSignal): Promise<string> {
   if (!response.body) throw new Error("BrainResponseEmpty");
   const reader = response.body.getReader();
@@ -136,7 +151,8 @@ async function readBounded(response: Response, signal: AbortSignal): Promise<str
   let bytes = 0;
   let text = "";
   try {
-    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+    const next = () => withinDeadline(reader.read(), signal);
+    for (let chunk = await next(); !chunk.done; chunk = await next()) {
       signal.throwIfAborted();
       bytes += chunk.value.byteLength;
       if (bytes > RESPONSE_MAX_BYTES) throw new Error("BrainResponseTooLarge");
@@ -145,8 +161,7 @@ async function readBounded(response: Response, signal: AbortSignal): Promise<str
     }
     return text + decoder.decode();
   } finally {
-    await reader.cancel().catch((error: unknown) =>
-      console.warn("[brain-tools] Cleanup failed:", error instanceof Error ? error.name : "UnknownError"));
+    await reader.cancel().catch(cleanupFailed);
   }
 }
 
@@ -167,9 +182,15 @@ async function callGateway<N extends ToolName>(
   const signal = AbortSignal.timeout(TIMEOUT_MS);
   const base = process.env.GATEWAY_URL ?? "http://localhost:4000";
   const path = `/api/brain/projects/${encodeURIComponent(input.project)}/${tool.slice("brain_".length)}`;
-  const response = await fetcher(`${base}${path}?${queryOf(tool, input)}`, {
+  const requested = fetcher(`${base}${path}?${queryOf(tool, input)}`, {
     method: "GET", headers: gatewayAuthHeaders(), redirect: "error", signal,
   });
+  // An answer that lands after the deadline is never read, so its body is cancelled here. A failure of the request is
+  // the call's own failure, reported through withinDeadline below.
+  void requested.then((late) => {
+    if (signal.aborted && late instanceof Response) late.body?.cancel().catch(cleanupFailed);
+  }, () => undefined);
+  const response = await withinDeadline(requested, signal);
   if (!(response instanceof Response)) throw new Error("BrainResponseUnavailable");
   const text = await readBounded(response, signal);
   if (response.ok) return { ...SCHEMAS[tool].parse(JSON.parse(text)), status: "ok" as const };
