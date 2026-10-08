@@ -194,3 +194,49 @@ describe("brain search array store", { timeout: 60_000 }, () => {
     expect(await vectorRows(h)).toBe(0);
   });
 });
+
+// PGlite is not the server customers run: the same checks on a disposable PostgreSQL schema.
+const databaseUrl = process.env.MATRIX_TEST_POSTGRES_URL;
+
+describe.skipIf(!databaseUrl)("brain search array store on PostgreSQL", { timeout: 120_000 }, () => {
+  let admin: pg.Pool;
+  let schema: string;
+  let h: SearchHarness;
+  beforeEach(async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    schema = `brain_${randomUUID().replaceAll("-", "")}`;
+    admin = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const url = new URL(databaseUrl!);
+    url.searchParams.set("options", `-c search_path=${schema}`);
+    const clock = new Date(BRAIN_CLOCK_START);
+    const repository = new BrainRepository(new PostgresDialect({
+      pool: new pg.Pool({ connectionString: url.toString(), max: 2 }) }), { now: () => clock });
+    await repository.bootstrap();
+    const harness = { repository, db: repository.kysely, now: () => clock, iso: () => clock.toISOString(),
+      tick: () => undefined, destroy: () => repository.destroy() };
+    h = { ...harness, capability: await bootstrapBrainSearchDatabase(harness.db) };
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await h?.destroy();
+    if (schema && admin) await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin?.end();
+  });
+
+  it("finds the same nearest chunks as a brute-force scan at the provider's size", async () => {
+    await expectExactNearest(h, 80, 25, 256);
+    const document = await documentOf(h, "doc0");
+    await expect(sql`INSERT INTO brain_search_vectors (owner_id, scope_id, document_id, chunk_index, incarnation,
+      revision, provider_id, dimensions, embedding) VALUES (${SCOPE.ownerId}, ${SCOPE.scopeId}, ${document.documentId},
+      39, ${document.incarnation}, ${document.revision}, 'p', 1, '{NaN}'::real[])`.execute(h.db))
+      .rejects.toMatchObject({ code: "23514" });
+    const store = createBrainArrayVectorStore(h.db);
+    const key = "1".repeat(32);
+    await store.replaceChunks(SCOPE, { documentId: document.documentId, incarnation: document.incarnation,
+      revision: document.revision, providerId: "p", chunks: [{ spanStart: 0, spanEnd: 1, vector: [3, 4], textKey: key }] });
+    expect(await store.storedVectors!(SCOPE, { providerId: "p", dimensions: 2, documentIds: [document.documentId],
+      textKeys: [key] })).toEqual(new Map([[key, [Math.fround(0.6), Math.fround(0.8)]]]));
+    expect(await store.remaining!(SCOPE, [document.documentId])).toBe(50_000 - 79 * 25);
+  });
+});
