@@ -5,9 +5,12 @@
  * Matrix home and never inside home's own `.git`. So a `.git` file or
  * symlink, a linked worktree or an alternates file cannot lead git to history
  * outside home, or to Matrix home's own history. Read-only filesystem checks,
- * each bounded; any refusal is GitSourceError("not_a_repository").
+ * each bounded; repository files are opened non-blocking and read only when
+ * regular, so a FIFO cannot stall them; any refusal is
+ * GitSourceError("not_a_repository").
  */
-import { open, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { GitSourceError } from "./types.js";
 
@@ -20,6 +23,8 @@ const ALTERNATES_MAX_BYTES = 64 * 1024;
 const ALTERNATES_MAX_DEPTH = 5;
 /** Alternate object directories checked per repository, across every level. */
 const ALTERNATES_MAX_ENTRIES = 64;
+/** Opening a FIFO this way returns at once instead of waiting for a writer. */
+const READ_NONBLOCKING = constants.O_RDONLY | constants.O_NONBLOCK;
 
 export interface GitHomeBounds {
   readonly realHome: string;
@@ -89,23 +94,28 @@ function hasCode(err: unknown, code: string): boolean {
   return err instanceof Error && "code" in err && err.code === code;
 }
 
-/** `<objects>/info/alternates` as text (at most ALTERNATES_MAX_BYTES), or null when there is none. */
-async function readAlternates(objectsDir: string): Promise<string | null> {
+/**
+ * A repository file's text (at most maxBytes), or null when there is none.
+ * Opened non-blocking and checked to be a regular file before any read, so a
+ * FIFO, socket or device in its place is refused instead of stalling the open.
+ */
+async function readRegularFile(path: string, maxBytes: number): Promise<string | null> {
+  let handle: FileHandle;
   try {
-    const handle = await open(join(objectsDir, "info", "alternates"), "r");
-    try {
-      const buffer = Buffer.alloc(ALTERNATES_MAX_BYTES + 1);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-      if (bytesRead > ALTERNATES_MAX_BYTES) refuse();
-      return buffer.subarray(0, bytesRead).toString("utf8");
-    } finally {
-      await handle.close();
-    }
+    handle = await open(path, READ_NONBLOCKING);
   } catch (err: unknown) {
-    if (err instanceof GitSourceError) throw err;
     if (hasCode(err, "ENOENT")) return null;
-    if (isMissingPathError(err) || hasCode(err, "EISDIR")) refuse(err);
+    if (isMissingPathError(err) || hasCode(err, "EISDIR") || hasCode(err, "ENXIO")) refuse(err);
     throw err;
+  }
+  try {
+    if (!(await handle.stat()).isFile()) refuse();
+    const buffer = Buffer.alloc(maxBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > maxBytes) refuse();
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
   }
 }
 
@@ -118,7 +128,7 @@ async function assertAlternatesAllowed(bounds: GitHomeBounds, commonDir: string)
   const pending: Array<{ objectsDir: string; depth: number }> = [{ objectsDir: join(commonDir, "objects"), depth: 0 }];
   let checked = 0;
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    const text = await readAlternates(next.objectsDir);
+    const text = await readRegularFile(join(next.objectsDir, "info", "alternates"), ALTERNATES_MAX_BYTES);
     if (text === null) continue;
     for (const raw of text.split("\n")) {
       const line = raw.trim();
