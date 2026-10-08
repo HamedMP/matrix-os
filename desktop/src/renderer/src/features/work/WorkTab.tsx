@@ -514,7 +514,7 @@ function WorkTabContent({
     showChat(layout === "narrow");
     openWorkProjectDraft(project);
   }, [layout, showChat]);
-  const selectRailChat = useCallback((record: CanonicalChatRecord, project?: Project) => {
+  const selectRailChat = useCallback((record: ChatNavigationRecord, project?: Project) => {
     showChat(layout === "narrow");
     if (project) {
       openWorkProject(project, record.chat.id, record.chat.title);

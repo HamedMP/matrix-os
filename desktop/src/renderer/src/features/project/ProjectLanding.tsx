@@ -1,6 +1,6 @@
 import { useRef, type ReactNode } from "react";
 import { FolderOpen, MessageSquare, PencilEditIcon } from "@renderer/lib/hugeicons";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { resolveCanonicalChatAttention } from "@matrix-os/ui";
 import type { CanonicalChatClient, CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { useProjectLandingChats } from "./use-project-landing-chats";
@@ -12,8 +12,8 @@ export const PROJECT_LANDING_CONTENT_CLASS = "mx-auto w-full max-w-3xl px-6";
 
 /** Project metadata surrounds the existing canonical draft; its provider and draft stay authoritative. */
 export function ProjectLanding({ project, children, showMetadata = true, records, onSelectChat, client, eventSource, active = true }: {
-  project: Project; children: ReactNode; showMetadata?: boolean; records?: CanonicalChatRecord[];
-  onSelectChat?: (record: CanonicalChatRecord) => void;
+  project: Project; children: ReactNode; showMetadata?: boolean; records?: ChatNavigationRecord[];
+  onSelectChat?: (record: ChatNavigationRecord) => void;
   client?: CanonicalChatClient | null; eventSource?: Pick<CanonicalChatEventSource, "subscribe">; active?: boolean;
 }) {
   const loaded = useProjectLandingChats(project, client, eventSource, active);
