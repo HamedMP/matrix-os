@@ -20,3 +20,5 @@ synced documents, their refs and current decision claims. Spec: `specs/557-compa
   document erased mid-write is skipped. Hooks are nudges; a bounded `refresh` derives what is missing or outdated.
 - Reads and pending scans run read only under a 10 s deadline (`brain/bounded.ts`) and skip tombstoned documents'
   links; at most two refreshes run at once across the service, the index and hooks; `scope_erased` never waits.
+- The project entity is written only while the scope has a `brain_sources` row: a project erase removes those first,
+  then the graph rows under the graph lock, so a refresh that outlives the erase writes nothing back.
