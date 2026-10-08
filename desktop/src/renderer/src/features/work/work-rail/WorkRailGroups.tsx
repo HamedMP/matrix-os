@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import type { CanonicalChatRecord, CollaborationProjectOverview } from "@matrix-os/contracts";
-import { AgentAvatar, ChatSidebarAddAction, type BotConversationSummary } from "@matrix-os/ui";
+import { AgentAvatar, type BotConversationSummary } from "@matrix-os/ui";
 import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
 import { SharedWorkRailProjectList } from "./SharedWorkRailProjects";
+import { Plus } from "lucide-react";
 import { WorkRailSection } from "./WorkRailSection";
 
 export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
@@ -20,9 +21,10 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
   sharedProjects: readonly CollaborationProjectOverview[];
   revealSharedProjectRequest?: { scopeId: string; requestId: number };
 }) {
+  const pendingBots = bots.filter(bot => bot.pendingApprovalCount > 0);
   return <>
 
-        <WorkRailSection
+        {model.pinned.length + model.pinnedProjects.length > 0 ? <WorkRailSection
           label="Pinned"
           count={model.pinned.length + model.pinnedProjects.length}
           expanded={sections.pinned}
@@ -30,24 +32,23 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
         >
           {model.pinnedProjects.map(renderProject)}
           {model.pinned.map((record) => renderChat(record, "pinned"))}
-        </WorkRailSection>
+        </WorkRailSection> : null}
 
         <WorkRailSection
           label="Projects"
           count={model.projects.length + sharedProjects.length}
           expanded={sections.projects}
           onToggle={() => onToggle("projects")}
-
+          action={<button type="button" aria-label="Create project" title="New project" className="work-rail-group-create outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]" onClick={onCreateProject}><Plus size={15} aria-hidden /></button>}
         >
           {model.projects.map(renderProject)}
           <SharedWorkRailProjectList projects={sharedProjects} revealRequest={revealSharedProjectRequest} />
-          <ChatSidebarAddAction label="New project" ariaLabel="Create project" onClick={onCreateProject} />
           {organizationDrives}
         </WorkRailSection>
 
-        <WorkRailSection label="Needs you" count={model.needsYou.length + bots.filter(bot => bot.pendingApprovalCount > 0).length} expanded={sections.needsYou} onToggle={() => onToggle("needsYou")}>
+        <WorkRailSection label="Needs you" attention count={model.needsYou.length + pendingBots.length} expanded={sections.needsYou} onToggle={() => onToggle("needsYou")}>
           {model.needsYou.map(record => renderChat(record, "recent"))}
-          {bots.filter(bot => bot.pendingApprovalCount > 0).map(bot => <button
+          {pendingBots.map(bot => <button
             key={bot.chatId} type="button" aria-label={`Review ${bot.name} approval`} aria-current={activeChatId === bot.chatId ? "page" : undefined}
             disabled={!onOpenBotChat} className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
             onClick={() => { onOpenBotChat?.(bot.chatId); }}>

@@ -27,6 +27,8 @@ import { applyProjectedChats, loadWorkRailChats } from "./work-rail-data";
 import { OrganizationDrivesRail } from "./work-rail/OrganizationDrivesRail";
 import { useWorkRailMoves } from "./work-rail/use-work-rail-moves";
 import { WorkRailScrollArea } from "./work-rail/WorkRailScrollArea";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
+import { useWorkRailDisclosure } from "./work-rail/use-work-rail-disclosure";
 import { useWorkRailOrder } from "./work-rail/use-work-rail-order";
 import { WorkRailOrderContext, WorkRailOrderItem } from "./work-rail/WorkRailOrderItem";
 import { resolveCanonicalChatLifecycleGroup } from "@matrix-os/ui";
@@ -111,13 +113,7 @@ export function WorkRail({
   const recordsClientRef = useRef(client);
   useEffect(() => { recordsRef.current = records; }, [records]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [sections, setSections] = useState<Record<SectionKey, boolean>>({
-    pinned: true,
-    projects: true,
-    needsYou: true,
-    working: true,
-    done: true,
-  });
+  const { sections, setExpanded } = useWorkRailDisclosure();
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
   const [pinning, setPinning] = useState<Record<string, boolean>>({});
   const [pinError, setPinError] = useState<string | null>(null);
@@ -273,10 +269,10 @@ export function WorkRail({
   };
 
   const toggleSection = (key: SectionKey) => {
-    setSections((current) => ({ ...current, [key]: !current[key] }));
+    setExpanded(key, !sections[key]);
   };
   const revealSharedProject = (scopeId: string) => {
-    setSections((current) => current.projects ? current : { ...current, projects: true });
+    setExpanded("projects", true);
     setSharedProjectRevealRequest((current) => ({
       scopeId,
       requestId: (current?.requestId ?? 0) + 1,
@@ -454,10 +450,10 @@ export function WorkRail({
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
+      <div className="ml-2.5 mr-[9px] flex shrink-0 flex-col"><WorkRailSearchControls onSearch={openSearch} active={searchOpen} /></div>
       <WorkRailScrollArea>
-      <WorkRailSearchControls onSearch={openSearch} />
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
-      <ChatAgentsRailSection visible={visible} activeChatId={activeChatId} client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
+      <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
         sharedProjects={sharedProjects.receivedProjects}

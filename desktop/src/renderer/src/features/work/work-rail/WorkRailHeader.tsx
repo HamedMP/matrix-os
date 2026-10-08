@@ -1,5 +1,5 @@
 import { chatSearchShortcutLabel } from "@matrix-os/ui";
-import { PanelLeftOpenIcon, Plus, Search } from "@renderer/lib/hugeicons";
+import { PanelLeftOpen as PanelLeftOpenIcon, Plus, Search } from "lucide-react";
 
 export function WorkRailHeader({
   onNewChat,
@@ -18,7 +18,7 @@ export function WorkRailHeader({
         <button
           type="button"
           aria-label="New chat"
-          className="flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-[8px] px-2.5 text-left text-[14px] leading-[18px] font-normal transition-colors duration-100 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+          className="work-rail-top-action flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-[8px] px-2.5 text-left text-[14px] leading-[18px] font-normal transition-colors duration-100 outline-none hover:bg-[var(--matrix-chat-rail-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
           style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }}
           onClick={onNewChat}
         >
@@ -33,7 +33,7 @@ export function WorkRailHeader({
             aria-expanded={true}
             aria-controls="work-navigation-pane"
             title="Hide Chat navigation"
-            className="flex size-7 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+            className="flex size-7 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--matrix-chat-rail-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
             style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}
             onClick={onCollapse}
           >
@@ -45,8 +45,8 @@ export function WorkRailHeader({
   );
 }
 
-export function WorkRailSearchControls({ onSearch }: { onSearch: () => void }) {
-  return <button type="button" aria-label="Search chats" aria-keyshortcuts="Meta+K Control+K" title="Search chats" className="flex h-8 shrink-0 items-center gap-2.5 rounded-[8px] px-2.5 text-left text-[14px] leading-[18px] font-normal outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} onClick={onSearch}>
+export function WorkRailSearchControls({ onSearch, active = false }: { onSearch: () => void; active?: boolean }) {
+  return <button type="button" aria-label="Search chats" aria-current={active ? "page" : undefined} data-current={active || undefined} aria-keyshortcuts="Meta+K Control+K" title="Search chats" className="work-rail-top-action flex h-8 shrink-0 items-center gap-2.5 rounded-[8px] px-2.5 text-left text-[14px] leading-[18px] font-normal outline-none hover:bg-[var(--matrix-chat-rail-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} onClick={onSearch}>
     <Search size={15} aria-hidden /><span className="flex-1">Search</span>
     <kbd aria-hidden="true" className="text-[12px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))", fontFamily: "inherit" }}>{chatSearchShortcutLabel()}</kbd>
   </button>;

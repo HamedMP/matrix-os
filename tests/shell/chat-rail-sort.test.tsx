@@ -52,6 +52,10 @@ it.each(["keyboard", "drag"])("starts Web manual ordering with a direct %s move 
   const items=[{id:"a",preview:"A",messageCount:1,updatedAt:1},{id:"b",preview:"B",messageCount:1,updatedAt:2}];
   const select=vi.fn();
   await act(async()=>{render(<ChatApp messages={[]} busy={false} connected conversations={items} onNewChat={vi.fn()} onSwitchConversation={select} onSubmit={vi.fn()} agentClient={client}/>);await Promise.resolve();});
+  const doneHeader = screen.getByRole("button", { name: "Done" });
+  expect(doneHeader.getAttribute("aria-expanded")).toBe("true");
+  await screen.findByRole("button", { name: "B", exact: true });
+  expect(screen.getByRole("button", { name: "A", exact: true })).toBeTruthy();
   const row=(id:string)=>document.querySelector<HTMLElement>(`[data-rail-order-id="${id}"]`)!;
   const ids=()=>[...document.querySelectorAll<HTMLElement>("[data-rail-order-id]")].map(e=>e.dataset.railOrderId);
   expect(ids()).toEqual(["b","a"]);
@@ -64,6 +68,8 @@ it.each(["keyboard", "drag"])("starts Web manual ordering with a direct %s move 
     fireEvent.drop(row("a"),{dataTransfer:transfer});
   }
   await waitFor(()=>expect(ids()).toEqual(["a","b"]));
+  expect(doneHeader.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("button", { name: "A", exact: true })).toBeTruthy();
   expect(select).not.toHaveBeenCalled();
 });
 it("rejects invalid Web moves before entering manual order",()=>{
